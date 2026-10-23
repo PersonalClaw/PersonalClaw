@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.ci import shards, telemetry
+from tools.ci import shards, telemetry, workflows
 
 PYPROJECT = '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n'
 
@@ -301,6 +301,8 @@ class _Gh:
         self.asked: list[str] = []
         self.downloads: list[int] = []
         self.broken = False
+        #: Each workflow's runs, when the runs are not every workflow's (``histories``' keys).
+        self.listings: dict[str, list[int]] | None = None
 
     def text(self, *args: str) -> str:
         path = next(a for a in args[1:] if not a.startswith("-"))
@@ -309,9 +311,12 @@ class _Gh:
             raise subprocess.CalledProcessError(1, ["gh", *args])
         if "/runs?" in path:
             assert "branch=main" in path and "status=completed" in path, path
+            runs = list(self.histories)
+            if self.listings is not None:
+                runs = self.listings.get(path.split("/workflows/")[1].split("/")[0], [])
             return "\n".join(
                 f"{r} {self.conclusions.get(r, 'success')} {self.owners.get(r, 'o/r')}"
-                for r in sorted(self.histories, reverse=True)
+                for r in sorted(runs, reverse=True)
             )
         if "/actions/runs/" in path and "?" not in path:
             producer = int(path.rsplit("/", 1)[1])
@@ -751,6 +756,53 @@ def test_the_record_gives_each_files_median_over_the_newest_three_runs_first_att
     assert durations == {"tests/test_a.py": 4.0}, "median of 3, 90 and 4; macOS's is another leg"
     assert "telemetry runs 50, 40, 30" in said and LINUX in said and "4 workers" in said
     assert 20 not in gh.downloads, "a fourth run is never read"
+
+
+#: A leg of main's push runs in either shape, as merge.yml's shard-plan names it.
+PUSH_LEG = shards.Leg.parse(f"test-shard:{workflows.MAIN_PUSH_NAME}:junit-test-shard-:4")
+
+
+def _listed(gh: _Gh) -> list[str]:
+    """The workflows whose runs the record listed, in the order it listed them."""
+    return [a.split("/workflows/")[1].split("/")[0] for a in gh.asked if "/runs?" in a]
+
+
+def test_a_main_push_leg_reads_merge_yml_s_runs_then_ci_yml_s() -> None:
+    """``main-push`` stands for both shapes, the newer first (#3915): merge.yml's runs are read
+    before ci.yml's, and a merge.yml run with no history (a dispatched one, which the collector
+    does not count) is skipped, so until the flip the plan reads ci.yml's as before."""
+    assert PUSH_LEG.workflows == (workflows.MERGE, workflows.LEGACY) == workflows.MAIN_PUSH
+    assert LEG.workflows == ("ci.yml",), "a file name stands for itself"
+    t = "tests.test_a::t"
+    gh = _Gh(
+        {
+            60: None,
+            50: _history(50, ("junit-test-shard-1", t, 2.0)),
+            40: _history(40, ("junit-test-shard-1", t, 90.0)),
+            30: _history(30, ("junit-test-shard-1", t, 4.0)),
+        }
+    )
+    gh.listings = {workflows.MERGE: [60, 50], workflows.LEGACY: [40, 30]}
+    durations, said = _record(gh).durations(PUSH_LEG, FILES)
+    assert durations == {"tests/test_a.py": 4.0} and "telemetry runs 50, 40, 30" in said, said
+    assert _listed(gh) == [workflows.MERGE, workflows.LEGACY]
+
+
+def test_a_main_push_leg_whose_merge_yml_runs_suffice_never_lists_ci_yml() -> None:
+    t = "tests.test_a::t"
+    gh = _Gh({run: _history(run, ("junit-test-shard-1", t, float(run))) for run in (70, 60, 50)})
+    gh.listings = {workflows.MERGE: [70, 60, 50], workflows.LEGACY: [40]}
+    durations, said = _record(gh).durations(PUSH_LEG, FILES)
+    assert durations == {"tests/test_a.py": 60.0} and "telemetry runs 70, 60, 50" in said, said
+    assert _listed(gh) == [workflows.MERGE]
+
+
+def test_a_main_push_leg_with_no_history_names_both_workflows() -> None:
+    gh = _Gh({60: None, 40: None})
+    gh.listings = {workflows.MERGE: [60], workflows.LEGACY: [40]}
+    durations, said = _record(gh).durations(PUSH_LEG, FILES)
+    assert durations == {}
+    assert "no telemetry history of merge.yml or ci.yml on main" in said, said
 
 
 def test_the_record_reads_only_attempt_one_the_first_results() -> None:

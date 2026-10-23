@@ -823,7 +823,10 @@ posts a check of its own: the pull request and push triggers come with the chang
   run's catalogue. A refusal fails the job, which `results` reads in `needs`, so the merge tier's
   verdict is red. A run of `main` itself checks nothing: its catalogue is main's own.
 - **`shard-plan`** (`merge.yml`) makes the run's one shard plan, as `ci.yml`'s does, for the
-  suite's legs (an entry whose job reads `shard-history`).
+  suite's legs (an entry whose job reads `shard-history`). Each leg names `main-push` for its
+  history (`--leg test-shard:main-push:junit-test-shard-:3`): main's push runs in either shape,
+  `merge.yml`'s newest first and then `ci.yml`'s (`tools/ci/workflows.py`), so the plan is
+  weighed by whichever shape has run, and `merge.yml` spells neither file.
 - **The stage jobs** run the matrix: `build`, `test`, `test-2` and `test-3` in `merge.yml`, and
   `test` alone in `pr.yml`, whose tier's jobs wait for no other job's output. Each is skipped when
   the plan gives it no entry, and runs after the stage before it whatever that stage's result
