@@ -7,6 +7,7 @@ hold to.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import itertools
 import re
@@ -15,13 +16,24 @@ import subprocess
 
 import pytest
 import yaml
+from ci_catalogue_steps import read
+from ci_catalogue_steps import text as catalogue_text
 from e2e_specs_are_executed_shared import _E2E, _ROOT, LOCAL_ONLY, _specs
+
+from tools.ci.catalogue import Catalogue, Step
 
 _WORKFLOWS = _ROOT / ".github" / "workflows"
 
 
-def _workflow_text() -> str:
-    return "\n".join(p.read_text(encoding="utf-8") for p in sorted(_WORKFLOWS.glob("*.yml")))
+def _workflow_text(without: str = "") -> str:
+    """Every workflow's text (but *without*'s), then each catalogue step as a ``run:`` line: both
+    of CI's shapes, ``ci.yml``'s own lines and the tier workflows' stage jobs, which run the
+    catalogue's through ``run-job`` (``tests/ci_catalogue_steps.py``)."""
+    workflows = [
+        p.read_text(encoding="utf-8") for p in sorted(_WORKFLOWS.glob("*.yml")) if p.name != without
+    ]
+    steps = [f"run: {each}" for job in read().jobs for each in catalogue_text(job).splitlines()]
+    return "\n".join([*workflows, *steps])
 
 
 #: A spec argument on a run line: a path ending in `.spec.ts`.
@@ -164,6 +176,12 @@ def test_every_e2e_spec_is_executed_or_declared():
     )
 
 
+def test_without_ci_yml_the_catalogue_still_runs_every_spec():
+    """The flip (#3915) deletes ci.yml, and the tier workflows run the catalogue's steps: those
+    and the other workflows must run every spec the sweep counts on their own."""
+    assert silent(_workflow_text(without="ci.yml")) == []
+
+
 def test_no_exemption_is_also_wired():
     """A spec cannot be both exempt and executed — one of the two claims would be a lie."""
     both = sorted(s for s in LOCAL_ONLY if _run_by_ci(s))
@@ -268,17 +286,126 @@ def test_a_spec_the_workflow_lines_leave_out_is_named():
 
 # ── A sharded run runs every shard, and the merge reads every leg ────────────────────────────────
 #
-# The shared specs run in `e2e-shard`'s legs, `--shard=N/2` each, so the whole-directory line
-# above runs every spec only if the job's matrix runs every N: a matrix of `[1]` would run half of
+# The shared specs run in `e2e-shard`'s legs, `--shard={shard}/2` each, so the whole-directory line
+# above runs every spec only if the job runs every shard: a job of one shard would run half of
 # them, and the sweep would still call all of them run. And the run is judged on the report
 # `e2e/merge-legs.mjs` merges from the legs' blob folders, so a leg the merge does not name has its
-# tests in no report anyone checks. Both are read from ci.yml's own steps.
+# tests in no report anyone checks. Both are read from the catalogue's steps, which both of CI's
+# shapes run: a job's `shards` is its matrix, and `{shard}` each leg's own number.
 
-_SHARD = re.compile(r"--shard[ =](\$\{\{\s*matrix\.shard\s*\}\}|\d+)/(\d+)")
-_MATRIX_SHARD = re.compile(r"\$\{\{\s*matrix\.shard\s*\}\}")
+_SHARD = re.compile(r"--shard[ =](\{shard\}|\d+)/(\d+)")
+#: The step that runs Playwright.
+_PLAYWRIGHT = ("npx", "playwright", "test")
+
+
+def _browser_steps(cat: Catalogue):
+    for job in cat.jobs:
+        for step in job.command:
+            if step.argv[:3] == _PLAYWRIGHT:
+                yield job, step
+
+
+def shard_gaps(cat: Catalogue) -> list[str]:
+    """Each sharded `playwright test` step whose job does not run each of its shards once."""
+    gaps = []
+    for job, step in _browser_steps(cat):
+        found = next((m for word in step.argv if (m := _SHARD.fullmatch(word))), None)
+        if not found:
+            continue
+        index, total = found.group(1), int(found.group(2))
+        if index != "{shard}":
+            gaps.append(f"{job.id} runs shard {index}/{total} alone: the other shards run nowhere")
+        elif job.shards != total:
+            gaps.append(
+                f"{job.id} runs --shard={{shard}}/{total} in {job.shards} shards, not {total}"
+            )
+    return gaps
+
+
+def leg_folders(cat: Catalogue) -> set[str]:
+    """The blob folders the `playwright test` steps write, each shard's by its number."""
+    folders = set()
+    for job, step in _browser_steps(cat):
+        folder = {**job.env, **step.env}.get("PLAYWRIGHT_BLOB_OUTPUT_DIR", "")
+        for shard in range(1, job.shards + 1) if folder else ():
+            folders.add(folder.replace("{shard}", str(shard)))
+    return folders
+
+
+def merges(cat: Catalogue) -> dict[str, set[str]]:
+    """Each job's `merge-legs.mjs` steps and the blob folders they read: the root joined to each
+    leg it names. `e2e` and `ui-quality` each merge the whole run."""
+    out: dict[str, set[str]] = {}
+    for job in cat.jobs:
+        for step in job.command:
+            words = list(step.argv)
+            if len(words) > 2 and words[:2] == ["node", "e2e/merge-legs.mjs"]:
+                out.setdefault(job.id, set()).update(f"{words[2]}/{leg}" for leg in words[3:])
+    return out
+
+
+def merged_folders(cat: Catalogue) -> set[str]:
+    """The blob folders EVERY merge reads, so one job that drops a leg is not hidden by another."""
+    each = list(merges(cat).values())
+    return set.intersection(*each) if each else set()
+
+
+def _with_job(cat: Catalogue, job_id: str, **changes) -> Catalogue:
+    return Catalogue(
+        jobs=tuple(dataclasses.replace(j, **changes) if j.id == job_id else j for j in cat.jobs)
+    )
+
+
+def _with_argv(cat: Catalogue, job_id: str, edit) -> Catalogue:
+    """*cat* with each step of *job_id* given ``edit(argv)``'s argv."""
+    job = cat.job(job_id)
+    steps = tuple(Step(tuple(edit(list(s.argv))), s.workdir, s.env) for s in job.command)
+    return _with_job(cat, job_id, command=steps)
+
+
+def test_a_sharded_browser_run_runs_every_shard():
+    cat = read()
+    assert any(
+        _SHARD.fullmatch(word) for _, step in _browser_steps(cat) for word in step.argv
+    ), "no sharded `playwright test` step found: this check would pass vacuously"
+    assert shard_gaps(cat) == []
+
+
+def test_the_merge_reads_every_leg_the_browser_steps_write():
+    cat = read()
+    written = leg_folders(cat)
+    assert written >= {
+        "blob-report/shard-1",
+        "blob-report/shard-2",
+        "blob-report/stateful",
+    }, written
+    assert merged_folders(cat) == written
+    assert {"e2e", "ui-quality"} <= set(merges(cat)), sorted(merges(cat))
+    assert all(f == written for f in merges(cat).values()), merges(cat)
+
+
+def test_a_missing_shard_or_an_unmerged_leg_is_named():
+    """The planted controls, through the same functions the two checks above use."""
+    cat = read()
+    one = _with_job(cat, "e2e-shard", shards=1)
+    assert shard_gaps(one) == ["e2e-shard runs --shard={shard}/2 in 1 shards, not 2"]
+    fixed = _with_argv(cat, "e2e-shard", lambda argv: [w.replace("{shard}/2", "1/2") for w in argv])
+    assert shard_gaps(fixed) == ["e2e-shard runs shard 1/2 alone: the other shards run nowhere"]
+    for merging in ("e2e", "ui-quality"):
+        # Either merge dropping a leg is named, though the other still reads it.
+        dropped = _with_argv(
+            cat,
+            merging,
+            lambda argv: (
+                [w for w in argv if w != "stateful"] if "e2e/merge-legs.mjs" in argv else argv
+            ),
+        )
+        assert leg_folders(dropped) - merged_folders(dropped) == {"blob-report/stateful"}, merging
 
 
 def _jobs() -> dict:
+    """ci.yml's jobs, for the leg gate below: ``ci.yml``'s own orchestration, which the flip
+    (#3915) retires with ci.yml, where the merge verdict reads each leg's record."""
     return yaml.safe_load((_WORKFLOWS / "ci.yml").read_text(encoding="utf-8"))["jobs"]
 
 
@@ -287,130 +414,6 @@ def _playwright_steps(jobs: dict):
         for step in job.get("steps") or []:
             if "playwright test" in str(step.get("run", "")):
                 yield name, job, step
-
-
-def shard_gaps(jobs: dict) -> list[str]:
-    """Each sharded `playwright test` line whose job does not run each of its shards once."""
-    gaps = []
-    for name, job, step in _playwright_steps(jobs):
-        found = _SHARD.search(str(step["run"]))
-        if not found:
-            continue
-        index, total = found.group(1), int(found.group(2))
-        shards = ((job.get("strategy") or {}).get("matrix") or {}).get("shard")
-        if not _MATRIX_SHARD.fullmatch(index):
-            gaps.append(f"{name} runs shard {index}/{total} alone: the other shards run nowhere")
-        elif shards != list(range(1, total + 1)):
-            gaps.append(f"{name} runs --shard=N/{total} over a matrix of {shards}, not 1..{total}")
-    return gaps
-
-
-def leg_folders(jobs: dict) -> set[str]:
-    """The blob folders the `playwright test` steps write, each matrix leg's by its value."""
-    folders = set()
-    for _, job, step in _playwright_steps(jobs):
-        folder = str((step.get("env") or {}).get("PLAYWRIGHT_BLOB_OUTPUT_DIR", ""))
-        if not folder:
-            continue
-        shards = ((job.get("strategy") or {}).get("matrix") or {}).get("shard") or [None]
-        for shard in shards:
-            folders.add(_MATRIX_SHARD.sub(str(shard), folder))
-    return folders
-
-
-def merges(jobs: dict) -> dict[str, set[str]]:
-    """Each job's `merge-legs.mjs` lines and the blob folders they read: the root joined to each leg
-    it names. `e2e` and `ui-quality` each merge the whole run."""
-    out: dict[str, set[str]] = {}
-    for name, job in jobs.items():
-        for step in job.get("steps") or []:
-            words = str(step.get("run", "")).split()
-            if len(words) > 2 and words[:2] == ["node", "e2e/merge-legs.mjs"]:
-                out.setdefault(name, set()).update(f"{words[2]}/{leg}" for leg in words[3:])
-    return out
-
-
-def merged_folders(jobs: dict) -> set[str]:
-    """The blob folders EVERY merge reads, so one job that drops a leg is not hidden by another."""
-    each = list(merges(jobs).values())
-    return set.intersection(*each) if each else set()
-
-
-def test_a_sharded_browser_run_runs_every_shard():
-    jobs = _jobs()
-    assert any(
-        _SHARD.search(str(s["run"])) for _, _, s in _playwright_steps(jobs)
-    ), "no sharded `playwright test` line found: this check would pass vacuously"
-    assert shard_gaps(jobs) == []
-
-
-def test_the_merge_reads_every_leg_the_browser_steps_write():
-    jobs = _jobs()
-    written = leg_folders(jobs)
-    assert written >= {
-        "blob-report/shard-1",
-        "blob-report/shard-2",
-        "blob-report/stateful",
-    }, written
-    assert merged_folders(jobs) == written
-    assert {"e2e", "ui-quality"} <= set(merges(jobs)), sorted(merges(jobs))
-    assert all(f == written for f in merges(jobs).values()), merges(jobs)
-
-
-def test_a_missing_shard_or_an_unmerged_leg_is_named():
-    """The planted controls, through the same functions the two checks above use."""
-    jobs = _jobs()
-    leg = jobs["e2e-shard"]
-    one = {**jobs, "e2e-shard": {**leg, "strategy": {"matrix": {"shard": [1]}}}}
-    assert shard_gaps(one) == ["e2e-shard runs --shard=N/2 over a matrix of [1], not 1..2"]
-    fixed = {
-        **jobs,
-        "e2e-shard": {
-            **leg,
-            "steps": [
-                (
-                    {**s, "run": str(s["run"]).replace("${{ matrix.shard }}/2", "1/2")}
-                    if "playwright test" in str(s.get("run", ""))
-                    else s
-                )
-                for s in leg["steps"]
-            ],
-        },
-    }
-    assert shard_gaps(fixed) == ["e2e-shard runs shard 1/2 alone: the other shards run nowhere"]
-    merge = jobs["e2e"]
-    dropped = {
-        **jobs,
-        "e2e": {
-            **merge,
-            "steps": [
-                (
-                    {**s, "run": str(s["run"]).replace(" stateful", "")}
-                    if "merge-legs.mjs" in str(s.get("run", ""))
-                    else s
-                )
-                for s in merge["steps"]
-            ],
-        },
-    }
-    assert leg_folders(dropped) - merged_folders(dropped) == {"blob-report/stateful"}
-    # The UI quality check's own merge dropping a leg is named too, though `e2e` still reads it.
-    check = jobs["ui-quality"]
-    dropped = {
-        **jobs,
-        "ui-quality": {
-            **check,
-            "steps": [
-                (
-                    {**s, "run": str(s["run"]).replace(" stateful", "")}
-                    if "merge-legs.mjs" in str(s.get("run", ""))
-                    else s
-                )
-                for s in check["steps"]
-            ],
-        },
-    }
-    assert leg_folders(dropped) - merged_folders(dropped) == {"blob-report/stateful"}
 
 
 # ── The merge is red whenever a leg did not pass ─────────────────────────────────────────────────
