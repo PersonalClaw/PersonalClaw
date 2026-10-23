@@ -44,7 +44,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from . import telemetry
+from . import telemetry, workflows
 
 VERSION = 1
 
@@ -170,13 +170,19 @@ def check(files: Sequence[str], buckets: Sequence[Sequence[str]]) -> list[str]:
 
 @dataclass(frozen=True)
 class Leg:
-    """A suite leg the plan covers: its name, the workflow whose runs hold its junit reports,
+    """A suite leg the plan covers: its name, the workflow whose runs hold its junit reports
+    (``main-push`` for main's push runs in either shape, :data:`workflows.MAIN_PUSH` in turn),
     the prefix those reports' artifacts are named by, and its number of shards."""
 
     name: str
     workflow: str
     report_prefix: str
     shards: int
+
+    @property
+    def workflows(self) -> tuple[str, ...]:
+        """The workflow files whose runs are read, in turn (:func:`workflows.named`)."""
+        return workflows.named(self.workflow)
 
     @classmethod
     def parse(cls, text: str) -> Leg:
@@ -426,17 +432,23 @@ class TelemetryRecord:
             return None
         return grouped if grouped.seconds else None
 
-    def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
-        listed = self.text(
+    def _listed(self, workflow: str) -> list[str]:
+        return self.text(
             "api",
-            f"repos/{self.repo}/actions/workflows/{leg.workflow}/runs"
+            f"repos/{self.repo}/actions/workflows/{workflow}/runs"
             f"?branch=main&status=completed&per_page={self.limit}",
             "--jq",
             '.workflow_runs[] | "\\(.id) \\(.conclusion) \\(.head_repository.full_name)"',
-        )
+        ).splitlines()
+
+    def durations(self, leg: Leg, files: Sequence[str]) -> tuple[dict[str, float], str]:
+        """The leg's runs are read workflow by workflow (:attr:`Leg.workflows`), each one's
+        newest first, until :data:`RUNS` hold its history: merge.yml's push runs before ci.yml's
+        for ``main-push``, so the plan reads whichever shape has run."""
         identity: Identity | None = None
         read: list[tuple[int, dict[str, dict[str, float]], Mapping[str, str | None]]] = []
-        for line in listed.splitlines():
+        lines = (line for workflow in leg.workflows for line in self._listed(workflow))
+        for line in lines:
             ident, conclusion, owner = (line.split() + ["", "", ""])[:3]
             if not ident.isdigit() or conclusion not in self.COUNTED or owner != self.repo:
                 continue
@@ -454,8 +466,8 @@ class TelemetryRecord:
                 break
         if not read or identity is None:
             return {}, (
-                f"no telemetry history of {leg.workflow} on main holds {leg.report_prefix}* yet,"
-                " so every file weighs the same"
+                f"no telemetry history of {' or '.join(leg.workflows)} on main holds"
+                f" {leg.report_prefix}* yet, so every file weighs the same"
             )
         factors = host_factors([(reports, cpus) for _, reports, cpus in read])
         normalized = []

@@ -12382,8 +12382,8 @@ printf '%s\n' "$answer" >> "$GITHUB_OUTPUT"
     },
     _SHARD_PLAN_JOB: {
         "the runner's identity": _RUNNER_IDENTITY_LINE,
-        "one shard plan for the run, as ci.yml's": r"""
-python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --leg test-shard:ci.yml:junit-test-shard-:3 --leg test-macos:ci.yml:junit-test-macos-:3 --out "$RUNNER_TEMP/shard-plan/plan.json"
+        "one shard plan for the run, from main's push runs in either shape": r"""
+python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --leg test-shard:main-push:junit-test-shard-:3 --leg test-macos:main-push:junit-test-macos-:3 --out "$RUNNER_TEMP/shard-plan/plan.json"
 """,  # noqa: E501
         "every file in exactly one shard of each leg": r"""
 python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
@@ -12434,7 +12434,7 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
     _SHARD_PLAN_JOB: (
         ("the runner's identity",),
-        ("one shard plan for the run, as ci.yml's",),
+        ("one shard plan for the run, from main's push runs in either shape",),
         ("every file in exactly one shard of each leg",),
     ),
     _RESULTS_JOB: (

@@ -27,3 +27,14 @@ NAMES: dict[str, str] = {LEGACY: "CI", FEEDBACK: "PR", MERGE: "Merge"}
 #: The workflows whose push to main is that commit's run, the newer shape first: merge.yml once
 #: the flip lands, ci.yml until then.
 MAIN_PUSH: tuple[str, ...] = (MERGE, LEGACY)
+
+#: What a workflow's file name stands in for where a reader takes one and means main's push runs
+#: in either shape, :data:`MAIN_PUSH` in turn, so a workflow that passes it spells neither file
+#: (``shards plan --leg test-shard:main-push:junit-test-shard-:3``).
+MAIN_PUSH_NAME = "main-push"
+
+
+def named(name: str) -> tuple[str, ...]:
+    """The workflow files *name* stands for, in the order a reader tries them: :data:`MAIN_PUSH`
+    for :data:`MAIN_PUSH_NAME`, else the one file."""
+    return MAIN_PUSH if name == MAIN_PUSH_NAME else (name,)
