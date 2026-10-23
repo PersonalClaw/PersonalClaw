@@ -13,11 +13,14 @@ import pytest
 from release_tag_semantics_shared import REPO_ROOT
 
 RELEASE_YML = REPO_ROOT / ".github" / "workflows" / "release.yml"
+#: Where release.yml builds: its `artifacts` job calls it, and the version comes from its `build`.
+ARTIFACTS_YML = REPO_ROOT / ".github" / "workflows" / "release-artifacts.yml"
 
 
 @pytest.fixture(scope="module")
 def release_yml() -> str:
-    """release.yml with whole-line `#` comments dropped — what the jobs actually DO.
+    """release.yml and the release-artifacts.yml it builds through, with whole-line `#` comments
+    dropped — what the jobs actually DO.
 
     The comments are kept out on purpose. They quote the two expressions this
     change deleted (`${REF%rc*}`, `lstrip("v")`) in order to explain what was wrong
@@ -25,22 +28,27 @@ def release_yml() -> str:
     which is a false positive about commentary, not a finding about behaviour.
     Every pattern asserted below is a step's `run:`/`with:` content, never a note.
     """
-    lines = RELEASE_YML.read_text(encoding="utf-8").splitlines()
+    lines = [
+        line
+        for path in (RELEASE_YML, ARTIFACTS_YML)
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
     effective = [ln for ln in lines if not ln.lstrip().startswith("#")]
     assert len(effective) > 150, "release.yml is unexpectedly small — the rails below would lie"
     # Vacuity floor: stripping comments must not have taken the anchors with it.
     text = "\n".join(effective)
-    for anchor in ("gh release create", "scripts/release_tags.py", "docker/build-push-action"):
+    for anchor in ("gh release create", "scripts/release_tags.py", "skopeo copy --all"):
         assert anchor in text, f"anchor {anchor!r} is only in a comment — rails would be vacuous"
     return text
 
 
 def test_the_image_job_takes_its_tags_from_the_parser(release_yml: str) -> None:
-    """`tags:` is rendered by `scripts/release_tags.py`, not written by hand."""
+    """The tags pushed are rendered by `scripts/release_tags.py`, not written by hand."""
     refs = re.findall(
-        r"tags:\s*\$\{\{\s*steps\.([A-Za-z0-9_-]+)\.outputs\.image_tags\s*\}\}", release_yml
+        r"TAGS:\s*\$\{\{\s*steps\.([A-Za-z0-9_-]+)\.outputs\.image_tags\s*\}\}", release_yml
     )
     assert refs, "the images job no longer reads its tag list from a step output"
+    assert 'done <<< "$TAGS"' in release_yml, "the push no longer pushes each tag the parser named"
     for step_id in refs:
         assert f"id: {step_id}" in release_yml, f"tags: references a missing step id {step_id!r}"
     assert "scripts/release_tags.py" in release_yml

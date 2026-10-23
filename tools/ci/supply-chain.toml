@@ -50,8 +50,8 @@ reason = "Trusted Publishing of personalclaw-client, behind the release-client e
 workflow = "release.yml"
 job = "images"
 permission = "packages: write"
-steps = ["docker/login-action", "Build and push image with supply-chain attestations"]
-reason = "Pushes the two multi-platform images and their attestations to GHCR."
+steps = ["docker/login-action", "Push the layout, every digest kept"]
+reason = "Pushes the two multi-platform images and their attestations to GHCR, from the layouts release-artifacts.yml built and smoked, every digest kept."
 
 [[audited_write]]
 workflow = "release.yml"

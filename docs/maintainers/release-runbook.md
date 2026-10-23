@@ -9,21 +9,26 @@ from memory — if you find a discrepancy, the code wins and this page is the bu
 
 ## What a release actually is
 
-One tag push produces every artifact. `release.yml` triggers on `tags: ["v*"]`
-and runs ten jobs:
+One tag push produces every artifact. `release.yml` triggers on `tags: ["v*"]`. Its first job,
+`artifacts`, builds and smokes everything through `release-artifacts.yml`, the same workflow the
+weekly rehearsal runs, and writes their manifest. Every job that publishes waits on all of it:
 
 | Job | What it produces | Gate |
 |---|---|---|
-| `build` | sdist + wheel (SPA bundled inside), and the wheel's SBOM | refuses a ref that is not a release tag at its first step; inspects the wheel's contents and metadata against the checkout, then installs it alone into a scratch venv and requires the SPA served, every bundled app enabled and the default model offered; fails unless the SBOM lists the wheel and every package installed with it |
-| `pypi` | core package on PyPI | environment `release` — **needs your approval** |
-| `pypi-client` | `personalclaw-client` on PyPI | environment `release-client` — **needs your approval** |
-| `gateway-dashboard` | nothing; it is purely a gate | boots the gateway image built from this commit and requires a **served bundle**, not a status — `images` needs it, so a dashboard-less image is never pushed |
-| `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch — tags per [the scheme below](#what-a-tag-publishes) | needs `build` and `gateway-dashboard`; then pulls each arch and runs the image's own liveness command inside it |
-| `desktop-mac` | `PersonalClaw-X.Y.Z-arm64.dmg`, ad-hoc signed, not notarized (Apple silicon only) | boots the bundled backend from inside the mounted dmg |
-| `desktop-linux` | unsigned `PersonalClaw-X.Y.Z.AppImage` + `personalclaw-desktop_X.Y.Z_amd64.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
-| `notes` | the GitHub Release, notes lifted from `CHANGELOG.md`; attaches the wheel, the sdist, the wheel's SBOM, four image SBOMs and the three desktop files | needs `build`, `pypi`, `images`, `desktop-linux`, `desktop-mac` |
+| `artifacts / build` | sdist + wheel (SPA bundled inside), and the wheel's SBOM | refuses a ref that is not a release tag at its first step; inspects the wheel's contents and metadata against the checkout, then installs it alone into a scratch venv and requires the SPA served, every bundled app enabled and the default model offered; fails unless the SBOM lists the wheel and every package installed with it |
+| `artifacts / gateway-dashboard` | nothing; it is purely a gate | boots the gateway image built from this commit and requires a **served bundle**, not a status — the image build needs it, so a dashboard-less image is never pushed |
+| `artifacts / images` | both images for both arches with their attestations, each to an OCI layout, and each arch's SBOM | needs `build` and `gateway-dashboard`; loads each arch from its layout and runs the image's own liveness command inside it |
+| `artifacts / desktop-mac` | `PersonalClaw-X.Y.Z-arm64.dmg`, ad-hoc signed, not notarized (Apple silicon only) | boots the bundled backend from inside the mounted dmg |
+| `artifacts / desktop-linux` | unsigned `PersonalClaw-X.Y.Z.AppImage` + `personalclaw-desktop_X.Y.Z_amd64.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
+| `artifacts / manifest` | the digest-bound manifest of every file and image above | writes and verifies it; a planted changed wheel must fail the verify |
+| `pypi` | core package on PyPI | needs `artifacts`; environment `release` — **needs your approval** |
+| `pypi-client` | `personalclaw-client` on PyPI | needs `artifacts`; environment `release-client` — **needs your approval** |
+| `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch — tags per [the scheme below](#what-a-tag-publishes) | needs `artifacts`; pushes each tag from the layout that was smoked, with every digest kept, and requires each tag to name the index the manifest records |
+| `notes` | the GitHub Release, notes lifted from `CHANGELOG.md`; attaches the wheel, the sdist, the wheel's SBOM, four image SBOMs and the three desktop files | needs `artifacts`, `pypi` and `images` |
 | `website-follow` | nudges personalclaw.dev to re-check its pins | best-effort, `continue-on-error`; runs in the `website-follow` environment, which holds its token |
-| `attest` | build-provenance attestation on the wheel and the sdist (OIDC, no keys) | needs only `build`, so it runs whether or not the Release is created |
+| `attest` | build-provenance attestation on the wheel and the sdist (OIDC, no keys) | needs only `artifacts`, so it runs whether or not the Release is created |
+
+`artifacts` keeps its files 30 days, as long as the `release` approval may wait.
 
 The desktop bundles are frozen with a pinned PyInstaller (`pyinstaller==6.22.3`,
 `pyinstaller-hooks-contrib==2026.8`, what v0.2.0 used), and electron-builder runs with
@@ -201,7 +206,7 @@ gh workflow run release-rehearsal.yml -R PersonalClaw/PersonalClaw --ref main
 ```
 
 It builds every artifact the tag builds, as the tag this tree's version names, through
-`release-artifacts.yml`, the build half of `release.yml`:
+`release-artifacts.yml`, the same build `release.yml` runs as its `artifacts` job:
 - the wheel and sdist with the wheel's SBOM and its contract;
 - the gateway image's dashboard smoke;
 - both images for both arches with their attestations, to an OCI layout;
@@ -219,11 +224,12 @@ The older way still works, and runs less. Dispatch the release workflow on `main
 gh workflow run release.yml -R PersonalClaw/PersonalClaw --ref main
 ```
 
-`gateway-dashboard`, `desktop-mac` and `desktop-linux` need no other job, so they run.
-`build` refuses `main` at its first step after the checkout ("Classify the release
-tag"), so every job that publishes (`pypi`, `pypi-client`, `images`, `notes`, `attest`,
-`website-follow`) is skipped, nothing is published and no approval is asked. The run
-therefore ends red, on `build`, and that is the expected result. What to check:
+Inside `artifacts`, `gateway-dashboard`, `desktop-mac` and `desktop-linux` need no other job,
+so they run. `build` refuses `main` at its first step after the checkout ("Classify the
+release tag"), so `artifacts` fails and every job that publishes (`pypi`, `pypi-client`,
+`images`, `notes`, `attest`, `website-follow`) is skipped, nothing is published and no
+approval is asked. The run therefore ends red, on `build`, and that is the expected result.
+What to check:
 
 - the three jobs are green, and the desktop artifacts carry the bumped version in their
   file names;

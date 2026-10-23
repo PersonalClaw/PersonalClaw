@@ -1,24 +1,31 @@
 # The release's image tooling, run before a tag needs it.
 #
-# `release.yml`'s `images` job builds both platforms with three pinned pieces: the QEMU binfmt
-# image setup-qemu installs (the arm64 half runs under it), the buildx release and the BuildKit
-# image buildx starts. That job runs only on a tag, after `pypi` may already have published, so
-# a bad pin would first show as half a release. This job runs the same three pins on a pull
-# request that changes them, with nothing to log in to and nothing to push:
-# tests/rails/test_ci_supply_chain_contract.py holds its pins equal to release.yml's.
+# The release builds both images for both platforms in `release-artifacts.yml`'s `images` job,
+# with three pinned pieces: the QEMU binfmt image setup-qemu installs (the arm64 half runs under
+# it), the buildx release and the BuildKit image buildx starts. It builds each to an OCI layout,
+# smokes each platform loaded from that layout, and `release.yml` then pushes the layout with
+# every digest kept (#3911). That runs only on a tag or the weekly rehearsal, after a pull
+# request has merged, so a bad pin or a broken layout step would first show there. This runs
+# both on a pull request that changes them, with nothing to log in to and nothing to push:
+# - `pin-smoke`, the three pins, which tests/rails/test_ci_supply_chain_contract.py holds equal
+#   to the release build's;
+# - `layout-smoke`, the layout path: a two-platform image built to a layout with the release's
+#   attestations, each platform loaded from it and run, and the layout copied as the release
+#   pushes it, to a second layout on the runner that must hold the same index.
 #
 # A workflow of its own because its trigger is a path filter: docker-single-container.yml's
-# filter would have to name release.yml, and every release.yml change would then pay for that
-# workflow's hour-long gateway image build as well.
+# filter would have to name the release's workflows, and every change to them would then pay for
+# that workflow's hour-long gateway image build as well.
 #
-# It builds a two-line image for both platforms and keeps it in BuildKit's cache: the `RUN`
-# executes once per platform, the arm64 one under the pinned QEMU, inside the pinned BuildKit.
+# `pin-smoke` builds a two-line image for both platforms and keeps it in BuildKit's cache: the
+# `RUN` executes once per platform, the arm64 one under the pinned QEMU, inside the pinned BuildKit.
 name: Release image tooling
 
 on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - .github/workflows/release-artifacts.yml
       - .github/workflows/release-image-tooling.yml
   workflow_dispatch:
 
@@ -39,7 +46,7 @@ jobs:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      # These three steps are release.yml's `images` steps, pin for pin.
+      # These three steps are release-artifacts.yml's `images` steps, pin for pin.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           # tonistiigi/binfmt:qemu-v10.2.3-68, the linux/amd64 manifest (this runner's platform)
@@ -63,3 +70,67 @@ jobs:
           RUN echo "built for $(uname -m)" && node --version
           DOCKERFILE
           docker buildx inspect --bootstrap | grep -E '^(Driver|BuildKit version|Platforms):'
+
+  layout-smoke:
+    runs-on: ubuntu-24.04
+    permissions: {}
+    # The same build with the release's attestations, then two loads and one copy: about three
+    # minutes.
+    timeout-minutes: 10
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # tools/ci/oci_layout.py, which reads a layout's index as the release's manifest does.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          # tonistiigi/binfmt:qemu-v10.2.3-68, the linux/amd64 manifest (this runner's platform)
+          # of index sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0.
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68@sha256:465d3fdd28d0f2b871ba4b4ec98bd183292e96167f00d9fd40bd249f8632d705
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.38.0
+          # moby/buildkit:v0.34.0, the linux/amd64 manifest (this runner's platform) of index
+          # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
+          driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
+      - name: Build a two-platform image to an OCI layout, with the release's attestations
+        run: |
+          set -euo pipefail
+          docker buildx build --platform linux/amd64,linux/arm64 --sbom=true --provenance=mode=max --output "type=oci,dest=$RUNNER_TEMP/smoke.oci.tar" - <<'DOCKERFILE'
+          FROM mirror.gcr.io/library/node:24.22.0-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
+          RUN echo "built for $(uname -m)" && node --version
+          DOCKERFILE
+          python3 -I tools/ci/oci_layout.py "$RUNNER_TEMP/smoke.oci.tar" --name smoke --out "$RUNNER_TEMP/read"
+      - name: Load and run each platform from the layout, as the release's smoke does
+        env:
+          LAYOUT: ${{ runner.temp }}/smoke.oci.tar
+          IMAGE: layout-smoke:local
+        run: |
+          set -euo pipefail
+          skopeo --version
+          for arch in amd64 arm64; do
+            skopeo copy --quiet --override-os linux --override-arch "$arch" "oci-archive:$LAYOUT" "docker-archive:$RUNNER_TEMP/smoke-$arch.tar:$IMAGE"
+            docker load --quiet --input "$RUNNER_TEMP/smoke-$arch.tar"
+            ran=$(docker run --rm --platform "linux/$arch" "$IMAGE" uname -m)
+            case "$arch:$ran" in
+              amd64:x86_64 | arm64:aarch64) echo "linux/$arch loaded from the layout ran as $ran" ;;
+              *) echo "::error::linux/$arch loaded from the layout ran as '$ran'"; exit 1 ;;
+            esac
+            docker image rm --force "$IMAGE" > /dev/null
+          done
+      - name: Copy the layout as the release pushes it, every digest kept
+        env:
+          LAYOUT: ${{ runner.temp }}/smoke.oci.tar
+        run: |
+          set -euo pipefail
+          skopeo copy --all --preserve-digests "oci-archive:$LAYOUT" "oci:$RUNNER_TEMP/copied:smoke"
+          want="sha256:$(sha256sum "$RUNNER_TEMP/read/smoke.index.json" | cut -d' ' -f1)"
+          got=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["manifests"][0]["digest"])' "$RUNNER_TEMP/copied/index.json")
+          if [ "$got" != "$want" ]; then
+            echo "::error::the copy holds the index $got, not the layout's $want"
+            exit 1
+          fi
+          echo "the copy holds the layout's index, $got"

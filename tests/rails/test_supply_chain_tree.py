@@ -19,10 +19,14 @@ import pytest
 import yaml
 from supply_chain_shared import _LOGIN_SHELL_RE, README, REPO_ROOT, _logical_lines
 
+from tools.ci import oci_layout
+
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 
 
 RELEASE_WORKFLOW = WORKFLOWS / "release.yml"
+#: Where the release builds and smokes every artifact: release.yml calls it as its `artifacts` job.
+ARTIFACTS_WORKFLOW = WORKFLOWS / "release-artifacts.yml"
 
 
 BREADTH_WORKFLOW = WORKFLOWS / "breadth.yml"
@@ -46,6 +50,14 @@ def _jobs() -> dict[str, dict]:
     return jobs
 
 
+def _built() -> dict[str, dict]:
+    """The jobs that build and smoke the release's artifacts, in release-artifacts.yml."""
+    assert _jobs()["artifacts"]["uses"] == "./.github/workflows/release-artifacts.yml"
+    jobs = yaml.safe_load(ARTIFACTS_WORKFLOW.read_text(encoding="utf-8")).get("jobs")
+    assert isinstance(jobs, dict)
+    return jobs
+
+
 def _breadth_workflow() -> dict[str, object]:
     workflow = yaml.safe_load(BREADTH_WORKFLOW.read_text(encoding="utf-8"))
     assert isinstance(workflow, dict)
@@ -61,14 +73,15 @@ def _step(job: dict[str, object], *, name: str) -> dict[str, object]:
     raise AssertionError(f"missing workflow step {name!r}")
 
 
+_IMAGE_BUILD = "Build the image for both arches with supply-chain attestations, to an OCI layout"
+_IMAGE_READ = "The image's index and its SBOM attestations, read from the layout"
+
+
 def test_image_build_publishes_sbom_and_provenance_attestations() -> None:
-    workflow = _workflow()
-    jobs = workflow.get("jobs")
-    assert isinstance(jobs, dict)
-    images = jobs.get("images")
+    images = _built().get("images")
     assert isinstance(images, dict)
 
-    build = _step(images, name="Build and push image with supply-chain attestations")
+    build = _step(images, name=_IMAGE_BUILD)
     assert _action(build) == "docker/build-push-action"
     inputs = build.get("with")
     assert isinstance(inputs, dict)
@@ -77,32 +90,26 @@ def test_image_build_publishes_sbom_and_provenance_attestations() -> None:
 
 
 def test_both_image_architectures_export_spdx_json_to_the_release() -> None:
-    workflow = _workflow()
-    jobs = workflow.get("jobs")
-    assert isinstance(jobs, dict)
-    images = jobs.get("images")
-    notes = jobs.get("notes")
+    images = _built().get("images")
+    notes = _jobs().get("notes")
     assert isinstance(images, dict)
     assert isinstance(notes, dict)
 
-    export = _step(images, name="Export image SBOM attestations (SPDX-JSON)")
+    # tools/ci/oci_layout.py reads each platform's SPDX SBOM out of the layout, and fails
+    # naming a platform with none (tests/test_ci_oci_layout.py).
+    export = _step(images, name=_IMAGE_READ)
     script = export.get("run")
     assert isinstance(script, str)
-    for anchor in (
-        "docker buildx imagetools inspect",
-        "{{ json .SBOM }}",
-        '"linux/amd64", "linux/arm64"',
-        '"SPDX"',
-        '"SPDXRef-DOCUMENT"',
-    ):
-        assert anchor in script
+    assert "tools/ci/oci_layout.py" in script
+    assert oci_layout.PLATFORMS == ("linux/amd64", "linux/arm64")
+    assert oci_layout.SPDX_PREDICATE == "https://spdx.dev/Document"
 
     upload = _step(images, name="Upload image SBOM artifacts")
     assert _action(upload) == "actions/upload-artifact"
     upload_inputs = upload.get("with")
     assert isinstance(upload_inputs, dict)
     assert upload_inputs.get("name") == "image-sbom-${{ matrix.name }}"
-    assert upload_inputs.get("path") == "image-sboms/*.spdx.json"
+    assert upload_inputs.get("path") == "image-out/*.spdx.json"
     assert upload_inputs.get("if-no-files-found") == "error"
 
     steps = notes.get("steps")
@@ -219,7 +226,7 @@ def _stand_in(path: Path, body: str) -> None:
 
 def _wheel_sbom(tmp_path: Path, drops: str = "") -> tuple[subprocess.CompletedProcess, Path]:
     """Run the build job's wheel-SBOM step in a checkout holding a built wheel and sdist."""
-    step = _step(_jobs()["build"], name=_WHEEL_SBOM_STEP)
+    step = _step(_built()["build"], name=_WHEEL_SBOM_STEP)
     checkout = tmp_path / "checkout"
     (checkout / "dist").mkdir(parents=True)
     for name in ("personalclaw-9.9.9-py3-none-any.whl", "personalclaw-9.9.9.tar.gz"):
@@ -296,7 +303,7 @@ def test_a_wheel_sbom_that_misses_what_was_installed_fails_the_build(
 
 def test_the_release_attaches_the_wheels_sbom_and_pypi_never_sees_it() -> None:
     jobs = _jobs()
-    build = jobs["build"]
+    build = _built()["build"]
     uploads = {
         step["with"]["name"]: step["with"]
         for step in build["steps"]
@@ -323,13 +330,13 @@ def test_the_release_attaches_the_wheels_sbom_and_pypi_never_sees_it() -> None:
 
 
 def test_the_wheels_provenance_needs_only_the_build_it_attests() -> None:
-    """`attest` attests `build`'s `dist`, so nothing else may stand between them.
+    """`attest` attests the `dist` that `artifacts` built, so nothing else may stand between them.
 
     It used to need `notes` too. v0.2.0's desktop-linux failed, `notes` was skipped, `attest`
     with it, and the wheel and sdist PyPI had published have no build provenance on GitHub."""
     attest = _jobs()["attest"]
     needs = attest.get("needs")
-    assert (needs if isinstance(needs, list) else [needs]) == ["build"], needs
+    assert (needs if isinstance(needs, list) else [needs]) == ["artifacts"], needs
     downloads = [
         step["with"] for step in attest["steps"] if _action(step) == "actions/download-artifact"
     ]
@@ -345,7 +352,7 @@ def test_both_desktop_bundles_are_frozen_by_one_pinned_pyinstaller() -> None:
     for name in ("desktop-mac", "desktop-linux"):
         installs = [
             line.strip()
-            for step in _jobs()[name]["steps"]
+            for step in _built()[name]["steps"]
             for line in str(step.get("run", "")).splitlines()
             if "pip install" in line and "pyinstaller" in line and not line.lstrip().startswith("#")
         ]
@@ -436,17 +443,18 @@ def test_readme_supply_chain_claim_matches_the_release_outputs() -> None:
     create = _step(jobs["notes"], name="Create GitHub Release")["run"]
     attached = create.split("gh release create", 1)[1].split("--title", 1)[0].split()
     assert {"dist/*", "wheel-sbom/*", "image-sboms/*"} <= set(attached), attached
-    _step(jobs["build"], name=_WHEEL_SBOM_STEP)
-    export = _step(jobs["images"], name="Export image SBOM attestations (SPDX-JSON)")["run"]
-    assert '"linux/amd64", "linux/arm64"' in export
+    built = _built()
+    _step(built["build"], name=_WHEEL_SBOM_STEP)
+    assert "tools/ci/oci_layout.py" in _step(built["images"], name=_IMAGE_READ)["run"]
+    assert oci_layout.PLATFORMS == ("linux/amd64", "linux/arm64")
     attest = [
         step
         for step in jobs["attest"]["steps"]
         if "attest-build-provenance" in step.get("uses", "")
     ]
     assert attest and attest[0]["with"]["subject-path"] == "dist/*"
-    push = _step(jobs["images"], name="Build and push image with supply-chain attestations")
-    assert push["with"]["provenance"] == "mode=max"
+    build = _step(built["images"], name=_IMAGE_BUILD)
+    assert build["with"]["provenance"] == "mode=max"
 
 
 def _jobs_that_run_the_suite() -> list[tuple[str, str, object]]:
@@ -589,7 +597,7 @@ def test_the_login_shell_scan_can_see_the_release_smoke_it_exists_to_guard() -> 
     images = [
         line
         for workflow, job, step, line in commands
-        if workflow == "release.yml" and job == "images" and "--entrypoint ''" in line
+        if workflow == "release-artifacts.yml" and job == "images" and "--entrypoint ''" in line
     ]
     smoke = [line for line in images if '"$SMOKE"' in line]
     assert len(smoke) == 1, f"expected exactly one release smoke invocation, got {images}"
@@ -615,9 +623,7 @@ def test_every_smoked_image_declares_the_output_its_smoke_must_produce() -> None
     And that version is compared AS A VERSION, by the image's own updater: a text match failed
     the first release candidate, whose package prints `0.3.0rc1` for the tag `v0.3.0-rc.1`.
     """
-    jobs = _workflow().get("jobs")
-    assert isinstance(jobs, dict)
-    images = jobs.get("images")
+    images = _built().get("images")
     assert isinstance(images, dict)
     legs = images["strategy"]["matrix"]["include"]
     assert isinstance(legs, list) and legs

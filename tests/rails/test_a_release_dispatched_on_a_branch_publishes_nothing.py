@@ -2,10 +2,11 @@
 
 ``release.yml`` keeps ``workflow_dispatch`` for the rehearsal of its tag-only jobs before a tag
 exists: ``gh workflow run release.yml --ref main``. That is safe only because of how the jobs
-are wired. Every job reads the ref it runs on (``$GITHUB_REF_NAME``); ``build``'s first step
-classifies that ref with ``scripts/release_tags.py``, which refuses a branch; every job that can
-publish needs ``build``; and the jobs that need nothing, and so do run on a branch, hold no write
-permission, no environment and no secret, and tell electron-builder never to publish.
+are wired. ``artifacts`` builds as the ref the run is on (``release-artifacts.yml``, as
+``$RELEASE_REF``); its ``build`` job's first step classifies that ref with
+``scripts/release_tags.py``, which refuses a branch, so ``artifacts`` fails; every job that can
+publish needs ``artifacts``; and the jobs that need nothing, and so do run on a branch, hold no
+write permission, no environment and no secret, and tell electron-builder never to publish.
 
 The dispatch used to declare a ``ref`` input that no step read. A dispatch that named a tag
 there built the branch it was run on, and a rehearsal and a release looked the same in the form.
@@ -25,6 +26,8 @@ from rails_repo import REPO
 _ROOT = REPO
 _WORKFLOWS = _ROOT / ".github" / "workflows"
 _RELEASE = _WORKFLOWS / "release.yml"
+#: What release.yml builds through, as its `artifacts` job.
+_ARTIFACTS = _WORKFLOWS / "release-artifacts.yml"
 
 
 def _load(path: Path) -> dict:
@@ -108,7 +111,10 @@ def test_the_release_can_still_be_dispatched_and_asks_for_nothing() -> None:
 
 def test_build_refuses_a_branch_at_its_first_step(tmp_path: Path) -> None:
     """The step itself, run as a dispatch on `main` runs it: it fails, and hands on no version."""
-    build = _load(_RELEASE)["jobs"]["build"]
+    artifacts = _load(_RELEASE)["jobs"]["artifacts"]
+    assert artifacts["with"]["ref"] == "${{ github.ref_name }}", "it builds as the run's own ref"
+    assert _load(_ARTIFACTS)["env"]["RELEASE_REF"] == "${{ inputs.ref }}"
+    build = _load(_ARTIFACTS)["jobs"]["build"]
     steps = [
         step
         for step in build["steps"]
@@ -116,10 +122,10 @@ def test_build_refuses_a_branch_at_its_first_step(tmp_path: Path) -> None:
     ]
     first = steps[0]
     assert first.get("id") == "ver" and "scripts/release_tags.py" in first["run"], first
-    assert '--ref "$GITHUB_REF_NAME"' in first["run"]
+    assert '--ref "$RELEASE_REF"' in first["run"]
     output = tmp_path / "github-output"
     output.write_text("", encoding="utf-8")
-    env = {**os.environ, "GITHUB_REF_NAME": "main", "GITHUB_OUTPUT": str(output)}
+    env = {**os.environ, "RELEASE_REF": "main", "GITHUB_OUTPUT": str(output)}
     result = subprocess.run(
         ["bash", "-e", "-c", first["run"]], cwd=_ROOT, env=env, capture_output=True, text=True
     )
@@ -129,7 +135,7 @@ def test_build_refuses_a_branch_at_its_first_step(tmp_path: Path) -> None:
     tagged = subprocess.run(
         ["bash", "-e", "-c", first["run"]],
         cwd=_ROOT,
-        env={**env, "GITHUB_REF_NAME": "v0.3.0"},
+        env={**env, "RELEASE_REF": "v0.3.0"},
         capture_output=True,
         text=True,
     )
@@ -137,7 +143,7 @@ def test_build_refuses_a_branch_at_its_first_step(tmp_path: Path) -> None:
     assert "version=0.3.0" in output.read_text(encoding="utf-8").splitlines()
 
 
-def test_every_job_that_can_publish_needs_build() -> None:
+def test_every_job_that_can_publish_needs_the_artifacts() -> None:
     workflow = _load(_RELEASE)
     jobs = workflow["jobs"]
     publishing = {name: _can_publish(workflow, job) for name, job in jobs.items()}
@@ -146,15 +152,18 @@ def test_every_job_that_can_publish_needs_build() -> None:
     assert {"pypi", "pypi-client", "images", "notes", "attest", "website-follow"} <= set(
         publishing
     ), publishing
-    ungated = [name for name in publishing if "build" not in _upstream(jobs, name)]
+    ungated = [name for name in publishing if "artifacts" not in _upstream(jobs, name)]
     assert not ungated, (
-        f"these jobs can publish and do not wait on `build`, so a dispatch on a branch runs "
+        f"these jobs can publish and do not wait on `artifacts`, so a dispatch on a branch runs "
         f"them: {ungated}"
     )
 
 
 def test_what_a_dispatch_on_a_branch_runs_can_publish_nothing() -> None:
-    workflow = _load(_RELEASE)
+    release = _load(_RELEASE)
+    assert sorted(name for name, job in release["jobs"].items() if not _needs(job)) == ["artifacts"]
+    assert not _can_publish(release, release["jobs"]["artifacts"])
+    workflow = _load(_ARTIFACTS)
     jobs = workflow["jobs"]
     runs_on_a_branch = sorted(name for name, job in jobs.items() if not _needs(job))
     assert runs_on_a_branch == ["build", "desktop-linux", "desktop-mac", "gateway-dashboard"]

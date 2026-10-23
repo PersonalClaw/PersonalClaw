@@ -12,6 +12,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **`main` is protected by a checked-in ruleset with no bypass for anyone, the maintainer included: a change reaches it only as the merge of a pull request with every conversation resolved, never by a direct push, a force push or a deletion (`.github/rulesets/main-protect.json`, in core and in the apps). A weekly read-only report compares the live repository settings with the checked-in ones and opens an issue on any drift.**
 - **CI's supply chain is pinned and checked in PersonalClaw, its apps and its website: every action is pinned to a commit SHA and GitHub refuses one that is not, every workflow container and image base is pinned to a digest, secret scanning and push protection are on, a pull request that adds a dependency with a known vulnerability fails dependency review, and a job may hold a write permission only where a checked-in list names it. A weekly check opens an issue when a pinned workflow image's tag moves.**
+- **A release builds and smokes every artifact, and records each in one digest-bound manifest, before anything publishes: the images it pushes are the layouts it smoked, byte for byte, and the weekly rehearsal runs the same build.**
 
 ## [0.2.6] — 2026-10-22
 

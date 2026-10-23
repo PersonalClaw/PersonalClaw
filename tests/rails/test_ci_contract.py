@@ -1461,16 +1461,16 @@ _NO_UV_WORKFLOW = (
 
 
 def _job_level_preference(root: Path, only_first: bool = False) -> None:
-    """Move release.yml's setting off the workflow and onto its uv jobs: every one of them, or
-    only the first, so the other uv jobs run without it. release.yml has uv jobs and jobs
+    """Move release-artifacts.yml's setting off the workflow and onto its uv jobs: every one of
+    them, or only the first, so the other uv jobs run without it. It has uv jobs and jobs
     without uv, so both halves of the rule are read."""
-    rel = ".github/workflows/release.yml"
+    rel = ".github/workflows/release-artifacts.yml"
     workflow = yaml.safe_load((root / rel).read_text(encoding="utf-8"))
     del workflow["env"]["UV_PYTHON_PREFERENCE"]
     uv_jobs = [
         job for job in workflow["jobs"].values() if any(_runs_uv(s) for s in job.get("steps", []))
     ]
-    assert len(uv_jobs) > 1, "release.yml no longer has several uv jobs to plant on"
+    assert len(uv_jobs) > 1, "release-artifacts.yml no longer has several uv jobs to plant on"
     for job in uv_jobs[:1] if only_first else uv_jobs:
         job.setdefault("env", {})["UV_PYTHON_PREFERENCE"] = "only-managed"
     _write(root, rel, yaml.safe_dump(workflow, sort_keys=False))
@@ -5336,7 +5336,7 @@ ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "a job in a workflow with no concurrency group without one",
-                ".github/workflows/release.yml",
+                ".github/workflows/release-artifacts.yml",
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n",
                 "    runs-on: ubuntu-24.04\n",
             ),
@@ -11294,7 +11294,7 @@ def _raw_test(name: str, rel: str, job: str, run: str, expect: str = "") -> Cont
 
 _IN_CI_ORCHESTRATION = (".github/workflows/ci.yml", "changes")
 _IN_BREADTH_ORCHESTRATION = (".github/workflows/breadth.yml", "freshness")
-_IN_RELEASE = (".github/workflows/release.yml", "build")
+_IN_RELEASE = (".github/workflows/release-artifacts.yml", "build")
 _IN_SMOKE = (".github/workflows/headless-run-smoke.yml", "smoke")
 
 

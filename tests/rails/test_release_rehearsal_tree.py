@@ -1,4 +1,4 @@
-"""The release rehearsal builds every release artifact, publishes nothing, and cannot drift (#3942).
+"""The release rehearsal builds every release artifact and publishes nothing (#3942).
 
 ``.github/workflows/release-rehearsal.yml`` runs weekly on main and calls
 ``release-artifacts.yml``, the build half of ``release.yml`` as a reusable workflow. This holds:
@@ -6,14 +6,16 @@
 - **nothing is published.** Neither file names an environment, asks for more than reading the
   tree (no ``id-token``, ``packages`` or ``contents: write``), passes or reads a secret, logs in to
   a registry, pushes an image, or runs a publishing step (PyPI, a GitHub Release, a tag, an
-  attestation). Every file goes up only as a workflow artifact kept at most 7 days.
+  attestation). An image is copied only to a file on the runner (``skopeo copy`` to ``oci:`` or
+  ``docker-archive:``). Every file goes up only as a workflow artifact: kept the days its caller
+  names, and the rehearsal names at most 7.
 - **it runs on main only.** It triggers on its schedule and on a dispatch, nothing else, and its
   first job refuses any ref but main and any repository but this one; the build waits on it.
-- **it cannot drift.** Until ``release.yml`` calls ``release-artifacts.yml`` (#3911), each job
-  copied from it is held to ``release.yml``'s own, step for step: the same names, actions, inputs
-  and commands, with only the tag it reads (``$RELEASE_REF`` for ``$GITHUB_REF_NAME``) and the
-  artifacts' retention added. The image job is the one built differently, to an OCI layout with
-  no push; its matrix, its builder and the build's inputs are held to the release's.
+- **the release builds through it** (#3911). ``release.yml`` calls ``release-artifacts.yml`` once,
+  as the tag, and builds nothing itself, so there is one copy of every build and smoke. Every
+  other job of the release waits on it, so nothing publishes before every artifact is built,
+  smoked and in the manifest. The images are published from the layouts it built, with every
+  digest kept (``skopeo copy --all --preserve-digests``), never built again.
 - **its manifest job runs.** The job's commands, from its write on, run as the runner runs them in
   a folder shaped like the release's, and name each image by the repository release.yml pushes it
   to. The first rehearsal on the runner found the write refusing the images' bare names.
@@ -23,7 +25,6 @@ Each rule is planted to fail.
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import os
@@ -43,8 +44,10 @@ RELEASE = WORKFLOWS / "release.yml"
 ARTIFACTS = WORKFLOWS / "release-artifacts.yml"
 REHEARSAL = WORKFLOWS / "release-rehearsal.yml"
 
-#: The jobs copied from release.yml, held to it step for step.
-COPIED = ("build", "gateway-dashboard", "desktop-mac", "desktop-linux")
+#: The jobs release-artifacts.yml builds and smokes with, and release.yml no longer holds. Its
+#: `images` job is release.yml's too, which pushes and builds nothing (release_problems).
+BUILDS = ("build", "gateway-dashboard", "desktop-mac", "desktop-linux", "manifest")
+CALL = "./.github/workflows/release-artifacts.yml"
 #: The one permission either workflow may hold.
 READ_ONLY = {"contents": "read"}
 #: Actions that publish, log in or attest.
@@ -61,9 +64,14 @@ PUBLISHING_ACTIONS = (
 PUBLISHING_COMMANDS = re.compile(
     r"\b(gh\s+release|gh\s+api\s+-X\s*(POST|PUT|PATCH)|twine\s+upload|uv\s+publish|npm\s+publish|"
     r"docker\s+(image\s+)?push|imagetools\s+create|git\s+push|git\s+tag|oras\s+push|"
-    r"crane\s+(push|copy)|skopeo\s+copy)\b"
+    r"crane\s+(push|copy))\b"
 )
+#: Where ``skopeo copy`` may write in either file: a file on the runner, never a registry.
+LOCAL_DESTINATIONS = ("oci:", "docker-archive:")
+_SKOPEO_COPY = re.compile(r"\bskopeo\s+copy\b([^\n]*)")
 MAX_RETENTION_DAYS = 7
+#: How release-artifacts.yml keeps each upload: the days its caller names.
+RETENTION_INPUT = "${{ inputs.retention-days }}"
 
 
 def _load(text: str) -> dict[str, Any]:
@@ -107,6 +115,10 @@ def publish_problems(name: str, text: str) -> list[str]:
             found = PUBLISHING_COMMANDS.search(run)
             if found:
                 out.append(f"{label}: runs {found.group(0)!r}, which publishes")
+            for copied in _SKOPEO_COPY.finditer(run.replace("\\\n", " ")):
+                destination = copied.group(1).split()[-1].strip("'\"") if copied.group(1) else ""
+                if not destination.startswith(LOCAL_DESTINATIONS):
+                    out.append(f"{label}: skopeo copies to {destination!r}, not a file here")
             inputs = step.get("with") or {}
             if uses.startswith("docker/build-push-action@"):
                 if inputs.get("push") not in (False, "false"):
@@ -117,6 +129,8 @@ def publish_problems(name: str, text: str) -> list[str]:
                     out.append(f"{label}: its outputs reach a registry")
             if uses.startswith("actions/upload-artifact@"):
                 days = inputs.get("retention-days")
+                if days == RETENTION_INPUT and "workflow_call" in (doc.get("on") or {}):
+                    continue  # the caller's days, which trigger_problems holds for the rehearsal
                 if not isinstance(days, int) or days > MAX_RETENTION_DAYS:
                     out.append(
                         f"{label}: keeps its artifact {days!r} days,"
@@ -149,75 +163,59 @@ def trigger_problems(text: str) -> list[str]:
         if job_id != "version" and "version" not in (job.get("needs") or []):
             out.append(f"job {job_id} does not wait on the main-only check")
     calls = [j for j in jobs.values() if j.get("uses")]
-    if [j.get("uses") for j in calls] != ["./.github/workflows/release-artifacts.yml"]:
+    if [j.get("uses") for j in calls] != [CALL]:
         out.append("the rehearsal does not call release-artifacts.yml, once")
+    for call in calls:
+        days = (call.get("with") or {}).get("retention-days")
+        if not isinstance(days, int) or days > MAX_RETENTION_DAYS:
+            out.append(f"the rehearsal keeps its artifacts {days!r} days, not at most 7")
     return out
 
 
-# ── no drift from release.yml ──────────────────────────────────────────────────────────────────
+# ── the release builds through it ──────────────────────────────────────────────────────────────
 
 
-def _normalised(job: dict) -> dict:
-    """A copied job as release.yml would hold it: its tag variable, and no artifact retention."""
-    job = copy.deepcopy(job)
-    for step in _steps(job):
-        for key in ("run",):
-            if isinstance(step.get(key), str):
-                step[key] = step[key].replace("$RELEASE_REF", "$GITHUB_REF_NAME")
-        for value in (step.get("env") or {}).values():
-            if isinstance(value, str) and "RELEASE_REF" in value:
-                raise AssertionError("RELEASE_REF in a step's env")
-        if str(step.get("uses", "")).startswith("actions/upload-artifact@"):
-            (step.get("with") or {}).pop("retention-days", None)
-    return job
+def _waits_on(jobs: dict, job_id: str, target: str, seen: frozenset = frozenset()) -> bool:
+    needs = jobs.get(job_id, {}).get("needs") or []
+    needs = [needs] if isinstance(needs, str) else list(needs)
+    return target in needs or any(
+        _waits_on(jobs, n, target, seen | {job_id}) for n in needs if n not in seen
+    )
 
 
-def drift_problems(release_text: str, artifacts_text: str) -> list[str]:
-    release, artifacts = _load(release_text), _load(artifacts_text)
-    if any(
-        j.get("uses") == "./.github/workflows/release-artifacts.yml"
-        for j in (release.get("jobs") or {}).values()
-    ):
-        return []  # release.yml builds through it: there is one copy, and nothing to drift.
+def release_problems(release_text: str) -> list[str]:
+    """release.yml builds through release-artifacts.yml, and publishes only after all of it."""
+    jobs = _load(release_text).get("jobs") or {}
     out: list[str] = []
-    rel_jobs, art_jobs = release.get("jobs") or {}, artifacts.get("jobs") or {}
-    for job_id in COPIED:
-        if job_id not in art_jobs:
-            out.append(f"release-artifacts.yml has no job {job_id}")
-            continue
-        mine, theirs = _normalised(art_jobs[job_id]), rel_jobs.get(job_id) or {}
-        for key in ("runs-on", "timeout-minutes", "needs", "strategy", "outputs"):
-            if mine.get(key) != theirs.get(key):
-                out.append(
-                    f"{job_id}: {key} is {mine.get(key)!r}, release.yml's is {theirs.get(key)!r}"
-                )
-        a, b = _steps(mine), _steps(theirs)
-        for i in range(max(len(a), len(b))):
-            x, y = (a[i] if i < len(a) else None), (b[i] if i < len(b) else None)
-            if x != y:
-                name = (x or y or {}).get("name") or (x or y or {}).get("uses")
-                out.append(f"{job_id}: step {i + 1} ({name}) is not release.yml's")
-    images, rel_images = art_jobs.get("images") or {}, rel_jobs.get("images") or {}
-    if images.get("strategy") != rel_images.get("strategy"):
-        out.append("images: the matrix is not release.yml's")
-    for action in ("docker/setup-qemu-action@", "docker/setup-buildx-action@"):
-        mine = [s for s in _steps(images) if str(s.get("uses", "")).startswith(action)]
-        theirs = [s for s in _steps(rel_images) if str(s.get("uses", "")).startswith(action)]
-        if mine != theirs:
-            out.append(f"images: {action.rstrip('@')} is not release.yml's")
-    builds = [
-        s for s in _steps(images) if str(s.get("uses", "")).startswith("docker/build-push-action@")
+    calls = [job_id for job_id, job in jobs.items() if job.get("uses") == CALL]
+    if calls != ["artifacts"]:
+        return [f"release.yml calls release-artifacts.yml as {calls}, not once as job artifacts"]
+    call = jobs["artifacts"]
+    if (call.get("with") or {}).get("ref") != "${{ github.ref_name }}":
+        out.append("release.yml builds its artifacts as a ref other than its own tag")
+    if call.get("permissions") != READ_ONLY:
+        out.append(f"the artifacts job holds {call.get('permissions')!r}, not contents: read")
+    for job_id in BUILDS:
+        if job_id in jobs:
+            out.append(
+                f"release.yml builds {job_id} itself, a second copy of release-artifacts.yml's"
+            )
+    for job_id in jobs:
+        if job_id != "artifacts" and not _waits_on(jobs, job_id, "artifacts"):
+            out.append(f"{job_id} does not wait on every artifact being built and smoked")
+    images = _steps(jobs.get("images") or {})
+    if any(str(s.get("uses", "")).startswith("docker/build-push-action@") for s in images):
+        out.append("images builds again, so what it pushes is not what was smoked")
+    pushes = [
+        m.group(1)
+        for s in images
+        for m in _SKOPEO_COPY.finditer(str(s.get("run") or "").replace("\\\n", " "))
     ]
-    rel_builds = [
-        s
-        for s in _steps(rel_images)
-        if str(s.get("uses", "")).startswith("docker/build-push-action@")
-    ]
-    drop = ("push", "tags", "outputs")
-    if [s.get("uses") for s in builds] != [s.get("uses") for s in rel_builds] or [
-        {k: v for k, v in (s.get("with") or {}).items() if k not in drop} for s in builds
-    ] != [{k: v for k, v in (s.get("with") or {}).items() if k not in drop} for s in rel_builds]:
-        out.append("images: the build's action or inputs are not release.yml's")
+    if not pushes or not all(
+        "--all" in p.split() and "--preserve-digests" in p.split() and "oci-archive:" in p
+        for p in pushes
+    ):
+        out.append("images does not push the layout with every digest kept")
     return out
 
 
@@ -243,9 +241,9 @@ def test_the_rehearsal_runs_on_main_only_and_calls_the_artifacts_workflow() -> N
     assert trigger_problems(rehearsal) == []
 
 
-def test_the_copied_jobs_are_release_ymls_step_for_step() -> None:
-    release, artifacts, _ = _texts()
-    assert drift_problems(release, artifacts) == []
+def test_the_release_builds_through_it_and_publishes_only_after_it() -> None:
+    release, _, _ = _texts()
+    assert release_problems(release) == []
 
 
 # ── its manifest job runs ──────────────────────────────────────────────────────────────────────
@@ -415,6 +413,18 @@ jobs:
         (
             (
                 "    steps:\n",
+                "    steps:\n"
+                "      - run: skopeo copy --all oci-archive:x.tar docker://ghcr.io/x/y:1\n",
+            ),
+            "skopeo copies to 'docker://ghcr.io/x/y:1'",
+        ),
+        (
+            ("    steps:\n", '    steps:\n      - run: skopeo copy oci-archive:x.tar "$DEST"\n'),
+            "skopeo copies to '$DEST'",
+        ),
+        (
+            (
+                "    steps:\n",
                 "    steps:\n      - uses: docker/build-push-action@abc\n"
                 "        with:\n          push: true\n",
             ),
@@ -458,26 +468,13 @@ def test_a_rehearsal_on_another_trigger_or_ref_is_caught() -> None:
             rehearsal.replace("    needs: [version]\n", "", 1),
             "does not wait on the main-only check",
         ),
+        (
+            rehearsal.replace("      retention-days: 3\n", "      retention-days: 30\n", 1),
+            "keeps its artifacts 30 days",
+        ),
     ]:
         assert planted != rehearsal
         assert any(said in p for p in trigger_problems(planted)), trigger_problems(planted)
-
-
-def test_a_build_step_changed_on_one_side_is_drift() -> None:
-    release, artifacts, _ = _texts()
-    planted = artifacts.replace("npm run typecheck:web", "npm run typecheck:web --if-present", 1)
-    assert planted != artifacts
-    assert any(
-        p.startswith("build: step") for p in drift_problems(release, planted)
-    ), drift_problems(release, planted)
-    planted = artifacts.replace("platforms: linux/amd64,linux/arm64", "platforms: linux/amd64", 1)
-    assert "images: the build's action or inputs are not release.yml's" in drift_problems(
-        release, planted
-    )
-    called = release.replace(
-        "  build:\n", "  build:\n    uses: ./.github/workflows/release-artifacts.yml\n", 1
-    )
-    assert drift_problems(called, planted) == [], "once release.yml calls it, there is one copy"
 
 
 @pytest.mark.parametrize(
@@ -513,3 +510,37 @@ def test_a_manifest_command_that_would_fail_on_the_runner_is_caught(
     assert planted != artifacts
     problems = manifest_run_problems(release, planted, tmp_path)
     assert any(said in p for p in problems), problems
+
+
+def test_a_release_that_builds_or_publishes_on_its_own_is_caught() -> None:
+    release, _, _ = _texts()
+    assert release_problems(release) == []
+    for planted, said in [
+        (
+            release.replace("    uses: ./.github/workflows/release-artifacts.yml\n", "", 1),
+            "not once as job artifacts",
+        ),
+        (
+            release.replace("      ref: ${{ github.ref_name }}\n", "      ref: main\n", 1),
+            "a ref other than its own tag",
+        ),
+        (
+            release.replace("\n  pypi:\n", "\n  build:\n    runs-on: x\n\n  pypi:\n", 1),
+            "builds build itself",
+        ),
+        (release.replace("    needs: [artifacts]\n", "", 1), "does not wait on every artifact"),
+        (
+            release.replace("--preserve-digests ", "", 1),
+            "does not push the layout with every digest kept",
+        ),
+        (
+            release.replace(
+                "      - name: Push the layout",
+                "      - uses: docker/build-push-action@abc\n      - name: Push the layout",
+                1,
+            ),
+            "images builds again",
+        ),
+    ]:
+        assert planted != release, said
+        assert any(said in p for p in release_problems(planted)), (said, release_problems(planted))

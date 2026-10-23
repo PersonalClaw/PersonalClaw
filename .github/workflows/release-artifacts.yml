@@ -1,21 +1,21 @@
 # Release artifacts — every artifact a release builds and smokes, with none published (#3942).
 #
-# The build half of release.yml as a reusable workflow:
+# The build half of the release as a reusable workflow:
 #   · the wheel and sdist, with the wheel's SBOM and its contract;
 #   · the gateway image's dashboard smoke;
-#   · both images for both arches, with their attestations;
+#   · both images for both arches, with their attestations, each arch smoked from its layout;
 #   · the macOS dmg and the Linux AppImage and deb;
 # each smoked as the release smokes it. Then one digest-bound manifest of them all
 # (tools/ci/release_manifest.py), written and verified, with a planted mismatch that must fail.
 #
 # It publishes nothing: no environment, no registry login, no push, no token beyond reading the
 # tree. The images build to an OCI layout on the runner, and every file goes up only as a
-# workflow artifact kept 3 days, never to a registry or a release
+# workflow artifact, kept the days the caller names, never to a registry or a release
 # (tests/rails/test_release_rehearsal_tree.py holds all of it).
 #
-# The weekly rehearsal (release-rehearsal.yml) calls it. Until release.yml calls it too, which
-# #3911's staged release does, each job copied from release.yml is held to release.yml's own,
-# step for step, so the two cannot drift: change a build step in both, in the same commit.
+# Two callers, so there is one copy of every build: release.yml, on a release tag, which then
+# publishes these files and pushes these layouts with every digest kept (#3911); and the weekly
+# rehearsal (release-rehearsal.yml), which publishes nothing.
 name: Release artifacts
 
 on:
@@ -25,6 +25,20 @@ on:
         description: "The release tag to build as (vX.Y.Z): every job reads its version from it"
         type: string
         required: true
+      retention-days:
+        description: "The days every artifact is kept: as long as the caller may still publish it"
+        type: number
+        required: true
+    outputs:
+      version:
+        description: "The release's version, as the tag names it"
+        value: ${{ jobs.build.outputs.version }}
+      gh_release_flags:
+        description: "The GitHub Release's stability flags for the tag"
+        value: ${{ jobs.build.outputs.gh_release_flags }}
+      manifest-digest:
+        description: "The digest of the release manifest of every artifact"
+        value: ${{ jobs.manifest.outputs.digest }}
 
 permissions:
   contents: read
@@ -194,18 +208,18 @@ jobs:
           name: wheel-sbom
           path: wheel-sbom/personalclaw-wheel.spdx.json
           if-no-files-found: error
-          retention-days: 3
+          retention-days: ${{ inputs.retention-days }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
-          retention-days: 3
+          retention-days: ${{ inputs.retention-days }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-notes
           path: release-notes.md
           if-no-files-found: error
-          retention-days: 3
+          retention-days: ${{ inputs.retention-days }}
 
   gateway-dashboard:
     # RELEASE-BLOCKING: the gateway image built from THIS commit must SERVE ITS DASHBOARD.
@@ -283,10 +297,12 @@ jobs:
             --image personalclaw-gateway:release-dashboard
 
   images:
-    # The release's image build, for both arches with the same supply-chain attestations, to an OCI
+    # The release's image build, for both arches with the supply-chain attestations, to an OCI
     # layout instead of a registry: no login and no push. The image's index (the bytes a registry
-    # would store) and each arch's SPDX SBOM are read out of the layout (tools/ci/oci_layout.py)
-    # and uploaded as workflow artifacts; the layout itself stays on the runner.
+    # would store) and each arch's SPDX SBOM are read out of the layout (tools/ci/oci_layout.py).
+    # Each arch is smoked from the layout itself, and the layout goes up as a workflow artifact:
+    # release.yml pushes exactly it, every digest kept, so what a user pulls is what was smoked
+    # and what the manifest records.
     needs: [build, gateway-dashboard]
     runs-on: ubuntu-24.04
     timeout-minutes: 165
@@ -359,21 +375,29 @@ jobs:
           name: image-sbom-${{ matrix.name }}
           path: image-out/*.spdx.json
           if-no-files-found: error
-          retention-days: 3
+          retention-days: ${{ inputs.retention-days }}
       - name: Upload the image's index
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-index-${{ matrix.name }}
           path: image-out/*.index.json
           if-no-files-found: error
-          retention-days: 3
+          retention-days: ${{ inputs.retention-days }}
+      - name: Free the build cache, which nothing after the layout needs
+        # The smoke below loads each arch out of the layout, several gigabytes for the gateway,
+        # so the runner's disk holds the layout, one arch's archive and the loaded image at once.
+        run: |
+          df -h "$RUNNER_TEMP"
+          docker buildx prune --all --force > /dev/null
+          df -h "$RUNNER_TEMP"
       - name: Smoke both arches (release-blocking)
-        # The release pulls each arch of what it pushed; this loads each arch from the build
-        # cache the step above filled, and runs the release's own checks on it.
+        # Each arch of the layout itself, copied out of it to a docker archive on the runner and
+        # loaded, so the bytes smoked are the bytes release.yml pushes. The runner image's skopeo
+        # reads the layout: docker cannot load one arch of a multi-platform index.
         env:
           # A local tag, loaded and never pushed, named as the release names its own.
           IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:rehearsal
-          DOCKERFILE: ${{ matrix.dockerfile }}
+          LAYOUT: ${{ runner.temp }}/personalclaw-${{ matrix.name }}.oci.tar
           SMOKE: ${{ matrix.smoke }}
           EXPECT: ${{ matrix.expect }}
           EXPECT_VERSION: ${{ matrix.expect_version }}
@@ -387,9 +411,12 @@ jobs:
             echo "::error::no expected output for $IMAGE — add an 'expect' or 'expect_version' to the matrix"
             exit 1
           fi
+          skopeo --version
           for arch in amd64 arm64; do
             echo "::group::smoke linux/$arch — $IMAGE — $SMOKE"
-            docker buildx build --quiet --platform "linux/$arch" --file "$DOCKERFILE" --load --tag "$IMAGE" .
+            skopeo copy --quiet --override-os linux --override-arch "$arch" "oci-archive:$LAYOUT" "docker-archive:$RUNNER_TEMP/smoke-$arch.tar:$IMAGE"
+            docker load --quiet --input "$RUNNER_TEMP/smoke-$arch.tar"
+            rm "$RUNNER_TEMP/smoke-$arch.tar"
             # --entrypoint '' bypasses the image ENTRYPOINT (tini/nginx-entrypoint)
             # so the smoke command runs directly instead of starting the service.
             # 2>&1 because a version banner is not reliably on stdout: `nginx -v`
@@ -419,8 +446,18 @@ jobs:
                   ;;
               esac
             fi
+            docker image rm --force "$IMAGE" > /dev/null
             echo "::endgroup::"
           done
+      - name: Upload the image's layout, for the release to push
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-layout-${{ matrix.name }}
+          path: ${{ runner.temp }}/personalclaw-${{ matrix.name }}.oci.tar
+          if-no-files-found: error
+          # Its blobs are compressed already.
+          compression-level: 0
+          retention-days: ${{ inputs.retention-days }}
 
   desktop-mac:
     # macOS desktop shell — AD-HOC SIGNED, NOT NOTARIZED .dmg. "Unsigned" was the word used
@@ -536,7 +573,7 @@ jobs:
         with:
           name: desktop-mac
           path: desktop/dist/*.dmg
-          retention-days: 3
+          retention-days: ${{ inputs.retention-days }}
 
   desktop-linux:
     # Linux desktop shell — UNSIGNED AppImage + .deb (the Linux target ships now;
@@ -624,7 +661,7 @@ jobs:
           path: |
             desktop/dist/*.AppImage
             desktop/dist/*.deb
-          retention-days: 3
+          retention-days: ${{ inputs.retention-days }}
 
   manifest:
     # Every artifact above, staged in one folder and recorded in one digest-bound manifest (#3911's
@@ -634,6 +671,8 @@ jobs:
     needs: [build, images, desktop-mac, desktop-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.manifest.outputs.digest }}
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -692,4 +731,4 @@ jobs:
           name: release-manifest
           path: manifest.json
           if-no-files-found: error
-          retention-days: 3
+          retention-days: ${{ inputs.retention-days }}
