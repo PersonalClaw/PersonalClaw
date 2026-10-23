@@ -286,10 +286,7 @@ async def test_a_read_that_names_a_conversation_reaches_only_the_apps_own(
     await SHARED.run(subtests, rows, _read_routes(reached), label="read")
 
 
-@pytest.mark.asyncio
-async def test_a_row_that_leaves_state_behind_fails_the_next_row(
-    tmp_path_factory, monkeypatch
-) -> None:
+async def _a_row_that_leaves_state_behind_fails_the_next_row(tmp_path_factory, monkeypatch) -> None:
     """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
     or a fenced registry changed is caught, by name, in the row after it."""
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -312,8 +309,7 @@ async def test_a_row_that_leaves_state_behind_fails_the_next_row(
 PLANTED = "GET /api/chat/sessions/{session}/export"
 
 
-@pytest.mark.asyncio
-async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+async def _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     tmp_path_factory, monkeypatch
 ) -> None:
     """A handler the app reaches, which saves your chat to your history as an export would read
@@ -366,6 +362,18 @@ async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     await SHARED.run(recorded, rows[at - 1 : at + 2], routes, label="read")
     assert list(recorded.failed) == [PLANTED], recorded.failed
     assert "a refusal changed your home: ['dashboard_mine.jsonl']" in recorded.failed[PLANTED]
+
+
+@pytest.mark.asyncio
+async def test_the_table_keeps_each_row_to_itself(subtests, tmp_path_factory, monkeypatch) -> None:
+    """Both halves of the table's isolation, each a row: a row that leaves state behind fails the
+    row after it, and a refusal that writes state fails its own row and no other."""
+    with row(subtests, check="a row that leaves state behind fails the next row"):
+        await _a_row_that_leaves_state_behind_fails_the_next_row(tmp_path_factory, monkeypatch)
+    with row(subtests, check="a refusal that writes state fails its own row and no other"):
+        await _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+            tmp_path_factory, monkeypatch
+        )
 
 
 # ── 2. Your transcript never leaves, through the real handlers ────────────────────────

@@ -408,10 +408,7 @@ async def test_every_control_is_refused_to_an_app_and_loosened_only_with_your_co
     await SHARED.run(subtests, rows, _routes([]), label="control")
 
 
-@pytest.mark.asyncio
-async def test_a_row_that_leaves_state_behind_fails_the_next_row(
-    tmp_path_factory, monkeypatch
-) -> None:
+async def _a_row_that_leaves_state_behind_fails_the_next_row(tmp_path_factory, monkeypatch) -> None:
     """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
     or a fenced registry changed is caught, by name, in the row after it."""
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -433,8 +430,7 @@ async def test_a_row_that_leaves_state_behind_fails_the_next_row(
 PLANTED = ("auth.require_totp", {"auth": {"require_totp": True}}, False)
 
 
-@pytest.mark.asyncio
-async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+async def _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     tmp_path_factory, monkeypatch
 ) -> None:
     """A config handler that, for the app's write of one field, stores it in your config and then
@@ -476,6 +472,18 @@ async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     name = _case_id(PLANTED)
     assert list(recorded.failed) == [name], recorded.failed
     assert "a refusal changed your home: ['config.json']" in recorded.failed[name]
+
+
+@pytest.mark.asyncio
+async def test_the_table_keeps_each_row_to_itself(subtests, tmp_path_factory, monkeypatch) -> None:
+    """Both halves of the table's isolation, each a row: a row that leaves state behind fails the
+    row after it, and a refusal that writes state fails its own row and no other."""
+    with row(subtests, check="a row that leaves state behind fails the next row"):
+        await _a_row_that_leaves_state_behind_fails_the_next_row(tmp_path_factory, monkeypatch)
+    with row(subtests, check="a refusal that writes state fails its own row and no other"):
+        await _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+            tmp_path_factory, monkeypatch
+        )
 
 
 # ── 2. Tightening is refused to an app too, and never needs your consent ───────────────────────

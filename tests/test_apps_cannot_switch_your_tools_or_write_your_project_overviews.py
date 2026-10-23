@@ -386,8 +386,7 @@ async def test_an_app_still_reaches_what_you_granted(
     await SHARED.run(subtests, rows, _stand_ins(reached), label="route")
 
 
-@pytest.mark.asyncio
-async def test_a_row_that_leaves_state_behind_fails_the_next_row(
+async def _a_row_that_leaves_state_behind_fails_the_next_row(
     tmp_path, tmp_path_factory, monkeypatch
 ) -> None:
     """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
@@ -412,8 +411,7 @@ async def test_a_row_that_leaves_state_behind_fails_the_next_row(
 PLANTED = "POST /api/tools/provider-toggle"
 
 
-@pytest.mark.asyncio
-async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+async def _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     tmp_path, tmp_path_factory, monkeypatch
 ) -> None:
     """A handler the app reaches, which switches the provider on in your tool switches and then
@@ -460,6 +458,20 @@ async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     await SHARED.run(recorded, rows[at - 1 : at + 2], routes, label="route")
     assert list(recorded.failed) == [PLANTED], recorded.failed
     assert "a refusal changed your home: ['tool_prefs.json']" in recorded.failed[PLANTED]
+
+
+@pytest.mark.asyncio
+async def test_the_table_keeps_each_row_to_itself(subtests, tmp_path_factory, monkeypatch) -> None:
+    """Both halves of the table's isolation, each a row: a row that leaves state behind fails the
+    row after it, and a refusal that writes state fails its own row and no other."""
+    with row(subtests, check="a row that leaves state behind fails the next row"):
+        await _a_row_that_leaves_state_behind_fails_the_next_row(
+            tmp_path_factory.mktemp("leaves"), tmp_path_factory, monkeypatch
+        )
+    with row(subtests, check="a refusal that writes state fails its own row and no other"):
+        await _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+            tmp_path_factory.mktemp("writes"), tmp_path_factory, monkeypatch
+        )
 
 
 # ── 2. What a refusal keeps from an app, measured on the real handlers ──────────────────────────
