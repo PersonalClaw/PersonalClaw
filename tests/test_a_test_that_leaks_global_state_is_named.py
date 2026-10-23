@@ -87,6 +87,18 @@ _LEAKS = """
         from personalclaw import notification_kinds
 
         assert ("planted", "kind") not in notification_kinds._REGISTRY
+
+
+    def test_leaves_an_event_router_attached():
+        from personalclaw import event_triggers
+
+        event_triggers.attach(lambda event: None)
+
+
+    def test_sees_no_event_router():
+        from personalclaw import event_triggers
+
+        assert not event_triggers.router_attached()
 """
 
 #: The kind each leaker's record carries, and whether strict mode fails it.
@@ -97,6 +109,7 @@ _EXPECTED = {
     "test_leaves_a_child": ("child process", True),
     "test_leaves_a_port_listening": ("listening socket", True),
     "test_registers_into_a_fenced_registry": ("fenced registry", False),
+    "test_leaves_an_event_router_attached": ("fenced registry", False),
 }
 
 
@@ -145,7 +158,7 @@ def test_report_mode_names_each_leaker_and_fails_none(tmp_path: Path) -> None:
     proc = _pytest(tmp_path, "-p", "no:xdist", "test_leaks.py")
     out = proc.stdout[-4000:] + proc.stderr[-2000:]
     assert proc.returncode == 0, out
-    assert "10 passed" in proc.stdout and "error" not in proc.stdout.lower(), out
+    assert "12 passed" in proc.stdout and "error" not in proc.stdout.lower(), out
     report = _report(tmp_path)
     assert report["strict"] is False
     found = _by_test(report)
@@ -159,12 +172,13 @@ def test_report_mode_names_each_leaker_and_fails_none(tmp_path: Path) -> None:
         assert leak["detail"], leak
     # The fenced entry shows, though its fence restored it before the next test (which passed).
     assert "notification_kinds" in found["test_registers_into_a_fenced_registry"][0]["detail"]
+    assert "event_router" in found["test_leaves_an_event_router_attached"][0]["detail"]
     # Each test's position in its process's order: 1 for the first, as the file lists them.
     order = list(dict.fromkeys(name for name in _names_in(_LEAKS)))
     for name, leaks in found.items():
         assert leaks[0]["position"] == order.index(name) + 1, (name, leaks[0])
-    assert report["tests"] == 10 and report["guard_seconds"] >= 0
-    assert "state leaks: 6 recorded" in proc.stdout, out
+    assert report["tests"] == 12 and report["guard_seconds"] >= 0
+    assert "state leaks: 7 recorded" in proc.stdout, out
 
 
 def _names_in(source: str) -> list[str]:
@@ -193,7 +207,7 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
     )
     out = proc.stdout[-6000:] + proc.stderr[-2000:]
     assert proc.returncode == 1, out
-    assert "10 passed" in proc.stdout and "4 errors" in proc.stdout, out
+    assert "12 passed" in proc.stdout and "4 errors" in proc.stdout, out
     for name in (
         "test_leaves_a_thread",
         "test_changes_directory",
@@ -204,6 +218,7 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
     for name in (
         "test_installs_a_signal_handler",
         "test_registers_into_a_fenced_registry",
+        "test_leaves_an_event_router_attached",
         "test_clean",
     ):
         assert f"ERROR test_leaks.py::{name}" not in proc.stdout, (name, out)
