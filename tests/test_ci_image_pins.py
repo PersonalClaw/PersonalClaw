@@ -205,6 +205,6 @@ def test_current_pins_close_the_issue_and_touch_no_other() -> None:
 def test_the_report_says_what_to_do_and_what_it_could_not_check() -> None:
     moved, _ = ip.check(_workflow(), _registry(NEW_INDEX, NEW_AMD64))
     text = ip.markdown(moved, ["ci.yml:9: quay.io/x: unknown"], "the run")
-    assert "put the new digest on the pin and the new index in the comment" in text
+    assert "move every copy of its old digest and old index in the tree" in text
     assert f"python:3.12.15-slim@{NEW_AMD64}" in text and "- not checked: ci.yml:9" in text
     assert ip.markdown([], [], "the run").startswith("Every pinned workflow image is its tag's")
