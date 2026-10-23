@@ -14,6 +14,9 @@
   and commands, with only the tag it reads (``$RELEASE_REF`` for ``$GITHUB_REF_NAME``) and the
   artifacts' retention added. The image job is the one built differently, to an OCI layout with
   no push; its matrix, its builder and the build's inputs are held to the release's.
+- **its manifest job runs.** The job's commands, from its write on, run as the runner runs them in
+  a folder shaped like the release's, and name each image by the repository release.yml pushes it
+  to. The first rehearsal on the runner found the write refusing the images' bare names.
 
 Each rule is planted to fail.
 """
@@ -21,7 +24,13 @@ Each rule is planted to fail.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+import os
 import re
+import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -239,6 +248,108 @@ def test_the_copied_jobs_are_release_ymls_step_for_step() -> None:
     assert drift_problems(release, artifacts) == []
 
 
+# ── its manifest job runs ──────────────────────────────────────────────────────────────────────
+
+#: Where the manifest job's own commands start. The steps before it fetch and stage the run's
+#: artifacts, which the test stands in for with a folder shaped like the release's.
+FIRST_MANIFEST_STEP = "Write the digest-bound manifest"
+#: The repository release.yml pushes each image to, with no tag.
+_RELEASE_REPOSITORY = re.compile(r"^\s+IMAGE: (\S+)\$\{\{ matrix\.name \}\}$", re.M)
+_IMAGE_ARG = re.compile(r"--image\s+([^=\s]+)=(\S+)")
+_STEP_OUTPUT = re.compile(r"\$\{\{ steps\.([a-z_-]+)\.outputs\.([a-z_-]+) \}\}")
+
+
+def _oci_index(name: str) -> bytes:
+    """A two-platform index, the shape tools/ci/oci_layout.py reads out of an image's layout."""
+    manifests = [
+        {
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": "sha256:" + hashlib.sha256(f"{name} {arch}".encode()).hexdigest(),
+            "size": 1,
+            "platform": {"os": "linux", "architecture": arch},
+        }
+        for arch in ("amd64", "arm64")
+    ]
+    index = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json"}
+    return json.dumps({**index, "manifests": manifests}).encode()
+
+
+def manifest_run_problems(release_text: str, artifacts_text: str, work: Path) -> list[str]:
+    """Run the manifest job's commands, from its write on, in ``work``.
+
+    Each step runs as the runner runs a ``run:`` step (``bash -e``), on a staged folder and an
+    index for each image it names, with an earlier step's outputs passed on as the workflow passes
+    them. Every step names the images by the repositories release.yml pushes them to.
+    """
+    jobs = _load(artifacts_text)["jobs"]
+    steps = _steps(jobs["manifest"])
+    names = [s.get("name") for s in steps]
+    if FIRST_MANIFEST_STEP not in names:
+        return [f"manifest: no step named {FIRST_MANIFEST_STEP!r}"]
+    runs = [s for s in steps[names.index(FIRST_MANIFEST_STEP) :] if "run" in s]
+    repository = _RELEASE_REPOSITORY.search(release_text)
+    if not repository:
+        return ["release.yml: no image repository to hold the manifest's names to"]
+    include = jobs["images"]["strategy"]["matrix"]["include"]
+    pushed = sorted(repository.group(1) + m["name"] for m in include)
+    out = []
+    for step in runs:
+        named = sorted({n for n, _ in _IMAGE_ARG.findall(step["run"])})
+        if named and named != pushed:
+            out.append(f"manifest: {step['name']!r} names the images {named}, not {pushed}")
+    # A staged folder (with a wheel, which the planted control changes) and each index named.
+    (work / "staged").mkdir()
+    (work / "staged" / "personalclaw-0.0.0-py3-none-any.whl").write_bytes(b"wheel bytes")
+    (work / "staged" / "personalclaw-0.0.0.tar.gz").write_bytes(b"sdist bytes")
+    for step in runs:
+        for name, index in _IMAGE_ARG.findall(step["run"]):
+            (work / index).parent.mkdir(parents=True, exist_ok=True)
+            (work / index).write_bytes(_oci_index(name))
+    (work / "tools").symlink_to(REPO / "tools", target_is_directory=True)
+    github_output = work / "github-output"
+    outputs: dict[str, dict[str, str]] = {}
+    for step in runs:
+        env = {
+            # `python3` is this run's interpreter; the tool imports only the standard library.
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+            "HOME": str(work),
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_SHA": "a" * 40,
+            "GITHUB_OUTPUT": str(github_output),
+        }
+        for key, value in (step.get("env") or {}).items():
+            used = _STEP_OUTPUT.fullmatch(str(value))
+            if not used or used.group(2) not in outputs.get(used.group(1), {}):
+                return out + [f"manifest: {step['name']!r} sets {key} to {value!r}, not passed on"]
+            env[key] = outputs[used.group(1)][used.group(2)]
+        if "${{" in step["run"]:
+            return out + [f"manifest: {step['name']!r} runs an expression this run cannot fill"]
+        github_output.write_text("")
+        script = work / "step.sh"
+        script.write_text(step["run"])
+        result = subprocess.run(
+            ["bash", "-e", str(script)],
+            cwd=work,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        if result.returncode != 0:
+            said = " ".join((result.stdout + result.stderr).strip().splitlines()[-3:])
+            return out + [f"manifest: {step['name']!r} exited {result.returncode}: {said}"]
+        if step.get("id"):
+            lines = github_output.read_text().splitlines()
+            outputs[step["id"]] = dict(line.split("=", 1) for line in lines if "=" in line)
+    return out
+
+
+def test_the_manifest_jobs_commands_run_on_a_release_shaped_folder(tmp_path: Path) -> None:
+    release, artifacts, _ = _texts()
+    assert manifest_run_problems(release, artifacts, tmp_path) == []
+
+
 # ── each rule can fail ──────────────────────────────────────────────────────────────────────────
 
 _MINIMAL = """
@@ -367,3 +478,38 @@ def test_a_build_step_changed_on_one_side_is_drift() -> None:
         "  build:\n", "  build:\n    uses: ./.github/workflows/release-artifacts.yml\n", 1
     )
     assert drift_problems(called, planted) == [], "once release.yml calls it, there is one copy"
+
+
+@pytest.mark.parametrize(
+    ("change", "said"),
+    [
+        (
+            # The first rehearsal's defect: the images by their bare names, in every step.
+            (
+                "--image ghcr.io/personalclaw/personalclaw-gateway=",
+                "--image personalclaw-gateway=",
+                -1,
+            ),
+            "not an image repository",
+        ),
+        (
+            (
+                "--image ghcr.io/personalclaw/personalclaw-web="
+                "indexes/personalclaw-web.index.json\n",
+                "",
+                1,
+            ),
+            "names the images",
+        ),
+        (('--ref "$GITHUB_REF"', '--ref "$GITHUB_REF_NAME"', 1), "exited 2"),
+        (("printf 'planted' >> \"$first\"", "true", 1), "the verify checks nothing"),
+    ],
+)
+def test_a_manifest_command_that_would_fail_on_the_runner_is_caught(
+    tmp_path: Path, change: tuple[str, str, int], said: str
+) -> None:
+    release, artifacts, _ = _texts()
+    planted = artifacts.replace(*change)
+    assert planted != artifacts
+    problems = manifest_run_problems(release, planted, tmp_path)
+    assert any(said in p for p in problems), problems
