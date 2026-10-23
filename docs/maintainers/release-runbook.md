@@ -241,6 +241,8 @@ at the tag: a dispatch builds the ref it runs on, and has no input to point it a
 else. A workflow fix merged afterwards helps the next tag only. So land release-path
 fixes, and rehearse (step 5), before you tag.
 
+`main` takes changes only through pull requests, for everyone ([the ruleset on `main`](ci.md#the-ruleset-on-main)), so the commit you tag is a pull request's merge.
+
 Tag only a `main` commit whose **own** push run of `ci.yml` is green. During a burst of
 merges a commit's suite shard can be replaced by a newer push's, and its `test` check then
 reads red as `superseded by <newer commit>`: its tree was not tested on its own. Tag the newer
