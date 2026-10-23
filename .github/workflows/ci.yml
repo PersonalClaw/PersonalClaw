@@ -1155,23 +1155,31 @@ jobs:
         # landing on an element. The NATIVE builds are deliberately not here — they need Xcode
         # and the Android SDK, so they are a maintainer step documented in mobile/README.md.
         run: npm run test:mobile
+      # The build runs whatever the tests before it answered, so a red desktop or vitest leg still
+      # leaves the e2e legs their web-dist and they run (#3905). The steps that read what it wrote
+      # run only when it passed, so a failed build uploads no half-built dist.
       - name: build (vite)
+        id: spa-build
+        if: ${{ !cancelled() }}
         run: npm run build
       # The build copies web/public verbatim and hashes the KaTeX and editor icon fonts out of
       # node_modules. Every font and binary it emitted must match ASSET_LICENSES.json, so a
       # dependency bump that changes a bundled font reds here until its record is updated.
       # Stdlib only, so the runner's python3 is enough.
       - name: bundled asset licences (built web)
+        if: ${{ !cancelled() && steps.spa-build.outcome == 'success' }}
         run: python3 scripts/check_asset_licenses.py --built-web
       # Record what this build was built FROM, so each browser leg's preview can refuse a dist that
       # does not match its checkout (web/playwright.config.ts). This is the run's ONE vite build:
       # the browser legs serve it rather than building their own. The render smoke that used to run
       # here is the `smoke` project, which an `e2e-shard` leg runs.
       - name: stamp the build (scripts/spa_dist_freshness.py)
+        if: ${{ !cancelled() && steps.spa-build.outcome == 'success' }}
         run: python3 scripts/spa_dist_freshness.py stamp
       # The desktop tier's built-page legs (desktop/test/built/): the buddy's real window on this
       # build. Here, after the build and its stamp, and required: a missing or stale build fails them.
       - name: test (desktop built pages, node --test)
+        if: ${{ !cancelled() && steps.spa-build.outcome == 'success' }}
         env:
           PCLAW_REQUIRE_ELECTRON: "1"
         run: npm run test:desktop:built
@@ -1179,6 +1187,7 @@ jobs:
       # leaves dotfiles out by default, which would hand the browser legs an unstamped dist that
       # their preview refuses.
       - name: upload the build (web-dist)
+        if: ${{ !cancelled() && steps.spa-build.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-dist

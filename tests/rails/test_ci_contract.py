@@ -1501,6 +1501,48 @@ def wheel_violations(tree: Tree) -> list[str]:
     return bad
 
 
+# ── The e2e legs' web-dist is a finished build ───────────────────────────────────────────────
+
+#: What marks a ``web`` step that reads the vite build's output: its licence check, its stamp, the
+#: desktop built-page legs, and the ``web-dist`` upload the e2e legs serve.
+_READS_THE_BUILD = (
+    "check_asset_licenses.py",
+    "spa_dist_freshness.py stamp",
+    "test:desktop:built",
+    "actions/upload-artifact",
+)
+
+
+def web_dist_violations(tree: Tree) -> list[str]:
+    """``ci.yml``'s ``web`` job builds the SPA whatever its tests answered (``!cancelled()``), so a
+    red vitest or desktop leg still hands the e2e legs a dist (#3905). Each step that reads that
+    build runs only when the build itself succeeded, so a failed build uploads no half-built
+    ``web-dist`` and its checks report the build's red, not their own."""
+    workflow = dict(_workflows(tree)).get("ci.yml")
+    if workflow is None:
+        return ["ci.yml is missing"]
+    steps = ((workflow.get("jobs") or {}).get("web") or {}).get("steps") or []
+    build = next((s for s in steps if "npm run build" in str(s.get("run", ""))), None)
+    if build is None:
+        return ["ci.yml:web builds no SPA"]
+    bad: list[str] = []
+    if "!cancelled()" not in str(build.get("if", "")):
+        bad.append("ci.yml:web's SPA build must run whatever the tests before it answered")
+    sid = build.get("id")
+    if not sid:
+        return [*bad, "ci.yml:web's SPA build has no id, so no step can ask how it ended"]
+    for step in steps[steps.index(build) + 1 :]:
+        if not any(r in f"{step.get('run', '')} {step.get('uses', '')}" for r in _READS_THE_BUILD):
+            continue
+        cond = " ".join(str(step.get("if", "")).split())
+        if "!cancelled()" not in cond or f"steps.{sid}.outcome == 'success'" not in cond:
+            bad.append(
+                f"ci.yml:web step {step.get('name')!r} reads the SPA build, so it must run on"
+                f" `!cancelled() && steps.{sid}.outcome == 'success'`"
+            )
+    return bad
+
+
 # ── The tested tree on main, and the nightly breadth ────────────────────────────────────────
 #
 # A push to main runs ``ci.yml``'s jobs again only when no green pull-request run tested its
@@ -3740,7 +3782,10 @@ ROWS: tuple[Row, ...] = (
                 _both(
                     _replace(
                         "ci.yml",
-                        "      - name: build (vite)\n        run: npm run build\n",
+                        "      - name: build (vite)\n"
+                        "        id: spa-build\n"
+                        "        if: ${{ !cancelled() }}\n"
+                        "        run: npm run build\n",
                         "",
                     ),
                     _replace(
@@ -3750,6 +3795,27 @@ ROWS: tuple[Row, ...] = (
                         "        run: npm run build\n",
                     ),
                 ),
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "web-dist-only-from-a-finished-build",
+        web_dist_violations,
+        (
+            _plant(
+                "an upload that does not check the build's outcome",
+                _CI,
+                "      - name: upload the build (web-dist)\n"
+                "        if: ${{ !cancelled() && steps.spa-build.outcome == 'success' }}\n",
+                "      - name: upload the build (web-dist)\n        if: ${{ !cancelled() }}\n",
+                expect="'upload the build (web-dist)'",
+            ),
+            _plant(
+                "a build that runs only after green tests",
+                _CI,
+                "        id: spa-build\n        if: ${{ !cancelled() }}\n",
+                "        id: spa-build\n",
+                expect="whatever the tests before it answered",
             ),
         ),
     ),
