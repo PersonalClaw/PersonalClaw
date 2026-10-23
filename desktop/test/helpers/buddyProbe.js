@@ -523,7 +523,7 @@ async function runPlaced() {
   };
   buddy.show();
   await look("shown");
-  for (const p of ["peek", "compact", "expanded", "compact", "peek"]) {
+  for (const p of ["orb", "line", "card", "line", "orb"]) {
     buddy.setPresentation(p);
     await look(p);
   }

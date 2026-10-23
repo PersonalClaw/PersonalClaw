@@ -227,7 +227,7 @@ describe("in the buddy's own window", () => {
   it('sizes the window to the room once it has read, and marks the open card as the shape', async () => {
     render(<BuddyPage {...route} />)
     const group = await prompt()
-    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('expanded'))
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('card'))
     expect(bridge.setPresentation).not.toHaveBeenCalledWith('hidden')
     expect(group.closest('[data-buddy-shape]')).not.toBeNull()
   })
@@ -237,7 +237,7 @@ describe("in the buddy's own window", () => {
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
     expect(bridge.setPresentation, 'nothing before the first read').not.toHaveBeenCalled()
-    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('peek'))
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('orb'))
     expect(bridge.setPresentation).not.toHaveBeenCalledWith('hidden')
     expect(container.querySelector('[data-buddy-shape]'), 'the zone takes no click').toBeNull()
   })
@@ -246,7 +246,7 @@ describe("in the buddy's own window", () => {
     lists.running = { running: [], finished: [] }
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
-    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('peek'))
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('orb'))
     await act(async () => { document.dispatchEvent(new MouseEvent('mousemove')) })
     await waitFor(() => expect(container.querySelector('[data-buddy-presence][data-room="peek"]')).not.toBeNull())
     expect(resolveApproval).not.toHaveBeenCalled()
@@ -256,7 +256,7 @@ describe("in the buddy's own window", () => {
     lists.running = { running: [], finished: [] }
     lists.waiting = { waiting: [], unreadable: [] } as WaitingList
     const { container } = render(<BuddyPage {...route} />)
-    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('peek'))
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenCalledWith('orb'))
     // In the card's area, where the window is shown but takes nothing: the shell's own move as the
     // window shows lands there, and so does every pointer the window forwards on macOS.
     await act(async () => { document.dispatchEvent(new MouseEvent('mousemove', { clientX: 200, clientY: 300 })) })
@@ -271,7 +271,7 @@ describe("in the buddy's own window", () => {
     render(<BuddyPage {...route} />)
     await waitFor(() => expect(placement).not.toBeNull())
     await act(async () => { placement?.('floating') })
-    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('compact'))
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('orb'))
   })
 
   it('where a drag the shell moved settles docks or floats the buddy, and the alert goes with it', async () => {
@@ -314,7 +314,7 @@ describe("in the buddy's own window", () => {
     await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('hidden'))
     expect(container.querySelector('[data-buddy-presence]')).toBeNull()
     await act(async () => { hidden?.(false) })
-    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('expanded'))
+    await waitFor(() => expect(bridge.setPresentation).toHaveBeenLastCalledWith('card'))
     expect(await prompt()).toBeTruthy()
     expect(resolveApproval).not.toHaveBeenCalled()
   })
@@ -325,7 +325,7 @@ describe("in the buddy's own window", () => {
     await waitFor(() => expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).not.toBeNull(), { timeout: 2000 })
     await act(async () => { away?.(true) })
     await waitFor(() => expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).toBeNull())
-    expect(bridge.setPresentation).toHaveBeenLastCalledWith('peek')
+    expect(bridge.setPresentation).toHaveBeenLastCalledWith('orb')
     await act(async () => { away?.(false) })
     await waitFor(() => expect(container.querySelector('[data-buddy-presence]:not([data-room="floating"])')).not.toBeNull())
   })

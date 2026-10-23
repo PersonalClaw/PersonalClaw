@@ -150,7 +150,7 @@ describe("the buddy's preload", () => {
     b.dragStart();
     b.dragBy(3, 4);
     b.dragEnd(true);
-    b.setPresentation("expanded");
+    b.setPresentation("card");
     b.openInApp("#/chat/abc");
     b.openMenu();
     const names = Object.fromEntries(Object.entries(BUDDY_CHANNELS).map(([name, channel]) => [channel, name]));
@@ -281,7 +281,7 @@ describe("main hears the buddy and no other page", () => {
     ipcMain.emit(BUDDY_CHANNELS.drag, own, { phase: "start" });
     ipcMain.emit(BUDDY_CHANNELS.drag, own, { phase: "move", dx: 2, dy: 60 });
     ipcMain.emit(BUDDY_CHANNELS.drag, own, { phase: "end", instant: "yes" });
-    ipcMain.emit(BUDDY_CHANNELS.presentation, own, { presentation: "expanded" });
+    ipcMain.emit(BUDDY_CHANNELS.presentation, own, { presentation: "card" });
     ipcMain.emit(BUDDY_CHANNELS.presentation, own, { presentation: "hidden" });
     ipcMain.emit(BUDDY_CHANNELS.open, own, { route: "#/chat/abc" });
     ipcMain.emit(BUDDY_CHANNELS.open, own, { route: "#/chat/new?prompt=what%20changed" });
@@ -291,7 +291,7 @@ describe("main hears the buddy and no other page", () => {
       ["beginDrag"],
       ["dragBy", 2, 60],
       ["endDrag", { instant: false }],
-      ["setPresentation", "expanded"],
+      ["setPresentation", "card"],
       ["hide"],
     ]);
     assert.deepEqual(opened, ["#/chat/abc", "#/chat/new?prompt=what+changed"], "what a pclaw:// link may open, in its parser's spelling");
@@ -355,10 +355,14 @@ describe("the buddy window's web preferences", () => {
 });
 
 describe("what the page may say it presents (#5216)", () => {
-  it("is hidden, the orb, its line or its card, and the earlier three until the page moves to them", () => {
-    for (const presentation of ["hidden", "orb", "line", "card", "peek", "compact", "expanded"]) {
+  it("is hidden, the orb, its line or its card, and nothing else", () => {
+    for (const presentation of ["hidden", "orb", "line", "card"]) {
       assert.deepEqual(BUDDY_PAYLOADS.presentation({ presentation }), { presentation }, presentation);
     }
     for (const presentation of ["fullscreen", "Orb", "", "toString"]) assert.equal(BUDDY_PAYLOADS.presentation({ presentation }), null, presentation);
+  });
+
+  it("refuses the earlier names, peek, compact and expanded, now that the page sends the new ones", () => {
+    for (const presentation of ["peek", "compact", "expanded"]) assert.equal(BUDDY_PAYLOADS.presentation({ presentation }), null, presentation);
   });
 });
