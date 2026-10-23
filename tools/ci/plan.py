@@ -76,19 +76,29 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
 
-from . import catalogue, rails_census, shards, verdict
+from . import catalogue, rails_census, shards, verdict, workflows
 from .catalogue import Catalogue, Job, Override
 
 #: What :func:`rails_floor` says when no passing rails run is recorded.
 NOT_MEASURED: dict[str, Any] = {"minutes": None, "runs": 0}
 
-#: The workflow and job whose runs the rails floor is measured from.
-FLOOR_WORKFLOW, FLOOR_JOB = "ci.yml", catalogue.MERGE_NEEDS_JOB
+#: The workflows and job whose runs the rails floor is measured from: each a push to main runs
+#: in, the newer shape first (:data:`workflows.MAIN_PUSH`).
+FLOOR_WORKFLOWS, FLOOR_JOB = workflows.MAIN_PUSH, catalogue.MERGE_NEEDS_JOB
 
-#: The rails job's legs as GitHub names them, one per list (``rails_census.LEGS``).
+#: The rails job's legs as ci.yml's matrix names them, one per list (``rails_census.LEGS``).
 FLOOR_LEGS: tuple[str, ...] = tuple(
     f"{FLOOR_JOB} ({n})" for n in range(1, len(rails_census.LEGS) + 1)
 )
+#: The same legs as merge.yml names them: by matrix key, as run-job keys each one's record.
+FLOOR_MATRIX_LEGS: tuple[str, ...] = tuple(
+    f"{FLOOR_JOB} ({n}/{len(rails_census.LEGS)})" for n in range(1, len(rails_census.LEGS) + 1)
+)
+#: Each workflow's names for the legs.
+_LEGS_BY_WORKFLOW: dict[str, tuple[str, ...]] = {
+    workflows.LEGACY: FLOOR_LEGS,
+    workflows.MERGE: FLOOR_MATRIX_LEGS,
+}
 
 _WILD = frozenset("*?[")
 
@@ -552,24 +562,30 @@ def stage_jobs(grid: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
 
 def _is_floor_job(name: object) -> bool:
-    """The rails job, or one of its legs: GitHub names a matrix leg ``rails (1)``."""
+    """The rails job, or one of its legs: ci.yml's matrix names a leg ``rails (1)``, merge.yml's
+    by its key, ``rails (1/3)``."""
     if not isinstance(name, str):
         return False
     if name == FLOOR_JOB:
         return True
     head, _, rest = name.partition(" (")
-    return head == FLOOR_JOB and rest.endswith(")") and rest[:-1].isdigit()
+    if head != FLOOR_JOB or not rest.endswith(")"):
+        return False
+    shard, _, of = rest[:-1].partition("/")
+    return shard.isdigit() and (not of or of.isdigit())
 
 
-def _run_minutes(jobs: list[Any]) -> float | None:
+def _run_minutes(jobs: list[Any], workflow: str = workflows.LEGACY) -> float | None:
     """One run's rails minutes: the slowest of its rails jobs, which is when the rails ended.
-    Its rails jobs are the one ``rails`` job of a run before the legs, or exactly the legs
-    (:data:`FLOOR_LEGS`), each once: a run missing a leg (one of the two halves the rails ran in
-    before is such a run), naming one twice or both kinds says nothing, and so does one with
-    any rails job that is not a passing measurement."""
+    Its rails jobs are the one ``rails`` job of a ci.yml run before the legs, or exactly the legs
+    by its workflow's names (:data:`FLOOR_LEGS`, :data:`FLOOR_MATRIX_LEGS`), each once: a run
+    missing a leg (one of the two halves the rails ran in before is such a run), naming one twice,
+    by the other workflow's names or both kinds says nothing, and so does one with any rails job
+    that is not a passing measurement."""
     legs = [job for job in jobs if isinstance(job, dict) and _is_floor_job(job.get("name"))]
     names = sorted(str(job["name"]) for job in legs)
-    if names != [FLOOR_JOB] and names != sorted(FLOOR_LEGS):
+    whole = [FLOOR_JOB] if workflow == workflows.LEGACY else None
+    if names != whole and names != sorted(_LEGS_BY_WORKFLOW.get(workflow, ("",))):
         return None
     measured = [_measured(job) for job in legs]
     if any(m is None for m in measured):
@@ -593,14 +609,15 @@ def _measured(job: object) -> float | None:
 FLOOR_RUNS, FLOOR_SECONDS = 3, 60.0
 
 
-def _rails_minutes(head: object) -> float | None:
-    """One history file's run line's rails minutes, when they are a measurement: the slowest
-    leg, or the one job a run before the legs had (:func:`_run_minutes`)."""
+def _rails_minutes(head: object, workflow: str) -> float | None:
+    """One history file's run line's rails minutes, when it is a run of ``workflow`` and they are
+    a measurement: the slowest leg, or the one job a run before the legs had
+    (:func:`_run_minutes`)."""
     if not isinstance(head, dict) or head.get("kind") != "run":
         return None
-    if head.get("workflow") != FLOOR_WORKFLOW or not isinstance(head.get("jobs"), list):
+    if head.get("workflow") != workflow or not isinstance(head.get("jobs"), list):
         return None
-    return _run_minutes(head["jobs"])
+    return _run_minutes(head["jobs"], workflow)
 
 
 def _floor(minutes: Sequence[float]) -> dict[str, Any]:
@@ -621,9 +638,10 @@ def rails_floor(folder: Path | None) -> dict[str, Any]:
             continue
         if not isinstance(head, dict) or head.get("kind") != "run":
             continue
-        if head.get("workflow") != FLOOR_WORKFLOW or not isinstance(head.get("jobs"), list):
+        workflow = head.get("workflow")
+        if workflow not in FLOOR_WORKFLOWS or not isinstance(head.get("jobs"), list):
             continue
-        run = _run_minutes(head["jobs"])
+        run = _run_minutes(head["jobs"], str(workflow))
         if run is not None:
             minutes.append(run)
     return _floor(minutes)
@@ -673,9 +691,10 @@ def rails_floor_from_ci(
     clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     """The rails floor from main's recorded CI runs: the median over the newest
-    :data:`FLOOR_RUNS` completed main runs of ``ci.yml`` whose history the collector itself
-    uploaded (``shards.TelemetryRecord`` checks who uploaded each archive), counting a red run
-    whose rails jobs passed and never a cancelled one.
+    :data:`FLOOR_RUNS` completed main runs of each of :data:`FLOOR_WORKFLOWS` in turn (merge.yml's,
+    then ci.yml's), whose history the collector itself uploaded (``shards.TelemetryRecord`` checks
+    who uploaded each archive), counting a red run whose rails jobs passed and never a cancelled
+    one.
 
     ``text`` and ``binary`` are gh calls that take a ``timeout``. Each is given only what is
     left of :data:`FLOOR_SECONDS`, and none is made once they are spent, so the whole read ends
@@ -686,29 +705,32 @@ def rails_floor_from_ci(
     minutes: list[float] = []
     try:
         record = shards.TelemetryRecord(repo, text=text, binary=binary)
-        listed = text(
-            "api",
-            f"repos/{repo}/actions/workflows/{FLOOR_WORKFLOW}/runs"
-            "?branch=main&status=completed&per_page=30",
-            "--jq",
-            '.workflow_runs[] | "\\(.id) \\(.conclusion) \\(.head_repository.full_name)"',
-        )
-        for line in listed.splitlines():
+        for workflow in FLOOR_WORKFLOWS:
             if len(minutes) == FLOOR_RUNS:
                 break
-            ident, conclusion, owner = (line.split() + ["", "", ""])[:3]
-            if not ident.isdigit() or conclusion not in record.COUNTED or owner != repo:
-                continue
-            archive = record._archive(int(ident))
-            if archive is None:
-                continue
-            try:
-                heads = _archive_heads(archive, int(ident))
-            except (zipfile.BadZipFile, ValueError, UnicodeDecodeError, OSError, EOFError):
-                continue
-            found = [m for m in (_rails_minutes(h) for h in heads) if m is not None]
-            if found:
-                minutes.append(found[0])
+            listed = text(
+                "api",
+                f"repos/{repo}/actions/workflows/{workflow}/runs"
+                "?branch=main&status=completed&per_page=30",
+                "--jq",
+                '.workflow_runs[] | "\\(.id) \\(.conclusion) \\(.head_repository.full_name)"',
+            )
+            for line in listed.splitlines():
+                if len(minutes) == FLOOR_RUNS:
+                    break
+                ident, conclusion, owner = (line.split() + ["", "", ""])[:3]
+                if not ident.isdigit() or conclusion not in record.COUNTED or owner != repo:
+                    continue
+                archive = record._archive(int(ident))
+                if archive is None:
+                    continue
+                try:
+                    heads = _archive_heads(archive, int(ident))
+                except (zipfile.BadZipFile, ValueError, UnicodeDecodeError, OSError, EOFError):
+                    continue
+                found = [m for m in (_rails_minutes(h, workflow) for h in heads) if m is not None]
+                if found:
+                    minutes.append(found[0])
     except Exception as exc:  # noqa: BLE001 - the floor is a report, never a gate
         print(f"::warning title=rails floor not read::{type(exc).__name__}: {exc}", file=sys.stderr)
     return _floor(minutes)

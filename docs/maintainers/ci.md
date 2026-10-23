@@ -588,14 +588,15 @@ overrides (`--areas`, beside the catalogue by default):
   beside an include as every path and git 2.55 as none, so an exclude names the paths it skips.
   A test holds the matcher to `git ls-files` over the forms it accepts.
 - **The rails floor** is the median, over a folder of telemetry history (`--history`), of each
-  `ci.yml` run's rails minutes: the slowest of its three legs, `rails (1)` to `rails (3)`, or
-  the one `rails` job a run before the legs had. A run with a leg that did not pass, a leg
+  `merge.yml` or `ci.yml` push run's rails minutes: the slowest of its three legs, `rails (1/3)`
+  to `rails (3/3)` in `merge.yml` (named by matrix key) and `rails (1)` to `rails (3)` in
+  `ci.yml`, or, in `ci.yml` alone, the one `rails` job a run before the legs had. A run with a leg that did not pass, a leg
   missing (a run of the two halves the rails ran in before is one) or a leg named twice measures
   nothing, and so does a head it cannot measure from (no job list, minutes that are not a finite
   positive number); with none it reads
   `{"minutes": null, "runs": 0}`, never a guessed number. On CI it is read with `--repo
-  <owner/name>` from `main`'s history instead: the newest three completed `ci.yml` runs on
-  `main` whose history the collector itself uploaded, a cancelled run skipped and a red one
+  <owner/name>` from `main`'s history instead: the newest three completed `merge.yml` runs on
+  `main`, then `ci.yml`'s, whose history the collector itself uploaded, a cancelled run skipped and a red one
   counted when its rails jobs passed, and only a history line naming that run. Each `gh` call
   gets what is left of 60 seconds, so the read ends within them; any failure, running out of
   time included, gives what was read and a warning on stderr. The floor is a report, never a
@@ -909,6 +910,17 @@ its `${{ matrix.timeout }}`, since the catalogue's loader holds every `timeout_m
 `MIN_TIMEOUT_MIN`.
 `tests/rails/test_ci_tier_workflow_steps_tree.py` runs the partner step, the plan step, the
 catalogue check and the verdict step as written, against the real planner and planted answers.
+
+**Both shapes, read from one place.** Until `ci.yml` is retired a candidate's checks run in two
+shapes: `ci.yml`'s one run, and `pr.yml`'s and `merge.yml`'s pair. `tools/ci/workflows.py` names
+the three, and a reader that takes its names from there (the telemetry collector, the fetch and
+the rails floor do) reads both. A reader that spells `ci.yml` itself reads one, and nothing once
+`ci.yml` goes. `tests/rails/test_the_candidate_workflows_are_named_in_one_place_tree.py` fails on
+any file under `tools/`, `scripts/`, `src/` or `.github/` that names `ci.yml` in its code, and on a
+`workflow_run` listener of `CI` that follows neither `PR` nor `Merge`, unless
+`tests/rails/baselines/ci-yml-readers.sites.jsonl` lists it with its reason. That list only
+shrinks: against the gate's base a line the base lacks fails, `added` and a reason or not. The
+change that retires `ci.yml` lands with it empty.
 
 ## A push to main, and the nightly breadth
 
@@ -1346,8 +1358,8 @@ schema: `tools/ci/telemetry.py` (`python -m tools.ci telemetry`), run by `ci-tel
 main's own code. Nothing else writes durations, first results, reruns or quarantines, and
 the shard planner and the weekly report read it.
 
-- **`collect`** runs when a CI or Breadth run completes. It counts only main's own runs: a CI run
-  of a commit landing on `main`, and Breadth's scheduled or dispatched run on `main`, from this
+- **`collect`** runs when a CI, Merge or Breadth run completes. It counts only main's own runs: a
+  CI or Merge run of a commit landing on `main`, and Breadth's scheduled or dispatched run on `main`, from this
   repository. It decides that from the run itself before it lists any artifact, and the job's
   `if:` holds the same rule, so a pull request's run starts no collector and its artifacts are
   never read. It writes `history-<run>-<attempt>.jsonl`: a first line naming the schema and its
@@ -1513,8 +1525,8 @@ and on dispatch, one run at a time and never cancelled:
   32 MiB as listed and as it arrives. These are the checks the shard planner makes
   (`telemetry.collector_run` and `telemetry.upload_refusal`, one copy of each). A history
   archive is kept only when it holds `history-<run>-<attempt>.jsonl` alone, whose run line names
-  that run and attempt, a counted run (a `ci.yml` push to main, or a scheduled or dispatched
-  Breadth run on main), and a run its own workflow's listing shows with that attempt. The fetch
+  that run and attempt, a counted run (a `ci.yml` or `merge.yml` push to main, or a scheduled or
+  dispatched Breadth run on main), and a run its own workflow's listing shows with that attempt. The fetch
   keeps the newest slots archive and every history in the window, one download at a time, in one
   stored archive, `window.zip`, beside `fetch-status.json`, how it was built. Every collector run
   and artifact it skips is in the status's refusals with the check that refused it.

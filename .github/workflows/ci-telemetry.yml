@@ -1,9 +1,9 @@
 # The one writer of CI telemetry (#3948): tools/ci/telemetry.py, in its one versioned schema.
 #
-# After a CI or Breadth run completes, `collect` writes that attempt's history: a run line with
-# the facts only the Actions API knows, then one line per test case of the attempt's junit
-# reports. It counts a CI run of a push to main and a scheduled or dispatched Breadth run on
-# main, from this repository, and decides that from the run itself before listing any artifact,
+# After a CI, Merge or Breadth run completes, `collect` writes that attempt's history: a run line
+# with the facts only the Actions API knows, then one line per test case of the attempt's junit
+# reports. It counts a push to main's run (CI's until the flip retires it, Merge's after) and a
+# scheduled or dispatched Breadth run on main, from this repository, and decides that from the run itself before listing any artifact,
 # so a pull request's artifacts are never read. The job's `if:` holds the same rule per workflow
 # and event, so such a run starts no runner at all.
 #
@@ -23,7 +23,7 @@ name: CI telemetry
 
 on:
   workflow_run:
-    workflows: ["CI", "Breadth"]
+    workflows: ["CI", "Merge", "Breadth"]
     types: [completed]
     # A pull request's run never starts this workflow at all. A fork's run from a branch it
     # named main still does, so the job's `if:` checks the repository too.
@@ -52,6 +52,8 @@ jobs:
            && (github.event.workflow_run.event == 'schedule'
                || github.event.workflow_run.event == 'workflow_dispatch'))
           || (github.event.workflow_run.path == '.github/workflows/ci.yml'
+              && (github.event.workflow_run.event == 'push'))
+          || (github.event.workflow_run.path == '.github/workflows/merge.yml'
               && (github.event.workflow_run.event == 'push'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15

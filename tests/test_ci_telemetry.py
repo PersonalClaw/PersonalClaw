@@ -218,6 +218,14 @@ def _collect(tmp_path: Path, monkeypatch, gh: FakeGh, attempt: int = 1) -> tuple
             id="a fork's run on a branch it named main",
         ),
         pytest.param(_run(head_repository={"full_name": "someone/fork"}), id="a fork's main"),
+        pytest.param(
+            _run(name="Merge", path=telemetry.MERGE_PATH, event="workflow_dispatch"),
+            id="merge.yml dispatched on main",
+        ),
+        pytest.param(
+            _run(name="Merge", path=telemetry.MERGE_PATH, event="pull_request"),
+            id="merge.yml on a pull request",
+        ),
     ],
 )
 def test_a_run_that_does_not_count_is_never_read(run: dict, tmp_path: Path, monkeypatch) -> None:
@@ -233,6 +241,8 @@ def test_a_run_that_does_not_count_is_never_read(run: dict, tmp_path: Path, monk
     "run",
     [
         pytest.param(_run(), id="a push to main"),
+        # merge.yml's push stage once the flip retires ci.yml: the newer shape of the same run.
+        pytest.param(_run(name="Merge", path=telemetry.MERGE_PATH), id="merge.yml's push to main"),
         pytest.param(
             _run(name="Breadth", path=telemetry.BREADTH_PATH, event="schedule"),
             id="breadth's night",

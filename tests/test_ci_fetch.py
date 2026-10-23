@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.ci import fetch, report, telemetry
+from tools.ci import fetch, report, telemetry, workflows
 
 REPO = "owner/project"
 NOW = datetime.datetime(2026, 10, 26, 8, 13, tzinfo=datetime.UTC)
@@ -105,7 +105,7 @@ class Gh:
 
     def __init__(self) -> None:
         self.runs: list[dict] = []
-        self.sources: dict[str, list[dict]] = {"ci.yml": [], "breadth.yml": []}
+        self.sources: dict[str, list[dict]] = {name: [] for name in telemetry.COUNTED}
         self.artifacts: dict[int, list[dict]] = {}
         self.data: dict[int, bytes] = {}
         self.carried: list[dict] = []
@@ -135,11 +135,11 @@ class Gh:
         return run
 
     def source(self, run_id: int, days_ago: float, workflow: str = "ci.yml", **changes: object):
-        """The CI or Breadth run a history came from, as its workflow's listing shows it."""
+        """The CI, Merge or Breadth run a history came from, as its workflow's listing shows it."""
         run = {
             "id": run_id,
             "path": f"{telemetry.WORKFLOWS}/{workflow}",
-            "event": "push" if workflow == "ci.yml" else "schedule",
+            "event": "push" if workflow in workflows.MAIN_PUSH else "schedule",
             "head_branch": "main",
             "head_repository": {"full_name": REPO},
             "run_attempt": 1,
@@ -422,9 +422,10 @@ def test_an_archive_over_the_limit_is_never_downloaded_nor_kept(tmp_path: Path) 
 def test_a_history_whose_source_run_cannot_be_shown_is_refused(
     tmp_path: Path, head: dict, source: dict | None, why: str
 ) -> None:
-    """A history is kept only when its run line names a counted run (a push to main of ci.yml,
-    or a scheduled or dispatched Breadth run on main) that the workflow's own listing shows, in
-    this repository, with that attempt, and the archive is named after that run and attempt."""
+    """A history is kept only when its run line names a counted run (a push to main of ci.yml or
+    merge.yml, or a scheduled or dispatched Breadth run on main) that the workflow's own listing
+    shows, in this repository, with that attempt, and the archive is named after that run and
+    attempt."""
     gh = Gh()
     gh.collector(30, "workflow_run", 1)
     attempt = head.get("attempt", 1)
@@ -521,6 +522,17 @@ def test_a_breadth_history_is_shown_by_breadths_own_listing(tmp_path: Path) -> N
     )
     gh.source(300, 1, workflow="breadth.yml")
     assert _fetch(gh, tmp_path / "window").fetched == 1
+
+
+def test_a_merge_history_is_shown_by_merges_own_listing(tmp_path: Path) -> None:
+    """A push to main of merge.yml counts as ci.yml's does, so its history is fetched too (#3915):
+    both shapes are read until the flip deletes ci.yml."""
+    gh = Gh()
+    gh.collector(30, "workflow_run", 1)
+    gh.artifact(30, "telemetry-history-300-1", _history_zip(300, 1, workflow=workflows.MERGE))
+    gh.source(300, 1, workflow=workflows.MERGE)
+    assert _fetch(gh, tmp_path / "window").fetched == 1
+    assert any(f"/actions/workflows/{workflows.MERGE}/runs?" in a for a in gh.asked), gh.asked
 
 
 def test_a_second_archive_of_one_name_is_refused(tmp_path: Path) -> None:

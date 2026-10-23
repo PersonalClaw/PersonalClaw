@@ -17,6 +17,7 @@ import pytest
 
 from tools.ci import catalogue
 from tools.ci import plan as planner
+from tools.ci import workflows
 
 _TEXT = """
 [tier.merge]
@@ -693,9 +694,11 @@ def test_every_plan_reports_the_floor() -> None:
     assert _plan([]).rails_floor == planner.NOT_MEASURED
 
 
-def _legs(folder: Path, run_id: int, *legs: tuple[str, str, float]) -> None:
+def _legs(
+    folder: Path, run_id: int, *legs: tuple[str, str, float], workflow: str = workflows.LEGACY
+) -> None:
     jobs = [{"name": n, "conclusion": c, "minutes": m} for n, c, m in legs]
-    _head(folder, run_id, json.dumps({"kind": "run", "workflow": "ci.yml", "jobs": jobs}))
+    _head(folder, run_id, json.dumps({"kind": "run", "workflow": workflow, "jobs": jobs}))
 
 
 #: The three legs, passing, in minutes.
@@ -709,6 +712,45 @@ def _three(first: float, second: float, third: float) -> tuple[tuple[str, str, f
 
 def test_the_floor_reads_the_rails_job_as_three_legs() -> None:
     assert planner.FLOOR_LEGS == ("rails (1)", "rails (2)", "rails (3)")
+    # merge.yml names each leg by its matrix key, as run-job keys its record.
+    assert planner.FLOOR_MATRIX_LEGS == ("rails (1/3)", "rails (2/3)", "rails (3/3)")
+
+
+def test_the_floor_reads_each_workflow_a_push_to_main_runs_in() -> None:
+    assert planner.FLOOR_WORKFLOWS == workflows.MAIN_PUSH == (workflows.MERGE, workflows.LEGACY)
+
+
+def _matrix_three(first: float, second: float, third: float) -> tuple[tuple[str, str, float], ...]:
+    return tuple(
+        (f"rails ({n}/3)", c, m) for n, (_, c, m) in enumerate(_three(first, second, third), 1)
+    )
+
+
+def test_a_merge_yml_push_floor_is_its_slowest_leg_by_matrix_key(tmp_path) -> None:
+    """Both shapes of a push to main's run, while both exist: merge.yml's legs by matrix key and
+    ci.yml's by number. Each workflow's run reads by its own names alone."""
+    _legs(tmp_path, 1, *_matrix_three(6.0, 4.0, 5.0), workflow=workflows.MERGE)
+    _legs(tmp_path, 2, *_three(5.0, 5.5, 3.0))
+    _legs(tmp_path, 3, *_matrix_three(9.0, 1.0, 1.0), workflow=workflows.MERGE)
+    assert planner.rails_floor(tmp_path) == {"minutes": 6.0, "runs": 3}
+
+
+@pytest.mark.parametrize(
+    ("workflow", "legs"),
+    [
+        pytest.param(workflows.MERGE, _three(6.0, 5.0, 4.0), id="merge.yml with ci.yml's names"),
+        pytest.param(workflows.LEGACY, _matrix_three(6.0, 5.0, 4.0), id="ci.yml with merge.yml's"),
+        pytest.param(
+            workflows.MERGE,
+            _matrix_three(6.0, 5.0, 4.0)[:2] + (("rails (3)", "success", 4.0),),
+            id="both names in one run",
+        ),
+        pytest.param(workflows.FEEDBACK, _matrix_three(6.0, 5.0, 4.0), id="pr.yml's run"),
+    ],
+)
+def test_a_run_whose_legs_are_not_its_workflows_measures_nothing(tmp_path, workflow, legs) -> None:
+    _legs(tmp_path, 1, *legs, workflow=workflow)
+    assert planner.rails_floor(tmp_path) == planner.NOT_MEASURED
 
 
 def test_a_run_in_legs_floor_is_its_slowest_leg(tmp_path) -> None:
@@ -1279,10 +1321,12 @@ def _gh(
     clock: _Clock | None = None,
     cost=None,
     timeouts: list[float | None] | None = None,
+    merge: tuple[int, ...] = (),
 ):
-    """A fake gh: the listed runs, each with its conclusion and its history archive. With a
-    ``clock``, each call takes ``cost(args)`` seconds, or its timeout, when that is shorter, and
-    then fails as a hung call would."""
+    """A fake gh: the listed runs, each with its conclusion and its history archive, all of them
+    ci.yml's but those ``merge`` names, which merge.yml lists. With a ``clock``, each call takes
+    ``cost(args)`` seconds, or its timeout, when that is shorter, and then fails as a hung call
+    would."""
     from tools.ci import telemetry
 
     def spend(args: tuple[str, ...], timeout: float | None) -> None:
@@ -1300,7 +1344,9 @@ def _gh(
         spend(args, timeout)
         path = args[1]
         if path.startswith(f"repos/{_REPO}/actions/workflows/"):
-            return "".join(f"{r} {c} {owner}\n" for r, (c, _) in runs.items())
+            of_merge = path.startswith(f"repos/{_REPO}/actions/workflows/{workflows.MERGE}/")
+            listed = {r: v for r, v in runs.items() if (r in merge) == of_merge}
+            return "".join(f"{r} {c} {owner}\n" for r, (c, _) in listed.items())
         if path.startswith(f"repos/{_REPO}/actions/artifacts?name="):
             run = int(path.split("telemetry-history-")[1].split("-")[0])
             if runs[run][1] is None:
@@ -1332,6 +1378,28 @@ def _gh(
 
 def _floor(text, binary, **kw):
     return planner.rails_floor_from_ci(_REPO, text=text, binary=binary, **kw)
+
+
+def test_the_ci_floor_lists_merge_yml_s_runs_before_ci_yml_s() -> None:
+    """The newer shape first: merge.yml's push runs once the flip lands, ci.yml's until then. A
+    run listed under one workflow counts only when its history names that workflow."""
+    asked: list[str] = []
+    runs = {
+        3: ("success", _zip(3, 0, workflows.MERGE, legs=_matrix_three(8.0, 1.0, 1.0))),
+        2: ("success", _zip(2, 6.0)),
+        1: ("success", _zip(1, 7.0)),
+        # Listed under merge.yml, but its history names ci.yml: no measurement of merge.yml's.
+        0: ("success", _zip(0, 99.0)),
+    }
+    text, binary = _gh(runs, merge=(3, 0))
+
+    def listing(*args: str, timeout: float | None = None) -> str:
+        if "/actions/workflows/" in args[1]:
+            asked.append(args[1].split("/actions/workflows/")[1].split("/")[0])
+        return text(*args, timeout=timeout)
+
+    assert _floor(listing, binary) == {"minutes": 7.0, "runs": 3}
+    assert asked == [workflows.MERGE, workflows.LEGACY]
 
 
 def test_the_ci_floor_is_the_median_of_the_newest_three_collected_runs() -> None:
@@ -1474,7 +1542,9 @@ def test_reading_never_passes_its_time_limit(listing: float, each: float) -> Non
 def test_a_read_that_runs_out_of_time_keeps_what_it_read(capsys) -> None:
     clock = _Clock()
     runs = {2: ("success", _zip(2, 8.0)), 1: ("success", _zip(1, 6.0))}
-    text, binary = _gh(runs, clock=clock, cost=lambda args: 15.0)
+    # 12 s a call: merge.yml's listing, ci.yml's, then run 2's artifact, uploader and archive
+    # spend the 60 s, and run 1 is never read.
+    text, binary = _gh(runs, clock=clock, cost=lambda args: 12.0)
     assert _floor(text, binary, clock=clock) == {"minutes": 8.0, "runs": 1}
     assert clock.now <= planner.FLOOR_SECONDS
     assert "rails floor not read" in capsys.readouterr().err

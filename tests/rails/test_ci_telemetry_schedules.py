@@ -42,10 +42,13 @@ def _collector() -> dict:
     return yaml.safe_load(_COLLECTOR.read_text("utf-8"))
 
 
-def test_the_collector_follows_both_collected_workflows_by_name() -> None:
+def test_the_collector_follows_every_collected_workflow_by_name() -> None:
     names = {
-        yaml.safe_load((REPO / p).read_text("utf-8"))["name"]
-        for p in (telemetry.CI_PATH, telemetry.BREADTH_PATH)
+        yaml.safe_load((REPO / telemetry.WORKFLOWS / name).read_text("utf-8"))["name"]
+        for name in telemetry.COUNTED
+    }
+    assert {telemetry.CI_PATH, telemetry.MERGE_PATH, telemetry.BREADTH_PATH} == {
+        f"{telemetry.WORKFLOWS}/{name}" for name in telemetry.COUNTED
     }
     on = _collector()[True]
     assert set(on["workflow_run"]["workflows"]) == names
