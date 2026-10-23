@@ -866,8 +866,12 @@ def test_the_streaming_reader_gives_the_figures_the_in_memory_one_did(
     assert {k: data[k] for k in expected} == expected
 
 
-#: A real main history's 53,999 tests by how long each took, at 1 in 100: (seconds, tests).
-_SPREAD = ((0.005, 1), (0.05, 388), (0.4, 138), (2.5, 10), (20.0, 3))
+#: A real main history's 53,999 tests by how long each took, at 1 in 200, a bucket's share rounded
+#: up to a whole test: (seconds, tests). The projection scales a run's whole cost by
+#: ``MAIN_RUN_TESTS / tests``, so the smaller sample charges a run's fixed cost more, never less
+#: (276 MiB at 1 in 100, 361 at 1 in 200). At 1 in 100 the reads under tracemalloc took 144 s on a
+#: hosted Mac, past the per-test timeout (#3905).
+_SPREAD = ((0.005, 1), (0.05, 194), (0.4, 69), (2.5, 5), (20.0, 2))
 #: A real main run's tests, and the histories 90 days hold (docs/maintainers/ci.md).
 MAIN_RUN_TESTS = 54_000
 RUNS_IN_90_DAYS = 860
