@@ -265,6 +265,182 @@ def test_a_toolchains_caches_managed_pythons_and_venv_are_under_the_work_folder(
     assert seen["UV_PYTHON"] == "3.12.15"
 
 
+# ── the chromium install (#5265): apt only when Chromium cannot start, and apt bounded ────────
+
+_OK = run.Result(run.OK, 0, ())
+_EXITED = run.Result(run.RED, 1, ("the job exited 1",))
+_INSTALL, _CHECK = jobs.INSTALL_ARGV["chromium"], jobs.CHROMIUM_START_CHECK
+_LIBRARIES = jobs.CHROMIUM_LIBRARIES
+_HUNG = run.Result(run.RED, -15, (f"the job timed out after {jobs.CHROMIUM_LIBRARIES_S:g}s",))
+
+
+def _answering(*results: run.Result):
+    """A step answering each command with the next of *results*; and what it was asked, with
+    the seconds each was given."""
+    asked: list[tuple[tuple[str, ...], float]] = []
+    left = list(results)
+
+    def step(argv, bound) -> run.Result:
+        asked.append((tuple(argv), bound))
+        return left.pop(0)
+
+    return step, asked
+
+
+def test_chromium_installs_without_apt_and_a_chromium_that_starts_needs_none(capsys):
+    step, asked = _answering(_OK, _OK)
+    assert jobs.install_chromium(step) == (run.OK, [], False)
+    assert asked == [
+        (_INSTALL, jobs.CHROMIUM_INSTALL_S),
+        (_CHECK, jobs.CHROMIUM_START_CHECK_S),
+    ]
+    assert _INSTALL == ("npx", "playwright", "install", "chromium")
+    assert (jobs.CHROMIUM_INSTALL_S, jobs.CHROMIUM_START_CHECK_S) == (300, 120)
+    assert "::warning::" not in capsys.readouterr().out
+
+
+def test_a_chromium_that_cannot_start_gets_its_libraries_from_apt_and_then_must_start(capsys):
+    step, asked = _answering(_OK, _EXITED, _OK, _OK)
+    assert jobs.install_chromium(step) == (run.OK, [], False)
+    assert asked == [
+        (_INSTALL, jobs.CHROMIUM_INSTALL_S),
+        (_CHECK, jobs.CHROMIUM_START_CHECK_S),
+        (_LIBRARIES, jobs.CHROMIUM_LIBRARIES_S),
+        (_CHECK, jobs.CHROMIUM_START_CHECK_S),
+    ]
+    assert jobs.CHROMIUM_LIBRARIES_S == 300
+    assert "::warning::Chromium did not start on this runner image" in capsys.readouterr().out
+    # A check that timed out is the same answer as one that exited.
+    slow = run.Result(run.RED, -15, (f"the job timed out after {jobs.CHROMIUM_START_CHECK_S}s",))
+    step, asked = _answering(_OK, slow, _OK, _OK)
+    assert jobs.install_chromium(step) == (run.OK, [], False) and len(asked) == 4
+    # It must start after: a check that still fails is the job's red.
+    step, _ = _answering(_OK, _EXITED, _OK, _EXITED)
+    assert jobs.install_chromium(step) == (
+        run.RED,
+        ["Chromium does not start with its system libraries: the job exited 1"],
+        False,
+    )
+
+
+def test_a_hung_apt_mirror_is_red_within_its_bound_and_named(capsys):
+    step, asked = _answering(_OK, _EXITED, _HUNG)
+    code, why, interrupted = jobs.install_chromium(step)
+    assert code == run.RED and not interrupted
+    assert why[0] == (
+        "Chromium's system libraries did not install within 300s: the apt mirror is slow or down"
+    )
+    assert [argv for argv, _ in asked] == [_INSTALL, _CHECK, _LIBRARIES]
+    out = capsys.readouterr().out
+    assert "::error::Chromium's system libraries did not install within 300s" in out
+    # An apt that fails on its own is red too, and not named as the mirror.
+    step, _ = _answering(_OK, _EXITED, run.Result(run.RED, 100, ("the job exited 100",)))
+    assert jobs.install_chromium(step) == (
+        run.RED,
+        ["Chromium's system libraries: the job exited 100"],
+        False,
+    )
+    assert "::error::" not in capsys.readouterr().out
+
+
+def test_an_install_that_does_not_finish_is_red_and_nothing_after_it_runs():
+    hung = run.Result(run.RED, -15, (f"the job timed out after {jobs.CHROMIUM_INSTALL_S}s",))
+    step, asked = _answering(hung)
+    assert jobs.install_chromium(step) == (
+        run.RED,
+        ["Chromium did not install: the job timed out after 300s"],
+        False,
+    )
+    assert len(asked) == 1
+
+
+def test_a_check_that_tripped_or_was_interrupted_is_never_read_as_chromium_not_starting():
+    tripped = run.Result(
+        run.RED,
+        1,
+        ("the job exited 1", "the job made the real home's /h/.personalclaw, which was absent"),
+    )
+    step, asked = _answering(_OK, tripped)
+    code, why, _ = jobs.install_chromium(step)
+    assert code == run.RED and len(asked) == 2
+    assert why[-1].startswith("Chromium's start check: the job made the real home's")
+    stopped = run.Result(run.PARTIAL, -2, ("interrupted by SIGINT",), interrupted=True)
+    step, asked = _answering(_OK, stopped)
+    assert jobs.install_chromium(step) == (
+        run.PARTIAL,
+        ["Chromium's start check: interrupted by SIGINT"],
+        True,
+    )
+    assert len(asked) == 2
+
+
+def _browser_job_run(repo, tmp_path, monkeypatch, timeout_min, **answers):
+    """Run a job whose toolchain is chromium with run.run_job faked: each command answered by
+    *answers* (its name: CHECK or LIBRARIES; a list, in turn), else OK; and each call's argv,
+    timeout and budget."""
+    given: list[tuple[tuple[str, ...], float, float | None]] = []
+    queues = {{"CHECK": _CHECK, "LIBRARIES": _LIBRARIES}[k]: list(v) for k, v in answers.items()}
+
+    def fake_run_job(argv, *, timeout, budget=None, **kw) -> run.Result:
+        given.append((tuple(argv), timeout, budget))
+        queue = queues.get(tuple(argv))
+        return queue.pop(0) if queue else _OK
+
+    monkeypatch.setattr(run, "run_job", fake_run_job)
+    stubs = _stubs(tmp_path, "npx")
+    host = _host(repo, path=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    job = _job("browser", "pass", toolchain=("chromium",), timeout_min=timeout_min)
+    return _run(repo, job, tmp_path, host=host), given
+
+
+def test_run_job_gives_each_chromium_command_its_own_bound(repo, tmp_path, monkeypatch):
+    outcome, given = _browser_job_run(repo, tmp_path, monkeypatch, 30, CHECK=[_EXITED])
+    assert outcome.code == run.OK, outcome.reasons
+    assert given[:4] == [
+        (_INSTALL, 300, 300),
+        (_CHECK, 120, 120),
+        (_LIBRARIES, 300, 300),
+        (_CHECK, 120, 120),
+    ]
+    # Then the entry's own step, with what is left of the job.
+    [(argv, timeout, budget)] = given[4:]
+    assert argv[1:] == ("-c", "pass") and budget == 30 * 60 - jobs.MARGIN_S >= timeout
+    # The record holds what the result rests on: the check that sent the install to apt is its
+    # answer, which the libraries' step records, and a success holds no step that exited non-zero.
+    assert [s["argv"] for s in _record(outcome)["steps"]] == [
+        list(_INSTALL),
+        list(_LIBRARIES),
+        list(_CHECK),
+        [PY, "-c", "pass"],
+    ]
+
+
+def test_run_job_stops_at_a_hung_apt_mirror_and_names_it(repo, tmp_path, monkeypatch):
+    outcome, given = _browser_job_run(
+        repo, tmp_path, monkeypatch, 30, CHECK=[_EXITED], LIBRARIES=[_HUNG]
+    )
+    assert outcome.code == run.RED
+    assert outcome.reasons[0] == (
+        "step 1: Chromium's system libraries did not install within 300s: the apt mirror is slow"
+        " or down"
+    )
+    assert [argv for argv, _, _ in given] == [_INSTALL, _CHECK, _LIBRARIES]
+    # A red record keeps every command that ran, the failed check among them.
+    assert [(s["argv"], s["exit"]) for s in _record(outcome)["steps"]] == [
+        (list(_INSTALL), 0),
+        (list(_CHECK), 1),
+        (list(_LIBRARIES), -15),
+    ]
+
+
+def test_a_chromium_bound_longer_than_the_job_has_left_is_the_jobs(repo, tmp_path, monkeypatch):
+    outcome, given = _browser_job_run(repo, tmp_path, monkeypatch, 2)
+    assert outcome.code == run.OK, outcome.reasons
+    argv, timeout, budget = given[0]
+    total = 2 * 60 - jobs.MARGIN_S
+    assert argv == _INSTALL and total - 5 < timeout <= total and budget == total
+
+
 @pytest.mark.skipif(shutil.which("uv") is None, reason="runs uv venv, which needs uv on PATH")
 def test_a_uv_venv_step_runs_again_over_the_venv_an_earlier_run_left(repo, tmp_path):
     # client's `uv venv .venv-client`: CI's checkout is new each run, a local one is not.

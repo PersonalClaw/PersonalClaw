@@ -75,6 +75,7 @@ Standard library only, like every ``tools/ci`` module.
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -110,6 +111,20 @@ INSTALL_ARGV: dict[str, tuple[str, ...]] = {
     "chromium": ("npx", "playwright", "install", "chromium"),
     "electron": ("sh", "tools/ci/install_electron.sh"),
 }
+
+#: The `chromium` install's bounds and commands beside :data:`INSTALL_ARGV`'s, as CI's browser legs
+#: run them since #5265 (:func:`install_chromium`): Playwright's build without apt, a check that it
+#: starts, and its system libraries from apt only when that check fails. A hung apt mirror then
+#: holds the job for a bound that names it, never its whole limit.
+CHROMIUM_INSTALL_S = 300
+CHROMIUM_START_CHECK: tuple[str, ...] = (
+    "node",
+    "-e",
+    "require('playwright').chromium.launch().then((browser) => browser.close())",
+)
+CHROMIUM_START_CHECK_S = 120
+CHROMIUM_LIBRARIES: tuple[str, ...] = ("npx", "playwright", "install-deps", "chromium")
+CHROMIUM_LIBRARIES_S = 300
 
 #: Each toolchain word that is a program this machine must already have.
 PROGRAMS: dict[str, str] = {
@@ -1197,6 +1212,68 @@ def run_id_of(host: Host) -> int | None:
     return int(text)
 
 
+def _only_failed(result: run.Result) -> bool:
+    """Whether *result* failed by its own exit or its own time alone: no signal, and no credential
+    tripwire or real home, which are never a check's answer."""
+    return (
+        result.code == run.RED
+        and not result.interrupted
+        and all(
+            v.startswith(("the job exited ", "the job timed out after ")) for v in result.violations
+        )
+    )
+
+
+def install_chromium(
+    step: Callable[[Sequence[str], float], run.Result],
+) -> tuple[int, list[str], bool]:
+    """The `chromium` toolchain word's install, as CI's browser legs make it since #5265. *step*
+    runs one command within the seconds it is given, or what is left of the job when that is less.
+
+    1. ``npx playwright install chromium``, the build the lock pins, within
+       :data:`CHROMIUM_INSTALL_S`, and no apt.
+    2. :data:`CHROMIUM_START_CHECK` within :data:`CHROMIUM_START_CHECK_S`: Chromium starts. Its
+       failing is an answer, not the job's red.
+    3. Only when it does not: :data:`CHROMIUM_LIBRARIES` within :data:`CHROMIUM_LIBRARIES_S`,
+       named as the apt mirror when it does not finish, then the check again, which must pass.
+
+    The e2e legs and browse-live check alike: the proof finds the headless shell Playwright
+    installed under the run's ``PLAYWRIGHT_BROWSERS_PATH`` (tests/browse_chrome.py), the same
+    binary ``chromium.launch()`` starts, so the libraries it needs are the same. Returns the run's
+    code, the reasons it is not OK and whether the runner was interrupted."""
+    installed = step(INSTALL_ARGV["chromium"], CHROMIUM_INSTALL_S)
+    if installed.code != run.OK:
+        why = [f"Chromium did not install: {v}" for v in installed.violations]
+        return installed.code, why, installed.interrupted
+    checked = step(CHROMIUM_START_CHECK, CHROMIUM_START_CHECK_S)
+    if checked.code == run.OK:
+        return run.OK, [], False
+    if not _only_failed(checked):
+        why = [f"Chromium's start check: {v}" for v in checked.violations]
+        return checked.code, why, checked.interrupted
+    print(
+        "::warning::Chromium did not start on this runner image, so its system libraries"
+        " install from apt",
+        flush=True,
+    )
+    libraries = step(CHROMIUM_LIBRARIES, CHROMIUM_LIBRARIES_S)
+    if libraries.code != run.OK:
+        why = [f"Chromium's system libraries: {v}" for v in libraries.violations]
+        if f"the job timed out after {CHROMIUM_LIBRARIES_S:g}s" in libraries.violations:
+            named = (
+                f"Chromium's system libraries did not install within {CHROMIUM_LIBRARIES_S:g}s:"
+                " the apt mirror is slow or down"
+            )
+            print(f"::error::{named}", flush=True)
+            why.insert(0, named)
+        return libraries.code, why, libraries.interrupted
+    again = step(CHROMIUM_START_CHECK, CHROMIUM_START_CHECK_S)
+    if again.code != run.OK:
+        why = [f"Chromium does not start with its system libraries: {v}" for v in again.violations]
+        return again.code, why, again.interrupted
+    return run.OK, [], False
+
+
 def run_one(
     cat: Catalogue,
     job: Job,
@@ -1263,12 +1340,50 @@ def run_one(
     code = run.OK
     interrupted = False
     rerun: dict[str, object] | None = None
+
+    def bounded(
+        n: int, ran: list[tuple[list[str], int, float]], words: Sequence[str], bound: float
+    ) -> run.Result:
+        """One command of step *n*, an install with bounds of its own, noted in *ran*: *bound*
+        seconds, or what is left of the job when that is less, which a timeout's reason then
+        names."""
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return run.Result(
+                run.RED, 0, (f"the job's {total:g}s ran out before {shlex.join(words)}",)
+            )
+        print(f"[{key}] step {n}: {' '.join(words)}", file=sys.stderr, flush=True)
+        began = time.monotonic()
+        result = run.run_job(
+            words,
+            cwd=host.root,
+            scratch=scratch,
+            timeout=min(bound, left),
+            path=host.path,
+            env=base_env,
+            grace=options.grace,
+            budget=bound if bound <= left else total,
+        )
+        ran.append((list(words), result.returncode, time.monotonic() - began))
+        return result
+
     for n, (argv, workdir, env) in enumerate(planned, 1):
         left = deadline - time.monotonic()
         if left <= 0:
             reasons.append(f"the job's {total:g}s ran out before step {n} ({' '.join(argv)})")
             code = run.RED
             break
+        if n < first_command and tuple(argv) == INSTALL_ARGV["chromium"]:
+            ran: list[tuple[list[str], int, float]] = []
+            code, more, interrupted = install_chromium(functools.partial(bounded, n, ran))
+            # A record of success holds no step that exited non-zero (verdict.job_record). The
+            # only one a green install leaves is the start check that sent it to apt: an answer,
+            # not a failure, which the libraries' step after it records. A red one keeps all.
+            steps.extend(s for s in ran if code != run.OK or s[1] == 0)
+            reasons.extend(f"step {n}: {m}" for m in more)
+            if code != run.OK:
+                break
+            continue
         print(f"[{key}] step {n}: {' '.join(argv)}", file=sys.stderr, flush=True)
         began = time.monotonic()
         kept = scratch.root / f"step-{n}.out" if job.lint_feedback and n >= first_command else None
