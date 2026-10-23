@@ -43,6 +43,10 @@ from personalclaw.agents.native.failover import (
 )
 from personalclaw.agents.native.local_turn import take_local_turn
 from personalclaw.agents.native.owed_reply import OwedReply, answered_row, capped_at
+from personalclaw.agents.native.steer_intake import (  # noqa: F401 — the cap, read by tests
+    _MAX_STEERS_PER_TURN,
+    SteerIntake,
+)
 from personalclaw.agents.native.tool_names import name_census
 from personalclaw.agents.native.tools import (
     ARGUMENTS_UNREADABLE,
@@ -140,10 +144,6 @@ _INFERENCE_RETRY_BACKOFF_SECS = 0.5
 # (`pre_tool_hooks.on_tool`, which the bridge binds to the agent the runtime runs as).
 HookFire = Callable[[str, Any], Awaitable[HooksSaid]]
 
-# Cap mid-turn steer injections so a message flood can't extend one turn
-# forever — past this, further steers wait for the next turn.
-_MAX_STEERS_PER_TURN = 4
-
 # Sentinel: the tool passed deny-list + hooks but needs interactive approval,
 # so the generator path (_run_tool) must run the gated branch.
 _NEEDS_APPROVAL: Any = object()
@@ -197,7 +197,7 @@ class _PreparedCall:
 # a notice's wording is defined once and cannot drift between the two runtimes.
 
 
-class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
+class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, SteerIntake, AgentProvider):
     """In-process agent runtime for one session."""
 
     def __init__(
@@ -2576,71 +2576,6 @@ class NativeAgentRuntime(InProcessCompaction, CatalogRefresh, AgentProvider):
 
     def set_session_key(self, session_key: str, channel_id: str | None = None) -> None:
         self._session_key = session_key
-
-    def set_steer_source(self, pull: "Callable[[], list[str]] | None") -> bool:
-        """Wire the queue-steering source: a callable the loop drains at each
-        model boundary for mid-turn user messages. None disables steering.
-
-        Returns whether a drain is now armed, so the dispatcher reads one answer from
-        every runtime instead of inferring native's from the absence of a refusal
-        (the ACP seam CAN refuse, this one never does)."""
-        self._pull_steer = pull
-        return pull is not None
-
-    def _take_steers(self) -> list[str]:
-        """Append any pending steers to history as fresh user input, and return them: what
-        this turn took, in order. The loop says each (``EVENT_STEER``), for the chat to write it
-        where the turn took it, and runs another inference so it affects the answer in progress.
-
-        Called at BOTH model boundaries — after a tool batch, and before a no-tool-call
-        turn would end. The second call site is the one that matters in practice: most
-        turns are plain prose and never execute a tool, and with the drain only after
-        the tool batch those steers were dropped after the API had already reported
-        success.
-
-        Capped by ``_MAX_STEERS_PER_TURN`` so a flood cannot extend one turn forever;
-        once the cap is hit this returns nothing and the turn ends normally.
-
-        The overflow is RETAINED on ``_steer_pending``, never dropped. The pull empties
-        the session's buffer, so popping the whole deque and then breaking at the cap
-        discarded steers that existed nowhere else — measured: with the cap at 4 and 7
-        buffered, three vanished from history, from the session deque, and from this
-        runtime in one call. The cap is a bound on how much redirection ONE turn absorbs,
-        not a licence to lose the rest, so what does not fit stays owed and is reported at
-        turn end by :meth:`undelivered_steers` for the dispatcher to requeue visibly.
-        """
-        if self._pull_steer is not None:
-            try:
-                pulled = self._pull_steer()
-            except Exception:
-                logger.debug("steer drain failed", exc_info=True)
-                pulled = []
-            self._steer_pending.extend(s for s in (pulled or []) if s and s.strip())
-        taken: list[str] = []
-        while self._steer_pending and self._steers_injected < _MAX_STEERS_PER_TURN:
-            s = self._steer_pending.pop(0)
-            self._messages.append(
-                {
-                    "role": "user",
-                    "content": f"[Steering — the user added this mid-task]\n{s}",
-                }
-            )
-            self._steers_injected += 1
-            taken.append(s)
-        return taken
-
-    def undelivered_steers(self) -> list[str]:
-        """Steers this turn owes the user: pulled from the session's buffer but never
-        appended to history, because the per-turn cap was already spent. Empty on the
-        happy path.
-
-        Read by the dispatcher at turn end (the same duck-typed seam
-        :class:`~personalclaw.acp.session.AcpSession` exposes) so an undeliverable steer is
-        requeued onto the visible queue instead of vanishing. Deliberately NOT an
-        ``activity_event``: the chat drops a steer's own notes (``kind:"steer"``), so
-        announcing the loss that way would be an invisible fix.
-        """
-        return list(self._steer_pending)
 
     def set_approval_policy(self, policy: str) -> None:
         self._approval_policy = policy or ""
