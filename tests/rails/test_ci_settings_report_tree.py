@@ -28,6 +28,8 @@ _REPOSITORIES = {
     "PersonalClaw/personalclaw.dev",
 }
 _READ_STEP = "read the settings and compare, and on main write the drift issue"
+#: The environments only a release run may deploy to (#4584): a tag's own release.yml.
+_TAG_ONLY = ("release", "release-client", "website-follow")
 _ON_MAIN = "${{ github.ref == 'refs/heads/main' && github.repository || '' }}"
 
 
@@ -80,6 +82,12 @@ def _expected_problems(data: dict[str, Any]) -> list[str]:
         if entry.get("allowed bypass"):
             found.append(f"{repo} allows a bypass: {entry['allowed bypass']!r}")
     core = repos.get("PersonalClaw/PersonalClaw") or {}
+    for name in _TAG_ONLY:
+        deploys = ((core.get("environments") or {}).get(name) or {}).get("deployment")
+        if deploys != ["tag:v*"]:
+            found.append(f"core's {name} environment deploys from {deploys!r}, not v* tags alone")
+    if core.get("fork approval") != "first_time_contributors":
+        found.append(f"core's fork approval is {core.get('fork approval')!r}")
     env = (core.get("environments") or {}).get("settings-report")
     if not isinstance(env, dict) or env.get("deployment") != ["branch:main"]:
         found.append(
@@ -140,6 +148,24 @@ def test_the_expected_file_names_every_setting_and_keeps_the_credential_on_main(
         (
             lambda d: d["repositories"]["PersonalClaw/PersonalClawApps"].pop("security"),
             "misses ['security']",
+        ),
+        (
+            lambda d: d["repositories"]["PersonalClaw/PersonalClaw"]["environments"][
+                "release"
+            ].update(deployment="any ref"),
+            "core's release environment deploys from 'any ref'",
+        ),
+        (
+            lambda d: d["repositories"]["PersonalClaw/PersonalClaw"]["environments"][
+                "website-follow"
+            ].update(deployment=["tag:v*", "branch:main"]),
+            "core's website-follow environment deploys from",
+        ),
+        (
+            lambda d: d["repositories"]["PersonalClaw/PersonalClaw"].update(
+                {"fork approval": "first_time_contributors_new_to_github"}
+            ),
+            "core's fork approval",
         ),
     ],
 )

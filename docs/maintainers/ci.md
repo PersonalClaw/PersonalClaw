@@ -44,6 +44,28 @@ any bypass used in the week.
 audit log records who and when), do the one thing, put the file's version back, and open an
 issue that says why. A bypass actor added for it shows in the next report as bypass use.
 
+### The release tags
+
+Two `v*` tag rulesets sit beside `main-protect` (#4584), apart because a ruleset's bypass list
+covers every rule in it:
+
+- `release-tags` refuses moving (`update`, `non_fast_forward`) and deleting a release tag, for
+  everyone, with no bypass actor.
+- `release-tag-creation` refuses creating one, with one bypass actor: the release controller's
+  GitHub App, which creates a tag only from the tagging workflow on `main`, for a commit on
+  `main`. So a hand-pushed `v*` tag is refused, the maintainer's included, and every tag's
+  `release.yml` is one `main` holds.
+
+`release-tags` is applied (2026-10-23): release tags are immutable today, and creating one still
+works as the release runbook says. `release-tag-creation` waits in `.github/rulesets/pending/`
+until that App exists; it is applied, and moved up beside the others with the App's id in its
+bypass list, in one step, so the weekly report starts expecting it the day it is live. `tests/rails/test_ci_rulesets_tree.py`
+holds both files to these rules, and the creation ruleset to that one App.
+
+The `release`, `release-client` and `website-follow` environments deploy only from `v*` tags,
+so no branch's copy of `release.yml`, dispatched or pushed, can reach the PyPI publishers or the
+website token. A dispatch on a tag still can: it runs the tag's own copy.
+
 ## Trust boundary
 
 A candidate (a pull request, or a push to a branch other than `main`) must not be able to change
