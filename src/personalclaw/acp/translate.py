@@ -53,7 +53,7 @@ def _declared_file_change(path: object, old: object, new: object) -> dict[str, s
     """A file-change chip built ONLY from what an ACP ``diff`` block declared.
 
     ACP's diff content block carries the file's whole ``oldText``/``newText``, which is
-    exactly the chip's contract (``chat_runner._flush_file_changes`` dedups per path
+    exactly the chip's contract (``dashboard.file_changes._flush_file_changes`` dedups per path
     keeping the earliest ``before`` and the latest ``after``). No path resolution and no
     disk read happens here: the native chip needs both because it reconstructs ``after``
     from a tool's arguments, and there is nothing to reconstruct when the agent states
