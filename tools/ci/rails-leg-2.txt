@@ -35,6 +35,7 @@ tests/rails/test_ci_action_pins_tree.py
 tests/rails/test_ci_audit_tree.py
 tests/rails/test_ci_catalogue_tree.py
 tests/rails/test_ci_dependency_review_tree.py
+tests/rails/test_ci_release_tag_tree.py
 tests/rails/test_ci_junit_artifacts_tree.py
 tests/rails/test_ci_python_suite_inputs_tree.py
 tests/rails/test_ci_supply_chain_contract.py

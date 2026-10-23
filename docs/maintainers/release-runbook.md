@@ -248,6 +248,10 @@ merges a commit's suite shard can be replaced by a newer push's, and its `test` 
 reads red as `superseded by <newer commit>`: its tree was not tested on its own. Tag the newer
 commit once its own run is green instead. Nothing enforces this yet; #3911's release gate must.
 
+A `v*` tag can never be moved or deleted once pushed ([the release tags](ci.md#the-release-tags)).
+Once `release-tag-creation` is applied too, a hand-pushed `v*` tag is refused, yours included:
+dispatch `release-tag.yml` on `main` with the tag and the commit instead. Until then:
+
 Tag the **merge commit on `main`**, not your branch tip:
 
 ```bash
