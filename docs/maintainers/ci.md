@@ -498,8 +498,10 @@ overrides (`--areas`, beside the catalogue by default):
 - **Pathspecs are read as git reads them.** The loader takes a pathspec only in git's normal
   form (no `.` or empty part, since git reads `.` as the tree but `:(top).` as nothing) and
   refuses a wildcard the planner would read otherwise than git: a backslash, a `[` it never
-  closes, a `/` or a `[:name:]` in a class, `literal` with `glob`. A test holds the matcher to
-  `git ls-files` over the forms it accepts.
+  closes, a `/` or a `[:name:]` in a class, `literal` with `glob`, and an exclude of every path
+  (`:!`, `:(exclude)*`, `:(exclude,glob)**`: a path of wildcards alone), which git 2.54 reads
+  beside an include as every path and git 2.55 as none, so an exclude names the paths it skips.
+  A test holds the matcher to `git ls-files` over the forms it accepts.
 - **The rails floor** is the median, over a folder of telemetry history (`--history`), of each
   `ci.yml` run's rails minutes: the slowest of its three legs, `rails (1)` to `rails (3)`, or
   the one `rails` job a run before the legs had. A run with a leg that did not pass, a leg
