@@ -184,6 +184,15 @@ describe('on a phone, where no ⌘K is, each moved page has an on-screen way in'
     }))
   }
 
+  it('Tasks: All tasks on the Projects page is a 44 px target there', async () => {
+    // The UI quality matrix measured it under 44 px at 320, 390, 412 and 768 (#3905). jsdom has no
+    // layout, so the classes that set its box are pinned; the matrix measures the box.
+    phone()
+    await open('projects')
+    const cls = screen.getByRole('button', { name: 'All tasks' }).className.toString().split(/\s+/)
+    expect(cls).toEqual(expect.arrayContaining(['max-lg:min-h-11', 'max-lg:min-w-11']))
+  })
+
   it('Tasks: the drawer\'s Projects, then All tasks there, or a project and its Tasks view', async () => {
     phone()
     await open('dashboard')
