@@ -95,6 +95,13 @@ permission = "issues: write"
 steps = ["read the settings and compare, and on main write the drift issue"]
 reason = "Opens or edits the one open issue titled `Repository settings drift` that the workflow's own account opened, and closes it when a run finds no drift; it writes the issue only on main, and no setting."
 
+[[audited_write]]
+workflow = "image-pins.yml"
+job = "check"
+permission = "issues: write"
+steps = ["check the pinned images, and on main write the refresh issue"]
+reason = "Opens or edits the one open issue titled `Pinned images to refresh` that the workflow's own account opened, and closes it when every pin is current; it writes the issue only on main, and no file."
+
 # Exceptions. One waives exactly one violation of one rule (scope) in one file, and expires at
 # most 30 days after the day it is written or renewed. Renewing is a new expiry with a new
 # reason. An expired entry, one more than 30 days out, one that matches nothing or more than one

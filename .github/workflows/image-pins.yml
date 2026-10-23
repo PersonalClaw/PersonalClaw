@@ -1,0 +1,54 @@
+# Weekly image check (#4585): every image a workflow pins itself (a job's `container:`, an
+# action's `image:` input), against what its tag names today (`python -m tools.ci image-pins`,
+# tools/ci/image_pins.py). Dependabot refreshes the Dockerfile bases and the actions, not these.
+#
+# It asks each image's registry anonymously, reads and writes no file, and fails on a moved tag
+# and on any pin it cannot check. On main it opens or edits the one open "Pinned images to
+# refresh" issue this workflow's account opened, with the exact new pin and index for each, and
+# closes it once every pin is current. The refresh itself is a reviewed pull request.
+#
+# Its own schedule slot, Mondays 07:53 UTC, is clear of every other workflow's.
+name: Image pins
+
+on:
+  schedule:
+    - cron: "53 7 * * 1"  # Mondays, 07:53 UTC
+  workflow_dispatch:
+
+# One check at a time, never cancelled: a second run waits, and then edits the issue the first
+# opened.
+concurrency:
+  group: image-pins
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    # A few registry calls per pinned image.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write   # the one "Pinned images to refresh" issue; nothing else
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's own tools/ci, run on the image's python3: standard-library Python, nothing installed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: check the pinned images, and on main write the refresh issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_REPO: ${{ github.ref == 'refs/heads/main' && github.repository || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          more=()
+          if [ -n "$ISSUE_REPO" ]; then
+            more+=(--issue-repo "$ISSUE_REPO")
+          fi
+          python3 -m tools.ci image-pins --run-url "$RUN_URL" "${more[@]}"
