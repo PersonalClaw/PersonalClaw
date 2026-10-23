@@ -56,6 +56,15 @@ def test_nothing_is_armed_off_github_actions(monkeypatch: pytest.MonkeyPatch) ->
     assert hang_stacks.configure(object()) is None
 
 
+def test_a_tree_without_tools_ci_arms_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child pytest on a tree of its own, under ``GITHUB_ACTIONS=true``, has no ``tools.ci``
+    to import: configure answers None rather than failing the run at startup (#4778)."""
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setitem(sys.modules, "tools.ci", None)
+    monkeypatch.setitem(sys.modules, "tools.ci.catalogue", None)
+    assert hang_stacks.configure(object()) is None
+
+
 def _run(tmp_path: Path, *args: str, actions: bool) -> subprocess.CompletedProcess[str]:
     (tmp_path / "plant_deadline.py").write_text(textwrap.dedent(_PLANT))
     (tmp_path / "test_stuck.py").write_text(textwrap.dedent(_STUCK))
