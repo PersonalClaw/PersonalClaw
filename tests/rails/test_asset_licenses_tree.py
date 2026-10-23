@@ -43,7 +43,7 @@ def _catalogue_checks() -> list[tuple[bool, bool]]:
     return checks
 
 
-@pytest.mark.parametrize("workflow", ["the catalogue", ".github/workflows/release.yml"])
+@pytest.mark.parametrize("workflow", ["the catalogue", ".github/workflows/release-artifacts.yml"])
 def test_each_workflow_checks_the_tree_and_the_web_build_it_made(workflow):
     if workflow == "the catalogue":
         checks = _catalogue_checks()

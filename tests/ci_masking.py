@@ -152,14 +152,9 @@ MASKED: tuple[Masked, ...] = (
         "Lists the leaked gateway for the log, in the branch that has already decided to exit 1.",
     ),
     Masked(
-        ".github/workflows/release.yml",
-        "trap 'hdiutil detach \"$MNT\" -quiet || true' EXIT",
-        "Detaches the mounted disk image on exit, whatever the check before it concluded.",
-    ),
-    Masked(
         ".github/workflows/release-artifacts.yml",
         "trap 'hdiutil detach \"$MNT\" -quiet || true' EXIT",
-        "The rehearsal's copy of release.yml's desktop-mac check: the same detach on exit.",
+        "Detaches the mounted disk image on exit, whatever the check before it concluded.",
     ),
     Masked(
         "scripts/smoke_backend_bundle.sh",

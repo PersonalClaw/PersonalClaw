@@ -2213,8 +2213,9 @@ seed's whole order in one process, runs no one worker's sequence.
 ## The release manifest
 
 `tools/ci/release_manifest.py` (#3911) records every artifact a release built and smoked, in one
-manifest, before anything publishes. Nothing calls it yet: the release's build, its approval and
-its publish phase will.
+manifest, before anything publishes. The release's build writes and verifies it, in
+`release-artifacts.yml`'s `manifest` job, on every release tag and every weekly rehearsal; the
+release's approval and its publish phase will read it.
 
 - **What it holds.** Each staged file's sha256 and size, by its path in the staged folder; each
   image's per-platform digests and its multi-platform index digest, the sha256 of the index bytes
@@ -2425,11 +2426,16 @@ arrive, and images have no separate security-update path.
   `paths:` run it on a change of a Dockerfile but not on a change of a lock that Dockerfile
   installs.
 - **Workflow containers, QEMU, BuildKit and buildx:** a reviewed edit, by hand. The release's
-  QEMU and buildx steps are also run by `release-image-tooling.yml`'s `pin-smoke` job on every
-  pull request that changes `release.yml`: a two-platform build of a two-line image on the
+  QEMU and buildx steps (`release-artifacts.yml`'s `images` job) are also run by
+  `release-image-tooling.yml`'s `pin-smoke` job on every pull request that changes
+  `release.yml` or `release-artifacts.yml`: a two-platform build of a two-line image on the
   images' own node base, with no permissions, no other action and nothing pushed. The contract
-  holds its pins and base equal to `release.yml`'s and `Dockerfile.web`'s, and requires it to
-  build every platform the release builds. `image-pins.yml` asks each workflow container's
+  holds its pins and base equal to the release build's and `Dockerfile.web`'s, and requires it
+  to build every platform the release builds. Its `layout-smoke` job runs the release's layout
+  path on the same pins: the image built to an OCI layout with the release's attestations, each
+  platform loaded from it and run, and the layout copied with the release's own `skopeo copy
+  --all --preserve-digests`, to a second layout on the runner that must hold the same index. The
+  contract holds it to the same pins, no permission, and copies only to a file on the runner. `image-pins.yml` asks each workflow container's
   registry every Monday, anonymously, what its tag names now (`python -m tools.ci image-pins`
   runs the same check locally). It names each pin whose tag has moved, with the new digest for
   the pin and the new index for its comment, and keeps one "Pinned images to refresh" issue

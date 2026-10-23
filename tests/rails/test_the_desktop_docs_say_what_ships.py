@@ -52,8 +52,10 @@ def test_the_guide_describes_quick_capture_as_the_note_composer_it_opens() -> No
 
 
 def test_the_vision_names_the_desktop_app_every_release_ships() -> None:
-    workflow = yaml.safe_load(_read(".github/workflows/release.yml"))
-    jobs = workflow["jobs"]
+    # release.yml publishes only after `artifacts`, whose manifest holds both desktop builds.
+    release = yaml.safe_load(_read(".github/workflows/release.yml"))["jobs"]
+    assert "artifacts" in release["notes"]["needs"], "the GitHub Release does not wait on the build"
+    jobs = yaml.safe_load(_read(".github/workflows/release-artifacts.yml"))["jobs"]
     publishing = [job for job in jobs.values() if "desktop-mac" in (job.get("needs") or [])]
     assert publishing, "no release job waits on the macOS desktop build"
     assert all("desktop-linux" in job["needs"] for job in publishing)

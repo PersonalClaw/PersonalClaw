@@ -1,18 +1,20 @@
-# Release — triggered by a version tag (v*). Builds the ONE artifact set every
-# install channel projects from (wheel with prebuilt web/dist + multi-arch images
-# + the unsigned Linux desktop AppImage/deb + the unsigned macOS dmg), publishes to PyPI via Trusted
-# Publishing (no stored tokens), and attaches provenance. Publish jobs sit behind the `release` / `release-client` environments
+# Release — triggered by a version tag (v*). Builds the ONE artifact set every install channel
+# projects from (wheel with prebuilt web/dist + multi-arch images + the unsigned Linux desktop
+# AppImage/deb + the unsigned macOS dmg) through release-artifacts.yml, which also smokes each and
+# writes their digest-bound manifest, and only then publishes: to PyPI via Trusted Publishing (no
+# stored tokens), the images to GHCR from the layouts that were smoked, the GitHub Release, and
+# provenance. Publish jobs sit behind the `release` / `release-client` environments
 # (owner-approved manual gate). Job ids.
 name: Release
 
 on:
   push:
     tags: ["v*"]
-  # A dispatch builds the ref it is run on: every job reads `$GITHUB_REF_NAME`. On a branch it
-  # is the no-publish rehearsal (`gh workflow run release.yml --ref main`): `build` refuses the
-  # branch at its first step, so no job that publishes runs, while gateway-dashboard and the
-  # two desktop builds, which need nothing, do. On a tag it is that tag's release, run with the
-  # workflow as it is at the tag.
+  # A dispatch builds the ref it is run on: `artifacts` builds as `$GITHUB_REF_NAME`. On a branch
+  # nothing publishes: the build refuses the branch at its first step, `artifacts` fails, and
+  # every job that publishes waits on it, while gateway-dashboard and the two desktop builds,
+  # which need nothing, run. On a tag it is that tag's release, run with the workflow as it is at
+  # the tag. The weekly rehearsal (release-rehearsal.yml) runs all of the build on main instead.
   workflow_dispatch:
 
 permissions:
@@ -24,178 +26,23 @@ env:
   UV_PYTHON_PREFERENCE: only-managed
 
 jobs:
-  build:
-    # The wheel MUST carry web/dist: run the web build FIRST, then `uv build`
-    # (setup.py's BuildWithWeb copies web/dist into the package). `make build` is the same
-    # build plus the proof that the sdist rebuilds a byte-identical wheel.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    outputs:
-      version: ${{ steps.ver.outputs.version }}
-      gh_release_flags: ${{ steps.ver.outputs.gh_release_flags }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # FIRST, before anything expensive: classify the tag. `scripts/release_tags.py`
-      # is the single parser every job downstream reads — the version, the
-      # stable/prerelease split, and the image tags all come from it, so the three
-      # shell dialects that used to each answer this differently cannot drift apart
-      # again. It REFUSES a ref it cannot classify (no `v`, not X.Y.Z, or build
-      # metadata), which is why it runs before the 10-minute build rather than after:
-      # a mistyped tag fails here instead of part-publishing.
-      - name: Classify the release tag (one parser)
-        id: ver
-        run: python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --github-output >> "$GITHUB_OUTPUT"
-      # After the classifier, which stays the first step that does anything (a refused ref
-      # fails before any other step runs).
-      - name: Runner identity
-        # The image this job ran on, so a runner image that moves is visible in the log.
-        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      # Nothing ships without a licence record: every tracked font, image and binary here,
-      # then every font and binary the SPA build emits (ASSET_LICENSES.json). Stdlib only.
-      - name: Verify bundled asset licences
-        run: python3 scripts/check_asset_licenses.py
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      # `npm run build` is `vite build` alone, so a release typechecks the web itself: this job
-      # is the only check every release artifact is built behind.
-      - name: Build the SPA (npm from repo root)
-        run: |
-          npm ci
-          npm run typecheck:web
-          npm run build
-      - name: Verify the built SPA's asset licences
-        run: python3 scripts/check_asset_licenses.py --built-web
-      - name: Install uv + build backend
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.13.1"
-          python-version: "3.12.15"
-          prune-cache: true
-      - name: Build sdist + wheel (with web/dist)
-        # `uv build` (not `uv pip install --system build` + `python -m build`): the
-        # runner's /usr python is PEP-668 externally managed, so --system errors.
-        # uv build runs the same sdist-first-then-wheel-from-sdist flow in its own
-        # isolated env — same fix as the ci.yml client job (PR #16).
-        run: |
-          uv build --out-dir dist
-      - name: Verify the wheel contract (SPA packaged + Node-free serve)
-        run: |
-          # Full wheel contract (scripts/verify_wheel.py): inspects the wheel's contents and
-          # metadata against this checkout (every declared package, dashboard and
-          # bundled-app file, nothing else, a true RECORD), asserts the SPA is in the
-          # wheel, installs it into a scratch venv from the wheel alone (this runner
-          # has Node for the SPA build, but the verify venv installs only the wheel),
-          # boots `personalclaw gateway --test-mode`, and probes / (200 HTML) +
-          # /api/healthz (200). Replaces the old shallow namelist check. It also reads
-          # the bundled-model sign-off record out of the INSTALLED package and requires
-          # /api/onboarding to offer the default model's download. `--release-version`
-          # requires the wheel to BE the tagged release, compared as a version: a tag cut
-          # before the bump would otherwise publish the previous version's wheel, and push
-          # its images, as this release.
-          python scripts/verify_wheel.py --wheel "dist/*.whl" \
-            --release-version "${{ steps.ver.outputs.version }}"
-      - name: Resolve this release's CHANGELOG section
-        # Found by VERSION, not by spelling (`scripts/release_version.py`, the updater's
-        # parse), so a heading the cut spelled `0.3.0-rc.1` or `0.3.0rc1` is this tag's
-        # either way. Resolved here, where uv is, and handed to `notes` as a file, so the
-        # job whose token can create the release fetches nothing. GitHub refuses a release
-        # body over 125,000 characters, and `notes` runs after PyPI and the images have
-        # published, so a longer section is cut on an entry boundary here, before anything
-        # ships, and ends with a link to the whole section in the CHANGELOG at this tag.
-        # The link names the tag, not its id: an annotated tag's object id is not its commit.
-        # `packaging` is named at the version uv.lock holds, and
-        # tests/test_release_pipeline_compares_versions.py holds the two equal: a uv.lock
-        # refresh that moves packaging (a Dependabot python-deps PR) moves this line with it.
-        env:
-          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          uv run --no-project --with packaging==26.2 python scripts/release_version.py notes \
-            --version "$RELEASE_VERSION" \
-            --changelog-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md" \
-            > release-notes.md
-      # The wheel's SBOM is a scan of the wheel INSTALLED. syft catalogs installed packages, and
-      # v0.2.0's step scanned `dist/`, where the wheel and the sdist are two files: it recorded
-      # one package, the directory itself, and the release had no SBOM for the wheel. So the
-      # wheel goes into a scratch venv over the locked versions of its dependencies, installed
-      # the way the gateway image installs them (`uv export --locked`, hash-checked, no
-      # resolver), and that venv is what syft reads. The step fails unless the SBOM lists the
-      # wheel and every package installed with it. It is written outside `dist/`: the `pypi`
-      # job uploads every `personalclaw-*` file there to PyPI.
-      - name: Install syft
-        id: syft
-        uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
-      - name: SBOM of the wheel as installed (syft SPDX-JSON)
-        env:
-          SYFT: ${{ steps.syft.outputs.cmd }}
-          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          set -euo pipefail
-          venv="$RUNNER_TEMP/wheel-sbom-venv"
-          uv venv "$venv"
-          uv export --locked --no-emit-project --output-file "$RUNNER_TEMP/wheel-requirements.txt"
-          uv pip install --python "$venv/bin/python" --require-hashes --no-deps \
-            -r "$RUNNER_TEMP/wheel-requirements.txt"
-          uv pip install --python "$venv/bin/python" --no-deps dist/*.whl
-          mkdir -p wheel-sbom
-          "$SYFT" scan "dir:$venv" --source-name personalclaw --source-version "$RELEASE_VERSION" \
-            -o spdx-json=wheel-sbom/personalclaw-wheel.spdx.json
-          "$venv/bin/python" -I - wheel-sbom/personalclaw-wheel.spdx.json <<'PY'
-          import importlib.metadata
-          import json
-          import re
-          import sys
-          from urllib.parse import unquote
-
-
-          def key(name):
-              return re.sub(r"[-_.]+", "-", name).lower()
-
-
-          path = sys.argv[1]
-          with open(path, encoding="utf-8") as fh:
-              packages = json.load(fh).get("packages") or []
-          listed = set()
-          for package in packages:
-              for ref in package.get("externalRefs") or []:
-                  locator = ref.get("referenceLocator", "")
-                  if ref.get("referenceType") == "purl" and locator.startswith("pkg:pypi/"):
-                      coordinates = re.split(r"[?#]", locator.removeprefix("pkg:pypi/"))[0]
-                      name, _, version = coordinates.partition("@")
-                      listed.add((key(unquote(name)), unquote(version)))
-          installed = {(key(d.metadata["Name"]), d.version) for d in importlib.metadata.distributions()}
-          wheel = (key("personalclaw"), importlib.metadata.version("personalclaw"))
-          if len(packages) <= 1:
-              raise SystemExit(f"{path}: {len(packages)} package(s), so syft cataloged nothing")
-          if wheel not in listed:
-              raise SystemExit(f"{path}: does not list the wheel, pkg:pypi/{wheel[0]}@{wheel[1]}")
-          missing = sorted(f"{name}@{version}" for name, version in installed - listed)
-          if missing:
-              raise SystemExit(f"{path}: does not list what the wheel installs: {', '.join(missing)}")
-          print(f"{path}: the wheel and the {len(installed) - 1} packages installed with it")
-          PY
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: wheel-sbom
-          path: wheel-sbom/personalclaw-wheel.spdx.json
-          if-no-files-found: error
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dist
-          path: dist/
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-notes
-          path: release-notes.md
-          if-no-files-found: error
+  artifacts:
+    # Every artifact, built and smoked, and their manifest (#3911): the wheel and sdist with the
+    # wheel's SBOM, the gateway image's dashboard, both images for both arches to OCI layouts,
+    # the dmg, the AppImage and the deb. The one copy of the release's build, which the weekly
+    # rehearsal runs too. Every job below waits on all of it, so nothing publishes before every
+    # artifact has passed. Its files are kept 30 days: as long as the `release` approval may wait.
+    uses: ./.github/workflows/release-artifacts.yml
+    permissions:
+      contents: read
+    with:
+      ref: ${{ github.ref_name }}
+      retention-days: 30
 
   pypi:
     # personalclaw → PyPI via Trusted Publishing. Owner-approved via the `release`
     # environment gate. No stored token (OIDC).
-    needs: build
+    needs: [artifacts]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: release
@@ -233,7 +80,7 @@ jobs:
     # changed (enforced by tests/test_version_consistency.py). skip-existing is
     # belt-and-suspenders for re-runs of a tag whose client already published:
     # an already-on-PyPI version no-ops instead of failing the job.
-    needs: build
+    needs: [artifacts]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     environment: release-client
@@ -261,123 +108,24 @@ jobs:
           packages-dir: dist-client/
           skip-existing: true
 
-  gateway-dashboard:
-    # RELEASE-BLOCKING: the gateway image built from THIS commit must SERVE ITS DASHBOARD.
-    #
-    # 🔴 THE GAP THIS CLOSES. `images`' own smoke runs `personalclaw --version` with
-    # `--entrypoint ''`, so the gateway NEVER STARTS: it proves the binary exists on both
-    # arches — a real assertion, left exactly as it is — not that the product works. Nothing
-    # at release time asserted the dashboard. Measured 2026-09-23 in containers against the
-    # published 0.1.3 image: `GET /` → **503**, title "PersonalClaw — Build the dashboard",
-    # **zero** asset references, no `static/dist` in site-packages — while the same version
-    # installed with `uv tool install personalclaw` served the real shell with a 6.9 MB
-    # bundle. The wheel could not ship broken (`scripts/verify_wheel.py` is a release gate);
-    # the image could. That asymmetry is the whole reason this job exists.
-    #
-    # WHY BEFORE THE PUSH. `images` pushes `:X.Y.Z`, `:X.Y` and `:latest` and only THEN
-    # smokes what it pushed, so an assertion bolted on after it would leave a dashboard-less
-    # `:latest` in GHCR — the tag README.md's one-liner and docs/guides/containers.md both
-    # point at — with no GitHub Release to explain it. `images` NEEDS this job instead.
-    #
-    # WHY A JOB AND NOT A STEP. A step cannot name which property broke, only a job can —
-    # the argument `ci.yml` acted on when it split `walkthrough` out of `e2e-a11y`. A red
-    # step inside `images (gateway)` reads as "the image build failed"; a red
-    # `gateway-dashboard` names the contract.
-    #
-    # WHY IT BUILDS RATHER THAN PULLS. A pull answers the published-artifact question, which
-    # `ghcr-anonymous-pull.yml` already owns, and could not run before the push it exists to
-    # gate. `--target runtime` is the stage `images`' own default target resolves to, since
-    # `runtime` is the last stage in the file.
-    #
-    # ONE RECIPE, NOT TWO DIALECTS. This build and this invocation are
-    # `.github/workflows/docker-single-container.yml`'s, differing only in the local tag, and
-    # `tools/docker_single_container_smoke.py` owns the assertion — healthz 200, `/` 200 HTML
-    # carrying the SPA mount point, and the shell's FIRST script fetched and required to come
-    # back as JavaScript — plus its own negative control, because a fabricated `/assets/*.js`
-    # answered by the SPA's index.html fallback is 200 too, and a status-only check calls that
-    # green. It then asks the image's INSTALLED package for the default chat model's sign-off
-    # record and requires `/api/onboarding` to offer the download: the image once shipped
-    # without that record behind all-200 responses, and the wheel gate, which read the record
-    # from the repository, could not see it. Last, signed in, seven API endpoints must answer
-    # 200 with the JSON their handlers answer. Exit 1 = the image is broken; exit 2
-    # = the run could not measure, which is never a pass.
-    #
-    # amd64 ONLY, stated rather than implied: this boots a real gateway, and arm64 under QEMU
-    # is a far slower, different measurement. `images`' per-arch `--entrypoint ''` smoke
-    # remains the arm64 evidence and is untouched.
-    runs-on: ubuntu-24.04
-    # The gateway image build is the long pole — a CPU-only torch install, four bundled ACP
-    # adapter CLIs, and a Node stage for the SPA. Same bound as the PR-side job, because it is
-    # the same build, and set well above its measured cost rather than tightly (#3326 was the
-    # cost of bounding a job BELOW its own runtime).
-    timeout-minutes: 60
-    steps:
-      - name: Runner identity
-        # The image this job ran on, so a runner image that moves is visible in the log.
-        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Build the gateway image (amd64, runtime target)
-        # `--target runtime` skips the in-image `test` stage: the question here is whether the
-        # shipped image serves a dashboard, and ci.yml already runs the suite.
-        run: |
-          docker build \
-            --file deploy/docker/Dockerfile.backend \
-            --target runtime \
-            --tag personalclaw-gateway:release-dashboard \
-            .
-      - name: Assert the built image serves the dashboard (release-blocking)
-        # The tool makes its own scratch cwd (so a checkout cannot satisfy the command by
-        # accident) and rewrites only the image ref, the container name and the volume name —
-        # the `docker run` itself is READ out of README.md, so a README that drifts into being
-        # wrong cannot leave this green.
-        run: |
-          python3 tools/docker_single_container_smoke.py \
-            --image personalclaw-gateway:release-dashboard
-
   images:
-    # Multi-arch GHCR images (amd64 + arm64). Auth = GITHUB_TOKEN (no extra secret).
-    # `gateway-dashboard` is in `needs` so NOTHING is pushed until the image built from this
-    # commit is proven to serve a dashboard — `personalclaw-web` included, because
+    # Multi-arch GHCR images (amd64 + arm64), pushed from the OCI layouts `artifacts` built, each
+    # tag with every digest kept: `skopeo copy --all --preserve-digests` fails rather than change
+    # a byte, and each tag must then name the index the manifest records. So what a user pulls is
+    # the image that was smoked, and nothing is built here. `artifacts` runs `gateway-dashboard`
+    # and both arches' smokes first, so NOTHING is pushed until the image built from this commit
+    # is proven to serve a dashboard — `personalclaw-web` included, because
     # `deploy/compose/compose.yaml` pulls both and half a published pair is worse than none.
-    needs: [build, gateway-dashboard]
+    # Auth = GITHUB_TOKEN (no extra secret).
+    needs: [artifacts]
     runs-on: ubuntu-24.04
-    timeout-minutes: 165
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
     strategy:
       matrix:
-        include:
-          # `smoke` is the per-image liveness command run INSIDE the container on
-          # BOTH arches. It differs per image because the
-          # images differ: gateway ships the `personalclaw` CLI; web is nginx and
-          # has no such binary, so it proves its own server binary instead. A
-          # single hardcoded `personalclaw --version` would fail on web.
-          #
-          # Each leg names what the smoke's own output must carry, because an exit
-          # status alone is a weak claim about a version command: exit 0 with no
-          # output at all is a real shape (a shell builtin shadowing the binary, a
-          # wrapper that swallows, a later `|| true`). `expect` is a substring of it.
-          # `expect_version` is a VERSION the `personalclaw --version` banner must
-          # report, and for the gateway that is the release-relevant property: not
-          # "some version printed" but "THE version being released printed". A cached
-          # `builder` layer that produced a stale venv would ship an image whose
-          # `--version` reports the PREVIOUS release under a `:latest` claiming this
-          # one — a published tag that lies, which is the defect class this whole step
-          # exists to stop. It is compared as a version, not as text, because the
-          # package spells a release candidate `0.3.0rc1` where its tag says
-          # `0.3.0-rc.1`. `needs` is available in `strategy` (actionlint enumerates the
-          # allowed set as github/inputs/needs/vars).
-          - name: gateway
-            dockerfile: deploy/docker/Dockerfile.backend
-            smoke: personalclaw --version
-            expect_version: ${{ needs.build.outputs.version }}
-          - name: web
-            dockerfile: deploy/docker/Dockerfile.web
-            smoke: nginx -v
-            expect: 'nginx version:'
+        name: [gateway, web]
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -385,22 +133,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # QEMU and BuildKit are named exactly: unset, setup-qemu pulls binfmt's `latest` and
-      # setup-buildx runs whatever BuildKit is newest, so the arm64 half of an image would be
-      # built by a different emulator on a day nothing here changed. release-image-tooling.yml's
-      # `pin-smoke` job runs these same three pins on a pull request that changes this file,
-      # and tests/rails/test_ci_supply_chain_contract.py holds the two copies equal.
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - name: The image's layout, as it was smoked
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          # tonistiigi/binfmt:qemu-v10.2.3-68, the linux/amd64 manifest (this runner's platform)
-          # of index sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0.
-          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68@sha256:465d3fdd28d0f2b871ba4b4ec98bd183292e96167f00d9fd40bd249f8632d705
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+          name: image-layout-${{ matrix.name }}
+          path: ${{ runner.temp }}/layout
+      - name: The image's index, as the manifest records it
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          version: v0.38.0
-          # moby/buildkit:v0.34.0, the linux/amd64 manifest (this runner's platform) of index
-          # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
-          driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
+          name: image-index-${{ matrix.name }}
+          path: ${{ runner.temp }}/index
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -423,361 +165,32 @@ jobs:
           python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE"
           python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE" \
             --github-output >> "$GITHUB_OUTPUT"
-      - name: Build and push image with supply-chain attestations
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.imagetags.outputs.image_tags }}
-          sbom: true
-          provenance: mode=max
-      - name: Export image SBOM attestations (SPDX-JSON)
+      - name: Push the layout, every digest kept
         env:
-          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
-          IMAGE_NAME: personalclaw-${{ matrix.name }}
+          LAYOUT: ${{ runner.temp }}/layout/personalclaw-${{ matrix.name }}.oci.tar
+          INDEX: ${{ runner.temp }}/index/personalclaw-${{ matrix.name }}.index.json
+          TAGS: ${{ steps.imagetags.outputs.image_tags }}
         run: |
           set -euo pipefail
-          mkdir -p image-sboms
-          docker buildx imagetools inspect "$IMAGE" --format '{{ json .SBOM }}' \
-            > image-sboms/attestations.json
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          directory = Path("image-sboms")
-          attestations = json.loads((directory / "attestations.json").read_text(encoding="utf-8"))
-          for platform in ("linux/amd64", "linux/arm64"):
-              record = attestations.get(platform)
-              document = record.get("SPDX") if isinstance(record, dict) else None
-              if not isinstance(document, dict):
-                  raise SystemExit(f"{platform}: missing SPDX SBOM attestation")
-              if document.get("SPDXID") != "SPDXRef-DOCUMENT":
-                  raise SystemExit(f"{platform}: malformed SPDX document")
-              arch = platform.removeprefix("linux/")
-              output = directory / f"{os.environ['IMAGE_NAME']}-{arch}.spdx.json"
-              output.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-              print(f"{platform}: wrote {output}")
-          PY
-          rm image-sboms/attestations.json
-      - name: Upload image SBOM artifacts
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: image-sbom-${{ matrix.name }}
-          path: image-sboms/*.spdx.json
-          if-no-files-found: error
-      # RELEASE-BLOCKING per-arch smoke. The build above publishes a
-      # multi-arch manifest; a manifest that merely *builds* can still ship an
-      # arch that cannot start. So pull each arch explicitly and run the image's
-      # own liveness command inside it — arm64 executes under the QEMU emulation
-      # already set up above. This step failing fails the `images` job, and
-      # `notes` (the GitHub Release) `needs: images` — so a broken arm64 blocks
-      # the release rather than shipping silently.
-      #
-      # 🔴 NOT A LOGIN SHELL, and this is the whole of #3562. This ran `sh -lc`
-      # from 2026-08-10 (#1004) until it was fixed, and the last Release before
-      # that was v0.1.3 on 2026-07-31 — so the step had NEVER executed, and its
-      # first execution would have been the v0.2.0 tag. `-l` makes the shell read
-      # `/etc/profile`, and `/etc/profile` does not EXTEND `PATH`, it OVERWRITES
-      # it — so the gateway image's own `ENV PATH="/opt/venv/bin:$PATH"`
-      # (Dockerfile.backend) is discarded and `personalclaw` is not found.
-      # Measured in containers against the published 0.1.3 gateway image:
-      #
-      #   sh -lc 'personalclaw --version'  ->  127, "sh: 1: personalclaw: not found"
-      #   sh -c  'personalclaw --version'  ->  0,   "personalclaw 0.1.3"
-      #
-      # PATH under `sh -c` is `/opt/venv/bin:/usr/local/bin:...`; under `sh -lc`
-      # it is `/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games`.
-      # The web leg survived on a COINCIDENCE, not by design: Debian's
-      # `/etc/profile` branches on `id -u` and the gateway drops to uid 10001
-      # `personalclaw`, while web's Alpine `/etc/profile` overwrites `PATH` in one
-      # unconditional line that happens to contain `/usr/sbin`, where `nginx`
-      # lives. Both bases clobber `PATH`; only one of them clobbers it into
-      # something that still works. So the rule is about the login shell, not
-      # about the user — `tests/test_supply_chain.py` holds it for every
-      # workflow in the tree.
-      #
-      # AND NOT AN ABSOLUTE PATH EITHER. `/opt/venv/bin/personalclaw` would also
-      # go green, and that is the problem: the property a container user depends
-      # on is that `personalclaw` resolves on `PATH`, because the image's own
-      # `CMD ["personalclaw", "gateway"]` is resolved that way. Hardcoding the
-      # venv prefix here would keep this step green through exactly the Dockerfile
-      # regression it exists to catch, and would pin an install prefix in a second
-      # place.
-      #
-      # WHY THE OUTPUT IS ASSERTED AND NOT JUST THE STATUS: see `expect` and
-      # `expect_version` in the matrix above. A version command that prints nothing,
-      # or that prints the PREVIOUS release out of a stale build layer, exits 0
-      # either way.
-      #
-      # THE VERSION IS COMPARED BY THE IMAGE'S OWN UPDATER. `scripts/release_version.py`
-      # is piped into the image's Python, so the parse that decides the banner names
-      # this release is the one `personalclaw update` decides "newer" with, and the
-      # runner installs nothing into a job that can push packages. A text match
-      # failed the first release candidate: `personalclaw --version` prints
-      # `personalclaw 0.3.0rc1` for the tag `v0.3.0-rc.1`.
-      - name: Smoke both arches (release-blocking)
-        env:
-          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}:${{ needs.build.outputs.version }}
-          SMOKE: ${{ matrix.smoke }}
-          EXPECT: ${{ matrix.expect }}
-          EXPECT_VERSION: ${{ matrix.expect_version }}
-        run: |
-          set -euo pipefail
-          # An EMPTY expectation is the vacuity hole in the checks below: the `case`
-          # pattern `*""*` matches every possible output, so a matrix leg added
-          # without an expectation would report green having asserted nothing. Refuse
-          # instead. `tests/test_supply_chain.py` holds the same floor statically.
-          if [ -z "$EXPECT" ] && [ -z "$EXPECT_VERSION" ]; then
-            echo "::error::no expected output for $IMAGE — add an 'expect' or 'expect_version' to the matrix"
-            exit 1
-          fi
-          for arch in amd64 arm64; do
-            echo "::group::smoke linux/$arch — $IMAGE — $SMOKE"
-            docker pull --quiet --platform "linux/$arch" "$IMAGE"
-            # --entrypoint '' bypasses the image ENTRYPOINT (tini/nginx-entrypoint)
-            # so the smoke command runs directly instead of starting the service.
-            # 2>&1 because a version banner is not reliably on stdout: `nginx -v`
-            # writes to stderr, so capturing stdout alone reads EMPTY and would red
-            # the web leg on a working image.
-            status=0
-            output=$(docker run --rm --platform "linux/$arch" --entrypoint '' "$IMAGE" \
-              sh -c "$SMOKE" 2>&1) || status=$?
-            printf '%s\n' "$output"
-            if [ "$status" -ne 0 ]; then
-              echo "::error::linux/$arch: '$SMOKE' exited $status inside $IMAGE"
+          skopeo --version
+          # The index's own digest: the one the manifest records, and each tag must name.
+          want="sha256:$(sha256sum "$INDEX" | cut -d' ' -f1)"
+          while IFS= read -r ref; do
+            [ -n "$ref" ] || continue
+            skopeo copy --all --preserve-digests "oci-archive:$LAYOUT" "docker://$ref"
+            got="sha256:$(skopeo inspect --raw "docker://$ref" | sha256sum | cut -d' ' -f1)"
+            if [ "$got" != "$want" ]; then
+              echo "::error::$ref names $got, not the index that was smoked and recorded, $want"
               exit 1
             fi
-            if [ -n "$EXPECT_VERSION" ]; then
-              if ! docker run -i --rm --platform "linux/$arch" --entrypoint '' "$IMAGE" \
-                python - --installed reports --expect "$EXPECT_VERSION" --output "$output" \
-                < scripts/release_version.py; then
-                echo "::error::linux/$arch: '$SMOKE' ran but did not report version $EXPECT_VERSION"
-                exit 1
-              fi
-            else
-              case "$output" in
-                *"$EXPECT"*) ;;
-                *)
-                  echo "::error::linux/$arch: '$SMOKE' ran but did not report '$EXPECT'"
-                  exit 1
-                  ;;
-              esac
-            fi
-            echo "::endgroup::"
-          done
-
-  desktop-mac:
-    # macOS desktop shell — AD-HOC SIGNED, NOT NOTARIZED .dmg. "Unsigned" was the word used
-    # here originally and it is not accurate: an arm64 bundle must carry at least an ad-hoc
-    # signature to execute, and the signature is ad-hoc precisely so it needs no Apple
-    # account. What we do not have is a Developer ID and notarization, which is what
-    # Gatekeeper actually asks for. ("We want to generate
-    # an installable app release. We don't need to be able to sign it in order to produce
-    # the installable app. Signing needs apple developer account with an ongoing payment
-    # which we are not ready for right now.")
-    #
-    # SIGNING AND PRODUCING AN INSTALLER ARE ORTHOGONAL, and conflating them is why this
-    # job did not exist. Desktop SIGNING was descoped, and that
-    # was read as descoping the mac artifact itself — so `release.yml` mentioned `macos`
-    # zero times while `desktop/package.json` had carried a working `dist` script
-    # (`electron-builder --mac`, target `dmg`) the whole time. Nothing here needs an Apple
-    # Developer account.
-    #
-    # WHAT UNSIGNED COSTS A MAC USER, unlike Linux. Gatekeeper DOES consume a signature,
-    # so an unsigned, un-notarized dmg will not launch by double-click: the user must go
-    # to System Settings → Privacy & Security → "Open Anyway" once. That is a real first-run
-    # step and docs/guides/desktop.md must say so — shipping it silently would be the
-    # dishonest version of this job.
-    #
-    # ARM64 ONLY, and stated rather than implied. `macos-26` is Apple silicon, and the
-    # bundled backend is a PyInstaller binary, which CANNOT be cross-compiled — so this dmg
-    # runs on Apple silicon only. Intel coverage needs a real x86_64 runner (macos-13) as a
-    # second leg; it is deliberately not claimed here until a job proves it, exactly as
-    # desktop-linux declines to claim arm64.
-    runs-on: macos-26
-    timeout-minutes: 15
-    steps:
-      - name: Runner identity
-        # The image this job ran on, so a runner image that moves is visible in the log.
-        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install uv + the venv the Makefile's pyinstaller target expects
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.13.1"
-          python-version: "3.12.15"
-          prune-cache: true
-      - name: Create .venv for the bundled backend build
-        # Same reasoning as desktop-linux: the spec collect_submodules()s
-        # openai/anthropic/slack_sdk, which are extras and must be importable here, the
-        # venv is synced from uv.lock, and PyInstaller is pinned to what desktop-linux pins.
-        run: |
-          uv sync --locked --no-editable --extra anthropic --extra openai --extra slack
-          uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.8
-      - name: Build the dmg (ad-hoc signed, not notarized)
-        # make desktop-dist = web-build (SPA) -> pyinstaller (the bundled
-        # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
-        # -> electron-builder --mac (dmg per desktop/package.json, whose afterPack hook
-        # ad-hoc re-signs the packed bundle before the dmg is assembled). The target sets
-        # CSC_IDENTITY_AUTO_DISCOVERY=false and then verifies the built .app is ad-hoc
-        # signed with a VALID seal and no third-party authority — so a runner that ever
-        # acquired a keychain identity, or an Electron bump that reintroduces the stock
-        # linker seal, fails here instead of shipping an uninstallable dmg.
-        run: make desktop-dist
-      - name: Smoke the artifact (release-blocking)
-        # The Electron shell is NOT launched (no display, same call as desktop-linux).
-        # What IS executed for real is the bundled backend, from inside the mounted dmg,
-        # on this OS/arch — a bundle that packages but cannot start must fail the release.
-        # Locally built files carry no com.apple.quarantine xattr, so Gatekeeper does not
-        # block this exec; that is why the smoke can run at all on an unsigned build.
-        #
-        # 🔴 `"$BACKEND" --version` USED TO BE THE WHOLE EXECUTION ASSERTION, and argparse's
-        # `--version` prints and exits before the runner catalogue is read, before any
-        # `personalclaw.sdk.*` submodule is imported, and before an MCP server command is
-        # resolved. So the 2026-09-23 dmg passed this step while being unable to enable a
-        # single extension. `scripts/smoke_backend_bundle.sh` boots the packaged gateway and
-        # drives the surfaces that force those reads; it is a script, not inline shell,
-        # because `desktop-linux` needs the identical assertion and two copies drift.
-        run: |
-          set -euo pipefail
-          cd desktop/dist
-          ls -la
-          DMG=$(ls -1 *.dmg | head -1)
-          test -n "$DMG"
-          MNT=$(mktemp -d)
-          hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -quiet
-          trap 'hdiutil detach "$MNT" -quiet || true' EXIT
-          APP=$(ls -1d "$MNT"/*.app | head -1)
-          test -n "$APP"
-          echo "mounted: $DMG -> $APP"
-          test -f "$APP/Contents/Resources/app.asar"
-          # Verify the signature state of the app AS SHIPPED INSIDE THE DMG: ad-hoc signed,
-          # seal valid over the bundle, no third-party authority.
-          #
-          # THIS RUNNER NEVER REPRODUCED THE FOREIGN-IDENTITY BUG — it has no keychain
-          # identity, so auto-discovery finds nothing. It WOULD have reproduced the
-          # damaged-seal bug, because that seal comes from Electron itself rather than the
-          # keychain, and it would have shipped an uninstallable dmg. So local and CI are
-          # now held to one standard instead of differing silently.
-          #
-          # Not a duplicate of the desktop-dist check: that one inspects
-          # desktop/dist/*/PersonalClaw.app (the build output), this one inspects the copy
-          # a user actually mounts and drags to Applications — the artifact whose failed
-          # Install started all of this.
-          sh "$GITHUB_WORKSPACE/scripts/verify_macos_app_signature.sh" "$APP"
-          BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
-          test -x "$BACKEND"
-          sh "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
-          # Name the arch in the log so an arm64-only dmg is never mistaken for universal.
-          echo "built arch: $(uname -m)"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: desktop-mac
-          path: desktop/dist/*.dmg
-
-  desktop-linux:
-    # Linux desktop shell — UNSIGNED AppImage + .deb (the Linux target ships now;
-    # Windows stays deferred — the native port is a no-go
-    # per docs/research/windows-native-audit.md:302 and no Windows signing
-    # secrets exist). The macOS dmg is built by `desktop-mac` above and is also
-    # unsigned, on purpose; the difference is that Gatekeeper consumes a
-    # signature and Linux has no equivalent gate, so here
-    # "unsigned" is the platform norm, not a downgrade — docs/guides/desktop.md says
-    # what that means for users. x86-64 only (this runner's arch); arm64 desktop is
-    # not claimed anywhere until a job proves it.
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - name: Runner identity
-        # The image this job ran on, so a runner image that moves is visible in the log.
-        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-      - name: Install uv + the venv the Makefile's pyinstaller target expects
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-        with:
-          version: "0.13.1"
-          python-version: "3.12.15"
-          prune-cache: true
-      - name: Create .venv for the bundled backend build
-        # Plain `.` is not enough: personalclaw-backend.spec collect_submodules()s
-        # openai/anthropic/slack_sdk into the frozen bundle, and those are extras —
-        # absent from core — so they must be importable in the build venv. The heavy
-        # [models] extra stays OUT deliberately (the spec excludes torch/faiss anyway).
-        # Synced from uv.lock, so the bundle freezes the versions CI tested: a
-        # `uv pip install '.[…]'` resolves pyproject's ranges on release day instead.
-        # `--no-editable` installs the package itself, as the frozen bundle needs.
-        # PyInstaller is not in uv.lock, so it is pinned here, both halves of it: its banner
-        # names the two ("PyInstaller: 6.22.3, contrib hooks: 2026.8" on v0.2.0's run), and
-        # the hooks decide what each third-party package brings into the bundle. Unpinned,
-        # a tag froze the bundle with whatever PyInstaller was newest that day.
-        run: |
-          uv sync --locked --no-editable --extra anthropic --extra openai --extra slack
-          uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.8
-      - name: Build unsigned AppImage + deb
-        # make desktop-dist-linux = web-build (SPA) -> pyinstaller (the bundled
-        # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
-        # -> electron-builder --linux (AppImage + deb per desktop/package.json).
-        run: make desktop-dist-linux
-      - name: Smoke the artifacts (release-blocking)
-        # The Electron shell itself is NOT launched here. ci.yml's `desktop-smoke` job
-        # launches the packed shell under xvfb on every pull request that touches
-        # desktop/ or web/ (#3942), from electron-builder's Linux dir build on a stub
-        # backend: a fast smoke, never this release's artifacts. What
-        # IS run for real is the bundled backend: extract the AppImage (no FUSE
-        # needed) and execute the frozen personalclaw-backend on this OS/arch —
-        # a bundle that packages but cannot start must fail the release, same
-        # rationale as the images job's per-arch smoke.
-        #
-        # 🔴 Same hole as `desktop-mac` had, and closed the same way: `--version` is
-        # argparse, so it exits before the runner catalogue, any `personalclaw.sdk.*`
-        # import, or an MCP server resolution. `scripts/smoke_backend_bundle.sh` boots the
-        # packaged gateway and drives those reads. ONE script for both jobs on purpose.
-        run: |
-          set -euo pipefail
-          cd desktop/dist
-          ls -la
-          chmod +x ./PersonalClaw-*.AppImage
-          ./PersonalClaw-*.AppImage --appimage-extract > /dev/null
-          test -f squashfs-root/resources/app.asar
-          BACKEND=squashfs-root/resources/backend-dist/personalclaw-backend/personalclaw-backend
-          test -x "$BACKEND"
-          sh "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$(pwd)/$BACKEND"
-          # deb: correct package name + the same two load-bearing paths present.
-          # Each listing goes to a file before it is searched: `grep -q` stops reading at its
-          # first match, so under pipefail the tar that dpkg-deb runs fails writing the rest
-          # ("tar: stdout: write error") and the check reds a good package. v0.2.0's run did.
-          dpkg-deb --info personalclaw-desktop_*.deb > "$RUNNER_TEMP/deb-info.txt"
-          dpkg-deb --contents personalclaw-desktop_*.deb > "$RUNNER_TEMP/deb-contents.txt"
-          grep -q "Package: personalclaw-desktop" "$RUNNER_TEMP/deb-info.txt"
-          grep -q "resources/app.asar" "$RUNNER_TEMP/deb-contents.txt"
-          grep -q "backend-dist/personalclaw-backend/personalclaw-backend" "$RUNNER_TEMP/deb-contents.txt"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: desktop-linux
-          path: |
-            desktop/dist/*.AppImage
-            desktop/dist/*.deb
+            echo "$ref: $got"
+          done <<< "$TAGS"
 
   notes:
-    # GitHub Release with notes drawn from CHANGELOG.md for this version.
-    # desktop-linux is in `needs` so its AppImage/deb attach here and a broken
-    # Linux desktop build blocks the release (the images-smoke precedent).
-    needs: [build, pypi, images, desktop-linux, desktop-mac]
+    # GitHub Release with notes drawn from CHANGELOG.md for this version. It waits on
+    # `artifacts`, so the AppImage, the deb and the dmg attach here and a broken desktop
+    # build blocks the release (the images-smoke precedent).
+    needs: [artifacts, pypi, images]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -826,7 +239,7 @@ jobs:
         # `--prerelease` and never `--latest`.
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_RELEASE_FLAGS: ${{ needs.build.outputs.gh_release_flags }}
+          GH_RELEASE_FLAGS: ${{ needs.artifacts.outputs.gh_release_flags }}
         run: |
           # Unquoted on purpose: GH_RELEASE_FLAGS is a closed set of whole flags
           # (`--latest` | `--prerelease`) from the parser above and MUST word-split.
@@ -877,10 +290,10 @@ jobs:
 
   attest:
     # Build-provenance attestations on the wheel and the sdist (zero key management — GitHub
-    # OIDC). It needs only `build`, whose `dist` it attests. It used to need `notes` as well,
+    # OIDC). It needs only `artifacts`, whose `dist` it attests. It used to need `notes` as well,
     # so when v0.2.0's desktop-linux failed and `notes` was skipped, this was skipped with it,
     # and the wheel PyPI had already published got no build provenance on GitHub.
-    needs: [build]
+    needs: [artifacts]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

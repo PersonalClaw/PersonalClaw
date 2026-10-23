@@ -1,13 +1,13 @@
 """Every way PersonalClaw is installed can call an external MCP server.
 
-🔴 The client SDK (``mcp``) was an OPTIONAL extra, and three of the four install paths never
-asked for it: the public installer (``uv tool install personalclaw``), a bare ``pip install
-personalclaw``, and the desktop bundle, which ``release.yml`` builds with the ``anthropic``,
-``openai`` and ``slack`` extras. Only the container image named the extra. On the other three the
-agent's MCP registry was empty, so no server's tools reached an agent, while the Tools page probed
-each stdio server with a handshake of its own and drew it "ready". The one error that said why
-advised ``pip install 'personalclaw[mcp]'``, which on a ``uv tool`` install puts the SDK into an
-environment the gateway does not run from.
+🔴 The client SDK (``mcp``) was an OPTIONAL extra, and three of the four install paths never asked
+for it: the public installer (``uv tool install personalclaw``), a bare ``pip install
+personalclaw``, and the desktop bundle, which ``release-artifacts.yml`` builds with the
+``anthropic``, ``openai`` and ``slack`` extras. Only the container image named the extra. On the
+other three the agent's MCP registry was empty, so no server's tools reached an agent, while the
+Tools page probed each stdio server with a handshake of its own and drew it "ready". The one error
+that said why advised ``pip install 'personalclaw[mcp]'``, which on a ``uv tool`` install puts the
+SDK into an environment the gateway does not run from.
 
 The fix is the dependency, not the advice. ``mcp`` is a core requirement, so no install path can
 lack it and no copy has to explain how to add it. These rails hold that from each install path's
@@ -79,10 +79,10 @@ def _extra_flags(command: str) -> set[str]:
 
 
 def _desktop_extras() -> list[set[str]]:
-    """Every venv ``release.yml`` builds a desktop bundle from (macOS and Linux)."""
-    text = (_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    """Every venv the release builds a desktop bundle from (macOS and Linux)."""
+    text = (_ROOT / ".github" / "workflows" / "release-artifacts.yml").read_text(encoding="utf-8")
     found = re.findall(r"uv sync --locked [^\n]*", text)
-    assert len(found) >= 2, f"release.yml: expected the two desktop syncs, read {found}"
+    assert len(found) >= 2, f"release-artifacts.yml: expected the two desktop syncs, read {found}"
     return [_extra_flags(c) for c in found]
 
 
@@ -113,7 +113,7 @@ def test_the_mcp_sdk_is_a_core_requirement_with_its_bound():
     [
         ("the public installer (`curl … | sh`)", lambda: [_installer_extras()]),
         ("`pip install personalclaw`", lambda: [set()]),
-        ("the desktop bundle (release.yml)", _desktop_extras),
+        ("the desktop bundle (release-artifacts.yml)", _desktop_extras),
         ("the gateway image", lambda: [_image_extras()]),
     ],
     ids=["installer", "pip", "desktop", "image"],

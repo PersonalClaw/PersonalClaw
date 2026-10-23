@@ -23,14 +23,16 @@ release_version = release_pipeline_compares_versions_shared.release_version
 
 
 RELEASE_YML = REPO / ".github" / "workflows" / "release.yml"
+#: Where the release builds and smokes: release.yml calls it as its `artifacts` job.
+ARTIFACTS_YML = REPO / ".github" / "workflows" / "release-artifacts.yml"
 
 
 #: The workflow's two spellings of the version `build` classified.
 _VERSION_EXPRESSIONS = ("${{ needs.build.outputs.version }}", "${{ steps.ver.outputs.version }}")
 
 
-def _jobs() -> dict:
-    workflow = yaml.safe_load(RELEASE_YML.read_text(encoding="utf-8"))
+def _jobs(path: Path = ARTIFACTS_YML) -> dict:
+    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(workflow, dict)
     return workflow["jobs"]
 
@@ -58,7 +60,7 @@ _FAKE_DOCKER = """
     import os, subprocess, sys
 
     args = sys.argv[1:]
-    if args[0] == "pull":
+    if args[0] in ("load", "image"):
         sys.exit(0)
     assert args[0] == "run", args
     arch = args[args.index("--platform") + 1].split("/", 1)[1]
@@ -75,6 +77,19 @@ _FAKE_DOCKER = """
 """
 
 
+#: skopeo, which copies one arch out of the layout to a docker archive the step then loads.
+_FAKE_SKOPEO = """
+    import sys
+    from pathlib import Path
+
+    args = sys.argv[1:]
+    if args[:1] == ["--version"]:
+        sys.exit(0)
+    assert args[0] == "copy" and args[-1].startswith("docker-archive:"), args
+    Path(args[-1].removeprefix("docker-archive:").split(":", 1)[0]).write_bytes(b"")
+"""
+
+
 def _smoke(tmp_path: Path, leg_name: str, ref: str, banner: str, **per_arch: str):
     """Run the images job's smoke step for one matrix leg, as released for *ref*."""
     images = _jobs()["images"]
@@ -85,10 +100,12 @@ def _smoke(tmp_path: Path, leg_name: str, ref: str, banner: str, **per_arch: str
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     _stand_in(bin_dir, "docker", _FAKE_DOCKER)
+    _stand_in(bin_dir, "skopeo", _FAKE_SKOPEO)
 
-    env = dict(os.environ)
+    env = dict(os.environ, RUNNER_TEMP=str(tmp_path))
     for key, value in step["env"].items():
         value = str(value).replace("${{ matrix.name }}", leg["name"])
+        value = value.replace("${{ runner.temp }}", str(tmp_path))
         for field in ("smoke", "expect", "expect_version"):
             value = value.replace(f"${{{{ matrix.{field} }}}}", str(leg.get(field, "")))
         env[key] = _expand(value, version)
@@ -205,7 +222,7 @@ def _notes(tmp_path: Path, ref: str, changelog: str):
     env.update(
         GITHUB_SERVER_URL="https://github.com",
         GITHUB_REPOSITORY="PersonalClaw/PersonalClaw",
-        GITHUB_REF_NAME=ref,
+        RELEASE_REF=ref,
     )
     for key, value in step["env"].items():
         env[key] = _expand(str(value), _classified_version(ref))
@@ -364,7 +381,7 @@ def test_the_release_job_publishes_the_notes_the_build_resolved() -> None:
     build = _jobs()["build"]
     uploads = [s for s in build["steps"] if s.get("with", {}).get("name") == "release-notes"]
     assert uploads and uploads[0]["with"]["path"] == "release-notes.md"
-    notes = _jobs()["notes"]
+    notes = _jobs(RELEASE_YML)["notes"]
     downloads = [s for s in notes["steps"] if s.get("with", {}).get("name") == "release-notes"]
     assert downloads, "the notes job must download the notes the build job resolved"
     create = _step(notes, "Create GitHub Release")["run"]

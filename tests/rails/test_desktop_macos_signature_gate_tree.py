@@ -11,7 +11,8 @@ import pytest
 import yaml
 from desktop_macos_signature_gate_shared import GATE_SCRIPT_NAME, MAKEFILE, REPO_ROOT
 
-RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+#: Where the release builds its dmg: release.yml calls it as its `artifacts` job.
+RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release-artifacts.yml"
 
 
 def _desktop_mac_job() -> dict:
@@ -31,7 +32,7 @@ def test_the_release_mac_job_verifies_the_app_inside_the_dmg() -> None:
     steps = _desktop_mac_job()["steps"]
     runs = "\n".join(step.get("run", "") for step in steps)
     assert GATE_SCRIPT_NAME in runs, (
-        f"release.yml's desktop-mac job must invoke {GATE_SCRIPT_NAME} on the app it mounts "
+        f"the release's desktop-mac job must invoke {GATE_SCRIPT_NAME} on the app it mounts "
         "from the dmg; otherwise a stale-linker-seal regression ships an uninstallable dmg"
     )
 

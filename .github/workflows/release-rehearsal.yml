@@ -52,3 +52,4 @@ jobs:
     uses: ./.github/workflows/release-artifacts.yml
     with:
       ref: ${{ needs.version.outputs.ref }}
+      retention-days: 3

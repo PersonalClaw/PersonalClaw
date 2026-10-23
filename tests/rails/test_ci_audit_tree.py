@@ -30,7 +30,7 @@ def test_each_graph_names_the_extras_its_artifact_installs() -> None:
     assert (
         tuple(re.findall(r"--extra (\S+)", export.group(1))) == audit.PYTHON_GRAPHS["gateway-image"]
     )
-    release = (REPO / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    release = (REPO / ".github/workflows/release-artifacts.yml").read_text(encoding="utf-8")
     syncs = {
         tuple(re.findall(r"--extra (\S+)", line))
         for line in release.splitlines()

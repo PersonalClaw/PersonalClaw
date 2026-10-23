@@ -8,6 +8,7 @@ hold to.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import yaml
 from docker_single_container_shared import _REPO, get_handler
@@ -18,6 +19,8 @@ _WORKFLOW = _REPO / ".github" / "workflows" / "docker-single-container.yml"
 
 
 _RELEASE_WORKFLOW = _REPO / ".github" / "workflows" / "release.yml"
+#: Where the release builds and smokes its images: release.yml calls it as `artifacts`.
+_ARTIFACTS_WORKFLOW = _REPO / ".github" / "workflows" / "release-artifacts.yml"
 
 
 #: The release job that must prove the image serves a dashboard before anything is pushed.
@@ -40,8 +43,8 @@ def test_workflow_runs_the_smoke_tool_against_the_image_it_built() -> None:
     assert "--tag personalclaw-gateway:single-container-ci" in text
 
 
-def _release_jobs() -> dict[str, object]:
-    workflow = yaml.safe_load(_RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+def _release_jobs(path: Path = _ARTIFACTS_WORKFLOW) -> dict[str, object]:
+    workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert isinstance(workflow, dict)
     jobs = workflow.get("jobs")
     assert isinstance(jobs, dict)
@@ -74,7 +77,8 @@ def test_release_asserts_the_image_dashboard_against_the_image_it_built() -> Non
     """
     job = _release_jobs().get(_RELEASE_GATE_JOB)
     assert job is not None, (
-        f"release.yml has no {_RELEASE_GATE_JOB!r} job, so nothing at release time starts the "
+        f"release-artifacts.yml has no {_RELEASE_GATE_JOB!r} job, so nothing at release time "
+        "starts the "
         "gateway — the `--entrypoint ''` smoke proves the binary exists, not the dashboard"
     )
     script = _run_scripts(job)
@@ -92,18 +96,22 @@ def test_release_asserts_the_image_dashboard_against_the_image_it_built() -> Non
 def test_a_dashboardless_image_is_never_published_or_released() -> None:
     """The wiring IS the gate. A warning, or an assertion after the push, is not one.
 
-    `images` pushes `:X.Y.Z`, `:X.Y` and `:latest` and only THEN smokes what it pushed, so a
-    dashboard assertion added *after* that push would leave a broken `:latest` in GHCR —
-    the tag README.md's one-liner points at — with no GitHub Release to explain it. Hence
-    `images: needs:` the gate, and `notes` (the GitHub Release) still needs `images`, so the
-    whole chain refuses.
+    A dashboard assertion added *after* the push would leave a broken `:latest` in GHCR —
+    the tag README.md's one-liner points at — with no GitHub Release to explain it. Hence the
+    build's `images` job needs the gate, release.yml's `images` (the push) needs `artifacts`,
+    which holds both, and `notes` (the GitHub Release) still needs `images`, so the whole
+    chain refuses.
     """
     jobs = _release_jobs()
     assert _RELEASE_GATE_JOB in _needs(jobs.get("images")), (
-        f"the `images` job does not need {_RELEASE_GATE_JOB!r}, so the multi-arch push runs "
+        f"the `images` job does not need {_RELEASE_GATE_JOB!r}, so the multi-arch build runs "
         "regardless of the dashboard assertion and a broken `:latest` ships"
     )
-    assert "images" in _needs(jobs.get("notes")), (
+    release = _release_jobs(_RELEASE_WORKFLOW)
+    assert "artifacts" in _needs(
+        release.get("images")
+    ), "release.yml's image push must wait on `artifacts`, where the dashboard gate runs"
+    assert "images" in _needs(release.get("notes")), (
         "the GitHub Release must stay downstream of `images`; without that edge the dashboard "
         "gate cannot block the release"
     )
@@ -118,7 +126,8 @@ def test_the_version_only_arch_smoke_is_left_intact() -> None:
     """
     script = _run_scripts(_release_jobs().get("images"))
     assert "--entrypoint ''" in script
-    assert 'docker pull --quiet --platform "linux/$arch"' in script
+    # Each arch is loaded from the layout release.yml pushes, so the smoke runs what ships.
+    assert '--override-arch "$arch" "oci-archive:$LAYOUT"' in script
     assert "for arch in amd64 arm64; do" in script
 
 

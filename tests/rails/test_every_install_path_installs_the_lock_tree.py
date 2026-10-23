@@ -18,7 +18,8 @@ from every_install_path_installs_the_lock_shared import (
     _from_ranges,
 )
 
-_RELEASE = _ROOT / ".github" / "workflows" / "release.yml"
+#: Where the release builds its desktop bundles: release.yml calls it as `artifacts`.
+_RELEASE = _ROOT / ".github" / "workflows" / "release-artifacts.yml"
 
 
 #: The installs that resolve pyproject's ranges on purpose, keyed by file and a piece of the
@@ -122,7 +123,7 @@ def test_the_census_reads_the_installs_that_matter() -> None:
     assert len(census) >= 12, [i.command for i in census]
     for path in (
         "deploy/docker/Dockerfile.backend",
-        ".github/workflows/release.yml",
+        ".github/workflows/release-artifacts.yml",
         ".github/workflows/ci.yml",
         "deploy/website/install.sh",
     ):
@@ -131,7 +132,7 @@ def test_the_census_reads_the_installs_that_matter() -> None:
 
 def test_the_desktop_bundles_sync_the_lock() -> None:
     text = _RELEASE.read_text(encoding="utf-8")
-    syncs = [i for i in _commands("release.yml", text) if i.tokens[1:2] == ("sync",)]
-    assert len(syncs) >= 2, "release.yml: expected the macOS and Linux desktop venvs to sync"
+    syncs = [i for i in _commands("release-artifacts.yml", text) if i.tokens[1:2] == ("sync",)]
+    assert len(syncs) >= 2, "release-artifacts.yml: expected the macOS and Linux desktop syncs"
     for sync in syncs:
         assert "--locked" in sync.tokens and "--no-editable" in sync.tokens, sync.command

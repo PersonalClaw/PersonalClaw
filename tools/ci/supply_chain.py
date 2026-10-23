@@ -504,6 +504,8 @@ def _resolve_arg(
 
 #: The project's own images, which the jobs that pull them by tag are there to test.
 OWN_IMAGES = re.compile(r"ghcr\.io/personalclaw/")
+#: A ``skopeo copy`` destination that is a docker archive on the runner, and the tag it names.
+_LOCAL_COPY = re.compile(r"docker-archive:[^:]+:(.+)")
 _TWO_PLATFORMS = ("linux/amd64", "linux/arm64")
 #: `docker run` options whose next word is their value.
 _DOCKER_VALUED = set(
@@ -590,7 +592,9 @@ def _run_images(
 ) -> int:
     """Judge the images one ``run:`` script fetches: ``docker run|pull|create``, the FROM lines of
     a build it feeds on stdin, and a ``--build-arg`` that overrides a base ARG. *built* gathers
-    the tags the job builds. Returns how many images it judged."""
+    the tags the job builds, and the tags it copies out of a layout it built (``skopeo copy`` to
+    ``docker-archive:<file>:<tag>``, which ``docker load`` then reads). Returns how many images
+    it judged."""
     script = shell_installs.read_script(run)
     raw = run.splitlines()
     judged = 0
@@ -598,6 +602,17 @@ def _run_images(
         for commands in shell_installs.pipelines(line):
             for words in commands:
                 tool = words[0].rsplit("/", 1)[-1]
+                if tool == "skopeo" and words[1:2] == ["copy"]:
+                    local = _LOCAL_COPY.fullmatch(words[-1].strip("'\""))
+                    if local:
+                        built.add(
+                            re.sub(
+                                r"\$\{?([A-Za-z_]\w*)\}?",
+                                lambda m: env.get(m.group(1), m.group(0)),
+                                local.group(1),
+                            )
+                        )
+                    continue
                 if tool not in ("docker", "podman", "nerdctl"):
                     continue
                 verb = words[1:2]
@@ -1971,6 +1986,8 @@ def dependabot(tree: Tree) -> list[Violation]:
 # ── the release's image tooling, run before a tag needs it ──────────────────────────────────
 
 RELEASE = ".github/workflows/release.yml"
+#: Where the release builds its images: release.yml calls it, and so does the weekly rehearsal.
+RELEASE_BUILD = ".github/workflows/release-artifacts.yml"
 RELEASE_TOOLING = ".github/workflows/release-image-tooling.yml"
 _TOOLING_ACTIONS = ("docker/setup-qemu-action", "docker/setup-buildx-action")
 WEB_DOCKERFILE = "deploy/docker/Dockerfile.web"
@@ -1982,6 +1999,11 @@ _PUBLISHES = re.compile(
     r"|\b(?:docker|podman|buildah)\s+(?:image\s+)?push\b|\b(?:docker|podman|buildah|helm)\s+login\b"
     r"|\b(?:crane|oras|regctl|skopeo)\s|imagetools\s+create\b|compose\s+push\b"
 )
+#: The same, for layout-smoke, which copies images with skopeo, but only to a file on the runner.
+_LAYOUT_PUBLISHES = re.compile(_PUBLISHES.pattern.replace("|skopeo", ""))
+_SKOPEO_COPY = re.compile(r"\bskopeo\s+copy\b([^\n]*)")
+#: Where layout-smoke's ``skopeo copy`` may write: a layout or a docker archive on the runner.
+_LOCAL_DESTINATIONS = ("oci:", "docker-archive:")
 
 
 def _tooling_steps(workflow: dict[str, Any], job_id: str) -> dict[str, tuple[Any, Any]]:
@@ -1994,7 +2016,7 @@ def _tooling_steps(workflow: dict[str, Any], job_id: str) -> dict[str, tuple[Any
 
 
 def _release_platforms(workflow: dict[str, Any]) -> set[str]:
-    """The platforms release.yml's images job builds."""
+    """The platforms the release's images job builds."""
     job = dict(_jobs(workflow)).get("images") or {}
     for step in _steps(job):
         inputs = step.get("with")
@@ -2012,32 +2034,85 @@ def _node_base(tree: Tree) -> str | None:
     return None
 
 
+def _layout_smoke(workflow: dict[str, Any], release: dict[str, tuple[Any, Any]]) -> list[Violation]:
+    """``layout-smoke``: the release build's pins, no permission, no `if`, and every image it
+    copies copied to a file on the runner."""
+    bad: list[Violation] = []
+
+    def fail(message: str) -> None:
+        bad.append(Violation("release-tooling", RELEASE_TOOLING, "layout-smoke", message))
+
+    job = dict(_jobs(workflow)).get("layout-smoke")
+    if not isinstance(job, dict):
+        fail("release-image-tooling.yml has no layout-smoke job")
+        return bad
+    if job.get("permissions") != {}:
+        fail("layout-smoke must hold `permissions: {}`")
+    for key in ("if", "continue-on-error"):
+        if key in job:
+            fail(f"layout-smoke sets `{key}`, so a run can pass without proving the layout path")
+    steps = _tooling_steps(workflow, "layout-smoke")
+    for name in _TOOLING_ACTIONS:
+        if name in release and steps.get(name) != release[name]:
+            fail(
+                f"layout-smoke runs {name} as {steps.get(name)}, release-artifacts.yml as"
+                f" {release[name]}"
+            )
+    copies = 0
+    for step in _steps(job):
+        name = step_name(step)
+        run = str(step.get("run", ""))
+        uses = action(step)
+        if uses and uses not in _SMOKE_ACTIONS | {"actions/checkout"}:
+            fail(f"layout-smoke step {name} runs {uses}; only checkout and the two setup actions")
+        if _LAYOUT_PUBLISHES.search(run):
+            fail(f"layout-smoke step {name} logs in or publishes an image")
+        for copied in _SKOPEO_COPY.finditer(run.replace("\\\n", " ")):
+            copies += 1
+            words = copied.group(1).split()
+            destination = words[-1].strip("'\"") if words else ""
+            if not destination.startswith(_LOCAL_DESTINATIONS):
+                fail(
+                    f"layout-smoke step {name} copies an image to {destination!r}, not a file here"
+                )
+    if not copies:
+        fail("layout-smoke copies nothing out of its layout, so it proves nothing")
+    return bad
+
+
 def release_tooling(tree: Tree) -> list[Violation]:
-    """release-image-tooling.yml's ``pin-smoke`` runs release.yml's QEMU and buildx steps pin for
-    pin, on every pull request that changes either file, holding nothing it could publish with:
-    it always runs, it builds every platform the release builds, on the images' own node base,
-    and its steps are only the two setup actions and a cache-only build."""
+    """release-image-tooling.yml's ``pin-smoke`` runs the release build's QEMU and buildx steps
+    pin for pin (release-artifacts.yml's ``images`` job), on every pull request that changes the
+    release's workflows or its own, holding nothing it could publish with: it always runs, it
+    builds every platform the release builds, on the images' own node base, and its steps are
+    only the two setup actions and a cache-only build. Its ``layout-smoke`` runs the same pins
+    and copies an image only to a file on the runner (``skopeo copy`` to ``oci:`` or
+    ``docker-archive:``), with nothing to log in with."""
     workflows = dict(_workflows(tree))
     smoke_workflow = workflows.get(RELEASE_TOOLING, {})
-    release_workflow = workflows.get(RELEASE, {})
+    release_workflow = workflows.get(RELEASE_BUILD, {})
     release = _tooling_steps(release_workflow, "images")
-    smoke = _tooling_steps(smoke_workflow, "pin-smoke")
     bad: list[Violation] = []
+    bad.extend(_layout_smoke(smoke_workflow, release))
+    smoke = _tooling_steps(smoke_workflow, "pin-smoke")
 
     def fail(message: str) -> None:
         bad.append(Violation("release-tooling", RELEASE_TOOLING, "pin-smoke", message))
 
     for name in _TOOLING_ACTIONS:
         if name not in release:
-            fail(f"release.yml's images job has no {name} step to compare")
+            fail(f"release-artifacts.yml's images job has no {name} step to compare")
         elif smoke.get(name) != release[name]:
-            fail(f"pin-smoke runs {name} as {smoke.get(name)}, release.yml as {release[name]}")
+            fail(
+                f"pin-smoke runs {name} as {smoke.get(name)}, release-artifacts.yml as"
+                f" {release[name]}"
+            )
     # PyYAML reads the bare key `on` as the boolean True.
     loaded: dict[Any, Any] = smoke_workflow
     triggers = loaded.get("on", loaded.get(True)) or {}
     pull_request = triggers.get("pull_request") if isinstance(triggers, dict) else None
     paths = (pull_request or {}).get("paths") or [] if isinstance(pull_request, dict) else []
-    for wanted in (RELEASE, RELEASE_TOOLING):
+    for wanted in (RELEASE, RELEASE_BUILD, RELEASE_TOOLING):
         if wanted not in paths:
             fail(f"pin-smoke does not run on a pull request that changes {wanted}")
     job = dict(_jobs(smoke_workflow)).get("pin-smoke") or {}

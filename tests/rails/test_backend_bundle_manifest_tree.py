@@ -55,10 +55,10 @@ class TestTheSpecActuallyUsesTheDerivation:
         """The EXECUTION half of the rail, and its call sites.
 
         The source rails above prove the derivation is complete; they cannot prove the built
-        artefact works. `release.yml`'s two desktop jobs are where that is proven — and until
-        2026-09-23 their only executed assertion was `"$BACKEND" --version`, which is argparse
-        and exits before the runner catalogue is read, before any `sdk` submodule is imported
-        and before an MCP server is resolved. So the broken dmg passed.
+        artefact works. The release's two desktop jobs (release-artifacts.yml) are where that is
+        proven — and until 2026-09-23 their only executed assertion was `"$BACKEND" --version`,
+        which is argparse and exits before the runner catalogue is read, before any `sdk`
+        submodule is imported and before an MCP server is resolved. So the broken dmg passed.
 
         Note these jobs run on TAGS ONLY (`on: push: tags: ["v*"]`), which is why the source
         rails exist as well: nothing in this file's other classes is redundant with the smoke,
@@ -70,7 +70,7 @@ class TestTheSpecActuallyUsesTheDerivation:
         assert smoke.is_file(), "the release smoke script is missing"
         assert os.access(smoke, os.X_OK), "the release smoke script is not executable"
 
-        workflow_path = _REPO_ROOT / ".github" / "workflows" / "release.yml"
+        workflow_path = _REPO_ROOT / ".github" / "workflows" / "release-artifacts.yml"
         workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
         # Parsed, not grepped: the step COMMENTS name the script too, so a text count reads 4
         # and would pass while a job ran nothing. `run:` blocks are the only call sites.

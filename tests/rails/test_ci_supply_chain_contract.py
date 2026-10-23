@@ -47,6 +47,8 @@ from tools.ci import supply_chain
 _POLICY = supply_chain.POLICY_FILE
 _BACKEND = "deploy/docker/Dockerfile.backend"
 _RELEASE_YML = ".github/workflows/release.yml"
+#: Where the release builds its artifacts: release.yml calls it as its `artifacts` job.
+_ARTIFACTS_YML = ".github/workflows/release-artifacts.yml"
 _TOOLING = ".github/workflows/release-image-tooling.yml"
 _SETUP_NODE = "actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0"
 _LOGIN = "docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0"
@@ -429,7 +431,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "the QEMU image pinned to its index",
-                _RELEASE_YML,
+                _ARTIFACTS_YML,
                 _QEMU_AMD64,
                 _QEMU_INDEX,
                 expect="pins the index",
@@ -496,14 +498,14 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             # BuildKit is judged like QEMU.
             _plant(
                 "the BuildKit image pinned to its index",
-                _RELEASE_YML,
+                _ARTIFACTS_YML,
                 _BUILDKIT_AMD64,
                 _BUILDKIT_INDEX,
                 expect="pins the index",
             ),
             _plant(
                 "the BuildKit image with no comment naming its index",
-                _RELEASE_YML,
+                _ARTIFACTS_YML,
                 "          # sha256:" + _BUILDKIT_INDEX + ".\n",
                 "",
                 expect="does not name the index",
@@ -628,7 +630,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant("pip-audit with no version", _BREADTH, "pip-audit==2.10.1", "pip-audit"),
             _plant(
                 "uv run --with a package with no version",
-                _RELEASE_YML,
+                _ARTIFACTS_YML,
                 f"--with packaging=={_LOCKED_PACKAGING}",
                 "--with packaging",
             ),
@@ -1380,16 +1382,16 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 "",
             ),
             _line(
-                "setup-qemu with no image", _RELEASE_YML, "          image: docker.io/tonistiigi"
+                "setup-qemu with no image", _ARTIFACTS_YML, "          image: docker.io/tonistiigi"
             ),
             _plant(
                 "setup-qemu's image by tag",
-                _RELEASE_YML,
+                _ARTIFACTS_YML,
                 f"binfmt:qemu-v10.2.3-68@sha256:{_QEMU_AMD64}",
                 "binfmt:latest",
             ),
-            _plant("buildx's latest", _RELEASE_YML, "version: v0.38.0", "version: latest"),
-            _line("buildx with no BuildKit image", _RELEASE_YML, "          driver-opts: image="),
+            _plant("buildx's latest", _ARTIFACTS_YML, "version: v0.38.0", "version: latest"),
+            _line("buildx with no BuildKit image", _ARTIFACTS_YML, "          driver-opts: image="),
             _planted_action(
                 "setup-node on latest in a local composite action",
                 f"    - uses: {_SETUP_NODE}\n      with:\n        node-version: latest\n",
@@ -1429,7 +1431,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "buildx's exact version without the v passes",
-                _RELEASE_YML,
+                _ARTIFACTS_YML,
                 "version: v0.38.0",
                 "version: 0.38.0",
                 fails=False,
@@ -1848,7 +1850,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
         "release-tooling",
         ("release-tooling",),
         (
-            _plant("release.yml's buildx moved alone", _RELEASE_YML, "v0.38.0", "v0.37.0"),
+            _plant("the release build's buildx moved alone", _ARTIFACTS_YML, "v0.38.0", "v0.37.0"),
             _plant("the smoke's buildx moved alone", _TOOLING, "v0.38.0", "v0.37.0"),
             _plant("the smoke's QEMU image moved alone", _TOOLING, _QEMU_AMD64, "c" * 64),
             _plant(
@@ -1856,6 +1858,49 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 _TOOLING,
                 "      - .github/workflows/release.yml\n",
                 "",
+            ),
+            _plant(
+                "the smoke not run when release-artifacts.yml changes",
+                _TOOLING,
+                "      - .github/workflows/release-artifacts.yml\n",
+                "",
+            ),
+            # layout-smoke: the same pins, nothing to publish with, and only local copies.
+            _plant(
+                "the layout smoke's QEMU action moved alone",
+                _TOOLING,
+                "persist-credentials: false\n      - uses: docker/setup-qemu-action@99012661954931",
+                "persist-credentials: false\n      - uses: docker/setup-qemu-action@00000000000000",
+                expect="layout-smoke runs docker/setup-qemu-action as",
+            ),
+            _plant(
+                "the layout smoke pushing its copy",
+                _TOOLING,
+                '"oci:$RUNNER_TEMP/copied:smoke"',
+                '"docker://ghcr.io/personalclaw/personalclaw-web:smoke"',
+                expect="copies an image to 'docker://",
+            ),
+            _plant(
+                "the layout smoke holding a permission",
+                _TOOLING,
+                "  layout-smoke:\n    runs-on: ubuntu-24.04\n    permissions: {}\n",
+                "  layout-smoke:\n    runs-on: ubuntu-24.04\n"
+                "    permissions:\n      packages: write\n",
+                expect="layout-smoke must hold `permissions: {}`",
+            ),
+            _plant(
+                "the layout smoke logging in",
+                _TOOLING,
+                "          skopeo --version\n",
+                "          skopeo --version\n          docker login ghcr.io\n",
+                expect="layout-smoke step",
+            ),
+            _plant(
+                "the layout smoke switched off",
+                _TOOLING,
+                "  layout-smoke:\n    runs-on: ubuntu-24.04\n",
+                "  layout-smoke:\n    runs-on: ubuntu-24.04\n    if: false\n",
+                expect="layout-smoke sets `if`",
             ),
             _plant(
                 "the smoke holding a permission",
