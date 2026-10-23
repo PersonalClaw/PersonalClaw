@@ -447,8 +447,9 @@ def test_the_three_origins_are_distinct_and_closed():
 
 #: The frames a turn already sends: the runner's own, the ring's reading said through the state
 #: (``context_usage``), a steer it did not take, requeued (``queue_push``, from ``running_turn``),
-#: its phase (``work_phase``, from ``chat_phase``) and the follow-ups suggested after it
-#: (``chat_followups``, from ``chat_followups``). Both contracts above are payload on names
+#: its phase (``work_phase``, from ``chat_phase``), the follow-ups suggested after it
+#: (``chat_followups``, from ``chat_followups``) and the running list's ring that its phase moved
+#: (``running_changed``, from ``running_now``). Both contracts above are payload on names
 #: already here (``meta`` on the turn's own message; a ``kind`` and an ``origin`` on
 #: ``activity_event``), so none of their emitters may send a name outside it.
 _TURN_WS_EVENTS = {
@@ -464,6 +465,7 @@ _TURN_WS_EVENTS = {
     "context_usage",
     "queue_pop",
     "queue_push",
+    "running_changed",
     "session_agent_switch",
     "session_clear",
     "token_usage",
