@@ -501,12 +501,11 @@ _SPECS = [
     [":(top)src"],
     [":/:src/a"],
     [":(glob)**", ":!:docs"],
-    # An empty path is the whole tree, as an include or an exclude.
+    # An empty path is the whole tree. (An exclude of every path is refused: git versions read
+    # `src/ :!` and `src/ :(exclude,glob)**` otherwise.)
     [":/"],
     [":(top)"],
     [":(glob)"],
-    [":!"],
-    ["src/", ":(exclude,glob)**"],
 ]
 
 
@@ -533,6 +532,18 @@ def test_every_form_the_matcher_is_held_to_is_one_the_catalogue_accepts() -> Non
         ("x[1.txt", "never closes"),
         (":(glob)src/[a/b]", "a / in a class"),
         ("src/[[:alpha:]]*", "character class"),
+        # An exclude of every path: git 2.54 excludes everything by `src/ :!`, 2.55 nothing.
+        (":(exclude,glob)**", "git versions read otherwise"),
+        (":(glob,exclude)**", "git versions read otherwise"),
+        (":(exclude,icase,glob)**", "git versions read otherwise"),
+        (":(exclude,glob)**/*", "git versions read otherwise"),
+        (":!", "git versions read otherwise"),
+        (":^", "git versions read otherwise"),
+        (":!:", "git versions read otherwise"),
+        (":(exclude)", "git versions read otherwise"),
+        (":(exclude)*", "git versions read otherwise"),
+        (":!?*", "git versions read otherwise"),
+        (":(exclude,top)", "git versions read otherwise"),
     ],
 )
 def test_a_pathspec_git_reads_otherwise_than_the_matcher_is_refused(spec, fault) -> None:
@@ -560,7 +571,7 @@ def test_an_input_of_the_whole_tree_names_no_path_however_it_is_spelled(spec) ->
     assert "build" in planner.plan(whole, "merge", ["docs/a.md"], overrides=()).jobs, spec
 
 
-@pytest.mark.parametrize("spec", [":!", ":(exclude,glob)**", ":(exclude)*"])
+@pytest.mark.parametrize("spec", [":!", ":(exclude)*"])
 def test_an_exclude_of_the_whole_tree_names_no_path_either(spec) -> None:
     """An exclude names the paths a job skips; one that skips every path names none."""
     cat = _with_build_inputs("src/sdk/", spec)

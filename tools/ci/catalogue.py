@@ -462,8 +462,17 @@ def pathspec_fault(spec: str) -> str | None:
         if {"literal", "glob"} <= words:
             return "uses literal and glob together, which git refuses"
         spec = spec[end + 1 :]
+        exclude = "exclude" in words
     else:
+        short = SHORT_MAGIC.match(spec)
+        exclude = short is not None and bool({"!", "^"} & set(short.group()))
         spec = SHORT_MAGIC.sub("", spec, count=1)
+    if exclude and not spec.strip("*?/"):
+        # git 2.54 excludes every path by `src/ :!` or `src/ :(exclude,glob)**`, and 2.55 none.
+        return (
+            "excludes every path, which git versions read otherwise: an exclude names the"
+            " paths it skips"
+        )
     parts = spec.split("/")
     if spec.startswith("/") or ".." in parts:
         return "leaves the repository"
