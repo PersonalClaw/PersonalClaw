@@ -108,8 +108,8 @@ jobs:
     # in run 35814995463.
     timeout-minutes: 30  # a pinned call may retry its install for ten minutes first
     # python:3.12.15-slim, the linux/amd64 manifest (this runner's platform) of index
-    # sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1.
-    container: python:3.12.15-slim@sha256:2b4f19dae3a777dfc3b76730bda1e82e1f66ab2a2686fa93ca78edbfb4f04ffe
+    # sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704.
+    container: python:3.12.15-slim@sha256:e8a38829209aea82774882e5157e1f7c3e8c8393ff53a697b3580896e57f345c
     steps:
       - name: Runner identity
         # The container's own system, beside the runner image the job's set-up log names.
