@@ -1,0 +1,146 @@
+# The release's image push, proved against GHCR before a tag needs it (#3911).
+#
+# release.yml's `images` job logs in to GHCR with the job's token and pushes each image's smoked
+# OCI layout with `skopeo copy --all --preserve-digests`, then requires each tag to name the index
+# the manifest records. That runs first at a tag, and a tag's release.yml cannot be fixed after:
+# a push that failed there would leave the release half published. This runs that job's own login
+# and its own push step, held to release.yml's text (tests/rails/test_release_push_proof_tree.py),
+# on main by hand, for a green release rehearsal's web layout, to a scratch package no release
+# names: ghcr.io/personalclaw/release-rehearsal-web. The same job then deletes that package, with
+# the admin the publishing repository holds on it, and reads it back: it must answer 404.
+#
+#   gh workflow run release-push-proof.yml --ref main -f run-id=<a green rehearsal run on main>
+#
+# A package a workflow first publishes takes the repository's visibility, so the scratch package
+# is public for the minutes between its push and its deletion. The release runbook's step 6 says
+# when to run it.
+name: Release push proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        description: "A green release-rehearsal.yml run on main, whose web layout is pushed"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One proof at a time, never cancelled: a cancelled proof could leave the package undeleted.
+concurrency:
+  group: release-push-proof
+  cancel-in-progress: false
+
+jobs:
+  push:
+    if: ${{ github.ref == 'refs/heads/main' && github.repository == 'PersonalClaw/PersonalClaw' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # The rehearsal run: its own record, and the layout and index it uploaded.
+      actions: read
+      # The scratch package: its push, and its deletion.
+      packages: write
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - name: The rehearsal run is a release rehearsal on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run-id }}
+        run: |
+          set -euo pipefail
+          case "$RUN_ID" in ''|*[!0-9]*) echo "::error::run-id '$RUN_ID' is not a run id"; exit 1;; esac
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            --jq '[.path, .head_branch, .status, .conclusion] | @tsv' > "$RUNNER_TEMP/run.tsv"
+          read -r path branch status conclusion < "$RUNNER_TEMP/run.tsv"
+          echo "run $RUN_ID: $path on $branch, $status $conclusion"
+          if [ "${path%%@*}" != .github/workflows/release-rehearsal.yml ] || [ "$branch" != main ] \
+            || [ "$status" != completed ] || [ "$conclusion" != success ]; then
+            echo "::error::run $RUN_ID is not a green release rehearsal on main"
+            exit 1
+          fi
+      - name: The image's layout, as it was smoked
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-layout-web
+          path: ${{ runner.temp }}/layout
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ github.token }}
+      - name: The image's index, as the manifest records it
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-index-web
+          path: ${{ runner.temp }}/index
+          run-id: ${{ inputs.run-id }}
+          github-token: ${{ github.token }}
+      # release.yml's login, as it is there.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # release.yml's push step, its `run` exactly; only the tag is the scratch package's.
+      - name: Push the layout, every digest kept
+        env:
+          LAYOUT: ${{ runner.temp }}/layout/personalclaw-web.oci.tar
+          INDEX: ${{ runner.temp }}/index/personalclaw-web.index.json
+          TAGS: ghcr.io/personalclaw/release-rehearsal-web:proof-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          skopeo --version
+          # The index's own digest: the one the manifest records, and each tag must name.
+          want="sha256:$(sha256sum "$INDEX" | cut -d' ' -f1)"
+          while IFS= read -r ref; do
+            [ -n "$ref" ] || continue
+            skopeo copy --all --preserve-digests "oci-archive:$LAYOUT" "docker://$ref"
+            got="sha256:$(skopeo inspect --raw "docker://$ref" | sha256sum | cut -d' ' -f1)"
+            if [ "$got" != "$want" ]; then
+              echo "::error::$ref names $got, not the index that was smoked and recorded, $want"
+              exit 1
+            fi
+            echo "$ref: $got"
+          done <<< "$TAGS"
+      - name: Delete the scratch package
+        # Whatever came before: a package this job published is deleted. A 404 means it published
+        # nothing; any other answer fails the job, and the package is deleted by hand.
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: release-rehearsal-web
+        run: |
+          set -euo pipefail
+          path="/orgs/$GITHUB_REPOSITORY_OWNER/packages/container/$PACKAGE"
+          # When it was created and how it is seen, for the CI settings log.
+          if gh api "$path" --jq '"created \(.created_at), \(.visibility)"' 2> /dev/null; then :; fi
+          if gh api -X DELETE "$path" 2> "$RUNNER_TEMP/delete.err"; then
+            echo "deleted ghcr.io/personalclaw/$PACKAGE at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          elif grep -q "Package not found" "$RUNNER_TEMP/delete.err"; then
+            echo "nothing to delete: ghcr.io/personalclaw/$PACKAGE was not published"
+          else
+            cat "$RUNNER_TEMP/delete.err"
+            echo "::error::ghcr.io/personalclaw/$PACKAGE was not deleted: delete it by hand"
+            exit 1
+          fi
+      - name: The scratch package is gone
+        # The read-back: the package must answer 404. Anything else fails the run, and the package
+        # is deleted by hand before anything else is published.
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: release-rehearsal-web
+        run: |
+          set -euo pipefail
+          if gh api "/orgs/$GITHUB_REPOSITORY_OWNER/packages/container/$PACKAGE" > /dev/null 2> "$RUNNER_TEMP/gone.err"; then
+            echo "::error::ghcr.io/personalclaw/$PACKAGE still exists: delete it by hand"
+            exit 1
+          fi
+          if ! grep -q "HTTP 404" "$RUNNER_TEMP/gone.err"; then
+            cat "$RUNNER_TEMP/gone.err"
+            echo "::error::could not read back ghcr.io/personalclaw/$PACKAGE as gone"
+            exit 1
+          fi
+          echo "read back at $(date -u +%Y-%m-%dT%H:%M:%SZ): 404, ghcr.io/personalclaw/$PACKAGE does not exist"

@@ -54,6 +54,13 @@ steps = ["docker/login-action", "Push the layout, every digest kept"]
 reason = "Pushes the two multi-platform images and their attestations to GHCR, from the layouts release-artifacts.yml built and smoked, every digest kept."
 
 [[audited_write]]
+workflow = "release-push-proof.yml"
+job = "push"
+permission = "packages: write"
+steps = ["docker/login-action", "Push the layout, every digest kept", "Delete the scratch package"]
+reason = "Proves release.yml's own image push against GHCR, on main by hand: pushes a green rehearsal's web layout to the scratch package release-rehearsal-web, never a release image, and deletes that package in the same job."
+
+[[audited_write]]
 workflow = "release.yml"
 job = "notes"
 permission = "contents: write"

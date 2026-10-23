@@ -239,6 +239,26 @@ What to check:
 `tests/rails/test_a_release_dispatched_on_a_branch_publishes_nothing.py` holds the wiring that
 makes this safe.
 
+### 6. Before v0.3.0, once: prove the image push against GHCR
+
+- [ ] Run this before the first tag whose `release.yml` pushes the images from their layouts
+  (v0.3.0). That push (the job token's login, skopeo reading it, the copy to the registry) first
+  runs at a tag, and a tag's `release.yml` cannot be fixed after it is cut: a push that broke
+  there would mean a v0.3.1. `release-push-proof.yml` runs `release.yml`'s own login and push
+  step (`tests/rails/test_release_push_proof_tree.py` holds them equal) for a green rehearsal's
+  web layout, to the scratch package `ghcr.io/personalclaw/release-rehearsal-web`, which no
+  release names, and then deletes that package:
+
+  ```bash
+  gh workflow run release-push-proof.yml -R PersonalClaw/PersonalClaw --ref main -f run-id=<green rehearsal run id>
+  ```
+
+  Expect it green: the push step names the index for the scratch tag, and the last step says
+  the package was deleted. A package a workflow first publishes takes the repository's
+  visibility, so the scratch package is public until that last step runs. If the delete fails,
+  delete the package by hand (Packages → `release-rehearsal-web` → Package settings → Delete).
+  Log the run, the push and the deletion in the CI settings log.
+
 ## Tagging
 
 **Nothing in `release.yml` can be fixed for a tag once you push it.** The tag's run, a

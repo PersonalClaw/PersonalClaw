@@ -833,6 +833,11 @@ _MAIN_ONLY_ENVIRONMENTS = {
     ("release-tag.yml", "tag"): "ci-controller",
 }
 _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
+#: The one publishing permission a workflow other than release.yml may hold, by workflow and job:
+#: release-push-proof.yml runs release.yml's own image push to a scratch package no release names,
+#: and deletes it (#3911; tests/rails/test_release_push_proof_tree.py holds that). It may hold
+#: `packages: write` alone, on a dispatch alone, in a job that runs on main alone.
+_SCRATCH_PUBLISHERS = {("release-push-proof.yml", "push"): ["packages"]}
 
 
 def _trust_workflows(root: Path) -> list[tuple[str, dict]]:
@@ -978,7 +983,15 @@ def _only_the_release_controller_publishes(root: Path) -> list[str]:
             found.append(f"{name} grants every job {held}")
         for job_name, job in _trust_jobs(wf).items():
             held = _publishing(job.get("permissions"))
-            if held:
+            scratch = _SCRATCH_PUBLISHERS.get((name, job_name))
+            if held and scratch is not None and held == scratch:
+                if set(_triggers(wf)) != {"workflow_dispatch"}:
+                    found.append(
+                        f"{name}:{job_name} holds {held} in a workflow not dispatched alone"
+                    )
+                if "github.ref == 'refs/heads/main'" not in str(job.get("if", "")):
+                    found.append(f"{name}:{job_name} holds {held} in a job not run on main alone")
+            elif held:
                 found.append(f"{name}:{job_name} holds {held} outside {_RELEASE_WORKFLOW}")
             environment = job.get("environment")
             if environment is None:
@@ -1133,6 +1146,36 @@ def _release_tag(old: str = "", new: str = "") -> Callable[[Path], None]:
         text = _RELEASE_TAG.replace(old, new, 1) if old else _RELEASE_TAG
         assert not old or old in _RELEASE_TAG, f"the plant's anchor is not there: {old!r}"
         _write(root, f"{_WORKFLOWS}/release-tag.yml", text)
+
+    return plant
+
+
+_PUSH_PROOF = """\
+name: Release push proof
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  push:
+    if: ${{ github.ref == 'refs/heads/main' && github.repository == 'PersonalClaw/PersonalClaw' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - run: ./push.sh
+"""
+
+
+def _push_proof(old: str = "", new: str = "") -> Callable[[Path], None]:
+    """Add the GHCR push proof, with *old* replaced by *new* in it."""
+
+    def plant(root: Path) -> None:
+        assert not old or old in _PUSH_PROOF, f"the plant's anchor is not there: {old!r}"
+        text = _PUSH_PROOF.replace(old, new, 1) if old else _PUSH_PROOF
+        _write(root, f"{_WORKFLOWS}/release-push-proof.yml", text)
 
     return plant
 
@@ -1435,6 +1478,25 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
                 "    environment:\n      name: settings-report\n",
             ),
             fails=False,
+        ),
+        Control("the push proof's packages: write passes", _push_proof(), fails=False),
+        Control(
+            "the push proof holding contents: write too fails",
+            _push_proof(
+                "      packages: write\n", "      packages: write\n      contents: write\n"
+            ),
+        ),
+        Control(
+            "the push proof on a push trigger fails",
+            _push_proof("  workflow_dispatch:\n", "  workflow_dispatch:\n  push:\n"),
+        ),
+        Control(
+            "the push proof's job off main fails",
+            _push_proof("github.ref == 'refs/heads/main' && ", ""),
+        ),
+        Control(
+            "packages: write in another job of the push proof fails",
+            _push_proof("  push:\n", "  other:\n"),
         ),
         Control(
             "release.yml's own publishing jobs pass",
