@@ -88,6 +88,7 @@ def project_runs(project: str, config: str | None = None) -> frozenset[str]:
     """
     modes, allowed = _isolation()
     serial = {spec for spec, mode in modes.items() if mode == "serial"}
+    alone = {spec for spec, mode in modes.items() if mode == "alone"}
     text = _CONFIG.read_text(encoding="utf-8") if config is None else config
     projects = text[text.index("projects: [") :]
     found = re.search(rf"\bname: '{re.escape(project)}',(.*?)(?=\bname: |\n  \],)", projects, re.S)
@@ -106,10 +107,14 @@ def project_runs(project: str, config: str | None = None) -> frozenset[str]:
             chosen = {s for s in specs if pattern.search(s)}
         else:
             inner = value[len("fileMatcher(") : -1]
-            unread = re.sub(r"'[^']*'|\.\.\.|\bSTATEFUL_SPECS\b|[\[\],\s]", "", inner)
+            unread = re.sub(
+                r"'[^']*'|\.\.\.|\bSTATEFUL_SPECS\b|\bALONE_SPECS\b|[\[\],\s]", "", inner
+            )
             assert not unread, f"{project!r}'s {key} names {unread!r}, which this rail cannot read"
-            chosen = set(re.findall(r"'([^']+)'", inner)) | (
-                serial if "STATEFUL_SPECS" in inner else set()
+            chosen = (
+                set(re.findall(r"'([^']+)'", inner))
+                | (serial if "STATEFUL_SPECS" in inner else set())
+                | (alone if "ALONE_SPECS" in inner else set())
             )
         picked = picked & chosen if key == "testMatch" else picked - chosen
     return frozenset(s for s in picked if project in allowed.get(modes.get(s, ""), ()))
@@ -256,10 +261,11 @@ def test_the_projects_are_read_from_the_config_and_a_form_it_cannot_read_is_refu
     """`project_runs` reads the real config, so a change there changes its answer; and a filter
     it cannot read is an error, never a guess."""
     config = _CONFIG.read_text(encoding="utf-8")
-    ignore = "testIgnore: fileMatcher(['smoke.spec.ts', ...STATEFUL_SPECS]),"
+    ignore = "testIgnore: fileMatcher(['smoke.spec.ts', ...STATEFUL_SPECS, ...ALONE_SPECS]),"
     assert ignore in config, "chromium's testIgnore moved: re-point this plant"
     assert "smoke.spec.ts" not in project_runs("chromium")
-    kept = config.replace(ignore, "testIgnore: fileMatcher([...STATEFUL_SPECS]),")
+    assert "surfaces.spec.ts" not in project_runs("chromium")
+    kept = config.replace(ignore, "testIgnore: fileMatcher([...STATEFUL_SPECS, ...ALONE_SPECS]),")
     assert "smoke.spec.ts" in project_runs("chromium", kept)
     match = "testMatch: /smoke\\.spec\\.ts$/,"
     assert match in config, "the smoke project's testMatch moved: re-point this plant"

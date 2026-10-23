@@ -41,13 +41,13 @@
     - button "Heartbeat tasks"
     - text: Heartbeat tasks · disabled every #s Heartbeat tasks Silent runs on its own <last run>
     - button "Identity report"
-    - text: Identity report · disabled At #:# <am/pm> PST, on day # of the month Identity report Silent runs on its own <last run>
+    - text: Identity report · disabled At #:# <am/pm> UTC, on day # of the month Identity report Silent runs on its own <last run>
     - button "Monthly usage recap"
-    - text: Monthly usage recap · disabled At #:# <am/pm> PST, on day # of the month Usage recap Silent runs on its own <last run>
+    - text: Monthly usage recap · disabled At #:# <am/pm> UTC, on day # of the month Usage recap Silent runs on its own <last run>
     - button "Morning source digest"
-    - text: Morning source digest · disabled At #:# <am/pm> PDT Source digest Silent runs on its own <last run>
+    - text: Morning source digest · disabled At #:# <am/pm> UTC Source digest Silent runs on its own <last run>
     - button "Notification digest"
-    - text: Notification digest · disabled At #:# <am/pm> PDT Notification digest Silent runs on its own <last run>
+    - text: Notification digest · disabled At #:# <am/pm> UTC Notification digest Silent runs on its own <last run>
     - button "Self-remediation"
     - text: "Self-remediation · disabled adaptive — every #m with nothing to repair, #m while repairing (now: every #m) Self-Remediation Reports to the Inbox runs on its own never"
 - contentinfo "Status":

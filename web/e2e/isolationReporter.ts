@@ -1,6 +1,6 @@
 import type { FullConfig, Reporter, Suite, TestCase, TestResult } from '@playwright/test/reporter'
 import { basename } from 'node:path'
-import { SPEC_ISOLATION, isolationViolation } from './isolation'
+import { SPEC_ISOLATION, isolationViolation, sharedHomeViolation } from './isolation'
 
 // ── Every spec's isolation mode, in the run's own report, and enforced ─────────────────────────
 //
@@ -11,7 +11,8 @@ import { SPEC_ISOLATION, isolationViolation } from './isolation'
 // stateful set's second pass also gets the seed its order came from.
 //
 // A spec running in a project its mode does not allow — a stateful spec in the shared parallel
-// project, say — fails the run, named, before its result could be trusted. `--list` reaches this
+// project, say, or a spec that runs alone in a run beside another project's — fails the run, named,
+// before its result could be trusted. `--list` reaches this
 // too, which is how the planted control in `src/design/e2eIsolation.test.ts` drives it.
 //
 // 🔑 AND A TEST THAT NEVER RAN FAILS THE RUN, NAMED. A project whose dependency failed is skipped
@@ -61,6 +62,8 @@ export default class IsolationReporter implements Reporter {
         this.violations.push(why)
       }
     }
+    const shared = sharedHomeViolation(suite.allTests().map((test) => test.parent.project()?.name ?? ''))
+    if (shared) this.violations.push(shared)
     if (order.length) {
       console.log(`isolation: the stateful set runs serially, then again in seed ${this.seed}'s order: ${order.join(' → ')}`)
     }

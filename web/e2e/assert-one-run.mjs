@@ -1,7 +1,8 @@
 // ── The merged browser report is one whole run — asserted, not assumed ──────────────────────────
 //
 // `node e2e/assert-one-run.mjs e2e-report.json`, from web/, after `merge-legs.mjs`. The run is two
-// `e2e-shard` legs and an `e2e-stateful` run, merged. Each leg's own run enforced its isolation
+// `e2e-shard` legs and the `e2e-stateful` job's runs (the stateful set, and each home a spec runs
+// alone on), merged. Each leg's own run enforced its isolation
 // modes (`isolationReporter.ts`), but no leg saw the others, and a merge is only as whole as what
 // was handed to it. This holds the merged report to one run:
 //
@@ -15,7 +16,10 @@
 //   · every test ran once (the auth setup aside, which each leg runs for itself, so only its
 //     count is exempt): a test twice is a shard split that overlapped;
 //   · every test carries its `isolation` annotation, and ran where its mode allows: a serial spec
-//     only in the stateful projects, a shared one never there;
+//     only in the stateful projects, a shared one never there, and an alone spec only in its own
+//     home's project (`metadata.isolationHome`), which only an invocation of that home's specs has;
+//   · EVERY HOME A SPEC RUNS ALONE ON IS THERE: each alone spec ran in its home's project, as the
+//     stateful run must be there below;
 //   · THE STATEFUL RUN IS THERE: every serial spec ran in `stateful` and once more in one
 //     `stateful-again-*` project. Without this, a merged report missing the stateful run passes
 //     every check above, because each counts only what is in it;
@@ -103,6 +107,7 @@ for (const t of tests) counts.set(named(t), (counts.get(named(t)) ?? 0) + 1)
 for (const [name, n] of counts) if (n > 1) problems.push(`ran ${n} times: ${name}`)
 
 const modes = report.config?.metadata?.isolation ?? {}
+const homes = report.config?.metadata?.isolationHome ?? {}
 const bare = tests.filter((t) => !(t.test.annotations ?? []).some((a) => a.type === 'isolation')).map(named)
 if (bare.length) problems.push(`${bare.length} test${bare.length === 1 ? '' : 's'} carr${bare.length === 1 ? 'ies' : 'y'} no isolation annotation: ${some(bare)}`)
 const placed = new Set()
@@ -110,11 +115,21 @@ for (const t of tests) {
   const mode = modes[t.file]
   if (!mode) {
     placed.add(`${t.file} has no isolation mode in the report's metadata`)
+  } else if (mode === 'alone') {
+    if (t.project !== homes[t.file]) placed.add(`${t.file} is alone on the ${homes[t.file] ?? 'unnamed'} home but ran in the ${t.project} project`)
   } else if ((mode === 'serial') !== STATEFUL.test(t.project)) {
     placed.add(`${t.file} is ${mode} but ran in the ${t.project} project`)
+  } else if (Object.values(homes).includes(t.project)) {
+    placed.add(`${t.file} is ${mode} but ran in the ${t.project} project, a home of its own for other specs`)
   }
 }
 problems.push(...placed)
+
+const alone = Object.keys(modes).filter((spec) => modes[spec] === 'alone').sort()
+for (const spec of alone) {
+  if (!homes[spec]) problems.push(`${spec} is alone but the report's metadata names no home for it`)
+  else if (!tests.some((t) => t.project === homes[spec] && t.file === spec)) problems.push(`${spec} did not run on its own home (${homes[spec]})`)
+}
 
 const serial = Object.keys(modes).filter((spec) => modes[spec] === 'serial').sort()
 const stateful = tests.filter((t) => STATEFUL.test(t.project))
@@ -172,7 +187,8 @@ if (problems.length) fail(problems)
 
 const projects = new Set(tests.map((t) => t.project))
 console.log(
-  `✓ one run: ${tests.length} tests across ${projects.size} projects, each once and where its isolation mode allows;` +
+  `✓ one run: ${tests.length} tests across ${projects.size} projects, each once and where its isolation mode allows` +
+    (alone.length ? `, ${alone.join(', ')} each on a home of its own;` : ';') +
     ` the stateful set ran (${serial.join(', ')}), then its second pass in seed ${seeds[0]}'s order: ${order.join(' → ')},` +
     ' each pass after the one before it had ended',
 )

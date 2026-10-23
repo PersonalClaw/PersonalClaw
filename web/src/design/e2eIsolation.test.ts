@@ -5,11 +5,13 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  ALONE_HOMES,
   PROJECTS_FOR,
   SPEC_ISOLATION,
   STATEFUL_SPECS,
   isolationViolation,
   seededOrder,
+  sharedHomeViolation,
   unclassified,
 } from '../../e2e/isolation'
 import IsolationReporter from '../../e2e/isolationReporter'
@@ -50,6 +52,55 @@ describe('every spec has an isolation mode', () => {
     expect(isolationViolation('stateful', 'a11y.spec.ts')).toMatch(/is shared/)
     expect(isolationViolation('chromium', 'not-in-the-table.spec.ts')).toMatch(/no isolation mode/)
   })
+})
+
+describe('a spec that measures the home runs on a home of its own', () => {
+  it('the matrix and its control share one home, and the idle-cost probe has another', () => {
+    expect(Object.fromEntries(Object.entries(ALONE_HOMES).map(([home, specs]) => [home, [...specs].sort()]))).toEqual({
+      idle: ['idleCost.spec.ts'],
+      matrix: ['surfaceMatrix.control.spec.ts', 'surfaces.spec.ts'],
+    })
+  })
+
+  it('an alone spec anywhere but its own home is a violation', () => {
+    expect(isolationViolation('matrix', 'surfaces.spec.ts')).toBe('')
+    expect(isolationViolation('idle', 'idleCost.spec.ts')).toBe('')
+    expect(isolationViolation('chromium', 'surfaces.spec.ts')).toMatch(/surfaces\.spec\.ts is alone .* not its own home \(matrix\)/)
+    expect(isolationViolation('idle', 'surfaces.spec.ts')).toMatch(/not its own home \(matrix\)/)
+    expect(isolationViolation('matrix', 'a11y.spec.ts')).toMatch(/is shared/)
+  })
+
+  it('a home that shares its invocation with another project is a violation', () => {
+    expect(sharedHomeViolation(['setup', 'matrix', 'matrix'])).toBe('')
+    expect(sharedHomeViolation(['setup', 'smoke', 'chromium'])).toBe('')
+    expect(sharedHomeViolation(['setup', 'matrix', 'chromium'])).toMatch(/the matrix home ran in one invocation with chromium/)
+    expect(sharedHomeViolation(['matrix', 'idle'])).toMatch(/the idle and matrix homes ran in one invocation/)
+  })
+
+  // The real config, listed with every server off. What an outer run decided from its own argv is
+  // left out of the environment, so each listing decides again from its own.
+  const listing = (...files: string[]) => {
+    const env: NodeJS.ProcessEnv = { ...process.env, PW_NO_SERVER: '1', PW_STATEFUL_SEED: '7' }
+    for (const decided of ['PW_ALONE_HOME', 'PW_STATEFUL_CHAIN', 'PW_STATEFUL_ONLY']) delete env[decided]
+    return spawnSync('npx', ['playwright', 'test', '--list', ...files], { cwd: WEB, encoding: 'utf8', env, timeout: 120_000 })
+  }
+
+  it('an invocation of one home runs that home alone, and one that names it beside another spec is refused', () => {
+    const env = (files: string[]) => {
+      const out = listing(...files)
+      return { code: out.status, text: `${out.stdout}\n${out.stderr}` }
+    }
+    const matrix = env(['e2e/surfaces.spec.ts'])
+    expect(matrix.code, matrix.text).toBe(0)
+    expect(matrix.text).toMatch(/\[matrix\] › surfaces\.spec\.ts/)
+    expect(matrix.text).not.toMatch(/\[chromium\]/)
+    const mixed = env(['e2e/surfaces.spec.ts', 'e2e/chat.spec.ts'])
+    expect(mixed.code, mixed.text).not.toBe(0)
+    expect(mixed.text).toMatch(/runs .* alone, each home .* in an invocation of its own/)
+    const shared = env(['e2e/chat.spec.ts'])
+    expect(shared.code, shared.text).toBe(0)
+    expect(shared.text).not.toMatch(/\[matrix\]|\[idle\]/)
+  }, 180_000)
 })
 
 describe('the second pass is drawn from a seed', () => {
@@ -198,10 +249,15 @@ describe('the real projects run the stateful passes one after another', () => {
       "  if (process.env.PW_PLANT_RED && test.info().project.name === 'stateful') throw new Error('planted red first pass') })")
     spec('deployedArtifacts.spec.ts', `test('a deployed page loads', async () => { ${wait(200)} })`)
     const config = join(dir, 'passes.config.ts')
+    // The stand-ins hold no spec that runs alone, which runs in an invocation of its own and is
+    // merged in with the other legs; so this run's metadata names none, or the run check would ask
+    // for homes this one invocation cannot hold.
     writeFileSync(
       config,
       `import base from ${JSON.stringify(join(WEB, 'playwright.config.ts'))}\n` +
+        `const isolation = Object.fromEntries(Object.entries(base.metadata.isolation).filter(([, mode]) => mode !== 'alone'))\n` +
         `export default { ...base, testDir: ${JSON.stringify(specs)}, retries: 0, webServer: undefined,\n` +
+        `  metadata: { ...base.metadata, isolation, isolationHome: {} },\n` +
         `  reporter: [[${JSON.stringify(join(E2E, 'isolationReporter.ts'))}], ['json', { outputFile: ${JSON.stringify(join(dir, 'report.json'))} }]] }\n`,
     )
     return config
