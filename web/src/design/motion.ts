@@ -414,10 +414,14 @@ export function exprHeavy(threshold = 0.5): boolean {
  *      that refuses: recovered in the `catch`, hence the run-once latch (the throw
  *      may have come *after* the callback was invoked). An error thrown by `update`
  *      itself is re-raised, never recovered — see the comment on the `catch`.
- *   3. **An animation that never settles** — the returned transition object is
- *      deliberately dropped. Awaiting `.finished`/`.ready` before the update is
- *      exactly the bug this function exists to make unwritable, so this function
- *      is not `async` and returns `void`.
+ *   3. **An animation that never settles** — the returned transition's promises are
+ *      never awaited. Awaiting `.finished`/`.ready` before the update is exactly the
+ *      bug this function exists to make unwritable, so this function is not `async`
+ *      and returns `void`. Its two decoration promises get a no-op `catch`: the
+ *      platform rejects them when it skips the transition (a second navigation, a
+ *      reload), and unhandled they surfaced as an uncaught InvalidStateError on every
+ *      quick pair of navigations. `updateCallbackDone` is left alone, so an update that
+ *      fails after the call returned still surfaces.
  *  The one mode not defended is an implementation that never invokes the callback at
  *  all; the spec requires it to run even when the transition is *skipped* (hidden
  *  document, a second transition starting), so a timer to second-guess that would be
@@ -440,7 +444,9 @@ export function viewTransition(update: () => void): void {
     try { update() } catch (err) { updateFailed = true; throw err }
   }
   try {
-    start.call(document, once)
+    const transition = start.call(document, once) as Partial<ViewTransition> | undefined
+    transition?.ready?.catch(() => {})
+    transition?.finished?.catch(() => {})
   } catch (err) {
     // Two very different throws surface at the same place, and conflating them is a
     // real defect: `update` failing (a render error travelling out through the

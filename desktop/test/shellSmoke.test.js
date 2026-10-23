@@ -8,7 +8,7 @@ const { PassThrough } = require("node:stream");
 const asar = require("@electron/asar");
 
 const { stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
-const { DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, devtoolsPipe, pageErrors } = require("./smoke/shellSmoke");
+const { DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, carriedOut, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
 const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, plantedCopy, shellSources } = require("./smoke/packedApp");
 
 // ── The packed shell's smoke, its parts (#3942) ───────────────────────────────────────────────
@@ -70,6 +70,42 @@ describe("what the smoke reads", () => {
     ];
     assert.deepEqual(pageErrors(events, "s1"), ["uncaught: TypeError: x is undefined"]);
     assert.deepEqual(pageErrors([]), []);
+  });
+});
+
+describe("a link the smoke hands the app (#3827)", () => {
+  const MARK = "smoke-draft-0a1b2c3d";
+  const sent = (request, extra = {}) => ({ method: "Network.requestWillBeSent", sessionId: "s", params: { requestId: "r1", request, ...extra } });
+
+  it("finds the draft wherever it left the page: a request's body, its fetched body, a non-GET address, a WebSocket frame", () => {
+    assert.deepEqual(carriedOut([sent({ method: "POST", url: "http://localhost:1/api/chat", postData: `{"text":"${MARK}"}` })], MARK, "s"), [
+      "POST http://localhost:1/api/chat carried it in its body",
+    ]);
+    const bodies = new Map([["r1", `text=${MARK}`]]);
+    assert.deepEqual(carriedOut([sent({ method: "POST", url: "http://localhost:1/x", hasPostData: true })], MARK, "s", bodies), [
+      "POST http://localhost:1/x carried it in its body",
+    ]);
+    assert.deepEqual(carriedOut([sent({ method: "PUT", url: `http://localhost:1/api/drafts/${MARK}` })], MARK, "s"), [
+      `PUT http://localhost:1/api/drafts/${MARK} carried it in its address`,
+    ]);
+    const frame = { method: "Network.webSocketFrameSent", sessionId: "s", params: { requestId: "w", response: { payloadData: `{"type":"send","text":"${MARK}"}` } } };
+    assert.deepEqual(carriedOut([frame], MARK, "s"), ["a WebSocket frame carried it"]);
+  });
+
+  it("does not count what stayed: a GET's address, a frame that came in, another page's requests, another text", () => {
+    const events = [
+      sent({ method: "GET", url: `http://localhost:1/api/search?q=${MARK}` }),
+      { method: "Network.webSocketFrameReceived", sessionId: "s", params: { response: { payloadData: MARK } } },
+      { ...sent({ method: "POST", url: "http://localhost:1/api/chat", postData: MARK }), sessionId: "other" },
+      sent({ method: "POST", url: "http://localhost:1/api/chat", postData: "something else" }),
+    ];
+    assert.deepEqual(carriedOut(events, MARK, "s"), []);
+  });
+
+  it("hands a link over as a second launch does: the app's own arguments and the link, and no DevTools pipe", () => {
+    assert.deepEqual(linkLaunchArgs(null, "/tmp/u", "personalclaw://settings"), ["--user-data-dir=/tmp/u", "personalclaw://settings"]);
+    assert.deepEqual(linkLaunchArgs("/src/desktop", "/tmp/u", "personalclaw://settings"), ["/src/desktop", "--user-data-dir=/tmp/u", "personalclaw://settings"]);
+    assert.ok(!linkLaunchArgs(null, "/tmp/u", "x").includes(DEVTOOLS_SWITCH), "the second launch closes nothing the first one's pipe needs");
   });
 });
 
@@ -163,8 +199,22 @@ describe("the packed app", () => {
     assert.equal(fs.readlinkSync(path.join(copy, "chrome-sandbox")), path.join(app, "chrome-sandbox"));
   });
 
+  it("plants the two link controls in deepLinks.js: one drops every link, one sends the draft it fills", async () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "deepLinks.js"), "utf8");
+    const app = await unpacked({ "deepLinks.js": source });
+    for (const control of CONTROLS.slice(2)) {
+      const copy = await plantedCopy(app, control.plant);
+      const planted = asar.extractFile(path.join(copy, "resources", "app.asar"), "deepLinks.js").toString("utf8");
+      assert.notEqual(planted, source, `${control.name}: the plant changed nothing`);
+    }
+  });
+
   it("a control is caught only for its own reason", () => {
-    const [missing, preload] = CONTROLS;
+    const [missing, preload, dropped, sends] = CONTROLS;
+    assert.equal(dropped.reads({ ok: false, reason: "personalclaw://settings did not open #/settings: the page stayed on #/chat", mainOutput: "" }), true);
+    assert.equal(dropped.reads({ ok: false, reason: "the draft left the page: a WebSocket frame carried it", mainOutput: "" }), false);
+    assert.equal(sends.reads({ ok: false, reason: "the draft left the page: a WebSocket frame carried it", mainOutput: "" }), true);
+    assert.equal(sends.reads({ ok: false, reason: "the chat shell did not mount", mainOutput: "" }), false);
     assert.equal(missing.reads({ ok: false, reason: "the main process threw", mainOutput: "Error: Cannot find module './doorbell'" }), true);
     assert.equal(missing.reads({ ok: false, reason: "no window loaded the gateway in time", mainOutput: "" }), false, "a timeout is not the missing module");
     assert.equal(preload.reads({ ok: false, reason: "the preload put no desktop bridge on the page (window.pclawDesktop is undefined)", mainOutput: "" }), true);
