@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, renderHook } from '@testing-library/react'
 import { useHashRoute } from './useHashRoute'
 
@@ -27,8 +27,14 @@ describe('a late query write', () => {
       window.dispatchEvent(new HashChangeEvent('hashchange'))
     })
     expect(result.current.route).toBe('settings')
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {})
     act(() => cockpitWrite({ diff: 'src/beds.py' }, { replace: true }))
     expect(location.hash).toBe('#/settings')
+    // A dev build says it dropped the write, naming the page and the keys and never their values.
+    expect(debug).toHaveBeenCalledWith('setQuery dropped a write from a page no longer showing',
+      { route: 'code', sub: 'c0dec0de', keys: ['diff'] })
+    expect(JSON.stringify(debug.mock.calls)).not.toContain('beds.py')
+    debug.mockRestore()
   })
 
   it('from the page still showing lands as before', () => {
