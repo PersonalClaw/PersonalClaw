@@ -20,7 +20,7 @@ question in this module and it is worth recording the answer rather than the con
 authentication. It is not config (nothing in it is a decision the user expressed, and no
 round-trippable field describes it), and it is not entity state (it is not a fact about a person
 or a project — it is a fact about *this machine's browser*). So it lives as a profile directory, and
-``durability/inventory.py`` claims ``browse`` in :data:`~personalclaw.durability.inventory.IGNORED`
+``durability/inventory.py`` claims ``browse`` in :data:`~personalclaw.durability.ignored.IGNORED`
 rather than as a ``secret=True`` entry. That distinction is load-bearing: a ``secret`` entry is
 excluded from EXPORTS but *deliberately captured by snapshots* so a backup can restore the
 credential store, whereas an IGNORED path never travels at all. A snapshot is restored onto another
