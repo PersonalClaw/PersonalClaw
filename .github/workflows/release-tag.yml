@@ -4,10 +4,11 @@
 #
 # `python -m tools.ci release-tag` (tools/ci/release_tag.py), from main's own checkout, refuses
 # unless the tag is a release tag by the release's parser, the commit is on main, the commit's
-# workflows, actions and tools/ci are main's (so the tag's release.yml is main's), and no tag of
-# that name exists. Only then is the release controller's App token made, and the tag created
-# with it: the `release-tag-creation` ruleset lets that App alone create a `v*` tag, and
-# `release-tags` lets nobody move or delete one. #3911 adds its release gate before the create.
+# workflows, actions and tools/ci are main's (so the tag's release.yml is main's), no tag of that
+# name exists, and the commit's own push run on main is green (#3911): read in merge.yml, else
+# ci.yml, with the job's token (`actions: read`). Only then is the release controller's App token
+# made, and the tag created with it: the `release-tag-creation` ruleset lets that App alone create
+# a `v*` tag, and `release-tags` lets nobody move or delete one.
 # `rehearsal: true` creates `rehearsal-<tag>` instead, with the same checks and the same App, a
 # name no `v*` rule and no release trigger sees: how the path is proved without a release.
 #
@@ -49,6 +50,8 @@ jobs:
     environment: ci-controller
     permissions:
       contents: read
+      # The commit's push run on main, read by the release gate.
+      actions: read
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -63,11 +66,12 @@ jobs:
           TAG: ${{ inputs.tag }}
           COMMIT: ${{ inputs.commit }}
           REHEARSAL: ${{ inputs.rehearsal }}
+          RUNS_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           more=()
           if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi
-          python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT" "${more[@]}"
+          python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT" --repository "$GITHUB_REPOSITORY" "${more[@]}"
       - name: the release controller's token
         id: controller
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -81,8 +85,9 @@ jobs:
           TAG: ${{ inputs.tag }}
           COMMIT: ${{ inputs.commit }}
           REHEARSAL: ${{ inputs.rehearsal }}
+          RUNS_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           more=()
           if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi
-          python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT" --create "$GITHUB_REPOSITORY" "${more[@]}"
+          python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT" --repository "$GITHUB_REPOSITORY" --create "${more[@]}"

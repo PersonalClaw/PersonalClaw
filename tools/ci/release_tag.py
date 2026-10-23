@@ -8,19 +8,23 @@ it with a tag and a commit. It refuses, naming why, unless:
   ``release.yml`` from a branch;
 - the commit's definitions (its workflows, actions, ``tools/ci`` and the entry points they run)
   equal ``main``'s tip's (``trust.compare``), so the tag's release run is the one ``main`` holds;
-- no tag of that name exists, here or on the remote.
+- no tag of that name exists, here or on the remote;
+- the commit's own push run on ``main`` is green (#3911, :func:`main_push_green`): read in each
+  workflow a push to ``main`` runs in, the newer shape first (``workflows.MAIN_PUSH``,
+  ``merge.yml`` once #3915's flip lands, ``ci.yml`` until then), so the gate outlives the flip.
 
 With ``--rehearsal`` the tag it checks for, and creates, is ``rehearsal-<tag>``: every check and
 the App are the same, and no ``v*`` rule or release trigger sees it, so the whole path can be
 proved without a release.
 
-With ``--create`` it then creates the annotated tag and its ref through the API with
+It reads the runs with ``RUNS_TOKEN``, the job's own token with ``actions: read``. With
+``--create`` it then creates the annotated tag and its ref through the API with
 ``GH_TOKEN``, the release controller's App token: the one actor the ``release-tag-creation``
 ruleset lets create a ``v*`` tag. The tag's push starts ``release.yml``. Nothing else is written,
 and a tag is never moved or deleted (``release-tags`` refuses both for everyone).
 
-#3911 adds its release gate (a green ``merge-verdict`` for the commit's tree, and the breadth
-evidence) to the checks before ``--create``. See docs/maintainers/ci.md, "The release tags".
+#3911's gate grows with the trusted ``merge-verdict`` (#3910) and the breadth evidence (#3913)
+once they exist. See docs/maintainers/ci.md, "The release tags".
 """
 
 from __future__ import annotations
@@ -35,8 +39,9 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-from . import trust
+from . import trust, workflows
 
 API = "https://api.github.com"
 MAIN = "origin/main"
@@ -52,6 +57,10 @@ def tag_name(tag: str, *, rehearsal: bool = False) -> str:
 
 #: ``post(path, body)`` returns the HTTP status and the decoded JSON answer.
 Post = Callable[[str, dict[str, object]], tuple[int, object]]
+#: ``get(path)`` returns one API read's decoded JSON answer.
+Get = Callable[[str], Any]
+#: Where a run's workflow file sits, as the API's ``path`` names it.
+WORKFLOW_DIR = ".github/workflows/"
 
 
 def _parse_tag(repo: Path, tag: str) -> None:
@@ -112,6 +121,78 @@ def check(repo: Path, tag: str, commit: str, *, main: str = MAIN, rehearsal: boo
         raise trust.Refused(f"{name} exists already; a release tag is never moved")
 
 
+def _runs(repository: str, workflow: str, commit: str, get: Get) -> list[dict[str, Any]]:
+    """*commit*'s push runs on ``main`` of *repository* in *workflow*, as the API lists them."""
+    path = (
+        f"/repos/{repository}/actions/workflows/{workflow}/runs"
+        f"?event=push&branch=main&head_sha={commit}&per_page=100"
+    )
+    try:
+        answer = get(path)
+    except (OSError, ValueError) as error:
+        raise trust.Refused(f"cannot read {workflow}'s runs of {commit}: {error}") from None
+    listed = answer.get("workflow_runs") if isinstance(answer, dict) else None
+    if not isinstance(listed, list):
+        raise trust.Refused(f"cannot read {workflow}'s runs of {commit}: {answer!r}")
+    # The API's filters are read again here: only this commit's push to this repository's main.
+    return [
+        run
+        for run in listed
+        if isinstance(run, dict)
+        and run.get("head_sha") == commit
+        and run.get("event") == "push"
+        and run.get("head_branch") == "main"
+        and (run.get("head_repository") or {}).get("full_name") == repository
+        and str(run.get("path", "")).split("@", 1)[0] == WORKFLOW_DIR + workflow
+    ]
+
+
+def main_push_green(repository: str, commit: str, get: Get) -> str:
+    """The URL of *commit*'s own push run on ``main``, which must have finished green; else
+    ``trust.Refused``, naming the run and what it concluded.
+
+    The first workflow in ``workflows.MAIN_PUSH`` with a push run for the commit holds its run:
+    ``merge.yml`` once #3915's flip lands, ``ci.yml`` until then. A red there is never passed
+    over for the older shape's green. Of its runs the newest is read. A run still going, failed,
+    cancelled or timed out is not green, and neither is one whose gate read a shard as superseded
+    by a newer push or unproven: that gate is red, so the run concluded failure. A run re-run to
+    green is green: its conclusion is its latest attempt's (the runbook's Tagging says so).
+    """
+    for workflow in workflows.MAIN_PUSH:
+        runs = _runs(repository, workflow, commit, get)
+        if not runs:
+            continue
+        run = max(runs, key=lambda r: (int(r.get("run_number") or 0), int(r.get("id") or 0)))
+        url = run.get("html_url") or f"run {run.get('id')}"
+        if run.get("status") != "completed":
+            raise trust.Refused(
+                f"{commit}'s push run on main ({workflow}, {url}) is {run.get('status')}: tag "
+                "it once that run is green"
+            )
+        if run.get("conclusion") != "success":
+            raise trust.Refused(
+                f"{commit}'s push run on main ({workflow}, {url}) concluded "
+                f"{run.get('conclusion')}, not success: tag a commit whose own run is green"
+            )
+        return str(url)
+    raise trust.Refused(
+        f"{commit} has no push run on main in {' or '.join(workflows.MAIN_PUSH)}, so nothing "
+        "proved it: tag a commit main's push ran on"
+    )
+
+
+def github_get(token: str) -> Get:
+    def get(path: str) -> Any:
+        request = urllib.request.Request(API + path)
+        request.add_header("Accept", "application/vnd.github+json")
+        request.add_header("X-GitHub-Api-Version", "2022-11-28")
+        request.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+            return json.loads(response.read() or b"null")
+
+    return get
+
+
 def github_post(token: str) -> Post:
     def post(path: str, body: dict[str, object]) -> tuple[int, object]:
         request = urllib.request.Request(API + path, data=json.dumps(body).encode(), method="POST")
@@ -155,7 +236,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tag", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--repo", default=".", type=Path, help="the checkout to read")
-    parser.add_argument("--create", metavar="OWNER/NAME", help="create the tag in this repository")
+    parser.add_argument(
+        "--repository",
+        required=True,
+        metavar="OWNER/NAME",
+        help="the repository whose main push runs are read, and where the tag is created",
+    )
+    parser.add_argument("--create", action="store_true", help="create the tag")
     parser.add_argument(
         "--rehearsal", action="store_true", help=f"create {REHEARSAL_PREFIX}<tag> instead"
     )
@@ -163,12 +250,16 @@ def main(argv: list[str] | None = None) -> int:
     name = tag_name(args.tag, rehearsal=args.rehearsal)
     try:
         check(args.repo, args.tag, args.commit, rehearsal=args.rehearsal)
-        print(f"may tag: {args.commit} on main as {name}")
+        runs_token = os.environ.get("RUNS_TOKEN")
+        if not runs_token:
+            raise trust.Refused("no RUNS_TOKEN: the job's token reads the commit's push run")
+        run = main_push_green(args.repository, args.commit, github_get(runs_token))
+        print(f"may tag: {args.commit} on main as {name}; its push run on main is green: {run}")
         if args.create:
             token = os.environ.get("GH_TOKEN")
             if not token:
                 raise trust.Refused("no GH_TOKEN: the controller's App token creates the tag")
-            sha = create(args.create, name, args.commit, github_post(token))
+            sha = create(args.repository, name, args.commit, github_post(token))
             print(f"created: {name} -> {args.commit} (tag object {sha})")
     except trust.Refused as refused:
         print(f"::error title=release tag refused::{refused}")

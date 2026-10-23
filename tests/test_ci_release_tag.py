@@ -188,20 +188,32 @@ def test_a_refused_ref_is_reported() -> None:
         release_tag.create("owner/project", "v1.2.3", COMMIT, post)
 
 
+def _green_runs(monkeypatch: pytest.MonkeyPatch, commit: str) -> None:
+    """The commit's push run on main is green, read with the job's token."""
+    green = FakeGet(ci_yml=[_run("ci.yml", sha=commit)])
+    monkeypatch.setattr(release_tag, "github_get", lambda token: green)
+    monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
+
+
 def test_main_refuses_to_create_without_the_controllers_token(
     planted: dict[str, object], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.delenv("GH_TOKEN", raising=False)
+    _green_runs(monkeypatch, str(planted["readme"]))
     argv = ["--tag", "v1.2.3", "--commit", str(planted["readme"]), "--repo", str(planted["repo"])]
+    argv += ["--repository", "owner/project"]
     assert release_tag.main(argv) == 0
-    assert release_tag.main([*argv, "--create", "owner/project"]) == 1
+    assert release_tag.main([*argv, "--create"]) == 1
     assert "no GH_TOKEN" in capsys.readouterr().out
-    assert (
-        release_tag.main(
-            ["--tag", "v1.2", "--commit", str(planted["readme"]), "--repo", str(planted["repo"])]
-        )
-        == 1
-    )
+    planted_tag = [
+        "--tag",
+        "v1.2",
+        "--commit",
+        str(planted["readme"]),
+        "--repo",
+        str(planted["repo"]),
+    ]
+    assert release_tag.main([*planted_tag, "--repository", "owner/project"]) == 1
 
 
 def test_a_rehearsal_is_checked_like_the_release_and_named_apart(
@@ -230,10 +242,184 @@ def test_a_rehearsal_creates_the_rehearsal_name_and_never_the_release_tag(
     post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/rehearsal-v1.2.3"}))
     monkeypatch.setattr(release_tag, "github_post", lambda token: post)
     monkeypatch.setenv("GH_TOKEN", "an-app-token")
+    _green_runs(monkeypatch, str(planted["readme"]))
     argv = ["--tag", "v1.2.3", "--commit", str(planted["readme"]), "--repo", str(planted["repo"])]
-    assert release_tag.main([*argv, "--create", "owner/project", "--rehearsal"]) == 0
+    assert (
+        release_tag.main([*argv, "--repository", "owner/project", "--create", "--rehearsal"]) == 0
+    )
     assert [body.get("tag") or body.get("ref") for _, body in post.calls] == [
         "rehearsal-v1.2.3",
         "refs/tags/rehearsal-v1.2.3",
     ]
     assert release_tag.tag_name("v1.2.3") == "v1.2.3"
+
+
+# ── the commit's own push run on main must be green (#3911) ───────────────────────────────────
+
+REPOSITORY = "owner/project"
+
+
+def _run(
+    workflow: str,
+    *,
+    sha: str = COMMIT,
+    status: str = "completed",
+    conclusion: str | None = "success",
+    number: int = 7,
+    event: str = "push",
+    branch: str = "main",
+    repository: str = REPOSITORY,
+) -> dict[str, object]:
+    return {
+        "id": 1000 + number,
+        "run_number": number,
+        "path": release_tag.WORKFLOW_DIR + workflow,
+        "head_sha": sha,
+        "event": event,
+        "head_branch": branch,
+        "head_repository": {"full_name": repository},
+        "status": status,
+        "conclusion": conclusion,
+        "html_url": f"https://github.com/{REPOSITORY}/actions/runs/{1000 + number}",
+    }
+
+
+class FakeGet:
+    """The API's runs of each workflow, by its file name; every path asked is kept."""
+
+    def __init__(self, **runs: list[dict[str, object]]) -> None:
+        self.runs = {name.replace("_", "."): listed for name, listed in runs.items()}
+        self.paths: list[str] = []
+
+    def __call__(self, path: str) -> object:
+        self.paths.append(path)
+        workflow = path.split("/actions/workflows/", 1)[1].split("/", 1)[0]
+        return {"workflow_runs": self.runs.get(workflow, [])}
+
+
+def _gate_refusal(get: FakeGet) -> str:
+    with pytest.raises(trust.Refused) as refused:
+        release_tag.main_push_green(REPOSITORY, COMMIT, get)
+    return str(refused.value)
+
+
+def test_a_commit_whose_own_main_push_run_is_green_may_be_tagged() -> None:
+    get = FakeGet(ci_yml=[_run("ci.yml")])
+    assert release_tag.main_push_green(REPOSITORY, COMMIT, get).endswith("/runs/1007")
+    # merge.yml is asked first, then ci.yml, each for this commit's push runs on main.
+    assert [p.split("/actions/workflows/")[1].split("/")[0] for p in get.paths] == [
+        "merge.yml",
+        "ci.yml",
+    ]
+    for path in get.paths:
+        assert path.startswith(f"/repos/{REPOSITORY}/actions/workflows/")
+        assert f"head_sha={COMMIT}" in path and "event=push" in path and "branch=main" in path
+
+
+def test_the_newer_shape_decides_and_its_red_is_not_passed_over() -> None:
+    """Once #3915's flip lands, merge.yml's push run is the commit's: a red there is never passed
+    over for ci.yml's green."""
+    green = FakeGet(merge_yml=[_run("merge.yml")], ci_yml=[_run("ci.yml", conclusion="failure")])
+    assert release_tag.main_push_green(REPOSITORY, COMMIT, green)
+    red = FakeGet(merge_yml=[_run("merge.yml", conclusion="failure")], ci_yml=[_run("ci.yml")])
+    assert "merge.yml" in _gate_refusal(red) and "concluded failure" in _gate_refusal(red)
+
+
+@pytest.mark.parametrize(
+    ("run", "says"),
+    [
+        # A shard a newer push replaced, or one nothing proved, reds the run's gate.
+        (_run("ci.yml", conclusion="failure"), "concluded failure, not success"),
+        (_run("ci.yml", conclusion="cancelled"), "concluded cancelled, not success"),
+        (_run("ci.yml", conclusion="timed_out"), "concluded timed_out, not success"),
+        (_run("ci.yml", status="in_progress", conclusion=None), "is in_progress"),
+        (_run("ci.yml", status="queued", conclusion=None), "is queued"),
+    ],
+)
+def test_a_run_that_is_not_green_is_refused_naming_it(run: dict[str, object], says: str) -> None:
+    reason = _gate_refusal(FakeGet(ci_yml=[run]))
+    assert says in reason and str(run["html_url"]) in reason, reason
+
+
+def test_the_newest_run_of_the_commit_is_the_one_read() -> None:
+    get = FakeGet(ci_yml=[_run("ci.yml", number=7), _run("ci.yml", number=9, conclusion="failure")])
+    assert "/runs/1009" in _gate_refusal(get)
+    get = FakeGet(ci_yml=[_run("ci.yml", number=9), _run("ci.yml", number=7, conclusion="failure")])
+    assert release_tag.main_push_green(REPOSITORY, COMMIT, get).endswith("/runs/1009")
+
+
+@pytest.mark.parametrize(
+    "other",
+    [
+        _run("ci.yml", sha="c" * 40),
+        _run("ci.yml", event="pull_request"),
+        _run("ci.yml", event="workflow_dispatch"),
+        _run("ci.yml", branch="side"),
+        _run("ci.yml", repository="someone/fork"),
+        _run("pr.yml"),
+    ],
+)
+def test_a_run_that_is_not_this_commits_push_to_main_proves_nothing(
+    other: dict[str, object],
+) -> None:
+    assert "has no push run on main" in _gate_refusal(FakeGet(ci_yml=[other]))
+
+
+def test_a_commit_with_no_push_run_on_main_is_refused() -> None:
+    reason = _gate_refusal(FakeGet())
+    assert "has no push run on main in merge.yml or ci.yml" in reason
+
+
+def test_an_answer_the_gate_cannot_read_is_refused_not_passed() -> None:
+    def broken(path: str) -> object:
+        return {"message": "Bad credentials"}
+
+    assert "cannot read" in _gate_refusal(broken)  # type: ignore[arg-type]
+
+    def failing(path: str) -> object:
+        raise OSError("connection reset")
+
+    assert "cannot read" in _gate_refusal(failing)  # type: ignore[arg-type]
+
+
+def test_main_reads_the_gate_before_it_creates_and_a_red_run_creates_nothing(
+    planted: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    commit = str(planted["readme"])
+    post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/v1.2.3"}))
+    monkeypatch.setattr(release_tag, "github_post", lambda token: post)
+    red = FakeGet(ci_yml=[_run("ci.yml", sha=commit, conclusion="failure")])
+    tokens: list[str] = []
+    monkeypatch.setattr(release_tag, "github_get", lambda token: tokens.append(token) or red)
+    monkeypatch.setenv("GH_TOKEN", "an-app-token")
+    monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
+    argv = ["--tag", "v1.2.3", "--commit", commit, "--repo", str(planted["repo"])]
+    assert release_tag.main([*argv, "--repository", REPOSITORY, "--create"]) == 1
+    assert "concluded failure" in capsys.readouterr().out
+    assert post.calls == [] and tokens == ["the-jobs-token"]
+    green = FakeGet(ci_yml=[_run("ci.yml", sha=commit)])
+    monkeypatch.setattr(release_tag, "github_get", lambda token: green)
+    assert release_tag.main([*argv, "--repository", REPOSITORY, "--create"]) == 0
+    out = capsys.readouterr().out
+    assert (
+        "its push run on main is green: https://github.com/owner/project/actions/runs/1007" in out
+    )
+    assert [path for path, _ in post.calls] == [
+        f"/repos/{REPOSITORY}/git/tags",
+        f"/repos/{REPOSITORY}/git/refs",
+    ]
+
+
+def test_main_refuses_without_the_token_that_reads_the_runs(
+    planted: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("RUNS_TOKEN", raising=False)
+    argv = ["--tag", "v1.2.3", "--commit", str(planted["readme"]), "--repo", str(planted["repo"])]
+    assert release_tag.main([*argv, "--repository", REPOSITORY]) == 1
+    assert "no RUNS_TOKEN" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        release_tag.main(argv)  # the repository is required: there is no tag without the gate

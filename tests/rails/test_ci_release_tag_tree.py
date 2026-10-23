@@ -1,8 +1,9 @@
 """``.github/workflows/release-tag.yml``'s trust shape: the one way a ``v*`` tag is made (#4584).
 
 It runs only on a dispatch, its one job only on main, in the ``ci-controller`` environment, with
-``contents: read``. The dispatch inputs reach the steps only as environment variables, never as
-text in a command. ``python -m tools.ci release-tag`` checks the commit and the tag before the
+``contents: read`` and ``actions: read``. The dispatch inputs reach the steps only as environment
+variables, never as text in a command. ``python -m tools.ci release-tag`` checks the commit and
+the tag, and reads the commit's push run on main with the job's own token (#3911), before the
 release controller's App token is made; that token is asked for ``contents: write`` alone and
 reaches only the step that creates the tag. Each rule fails on a planted edit of the real file.
 """
@@ -23,6 +24,9 @@ _CHECK, _TOKEN, _CREATE = (
 )
 _APP_ACTION = "actions/create-github-app-token@"
 _REHEARSE = 'if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi'
+#: The job's own token, which reads the commit's push run on main and nothing else.
+_RUNS_TOKEN = "${{ github.token }}"
+_GATE = '--repository "$GITHUB_REPOSITORY"'
 
 
 def _problems(text: str) -> list[str]:
@@ -43,7 +47,7 @@ def _problems(text: str) -> list[str]:
         found.append(f"the job runs on {job.get('if')!r}, not main alone")
     if job.get("environment") != "ci-controller":
         found.append(f"the job deploys to {job.get('environment')!r}")
-    if job.get("permissions") != {"contents": "read"}:
+    if job.get("permissions") != {"contents": "read", "actions": "read"}:
         found.append(f"the job holds {job.get('permissions')!r}")
     steps = job.get("steps") or []
     names = [s.get("name") for s in steps]
@@ -84,6 +88,9 @@ def _problems(text: str) -> list[str]:
         )
         if not rehearses:
             found.append(f"step {at!r} does not pass the rehearsal on")
+        # The release gate reads this repository's runs with the job's token, in both steps.
+        if (step.get("env") or {}).get("RUNS_TOKEN") != _RUNS_TOKEN or _GATE not in run:
+            found.append(f"step {at!r} does not read the commit's push run on main")
     if "--create" not in str(steps[names.index(_CREATE)].get("run", "")):
         found.append("the create step creates nothing")
     return found
@@ -100,13 +107,14 @@ def test_the_tagging_workflow_checks_first_and_hands_the_token_to_one_step() -> 
         ("    if: github.ref == 'refs/heads/main'\n", "", "not main alone"),
         ("    environment: ci-controller\n", "", "deploys to None"),
         (
-            "    permissions:\n      contents: read\n    steps:",
-            "    permissions:\n      contents: write\n    steps:",
+            "    permissions:\n      contents: read\n      #",
+            "    permissions:\n      contents: write\n      #",
             "the job holds",
         ),
         (
-            'release-tag --tag "$TAG" --commit "$COMMIT" "${more[@]}"\n',
-            'release-tag --tag ${{ inputs.tag }} --commit "$COMMIT" "${more[@]}"\n',
+            'release-tag --tag "$TAG" --commit "$COMMIT" --repository "$GITHUB_REPOSITORY" "${more',
+            "release-tag --tag ${{ inputs.tag }} --commit "
+            '"$COMMIT" --repository "$GITHUB_REPOSITORY" "${more',
             "puts an input into its command",
         ),
         ("          permission-contents: write\n", "", "asking {}"),
@@ -131,12 +139,27 @@ def test_the_tagging_workflow_checks_first_and_hands_the_token_to_one_step() -> 
             "          GH_TOKEN: ${{ steps.controller.outputs.token }}\n",
             "is handed the controller's token",
         ),
-        ('--create "$GITHUB_REPOSITORY"', "", "creates nothing"),
+        ("--create ", "", "creates nothing"),
         ("        default: false\n", "        default: true\n", "defaults to false"),
         (
-            '--create "$GITHUB_REPOSITORY" "${more[@]}"',
-            '--create "$GITHUB_REPOSITORY"',
+            '--create "${more[@]}"',
+            "--create",
             "'create the tag' does not pass the rehearsal on",
+        ),
+        (
+            "      actions: read\n",
+            "      actions: write\n",
+            "the job holds",
+        ),
+        (
+            '--commit "$COMMIT" --repository "$GITHUB_REPOSITORY" "${more[@]}"',
+            '--commit "$COMMIT" "${more[@]}"',
+            "'check the commit and the tag' does not read the commit's push run",
+        ),
+        (
+            '--repository "$GITHUB_REPOSITORY" --create',
+            "--create",
+            "'create the tag' does not read the commit's push run",
         ),
         (
             "        type: boolean\n",
