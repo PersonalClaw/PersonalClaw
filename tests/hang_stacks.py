@@ -66,9 +66,11 @@ def configure(config: Any) -> float | None:
     global _STREAM
     if os.environ.get("GITHUB_ACTIONS") != "true":
         return None
-    from tools.ci import catalogue
-
     try:
+        # Imported here, inside the guard: a tree with no importable ``tools.ci`` (a child pytest
+        # run on a tree of its own) arms nothing rather than failing at configure (#4778).
+        from tools.ci import catalogue
+
         secs = deadline(getattr(config.option, "xmlpath", None), catalogue.read().jobs)
     except Exception:  # noqa: BLE001 - an unreadable catalogue arms nothing; it never fails a run
         return None
