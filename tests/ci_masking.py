@@ -229,6 +229,15 @@ TOLERATED: tuple[Tolerated, ...] = (
         "union (`shard-union`) never reads the canary's ids.",
     ),
     Tolerated(
+        _CI,
+        ("e2e-shard", "e2e-stateful", "browse-live"),
+        "chromium-starts",
+        "A Chromium that does not start on the runner image is the cue to install its system "
+        "libraries, not a failure: the next step runs apt only then, and checks again, so a "
+        "browser that still cannot start fails the job there.",
+        outcome_read=True,
+    ),
+    Tolerated(
         ".github/workflows/pr-feedback.yml",
         ("lint-help",),
         "dl",

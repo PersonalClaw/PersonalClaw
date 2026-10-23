@@ -1501,6 +1501,48 @@ def wheel_violations(tree: Tree) -> list[str]:
     return bad
 
 
+# ── A browser install never waits on apt unless the browser cannot start ─────────────────────
+
+_PROBE_ID = "chromium-starts"
+
+
+def browser_install_violations(tree: Tree) -> list[str]:
+    """Each job that installs Playwright's Chromium does it without apt, within 5 minutes, then
+    checks that it starts (``id: chromium-starts``, ``continue-on-error``, bounded), and installs
+    the system libraries from apt only when that check failed, under ``timeout``. ``--with-deps``
+    ran apt on every run, and a hung Ubuntu mirror held a job there for its whole limit."""
+    bad: list[str] = []
+    for where, job_id, job in _jobs(tree):
+        steps = _job_steps(tree, job)
+        runs = [str(step.get("run", "")) for step in steps]
+        if not any("playwright install" in run for run in runs):
+            continue
+        at = f"{where}:{job_id}"
+        probe = next((s for s in steps if s.get("id") == _PROBE_ID), None)
+        for step, run in zip(steps, runs):
+            name = step.get("name", "a step")
+            if re.search(r"playwright install\b(?!-deps).*--with-deps", run):
+                bad.append(f"{at} {name!r} installs Chromium with --with-deps, which runs apt")
+            elif re.search(r"playwright install\b(?!-deps)", run):
+                if not 0 < int(step.get("timeout-minutes") or 0) <= 5:
+                    bad.append(
+                        f"{at} {name!r} installs Chromium with no timeout-minutes of 5 or less"
+                    )
+            if "playwright install-deps" in run:
+                cond = " ".join(str(step.get("if", "")).split())
+                if f"steps.{_PROBE_ID}.outcome == 'failure'" not in cond:
+                    bad.append(f"{at} {name!r} runs apt without the start check having failed")
+                if not re.search(r"\btimeout \d+ npx playwright install-deps", run):
+                    bad.append(f"{at} {name!r} runs apt with no `timeout` around it")
+        if probe is None:
+            bad.append(f"{at} installs Chromium but never checks that it starts (id: {_PROBE_ID})")
+        elif probe.get("continue-on-error") is not True or not probe.get("timeout-minutes"):
+            bad.append(f"{at} start check must be continue-on-error, with a timeout-minutes")
+        if not any("playwright install-deps" in run for run in runs):
+            bad.append(f"{at} has no apt install for a Chromium that does not start")
+    return bad
+
+
 # ── The e2e legs' web-dist is a finished build ───────────────────────────────────────────────
 
 #: What marks a ``web`` step that reads the vite build's output: its licence check, its stamp, the
@@ -3795,6 +3837,34 @@ ROWS: tuple[Row, ...] = (
                         "        run: npm run build\n",
                     ),
                 ),
+            ),
+        ),
+    ),
+    _toolchain_row(
+        "browser-installs-wait-on-apt-only-when-chromium-cannot-start",
+        browser_install_violations,
+        (
+            _plant(
+                "a browser install with --with-deps",
+                _CI,
+                "        timeout-minutes: 5\n        run: npx playwright install chromium\n",
+                "        timeout-minutes: 5\n"
+                "        run: npx playwright install --with-deps chromium\n",
+                expect="with --with-deps, which runs apt",
+            ),
+            _plant(
+                "apt run whatever the start check said",
+                _CI,
+                "        if: ${{ steps.chromium-starts.outcome == 'failure' }}\n",
+                "",
+                expect="without the start check having failed",
+            ),
+            _plant(
+                "an apt install with no timeout around it",
+                _CI,
+                "          if ! timeout 300 npx playwright install-deps chromium; then\n",
+                "          if ! npx playwright install-deps chromium; then\n",
+                expect="no `timeout` around it",
             ),
         ),
     ),
@@ -7524,7 +7594,7 @@ _NOT_COMMANDS: dict[str, str] = {
     "an install the job's toolchain names": r"""
         uv sync --locked --extra dev
         npm ci
-        npx playwright install --with-deps chromium
+        npx playwright install chromium
         sh tools/ci/install_electron.sh
         sudo apt-get update -qq
         sudo apt-get install -y --no-install-recommends tmux
@@ -7538,6 +7608,15 @@ _NOT_COMMANDS: dict[str, str] = {
         done
         shellcheck --version | head -2
     """,
+    "the browser's start check, and its system libraries from apt only when it cannot start": r"""
+        node -e "require('playwright').chromium.launch().then((browser) => browser.close())"
+        uv run python -c "import subprocess, sys; sys.path.insert(0, 'tests'); import browse_chrome; subprocess.run([browse_chrome.find_chrome() or sys.exit('no Chromium found'), '--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--dump-dom', 'about:blank'], check=True, timeout=60, stdout=subprocess.DEVNULL)"
+        echo "::warning::Chromium did not start on this runner image, so its system libraries install from apt"
+        if ! timeout 300 npx playwright install-deps chromium; then
+          echo "::error::Chromium's system libraries did not install within 5 minutes: the apt mirror is slow or down" >&2
+          exit 1
+        fi
+    """,  # noqa: E501
     "the shell around a step: its options, and the branch on which base there is": r"""
         set -eu
         if [ -n "${BASE_SHA:-}" ]; then

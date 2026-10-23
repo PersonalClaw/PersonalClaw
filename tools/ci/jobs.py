@@ -107,7 +107,7 @@ WORKFLOW_ENV: dict[str, str] = {"UV_PYTHON_PREFERENCE": "only-managed"}
 INSTALL_ARGV: dict[str, tuple[str, ...]] = {
     "uv-sync": ("uv", "sync", "--locked", "--extra", "dev"),
     "npm-ci": ("npm", "ci"),
-    "chromium": ("npx", "playwright", "install", "--with-deps", "chromium"),
+    "chromium": ("npx", "playwright", "install", "chromium"),
     "electron": ("sh", "tools/ci/install_electron.sh"),
 }
 
