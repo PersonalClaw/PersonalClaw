@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { BOT, MARKER, MAX_VIOLATIONS, fence, relay } from "./ci_pr_feedback.mjs";
+import { BOT, MARKER, MAX_FILE_BYTES, MAX_VIOLATIONS, fence, relay } from "./ci_pr_feedback.mjs";
 
 const HEAD = "a".repeat(40);
 const FORK = "contributor/PersonalClaw";
@@ -105,6 +105,38 @@ test("an overlong violations text is cut to fit one comment", async () => {
   const s = stub({ pulls: [pull(42)] });
   await relay({ ...s, dir: await artifact("42", "x".repeat(MAX_VIOLATIONS * 2)) });
   assert.ok(s.calls.created[0].body.length < 65536);
+});
+
+test("an artifact past the read cap is read only that far, and cut to fit one comment", async () => {
+  const past = `${"x".repeat(MAX_FILE_BYTES * 4)}\nTHE-END-OF-THE-FILE`;
+  const s = stub({ pulls: [pull(42)] });
+  await relay({ ...s, dir: await artifact("42", past) });
+  const body = s.calls.created[0].body;
+  assert.ok(body.length < 65536, "one comment");
+  assert.ok(!body.includes("THE-END-OF-THE-FILE"), "nothing past the cap is read");
+  assert.ok(body.includes("cut here"), "and the cut says so");
+});
+
+test("a step's output as run-job leaves it, with a line that breaks the fence, stays text", async () => {
+  // tools/ci/jobs.py's write_feedback: the command in bold, then the output in a ``` fence. A
+  // hostile output closes that fence, the details block, and adds a link and an image.
+  const output = "src/x.py:1:1: F401\n```\n</details>\n[click me](https://example.invalid/x)\n<img src=x>";
+  const violations = `**black --check src/personalclaw**\n\`\`\`\n${output}\n\`\`\`\n`;
+  const s = stub({ pulls: [pull(42)] });
+  await relay({ ...s, dir: await artifact("42", violations) });
+  const body = s.calls.created[0].body;
+  const open = body.indexOf("````text\n");
+  const close = body.indexOf("\n````\n", open + 1);
+  assert.ok(open > body.indexOf("<details>") && open !== -1, "the relay's own fence opens it");
+  assert.ok(close > body.indexOf("[click me]"), "the link sits inside the fence");
+  assert.equal(body.split("</details>").length, 3, "one closing tag of its own, one as text");
+});
+
+test("a pr.txt is read only to its cap: a number past it names no pull request", async () => {
+  const s = stub({ pulls: [pull(42)] });
+  const got = await relay({ ...s, dir: await artifact(`${" ".repeat(64)}42`) });
+  assert.equal(got.posted, null, "read whole, it would trim to 42 and post");
+  assert.equal(s.calls.created.length, 0);
 });
 
 test("only the bot's own marked comment is updated", async () => {

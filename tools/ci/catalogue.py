@@ -193,6 +193,7 @@ _KEYS = frozenset(
         "after",
         "install_exemptions",
         "retiring",
+        "lint_feedback",
     }
 )
 _STEP_KEYS = frozenset({"argv", "workdir", "env"})
@@ -360,6 +361,10 @@ class Job:
     #: The issue that retires the job (``#<number>``). The job is still the catalogue's and
     #: still runs; once main's catalogue marks it, a pull request may drop it (:func:`against`).
     retiring: str | None = None
+    #: A failed step's output is the pull request's lint remediation: run-job leaves it for the
+    #: stage job to upload as ``lint-feedback``, which ``pr-feedback.yml`` posts. One job, of the
+    #: change tier, which ``pr.yml`` runs on every pull request.
+    lint_feedback: bool = False
 
     def placeholders(self) -> set[str]:
         """Every placeholder the job names: in a step's argv or env, or in its own env, which
@@ -732,6 +737,7 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         shards=fields.count("shards", 1) or 1,
         needs_node=fields.flag("needs_node"),
         needs_browser=fields.flag("needs_browser"),
+        lint_feedback=fields.flag("lint_feedback"),
         after=fields.strings("after"),
         install_exemptions=tuple(exemptions),
         retiring=retiring,
@@ -957,6 +963,18 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
     ids = [j.id for j in catalogue.jobs]
     for job_id in sorted({i for i in ids if ids.count(i) > 1}):
         problems.append(f"{job_id}: the id is used by {ids.count(job_id)} entries")
+    feedback = [j.id for j in catalogue.jobs if j.lint_feedback]
+    if len(feedback) > 1:
+        problems.append(
+            f"lint_feedback is set on {', '.join(feedback)}: one job's failed step is a pull"
+            " request's lint remediation, uploaded under one name"
+        )
+    for job in catalogue.jobs:
+        if job.lint_feedback and "change" not in job.tiers:
+            problems.append(
+                f"{job.id}: lint_feedback is set, but the job is not of the change tier, which"
+                " pr.yml runs on every pull request"
+            )
     for job in catalogue.jobs:
         if job.reuse != NEVER and (job.security == "security" or job.live):
             what = "a security job's" if job.security == "security" else "a live job's"

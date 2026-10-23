@@ -1,14 +1,17 @@
 # PR feedback relay — post CI's remediation into the PR conversation, including fork PRs.
 #
-# WHY THIS WORKFLOW EXISTS. `ci.yml` runs on `pull_request`, and a `pull_request` run from a
-# FORK is handed a read-only GITHUB_TOKEN no matter what its `permissions:` block asks for.
+# WHY THIS WORKFLOW EXISTS. `ci.yml` runs on `pull_request`, as `pr.yml` will once #3915's flip
+# gives it the trigger, and a `pull_request` run from a FORK is handed a read-only GITHUB_TOKEN
+# no matter what its `permissions:` block asks for.
 # So the remediation comment could never be posted from inside CI on exactly the PRs that
 # needed it. Measured across every fork PR this repo has had — #678, #680, #1210, #1211 —
 # zero `lint-help` comments were ever posted, and the only visible signal was a red job.
 #
-# `workflow_run` fires in the BASE repo's context after CI finishes, where the token is
+# `workflow_run` fires in the BASE repo's context after CI or PR finishes, where the token is
 # genuinely write-capable, so the comment can be posted from here for fork and same-repo
-# PRs alike through one path.
+# PRs alike through one path. CI's lint job writes the `lint-feedback` artifact itself; in PR
+# (pr.yml), run-job leaves it for the catalogue's lint_feedback job, static, and the stage job
+# uploads it. The flip deletes ci.yml and takes "CI" off the list.
 #
 # SAFETY. This workflow never checks out the PR's code and never runs it. It checks out the
 # default branch's copy of `scripts/ci_pr_feedback.mjs` and nothing else, downloads the artifact
@@ -21,7 +24,7 @@ name: PR feedback
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI", "PR"]
     types: [completed]
 
 # Read-only at the top, so a job added here later holds no write it was never audited for. The

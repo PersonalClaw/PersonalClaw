@@ -720,6 +720,49 @@ def test_each_flag_that_is_not_a_boolean_is_refused(flag: str) -> None:
     assert f"rails: {flag} is true or false" in problems
 
 
+def test_a_change_tier_job_may_be_the_lint_feedback_job() -> None:
+    """rails is of the change tier, which pr.yml runs on every pull request (#3915)."""
+    cat = catalogue.load(
+        _in_job("rails", "timeout_min = 10", "timeout_min = 10\nlint_feedback = true")
+    )
+    assert [job.id for job in cat.jobs if job.lint_feedback] == ["rails"]
+
+
+def test_a_lint_feedback_job_outside_the_change_tier_is_refused() -> None:
+    """pr-feedback.yml relays pr.yml's runs, which run only the change tier: a merge-tier job's
+    remediation would never reach the pull request."""
+    problems = _refused(
+        _in_job("security", "timeout_min = 25", "timeout_min = 25\nlint_feedback = true")
+    )
+    assert (
+        "security: lint_feedback is set, but the job is not of the change tier, which pr.yml runs"
+        " on every pull request"
+    ) in problems
+
+
+def test_two_lint_feedback_jobs_are_refused() -> None:
+    """The stage job uploads the remediation under one name, so only one job's can be it."""
+    text = _in_job("rails", "timeout_min = 10", "timeout_min = 10\nlint_feedback = true")
+    text = text.replace(
+        'id = "python-suite"\ntiers = ["merge"]', 'id = "python-suite"\ntiers = ["change", "merge"]'
+    )
+    text = text.replace("timeout_min = 55", "timeout_min = 55\nlint_feedback = true", 1)
+    problems = _refused(text)
+    assert any(
+        p.startswith("lint_feedback is set on rails, python-suite: ") for p in problems
+    ), problems
+
+
+def test_a_lint_feedback_value_that_is_not_a_boolean_is_refused() -> None:
+    problems = _refused(_with("timeout_min = 10", 'timeout_min = 10\nlint_feedback = "true"'))
+    assert "rails: lint_feedback is true or false" in problems
+
+
+def test_the_catalogues_lint_feedback_job_is_static() -> None:
+    """The one job whose failed step pr-feedback.yml posts: ci.yml's lint job's, as an entry."""
+    assert [job.id for job in catalogue.read().jobs if job.lint_feedback] == ["static"]
+
+
 def test_a_job_that_reads_the_advisory_feed_is_live() -> None:
     """What the feed says is what it said at the time of the run, so the job is live and its
     evidence is never reused; the posture is the reader's to hold, not only the data's."""

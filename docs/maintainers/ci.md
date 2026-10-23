@@ -127,6 +127,19 @@ A trusted job reads candidate output only as data:
 - It shows candidate text as text. `scripts/ci_pr_feedback.mjs` fences the lint output itself,
   with a fence longer than any backtick run inside it, so text that closes a block or adds a
   link stays inside the fence.
+- It reads an artifact's files only so far: the relay reads at most 256 KiB of `violations.md`
+  and 64 bytes of `pr.txt`, and shows at most 60000 characters, so an artifact past those caps
+  is cut, never read whole.
+
+`pr-feedback.yml` follows CI and PR (`pr.yml`). CI's `lint` job writes `lint-feedback` itself.
+In PR, the catalogue's one `lint_feedback` job, `static`, has `run-job` keep each command step's
+output, its first 60000 bytes (`run.OUTPUT_LIMIT`). When a step exits non-zero on a pull
+request's run, `run-job` leaves the step's command and output as `violations.md`, with the pull
+request's number from the run's own event as `pr.txt`, and the stage job uploads them. A
+dispatched run has no pull request, so it leaves none. `run-job` stops a job at its first failed
+step, so a PR run's comment shows the first failing tool's output alone (`black`'s before
+`flake8`'s), where CI's `lint` job runs every tool and shows each one's. The flip deletes
+`ci.yml` and takes CI off the list.
 
 ### Definitions: which files judge
 
@@ -408,8 +421,10 @@ Every entry declares:
 
 An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `workers_env`,
 `mem_gb`, `junit`, `shards`, `needs_node`, `needs_browser`, `after` (the jobs whose output it
-uses), `install_exemptions`, each exemption with its reason, and `retiring`, the issue that
-retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catalogue"). A key the
+uses), `install_exemptions`, each exemption with its reason, `retiring`, the issue that
+retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catalogue"), and
+`lint_feedback`: a failed step's output is the pull request's lint remediation, which
+`pr-feedback.yml` posts. One job sets it, of the change tier. A key the
 reader does not know is refused, so a misspelt field fails rather than being ignored.
 
 `workers` is the job's worker count, a whole number or `auto`. Every pytest step's `-n` must equal
@@ -838,8 +853,9 @@ posts a check of its own: the pull request and push triggers come with the chang
   one line,
   `python3 -m tools.ci run-job "$JOB" [--shard "$SHARD"] --out "$RUNNER_TEMP/run-job"`; then,
   whatever it answered, the entry's record under `ci-record-<slug>-<run id>-<attempt>`
-  (`verdict.record_artifact`) and its reports, and `web-build`'s dist and each browser leg's blob
-  for the entries that wait on them. Each entry's cap is its job's `timeout_min`, its runner its
+  (`verdict.record_artifact`) and its reports, on a failure the `lint-feedback` run-job left (a
+  `lint_feedback` entry's alone; see "How a trusted job reads a candidate"), and `web-build`'s
+  dist and each browser leg's blob for the entries that wait on them. Each entry's cap is its job's `timeout_min`, its runner its
   job's `platform`, and one red entry cancels no other.
 - **`results`** runs whatever ran before it (`always()`), after every other job, and judges the
   plan's keys against `toJSON(needs)` and the records the run's entries uploaded, with `main`'s

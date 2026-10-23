@@ -692,6 +692,87 @@ def test_a_record_on_github_names_the_runs_id_and_attempt(repo, tmp_path, monkey
     assert (_record(outcome)["run_id"], _record(outcome)["attempt"]) == (18273645546, 3)
 
 
+# ── the lint remediation (#3915) ──────────────────────────────────────────────────────────────
+
+_LINT_RED = "import sys; print('src/x.py:1:1: F401 unused'); raise SystemExit(1)"
+
+
+def _on_a_pull_request(tmp_path: Path, monkeypatch, event: object) -> None:
+    """A GitHub run whose event is *event*: a pull request's, a dispatch's, or none."""
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps(event))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(path))
+
+
+def test_a_lint_feedback_jobs_failed_step_leaves_its_output_for_the_pull_request(
+    repo, tmp_path, monkeypatch
+):
+    """ci.yml's lint job hands its violations on; under run-job a lint_feedback job does: the
+    failed step's command and output, and the pull request's number from the run's own event.
+    A step that passed before it is no part of it."""
+    _on_a_pull_request(tmp_path, monkeypatch, {"pull_request": {"number": 42}})
+    job = _job("static", "print('formatted')", _LINT_RED, lint_feedback=True)
+    outcome = _run(repo, job, tmp_path, host=_host(repo, on_github=True))
+    assert outcome.code == run.RED
+    folder = tmp_path / "work" / jobs.FEEDBACK
+    violations = (folder / "violations.md").read_text()
+    assert violations.startswith(f"**{PY} -c {_LINT_RED}**\n```\n"), violations
+    assert "src/x.py:1:1: F401 unused" in violations and "formatted" not in violations
+    assert (folder / "pr.txt").read_text() == "42"
+
+
+@pytest.mark.parametrize(
+    ("event", "flag", "program"),
+    [
+        ({"pull_request": {"number": 42}}, True, "print('clean')"),
+        ({"inputs": {}}, True, _LINT_RED),
+        ({"pull_request": {"number": "42"}}, True, _LINT_RED),
+        ({"pull_request": {"number": True}}, True, _LINT_RED),
+        ({"pull_request": {"number": 42}}, False, _LINT_RED),
+    ],
+    ids=["a-pass", "a-dispatch", "a-number-as-text", "a-number-as-a-flag", "another-job"],
+)
+def test_no_remediation_is_left_without_a_failed_lint_step_on_a_pull_request(
+    repo, tmp_path, monkeypatch, event, flag, program
+):
+    _on_a_pull_request(tmp_path, monkeypatch, event)
+    job = _job("static", program, lint_feedback=flag)
+    _run(repo, job, tmp_path, host=_host(repo, on_github=True))
+    assert not (tmp_path / "work" / jobs.FEEDBACK).exists()
+
+
+def test_a_lint_step_that_runs_out_of_time_leaves_no_remediation(repo, tmp_path, monkeypatch):
+    _on_a_pull_request(tmp_path, monkeypatch, {"pull_request": {"number": 42}})
+    job = _job(
+        "static", "import time; print('slow', flush=True); time.sleep(30)", lint_feedback=True
+    )
+    outcome = _run(repo, job, tmp_path, host=_host(repo, on_github=True), deadline_s=1.0, grace=0.1)
+    assert outcome.code == run.RED and any("timed out" in r for r in outcome.reasons)
+    assert not (tmp_path / "work" / jobs.FEEDBACK).exists()
+
+
+def test_off_github_a_run_names_no_pull_request(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "event.json"
+    path.write_text(json.dumps({"pull_request": {"number": 42}}))
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(path))
+    assert jobs.pull_request_number(_host(tmp_path, on_github=True)) == "42"
+    assert jobs.pull_request_number(_host(tmp_path)) is None
+    path.write_text("not json")
+    assert jobs.pull_request_number(_host(tmp_path, on_github=True)) is None
+
+
+def test_the_remediation_names_the_tool_as_ci_yml_does(tmp_path) -> None:
+    kept = tmp_path / "kept.out"
+    kept.write_bytes(b"would reformat src/x.py\n\xff\n")
+    jobs.write_feedback(tmp_path / "f", ["uv", "run", "black", "--check", "src"], kept, "7")
+    text = (tmp_path / "f" / "violations.md").read_text()
+    assert text == "**black --check src**\n```\nwould reformat src/x.py\n\ufffd\n```\n"
+    assert (tmp_path / "f" / "pr.txt").read_text() == "7"
+
+
 def test_a_local_record_names_no_run_and_attempt_1_whatever_the_environment_says(
     repo, tmp_path, monkeypatch
 ):
