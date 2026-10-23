@@ -78,11 +78,13 @@ describe('a spec that measures the home runs on a home of its own', () => {
   })
 
   // The real config, listed with every server off. What an outer run decided from its own argv is
-  // left out of the environment, so each listing decides again from its own.
+  // left out of the environment, so each listing decides again from its own. The list reporter is
+  // named: under CI the config's reporters are JSON and blob, so the listing printed JSON and the
+  // `[project] › file` lines these read were never there (main's web job, 4d6d203d).
   const listing = (...files: string[]) => {
     const env: NodeJS.ProcessEnv = { ...process.env, PW_NO_SERVER: '1', PW_STATEFUL_SEED: '7' }
     for (const decided of ['PW_ALONE_HOME', 'PW_STATEFUL_CHAIN', 'PW_STATEFUL_ONLY']) delete env[decided]
-    return spawnSync('npx', ['playwright', 'test', '--list', ...files], { cwd: WEB, encoding: 'utf8', env, timeout: 120_000 })
+    return spawnSync('npx', ['playwright', 'test', '--list', '--reporter=list', ...files], { cwd: WEB, encoding: 'utf8', env, timeout: 120_000 })
   }
 
   it('an invocation of one home runs that home alone, and one that names it beside another spec is refused', () => {
