@@ -17,7 +17,11 @@ Two shapes of copy are found here, both read from source and never imported:
 - **A file.** A test file that a workflow job runs by name while the suite's shards also collect
   it (``tools/ci/shards.py``), so it runs twice in one run. A file the shards leave to its job
   (``shards.JOB_OWNED``) is no copy, and no reader of ``docs/`` in the suite either; a row holds
-  that its job still runs it by name.
+  that its job's catalogue command still runs it by name.
+
+Each owner, of a check or of a file the shards leave out, is a job of ``tools/ci/catalogue.toml``,
+the one definition ``ci.yml``'s jobs and the tier workflows' run alike, so no owner names a job of
+one shape only.
 
 :data:`KNOWN_COPIES` and :data:`KNOWN_FILE_COPIES` list the copies that are still there, each
 with the job that owns the check. They only shrink: a copy not on them fails, and so does an
@@ -35,7 +39,7 @@ import pytest
 import yaml
 from rails_repo import REPO
 
-from tools.ci import shards
+from tools.ci import catalogue, shards
 from tools.ci.tree_checks import CHECKS, module_copies
 
 #: The calls that still run a check on the real tree in the suite. None is left: the gate
@@ -246,15 +250,40 @@ def test_an_exemption_naming_security_marked_says_so_only_where_it_is() -> None:
         assert ("security-marked" in why) is marked, (rel, why)
 
 
-def job_owned_problems(root: Path, owned: Mapping[str, str]) -> list[str]:
-    """Each file the shards leave to a job that the job no longer runs by name, or that is not a
-    test file pytest would collect: either way it would run nowhere."""
-    runs = named_runs(root)
+def catalogue_runs(cat: catalogue.Catalogue) -> set[tuple[str, str]]:
+    """``(catalogue job, path)`` for each path a job's pytest step names: a file, or a folder
+    (each file under it counts, by :func:`_under`)."""
+    found: set[tuple[str, str]] = set()
+    for job in cat.jobs:
+        for step in job.command:
+            args = catalogue.pytest_args(step.argv) or []
+            found |= {(job.id, word.rstrip("/")) for word in args if word.startswith("tests/")}
+    return found
+
+
+def _under(rel: str, named: str) -> bool:
+    return rel == named or rel.startswith(named + "/")
+
+
+def job_owned_problems(
+    root: Path, owned: Mapping[str, str], cat: catalogue.Catalogue | None = None
+) -> list[str]:
+    """Each file the shards leave to a job that is no catalogue job, whose command no longer
+    runs it by name, or that is not a test file pytest would collect: any of them, and it would
+    run nowhere."""
+    cat = catalogue.read(root) if cat is None else cat
+    ids = {job.id for job in cat.jobs}
+    runs = catalogue_runs(cat)
     collectable = set(shards.universe(root, {}))
     problems = [
+        f"{rel} is left to {job}, which is no job of the catalogue"
+        for rel, job in sorted(owned.items())
+        if job not in ids
+    ]
+    problems += [
         f"{rel} is left to {job}, which no longer runs it by name"
         for rel, job in sorted(owned.items())
-        if (job, rel) not in runs
+        if job in ids and not any(j == job and _under(rel, named) for j, named in runs)
     ]
     problems += [
         f"{rel} is left to {job}, but pytest would not collect it"
@@ -276,7 +305,7 @@ def test_the_maintainer_docs_name_each_job_the_shards_leave_a_file_to() -> None:
     ``shards.JOB_OWNED``, beside the files it runs."""
     docs = (REPO / "docs" / "maintainers" / "ci.md").read_text(encoding="utf-8")
     [said] = [p for p in docs.split("\n\n") if p.startswith("The plan leaves out `tests/rails`")]
-    jobs = sorted({owner.split(" ", 1)[1] for owner in shards.JOB_OWNED.values()})
+    jobs = sorted(set(shards.JOB_OWNED.values()))
     assert jobs, "nothing is left to a job, so this row checks nothing"
     missing = [job for job in jobs if f"in `{job}`" not in said]
     assert not missing, f"ci.md's paragraph on shards.JOB_OWNED names no file in {missing}"
@@ -300,6 +329,78 @@ def test_every_known_copy_names_a_check_and_its_owner() -> None:
     for check, _test in KNOWN_COPIES:
         assert check in CHECKS, check
         assert CHECKS[check].owner
+
+
+def owner_problems(checks: Mapping[str, object], cat: catalogue.Catalogue) -> list[str]:
+    """Each check whose owner is not ``"<catalogue job>: <what it runs>"``, or whose job's
+    command runs no path the owner names (a ``.py`` path, run itself or under a folder a pytest
+    step names)."""
+    ids = {job.id: job for job in cat.jobs}
+    problems: list[str] = []
+    for name, check in sorted(checks.items()):
+        owner = str(getattr(check, "owner", ""))
+        job_id, colon, what = owner.partition(": ")
+        if not colon or job_id not in ids:
+            problems.append(f"{name}'s owner {owner!r} names no job of the catalogue")
+            continue
+        words = {word for step in ids[job_id].command for word in step.argv}
+        folders = {named for j, named in catalogue_runs(cat) if j == job_id}
+        for path in (w.strip(",()") for w in what.split()):
+            if path.endswith(".py") and not (
+                path in words or any(_under(path, folder) for folder in folders)
+            ):
+                problems.append(f"{name}'s owner {job_id} runs no {path}")
+    return problems
+
+
+def test_every_check_is_owned_by_a_catalogue_job_that_runs_it() -> None:
+    problems = owner_problems(CHECKS, catalogue.read(REPO))
+    assert not problems, "\n  ".join(problems)
+
+
+@pytest.mark.parametrize(
+    ("owner", "fault"),
+    [
+        ("ci.yml rails-checks: python scripts/gate_report.py", "names no job of the catalogue"),
+        ("rails-checks python scripts/gate_report.py", "names no job of the catalogue"),
+        ("lint: python scripts/gate_report.py", "names no job of the catalogue"),
+        ("static: python scripts/gate_report.py", "static runs no scripts/gate_report.py"),
+        ("rails-checks: python scripts/gate_report.py", None),
+        ("rails: tests/rails/test_licence_governance_tree.py", None),
+        ("static: python -m harness scan, over the whole tree", None),
+    ],
+)
+def test_a_planted_owner_of_one_shape_or_of_a_job_that_runs_nothing_fails(
+    owner: str, fault: str | None
+) -> None:
+    """A label of ``ci.yml``'s shape (``ci.yml <job>``, or a ci.yml job name the catalogue does
+    not have) fails, and so does a catalogue job that does not run the path; the real owners'
+    forms pass."""
+    problems = owner_problems({"planted": type("C", (), {"owner": owner})()}, catalogue.read(REPO))
+    if fault is None:
+        assert not problems, problems
+    else:
+        assert len(problems) == 1 and fault in problems[0], problems
+
+
+@pytest.mark.parametrize(
+    ("owned", "fault"),
+    [
+        ({"tests/test_npm_advisory_floors.py": "ci.yml rails-checks"}, "no job of the catalogue"),
+        ({"tests/test_npm_advisory_floors.py": "static"}, "no longer runs it by name"),
+        ({"tests/security/test_app_signature.py": "security"}, None),
+    ],
+)
+def test_a_planted_file_owner_of_one_shape_or_of_a_job_that_does_not_run_it_fails(
+    owned: dict[str, str], fault: str | None
+) -> None:
+    """The same for a file the shards leave out: ``ci.yml``'s label fails, and so does a
+    catalogue job that does not run it; a folder its job runs (``tests/security``) holds it."""
+    problems = job_owned_problems(REPO, owned)
+    if fault is None:
+        assert not problems, problems
+    else:
+        assert len(problems) == 1 and fault in problems[0], problems
 
 
 def test_the_census_reads_the_real_tree() -> None:
@@ -533,15 +634,41 @@ def test_a_named_file_stops_being_a_copy_only_once_the_shards_leave_it_to_its_jo
     assert file_copies(root, {"tests/test_a.py": "ci.yml lint"}) == set()
 
 
+def _catalogue(**commands: tuple[str, ...]) -> catalogue.Catalogue:
+    """A catalogue of one job per keyword, each running its one argv."""
+    return catalogue.Catalogue(
+        jobs=tuple(
+            catalogue.Job(
+                id=job_id,
+                tiers=("change",),
+                inputs=(":(glob)**",),
+                external_inputs=(),
+                toolchain=(),
+                cache=(),
+                security="ordinary",
+                timeout_min=10,
+                command=(catalogue.Step(argv),),
+            )
+            for job_id, argv in commands.items()
+        )
+    )
+
+
 def test_a_file_left_to_a_job_that_no_longer_runs_it_fails(tmp_path) -> None:
+    """Its owner is a catalogue job whose command runs it by name; a job that does not, a label
+    the catalogue does not know (``ci.yml``'s shape) and a file pytest would not collect fail."""
     root = _planted_repo(tmp_path, _NAMED)
-    assert job_owned_problems(root, {"tests/test_a.py": "ci.yml lint"}) == []
-    assert job_owned_problems(root, {"tests/test_a.py": "ci.yml e2e"}) == [
-        "tests/test_a.py is left to ci.yml e2e, which no longer runs it by name"
+    cat = _catalogue(static=("uv", "run", "pytest", "tests/test_a.py"), e2e=("npx", "playwright"))
+    assert job_owned_problems(root, {"tests/test_a.py": "static"}, cat) == []
+    assert job_owned_problems(root, {"tests/test_a.py": "e2e"}, cat) == [
+        "tests/test_a.py is left to e2e, which no longer runs it by name"
     ]
-    gone = {"tests/test_gone.py": "ci.yml lint"}
-    assert "tests/test_gone.py is left to ci.yml lint, but pytest would not collect it" in (
-        job_owned_problems(root, gone)
+    assert job_owned_problems(root, {"tests/test_a.py": "ci.yml lint"}, cat) == [
+        "tests/test_a.py is left to ci.yml lint, which is no job of the catalogue"
+    ]
+    gone = {"tests/test_gone.py": "static"}
+    assert "tests/test_gone.py is left to static, but pytest would not collect it" in (
+        job_owned_problems(root, gone, cat)
     )
 
 

@@ -1,8 +1,8 @@
 name: Set up the toolchain
 description: >-
   uv with the job's exact Python, Node from .nvmrc, and the programs a catalogue job needs that
-  the runner image may lack, for a ci.yml, pr.yml or merge.yml job. The job checks out the
-  repository first (a local action loads only from a checkout) and keeps its own installs
+  the runner image may lack, for a job of any workflow that runs the catalogue. The job checks
+  out the repository first (a local action loads only from a checkout) and keeps its own installs
   (`uv sync`, `npm ci`, which `run-job` runs for a catalogue entry) and its junit upload, which
   runs after its tests: a composite action has no post step.
 inputs:

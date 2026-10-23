@@ -8336,6 +8336,23 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "uv run pytest -n 4 --dist worksteal -q -x tests/rails",
             expect="rails: command step 1",
         ),
+        # The files the shards leave to a job (shards.JOB_OWNED) other than the security corpus,
+        # whose own rail reads each owner's steps: ci.yml's jobs run their own steps, so this row
+        # is what keeps each running there by name until the flip deletes ci.yml.
+        _plant(
+            "ci.yml's lint job no longer running the installer's tests",
+            _CI,
+            "uv run pytest tests/test_website_installer.py --junitxml",
+            "uv run pytest --junitxml",
+            expect="static: command step 9",
+        ),
+        _plant(
+            "ci.yml's rails-checks job no longer running the npm floors' tests",
+            _CI,
+            "run: uv run pytest tests/test_npm_advisory_floors.py --junitxml",
+            "run: uv run pytest --junitxml",
+            expect="rails-checks: command step 4",
+        ),
         _plant(
             "the first random-order seed drawn from another number than the run's",
             _BREADTH,

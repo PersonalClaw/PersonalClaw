@@ -61,7 +61,7 @@ def test_a_shard_plan_listing_a_rail_fails_its_check(tmp_path: Path) -> None:
 
 def test_a_file_a_job_owns_is_in_no_shard(tmp_path: Path) -> None:
     root = _tree(tmp_path, "tests/test_a.py", "tests/test_owned.py")
-    owned = {"tests/test_owned.py": "ci.yml lint"}
+    owned = {"tests/test_owned.py": "static"}
     assert shards.universe(root, owned) == ["tests/test_a.py"]
     assert shards.universe(root, {}) == ["tests/test_a.py", "tests/test_owned.py"]
 
@@ -70,7 +70,7 @@ def test_a_shard_plan_listing_a_file_a_job_owns_fails_its_check(tmp_path: Path) 
     """The control: a plan that hands a job's file to a shard lists a file the shards would not
     collect, and ``check`` refuses it, as it refuses a rail."""
     root = _tree(tmp_path, "tests/test_a.py", "tests/test_owned.py")
-    files = shards.universe(root, {"tests/test_owned.py": "ci.yml lint"})
+    files = shards.universe(root, {"tests/test_owned.py": "static"})
     problems = shards.check(files, [["tests/test_a.py"], ["tests/test_owned.py"]])
     assert problems == ["tests/test_owned.py is listed but not collected"]
 
@@ -144,8 +144,8 @@ def test_the_universe_reads_testpaths_and_python_files(tmp_path: Path) -> None:
 
 
 def test_the_security_corpus_is_in_no_shard_and_its_job_runs_it(tmp_path: Path) -> None:
-    """``ci.yml``'s ``security`` job runs the corpus on every run, so no shard collects it."""
-    owned = {p: j for p, j in shards.JOB_OWNED.items() if j == "ci.yml security"}
+    """The ``security`` job runs the corpus on every run, so no shard collects it."""
+    owned = {p: j for p, j in shards.JOB_OWNED.items() if j == "security"}
     assert len(owned) == 12, sorted(owned)
     assert "tests/test_supply_chain_gates.py" in owned
     assert all(p.startswith("tests/security/") or "supply_chain" in p for p in owned)

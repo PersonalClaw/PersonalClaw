@@ -54,25 +54,26 @@ _SKIPPED_DIRS = frozenset({"__pycache__", "node_modules", "build", "dist", "venv
 #: The rails' folder, run by the ``rails`` job and never by a shard (``rails_census.RAILS``).
 RAILS = "tests/rails"
 
-#: The test files a workflow job runs by name, and so no shard collects (#3929): each runs once
-#: per run, in the job that owns it. ``file: "workflow job"``. A rail
-#: (``tests/rails/test_each_tree_check_runs_in_one_place.py``) holds that each owner still runs
-#: its file by name, so leaving a file out here never leaves it running nowhere.
+#: The test files a job runs by name, and so no shard collects (#3929): each runs once per run,
+#: in the job that owns it. ``file: "catalogue job"``, the job's id in ``tools/ci/catalogue.toml``,
+#: which ``ci.yml``'s jobs and the tier workflows' both run. A rail
+#: (``tests/rails/test_each_tree_check_runs_in_one_place.py``) holds that each owner's command
+#: still runs its file by name, so leaving a file out here never leaves it running nowhere.
 JOB_OWNED: Mapping[str, str] = {
-    "tests/test_website_installer.py": "ci.yml lint",
-    "tests/test_npm_advisory_floors.py": "ci.yml rails-checks",
-    "tests/security/test_app_data_reads_never_follow_links.py": "ci.yml security",
-    "tests/security/test_app_installs_what_was_scanned.py": "ci.yml security",
-    "tests/security/test_app_signature.py": "ci.yml security",
-    "tests/security/test_app_staging_links.py": "ci.yml security",
-    "tests/security/test_mode_independence.py": "ci.yml security",
-    "tests/security/test_scanner_adversarial.py": "ci.yml security",
-    "tests/security/test_scanner_judges_what_the_app_runs.py": "ci.yml security",
-    "tests/security/test_scanner_reachability.py": "ci.yml security",
-    "tests/security/test_scanner_recall.py": "ci.yml security",
-    "tests/security/test_scanner_runtime_use.py": "ci.yml security",
-    "tests/test_supply_chain_gates.py": "ci.yml security",
-    "tests/test_supply_chain_scanner.py": "ci.yml security",
+    "tests/test_website_installer.py": "static",
+    "tests/test_npm_advisory_floors.py": "rails-checks",
+    "tests/security/test_app_data_reads_never_follow_links.py": "security",
+    "tests/security/test_app_installs_what_was_scanned.py": "security",
+    "tests/security/test_app_signature.py": "security",
+    "tests/security/test_app_staging_links.py": "security",
+    "tests/security/test_mode_independence.py": "security",
+    "tests/security/test_scanner_adversarial.py": "security",
+    "tests/security/test_scanner_judges_what_the_app_runs.py": "security",
+    "tests/security/test_scanner_reachability.py": "security",
+    "tests/security/test_scanner_recall.py": "security",
+    "tests/security/test_scanner_runtime_use.py": "security",
+    "tests/test_supply_chain_gates.py": "security",
+    "tests/test_supply_chain_scanner.py": "security",
 }
 
 
@@ -94,11 +95,11 @@ def universe(root: Path, owned: Mapping[str, str] | None = None) -> list[str]:
 
     - ``tests/rails``, the rails, which the ``rails`` job runs once per run
       (``tools/ci/rails_census.py``);
-    - the files in ``owned`` (:data:`JOB_OWNED` unless given), each of which a workflow job
+    - the files in ``owned`` (:data:`JOB_OWNED` unless given), each of which its catalogue job
       runs by name.
 
-    The security corpus is among them: ``ci.yml``'s ``security`` job runs it on every run, and
-    the merge tier requires that job (``catalogue.MERGE_SECURITY_JOBS``).
+    The security corpus is among them: the ``security`` job runs it on every run, and the merge
+    tier requires that job (``catalogue.MERGE_SECURITY_JOBS``).
     """
     skipped = JOB_OWNED if owned is None else owned
     options = _pytest_options(root)

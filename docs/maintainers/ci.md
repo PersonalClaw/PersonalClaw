@@ -1103,12 +1103,13 @@ records its list's digest as one of its inputs, so a result is carried only onto
 measured. Modules stay whole, so a module-scoped fixture is set up in one shard.
 
 The plan leaves out `tests/rails`, which the `rails` job runs, and each file in `shards.JOB_OWNED`,
-which the job named beside it runs by name: `tests/test_website_installer.py`, in `lint`;
-`tests/test_npm_advisory_floors.py`, in `rails-checks`; and the security corpus (the ten
-`tests/security` modules, `tests/test_supply_chain_scanner.py` and
-`tests/test_supply_chain_gates.py`), in `security`. `shards check` fails a plan that lists one,
-and a rail (`tests/rails/test_each_tree_check_runs_in_one_place.py`) fails when a listed job
-stops running its file, so a file left out of the shards never runs nowhere.
+which the catalogue job named beside it runs by name (in `ci.yml`'s shape and the tier workflows'
+alike): `tests/test_website_installer.py`, in `static`; `tests/test_npm_advisory_floors.py`,
+in `rails-checks`; and the security corpus (the ten `tests/security` modules,
+`tests/test_supply_chain_scanner.py` and `tests/test_supply_chain_gates.py`), in `security`.
+`shards check` fails a plan that lists one, and a rail
+(`tests/rails/test_each_tree_check_runs_in_one_place.py`) fails when a listed job is no catalogue
+job or its command stops running the file, so a file left out of the shards never runs nowhere.
 
 `shards check` holds the plan to files on every run. Each night `breadth.yml` also holds the
 shards to test ids, as a net under it. Every suite shard passes `--shard-ids FILE`, which writes
