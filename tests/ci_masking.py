@@ -71,6 +71,7 @@ class Tolerated:
 
 _CI = ".github/workflows/ci.yml"
 _DOCKER = ".github/workflows/docker-single-container.yml"
+_MERGE = ".github/workflows/merge.yml"
 _WALK = ".github/workflows/clean-machine-walkthroughs.yml"
 _BREADTH = ".github/workflows/breadth.yml"
 _SUITE_LEGS = ("ubuntu", "macos", "arm", "coverage-shard")
@@ -109,6 +110,16 @@ MASKED: tuple[Masked, ...] = (
         "--jq '.[0].number // empty' 2>/dev/null || true",
         "The feedback relay's pull request number, looked up by branch: none found means there "
         "is nothing to post to, and the step says so.",
+    ),
+    Masked(
+        _MERGE,
+        'python3 "$check" --workflow merge.yml || true',
+        "tree-check, as in ci.yml: no answer is tested=false, so the whole tier is planned.",
+    ),
+    Masked(
+        _MERGE,
+        'answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)',
+        "tree-check, as in ci.yml: no answer file is tested=false.",
     ),
     Masked(
         _DOCKER,

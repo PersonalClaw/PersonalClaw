@@ -833,6 +833,66 @@ def test_the_command_with_full_plans_the_whole_tier(tmp_path) -> None:
     assert code == 0 and json.loads(out)["full"] is True
 
 
+# ── a push to main whose tree a pull request's run tested ───────────────────────────────────
+
+#: The scaffold with the jobs a push runs whatever the tree check answers.
+_TESTED_TEXT = _TEXT.replace(
+    '  "lint", "audit",\n]\n', '  "lint", "audit",\n]\nevery_push = ["audit", "security"]\n', 1
+)
+
+
+def test_a_tested_push_plans_only_the_jobs_every_push_runs() -> None:
+    cat = _cat(_TESTED_TEXT)
+    p = planner.plan(cat, "merge", ["src/x.py"], overrides=(), tested=True)
+    assert p.full is False
+    # In the tier's order, whatever the diff: the tree check, not the paths, chose them.
+    assert p.jobs == tuple(j.id for j in cat.tier("merge") if j.id in {"audit", "security"})
+    assert all("whatever the tree check answers" in why[0] for why in p.reasons.values())
+
+
+def test_a_tested_push_with_no_every_push_list_runs_the_whole_tier() -> None:
+    p = planner.plan(_cat(), "merge", ["src/x.py"], overrides=(), tested=True)
+    assert p.full is True and set(p.jobs) == _MERGE
+    assert "names no every_push list" in p.full_reasons[0]
+
+
+def test_a_tested_push_brings_the_jobs_its_jobs_wait_for() -> None:
+    # web waits for build's output: a push that runs web runs build before it.
+    cat = _cat(
+        _TESTED_TEXT.replace(
+            'every_push = ["audit", "security"]', 'every_push = ["security", "web"]'
+        )
+    )
+    assert cat.job("web").after == ("build",)
+    p = planner.plan(cat, "merge", None, overrides=(), tested=True)
+    assert set(p.jobs) == {"security", "web", "build"}
+    assert p.reasons["build"] == ["after: web uses its output"]
+
+
+@pytest.mark.parametrize(
+    ("tier", "full", "why"),
+    [("change", False, "a push to main's merge tier"), ("merge", True, "with --full")],
+)
+def test_tested_is_refused_off_the_merge_tier_or_with_full(tier: str, full: bool, why: str) -> None:
+    with pytest.raises(ValueError, match=why):
+        planner.plan(_cat(_TESTED_TEXT), tier, None, overrides=(), full=full, tested=True)
+
+
+def test_the_command_with_tested_plans_only_the_jobs_every_push_runs(tmp_path) -> None:
+    cat = tmp_path / "catalogue.toml"
+    cat.write_text(_TESTED_TEXT)
+    (tmp_path / "areas.toml").write_text(_AREAS)
+    listed = tmp_path / "changed.txt"
+    listed.write_text("src/x.py\n")
+    done = _command(
+        "merge", "--catalogue", str(cat), "--paths", str(listed), "--tested", "--outputs"
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[:2] == ["full=false", 'jobs=["security","audit"]']
+    both = _command("merge", "--catalogue", str(cat), "--paths", str(listed), "--tested", "--full")
+    assert both.returncode == 2 and "with --full" in both.stderr
+
+
 @pytest.mark.parametrize(
     "paths", ["docs/a.md\r\nsrc/x.py\r\n", "docs/a.md\0src/x.py\n"], ids=["crlf", "nul"]
 )

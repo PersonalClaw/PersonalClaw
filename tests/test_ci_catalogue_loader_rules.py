@@ -153,6 +153,66 @@ def test_a_malformed_merge_list_is_refused(old: str, new: str, expect: str) -> N
     assert expect in " ".join(_problems(_edit(old, new)))
 
 
+# ── the jobs a push to main runs whatever the tree check answers ─────────────────────────────
+
+
+def _every_push(names: str) -> str:
+    return _edit(_MERGE_LIST, f"{_MERGE_LIST}every_push = {names}\n")
+
+
+def test_the_jobs_every_push_runs_load_as_listed() -> None:
+    assert catalogue.load(_every_push('["security", "rails"]')).every_push == ("security", "rails")
+
+
+def test_a_catalogue_naming_no_every_push_list_loads_with_none() -> None:
+    assert catalogue.load(_BASE).every_push is None
+
+
+@pytest.mark.parametrize(
+    ("names", "expect"),
+    [
+        ('["lint", "security"]', "every_push lists lint, which is no job the merge tier runs"),
+        ('["security", "security"]', "tier.merge every_push names a job twice"),
+        ('"security"', "tier.merge every_push is a list of job ids"),
+        ('[3, "security"]', "tier.merge every_push is a list of job ids"),
+        (
+            '["rails"]',
+            "every_push leaves out security, so a push whose tree a pull request's run tested"
+            " would skip it",
+        ),
+        ("[]", "every_push leaves out security"),
+    ],
+)
+def test_an_every_push_list_that_is_not_the_merge_tiers_is_refused(names: str, expect: str) -> None:
+    assert expect in " ".join(_problems(_every_push(names)))
+
+
+def test_every_push_holds_apps_contract_when_the_merge_tier_runs_it() -> None:
+    # The owner's rule (2026-10-19): every push to main runs the security corpus and
+    # apps-contract, whatever the tree check answers.
+    assert catalogue.EVERY_PUSH_JOBS == ("security", "apps-contract")
+    text = _BASE.replace(
+        '"security"]\n', '"security", "apps-contract"]\nevery_push = ["security"]\n', 1
+    )
+    text += """
+[[job]]
+id = "apps-contract"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = ["apps-partner"]
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+timeout_min = 15
+command = [{ argv = ["uv", "run", "pytest", "tests/apps"] }]
+"""
+    assert "every_push leaves out apps-contract" in " ".join(_problems(text))
+    loaded = catalogue.load(
+        text.replace('every_push = ["security"]', 'every_push = ["security", "apps-contract"]')
+    )
+    assert loaded.every_push == ("security", "apps-contract")
+
+
 def test_a_pytest_n_must_equal_workers() -> None:
     text = _edit(
         'timeout_min = 10\ncommand = [{ argv = ["uv", "run", "pytest", "tests/rails"] }]',

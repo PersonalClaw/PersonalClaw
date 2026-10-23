@@ -318,16 +318,23 @@ def plan(
     *,
     overrides: Sequence[Override],
     full: bool = False,
+    tested: bool = False,
     history: Path | None = None,
     root: Path | None = None,
     floor: Mapping[str, Any] | None = None,
 ) -> Plan:
     """The plan for ``tier`` over the ``changed`` paths, with the area map's ``overrides``
-    (:func:`catalogue.read_areas`). A tier with no job in the catalogue raises ValueError,
-    since its plan would run nothing; anything else the planner cannot read plans the whole
-    tier."""
+    (:func:`catalogue.read_areas`). ``tested`` is a push to main whose tree a pull request's run
+    tested: it plans the merge tier's ``every_push`` jobs alone, and the jobs they wait for, or the
+    whole tier when the catalogue names none. A tier with no job in the catalogue raises
+    ValueError, since its plan would run nothing, and so does ``tested`` off the merge tier or
+    with ``full``; anything else the planner cannot read plans the whole tier."""
     if tier not in catalogue.TIERS:
         raise ValueError(f"{tier!r} is not a tier: one of {', '.join(catalogue.TIERS)}")
+    if tested and tier != "merge":
+        raise ValueError(f"--tested is for a push to main's merge tier, not the {tier} tier")
+    if tested and full:
+        raise ValueError("--tested plans what a tested push runs, and cannot be given with --full")
     if not cat.tier(tier):
         raise ValueError(f"the {tier} tier has no job in the catalogue, so its plan runs nothing")
     if floor is not None:
@@ -340,9 +347,36 @@ def plan(
     try:
         if full:
             return _whole(cat, tier, ["the run asked for the whole tier (--full)"], floor)
+        if tested:
+            return _tested(cat, floor)
         return _plan(cat, tier, changed, overrides, floor, root)
     except Exception as exc:  # noqa: BLE001 - a broken planner must plan everything
         return _whole(cat, tier, [f"the planner failed ({type(exc).__name__}: {exc})"], floor)
+
+
+def _tested(cat: Catalogue, floor: Mapping[str, Any]) -> Plan:
+    """A push to main whose tree a pull request's run tested: the merge tier's ``every_push``
+    jobs, whatever the diff, and the jobs whose output they use; the whole tier when the
+    catalogue names no such job."""
+    in_tier = {j.id: j for j in cat.tier("merge")}
+    every = [j for j in cat.every_push or () if j in in_tier]
+    if not every:
+        why = "a pull request's run tested this tree, and the catalogue names no every_push list"
+        return _whole(cat, "merge", [f"{why}, so the whole tier runs"], floor)
+    reasons = {
+        j: ["a pull request's run tested this tree: a push runs it whatever the tree check answers"]
+        for j in every
+    }
+    grew = True
+    while grew:
+        grew = False
+        for job_id in list(reasons):
+            for other in in_tier[job_id].after:
+                if other in in_tier and other not in reasons:
+                    reasons[other] = [f"after: {job_id} uses its output"]
+                    grew = True
+    order = tuple(j for j in in_tier if j in reasons)
+    return Plan("merge", False, order, {j: reasons[j] for j in order}, (), floor)
 
 
 def _plan(
@@ -763,6 +797,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--paths", default=None, help="the changed paths, one per line (stdin)")
     parser.add_argument("-z", action="store_true", help="the paths are NUL-separated")
     parser.add_argument("--full", action="store_true", help="plan the whole tier")
+    parser.add_argument(
+        "--tested",
+        action="store_true",
+        help="a push to main whose tree a pull request's run tested: plan [tier.merge] every_push",
+    )
     parser.add_argument("--history", type=Path, default=None, help="a folder of telemetry")
     parser.add_argument("--root", type=Path, default=catalogue.REPO, help="the repository root")
     parser.add_argument(
@@ -797,6 +836,7 @@ def main(argv: list[str]) -> int:
             _changed(args),
             overrides=overrides,
             full=args.full,
+            tested=args.tested,
             history=args.history,
             root=args.root,
             floor=_ci_floor(args.repo) if args.repo else None,

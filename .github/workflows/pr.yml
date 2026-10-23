@@ -87,6 +87,7 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           TIER: change
           STAGE_JOBS: test
+          PUSH_PLAN: ""
         run: |
           set -uo pipefail
           listed="$RUNNER_TEMP/changed.json"
@@ -104,12 +105,24 @@ jobs:
             echo "::error title=no plan::main's tools/ci could not be fetched, so nothing is planned and the verdict is red. Re-run the job."
             exit 1
           fi
+          # A push to main plans by the tree check's answer, read in PUSH_PLAN: the jobs every push
+          # runs when a pull request's run tested the tree, the whole tier when none did. Any other
+          # run plans what it changed.
+          case "$PUSH_PLAN" in
+            "") mode="" ;;
+            tested) mode="--tested" ;;
+            full) mode="--full" ;;
+            *)
+              echo "::error title=no plan::PUSH_PLAN is '$PUSH_PLAN', which is no push plan, so nothing is planned and the verdict is red."
+              exit 1
+              ;;
+          esac
           : > "$RUNNER_TEMP/plan.err"
           answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \
                      --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
                      --trusted-areas "$judge/tools/ci/areas.toml" \
                      --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
-                     --repo "$GITHUB_REPOSITORY" --outputs --matrix \
+                     --repo "$GITHUB_REPOSITORY" --outputs --matrix ${mode:+"$mode"} \
                      2> "$RUNNER_TEMP/plan.err") || answer=""
           cat "$RUNNER_TEMP/plan.err" >> "$GITHUB_STEP_SUMMARY"
           sed -n '/^::warning[ :]/p' "$RUNNER_TEMP/plan.err"

@@ -210,7 +210,7 @@ SHORT_MAGIC = re.compile(r"\A:[/!^]*:?")
 
 #: The catalogue's tables besides its jobs, and what each may hold.
 _TIER_TABLES = frozenset({"merge"})
-_TIER_KEYS = frozenset({"jobs"})
+_TIER_KEYS = frozenset({"jobs", "every_push"})
 #: What an ``[[override]]`` of the areas file may hold.
 _OVERRIDE_KEYS = frozenset({"paths", "jobs", "whole_tier", "reason"})
 
@@ -232,6 +232,12 @@ MERGE_SECURITY_JOBS: dict[str, str] = {
     "python-suite-macos": "macos-",
     "security": "ubuntu-",
 }
+
+#: The jobs a push to main runs whatever the tree check answers (the owner's rule, 2026-10-19):
+#: the security corpus, whose evidence is never reused, and apps-contract, whose partner may have
+#: moved since the pull request's run. ``[tier.merge] every_push`` must list each one the merge
+#: tier runs, so a push whose tree a pull request's run tested still runs them.
+EVERY_PUSH_JOBS: tuple[str, ...] = ("security", "apps-contract")
 
 
 class CatalogueError(Exception):
@@ -380,6 +386,9 @@ class Catalogue:
     jobs: tuple[Job, ...]
     #: ``[tier.merge] jobs``: the jobs the merge tier must run, held against each job's tiers.
     merge_jobs: tuple[str, ...] = ()
+    #: ``[tier.merge] every_push``: the merge-tier jobs a push to main runs whatever the tree
+    #: check answers (:data:`EVERY_PUSH_JOBS` among them); None when the catalogue names none.
+    every_push: tuple[str, ...] | None = None
 
     def job(self, job_id: str) -> Job:
         for job in self.jobs:
@@ -743,7 +752,7 @@ def load(text: str, source: str = CATALOGUE, reference: Catalogue | None = None)
     problems: list[str] = [
         f"{source}: unknown table {key!r}" for key in data if key not in ("job", "tier")
     ]
-    merge_jobs = _tier_merge(data.get("tier"), source, problems)
+    merge_jobs, every_push = _tier_merge(data.get("tier"), source, problems)
     raw_jobs = data.get("job")
     if not isinstance(raw_jobs, list) or not raw_jobs:
         raise CatalogueError([*problems, f"{source} has no [[job]] entries"])
@@ -751,7 +760,7 @@ def load(text: str, source: str = CATALOGUE, reference: Catalogue | None = None)
     for job_id in sorted({i for i in ids if isinstance(i, str) and ids.count(i) > 1}):
         problems.append(f"{job_id}: the id is used by {ids.count(job_id)} entries")
     jobs = [job for n, raw in enumerate(raw_jobs, 1) if (job := _job(raw, n, problems))]
-    cat = Catalogue(tuple(jobs), merge_jobs)
+    cat = Catalogue(tuple(jobs), merge_jobs, every_push)
     complete = not problems
     problems += validate(cat, complete=complete)
     if reference is not None and complete:
@@ -823,28 +832,40 @@ def _overrides(
     return tuple(out)
 
 
-def _tier_merge(raw: object, source: str, problems: list[str]) -> tuple[str, ...]:
-    """``[tier.merge] jobs``, the merge tier's job list; a fault is a problem naming it."""
+def _tier_merge(
+    raw: object, source: str, problems: list[str]
+) -> tuple[tuple[str, ...], tuple[str, ...] | None]:
+    """``[tier.merge] jobs``, the merge tier's job list, and ``every_push``, the ones a push to
+    main runs whatever the tree check answers; a fault is a problem naming it."""
     if raw is None:
-        return ()
+        return (), None
     if not isinstance(raw, dict):
         problems.append(f"{source}: tier is a table of tiers")
-        return ()
+        return (), None
     for key in sorted(set(raw) - _TIER_TABLES):
         problems.append(f"{source}: unknown table 'tier.{key}'")
     merge = raw.get("merge")
     if not isinstance(merge, dict):
         problems.append(f"{source}: tier.merge is a table holding jobs")
-        return ()
+        return (), None
     for key in sorted(set(merge) - _TIER_KEYS):
         problems.append(f"{source}: tier.merge has unknown key {key!r}")
+    every: tuple[str, ...] | None = None
+    if "every_push" in merge:
+        listed = merge["every_push"]
+        if not isinstance(listed, list) or not all(isinstance(j, str) and j for j in listed):
+            problems.append(f"{source}: tier.merge every_push is a list of job ids")
+        else:
+            if len(set(listed)) != len(listed):
+                problems.append(f"{source}: tier.merge every_push names a job twice")
+            every = tuple(listed)
     jobs = merge.get("jobs")
     if not isinstance(jobs, list) or not jobs or not all(isinstance(j, str) and j for j in jobs):
         problems.append(f"{source}: tier.merge jobs is a non-empty list of job ids")
-        return ()
+        return (), every
     if len(set(jobs)) != len(jobs):
         problems.append(f"{source}: tier.merge jobs names a job twice")
-    return tuple(jobs)
+    return tuple(jobs), every
 
 
 #: pytest's own spellings of "collect, run nothing". No other word counts.
@@ -1012,6 +1033,18 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
                 f"the merge tier runs the {MERGE_NEEDS_JOB} job in legs and lacks"
                 f" {RAILS_CHECKS_JOB}, so a rail can be in no leg unseen"
             )
+        if catalogue.every_push is not None:
+            for job_id in catalogue.every_push:
+                if job_id not in merge:
+                    problems.append(
+                        f"every_push lists {job_id}, which is no job the merge tier runs"
+                    )
+            for job_id in EVERY_PUSH_JOBS:
+                if job_id in merge and job_id not in catalogue.every_push:
+                    problems.append(
+                        f"every_push leaves out {job_id}, so a push whose tree a pull request's"
+                        " run tested would skip it"
+                    )
         for job_id, family in MERGE_SECURITY_JOBS.items():
             evidence = merge.get(job_id)
             if evidence is None:
