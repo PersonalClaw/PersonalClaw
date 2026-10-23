@@ -993,6 +993,17 @@
         "web/e2e/fixtures/home/triggers.json",
         "web/e2e/fixtures/scripted-chat.json"
       ]
+    },
+    {
+      "id": "web-e2e-store-catalogue",
+      "source": "What the e2e gateway's /api/apps/catalog answered on 2026-10-23: the app listings of PersonalClaw/PersonalClawApps, the project's own MIT-licensed apps repository, kept as the UI quality check's Store snapshot (web/e2e/stubbedReads.ts)",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "web/e2e/fixtures/app-catalog.json"
+      ]
     }
   ],
   "built_web_groups": [
