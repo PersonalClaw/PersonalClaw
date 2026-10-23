@@ -288,6 +288,37 @@ jobs:
           echo "  Closing it needs either a repo secret or a local model on the runner;"
           echo "  until then V1 is verified up to onboarding and no further."
 
+      # ONE VERDICT, WITH ITS REASON (#4330). `release-verify.yml`'s wheel leg delegates to
+      # this job through `workflow_call` instead of keeping a second copy, so THIS is where
+      # the wheel leg's verdict is written; the report job reads `verdict.json` back. Until
+      # the step above is a real turn on the scripted model (plan item 1), a reachable
+      # onboarding is `incomplete` — never `passed`: this job has not proven a first chat,
+      # and a green mark over an unproven chat is the exact confusion the header forbids.
+      - name: Write the V1 verdict
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          WHEEL_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$JOB_STATUS" = "success" ]; then
+            word=incomplete
+            reason="the wheel installs, the gateway boots and onboarding answers — but the first chat is recorded as a gap (no credential and no local model on this runner)"
+          else
+            word=failed
+            reason="an earlier step of this walkthrough failed — see the log above"
+          fi
+          python3 tools/ci/release_verdict.py --leg v1-wheel --verdict "$word" \
+            --release "${WHEEL_VERSION:-}" --out-dir verdict --reason "$reason"
+      - name: Upload the V1 verdict
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verdict-v1-wheel
+          path: verdict/verdict.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   # ── V3 ─────────────────────────────────────────────────────────────────────────────────
   # The documented two-command container bring-up, and the part everyone forgets: state must
   # survive `compose down` / `up`. That is the assertion, not the bring-up.

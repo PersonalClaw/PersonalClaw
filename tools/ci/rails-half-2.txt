@@ -103,6 +103,7 @@ tests/rails/test_provider_instance_secrets_tree.py
 tests/rails/test_python_children_in_the_desktop_app_tree.py
 tests/rails/test_recall_ranking_disclosure_tree.py
 tests/rails/test_record_id_containment_tree.py
+tests/rails/test_release_verify_workflow_tree.py
 tests/rails/test_rendering_registry_parity_tree.py
 tests/rails/test_replay_harness_tree.py
 tests/rails/test_reply_style_texts_name_only_controls_that_exist_tree.py
