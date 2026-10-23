@@ -72,7 +72,11 @@ unless the tag is a release tag by `scripts/release_tags.py`, the commit is on `
 is the App's token made, asked for `contents: write` alone and handed only to the step that
 creates the annotated tag and its ref. The job runs only on `main`, in the `ci-controller`
 environment, which deploys only from `main` and holds the App's key. #3911 adds its release gate
-before the create. `tests/rails/test_ci_release_tag_tree.py` holds the workflow's shape. Until
+before the create. `-f rehearsal=true` creates `rehearsal-<tag>` instead: the same checks and the
+same App, under a name no `v*` rule and no release trigger sees, which is how the path is proved
+without a release (on a scratch copy of the creation ruleset over `refs/tags/rehearsal-v*`).
+`tests/rails/test_ci_release_tag_tree.py` holds the workflow's shape, both steps passing the
+rehearsal on alike. Until
 `release-tag-creation` is applied, the [release runbook](release-runbook.md#tagging)'s manual
 tag still works; from then on it is refused, and this workflow is the way.
 

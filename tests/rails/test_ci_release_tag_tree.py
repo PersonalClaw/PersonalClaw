@@ -22,6 +22,7 @@ _CHECK, _TOKEN, _CREATE = (
     "create the tag",
 )
 _APP_ACTION = "actions/create-github-app-token@"
+_REHEARSE = 'if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi'
 
 
 def _problems(text: str) -> list[str]:
@@ -30,6 +31,10 @@ def _problems(text: str) -> list[str]:
     on = data.get("on", data.get(True))
     if not isinstance(on, dict) or set(on) != {"workflow_dispatch"}:
         found.append(f"runs on {on!r}, not a dispatch alone")
+    inputs = (on.get("workflow_dispatch") or {}).get("inputs") if isinstance(on, dict) else None
+    rehearsal = (inputs or {}).get("rehearsal") or {}
+    if rehearsal.get("type") != "boolean" or rehearsal.get("default") is not False:
+        found.append(f"the rehearsal input is {rehearsal!r}, not a boolean that defaults to false")
     jobs = data.get("jobs") or {}
     if set(jobs) != {"tag"}:
         return [*found, f"has jobs {sorted(jobs)}, not the one tag job"]
@@ -67,9 +72,18 @@ def _problems(text: str) -> list[str]:
     }:
         found.append(f"the token step is {token.get('uses')!r} asking {asks!r}")
     for at in (_CHECK, _CREATE):
-        run = str(steps[names.index(at)].get("run", ""))
+        step = steps[names.index(at)]
+        run = str(step.get("run", ""))
         if "python3 -m tools.ci release-tag" not in run:
             found.append(f"step {at!r} runs no release-tag check")
+        # A rehearsal must check and create the same name: both steps pass --rehearsal alike.
+        rehearses = (
+            (step.get("env") or {}).get("REHEARSAL") == "${{ inputs.rehearsal }}"
+            and _REHEARSE in run
+            and '"${more[@]}"' in run
+        )
+        if not rehearses:
+            found.append(f"step {at!r} does not pass the rehearsal on")
     if "--create" not in str(steps[names.index(_CREATE)].get("run", "")):
         found.append("the create step creates nothing")
     return found
@@ -91,8 +105,8 @@ def test_the_tagging_workflow_checks_first_and_hands_the_token_to_one_step() -> 
             "the job holds",
         ),
         (
-            'run: python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT"\n',
-            'run: python3 -m tools.ci release-tag --tag ${{ inputs.tag }} --commit "$COMMIT"\n',
+            'release-tag --tag "$TAG" --commit "$COMMIT" "${more[@]}"\n',
+            'release-tag --tag ${{ inputs.tag }} --commit "$COMMIT" "${more[@]}"\n',
             "puts an input into its command",
         ),
         ("          permission-contents: write\n", "", "asking {}"),
@@ -118,6 +132,17 @@ def test_the_tagging_workflow_checks_first_and_hands_the_token_to_one_step() -> 
             "is handed the controller's token",
         ),
         ('--create "$GITHUB_REPOSITORY"', "", "creates nothing"),
+        ("        default: false\n", "        default: true\n", "defaults to false"),
+        (
+            '--create "$GITHUB_REPOSITORY" "${more[@]}"',
+            '--create "$GITHUB_REPOSITORY"',
+            "'create the tag' does not pass the rehearsal on",
+        ),
+        (
+            "        type: boolean\n",
+            "        type: string\n",
+            "not a boolean",
+        ),
     ],
 )
 def test_a_planted_edit_fails(old: str, new: str, says: str) -> None:
