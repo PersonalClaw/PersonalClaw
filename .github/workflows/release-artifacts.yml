@@ -659,8 +659,8 @@ jobs:
         id: manifest
         run: >-
           python3 -I tools/ci/release_manifest.py write --staged staged
-          --image personalclaw-gateway=indexes/personalclaw-gateway.index.json
-          --image personalclaw-web=indexes/personalclaw-web.index.json
+          --image ghcr.io/personalclaw/personalclaw-gateway=indexes/personalclaw-gateway.index.json
+          --image ghcr.io/personalclaw/personalclaw-web=indexes/personalclaw-web.index.json
           --ref "$GITHUB_REF" --commit "$GITHUB_SHA" --out manifest.json
       - name: The staged files and the images match it
         env:
@@ -668,8 +668,8 @@ jobs:
         run: >-
           python3 -I tools/ci/release_manifest.py verify --manifest manifest.json --digest "$DIGEST"
           --staged staged
-          --image personalclaw-gateway=indexes/personalclaw-gateway.index.json
-          --image personalclaw-web=indexes/personalclaw-web.index.json
+          --image ghcr.io/personalclaw/personalclaw-gateway=indexes/personalclaw-gateway.index.json
+          --image ghcr.io/personalclaw/personalclaw-web=indexes/personalclaw-web.index.json
       - name: A changed file fails the verify (its planted control)
         env:
           DIGEST: ${{ steps.manifest.outputs.digest }}
@@ -680,8 +680,8 @@ jobs:
           printf 'planted' >> "$first"
           if python3 -I tools/ci/release_manifest.py verify --manifest manifest.json --digest "$DIGEST" \
             --staged planted \
-            --image personalclaw-gateway=indexes/personalclaw-gateway.index.json \
-            --image personalclaw-web=indexes/personalclaw-web.index.json; then
+            --image ghcr.io/personalclaw/personalclaw-gateway=indexes/personalclaw-gateway.index.json \
+            --image ghcr.io/personalclaw/personalclaw-web=indexes/personalclaw-web.index.json; then
             echo "::error::a changed $first matched the manifest: the verify checks nothing"
             exit 1
           fi
