@@ -1,0 +1,39 @@
+# Dependency review (#4585): GitHub's dependency comparison between a pull request's base and
+# head, read over the API, failing on a dependency the pull request adds or moves to with a
+# known vulnerability.
+#
+# `pull_request_target` runs this file as it is on main, so a pull request cannot edit what
+# reviews it, and runs a first-time contributor's pull request without waiting for approval. It
+# never checks out or runs the pull request's code: the action reads the base and head commits
+# from the event and asks the dependency-graph API to compare them, with a read-only token. There
+# is no checkout here at all; do not add one.
+#
+# Not a required check: #3910 makes it an input of the one required `merge-verdict` instead.
+name: Dependency review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+# One review per pull request: a new head cancels the review of the old one.
+concurrency:
+  group: dependency-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - name: Review the dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          comment-summary-in-pr: never

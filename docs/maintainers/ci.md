@@ -2411,6 +2411,17 @@ Waivers are `[[waiver]]` entries in `tools/ci/audit-baseline.toml`, in the form 
 exceptions below. Not audited here: the apps' and the website's locks, which their own
 repositories audit, and the images' OS packages, which need a scanner of their own.
 
+### Dependency review
+
+`.github/workflows/dependency-review.yml` runs on `pull_request_target`, so GitHub takes it from
+`main` and a pull request cannot edit what reviews it. It holds `contents: read` and no
+checkout: `actions/dependency-review-action` reads the pull request's base and head commits from
+the event and asks the dependency-graph API to compare them, and it fails on a dependency the
+pull request adds, or moves to, with a known vulnerability. It is not a required check; with
+CodeQL's default setup, which lives in the repository settings out of a candidate's reach, it
+becomes an input of the one required `merge-verdict` (#3910). The apps and the website run the
+same workflow.
+
 ### Nothing throws an exit status away unseen
 
 The contract row `nothing-throws-an-exit-status-away-unseen` (`tests/ci_masking.py`) finds
