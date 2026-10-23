@@ -171,8 +171,11 @@ def test_release_unloads_every_module_loaded_from_the_apps_directory(root):
     assert released.left_running == []
 
 
-def test_release_drops_the_old_versions_cached_bytecode(root):
+def test_release_drops_the_old_versions_cached_bytecode(root, monkeypatch):
     """The next version's file sits at the same path; its size and mtime second may match."""
+    # Bytecode is written whatever the run's environment says (a shell with
+    # PYTHONDONTWRITEBYTECODE set writes none, and there is then nothing to drop).
+    monkeypatch.setattr(sys, "dont_write_bytecode", False)
     _write(root / "runtime" / "__init__.py", "")
     _write(root / "runtime" / "version.py", "VERSION = 'v1'\n")
     _write(root / "provider.py", "from runtime.version import VERSION  # noqa: F401\n")
