@@ -10,19 +10,20 @@ repository's own ``.github/rulesets/*.json`` on its default branch, and fails on
   ``bypass_actors`` only to a caller with write access to it, so they are compared only when the
   answer carries them; the bypass *use* is read instead, below.
 - **Bypass use:** the week's rule suites whose result is ``bypass``. Any one fails, except an
-  actor and ref an ``allowed bypass`` entry names (none today).
+  actor and ref an ``allowed bypass`` entry names (the release controller's App on tags).
 - **Classic protection** on the default branch, or its absence.
 - **Merge methods**, **security** (secret scanning, push protection, Dependabot security
-  updates), **Dependabot alerts**, **CodeQL default setup**, **actions** (allowed actions and
-  ``sha_pinning_required``), **workflow token** (its default permissions, and whether Actions may
-  approve pull requests), **fork approval**, and **environments** (reviewers, wait timer and the
-  deployment branch and tag policy).
+  updates), **Dependabot alerts**, **the dependency graph** (which dependency review reads),
+  **CodeQL default setup**, **actions** (allowed actions and ``sha_pinning_required``),
+  **workflow token** (its default permissions, and whether Actions may approve pull requests),
+  **fork approval**, and **environments** (reviewers, wait timer and the deployment branch and
+  tag policy).
 
-Rulesets and environments answer anyone on a public repository. The rest need administration
-read, which no workflow token can hold: they are read with ``SETTINGS_READ_TOKEN``, a read-only
-credential the maintainer keeps in the ``settings-report`` environment, which only ``main`` may
-deploy to. A setting that cannot be read is drift too (``not read``), never a pass, so a missing
-or expired credential fails the report.
+Rulesets, environments and the dependency graph answer anyone on a public repository. The rest
+need administration read, which no workflow token can hold: they are read with
+``SETTINGS_READ_TOKEN``, a read-only credential the maintainer keeps in the ``settings-report``
+environment, which only ``main`` may deploy to. A setting that cannot be read is drift too
+(``not read``), never a pass, so a missing or expired credential fails the report.
 
 With ``--issue-repo`` (the scheduled run on ``main``) it opens or edits the one open issue titled
 "Repository settings drift" that the workflow's account opened, and closes it once a run finds
@@ -63,6 +64,7 @@ SETTINGS = (
     "classic protection",
     "security",
     "dependabot alerts",
+    "dependency graph",
     "codeql default setup",
     "actions",
     "workflow token",
@@ -443,6 +445,18 @@ def _environments(fetch: Fetch, repo: str) -> object:
     return out
 
 
+def _dependency_graph(fetch: Fetch, repo: str) -> object:
+    """Whether GitHub keeps the repository's dependency graph: its SBOM answers 200 when it does
+    and 404 when it does not (dependency review then fails on every pull request)."""
+    path = f"/repos/{repo}/dependency-graph/sbom"
+    status, body = fetch(path)
+    if status == 200 and isinstance(body, dict) and isinstance(body.get("sbom"), dict):
+        return True
+    if status == 404:
+        return False
+    return _unread(path, status, body)
+
+
 def read_settings(
     repo: str, public: Fetch, admin: Fetch | None, queries: Sequence[Query] = ()
 ) -> dict[str, object]:
@@ -450,7 +464,10 @@ def read_settings(
     no_token = Unread(
         "no SETTINGS_READ_TOKEN: administration read needs the maintainer's read-only token"
     )
-    live: dict[str, object] = {"environments": _environments(public, repo)}
+    live: dict[str, object] = {
+        "environments": _environments(public, repo),
+        "dependency graph": _dependency_graph(public, repo),
+    }
     if admin is None:
         for name in SETTINGS:
             live.setdefault(name, no_token)

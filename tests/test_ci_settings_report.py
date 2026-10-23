@@ -73,6 +73,7 @@ EXPECTED: dict[str, Any] = {
         "secret_scanning_push_protection": "enabled",
     },
     "dependabot alerts": True,
+    "dependency graph": True,
     "codeql default setup": {
         "languages": ["actions", "python"],
         "query_suite": "default",
@@ -139,6 +140,7 @@ def _answers(ruleset: dict[str, Any] | None = None) -> dict[str, tuple[int, obje
             {"state": "configured", "query_suite": "default", "languages": ["python", "actions"]},
         ),
         f"{r}/vulnerability-alerts": (204, None),
+        f"{r}/dependency-graph/sbom": (200, {"sbom": {"packages": [{"name": "npm:left-pad"}]}}),
         _page(f"{r}/environments"): (
             200,
             {
@@ -330,6 +332,29 @@ def test_dependabot_alerts_turned_off_fails() -> None:
     assert lines == [f"{REPO} dependabot alerts: expected true, live false"]
 
 
+def test_a_dependency_graph_turned_off_fails() -> None:
+    def plant(answers: dict[str, tuple[int, object]]) -> None:
+        answers[f"/repos/{REPO}/dependency-graph/sbom"] = (404, {"message": "Not Found"})
+
+    assert _run(plant) == [f"{REPO} dependency graph: expected true, live false"]
+
+
+def test_a_dependency_graph_the_api_cannot_answer_fails_as_not_read() -> None:
+    def plant(answers: dict[str, tuple[int, object]]) -> None:
+        answers[f"/repos/{REPO}/dependency-graph/sbom"] = (500, {"message": "Server Error"})
+
+    lines = _run(plant)
+    assert len(lines) == 1 and lines[0].startswith(f"{REPO} dependency graph: not read")
+
+
+def test_the_dependency_graph_is_read_with_no_read_token() -> None:
+    def plant(answers: dict[str, tuple[int, object]]) -> None:
+        answers[f"/repos/{REPO}/dependency-graph/sbom"] = (404, {"message": "Not Found"})
+
+    lines = _run(plant, admin=False)
+    assert f"{REPO} dependency graph: expected true, live false" in lines
+
+
 def test_a_removed_required_check_fails() -> None:
     live = copy.deepcopy(MAIN_PROTECT)
     live["rules"] = [r for r in live["rules"] if r["type"] != "required_status_checks"]
@@ -477,7 +502,9 @@ def test_with_no_read_token_every_administration_setting_fails_as_not_read() -> 
     lines = _run(admin=False)
     not_read = sorted(x.split(":")[0] for x in lines)
     want = sorted(
-        f"{REPO} {s}" for s in sr.SETTINGS if s not in ("environments", "allowed bypass")
+        f"{REPO} {s}"
+        for s in sr.SETTINGS
+        if s not in ("environments", "dependency graph", "allowed bypass")
     ) + [f"{REPO} bypass use"]
     assert not_read == sorted(want)
     assert all("not read (no SETTINGS_READ_TOKEN" in x for x in lines)
