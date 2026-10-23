@@ -62,6 +62,7 @@ from shared_app_rows import (
     recording_sel,
     written_since,
 )
+from table_rows import row
 from test_apps_cannot_change_your_models import PORT, _Gateway
 
 # Imported before any test patches `config_dir`: a module first imported under a patch keeps the
@@ -955,10 +956,7 @@ class TestTheRouteTableDeclaresYourProviders:
 # ── the table's isolation, and a refusal that writes ───────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_a_row_that_leaves_state_behind_fails_the_next_row(
-    tmp_path_factory, monkeypatch
-) -> None:
+async def _a_row_that_leaves_state_behind_fails_the_next_row(tmp_path_factory, monkeypatch) -> None:
     """The table's isolation, shown rather than assumed: a row that leaves the home, the SEL rows
     or a fenced registry changed is caught, by name, in the row after it."""
     await SETTINGS.home(tmp_path_factory, monkeypatch)
@@ -981,8 +979,7 @@ async def test_a_row_that_leaves_state_behind_fails_the_next_row(
 PLANTED = "PATCH /api/providers/{name}/config"
 
 
-@pytest.mark.asyncio
-async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+async def _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     tmp_path_factory, monkeypatch
 ) -> None:
     """An ownership check that lets Alpha's write of Bravo's settings through, to a handler that
@@ -1035,6 +1032,18 @@ async def test_a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     assert list(recorded.failed) == [PLANTED], recorded.failed
     written = f"a refusal changed your home: ['apps/{BRAVO}/data/config.json']"
     assert written in recorded.failed[PLANTED], recorded.failed
+
+
+@pytest.mark.asyncio
+async def test_the_table_keeps_each_row_to_itself(subtests, tmp_path_factory, monkeypatch) -> None:
+    """Both halves of the table's isolation, each a row: a row that leaves state behind fails the
+    row after it, and a refusal that writes state fails its own row and no other."""
+    with row(subtests, check="a row that leaves state behind fails the next row"):
+        await _a_row_that_leaves_state_behind_fails_the_next_row(tmp_path_factory, monkeypatch)
+    with row(subtests, check="a refusal that writes state fails its own row and no other"):
+        await _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
+            tmp_path_factory, monkeypatch
+        )
 
 
 # ── 5. Each family, end to end, on apps installed for this test alone ──────────────────────────
