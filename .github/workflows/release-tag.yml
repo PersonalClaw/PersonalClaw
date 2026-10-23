@@ -1,0 +1,71 @@
+# Release tag (#4584): the one way a `v*` tag is created. The maintainer dispatches it on main
+# with the tag and the commit (`gh workflow run release-tag.yml --ref main -f tag=vX.Y.Z -f
+# commit=<sha>`); the tag's push then starts release.yml.
+#
+# `python -m tools.ci release-tag` (tools/ci/release_tag.py), from main's own checkout, refuses
+# unless the tag is a release tag by the release's parser, the commit is on main, the commit's
+# workflows, actions and tools/ci are main's (so the tag's release.yml is main's), and no tag of
+# that name exists. Only then is the release controller's App token made, and the tag created
+# with it: the `release-tag-creation` ruleset lets that App alone create a `v*` tag, and
+# `release-tags` lets nobody move or delete one. #3911 adds its release gate before the create.
+#
+# The App's key is a secret of the `ci-controller` environment, which only main may deploy to,
+# so no branch's copy of this file can reach it; the job also runs only on main. The inputs reach
+# the steps as environment variables, never as text in a command.
+name: Release tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag to create, vX.Y.Z"
+        required: true
+        type: string
+      commit:
+        description: "The full commit id on main to tag"
+        required: true
+        type: string
+
+# One tag at a time, never cancelled.
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ci-controller
+    permissions:
+      contents: read
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's own tools/ci and history, run on the image's python3: standard-library Python.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: check the commit and the tag
+        env:
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+        run: python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT"
+      - name: the release controller's token
+        id: controller
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CONTROLLER_APP_ID }}
+          private-key: ${{ secrets.CONTROLLER_APP_KEY }}
+          permission-contents: write
+      - name: create the tag
+        env:
+          GH_TOKEN: ${{ steps.controller.outputs.token }}
+          TAG: ${{ inputs.tag }}
+          COMMIT: ${{ inputs.commit }}
+        run: python3 -m tools.ci release-tag --tag "$TAG" --commit "$COMMIT" --create "$GITHUB_REPOSITORY"

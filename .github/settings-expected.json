@@ -71,6 +71,14 @@
           "prevent_self_review": false,
           "reviewers": [],
           "wait_timer": 0
+        },
+        "ci-controller": {
+          "deployment": [
+            "branch:main"
+          ],
+          "prevent_self_review": false,
+          "reviewers": [],
+          "wait_timer": 0
         }
       },
       "allowed bypass": []

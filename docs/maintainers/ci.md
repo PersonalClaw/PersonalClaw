@@ -62,6 +62,20 @@ until that App exists; it is applied, and moved up beside the others with the Ap
 bypass list, in one step, so the weekly report starts expecting it the day it is live. `tests/rails/test_ci_rulesets_tree.py`
 holds both files to these rules, and the creation ruleset to that one App.
 
+**The tagging workflow.** `.github/workflows/release-tag.yml` is how a tag will be made: the
+maintainer dispatches it on `main` with the tag and the commit
+(`gh workflow run release-tag.yml --ref main -f tag=vX.Y.Z -f commit=<sha>`).
+`python -m tools.ci release-tag` (`tools/ci/release_tag.py`), from `main`'s own checkout, refuses
+unless the tag is a release tag by `scripts/release_tags.py`, the commit is on `main`
+(`trust.require_on_main`), its workflows, actions, `tools/ci` and the entry points they run are
+`main`'s tip's (`trust.compare`), and no tag of that name exists here or on the remote. Only then
+is the App's token made, asked for `contents: write` alone and handed only to the step that
+creates the annotated tag and its ref. The job runs only on `main`, in the `ci-controller`
+environment, which deploys only from `main` and holds the App's key. #3911 adds its release gate
+before the create. `tests/rails/test_ci_release_tag_tree.py` holds the workflow's shape. Until
+`release-tag-creation` is applied, the [release runbook](release-runbook.md#tagging)'s manual
+tag still works; from then on it is refused, and this workflow is the way.
+
 The `release`, `release-client` and `website-follow` environments deploy only from `v*` tags,
 so no branch's copy of `release.yml`, dispatched or pushed, can reach the PyPI publishers or the
 website token. A dispatch on a tag still can: it runs the tag's own copy.

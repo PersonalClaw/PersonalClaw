@@ -822,12 +822,16 @@ _PR_REF_MARKERS = (
 )
 _PUBLISHING_SCOPES = {"contents", "packages", "id-token", "attestations", "deployments"}
 _RELEASE_WORKFLOW = "release.yml"
-#: The one environment a workflow other than release.yml may name, by workflow and job: it holds
-#: the settings report's read-only credential and deploys only from main (the report reads that
-#: policy back every week), and its workflow runs only on a schedule or a dispatch, so no
-#: candidate's run can name it. It may hold no publishing permission, as any job outside
-#: release.yml may not.
-_READ_ONLY_ENVIRONMENTS = {("settings-report.yml", "report"): "settings-report"}
+#: The environments a workflow other than release.yml may name, by workflow and job. Each deploys
+#: only from main (the settings report reads that policy back every week), and its workflow runs
+#: only on a schedule or a dispatch, so no candidate's run can name it. `settings-report` holds
+#: the report's read-only credential; `ci-controller` the release controller's App key, which
+#: release-tag.yml uses to create a `v*` tag. Neither job may hold a publishing permission, as
+#: no job outside release.yml may.
+_MAIN_ONLY_ENVIRONMENTS = {
+    ("settings-report.yml", "report"): "settings-report",
+    ("release-tag.yml", "tag"): "ci-controller",
+}
 _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
 
 
@@ -980,14 +984,14 @@ def _only_the_release_controller_publishes(root: Path) -> list[str]:
             if environment is None:
                 continue
             named = environment.get("name") if isinstance(environment, dict) else environment
-            allowed = _READ_ONLY_ENVIRONMENTS.get((name, job_name))
+            allowed = _MAIN_ONLY_ENVIRONMENTS.get((name, job_name))
             if allowed is None or named != allowed:
                 found.append(
                     f"{name}:{job_name} deploys to {environment!r} outside {_RELEASE_WORKFLOW}"
                 )
             elif not set(_triggers(wf)) <= _SCHEDULED_ONLY:
                 found.append(
-                    f"{name}:{job_name} names the read-only environment {named!r} in a workflow "
+                    f"{name}:{job_name} names the main-only environment {named!r} in a workflow "
                     f"that runs on {sorted(set(_triggers(wf)) - _SCHEDULED_ONLY)}"
                 )
     return found
@@ -1099,6 +1103,36 @@ def _settings_report(old: str = "", new: str = "") -> Callable[[Path], None]:
             assert old in text, f"the plant's anchor is not in the settings report: {old!r}"
             text = text.replace(old, new, 1)
         _write(root, f"{_WORKFLOWS}/settings-report.yml", text)
+
+    return plant
+
+
+_RELEASE_TAG = """\
+name: Release tag
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+    environment: ci-controller
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/create-github-app-token@v3
+        with:
+          private-key: ${{ secrets.CONTROLLER_APP_KEY }}
+"""
+
+
+def _release_tag(old: str = "", new: str = "") -> Callable[[Path], None]:
+    """Add the tagging workflow, with *old* replaced by *new* in it."""
+
+    def plant(root: Path) -> None:
+        text = _RELEASE_TAG.replace(old, new, 1) if old else _RELEASE_TAG
+        assert not old or old in _RELEASE_TAG, f"the plant's anchor is not there: {old!r}"
+        _write(root, f"{_WORKFLOWS}/release-tag.yml", text)
 
     return plant
 
@@ -1376,6 +1410,19 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
         Control(
             "the read-only environment on a push-triggered workflow fails",
             _settings_report("  workflow_dispatch:\n", "  push:\n    branches: [main]\n"),
+        ),
+        Control(
+            "the controller's environment on the dispatched tagging job passes",
+            _release_tag(),
+            fails=False,
+        ),
+        Control(
+            "the controller's environment on a tagging workflow that runs on a push fails",
+            _release_tag("  workflow_dispatch:\n", "  workflow_dispatch:\n  push:\n"),
+        ),
+        Control(
+            "the controller's environment on the settings report's job fails",
+            _settings_report("environment: settings-report", "environment: ci-controller"),
         ),
         Control(
             "the read-only environment named in its mapping form passes",

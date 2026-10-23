@@ -28,6 +28,9 @@ _REPOSITORIES = {
     "PersonalClaw/personalclaw.dev",
 }
 _READ_STEP = "read the settings and compare, and on main write the drift issue"
+#: The environments that hold a credential for a job only main runs: the report's read token
+#: and the release controller's App key (#4584).
+_MAIN_ONLY = ("settings-report", "ci-controller")
 #: The environments only a release run may deploy to (#4584): a tag's own release.yml.
 _TAG_ONLY = ("release", "release-client", "website-follow")
 _ON_MAIN = "${{ github.ref == 'refs/heads/main' && github.repository || '' }}"
@@ -88,12 +91,13 @@ def _expected_problems(data: dict[str, Any]) -> list[str]:
             found.append(f"core's {name} environment deploys from {deploys!r}, not v* tags alone")
     if core.get("fork approval") != "first_time_contributors":
         found.append(f"core's fork approval is {core.get('fork approval')!r}")
-    env = (core.get("environments") or {}).get("settings-report")
-    if not isinstance(env, dict) or env.get("deployment") != ["branch:main"]:
-        found.append(
-            "core's settings-report environment does not deploy from main alone: "
-            f"{None if not isinstance(env, dict) else env.get('deployment')!r}"
-        )
+    for name in _MAIN_ONLY:
+        env = (core.get("environments") or {}).get(name)
+        if not isinstance(env, dict) or env.get("deployment") != ["branch:main"]:
+            found.append(
+                f"core's {name} environment does not deploy from main alone: "
+                f"{None if not isinstance(env, dict) else env.get('deployment')!r}"
+            )
     return found
 
 
@@ -148,6 +152,12 @@ def test_the_expected_file_names_every_setting_and_keeps_the_credential_on_main(
         (
             lambda d: d["repositories"]["PersonalClaw/PersonalClawApps"].pop("security"),
             "misses ['security']",
+        ),
+        (
+            lambda d: d["repositories"]["PersonalClaw/PersonalClaw"]["environments"][
+                "ci-controller"
+            ].update(deployment=["branch:main", "tag:v*"]),
+            "core's ci-controller environment does not deploy from main alone",
         ),
         (
             lambda d: d["repositories"]["PersonalClaw/PersonalClaw"]["environments"][
