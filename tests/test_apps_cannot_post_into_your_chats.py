@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -35,6 +35,7 @@ import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
+from fenced_rows import fences_unchanged
 from shared_app_rows import (
     RecordedRows,
     Row,
@@ -43,7 +44,7 @@ from shared_app_rows import (
     planted_rows,
     written_since,
 )
-from table_rows import row
+from table_rows import labelled, row, tasks_ended
 from test_apps_cannot_change_your_models import PORT, _Gateway
 from test_apps_cannot_run_code_or_bypass_approvals import APP, _denials, _home, _install
 
@@ -55,12 +56,19 @@ from personalclaw.dashboard.handlers.apps import register_app_routes
 pytestmark = pytest.mark.security
 
 
-@pytest.fixture
-def sel_rows():
+@contextmanager
+def _recording_sel() -> Iterator[MagicMock]:
     """Every row the permission middleware writes (it imports ``sel`` at the refusal)."""
     fake = MagicMock()
     with patch("personalclaw.sel.sel", return_value=fake):
         yield fake.log_api_access
+
+
+@pytest.fixture
+def sel_rows() -> Iterator[MagicMock]:
+    """:func:`_recording_sel` for the whole test."""
+    with _recording_sel() as rows:
+        yield rows
 
 
 #: What the probe app declares: the chat, session, room, inbox and reveal families, so a refusal
@@ -367,8 +375,7 @@ def _your_chat_rows(reached: list[tuple[str, str]]) -> list[tuple[str, Any]]:
     ]
 
 
-@pytest.mark.asyncio
-async def test_an_app_is_refused_every_write_to_your_chats_and_you_are_not(
+async def _an_app_is_refused_every_write_to_your_chats_and_you_are_not(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -589,8 +596,7 @@ def _refusal_rows(reached: list[tuple[str, str]]) -> list[tuple[str, Any]]:
     ]
 
 
-@pytest.mark.asyncio
-async def test_what_a_refusal_keeps_of_your_chats(subtests, tmp_path_factory, monkeypatch) -> None:
+async def _what_a_refusal_keeps_of_your_chats(subtests, tmp_path_factory, monkeypatch) -> None:
     """The real handlers behind the refusals: nothing is sent, loaded, relaxed or read out."""
     await SHARED.home(tmp_path_factory, monkeypatch)
     reached: list[tuple[str, str]] = []
@@ -655,8 +661,7 @@ ORIGIN_TAGS = [
 ]
 
 
-@pytest.mark.asyncio
-async def test_an_app_named_like_an_origin_tag_reaches_none_of_them(
+async def _an_app_named_like_an_origin_tag_reaches_none_of_them(
     subtests, tmp_path, sel_rows
 ) -> None:
     """The copies of the ownership check compared the app's name with ``session._app`` — the
@@ -729,8 +734,7 @@ async def _you_answer_through_the_approvals_list(r: Row) -> None:
     assert pending.done() and pending.result() == "approved"
 
 
-@pytest.mark.asyncio
-async def test_you_still_drive_your_own_chats(subtests, tmp_path_factory, monkeypatch) -> None:
+async def _you_still_drive_your_own_chats(subtests, tmp_path_factory, monkeypatch) -> None:
     """With the app installed, so the permission layer is live for every request: you send, set a
     chat's task mode, and answer its approval in the chat and through the approvals list."""
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -830,8 +834,7 @@ async def _whose_conversation_it_is_is_the_app_that_started_it(r: Row) -> None:
     assert started_by_app(_chat("c")) == "", "yours: your switches decide"
 
 
-@pytest.mark.asyncio
-async def test_an_apps_own_conversation_is_its_own(subtests, tmp_path_factory, monkeypatch) -> None:
+async def _an_apps_own_conversation_is_its_own(subtests, tmp_path_factory, monkeypatch) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
     rows = [
         ("the app starts one and speaks in it", _the_app_starts_one_and_speaks_in_it),
@@ -848,8 +851,7 @@ async def test_an_apps_own_conversation_is_its_own(subtests, tmp_path_factory, m
     await SHARED.run(subtests, rows, _real_routes([]), label="case")
 
 
-@pytest.mark.asyncio
-async def test_without_the_agent_grant_its_turn_is_refused(tmp_path, sel_rows) -> None:
+async def _without_the_agent_grant_its_turn_is_refused(tmp_path, sel_rows) -> None:
     """A turn is your model working with your tools, and the grant that says an app runs agents is
     ``agent``. An app holding only the ``/api/chat`` path ran your agent before this."""
     from personalclaw.dashboard import chat
@@ -945,8 +947,7 @@ def _switch_home(tmp_path: Path, switch: str) -> Path:
     return where
 
 
-@pytest.mark.asyncio
-async def test_none_of_your_switches_reaches_it(subtests, tmp_path) -> None:
+async def _none_of_your_switches_reaches_it(subtests, tmp_path) -> None:
     """An app WITHOUT the ``agent`` grant: its conversation asks, whatever you switched on."""
     from test_acp_permission_authority import _drive
 
@@ -966,8 +967,7 @@ async def test_none_of_your_switches_reaches_it(subtests, tmp_path) -> None:
             assert any(m.get("role") == "permission" for m in session.messages), "you were asked"
 
 
-@pytest.mark.asyncio
-async def test_a_declared_read_asks_nobody_in_its_conversation_either(tmp_path) -> None:
+async def _a_declared_read_asks_nobody_in_its_conversation_either(tmp_path) -> None:
     """Not a switch: a call that declares it only reads asks nobody, whoever's conversation it is,
     as a native agent's never does. Only the calls that ask are the app's grant's."""
     from test_acp_permission_authority import _drive, _set_stream
@@ -993,8 +993,7 @@ async def test_a_declared_read_asks_nobody_in_its_conversation_either(tmp_path) 
     assert not any(m.get("role") == "permission" for m in session.messages)
 
 
-@pytest.mark.asyncio
-async def test_each_switch_still_works_in_your_own_chat(subtests, tmp_path) -> None:
+async def _each_switch_still_works_in_your_own_chat(subtests, tmp_path) -> None:
     """The inverse floor: the refusal above is about WHOSE conversation, not a dead switch."""
     from test_acp_permission_authority import _drive
 
@@ -1011,8 +1010,7 @@ async def test_each_switch_still_works_in_your_own_chat(subtests, tmp_path) -> N
             client.approve_tool.assert_awaited_once()
 
 
-@pytest.mark.asyncio
-async def test_an_app_holding_every_tool_still_approves_none_of_its_calls(tmp_path) -> None:
+async def _an_app_holding_every_tool_still_approves_none_of_its_calls(tmp_path) -> None:
     """The `tools` tier is an agent with your tools, each call that needs approval asking you, as
     install consent words it — so a change in the app's own conversation asks you, with your YOLO
     on, and nothing approves it in the app's name."""
@@ -1075,8 +1073,7 @@ def _no_verb_answers(verb: str, creator: str):
     return case
 
 
-@pytest.mark.asyncio
-async def test_no_verb_answers_a_chats_approval(subtests, tmp_path_factory, monkeypatch) -> None:
+async def _no_verb_answers_a_chats_approval(subtests, tmp_path_factory, monkeypatch) -> None:
     from personalclaw.dashboard.approval_state import SESSION_APPROVAL_ACTIONS
 
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -1090,8 +1087,7 @@ async def test_no_verb_answers_a_chats_approval(subtests, tmp_path_factory, monk
     await SHARED.run(subtests, rows, _real_routes([]), label="case")
 
 
-@pytest.mark.asyncio
-async def test_an_app_answers_no_approval_through_the_approvals_list(subtests, tmp_path) -> None:
+async def _an_app_answers_no_approval_through_the_approvals_list(subtests, tmp_path) -> None:
     """``POST /api/approvals/{id}/approve`` with an app's token: refused, in your chat as in the
     app's own. It used to relay the answer for any chat but the app's own, which let any app that
     declared ``/api/approvals`` approve every tool call you were asked about. The menu-bar
@@ -1163,8 +1159,7 @@ OWNER_ONLY_CONVERSATION_WRITES = [
 ]
 
 
-@pytest.mark.asyncio
-async def test_an_app_is_refused_your_rooms_inbox_and_agents_voice_and_you_are_not(
+async def _an_app_is_refused_your_rooms_inbox_and_agents_voice_and_you_are_not(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -1179,17 +1174,93 @@ async def test_an_app_is_refused_your_rooms_inbox_and_agents_voice_and_you_are_n
 
 
 @pytest.mark.asyncio
-async def test_an_app_still_reaches_you_with_a_proposal_that_names_it(
-    tmp_path, monkeypatch
+async def test_an_app_is_held_to_its_own_chats_and_you_drive_yours(
+    subtests, tmp_path_factory
 ) -> None:
+    """The tables on the shared app, each a row: every write to your chats refused to the app and
+    still yours, what a refusal keeps of them, your own chats still driven, the app's own
+    conversation its own, no verb answering a chat's approval, and your rooms, inbox and agents'
+    voice."""
+    with (
+        row(subtests, check="an app is refused every write to your chats and you are not"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _an_app_is_refused_every_write_to_your_chats_and_you_are_not(
+                labelled(
+                    subtests, check="an app is refused every write to your chats and you are not"
+                ),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="what a refusal keeps of your chats"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _what_a_refusal_keeps_of_your_chats(
+                labelled(subtests, check="what a refusal keeps of your chats"), tmp_path_factory, mp
+            )
+    with (
+        row(subtests, check="you still drive your own chats"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _you_still_drive_your_own_chats(
+                labelled(subtests, check="you still drive your own chats"), tmp_path_factory, mp
+            )
+    with (
+        row(subtests, check="an apps own conversation is its own"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _an_apps_own_conversation_is_its_own(
+                labelled(subtests, check="an apps own conversation is its own"),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="no verb answers a chats approval"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _no_verb_answers_a_chats_approval(
+                labelled(subtests, check="no verb answers a chats approval"), tmp_path_factory, mp
+            )
+    with (
+        row(subtests, check="an app is refused your rooms inbox and agents voice and you are not"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _an_app_is_refused_your_rooms_inbox_and_agents_voice_and_you_are_not(
+                labelled(
+                    subtests,
+                    check="an app is refused your rooms inbox and agents voice and you are not",
+                ),
+                tmp_path_factory,
+                mp,
+            )
+
+
+async def _an_app_still_reaches_you_with_a_proposal_that_names_it(tmp_path, monkeypatch) -> None:
     """The app's own way to you stays open through the real middleware, labelled as the app."""
     from test_inbox_app_proposals import _State
 
+    from personalclaw import notification_kinds
     from personalclaw import proposals_contract as pc
     from personalclaw.apps import app_manager
     from personalclaw.dashboard import handlers_inbox
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))  # as the proposal tests' harness
+    # The install registers the app's proposal kind, a registry the conftest's fences put back
+    # once per test: put back here when the row ends, so the rows after it read it as it was.
+    monkeypatch.setattr(notification_kinds, "_REGISTRY", dict(notification_kinds._REGISTRY))
     src = tmp_path / "src" / APP
     src.mkdir(parents=True)
     manifest = {
@@ -1308,8 +1379,7 @@ REVEALS = {
 }
 
 
-@pytest.mark.asyncio
-async def test_reveal_reaches_only_the_apps_own_files(subtests, tmp_path) -> None:
+async def _reveal_reaches_only_the_apps_own_files(subtests, tmp_path) -> None:
     """Each row in a home of its own, with a file of yours in your workspace, and the app it
     installs (if any) declaring ``/api/reveal``, with or without ``storage``."""
     assert len(REVEALS) == 4, "a case was left out of the table"
@@ -1325,6 +1395,86 @@ async def test_reveal_reaches_only_the_apps_own_files(subtests, tmp_path) -> Non
                 patch("personalclaw.config.loader.workspace_root", return_value=workspace),
             ):
                 await check(home, yours, home / "apps" / APP / "data")
+
+
+@pytest.mark.asyncio
+async def test_an_app_answers_for_you_in_no_chat(subtests, tmp_path_factory) -> None:
+    """The cases that build a gateway, or a chat, of their own, each a row on a folder, patches and
+    SEL rows of its own: an app named like an origin tag, a turn without the agent grant, your
+    switches, a declared read, a tool-holding app, the approvals list, a proposal that names the
+    app, and reveal."""
+    with (
+        row(subtests, check="an app named like an origin tag reaches none of them"),
+        fences_unchanged(),
+        _recording_sel() as sel_rows,
+    ):
+        async with tasks_ended():
+            await _an_app_named_like_an_origin_tag_reaches_none_of_them(
+                labelled(subtests, check="an app named like an origin tag reaches none of them"),
+                tmp_path_factory.mktemp("an-app-named-like"),
+                sel_rows,
+            )
+    with (
+        row(subtests, check="without the agent grant its turn is refused"),
+        fences_unchanged(),
+        _recording_sel() as sel_rows,
+    ):
+        async with tasks_ended():
+            await _without_the_agent_grant_its_turn_is_refused(
+                tmp_path_factory.mktemp("without-the-agent-grant"), sel_rows
+            )
+    with row(subtests, check="none of your switches reaches it"), fences_unchanged():
+        async with tasks_ended():
+            await _none_of_your_switches_reaches_it(
+                labelled(subtests, check="none of your switches reaches it"),
+                tmp_path_factory.mktemp("none-of-your-switches"),
+            )
+    with (
+        row(subtests, check="a declared read asks nobody in its conversation either"),
+        fences_unchanged(),
+    ):
+        async with tasks_ended():
+            await _a_declared_read_asks_nobody_in_its_conversation_either(
+                tmp_path_factory.mktemp("a-declared-read-asks")
+            )
+    with row(subtests, check="each switch still works in your own chat"), fences_unchanged():
+        async with tasks_ended():
+            await _each_switch_still_works_in_your_own_chat(
+                labelled(subtests, check="each switch still works in your own chat"),
+                tmp_path_factory.mktemp("each-switch-still-works"),
+            )
+    with (
+        row(subtests, check="an app holding every tool still approves none of its calls"),
+        fences_unchanged(),
+    ):
+        async with tasks_ended():
+            await _an_app_holding_every_tool_still_approves_none_of_its_calls(
+                tmp_path_factory.mktemp("an-app-holding-every")
+            )
+    with (
+        row(subtests, check="an app answers no approval through the approvals list"),
+        fences_unchanged(),
+    ):
+        async with tasks_ended():
+            await _an_app_answers_no_approval_through_the_approvals_list(
+                labelled(subtests, check="an app answers no approval through the approvals list"),
+                tmp_path_factory.mktemp("an-app-answers-no"),
+            )
+    with (
+        row(subtests, check="an app still reaches you with a proposal that names it"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _an_app_still_reaches_you_with_a_proposal_that_names_it(
+                tmp_path_factory.mktemp("an-app-still-reaches"), mp
+            )
+    with row(subtests, check="reveal reaches only the apps own files"), fences_unchanged():
+        async with tasks_ended():
+            await _reveal_reaches_only_the_apps_own_files(
+                labelled(subtests, check="reveal reaches only the apps own files"),
+                tmp_path_factory.mktemp("reveal-reaches-only-the"),
+            )
 
 
 # ── 8. The route table: complete for these families, and it says why ──────────────────

@@ -44,6 +44,7 @@ from urllib.parse import quote
 import pytest
 from aiohttp import DummyCookieJar, web
 from aiohttp.test_utils import TestClient, TestServer
+from fenced_rows import fences_unchanged
 from shared_app_rows import (
     RecordedRows,
     Row,
@@ -53,7 +54,7 @@ from shared_app_rows import (
     recording_sel,
     written_since,
 )
-from table_rows import row
+from table_rows import labelled, row, tasks_ended
 from test_apps_cannot_change_your_models import PORT, _Gateway
 
 # Imported before any test patches `config_dir`: a module first imported under a patch keeps the
@@ -403,10 +404,7 @@ def _mcp_rows(reached: list[tuple[str, str]]) -> list[tuple[str, Any]]:
     ]
 
 
-@pytest.mark.asyncio
-async def test_no_app_defines_or_reads_an_mcp_server(
-    subtests, tmp_path_factory, monkeypatch
-) -> None:
+async def _no_app_defines_or_reads_an_mcp_server(subtests, tmp_path_factory, monkeypatch) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
     reached: list[tuple[str, str]] = []
     rows = _mcp_rows(reached)
@@ -516,8 +514,7 @@ def _a_new_write_fails_closed(reached: list[tuple[str, str]]):
     return run
 
 
-@pytest.mark.asyncio
-async def test_no_app_defines_or_fires_an_automation_and_it_still_stops_one(
+async def _no_app_defines_or_fires_an_automation_and_it_still_stops_one(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -922,8 +919,7 @@ ACCESS_LEVERS = [
 ]
 
 
-@pytest.mark.asyncio
-async def test_no_app_takes_your_access_away_and_its_levers_stay(
+async def _no_app_takes_your_access_away_and_its_levers_stay(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -1029,8 +1025,7 @@ async def _no_file_of_your_home(r: Row) -> None:
     assert yours[0] == 400, yours
 
 
-@pytest.mark.asyncio
-async def test_an_app_reads_only_the_settings_it_declared_and_no_file_of_your_home(
+async def _an_app_reads_only_the_settings_it_declared_and_no_file_of_your_home(
     subtests, tmp_path_factory, monkeypatch
 ) -> None:
     await SHARED.home(tmp_path_factory, monkeypatch)
@@ -1042,6 +1037,61 @@ async def test_an_app_reads_only_the_settings_it_declared_and_no_file_of_your_ho
         ("your config file, through the file explorer", _no_file_of_your_home),
     ]
     await SHARED.run(subtests, rows, _routes([]), label="case")
+
+
+@pytest.mark.asyncio
+async def test_an_app_runs_no_code_of_yours_and_takes_no_access(subtests, tmp_path_factory) -> None:
+    """The tables on the shared app, each a row: no MCP server defined or read, no automation
+    defined or fired, no access of yours taken away, and only the settings an app declared."""
+    with (
+        row(subtests, check="no app defines or reads an mcp server"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _no_app_defines_or_reads_an_mcp_server(
+                labelled(subtests, check="no app defines or reads an mcp server"),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="no app defines or fires an automation and it still stops one"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _no_app_defines_or_fires_an_automation_and_it_still_stops_one(
+                labelled(
+                    subtests, check="no app defines or fires an automation and it still stops one"
+                ),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="no app takes your access away and its levers stay"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _no_app_takes_your_access_away_and_its_levers_stay(
+                labelled(subtests, check="no app takes your access away and its levers stay"),
+                tmp_path_factory,
+                mp,
+            )
+    with (
+        row(subtests, check="an app reads only the settings it declared and no file of your home"),
+        fences_unchanged(),
+        pytest.MonkeyPatch.context() as mp,
+    ):
+        async with tasks_ended():
+            await _an_app_reads_only_the_settings_it_declared_and_no_file_of_your_home(
+                labelled(
+                    subtests,
+                    check="an app reads only the settings it declared and no file of your home",
+                ),
+                tmp_path_factory,
+                mp,
+            )
 
 
 class TestTheFileExplorerKeepsAnAppOutOfTheHome:

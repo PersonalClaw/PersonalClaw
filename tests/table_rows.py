@@ -22,8 +22,9 @@ docs/maintainers/testing.md says when a variation is a row.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
+import asyncio
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any
 
 import pytest
@@ -42,3 +43,36 @@ def row(subtests: Any, **kwargs: Any) -> Iterator[None]:
     except _REPORTED as exc:
         with subtests.test(**kwargs):
             raise exc
+
+
+class labelled:
+    """*subtests*, every row reported through it named by *names* as well as its own input.
+
+    A table that was a test of its own, folded into a row of a test with others, reports its
+    rows under that test: ``labelled(subtests, check="what the old test was")`` keeps saying which
+    table a failing row is in (``SUBFAILED(check='...', case='...')``)."""
+
+    def __init__(self, subtests: Any, **names: Any) -> None:
+        self._subtests = subtests
+        self._names = names
+
+    def test(self, **kwargs: Any) -> Any:
+        return self._subtests.test(**self._names, **kwargs)
+
+
+@asynccontextmanager
+async def tasks_ended() -> AsyncIterator[None]:
+    """End the tasks a row started and left running, as the event loop's teardown ends a test's.
+
+    A row that was a test of its own, folded into a test with others, shares that test's event
+    loop: a turn it started in the background would otherwise run on into the rows after it. The
+    tasks still running when the row ends are cancelled and waited for, so none reaches the next
+    row."""
+    before = asyncio.all_tasks()
+    try:
+        yield
+    finally:
+        left = asyncio.all_tasks() - before
+        for task in left:
+            task.cancel()
+        await asyncio.gather(*left, return_exceptions=True)
