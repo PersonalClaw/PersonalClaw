@@ -2413,7 +2413,13 @@ arrive, and images have no separate security-update path.
   pull request that changes `release.yml`: a two-platform build of a two-line image on the
   images' own node base, with no permissions, no other action and nothing pushed. The contract
   holds its pins and base equal to `release.yml`'s and `Dockerfile.web`'s, and requires it to
-  build every platform the release builds.
+  build every platform the release builds. `image-pins.yml` asks each workflow container's
+  registry every Monday, anonymously, what its tag names now (`python -m tools.ci image-pins`
+  runs the same check locally). It names each pin whose tag has moved, with the new digest for
+  the pin and the new index for its comment, and keeps one "Pinned images to refresh" issue
+  open on `main` until the refresh merges. A pin whose comment names no platform and index, an
+  unknown registry, or a tag or platform that is gone fails it too. It holds `contents: read`
+  and `issues: write`, and moves no pin itself.
 - **Tools named by hand** (`pip-audit` in the audit job, `wheel` in the gateway image,
   `pyinstaller` in the desktop builds): nothing refreshes them yet. Moving one is a reviewed
   edit of its line. `packaging` in `release.yml`'s notes step is named at the version
