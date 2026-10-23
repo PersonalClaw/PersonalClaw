@@ -2528,7 +2528,7 @@ What it reads, for each repository:
 | each ruleset | target, enforcement, conditions and rules, against the file of the same name; a ruleset with no file, or a file with no ruleset, is drift | the job token |
 | bypass use | the week's rule suites whose result is `bypass`; each one fails unless `allowed bypass` names its actor and ref prefix (none does) | `SETTINGS_READ_TOKEN` |
 | `classic protection` | the default branch's classic protection, or `null` for none | `SETTINGS_READ_TOKEN` |
-| `merge methods` | merge commits, squash and rebase | `SETTINGS_READ_TOKEN` |
+| `merge methods` | merge commits, squash and rebase | `SETTINGS_READ_TOKEN`, through GraphQL: the repository answer shows them only to a caller that may push |
 | `security` | secret scanning, push protection, Dependabot security updates | `SETTINGS_READ_TOKEN` |
 | `dependabot alerts` | on or off | `SETTINGS_READ_TOKEN` |
 | `codeql default setup` | its state, query suite and languages | `SETTINGS_READ_TOKEN` |
