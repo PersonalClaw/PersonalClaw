@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-10-22
+
+The app's redesign. Home is what needs you, what is running and what finished, and starts a new thread from one line. Everything waiting on you is one list, which Home, the phone companion, the menu bar and the new desktop buddy all read. The buddy is one orb that stays where you put it, with what it says on a card beside it, and it is off until you turn on Show Buddy. The sidebar shows every destination and keeps its place, and a chat gets a Session Map rail, an Activity rail and a side pane that expands, moves and remembers its side. Loops and code sessions read like chats. No upgrade step is needed.
+
 ### Added
 
 - **A chat's Session Map can move with PersonalClaw's own audio: turn on Settings › Speech & Transcription › "Session Map reacts to audio" (off by default), and the question whose reply is being read aloud, or whose answer has audio or video playing, shows as playing, and the newest message as listening while your microphone is on for dictation or hands-free voice, each named for screen readers and drawn thicker, with a line that moves with the sound. It never opens the microphone itself, measures only while the map is on screen, and keeps nothing: one loudness level a frame, read and dropped in the page. With reduced motion the marks hold still.**
