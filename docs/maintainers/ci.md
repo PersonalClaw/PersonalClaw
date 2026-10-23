@@ -1648,7 +1648,11 @@ shadow mode, and the recall study.
   `PATH`. `{runner_temp}` is the job's own temporary folder, `{shard}` the shard asked for,
   `{base}` `--base` or the merge base with `origin/main`, and `{run_number}` the run's
   `GITHUB_RUN_NUMBER` on GitHub and `0` here, where no numbered run runs, whatever the caller
-  set.
+  set. The `chromium` install is the browser legs' three steps since #5265
+  (`jobs.install_chromium`): Playwright's build without apt within 5 minutes, a check that
+  Chromium starts within 2, and only when that check fails its system libraries from apt within
+  5 more, named as the apt mirror when they do not finish, then the check again. A hung mirror
+  holds the job for that bound, never its whole limit.
 - **Caches, managed Pythons and the project venv** go under `.local/run-job/cache`, never the
   caller's own: uv's cache and Pythons, the venv `uv sync` installs, npm's cache and the
   Playwright browsers. `npm ci` reinstalls the checkout's own `node_modules`, as it does on CI,
