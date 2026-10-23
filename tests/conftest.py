@@ -12,7 +12,6 @@ import sys
 import types
 from pathlib import Path
 
-import hang_stacks
 import native_omp_guard
 import pycache_guard
 import pytest
@@ -292,8 +291,6 @@ def pytest_configure(config):
     random_order.configure(config)
     # Where this process ran (platform, xdist workers), for the telemetry record (#3948).
     run_facts.configure(config)
-    # A suite leg still running near its cap writes every thread's stack to its log (#3905).
-    hang_stacks.configure(config)
     if config.getoption("--fixture-costs"):
         config.pluginmanager.register(fixture_costs.Plugin(config.rootpath), "fixture-costs")
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
