@@ -86,6 +86,9 @@
   - 'option "Reading mode: fold the composer Open a chat to fold its composer Action · ⌘⇧." [disabled]'
   - option "Show or hide the chat's working folder Open a chat to see its working folder Action · ⌘⇧E" [disabled]
   - option "Go to the next chat that needs you Action · ⌘⌥A"
+  - option "Mark every chat as read Action · ⇧Esc"
+  - option "Go to your previous message in this chat Open a chat with four or more of your messages Action · ⌥↑" [disabled]
+  - option "Go to your next message in this chat Open a chat with four or more of your messages Action · ⌥↓" [disabled]
   - option "New thread Action · ⌘N"
   - option "Open thread # in the sidebar Action · ⌘#"
   - option "Open thread # in the sidebar Action · ⌘#"

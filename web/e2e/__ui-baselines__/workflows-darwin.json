@@ -2,10 +2,8 @@
   "dark": {
     "targets": {
       "320": [
-        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -19,10 +17,8 @@
         "input \"Search workflows\""
       ],
       "390": [
-        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -36,10 +32,8 @@
         "input \"Search workflows\""
       ],
       "412": [
-        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -53,10 +47,8 @@
         "input \"Search workflows\""
       ],
       "768": [
-        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -80,10 +72,8 @@
   "light": {
     "targets": {
       "320": [
-        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -97,10 +87,8 @@
         "input \"Search workflows\""
       ],
       "390": [
-        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -114,10 +102,8 @@
         "input \"Search workflows\""
       ],
       "412": [
-        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
@@ -131,10 +117,8 @@
         "input \"Search workflows\""
       ],
       "768": [
-        "a \"Open Chat\"",
         "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",

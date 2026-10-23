@@ -14,7 +14,7 @@ import type { AppCatalog } from '../../lib/api'
 // (`STORE_CATALOGUE`, `e2e/fixtures/app-catalog.json`). This holds the committed tree to that
 // snapshot, and plants a registry edit to show it never reaches the page.
 
-const TREE = readFileSync(join(process.cwd(), 'e2e/__aria__/apps-store.aria.yml'), 'utf8')
+const TREE = readFileSync(join(process.cwd(), 'e2e/__aria__/apps-store-darwin.aria.yml'), 'utf8')
 const SNAPSHOT = ('json' in STORE_CATALOGUE ? STORE_CATALOGUE.json : null) as AppCatalog
 /** A name as the tree writes it: every run of digits is `#` (`normalizeTree`, e2e/surfaceChecks.ts). */
 const asTree = (s: string) => s.replace(/\d+/g, '#')

@@ -47,6 +47,8 @@
   - text: Sender trust No trusted senders Strangers must pair before they can talk
   - button "Open Companion apps settings"
   - text: Companion apps Not advertising LAN discovery is off — companion apps need the URL typed in.
+  - button "Open Buddy settings"
+  - text: Buddy Off
   - button "Open Guardrails settings"
   - text: Guardrails Normal operation Kill switch · budgets · outbound scan
   - button "Open External access settings"

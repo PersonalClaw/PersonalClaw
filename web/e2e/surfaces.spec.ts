@@ -22,17 +22,27 @@ import { STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedR
 // `assert-no-route-skips.mjs` counts: one scan per declared route and theme, none skipped, each
 // carrying every step. `surfaceMatrix.control.spec.ts` proves each step can fail.
 //
-// Two committed baselines, platform-free so a macOS and a Linux run read the same files:
-//   · `__aria__/<id>.aria.yml`: the surface's normalized accessibility tree, ONE for both themes;
-//   · `__targets__/<id>.json`: per theme and compact width, the controls already under 44 px.
-//     Shrink-only and self-clearing: a new small control reds, and so does a baselined one that
-//     grew, until its entry is deleted.
-// `npx playwright test e2e/surfaces.spec.ts --update-snapshots` rewrites both from what it measures,
-// which a reviewer then reads as a diff. Outside CI a missing baseline is written on first run.
+// Two committed baselines per platform, as `__screenshots__` has (`-darwin`, `-linux`):
+//   · `__aria__/<id>-<platform>.aria.yml`: the surface's normalized accessibility tree, ONE for both
+//     themes;
+//   · `__ui-baselines__/<id>-<platform>.json`: per theme and compact width, the controls already
+//     under 44 px, and the findings main already had per baselined step. Shrink-only and
+//     self-clearing: a new small control reds, and so does a baselined one that grew, until its
+//     entry is deleted.
+// They were one set for both platforms, and a set a Mac wrote was a red on CI's Linux for what the
+// machine decides: the platform's own copy, what it has installed, and how its fonts render (#3905).
+// `npx playwright test e2e/surfaces.spec.ts --update-snapshots` rewrites this platform's from what it
+// measures, which a reviewer then reads as a diff; feature PRs write the `-darwin` set so. Outside CI
+// a missing baseline is written on first run. Under CI each surface ATTACHES what it measured
+// (`platform-baseline-*`), and `e2e/platform-baselines.mjs` writes the `-linux` set from a CI run's
+// report, so that set is only ever CI's own measurement.
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ARIA_DIR = join(HERE, '__aria__')
 const BASELINE_DIR = join(HERE, '__ui-baselines__')
+/** This run's platform's baselines, named as Playwright names a screenshot's (`{platform}`). */
+const ariaPath = (id: string) => join(ARIA_DIR, `${id}-${process.platform}.aria.yml`)
+const baselinePath = (id: string) => join(BASELINE_DIR, `${id}-${process.platform}.json`)
 
 /** One surface's baseline file: per theme, its 44 px targets per compact width and its known
  *  findings per baselined step (`BASELINED_STEPS`). */
@@ -439,12 +449,12 @@ const updating = (info: TestInfo) => info.config.updateSnapshots === 'all' || in
 /** The committed baselines for one surface and theme. A missing one is ADOPTED (written from this
  *  run, and not a finding) under `--update-snapshots` or outside CI; in CI it is a red. */
 function readFile(id: string): BaselineFile | null {
-  const path = join(BASELINE_DIR, `${id}.json`)
+  const path = baselinePath(id)
   return existsSync(path) ? (JSON.parse(readFileSync(path, 'utf8')) as BaselineFile) : null
 }
 
 function readBaselines(id: string, theme: Theme, info: TestInfo): Baselines {
-  const aria = join(ARIA_DIR, `${id}.aria.yml`)
+  const aria = ariaPath(id)
   const mine = readFile(id)?.[theme]
   // A theme entry lists only the steps that found something (`writeBaselines`), so once the theme
   // has an entry, a step it does not name had nothing to baseline: it is held to zero findings,
@@ -458,11 +468,17 @@ function readBaselines(id: string, theme: Theme, info: TestInfo): Baselines {
   }
 }
 
+/** One theme's entry in a baseline file, from what a run measured: only steps that found something
+ *  are written, so a clean step leaves no entry behind. */
+function themeEntry(measured: Measured): BaselineFile[string] {
+  return { targets: measured.targets, known: Object.fromEntries(Object.entries(measured.known).filter(([, v]) => v.length).sort()) }
+}
+
 /** Write what this run measured, when asked to (`--update-snapshots`) or, outside CI, when the
  *  surface has no baseline yet. The tree is written by the light theme only: it is one file. */
 function writeBaselines(id: string, theme: Theme, measured: Measured, info: TestInfo): string[] {
   const update = updating(info)
-  const aria = join(ARIA_DIR, `${id}.aria.yml`)
+  const aria = ariaPath(id)
   const wrote: string[] = []
   if ((update || (!process.env.CI && !existsSync(aria))) && theme === 'light') {
     mkdirSync(ARIA_DIR, { recursive: true })
@@ -473,11 +489,9 @@ function writeBaselines(id: string, theme: Theme, measured: Measured, info: Test
   if (update || (!process.env.CI && !(file && theme in file))) {
     mkdirSync(BASELINE_DIR, { recursive: true })
     const all: BaselineFile = file ?? {}
-    // Only steps that found something are written, so a clean step leaves no entry behind.
-    const known = Object.fromEntries(Object.entries(measured.known).filter(([, v]) => v.length).sort())
-    all[theme] = { targets: measured.targets, known }
+    all[theme] = themeEntry(measured)
     const sorted = Object.fromEntries(Object.keys(all).sort().map((k) => [k, all[k]]))
-    const path = join(BASELINE_DIR, `${id}.json`)
+    const path = baselinePath(id)
     writeFileSync(path, JSON.stringify(sorted, null, 2) + '\n')
     wrote.push(path)
   }
@@ -496,6 +510,14 @@ async function checkSurface(page: Page, info: TestInfo, ctx: SurfaceContext, id:
   })
   writeBaselines(id, ctx.theme, measured, info)
   await info.attach(`ui-quality-${id}-${ctx.theme}.txt`, { body: report.join('\n'), contentType: 'text/plain' })
+  // What CI measured, in the files' own form, for `e2e/platform-baselines.mjs` to write this
+  // platform's set from: a CI run's report is the only source of the `-linux` baselines.
+  if (process.env.CI) {
+    await info.attach(`platform-baseline-${id}-${ctx.theme}.json`, { body: JSON.stringify(themeEntry(measured)), contentType: 'application/json' })
+    if (ctx.theme === 'light') {
+      await info.attach(`platform-baseline-${id}.aria.yml`, { body: measured.tree.trimEnd() + '\n', contentType: 'text/yaml' })
+    }
+  }
 }
 
 for (const theme of THEMES) {
