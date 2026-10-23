@@ -52,7 +52,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { app, BrowserWindow, ipcMain, protocol } = require("electron");
 const { contentProtection } = require("./electronHost");
-const { postPointer, stacking, xid } = require("./osPointer");
+const { postPointer, shapeOf, stacking, xid } = require("./osPointer");
 
 const PAGE = ["ticks", "route", "orbBox"].includes(process.env.PC_PROBE_PAGE) ? process.env.PC_PROBE_PAGE : "root";
 const SHOW = process.env.PC_PROBE_SHOW === "inactive" ? "inactive" : "shell";
@@ -387,6 +387,7 @@ async function runClickThrough() {
     stacking: order,
     diagnosis: {
       shapes: shapes.slice(-3),
+      xshape: shapeOf(xid(win)),
       layout: buddy.layout,
       buddyBounds: win.getBounds(),
       buddyContentBounds: win.getContentBounds(),
@@ -426,6 +427,11 @@ async function runClickThrough() {
   for (let t = 0; t < 50 && shapes.length === shapesBefore; t += 1) await wait(100);
   await wait(300);
   const sample = outside.filter((_, i) => i % Math.ceil(outside.length / 20) === 0);
+  // The X server's own view as the control's clicks go: which window is above, and the buddy's
+  // bounding and input regions, so a red control tells the stacking from the shape.
+  const controlStack = stacking();
+  const controlOrder = controlStack.ids ? { buddy: controlStack.ids.indexOf(xid(win)), below: controlStack.ids.indexOf(xid(below)) } : controlStack;
+  const controlShape = shapeOf(xid(win));
   const rawBefore = { buddy: raw.buddy.length, below: raw.below.length };
   const again = postPointer({ clicks: sample });
   for (let t = 0; t < 100 && raw.buddy.length + raw.below.length - rawBefore.buddy - rawBefore.below < sample.length; t += 1) await wait(100);
@@ -441,6 +447,8 @@ async function runClickThrough() {
     belowPagePresses: (await below.webContents.executeJavaScript("window.__presses")).length,
     shape: shapes.length > shapesBefore ? shapes[shapes.length - 1] : null,
     window: win.getBounds(),
+    stacking: controlOrder,
+    xshape: controlShape,
   };
   // The second control: the other window raised above the buddy's takes even the orb's press, as
   // the earlier run's did, so a pass here is the stacking's and the shape's, told apart.

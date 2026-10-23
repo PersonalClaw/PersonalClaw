@@ -16,6 +16,9 @@
  * `stacking()`: the root window's children, bottom to top, as X window ids: with no window
  * manager on the run's display, which window is above which is the order they were created or
  * raised in, and nothing keeps an always-on-top window above.
+ *
+ * `shapeOf(id)`: the window's bounding and input regions as the X server holds them (SHAPE
+ * extension, through libXext), each a list of `[x, y, width, height]` in the window's own points.
  */
 
 const { spawnSync } = require("node:child_process");
@@ -70,6 +73,40 @@ if n.value:
 x11.XCloseDisplay(d)
 `;
 
+const SHAPE = `
+import ctypes, ctypes.util, json, sys
+class Rect(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_short), ("y", ctypes.c_short), ("width", ctypes.c_ushort), ("height", ctypes.c_ushort)]
+x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+xext = ctypes.CDLL(ctypes.util.find_library("Xext") or "libXext.so.6")
+x11.XOpenDisplay.restype = ctypes.c_void_p
+x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+x11.XFree.argtypes = [ctypes.c_void_p]
+x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+xext.XShapeGetRectangles.restype = ctypes.POINTER(Rect)
+xext.XShapeGetRectangles.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
+d = x11.XOpenDisplay(None)
+if not d:
+    sys.exit("cannot open the X display")
+out = {}
+for name, kind in (("bounding", 0), ("input", 2)):
+    count, ordering = ctypes.c_int(), ctypes.c_int()
+    rects = xext.XShapeGetRectangles(d, int(sys.argv[1]), kind, ctypes.byref(count), ctypes.byref(ordering))
+    out[name] = [[rects[i].x, rects[i].y, rects[i].width, rects[i].height] for i in range(count.value)]
+    if rects:
+        x11.XFree(rects)
+x11.XCloseDisplay(d)
+print(json.dumps(out))
+`;
+
+/** The window's bounding and input regions, as the X server holds them, or `{error}`. */
+function shapeOf(id) {
+  if (process.platform !== "linux") return { error: `reads X shapes only, not on ${process.platform}` };
+  const res = spawnSync("python3", ["-I", "-c", SHAPE, String(id)], { encoding: "utf8", timeout: 30_000 });
+  if (res.error || res.status !== 0) return { error: String((res.error && res.error.message) || res.stderr || `exit ${res.status}`).trim() };
+  return JSON.parse(res.stdout);
+}
+
 /** The root window's children, bottom to top, or `{error}`. */
 function stacking() {
   if (process.platform !== "linux") return { error: `reads X stacking only, not on ${process.platform}` };
@@ -89,4 +126,4 @@ function postPointer(plan) {
   return { ok: true };
 }
 
-module.exports = { postPointer, stacking, xid };
+module.exports = { postPointer, shapeOf, stacking, xid };
