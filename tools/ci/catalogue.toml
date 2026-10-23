@@ -21,7 +21,10 @@
 # which add jobs for named paths and only add.
 
 # The jobs the merge tier must run. Each job whose tiers claim merge is listed here, and only
-# those, so dropping one from the merge tier takes two edits.
+# those, so dropping one from the merge tier takes two edits. `every_push` is the ones a push to
+# main runs whatever the tree check answers: the security corpus and apps-contract (the owner's
+# rule, which the loader holds), and browse-live, whose evidence is live. A push whose tree a
+# pull request's run tested runs these alone (`plan merge --tested`).
 [tier.merge]
 jobs = [
   "static",
@@ -43,6 +46,7 @@ jobs = [
   "apps-contract",
   "audit",
 ]
+every_push = ["browse-live", "security", "apps-contract"]
 
 [[job]]
 id = "static"

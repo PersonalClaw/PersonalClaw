@@ -8033,11 +8033,14 @@ def _catalogue_scaffold(root: Path) -> None:
 
 
 def _without_merge_list(root: Path) -> None:
-    """The tree's catalogue with its [tier.merge] table, the header and its list, removed."""
+    """The tree's catalogue with its [tier.merge] table, the header, its list and its every_push
+    line, removed."""
     path = root / catalogue.CATALOGUE
     text = path.read_text(encoding="utf-8")
     start = text.index("[tier.merge]\n")
     end = text.index("]\n", text.index("jobs = [", start)) + 2
+    if text.startswith("every_push = ", end):
+        end = text.index("\n", end) + 1
     _write(root, catalogue.CATALOGUE, text[:start] + text[end:])
 
 
@@ -12010,6 +12013,8 @@ _RECORD_RETENTION_DAYS = 30
 #: Where run-job leaves an entry's record, and so what the record upload uploads.
 _RECORDS_PATH = "${{ runner.temp }}/run-job/records/"
 _PLAN_JOB, _SHARD_PLAN_JOB, _RESULTS_JOB = merge_decision.CATALOGUE_CHECK, "shard-plan", "results"
+#: merge.yml's push stage's first job: did a green pull-request run of merge.yml test this tree.
+_TREE_CHECK_JOB = "tree-check"
 #: The external input of an entry that reads the run's one shard plan, which `shard-plan` makes.
 _SHARD_HISTORY = "shard-history"
 #: The expensive tier, which runs once per candidate (#3915): the suite's shards, the browser
@@ -12059,13 +12064,24 @@ if ! { rm -rf "$judge" && mkdir -p "$judge" \
   exit 1
 fi
 """,  # noqa: E501
+        "a push's plan, by the tree check's answer, or no plan": r"""
+case "$PUSH_PLAN" in
+  "") mode="" ;;
+  tested) mode="--tested" ;;
+  full) mode="--full" ;;
+  *)
+    echo "::error title=no plan::PUSH_PLAN is '$PUSH_PLAN', which is no push plan, so nothing is planned and the verdict is red."
+    exit 1
+    ;;
+esac
+""",  # noqa: E501
         "main's planner, over this checkout's catalogue, as a matrix": r"""
 : > "$RUNNER_TEMP/plan.err"
 answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \
            --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
            --trusted-areas "$judge/tools/ci/areas.toml" \
            --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
-           --repo "$GITHUB_REPOSITORY" --outputs --matrix \
+           --repo "$GITHUB_REPOSITORY" --outputs --matrix ${mode:+"$mode"} \
            2> "$RUNNER_TEMP/plan.err") || answer=""
 cat "$RUNNER_TEMP/plan.err" >> "$GITHUB_STEP_SUMMARY"
 sed -n '/^::warning[ :]/p' "$RUNNER_TEMP/plan.err"
@@ -12130,6 +12146,31 @@ if [ "$rc" -ne 0 ]; then
 fi
 """,  # noqa: E501
     },
+    _TREE_CHECK_JOB: {
+        "the runner's identity": _RUNNER_IDENTITY_LINE,
+        "the previous main commit's tree check, over merge.yml's pull_request runs": r"""
+set -u
+answer=""
+if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+  check="$RUNNER_TEMP/tree_tested.py"
+  if gh api -H "Accept: application/vnd.github.raw" \
+       "repos/${GITHUB_REPOSITORY}/contents/tools/ci/tree_tested.py?ref=${BEFORE}" \
+       > "$check"; then
+    GITHUB_OUTPUT="$RUNNER_TEMP/answer.txt" python3 "$check" --workflow merge.yml || true
+    answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)
+  else
+    echo "the previous main commit ${BEFORE} has no tree check, so every job runs" \
+      | tee -a "$GITHUB_STEP_SUMMARY"
+  fi
+fi
+case "$answer" in
+  tested=true|tested=false) ;;
+  *) answer="tested=false" ;;
+esac
+echo "$answer"
+printf '%s\n' "$answer" >> "$GITHUB_OUTPUT"
+""",
+    },
     _SHARD_PLAN_JOB: {
         "the runner's identity": _RUNNER_IDENTITY_LINE,
         "one shard plan for the run, as ci.yml's": r"""
@@ -12172,10 +12213,15 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
         (
             "the changed paths, against main's tip",
             "main's tools/ci, archived beside the checkout, or no plan",
+            "a push's plan, by the tree check's answer, or no plan",
             "main's planner, over this checkout's catalogue, as a matrix",
             "the keys and the stage jobs' matrices, read back before they are published",
         ),
         ("main's check of this run's catalogue (merge.yml's)",),
+    ),
+    _TREE_CHECK_JOB: (
+        ("the runner's identity",),
+        ("the previous main commit's tree check, over merge.yml's pull_request runs",),
     ),
     _SHARD_PLAN_JOB: (
         ("the runner's identity",),
@@ -12746,8 +12792,8 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
                "    needs: [changes, test]\n    if: ${{ always() }}\n",
                "    needs: [changes, test]\n", expect="pr.yml job results runs None"),
         _plant("results not reading the last stage", _MERGE_YML,
-               "    needs: [changes, shard-plan, build, test, test-2, test-3]\n",
-               "    needs: [changes, shard-plan, build, test, test-2]\n",
+               "    needs: [tree-check, changes, shard-plan, build, test, test-2, test-3]\n",
+               "    needs: [tree-check, changes, shard-plan, build, test, test-2]\n",
                expect="not every other job of the run"),
         _plant("results not reading the run's records", _MERGE_YML,
                "          pattern: ci-record-*\n", "          pattern: ci-records-*\n",
@@ -12884,8 +12930,8 @@ THE_CATALOGUE_CHECK_STANDS_IN_FRONT_OF_MERGE_YMLS_VERDICT = Row(
                "      - run: echo after\n\n  shard-plan:\n",
                expect="is not the last step after the plan"),
         _plant("results not reading the job", _MERGE_YML,
-               "    needs: [changes, shard-plan, build, test, test-2, test-3]\n",
-               "    needs: [shard-plan, build, test, test-2, test-3]\n",
+               "    needs: [tree-check, changes, shard-plan, build, test, test-2, test-3]\n",
+               "    needs: [tree-check, shard-plan, build, test, test-2, test-3]\n",
                expect="does not read the changes job"),
     ),
 )  # fmt: skip
@@ -12985,6 +13031,100 @@ def pr_push_stage_violations(root: Path) -> list[str]:
         if _PUSH_ONLY.search(expression):
             bad.append(f"pr.yml's {where} reads ${{{{{expression}}}}}, a push stage's condition")
     return bad
+
+
+#: How merge.yml's plan step reads the tree check: a push plans by its answer, every other run
+#: plans what it changed. The one place the answer is read.
+_PUSH_PLAN = (
+    "${{ github.event_name == 'push' && (needs.tree-check.outputs.tested == 'true'"
+    " && 'tested' || 'full') || '' }}"
+)
+
+
+def merge_push_stage_violations(root: Path) -> list[str]:
+    """Every push to main runs the security corpus and apps-contract, whatever the tree check
+    answers (the owner's rule, 2026-10-19): merge.yml's tree check answers `changes` alone, whose
+    plan step reads it only as :data:`_PUSH_PLAN`, so a tested push plans `[tier.merge]
+    every_push`, an untested one the whole tier, and no other job reads the answer; and the
+    catalogue's every_push names both jobs."""
+    workflow = _tier_workflows(root)["merge.yml"]
+    if not workflow:
+        return [f"{_MERGE_YML} is missing"]
+    jobs = _trust_jobs(workflow)
+    bad: list[str] = []
+    answer = f"needs.{_TREE_CHECK_JOB}.outputs"
+    if _TREE_CHECK_JOB not in jobs:
+        bad.append(
+            f"merge.yml has no {_TREE_CHECK_JOB} job: a push cannot ask whether its tree was tested"
+        )
+    plan_job = jobs.get(_PLAN_JOB) or {}
+    if _TREE_CHECK_JOB not in _needs(plan_job):
+        bad.append(
+            f"merge.yml's {_PLAN_JOB} job does not need {_TREE_CHECK_JOB}, whose answer it plans by"
+        )
+    steps = [s for s in _trust_steps(plan_job) if s.get("id") == "plan"]
+    given = (steps[0].get("env") or {}).get("PUSH_PLAN") if steps else None
+    if given != _PUSH_PLAN:
+        bad.append(
+            f"merge.yml's plan step reads PUSH_PLAN as {given!r}, not {_PUSH_PLAN!r}: a push plans"
+            " by the tree check's answer, and every other run by what it changed"
+        )
+    for job_id, job in jobs.items():
+        text = yaml.safe_dump({k: v for k, v in job.items()}, sort_keys=True)
+        if job_id != _PLAN_JOB and answer in text:
+            bad.append(
+                f"merge.yml job {job_id} reads the tree check's answer: only {_PLAN_JOB}'s plan"
+                " reads it, so no job a push must run is gated on it"
+            )
+    try:
+        cat = catalogue.load((root / catalogue.CATALOGUE).read_text(encoding="utf-8"))
+    except catalogue.CatalogueError as exc:
+        return [*bad, *exc.problems]
+    missing = [j for j in catalogue.EVERY_PUSH_JOBS if j not in (cat.every_push or ())]
+    if missing:
+        bad.append(
+            f"[tier.merge] every_push does not name {', '.join(missing)}: every push to main runs"
+            " them whatever the tree check answers"
+        )
+    return bad
+
+
+MERGE_YML_PUSH_STAGE_RUNS_THE_SECURITY_CORPUS_AND_APPS_CONTRACT = Row(
+    name="every-push-runs-the-security-corpus-and-apps-contract-whatever-the-tree-check-says",
+    check=merge_push_stage_violations,
+    scaffold=_tier_scaffold,
+    controls=(
+        _plant_in_job("a stage job gated on the tree check", _MERGE_YML, "test",
+                      "    if: ${{ !cancelled() && needs.changes.outputs.test != '' }}\n",
+                      "    if: ${{ !cancelled() && needs.changes.outputs.test != ''"
+                      " && needs.tree-check.outputs.tested != 'true' }}\n",
+                      expect="merge.yml job test reads the tree check's answer"),
+        _plant("the verdict reading the tree check's answer", _MERGE_YML,
+               "          KEYS: ${{ needs.changes.outputs.keys }}\n",
+               "          KEYS: ${{ needs.changes.outputs.keys }}\n"
+               "          TESTED: ${{ needs.tree-check.outputs.tested }}\n",
+               expect="merge.yml job results reads the tree check's answer"),
+        _plant("every push planned as tested", _MERGE_YML, _PUSH_PLAN,
+               "${{ github.event_name == 'push' && 'tested' || '' }}",
+               expect="merge.yml's plan step reads PUSH_PLAN as"),
+        _plant("the answer read off a push too", _MERGE_YML, _PUSH_PLAN,
+               "${{ needs.tree-check.outputs.tested == 'true' && 'tested' || '' }}",
+               expect="merge.yml's plan step reads PUSH_PLAN as"),
+        _plant("changes planning without the answer", _MERGE_YML,
+               "    needs: [tree-check]\n    runs-on: ubuntu-24.04\n",
+               "    runs-on: ubuntu-24.04\n",
+               expect="does not need tree-check"),
+        _plant("no tree check", _MERGE_YML, "\n  tree-check:\n", "\n  tree-check-renamed:\n",
+               expect="merge.yml has no tree-check job"),
+        _plant("every_push without apps-contract", catalogue.CATALOGUE,
+               'every_push = ["browse-live", "security", "apps-contract"]\n',
+               'every_push = ["browse-live", "security"]\n',
+               expect="every_push leaves out apps-contract"),
+        _plant("no every_push list", catalogue.CATALOGUE,
+               'every_push = ["browse-live", "security", "apps-contract"]\n', "",
+               expect="[tier.merge] every_push does not name security, apps-contract"),
+    ),
+)  # fmt: skip
 
 
 PR_YML_CARRIES_NO_PUSH_STAGE = Row(
@@ -13144,6 +13284,7 @@ ROWS = (
     THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX,
     THE_CATALOGUE_CHECK_STANDS_IN_FRONT_OF_MERGE_YMLS_VERDICT,
     PR_YML_CARRIES_NO_PUSH_STAGE,
+    MERGE_YML_PUSH_STAGE_RUNS_THE_SECURITY_CORPUS_AND_APPS_CONTRACT,
     THE_TIER_WORKFLOWS_TAKE_NO_TRUST,
 )
 

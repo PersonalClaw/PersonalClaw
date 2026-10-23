@@ -46,6 +46,56 @@ env:
   UV_PYTHON_PREFERENCE: only-managed
 
 jobs:
+  tree-check:
+    # ── Did a green pull-request run of merge.yml already test this tree? (#3913) ──────────
+    # The push stage's first question, as ci.yml's tree-check asks it of ci.yml's runs: the
+    # PREVIOUS main commit's copy of tools/ci/tree_tested.py, read from the API at
+    # `github.event.before`, never this checkout's, run on the image's own python3 over this
+    # workflow's pull_request runs. Anything but exactly `tested=true` or `tested=false` is
+    # `false`, and on any event but a push to main the answer is `false` at once. `changes` reads
+    # it: a tested push plans only `[tier.merge] every_push` (the security corpus, apps-contract
+    # and browse-live, which run on every push whatever this answers), an untested one the whole
+    # tier. No other job reads it.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read   # `commits/{sha}/pulls`
+      actions: read         # the pull request's runs and their first attempts
+      issues: read          # the pull request's events: whether its base was changed
+    outputs:
+      tested: ${{ steps.answer.outputs.tested }}
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - name: did a green pull-request run already test this tree
+        id: answer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -u
+          answer=""
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            check="$RUNNER_TEMP/tree_tested.py"
+            if gh api -H "Accept: application/vnd.github.raw" \
+                 "repos/${GITHUB_REPOSITORY}/contents/tools/ci/tree_tested.py?ref=${BEFORE}" \
+                 > "$check"; then
+              GITHUB_OUTPUT="$RUNNER_TEMP/answer.txt" python3 "$check" --workflow merge.yml || true
+              answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)
+            else
+              echo "the previous main commit ${BEFORE} has no tree check, so every job runs" \
+                | tee -a "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          case "$answer" in
+            tested=true|tested=false) ;;
+            *) answer="tested=false" ;;
+          esac
+          echo "$answer"
+          printf '%s\n' "$answer" >> "$GITHUB_OUTPUT"
+
   changes:
     # ── The plan, and main's check of this run's catalogue ──────────────────────────────────
     # The changed paths are what this commit changed against main's tip. The planner and its
@@ -57,6 +107,7 @@ jobs:
     # The check step runs main's `catalogue-check` over this checkout's catalogue (#3909), as
     # ci.yml's does: a refusal fails this job, which `results` reads in `needs`, so the verdict
     # is red. It is this job's last step, so nothing after it runs only on its green.
+    needs: [tree-check]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -99,6 +150,7 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           TIER: merge
           STAGE_JOBS: build test test-2 test-3
+          PUSH_PLAN: ${{ github.event_name == 'push' && (needs.tree-check.outputs.tested == 'true' && 'tested' || 'full') || '' }}
         run: |
           set -uo pipefail
           listed="$RUNNER_TEMP/changed.json"
@@ -116,12 +168,24 @@ jobs:
             echo "::error title=no plan::main's tools/ci could not be fetched, so nothing is planned and the verdict is red. Re-run the job."
             exit 1
           fi
+          # A push to main plans by the tree check's answer, read in PUSH_PLAN: the jobs every push
+          # runs when a pull request's run tested the tree, the whole tier when none did. Any other
+          # run plans what it changed.
+          case "$PUSH_PLAN" in
+            "") mode="" ;;
+            tested) mode="--tested" ;;
+            full) mode="--full" ;;
+            *)
+              echo "::error title=no plan::PUSH_PLAN is '$PUSH_PLAN', which is no push plan, so nothing is planned and the verdict is red."
+              exit 1
+              ;;
+          esac
           : > "$RUNNER_TEMP/plan.err"
           answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \
                      --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
                      --trusted-areas "$judge/tools/ci/areas.toml" \
                      --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
-                     --repo "$GITHUB_REPOSITORY" --outputs --matrix \
+                     --repo "$GITHUB_REPOSITORY" --outputs --matrix ${mode:+"$mode"} \
                      2> "$RUNNER_TEMP/plan.err") || answer=""
           cat "$RUNNER_TEMP/plan.err" >> "$GITHUB_STEP_SUMMARY"
           sed -n '/^::warning[ :]/p' "$RUNNER_TEMP/plan.err"
@@ -632,7 +696,7 @@ jobs:
     # read from the API, judges the plan's keys against the records this run's entries uploaded
     # and against `needs`; this checkout's copy never judges itself. It is standard-library
     # Python, run under `python3 -I`, so nothing this run brings is installed or imported.
-    needs: [changes, shard-plan, build, test, test-2, test-3]
+    needs: [tree-check, changes, shard-plan, build, test, test-2, test-3]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

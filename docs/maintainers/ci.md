@@ -458,7 +458,11 @@ A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
   a merge verdict on a run without `security` is red. `[tier.merge] jobs` lists the tier's
   jobs, checked both ways: every job whose tiers claim `merge` is in the list, and the list
   names only such jobs, so dropping a job from the merge tier takes two edits. A catalogue
-  without the list is refused.
+  without the list is refused. `[tier.merge] every_push` lists the merge-tier jobs a push to
+  `main` runs whatever its tree check answers; when given, it names only merge-tier jobs, none
+  twice, and every one of `catalogue.EVERY_PUSH_JOBS` (the security corpus and
+  `apps-contract`) the tier runs. A catalogue that names none plans the whole tier for a tested
+  push.
 - **change:** the fast jobs, run before a commit.
 - **breadth:** the checks run on `main` that are too slow or too wide for every pull request,
   among them the security corpus again, on Linux and on macOS.
@@ -769,6 +773,15 @@ a run of its tier on that branch's head without doubling every pull request's co
 posts a check of its own: the pull request and push triggers come with the change that retires
 `ci.yml`, and `merge-verdict` is the trusted controller's alone (#3910).
 
+- **`tree-check`** (`merge.yml`) is the push stage's first question: did a green pull-request run
+  of `merge.yml` test this tree. It runs the previous `main` commit's `tools/ci/tree_tested.py`,
+  read from the API at `github.event.before`, over `merge.yml`'s own `pull_request` runs, as
+  `ci.yml`'s `tree-check` asks it of `ci.yml`'s; anything but `tested=true|false` is `false`, and
+  any event but a push to `main` answers `false` at once. Only `changes` reads the answer, as its
+  plan step's `PUSH_PLAN`: a tested push plans `[tier.merge] every_push` alone (`plan --tested`:
+  the security corpus, `apps-contract` and `browse-live`, which run on every push whatever the
+  answer, the owner's rule of 2026-10-19), an untested one the whole tier (`--full`), and every
+  other run what it changed. pr.yml's plan step is the same text, given no push plan.
 - **`changes`** first reads the partner head the run tests against, the apps repository's `main` as
   one full object id (`git ls-remote`), and publishes it as `apps-partner`: every entry that reads
   the apps repository checks out that commit, and `results` names it as the candidate's partner. A
@@ -823,9 +836,9 @@ The issue gave no retention, so 30 is the default until the owner sets one. Repo
 week and the build three days, as `ci.yml` keeps its own.
 
 What the dispatch-only workflows do not do yet: `merge.yml` repeats the change tier's quick jobs,
-since its verdict is the merge tier's whole plan; and neither has a push stage. The tree check, the
-security corpus and `apps-contract` on every push to `main` are `merge.yml`'s to add with its push
-trigger.
+since its verdict is the merge tier's whole plan; and its push stage (the tree check and the push
+plan above) waits for its push trigger, which comes with the change that retires `ci.yml`, with
+the suite's one shared group per shard on `main`.
 
 The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted violations:
 
@@ -851,6 +864,13 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   job is `merge-verdict`, by its id, its name or any key the tier's plan can give a stage job; and
   no expensive job (the suite's shards, the browser run, the package) is in both tiers' plans, so
   the expensive tier runs once per candidate.
+- "every-push-runs-the-security-corpus-and-apps-contract-whatever-the-tree-check-says": merge.yml
+  has its tree check, `changes` needs it and reads its answer only as the plan step's
+  `PUSH_PLAN` (tested on a tested push, full on any other push, nothing on any other run), no
+  other job reads it, and `[tier.merge] every_push` names the security corpus and
+  `apps-contract`. Plants: a stage job or the verdict reading the answer, every push planned as
+  tested, the answer read off a push, `changes` without the tree check, no tree check, and
+  `every_push` without `apps-contract` or with no list.
 - "main's catalogue check stands in front of merge.yml's verdict": the check is the last step of
   the `changes` job, after the plan, with no condition and no `continue-on-error`, and `results`
   reads the job.

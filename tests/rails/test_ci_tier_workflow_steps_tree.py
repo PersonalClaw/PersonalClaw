@@ -1,6 +1,9 @@
 """The tier workflows' own steps, run as written (#3915): pr.yml's and merge.yml's read of the
-partner head and their plan, merge.yml's check of the catalogue, the verdict each run ends with,
-and the setup action's programs step their stage jobs call.
+partner head and their plan, merge.yml's tree check and check of the catalogue, the verdict each
+run ends with, and the setup action's programs step their stage jobs call. merge.yml's tree check
+asks the commit a push replaced, of merge.yml's runs, and anything but a tested push to main is
+untested; a tested push plans every_push alone, an untested one the whole tier, and a push plan
+the step does not know plans nothing.
 
 Each step's ``run:`` is read out of its workflow and run under ``bash -e``, as GitHub runs a step
 with no ``shell:``, with ``gh`` and ``git`` stubbed: ``gh`` lists the changed names as its
@@ -117,6 +120,9 @@ for a in "$@"; do
   case "$a" in
     */compare/*) cat "$STUB/changed"; exit 0 ;;
     */contents/tools/ci/verdict.py?ref=main) cat "$STUB/verdict.py"; exit 0 ;;
+    */contents/tools/ci/tree_tested.py?ref=*)
+      [ -f "$STUB/tree_tested.py" ] || exit 1
+      printf '%s\n' "$a" > "$STUB/tree-check.url"; cat "$STUB/tree_tested.py"; exit 0 ;;
   esac
 done
 exit 1
@@ -182,6 +188,7 @@ def _run_plan(
     rc: int = 0,
     changed: tuple[str, ...] = ("docs/a.md",),
     fetch_fails: bool = False,
+    push_plan: str = "",
 ) -> Ran:
     """Run ``workflow``'s plan step once, over this checkout. ``answer`` plants the planner's
     stdout and ``rc``; without one the real planner runs from the archived judge."""
@@ -204,6 +211,8 @@ def _run_plan(
         **{k: str(v) for k, v in step["env"].items()},
         "GH_TOKEN": "a-token",
         "HEAD_SHA": _HEAD,
+        # What merge.yml's expression gives: "tested" or "full" on a push, else empty.
+        "PUSH_PLAN": push_plan,
         "GITHUB_EVENT_NAME": "workflow_dispatch",
         "GITHUB_REF": "refs/heads/feature",
         "GITHUB_REPOSITORY": _REPO,
@@ -261,11 +270,17 @@ def _no_plan(ran: Ran) -> None:
 def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) -> None:
     tier, jobs = _TIERS[workflow]
     step = _step(workflow, "changes", "plan")
+    push_plan = (
+        "${{ github.event_name == 'push' && (needs.tree-check.outputs.tested == 'true'"
+        " && 'tested' || 'full') || '' }}"
+    )
     assert step.get("env") == {
         "GH_TOKEN": "${{ github.token }}",
         "HEAD_SHA": "${{ github.sha }}",
         "TIER": tier,
         "STAGE_JOBS": " ".join(jobs),
+        # pr.yml carries no push stage: its plan step is the same text, given no push plan.
+        "PUSH_PLAN": push_plan if workflow == "merge.yml" else "",
     }
     assert step.get("shell") is None and _workflow(workflow).get("defaults") is None
     assert "${{" not in step["run"], "an expression pasted into the shell"
@@ -441,6 +456,120 @@ def test_a_stage_job_matrix_that_is_not_its_entries_alone_publishes_nothing(
     ran = _run_plan(tmp_path, "pr.yml", judge_tar, answer="\n".join(lines) + "\n")
     _no_plan(ran)
     assert "test: not a matrix of entries" in ran.log, ran.log
+
+
+def test_a_tested_push_plans_only_the_jobs_every_push_runs(tmp_path, judge_tar) -> None:
+    ran = _run_plan(tmp_path, "merge.yml", judge_tar, changed=("src/x.py",), push_plan="tested")
+    assert ran.rc == 0, ran.log
+    assert "--tested" in (ran.argv or []) and "--full" not in (ran.argv or [])
+    path = REPO / catalogue.CATALOGUE
+    cat = catalogue.load(path.read_text(encoding="utf-8"), str(path))
+    want = planner.plan(cat, "merge", None, overrides=(), tested=True)
+    keys = json.loads(ran.published["keys"])
+    assert {k.split(" (")[0] for k in keys} == set(want.jobs)
+    assert set(catalogue.EVERY_PUSH_JOBS) <= set(want.jobs)
+
+
+def test_an_untested_push_plans_the_whole_tier(tmp_path, judge_tar) -> None:
+    ran = _run_plan(tmp_path, "merge.yml", judge_tar, push_plan="full")
+    assert ran.rc == 0, ran.log
+    assert "--full" in (ran.argv or []) and "--tested" not in (ran.argv or [])
+    path = REPO / catalogue.CATALOGUE
+    cat = catalogue.load(path.read_text(encoding="utf-8"), str(path))
+    keys = json.loads(ran.published["keys"])
+    assert {k.split(" (")[0] for k in keys} == {j.id for j in cat.tier("merge")}
+
+
+def test_a_push_plan_it_does_not_know_plans_nothing(tmp_path, judge_tar) -> None:
+    ran = _run_plan(tmp_path, "merge.yml", judge_tar, push_plan="true")
+    _no_plan(ran)
+    assert ran.argv is None, "a planner ran on a push plan the step does not know"
+
+
+# ── merge.yml's tree check ───────────────────────────────────────────────────────────────────
+
+
+_BEFORE = "b" * 40
+#: A stand-in for the previous main commit's tools/ci/tree_tested.py: it records its argv and
+#: writes the answer the row plants (or garbage, or nothing).
+_TREE_TESTED = """import os, sys
+open(os.environ["STUB_ARGV"], "w").write("\\n".join(sys.argv[1:]))
+answer = os.environ.get("STUB_ANSWER", "")
+if answer == "crash":
+    raise SystemExit(3)
+with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+    out.write(answer + "\\n")
+"""
+
+
+def _run_tree_check(tmp: Path, *, event: str, ref: str, answer: str | None) -> Ran:
+    stub, bin_, temp = _stubs(tmp)
+    if answer is not None:
+        (stub / "tree_tested.py").write_text(_TREE_TESTED, encoding="utf-8")
+    output, summary = tmp / "GITHUB_OUTPUT", tmp / "GITHUB_STEP_SUMMARY"
+    output.write_text("")
+    summary.write_text("")
+    steps = _workflow("merge.yml")["jobs"]["tree-check"]["steps"]
+    step = next(s for s in steps if s.get("id") == "answer")
+    assert step["env"] == {
+        "GH_TOKEN": "${{ github.token }}",
+        "BEFORE": "${{ github.event.before }}",
+    }
+    env = {
+        "PATH": f"{bin_}:/usr/bin:/bin",
+        "HOME": str(tmp),
+        "STUB": str(stub),
+        "STUB_ARGV": str(stub / "check.argv"),
+        "STUB_ANSWER": answer or "",
+        "GH_TOKEN": "a-token",
+        "BEFORE": _BEFORE,
+        "GITHUB_EVENT_NAME": event,
+        "GITHUB_REF": ref,
+        "GITHUB_REPOSITORY": _REPO,
+        "GITHUB_OUTPUT": str(output),
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "RUNNER_TEMP": str(temp),
+    }
+    done = _bash(step["run"], tmp, env, tmp)
+    argv = stub / "check.argv"
+    return Ran(
+        rc=done.returncode,
+        lines=output.read_text(encoding="utf-8").split("\n")[:-1],
+        log=done.stdout + done.stderr + summary.read_text(),
+        argv=argv.read_text().splitlines() if argv.exists() else None,
+        cwd=(
+            (stub / "tree-check.url").read_text().strip()
+            if (stub / "tree-check.url").exists()
+            else None
+        ),
+        runner_temp=temp,
+    )
+
+
+def test_a_push_to_main_asks_the_previous_commits_check_about_merge_yml(tmp_path) -> None:
+    ran = _run_tree_check(tmp_path, event="push", ref="refs/heads/main", answer="tested=true")
+    assert ran.rc == 0, ran.log
+    assert ran.lines == ["tested=true"]
+    # The check of the commit the push replaced, over merge.yml's own pull_request runs.
+    assert ran.cwd is not None and ran.cwd.endswith(f"tree_tested.py?ref={_BEFORE}")
+    assert ran.argv == ["--workflow", "merge.yml"]
+
+
+@pytest.mark.parametrize(
+    ("event", "ref", "answer"),
+    [
+        pytest.param("workflow_dispatch", "refs/heads/main", "tested=true", id="a dispatch"),
+        pytest.param("push", "refs/heads/feature", "tested=true", id="a push off main"),
+        pytest.param("push", "refs/heads/main", "crash", id="a check that crashes"),
+        pytest.param("push", "refs/heads/main", "tested=yes", id="an answer it does not know"),
+        pytest.param("push", "refs/heads/main", "", id="no answer"),
+        pytest.param("push", "refs/heads/main", None, id="no check at the commit replaced"),
+    ],
+)
+def test_anything_but_a_tested_push_to_main_is_untested(tmp_path, event, ref, answer) -> None:
+    ran = _run_tree_check(tmp_path, event=event, ref=ref, answer=answer)
+    assert ran.rc == 0, ran.log
+    assert ran.lines == ["tested=false"], ran.log
 
 
 def test_a_main_whose_tools_ci_cannot_be_fetched_plans_nothing(
