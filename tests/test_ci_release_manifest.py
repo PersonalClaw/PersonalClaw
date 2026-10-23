@@ -54,6 +54,54 @@ def _sha(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _job(name: str, artifacts: list[str], *, tools: bool = True, bases: int = 0) -> dict:
+    """One build, as tools/ci/build_identity.py collects it from a record and a set-up log."""
+    return {
+        "job": name,
+        "runner": {"image": "ubuntu-24.04", "version": "20261012.334.1"},
+        "actions": [
+            {"action": "actions/checkout", "ref": "a" * 40, "sha": "a" * 40},
+            {"action": "someone/nested", "ref": "v1", "sha": "b" * 40},
+        ],
+        "toolchain": {
+            tool: (
+                {"python": "3.12.15", "uv": "uv 0.13.1", "node": "v24.22.0", "npm": "11.6.2"}[tool]
+                if tools
+                else None
+            )
+            for tool in rm.TOOLS
+        },
+        "bases": [
+            {
+                "image": f"pkg:docker/python@3.13?platform=linux%2F{arch}",
+                "digest": _sha(arch.encode()),
+            }
+            for arch in ("amd64", "arm64")[:bases]
+        ],
+        "artifacts": artifacts,
+    }
+
+
+#: What built STAGED and the gateway image: one job per artifact kind, each artifact once.
+BUILDS = [
+    _job(
+        "artifacts / build",
+        [
+            "dist/personalclaw-0.3.0-py3-none-any.whl",
+            "dist/personalclaw-0.3.0.tar.gz",
+            "release-notes.md",
+        ],
+    ),
+    _job("artifacts / desktop-linux", ["desktop/PersonalClaw-0.3.0.AppImage"]),
+    _job(
+        "artifacts / images (gateway)",
+        ["ghcr.io/personalclaw/personalclaw-gateway"],
+        tools=False,
+        bases=2,
+    ),
+]
+
+
 def _descriptor(platform: str, seed: str, media_type: str = OCI_MANIFEST) -> dict:
     os_, _, arch = platform.partition("/")
     arch, _, variant = arch.partition("/")
@@ -102,7 +150,7 @@ def _stage(folder: Path, files: dict[str, bytes] = STAGED) -> Path:
 def _manifest(tmp_path: Path) -> tuple[dict, bytes]:
     staged = _stage(tmp_path / "staged")
     images = {GATEWAY: rm.image_from_index(GATEWAY, _gateway_index())}
-    data = rm.canonical(rm.build(rm.staged(staged), images, ref=REF, commit=COMMIT))
+    data = rm.canonical(rm.build(rm.staged(staged), images, ref=REF, commit=COMMIT, builds=BUILDS))
     return rm.load(data), data
 
 
@@ -111,7 +159,8 @@ def _manifest(tmp_path: Path) -> tuple[dict, bytes]:
 
 def test_a_manifest_names_every_staged_file_and_image_under_its_own_digest(tmp_path: Path) -> None:
     manifest, data = _manifest(tmp_path)
-    assert set(manifest) == {"version", "source", "files", "images", "digest"}
+    assert set(manifest) == {"version", "source", "files", "images", "builds", "digest"}
+    assert manifest["builds"] == BUILDS
     assert manifest["version"] == rm.VERSION
     assert manifest["source"] == {"ref": REF, "commit": COMMIT}
     assert manifest["files"] == {
@@ -346,14 +395,20 @@ def _refusing_manifests(manifest: dict, data: bytes) -> list[tuple[str, bytes, s
     def source(**changes: object) -> bytes:
         return remade(source={"ref": REF, "commit": COMMIT, **changes})
 
+    builds = manifest["builds"]
+    first = builds[0]
+
+    def build(at: int, **changes: object) -> bytes:
+        return remade(builds=[{**b, **changes} if i == at else b for i, b in enumerate(builds)])
+
     return [
         ("a changed byte", data.replace(b"release-notes", b"release-notez"), None, "own digest"),
         ("another approved digest", data, _sha(b"another"), "not the approved manifest"),
         ("whitespace", data.replace(b",", b", ", 1), None, "canonical"),
-        ("a key twice", data[:-1] + b',"version":1}', None, "twice"),
+        ("a key twice", data[:-1] + b',"version":2}', None, "twice"),
         ("not JSON", b"{", None, "not JSON"),
-        ("another version", remade(version=2), None, "version 1"),
-        ("a version that is a bool", remade(version=True), None, "version 1"),
+        ("another version", remade(version=1), None, "version 2"),
+        ("a version that is a bool", remade(version=True), None, "version 2"),
         ("an unknown key", remade(signed=True), None, "signed"),
         ("no files", remade(files={}), None, "no files"),
         ("a path out of the folder", remade(files={"../x": files[wheel]}), None, "../x"),
@@ -411,7 +466,7 @@ def _refusing_manifests(manifest: dict, data: bytes) -> list[tuple[str, bytes, s
         ),
         (
             "an integer too long to read",
-            data.replace(b'"version":1', b'"version":' + b"1" * 5000),
+            data.replace(b'"version":2', b'"version":' + b"2" * 5000),
             None,
             "not JSON",
         ),
@@ -424,6 +479,59 @@ def _refusing_manifests(manifest: dict, data: bytes) -> list[tuple[str, bytes, s
             "digest None",
         ),
         ("a source that is a list", remade(source=[REF, COMMIT]), None, "source is not an object"),
+        # What built each artifact (#3911's build identities, #4585's step 7).
+        ("no builds", remade(builds=[]), None, "names no builds"),
+        ("builds that are an object", remade(builds={}), None, "builds are not a list"),
+        ("a build with an unknown key", build(0, signed=True), None, "unknown.*signed"),
+        (
+            "a build with no runner image version",
+            build(0, runner={"image": "ubuntu-24.04", "version": ""}),
+            None,
+            "artifacts / build: its runner image version is missing",
+        ),
+        (
+            "a nested action with no SHA",
+            build(0, actions=[*first["actions"][:1], {**first["actions"][1], "sha": ""}]),
+            None,
+            "someone/nested@v1 has no SHA",
+        ),
+        ("a build with no action", build(0, actions=[]), None, "names no action"),
+        (
+            "an image's build with no base image",
+            build(2, bases=[]),
+            None,
+            "builds an image and names no base image",
+        ),
+        (
+            "a base with no digest",
+            build(2, bases=[{"image": "pkg:docker/python@3.13", "digest": "3.13"}]),
+            None,
+            "pkg:docker/python@3.13: digest",
+        ),
+        (
+            "a file's build with no npm version",
+            build(0, toolchain={**first["toolchain"], "npm": None}),
+            None,
+            "names no npm version",
+        ),
+        (
+            "an artifact no build claims",
+            build(0, artifacts=first["artifacts"][:2]),
+            None,
+            "release-notes.md: built by no build",
+        ),
+        (
+            "an artifact two builds claim",
+            build(1, artifacts=[*builds[1]["artifacts"], "release-notes.md"]),
+            None,
+            "release-notes.md: claimed by 2 builds",
+        ),
+        (
+            "a build of what the manifest does not hold",
+            build(1, artifacts=[*builds[1]["artifacts"], "elsewhere.deb"]),
+            None,
+            "'elsewhere.deb' is not an artifact of this manifest",
+        ),
     ]
 
 
@@ -432,7 +540,7 @@ def test_a_manifest_that_is_not_the_approved_one_is_refused(
 ) -> None:
     manifest, data = _manifest(tmp_path)
     rows = _refusing_manifests(manifest, data)
-    assert len(rows) == 42, "a refusal row was dropped"
+    assert len(rows) == 54, "a refusal row was dropped"
     for name, bytes_, expected, reason in rows:
         with row(subtests, case=name):
             with pytest.raises(rm.Refused, match=reason):
@@ -451,8 +559,8 @@ def test_a_manifest_that_is_not_the_approved_one_is_refused(
     for name, ref, commit in built:
         with row(subtests, case=f"built from {name}"):
             with pytest.raises(rm.Refused, match="ref|commit"):
-                rm.build(files, images, ref=ref, commit=commit)
-    assert rm.build(files, images, ref=REF, commit=COMMIT) == manifest  # the control
+                rm.build(files, images, ref=ref, commit=commit, builds=BUILDS)
+    assert rm.build(files, images, ref=REF, commit=COMMIT, builds=BUILDS) == manifest  # control
 
 
 # ── verifying a folder ─────────────────────────────────────────────────────────────────────────
@@ -625,6 +733,9 @@ def _cli_inputs(tmp_path: Path) -> dict[str, Path]:
     published.write_text(json.dumps({"personalclaw-0.3.0.tar.gz": _sha(b"rebuilt sdist")}))
     absent = tmp_path / "absent.json"
     absent.write_text("{}")
+    builds = tmp_path / "builds.json"
+    builds.write_text(json.dumps(BUILDS))
+    (tmp_path / "builds-short.json").write_text(json.dumps(BUILDS[:2]))
     sdist = '"personalclaw-0.3.0.tar.gz": "' + _sha(STAGED["dist/personalclaw-0.3.0.tar.gz"]) + '"'
     rebuilt = '"personalclaw-0.3.0.tar.gz": "' + _sha(b"rebuilt sdist") + '"'
     inputs = {
@@ -646,6 +757,8 @@ def _cli_inputs(tmp_path: Path) -> dict[str, Path]:
         "changed": changed,
         "published": published,
         "absent": absent,
+        "builds": builds,
+        "builds-short": tmp_path / "builds-short.json",
         "manifest": tmp_path / "manifest.json",
         "unreadable": _stage(tmp_path / "unreadable"),
         **{name: tmp_path / f"{name}.json" for name in inputs},
@@ -674,9 +787,13 @@ def test_the_commands_exit_0_on_a_match_1_on_a_difference_and_2_on_what_they_can
     module = [sys.executable, "-m", "tools.ci", "release-manifest"]
     output = tmp_path / "github-output"
 
-    def write(staged: Path, out: Path | str, ref: str = REF) -> list[str]:
+    def write(
+        staged: Path, out: Path | str, ref: str = REF, builds: Path | None = None
+    ) -> list[str]:
         image = ["--image", f"{GATEWAY}={paths['index']}"]
         return ["write", "--staged", str(staged), *image, "--ref", ref, "--commit", COMMIT] + [
+            "--builds",
+            str(builds or paths["builds"]),
             "--out",
             str(out),
         ]
@@ -688,7 +805,7 @@ def test_the_commands_exit_0_on_a_match_1_on_a_difference_and_2_on_what_they_can
     data = paths["manifest"].read_bytes()
     surrogate, long = tmp_path / "surrogate.json", tmp_path / "long.json"
     surrogate.write_bytes(data.replace(b'"release-notes.md"', b'"release-notes\\ud800.md"'))
-    long.write_bytes(data.replace(b'"version":1', b'"version":' + b"1" * 5000))
+    long.write_bytes(data.replace(b'"version":2', b'"version":' + b"2" * 5000))
 
     approved = ["--manifest", str(paths["manifest"]), "--digest", digest]
     image = ["--image", f"{GATEWAY}={paths['index']}"]
@@ -828,6 +945,18 @@ def test_the_commands_exit_0_on_a_match_1_on_a_difference_and_2_on_what_they_can
             "not a full branch or tag ref",
         ),
         ("a staged file it cannot read", write(paths["unreadable"], refused), 2, "cannot read"),
+        (
+            "builds that are not a list",
+            write(paths["staged"], refused, builds=paths["absent"]),
+            2,
+            "is not a JSON list of builds",
+        ),
+        (
+            "builds that leave the gateway image to no job",
+            write(paths["staged"], refused, builds=paths["builds-short"]),
+            2,
+            "personalclaw-gateway: built by no build",
+        ),
         ("no verb", [], 2, "write"),
     ]
     locked: list[Path] = []
@@ -842,7 +971,7 @@ def test_the_commands_exit_0_on_a_match_1_on_a_difference_and_2_on_what_they_can
             paths["unreadable"] / "release-notes.md", locked
         ),
     }
-    assert len(rows) == 32, "a row was dropped"
+    assert len(rows) == 34, "a row was dropped"
     try:
         for name, args, code, says in rows:
             with row(subtests, case=name):

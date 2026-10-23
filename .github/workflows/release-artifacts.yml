@@ -6,10 +6,11 @@
 #   · both images for both arches, with their attestations, each arch smoked from its layout;
 #   · the macOS dmg and the Linux AppImage and deb;
 # each smoked as the release smokes it. Then one digest-bound manifest of them all
-# (tools/ci/release_manifest.py), written and verified, with a planted mismatch that must fail.
+# (tools/ci/release_manifest.py), with what built each as it ran (tools/ci/build_identity.py),
+# written and verified, with a planted mismatch that must fail.
 #
 # It publishes nothing: no environment, no registry login, no push, no token beyond reading the
-# tree. The images build to an OCI layout on the runner, and every file goes up only as a
+# tree and, in the manifest job, this run's own job logs. The images build to an OCI layout on the runner, and every file goes up only as a
 # workflow artifact, kept the days the caller names, never to a registry or a release
 # (tests/rails/test_release_rehearsal_tree.py holds all of it).
 #
@@ -218,6 +219,21 @@ jobs:
         with:
           name: release-notes
           path: release-notes.md
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
+      - name: Record what built it
+        # The runner, the toolchain and what this job built, for the release manifest, which adds
+        # the actions this job's own set-up log shows (tools/ci/build_identity.py).
+        run: >-
+          python3 -I tools/ci/build_identity.py record --out build-record --name build
+          --artifact 'dist/*' --artifact wheel-sbom/personalclaw-wheel.spdx.json
+          --tool "python=$(uv run --no-project python -c 'import platform; print(platform.python_version())')"
+          --tool "uv=$(uv --version)" --tool "node=$(node --version)" --tool "npm=$(npm --version)"
+      - name: Upload the build record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-record-build
+          path: build-record/build.json
           if-no-files-found: error
           retention-days: ${{ inputs.retention-days }}
 
@@ -458,6 +474,26 @@ jobs:
           # Its blobs are compressed already.
           compression-level: 0
           retention-days: ${{ inputs.retention-days }}
+      - name: Record what built it
+        # The runner, the bases each platform's build resolved (its provenance) and the workflow
+        # containers that ran, for the release manifest, which adds the actions this job's own
+        # set-up log shows (tools/ci/build_identity.py). An image's toolchain is its bases.
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          # The workflow containers that ran here (QEMU's binfmt, BuildKit), by the digest pulled.
+          docker image ls --digests --format '{{.Repository}}@{{.Digest}}' > "$RUNNER_TEMP/containers.txt"
+          python3 -I tools/ci/build_identity.py record --out build-record --name "images-$NAME" \
+            --image "ghcr.io/personalclaw/personalclaw-$NAME" --artifact 'image-out/*.spdx.json' \
+            --bases 'image-out/*.bases.json' --containers "$RUNNER_TEMP/containers.txt"
+      - name: Upload the build record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-record-images-${{ matrix.name }}
+          path: build-record/images-${{ matrix.name }}.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
 
   desktop-mac:
     # macOS desktop shell — AD-HOC SIGNED, NOT NOTARIZED .dmg. "Unsigned" was the word used
@@ -574,6 +610,21 @@ jobs:
           name: desktop-mac
           path: desktop/dist/*.dmg
           retention-days: ${{ inputs.retention-days }}
+      - name: Record what built it
+        # The runner, the toolchain and what this job built, for the release manifest, which adds
+        # the actions this job's own set-up log shows (tools/ci/build_identity.py).
+        run: >-
+          python3 -I tools/ci/build_identity.py record --out build-record --name desktop-mac
+          --artifact 'desktop/dist/*.dmg'
+          --tool "python=$(.venv/bin/python -c 'import platform; print(platform.python_version())')"
+          --tool "uv=$(uv --version)" --tool "node=$(node --version)" --tool "npm=$(npm --version)"
+      - name: Upload the build record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-record-desktop-mac
+          path: build-record/desktop-mac.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
 
   desktop-linux:
     # Linux desktop shell — UNSIGNED AppImage + .deb (the Linux target ships now;
@@ -662,6 +713,21 @@ jobs:
             desktop/dist/*.AppImage
             desktop/dist/*.deb
           retention-days: ${{ inputs.retention-days }}
+      - name: Record what built it
+        # The runner, the toolchain and what this job built, for the release manifest, which adds
+        # the actions this job's own set-up log shows (tools/ci/build_identity.py).
+        run: >-
+          python3 -I tools/ci/build_identity.py record --out build-record --name desktop-linux
+          --artifact 'desktop/dist/*.AppImage' --artifact 'desktop/dist/*.deb'
+          --tool "python=$(.venv/bin/python -c 'import platform; print(platform.python_version())')"
+          --tool "uv=$(uv --version)" --tool "node=$(node --version)" --tool "npm=$(npm --version)"
+      - name: Upload the build record
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-record-desktop-linux
+          path: build-record/desktop-linux.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
 
   manifest:
     # Every artifact above, staged in one folder and recorded in one digest-bound manifest (#3911's
@@ -671,6 +737,10 @@ jobs:
     needs: [build, images, desktop-mac, desktop-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      # This run's own jobs and their set-up logs, which say what built each artifact.
+      actions: read
     outputs:
       digest: ${{ steps.manifest.outputs.digest }}
     steps:
@@ -693,14 +763,25 @@ jobs:
           cp "$A"/desktop-linux/*.AppImage "$A"/desktop-linux/*.deb "$A"/desktop-mac/*.dmg staged/
           cp "$A"/wheel-sbom/*.spdx.json "$A"/image-sbom-gateway/*.spdx.json "$A"/image-sbom-web/*.spdx.json staged/
           cp "$A"/image-index-gateway/*.index.json "$A"/image-index-web/*.index.json indexes/
+          mkdir records
+          cp "$A"/build-record-*/*.json records/
           ls -la staged indexes
+      - name: What built each artifact, from its own job's set-up log
+        # Each job's record, borne out by that job's set-up log, read by its runner's name: the
+        # runner image GitHub reports and every action the job downloaded, nested ones included,
+        # with the SHA each resolved to (tools/ci/build_identity.py).
+        env:
+          RUNS_TOKEN: ${{ github.token }}
+        run: >-
+          python3 -I tools/ci/build_identity.py collect --records records
+          --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --out builds.json
       - name: Write the digest-bound manifest
         id: manifest
         run: >-
           python3 -I tools/ci/release_manifest.py write --staged staged
           --image ghcr.io/personalclaw/personalclaw-gateway=indexes/personalclaw-gateway.index.json
           --image ghcr.io/personalclaw/personalclaw-web=indexes/personalclaw-web.index.json
-          --ref "$GITHUB_REF" --commit "$GITHUB_SHA" --out manifest.json
+          --ref "$GITHUB_REF" --commit "$GITHUB_SHA" --builds builds.json --out manifest.json
       - name: The staged files and the images match it
         env:
           DIGEST: ${{ steps.manifest.outputs.digest }}

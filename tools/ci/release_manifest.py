@@ -2,8 +2,9 @@
 
 A release builds and smokes every artifact before anything publishes, and records them in one
 manifest (#3911): each staged file's sha256 and size, each image's per-platform digests and the
-digest of its multi-platform index, the ref and commit the release was built from, and the
-manifest's own digest, the sha256 of its canonical body (every other field, sorted keys, no
+digest of its multi-platform index, the ref and commit the release was built from, what built
+each artifact as it ran (``builds``, from ``tools/ci/build_identity.py``), and the manifest's own
+digest, the sha256 of its canonical body (every other field, sorted keys, no
 spaces, UTF-8). The approval names that digest, and every later step reads the manifest only
 under it (:func:`load`): a manifest whose bytes are not canonical, that does not hash to its own
 digest, or that is not the approved one is refused.
@@ -11,14 +12,18 @@ digest, or that is not the approved one is refused.
 Three verbs of ``python -m tools.ci release-manifest`` (or ``python3 -I
 tools/ci/release_manifest.py``, the way a trusted job runs the default branch's copy):
 
-- ``write`` stages a folder and the images' raw index bytes into a manifest (:func:`staged`,
-  :func:`image_from_index`, :func:`build`). The folder holds only regular files and folders with
-  plain names: a symlink, a special file, a file or folder it cannot read, an empty folder, a
-  hidden name or a name with a space or a control character is refused, never skipped. It
-  refuses to write the manifest inside that folder, by the folder's identity rather than the
-  spelling of its path. An image's index digest is the sha256 of the index bytes the registry
-  stores, and each platform's digest is read out of the index; the attestation manifests a
-  BuildKit build adds beside each platform's are covered by the index digest and are not
+- ``write`` stages a folder, the images' raw index bytes and the builds into a manifest
+  (:func:`staged`, :func:`image_from_index`, :func:`build`). Each build is one job's: the runner
+  image its set-up log reported, every action it downloaded with its SHA, the base images that ran
+  with their digests, the Python, uv, Node and npm versions it used, and the artifacts it built.
+  Every file and image is one build's, and a build that lacks any of these is refused: an image's
+  names its bases and may name no host tool, and a file's names all four tools. The folder holds
+  only regular files and folders with plain names: a symlink, a special file, a file or folder it
+  cannot read, an empty folder, a hidden name or a name with a space or a control character is
+  refused, never skipped. It refuses to write the manifest inside that folder, by the folder's
+  identity rather than the spelling of its path. An image's index digest is the sha256 of the index
+  bytes the registry stores, and each platform's digest is read out of the index; the attestation
+  manifests a BuildKit build adds beside each platform's are covered by the index digest and are not
   platforms.
 - ``verify`` holds a folder and the images against the approved manifest, and names every
   missing, extra and changed artifact (:func:`verify`). It exits 1 on any.
@@ -54,12 +59,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
-VERSION = 1
+VERSION = 2
 
-KEYS = frozenset({"version", "source", "files", "images", "digest"})
+KEYS = frozenset({"version", "source", "files", "images", "builds", "digest"})
 FILE_KEYS = frozenset({"digest", "size"})
 IMAGE_KEYS = frozenset({"index", "platforms"})
 SOURCE_KEYS = frozenset({"ref", "commit"})
+BUILD_KEYS = frozenset({"job", "runner", "actions", "toolchain", "bases", "artifacts"})
+RUNNER_KEYS = frozenset({"image", "version"})
+ACTION_KEYS = frozenset({"action", "ref", "sha"})
+BASE_KEYS = frozenset({"image", "digest"})
+#: The tools each build names: every one for a file's build; an image's build is its bases.
+TOOLS = ("python", "uv", "node", "npm")
 
 #: The image index media types a registry stores a multi-platform image under.
 INDEX_TYPES = frozenset(
@@ -82,6 +93,7 @@ ATTESTATION = ("vnd.docker.reference.type", "attestation-manifest")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _HEX = re.compile(r"[0-9a-f]{64}")
 _COMMIT = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+_SHA1 = re.compile(r"[0-9a-f]{40}")
 #: A branch or a tag, in full: a release is cut from one of the two.
 _REF = re.compile(r"refs/(?:heads|tags)/[A-Za-z0-9][A-Za-z0-9._/+-]*")
 #: One path component of a staged file: no hidden file, no space or control character, and none
@@ -301,9 +313,10 @@ def build(
     *,
     ref: str,
     commit: str,
+    builds: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """The manifest of ``files`` (:func:`staged`) and ``images``, built from ``ref`` at
-    ``commit``, with its own digest."""
+    ``commit`` by ``builds``, with its own digest."""
     body = {
         "version": VERSION,
         "source": {"ref": ref, "commit": commit},
@@ -312,6 +325,7 @@ def build(
             name: {"index": image.index, "platforms": dict(image.platforms)}
             for name, image in images.items()
         },
+        "builds": [json.loads(json.dumps(b)) for b in builds],
     }
     _check(body)
     return {**body, "digest": sha256(canonical(body))}
@@ -322,7 +336,7 @@ def build(
 
 def load(data: bytes, expected: str | None = None) -> dict[str, Any]:
     """The manifest ``data`` holds, if its bytes are canonical, it hashes to its own digest, it
-    is a version 1 manifest and, when ``expected`` is given, it is the approved one."""
+    is a version 2 manifest and, when ``expected`` is given, it is the approved one."""
     manifest = _json(data, "the manifest")
     if not isinstance(manifest, dict):
         raise Refused("the manifest is not an object")
@@ -372,6 +386,67 @@ def _check(body: Mapping[str, Any]) -> None:
             if not _PLATFORM.fullmatch(key):
                 raise Refused(f"{name}: platform {key!r}")
             _digest(digest, f"{name} {key}")
+    _check_builds(body["builds"], set(files), set(images))
+
+
+def _text(value: Any, what: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise Refused(f"{what} is missing")
+    return value
+
+
+def _check_builds(builds: Any, files: set[str], images: set[str]) -> None:
+    """Every build names what ran, and every file and image is exactly one build's."""
+    if not isinstance(builds, list):
+        raise Refused("the manifest's builds are not a list")
+    if not builds:
+        raise Refused("the manifest names no builds: what built its artifacts")
+    claimed: dict[str, list[str]] = {}
+    for entry in builds:
+        if not isinstance(entry, dict):
+            raise Refused(f"a build is not an object: {entry!r}")
+        job = _text(entry.get("job"), "a build's job")
+        entry = _exact(entry, BUILD_KEYS, job)
+        runner = _exact(entry["runner"], RUNNER_KEYS, f"{job}'s runner")
+        _text(runner["image"], f"{job}: its runner image")
+        _text(runner["version"], f"{job}: its runner image version")
+        actions = entry["actions"]
+        if not isinstance(actions, list) or not actions:
+            raise Refused(f"{job}: names no action its set-up downloaded")
+        for action in actions:
+            action = _exact(action, ACTION_KEYS, f"{job}'s action")
+            named = f"{action['action']}@{action['ref']}"
+            if not isinstance(action["sha"], str) or not _SHA1.fullmatch(action["sha"]):
+                raise Refused(f"{job}: {named} has no SHA it resolved to")
+        artifacts = entry["artifacts"]
+        if not isinstance(artifacts, list) or not artifacts:
+            raise Refused(f"{job}: names no artifact it built")
+        for artifact in artifacts:
+            if artifact not in files and artifact not in images:
+                raise Refused(f"{job}: {artifact!r} is not an artifact of this manifest")
+            claimed.setdefault(artifact, []).append(job)
+        bases = entry["bases"]
+        if not isinstance(bases, list):
+            raise Refused(f"{job}: its bases are not a list")
+        for base in bases:
+            base = _exact(base, BASE_KEYS, f"{job}'s base")
+            _text(base["image"], f"{job}: a base's image")
+            _digest(base["digest"], f"{job}: {base['image']}")
+        tools = _exact(entry["toolchain"], frozenset(TOOLS), f"{job}'s toolchain")
+        if any(a in images for a in artifacts):
+            if not bases:
+                raise Refused(f"{job} builds an image and names no base image it ran")
+        for tool in TOOLS:
+            version = tools[tool]
+            if version is None and not any(a in images for a in artifacts):
+                raise Refused(f"{job}: names no {tool} version")
+            if version is not None:
+                _text(version, f"{job}: its {tool} version")
+    for artifact in sorted(files | images):
+        jobs = claimed.get(artifact, [])
+        if len(jobs) != 1:
+            say = f"claimed by {len(jobs)} builds" if jobs else "built by no build"
+            raise Refused(f"{artifact}: {say}; each artifact is one job's")
 
 
 # ── verifying a folder ────────────────────────────────────────────────────────────────────────
@@ -590,14 +665,18 @@ def _write(argv: list[str]) -> int:
     parser.add_argument("--image", action="append", default=[], help="NAME=INDEX_FILE")
     parser.add_argument("--ref", action=_Once, required=True, help="the ref built, in full")
     parser.add_argument("--commit", action=_Once, required=True)
+    parser.add_argument("--builds", action=_Once, required=True, help="what built each artifact")
     parser.add_argument("--out", action=_Once, required=True)
     args = parser.parse_args(argv)
     folder, out = Path(args.staged), Path(args.out)
     files, images = staged(folder), _images(args.image)
+    builds = _json(_read(args.builds), args.builds)
+    if not isinstance(builds, list):
+        raise Refused(f"{args.builds} is not a JSON list of builds")
     try:
         if _inside(out, folder):
             raise Refused(f"{args.out} is inside {args.staged}, the folder it describes")
-        manifest = build(files, images, ref=args.ref, commit=args.commit)
+        manifest = build(files, images, ref=args.ref, commit=args.commit, builds=builds)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(canonical(manifest))
     except (OSError, RuntimeError) as exc:  # RuntimeError: a symlink loop, before Python 3.13
@@ -608,7 +687,7 @@ def _write(argv: list[str]) -> int:
     _report(
         f"### Release manifest {manifest['digest']}\n\n"
         f"{len(manifest['files'])} file(s) and {len(manifest['images'])} image(s), built from "
-        f"{args.ref} at {args.commit}.\n"
+        f"{args.ref} at {args.commit} by {len(manifest['builds'])} job(s).\n"
     )
     return 0
 

@@ -50,6 +50,12 @@ BUILDS = ("build", "gateway-dashboard", "desktop-mac", "desktop-linux", "manifes
 CALL = "./.github/workflows/release-artifacts.yml"
 #: The one permission either workflow may hold.
 READ_ONLY = {"contents": "read"}
+#: What a job may hold: reading the tree, and reading this run's own job logs, which is how the
+#: manifest job learns what built each artifact (tools/ci/build_identity.py).
+READS_RUN = {"contents": "read", "actions": "read"}
+JOB_PERMISSIONS = (READ_ONLY, READS_RUN)
+#: The jobs that build an artifact, each of which records what built it.
+ARTIFACT_JOBS = ("build", "images", "desktop-mac", "desktop-linux")
 #: Actions that publish, log in or attest.
 PUBLISHING_ACTIONS = (
     "pypa/gh-action-pypi-publish",
@@ -102,7 +108,7 @@ def publish_problems(name: str, text: str) -> list[str]:
         where = f"{name}: job {job_id}"
         if "environment" in job:
             out.append(f"{where}: names environment {job['environment']!r}")
-        if "permissions" in job and job["permissions"] != READ_ONLY:
+        if "permissions" in job and job["permissions"] not in JOB_PERMISSIONS:
             out.append(f"{where}: asks for permissions {job['permissions']!r}")
         if job.get("secrets"):
             out.append(f"{where}: passes secrets")
@@ -193,8 +199,10 @@ def release_problems(release_text: str) -> list[str]:
     call = jobs["artifacts"]
     if (call.get("with") or {}).get("ref") != "${{ github.ref_name }}":
         out.append("release.yml builds its artifacts as a ref other than its own tag")
-    if call.get("permissions") != READ_ONLY:
-        out.append(f"the artifacts job holds {call.get('permissions')!r}, not contents: read")
+    if call.get("permissions") != READS_RUN:
+        out.append(
+            f"the artifacts job holds {call.get('permissions')!r}, not contents and actions: read"
+        )
     for job_id in BUILDS:
         if job_id in jobs:
             out.append(
@@ -257,6 +265,18 @@ _IMAGE_ARG = re.compile(r"--image\s+([^=\s]+)=(\S+)")
 _STEP_OUTPUT = re.compile(r"\$\{\{ steps\.([a-z_-]+)\.outputs\.([a-z_-]+) \}\}")
 
 
+def _build(job: str, artifacts: list[str], *, tools: str = "", bases: int = 0) -> dict:
+    """One build as tools/ci/build_identity.py collects it: what ran, and what it built."""
+    return {
+        "job": job,
+        "runner": {"image": "ubuntu-24.04", "version": "1"},
+        "actions": [{"action": "actions/checkout", "ref": "v7", "sha": "a" * 40}],
+        "toolchain": {tool: tools or None for tool in ("python", "uv", "node", "npm")},
+        "bases": [{"image": "pkg:docker/python@3", "digest": "sha256:" + "b" * 64}] * bases,
+        "artifacts": artifacts,
+    }
+
+
 def _oci_index(name: str) -> bytes:
     """A two-platform index, the shape tools/ci/oci_layout.py reads out of an image's layout."""
     manifests = [
@@ -297,12 +317,19 @@ def manifest_run_problems(release_text: str, artifacts_text: str, work: Path) ->
             out.append(f"manifest: {step['name']!r} names the images {named}, not {pushed}")
     # A staged folder (with a wheel, which the planted control changes) and each index named.
     (work / "staged").mkdir()
-    (work / "staged" / "personalclaw-0.0.0-py3-none-any.whl").write_bytes(b"wheel bytes")
-    (work / "staged" / "personalclaw-0.0.0.tar.gz").write_bytes(b"sdist bytes")
+    staged = ["personalclaw-0.0.0-py3-none-any.whl", "personalclaw-0.0.0.tar.gz"]
+    for name in staged:
+        (work / "staged" / name).write_bytes(name.encode())
     for step in runs:
         for name, index in _IMAGE_ARG.findall(step["run"]):
             (work / index).parent.mkdir(parents=True, exist_ok=True)
             (work / index).write_bytes(_oci_index(name))
+    # What the collect step before the write hands it: one job for the files, one per image.
+    for step in runs:
+        for path in re.findall(r"--builds\s+(\S+)", step["run"]):
+            builds = [_build("artifacts / build", staged, tools="3")]
+            builds += [_build(f"artifacts / images ({n})", [n], bases=1) for n in pushed]
+            (work / path).write_text(json.dumps(builds))
     (work / "tools").symlink_to(REPO / "tools", target_is_directory=True)
     github_output = work / "github-output"
     outputs: dict[str, dict[str, str]] = {}
@@ -341,6 +368,76 @@ def manifest_run_problems(release_text: str, artifacts_text: str, work: Path) ->
             lines = github_output.read_text().splitlines()
             outputs[step["id"]] = dict(line.split("=", 1) for line in lines if "=" in line)
     return out
+
+
+def identity_problems(artifacts_text: str) -> list[str]:
+    """Each job that builds an artifact records what built it and uploads the record, and the
+    manifest job reads the records against their jobs' set-up logs before it writes."""
+    jobs = _load(artifacts_text)["jobs"]
+    out: list[str] = []
+    for job_id in ARTIFACT_JOBS:
+        steps = _steps(jobs.get(job_id) or {})
+        runs = " ".join(str(s.get("run") or "") for s in steps)
+        uploads = [
+            str((s.get("with") or {}).get("name"))
+            for s in steps
+            if str(s.get("uses", "")).startswith("actions/upload-artifact@")
+        ]
+        if "tools/ci/build_identity.py record" not in runs:
+            out.append(f"{job_id} records nothing of what built it")
+        if not any(name.startswith("build-record-") for name in uploads):
+            out.append(f"{job_id} uploads no build record")
+    manifest = jobs.get("manifest") or {}
+    steps = _steps(manifest)
+    names = [s.get("name") for s in steps]
+    collect = [
+        i for i, s in enumerate(steps) if "tools/ci/build_identity.py collect" in str(s.get("run"))
+    ]
+    if not collect or FIRST_MANIFEST_STEP not in names:
+        return [*out, "the manifest job does not read what built each artifact"]
+    if collect[0] > names.index(FIRST_MANIFEST_STEP):
+        out.append("the manifest job reads what built each artifact after it writes the manifest")
+    if (steps[collect[0]].get("env") or {}).get("RUNS_TOKEN") != "${{ github.token }}":
+        out.append("the manifest job reads the job logs with no token of its own run")
+    if manifest.get("permissions") != READS_RUN:
+        out.append(f"the manifest job holds {manifest.get('permissions')!r}, not actions: read")
+    return out
+
+
+def test_every_artifact_job_records_what_built_it_and_the_manifest_reads_it() -> None:
+    _, artifacts, _ = _texts()
+    assert identity_problems(artifacts) == []
+
+
+def test_a_job_that_records_nothing_or_a_manifest_that_reads_nothing_is_caught() -> None:
+    _, artifacts, _ = _texts()
+    for planted, said in [
+        (
+            artifacts.replace("--name desktop-mac", "--name desktop-mac-x", 1).replace(
+                "tools/ci/build_identity.py record --out build-record --name desktop-mac-x",
+                "echo",
+                1,
+            ),
+            "desktop-mac records nothing",
+        ),
+        (
+            artifacts.replace("          name: build-record-build\n", "          name: other\n", 1),
+            "build uploads no build record",
+        ),
+        (
+            artifacts.replace("python3 -I tools/ci/build_identity.py collect", "echo", 1),
+            "does not read what built each artifact",
+        ),
+        (
+            artifacts.replace("          RUNS_TOKEN: ${{ github.token }}\n", "", 1),
+            "with no token of its own run",
+        ),
+    ]:
+        assert planted != artifacts, said
+        assert any(said in p for p in identity_problems(planted)), (
+            said,
+            identity_problems(planted),
+        )
 
 
 def test_the_manifest_jobs_commands_run_on_a_release_shaped_folder(tmp_path: Path) -> None:

@@ -1,8 +1,9 @@
 """The release rehearsal reads an image's OCI layout as the release reads its registry (#3942).
 
 ``tools/ci/oci_layout.py`` takes a layout BuildKit wrote (``--output type=oci``) and gives the
-image's multi-platform index, the bytes the digest-bound manifest records, and each platform's
-SPDX SBOM, from the attestation manifest beside it. Each test builds a layout of its own.
+image's multi-platform index, the bytes the digest-bound manifest records, each platform's SPDX
+SBOM, and the base images each platform's build resolved, from the SLSA provenance beside it
+(#3911's build identities). Each test builds a layout of its own.
 """
 
 from __future__ import annotations
@@ -25,12 +26,35 @@ def _spdx(arch: str) -> dict:
     return {"SPDXID": "SPDXRef-DOCUMENT", "name": f"personalclaw-gateway-{arch}", "packages": []}
 
 
+def _base(arch: str) -> str:
+    return "sha256:" + hashlib.sha256(f"python base {arch}".encode()).hexdigest()
+
+
+def _provenance(arch: str) -> dict:
+    """BuildKit's SLSA v1 provenance for one platform: what its build resolved, by digest."""
+    uri = f"pkg:docker/mirror.gcr.io/library/python@3.13.16-slim?platform=linux%2F{arch}"
+    return {
+        "buildDefinition": {
+            "resolvedDependencies": [
+                {"uri": uri, "digest": {"sha256": _base(arch).removeprefix("sha256:")}},
+                {
+                    "uri": "https://github.com/PersonalClaw/PersonalClaw.git#main",
+                    "digest": {"sha1": "c" * 40},
+                },
+            ]
+        }
+    }
+
+
 def _layout(
     tmp_path: Path,
     *,
     platforms=("amd64", "arm64"),
     sbom_for=("amd64", "arm64"),
     spdx=_spdx,
+    provenance_for=("amd64", "arm64"),
+    provenance=_provenance,
+    slsa=oci_layout.SLSA_PREDICATES[0],
     indexes=1,
 ) -> Path:
     """A layout tar: one multi-platform index with an image manifest and an attestation per arch."""
@@ -73,6 +97,17 @@ def _layout(
                     "mediaType": "application/vnd.in-toto+json",
                     "digest": statement,
                     "annotations": {oci_layout.PREDICATE_TYPE: oci_layout.SPDX_PREDICATE},
+                }
+            )
+        if arch in provenance_for:
+            statement = put(
+                json.dumps({"predicateType": slsa, "predicate": provenance(arch)}).encode()
+            )
+            layers.append(
+                {
+                    "mediaType": "application/vnd.in-toto+json",
+                    "digest": statement,
+                    "annotations": {oci_layout.PREDICATE_TYPE: slsa},
                 }
             )
         attestation = put(
@@ -119,6 +154,16 @@ def test_the_index_is_the_bytes_a_registry_would_store_and_each_platform_has_its
         "personalclaw-gateway.index.json",
         "personalclaw-gateway-amd64.spdx.json",
         "personalclaw-gateway-arm64.spdx.json",
+        "personalclaw-gateway-amd64.bases.json",
+        "personalclaw-gateway-arm64.bases.json",
+    ]
+    # Each platform's bases are the images its build resolved, by digest, as BuildKit's
+    # provenance names them; the source repository it read is not an image and is not one.
+    assert json.loads((out / "personalclaw-gateway-arm64.bases.json").read_text()) == [
+        {
+            "image": "pkg:docker/mirror.gcr.io/library/python@3.13.16-slim?platform=linux%2Farm64",
+            "digest": _base("arm64"),
+        }
     ]
     index = json.loads((out / "personalclaw-gateway.index.json").read_bytes())
     assert index["mediaType"] == INDEX
@@ -145,6 +190,21 @@ def test_the_index_it_writes_is_byte_for_byte_the_blob(tmp_path: Path) -> None:
         ),
         ({"spdx": lambda arch: {"SPDXID": "something-else"}}, "malformed SPDX document"),
         ({"indexes": 2}, "names 2 multi-platform indexes, not one"),
+        ({"provenance_for": ("amd64",)}, "linux/arm64: missing SLSA provenance attestation"),
+        (
+            {"provenance": lambda arch: {"buildDefinition": {"resolvedDependencies": []}}},
+            "linux/amd64: the provenance names no base image",
+        ),
+        (
+            {
+                "provenance": lambda arch: {
+                    "buildDefinition": {
+                        "resolvedDependencies": [{"uri": "pkg:docker/x@1", "digest": {}}]
+                    }
+                }
+            },
+            "linux/amd64: pkg:docker/x@1 has no sha256 digest",
+        ),
     ],
 )
 def test_what_the_release_reads_and_the_layout_lacks_fails_it(
@@ -164,3 +224,16 @@ def test_the_script_exits_1_naming_the_problem(
     )
     assert "missing SPDX SBOM attestation" in capsys.readouterr().err
     assert oci_layout.main([str(layout)]) == 2, "a usage error is input it cannot rely on"
+
+
+def test_slsa_v0_2_provenance_names_its_bases_as_materials(tmp_path: Path) -> None:
+    """BuildKit wrote v0.2 before v1; a builder that still does is read the same way."""
+
+    def materials(arch: str) -> dict:
+        return {"materials": _provenance(arch)["buildDefinition"]["resolvedDependencies"]}
+
+    out = tmp_path / "out"
+    layout = _layout(tmp_path, provenance=materials, slsa=oci_layout.SLSA_PREDICATES[1])
+    oci_layout.write(layout, "personalclaw-gateway", out)
+    bases = json.loads((out / "personalclaw-gateway-amd64.bases.json").read_text())
+    assert [b["digest"] for b in bases] == [_base("amd64")]
