@@ -42,6 +42,10 @@ import { stopLoop } from '../loop/stopLoop'
 import { Segmented } from '../../ui/Segmented'
 import { TaskList } from '../tasks/TasksSection'
 
+/** All tasks is a 44 px target at the compact widths (320 to 768 px), where it is a phone's way to
+ *  every project's tasks, and the header's own size above them (#3905). */
+export const ALL_TASKS_TARGET = 'max-lg:min-h-11 max-lg:min-w-11'
+
 /** Projects navigation — the first-class work unit tying Goal Loops, Code projects,
  *  and Tasks together under one context-continuous container.
  *    #/projects        → the project list
@@ -198,8 +202,8 @@ function ProjectListPage({ onOpen, onOpenLoops, onOpenTasks, query, setQuery }: 
         // and Home's "loops running" pill lands here — which had no way to the loops at all
         // (measured 2026-09-25).
         // All tasks, every project's, from the page the sidebar's Projects row opens: the way to it
-        // where no ⌘K is, a phone's (#3818).
-        right={<HeaderActions><HeaderControl icon={ListChecks} label="All tasks" onClick={onOpenTasks} /><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
+        // where no ⌘K is, a phone's (#3818). So on a phone it is a 44 px target (ALL_TASKS_TARGET).
+        right={<HeaderActions><HeaderControl icon={ListChecks} label="All tasks" onClick={onOpenTasks} className={ALL_TASKS_TARGET} /><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
       {/* Raw: no primitive draws a file picker. Forwarded to by the header's Import control, which is the keyboard-reachable control. */}
       <input ref={importInput} type="file" accept=".zip,application/zip" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void previewImport(file) }} />
