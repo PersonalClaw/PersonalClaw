@@ -56,13 +56,14 @@ covers every rule in it:
   `main`. So a hand-pushed `v*` tag is refused, the maintainer's included, and every tag's
   `release.yml` is one `main` holds.
 
-`release-tags` is applied (2026-10-23): release tags are immutable today, and creating one still
-works as the release runbook says. `release-tag-creation` waits in `.github/rulesets/pending/`
-until that App exists; it is applied, and moved up beside the others with the App's id in its
-bypass list, in one step, so the weekly report starts expecting it the day it is live. `tests/rails/test_ci_rulesets_tree.py`
-holds both files to these rules, and the creation ruleset to that one App.
+Both are applied (2026-10-23): `release-tags` first, then `release-tag-creation`, naming the App
+`personalclaw-ci-controller` (id 5444147), once a rehearsal through `release-tag.yml` had shown
+the path end to end. `tests/rails/test_ci_rulesets_tree.py` holds both files to these rules, and
+the creation ruleset to that one App with its real id. The weekly report lets exactly that App's
+bypass through, on `refs/tags/v` and `refs/tags/rehearsal-v` (`allowed bypass` in
+`.github/settings-expected.json`); any other bypass fails it.
 
-**The tagging workflow.** `.github/workflows/release-tag.yml` is how a tag will be made: the
+**The tagging workflow.** `.github/workflows/release-tag.yml` is how a tag is made: the
 maintainer dispatches it on `main` with the tag and the commit
 (`gh workflow run release-tag.yml --ref main -f tag=vX.Y.Z -f commit=<sha>`).
 `python -m tools.ci release-tag` (`tools/ci/release_tag.py`), from `main`'s own checkout, refuses
@@ -76,9 +77,8 @@ before the create. `-f rehearsal=true` creates `rehearsal-<tag>` instead: the sa
 same App, under a name no `v*` rule and no release trigger sees, which is how the path is proved
 without a release (on a scratch copy of the creation ruleset over `refs/tags/rehearsal-v*`).
 `tests/rails/test_ci_release_tag_tree.py` holds the workflow's shape, both steps passing the
-rehearsal on alike. Until
-`release-tag-creation` is applied, the [release runbook](release-runbook.md#tagging)'s manual
-tag still works; from then on it is refused, and this workflow is the way.
+rehearsal on alike. A hand-pushed `v*` tag is refused, the maintainer's included (the
+[release runbook](release-runbook.md#tagging) says how to tag).
 
 The `release`, `release-client` and `website-follow` environments deploy only from `v*` tags,
 so no branch's copy of `release.yml`, dispatched or pushed, can reach the PyPI publishers or the

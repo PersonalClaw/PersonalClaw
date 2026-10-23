@@ -28,6 +28,12 @@ _REPOSITORIES = {
     "PersonalClaw/personalclaw.dev",
 }
 _READ_STEP = "read the settings and compare, and on main write the drift issue"
+#: The one bypass the report lets pass: the release controller's App creating a release tag or
+#: its rehearsal (#4584), the release-tag-creation ruleset's one bypass actor, in core alone.
+_CONTROLLER_BYPASS = [
+    {"actor_name": "personalclaw-ci-controller[bot]", "ref_prefix": "refs/tags/v"},
+    {"actor_name": "personalclaw-ci-controller[bot]", "ref_prefix": "refs/tags/rehearsal-v"},
+]
 #: The environments that hold a credential for a job only main runs: the report's read token
 #: and the release controller's App key (#4584).
 _MAIN_ONLY = ("settings-report", "ci-controller")
@@ -82,8 +88,9 @@ def _expected_problems(data: dict[str, Any]) -> list[str]:
         missing = set(settings_report.SETTINGS) - set(entry)
         if missing:
             found.append(f"{repo} misses {sorted(missing)}")
-        if entry.get("allowed bypass"):
-            found.append(f"{repo} allows a bypass: {entry['allowed bypass']!r}")
+        allowed = _CONTROLLER_BYPASS if repo == "PersonalClaw/PersonalClaw" else []
+        if entry.get("allowed bypass") != allowed:
+            found.append(f"{repo} allows a bypass: {entry.get('allowed bypass')!r}")
     core = repos.get("PersonalClaw/PersonalClaw") or {}
     for name in _TAG_ONLY:
         deploys = ((core.get("environments") or {}).get(name) or {}).get("deployment")
@@ -148,6 +155,24 @@ def test_the_expected_file_names_every_setting_and_keeps_the_credential_on_main(
                 {"allowed bypass": [{"actor_name": "x", "ref_prefix": "refs/heads/"}]}
             ),
             "allows a bypass",
+        ),
+        (
+            lambda d: d["repositories"]["PersonalClaw/PersonalClaw"]["allowed bypass"].append(
+                {"actor_name": "personalclaw-ci-controller[bot]", "ref_prefix": "refs/heads/"}
+            ),
+            "PersonalClaw/PersonalClaw allows a bypass",
+        ),
+        (
+            lambda d: d["repositories"]["PersonalClaw/PersonalClaw"]["allowed bypass"][0].update(
+                actor_name="keyurgolani"
+            ),
+            "PersonalClaw/PersonalClaw allows a bypass",
+        ),
+        (
+            lambda d: d["repositories"]["PersonalClaw/PersonalClaw"]["allowed bypass"][0].update(
+                ref_prefix="refs/tags/"
+            ),
+            "PersonalClaw/PersonalClaw allows a bypass",
         ),
         (
             lambda d: d["repositories"]["PersonalClaw/PersonalClawApps"].pop("security"),
