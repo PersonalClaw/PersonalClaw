@@ -14,6 +14,7 @@
         "secret_scanning_push_protection": "enabled"
       },
       "dependabot alerts": true,
+      "dependency graph": true,
       "codeql default setup": {
         "languages": [
           "actions",
@@ -105,6 +106,7 @@
         "secret_scanning_push_protection": "enabled"
       },
       "dependabot alerts": true,
+      "dependency graph": true,
       "codeql default setup": {
         "languages": [
           "actions",
@@ -175,6 +177,7 @@
         "secret_scanning_push_protection": "enabled"
       },
       "dependabot alerts": true,
+      "dependency graph": true,
       "codeql default setup": {
         "languages": [
           "actions",

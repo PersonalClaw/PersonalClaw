@@ -2551,6 +2551,7 @@ What it reads, for each repository:
 | `merge methods` | merge commits, squash and rebase | `SETTINGS_READ_TOKEN`, through GraphQL: the repository answer shows them only to a caller that may push |
 | `security` | secret scanning, push protection, Dependabot security updates | `SETTINGS_READ_TOKEN` |
 | `dependabot alerts` | on or off | `SETTINGS_READ_TOKEN` |
+| `dependency graph` | on (its SBOM answers) or off; dependency review fails on every pull request without it | the job token |
 | `codeql default setup` | its state, query suite and languages | `SETTINGS_READ_TOKEN` |
 | `actions` | whether Actions run, the allowed actions, `sha_pinning_required` | `SETTINGS_READ_TOKEN` |
 | `workflow token` | the default token's permissions, whether Actions may approve pull requests | `SETTINGS_READ_TOKEN` |
@@ -2577,7 +2578,7 @@ the ruleset file) together, in a pull request that says why. A setting changed b
 drift the next Monday.
 
 `tests/test_ci_settings_report.py` holds each row on planted API answers: a secret scanning,
-push protection, CodeQL or SHA-pinning setting turned off, a widened workflow token, a changed
+push protection, CodeQL or SHA-pinning setting turned off, a dependency graph turned off, a widened workflow token, a changed
 fork policy, a merge method turned back on, an environment opened to every ref or stripped of
 its reviewer, an added environment, classic protection put back, a removed required check, a
 required check bound to another App, an added bypass actor, a ruleset with no file, a deleted
