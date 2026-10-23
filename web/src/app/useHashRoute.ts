@@ -172,7 +172,14 @@ export function useHashRoute(fallback: string): HashRoute {
   const ownPage = { route: state.route, sub: state.sub }
   const setQuery = (patch: Record<string, string | null | undefined>, opts?: { replace?: boolean; remount?: boolean }) => {
     const cur = parseHash(fallback)
-    if (cur.route !== ownPage.route || cur.sub !== ownPage.sub) return
+    if (cur.route !== ownPage.route || cur.sub !== ownPage.sub) {
+      // Said in a dev build, so a page that writes after its own navigate is seen, not lost: the
+      // page and the keys it wrote, never their values.
+      if (import.meta.env.DEV) {
+        console.debug('setQuery dropped a write from a page no longer showing', { route: ownPage.route, sub: ownPage.sub, keys: Object.keys(patch) })
+      }
+      return
+    }
     const merged = { ...cur.query }
     for (const [k, v] of Object.entries(patch)) {
       if (v == null || v === '') delete merged[k]
