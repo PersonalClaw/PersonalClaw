@@ -144,8 +144,9 @@ def test_the_inert_population_shrank_by_exactly_these_seven() -> None:
     The list only shrinks, and deleting a line is legitimate only when the census stopped
     finding the surface — a surface that is NEW means a reader is missing, and listing it reads
     green while guarding nothing. Seven ``config_reader`` surfaces left the census here (four
-    leaves deleted, three given readers), so the list holds exactly six, by name: the four
-    frontend-read ``voice.*`` leaves the Python census cannot see,
+    leaves deleted, three given readers), so the list holds exactly these, by name: the
+    frontend-read ``voice.*`` leaves the Python census cannot see (five since
+    ``voice.session_map_audio_enabled``, which the chat page reads for the Session Map),
     ``routing.energy_sampling`` (deliberately control-less), and ``learning.min_evidence``.
     """
     from scripts.generate_inert_surface_baseline import listed
@@ -158,6 +159,7 @@ def test_the_inert_population_shrank_by_exactly_these_seven() -> None:
         "config_reader:voice.duplex_mute_enabled",
         "config_reader:voice.exit_phrases",
         "config_reader:voice.push_to_talk_chord",
+        "config_reader:voice.session_map_audio_enabled",
     }
     for path_key, _cls, _leaf in DELETED:
         assert f"config_reader:{path_key}" not in surfaces
