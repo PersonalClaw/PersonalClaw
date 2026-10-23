@@ -259,7 +259,7 @@ class TestDeclaredFileChangeBecomesAChip:
         assert [c["path"] for c in session._file_changes] == ["a.py", "b.py"]
 
     def test_a_huge_snapshot_is_capped(self):
-        from personalclaw.dashboard.chat_runner import _MAX_FILE_SNAPSHOT
+        from personalclaw.dashboard.file_changes import _MAX_FILE_SNAPSHOT
 
         session = _session()
         _capture_declared_file_change(
