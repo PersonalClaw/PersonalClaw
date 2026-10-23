@@ -8518,13 +8518,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             "two steps swapped",
             catalogue.CATALOGUE,
             '  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2",'
-            ' "stateful"], workdir = "web" },\n'
+            ' "matrix", "idle", "stateful"], workdir = "web" },\n'
             '  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"],'
             ' workdir = "web" },\n',
             '  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"],'
             ' workdir = "web" },\n'
             '  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2",'
-            ' "stateful"], workdir = "web" },\n',
+            ' "matrix", "idle", "stateful"], workdir = "web" },\n',
             expect="e2e: command step 2 is out of ci.yml's order",
         ),
         _plant(
@@ -8552,7 +8552,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
                     ' PW_SCRATCH = "{runner_temp}/pw" }',
                 ),
             ),
-            expect="e2e-stateful: command step 1",
+            expect="e2e-stateful: command step 3",
         ),
         _plant(
             "a step listed twice",

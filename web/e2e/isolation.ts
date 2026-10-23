@@ -10,16 +10,26 @@
 // own preview server, because `vite preview` proxies `/api` to ONE gateway port; that is two boots
 // per worker for two specs whose whole runtime is under two minutes.
 //
+// A spec that MEASURES the home rather than only reading its own part of it runs on a home of its
+// own: `alone`, in an invocation that runs nothing but it (and the auth step), on a gateway and
+// home that invocation made, as the visual rail does. The UI quality matrix compares every surface
+// with baselines taken on a home nothing else wrote to, and the idle-cost probe counts what an idle
+// page schedules; in the shared project they measured the threads, chats and turns the other specs
+// left (#3905). Each such home is one project of the same name, which the config adds only to an
+// invocation whose file filter names that home's specs and nothing else (`npm run e2e:ui`).
+//
 // Every spec in `e2e/` must be listed here. `playwright.config.ts` refuses to load when one is
 // missing, and the isolation reporter fails a run in which a spec runs in a project its mode does
 // not allow. `src/design/e2eIsolation.test.ts` holds both to their planted violations.
 
-export type Isolation = 'shared' | 'serial'
+export type Isolation = 'shared' | 'serial' | 'alone'
 
 export interface SpecIsolation {
   readonly mode: Isolation
   /** What the spec writes or reads that decides its mode. */
   readonly why: string
+  /** An `alone` spec's home: the project, and the invocation, it runs in, with no other spec's. */
+  readonly home?: string
 }
 
 export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
@@ -50,15 +60,17 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   'sidebarHoldsItsPlace.spec.ts': { mode: 'shared', why: 'answers its thread reads with route stubs' },
   'focusAndReadingModes.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
   'idleCost.spec.ts': {
-    mode: 'shared',
+    mode: 'alone',
+    home: 'idle',
     why:
-      'reads Home and Chat and writes nothing; a window in which another spec pushed something to the ' +
-      'page or ran a turn is thrown away and measured again',
+      'counts what an idle Home and Chat schedule; in the shared project the other specs\' turns and ' +
+      'pushes reached its windows, and their threads were on the page it measured',
   },
   'nonAxeA11yChecks.spec.ts': { mode: 'shared', why: 'plants its defects in the page, writes nothing' },
   'surfaceMatrix.control.spec.ts': {
-    mode: 'shared',
-    why: 'plants one defect of each kind in the page and reads what the matrix reports, writes nothing',
+    mode: 'alone',
+    home: 'matrix',
+    why: 'plants one defect of each kind in the page and reads what the matrix reports, so it runs where the matrix runs',
   },
   'onboardingGeometry.spec.ts': {
     mode: 'shared',
@@ -77,8 +89,11 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
     why: 'answers its approval, inbox and chat-list reads with route stubs; its one scripted turn adds a chat session of its own',
   },
   'surfaces.spec.ts': {
-    mode: 'shared',
-    why: 'reads every route and opened surface; it writes only its own baseline files, never to the gateway',
+    mode: 'alone',
+    home: 'matrix',
+    why:
+      'holds every route and opened surface to baselines taken on a home nothing else wrote to; in the ' +
+      'shared project it measured the threads and chats the other specs left as findings',
   },
   'visual.spec.ts': {
     mode: 'shared',
@@ -98,15 +113,44 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   },
 }
 
-/** The projects a spec of each mode may run in. `setup` is the auth step, not a spec. */
+/** The projects a spec of each mode may run in. `setup` is the auth step, not a spec. An `alone`
+ *  spec runs only in its own home's project (`homeOf`). */
 export const PROJECTS_FOR: Readonly<Record<Isolation, readonly string[]>> = {
   shared: ['smoke', 'chromium'],
   serial: ['stateful', 'stateful-again-1', 'stateful-again-2'],
+  alone: [],
 }
 
 export const STATEFUL_SPECS: readonly string[] = Object.keys(SPEC_ISOLATION).filter(
   (spec) => SPEC_ISOLATION[spec].mode === 'serial',
 )
+
+/** Each home of its own, by name, with the specs that run on it. */
+export const ALONE_HOMES: Readonly<Record<string, readonly string[]>> = Object.entries(SPEC_ISOLATION).reduce<
+  Record<string, string[]>
+>((homes, [spec, entry]) => {
+  if (entry.mode === 'alone' && entry.home) (homes[entry.home] ??= []).push(spec)
+  return homes
+}, {})
+
+export const ALONE_SPECS: readonly string[] = Object.values(ALONE_HOMES).flat()
+
+/** The home `file` runs on alone, or '' for a spec that shares one. */
+export function homeOf(file: string): string {
+  const entry = SPEC_ISOLATION[file]
+  return entry?.mode === 'alone' ? (entry.home ?? '') : ''
+}
+
+/** Why a run of these projects shares a home of its own with another project's specs, or ''. */
+export function sharedHomeViolation(projects: Iterable<string>): string {
+  const ran = [...new Set(projects)].filter((p) => p !== 'setup').sort()
+  const homes = ran.filter((p) => p in ALONE_HOMES)
+  if (!homes.length || ran.length === 1) return ''
+  return (
+    `the ${homes.join(' and ')} home${homes.length > 1 ? 's' : ''} ran in one invocation with ` +
+    `${ran.filter((p) => p !== homes[0]).join(', ')}: a spec that runs alone measures a home only it wrote to`
+  )
+}
 
 /** The specs in `files` that the table does not classify. */
 export function unclassified(files: readonly string[]): string[] {
@@ -118,6 +162,14 @@ export function isolationViolation(project: string, file: string): string {
   if (project === 'setup') return ''
   const entry = SPEC_ISOLATION[file]
   if (!entry) return `${file} has no isolation mode in e2e/isolation.ts`
+  if (entry.mode === 'alone') {
+    if (!entry.home) return `${file} is alone but names no home in e2e/isolation.ts`
+    if (project === entry.home) return ''
+    return (
+      `${file} is alone (${entry.why}) but ran in the ${project} project, which is not its own home ` +
+      `(${entry.home})`
+    )
+  }
   if (!PROJECTS_FOR[entry.mode].includes(project)) {
     return (
       `${file} is ${entry.mode} (${entry.why}) but ran in the ${project} project, which does not ` +

@@ -38,19 +38,23 @@ Two failure modes this closes, both of which read as success:
 
 ## One run, three ways to share the gateway
 
-The harness builds nothing. It serves the `web/dist` that `make web-build` (or CI's `web` job) built and stamped, and the preview refuses a dist whose stamp does not match the checked-out sources (`scripts/spa_dist_freshness.py check --require-stamp`), so a stale or unstamped build fails before any test runs. Every spec but the visual rail runs in one invocation, `npx playwright test --grep-invert @visual`, in this order:
+The harness builds nothing. It serves the `web/dist` that `make web-build` (or CI's `web` job) built and stamped, and the preview refuses a dist whose stamp does not match the checked-out sources (`scripts/spa_dist_freshness.py check --require-stamp`), so a stale or unstamped build fails before any test runs. Every spec but the visual rail and the specs that run alone (below) runs in one invocation, `npx playwright test --grep-invert @visual`, in this order:
 
 1. **`smoke`** — `smoke.spec.ts`, the render smoke: the built bundle mounts on six routes with every `/api` call answered in the page, so it reaches no gateway. Its planted render crash, widget catch and uncaught error must each be caught. The local pre-push gate runs this project alone: `PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps`.
 2. **`chromium`** — every spec `isolation.ts` calls *shared*, in parallel against the one gateway and home.
 3. **`stateful`** — the specs `isolation.ts` calls *serial* (`staleWrite`, `deployedArtifacts`: each writes what other specs read), one worker, after the shared project has finished whatever it answered. Then **`stateful-again-1`** and **`stateful-again-2`** run them once more in an order drawn from a seed: `PW_STATEFUL_SEED` when set, so a run can be replayed, otherwise a random one.
 
+**A spec that measures the home runs alone** (`alone` in `isolation.ts`, #3905): the UI quality matrix and its control (the `matrix` home), and the idle-cost probe (the `idle` home), each in an invocation of its own, on a gateway and home that invocation made, as the visual rail does. In the shared project the matrix measured the threads and chats the other specs left, against baselines taken on a home nothing else wrote to, and the idle-cost probe's windows met their turns. A home's project is in the config only when the file filter names that home's specs and nothing else (`npm run e2e:ui` runs each so); `chromium` never runs them, and a filter that names one beside another spec is refused before a server starts.
+
+**One timezone.** The gateway's `TZ` and the browser's `timezoneId` are both `RUN_TIMEZONE` (`Etc/UTC`, `runPlaces.ts`), so a time on a surface reads the same on a Mac and on CI; `src/design/e2eTimezone.test.ts` names a spec that sets its own.
+
 Each pass starts only once the one before it has ended. A run that names only the stateful specs chains the passes by dependencies, so a red pass skips the ones after it; a full run makes each pass the teardown of a project further out (`chromium`, `setup`, then the empty `stateful-anchor`), so the stateful set runs whatever the shared specs answered. `playwright.config.ts` says why each shape is the only one Playwright allows where it is used.
 
-Every test in the report carries an `isolation` annotation (its mode and why), every second-pass test a `stateful-seed` annotation, and the run's `metadata` carries the seed and the order. `isolationReporter.ts` fails a run in which a spec runs in a project its mode does not allow, or in which a test never ran (a project it needs failed, or the run stopped first), and `playwright.config.ts` refuses to load when a spec has no mode at all; `src/design/e2eIsolation.test.ts` holds each to a planted violation, the passes' order and a red first pass on the real projects among them. A new spec is classified in `isolation.ts` before it can run.
+Every test in the report carries an `isolation` annotation (its mode and why), every second-pass test a `stateful-seed` annotation, and the run's `metadata` carries the seed and the order. `isolationReporter.ts` fails a run in which a spec runs in a project its mode does not allow, or a home of its own shares the run with another project, or in which a test never ran (a project it needs failed, or the run stopped first), and `playwright.config.ts` refuses to load when a spec has no mode at all; `src/design/e2eIsolation.test.ts` holds each to a planted violation, the passes' order and a red first pass on the real projects among them. A new spec is classified in `isolation.ts` before it can run.
 
-### On CI: two shards and the stateful run, merged
+### On CI: two shards and the runs on homes of their own, merged
 
-CI splits that one run over three jobs. Each **`e2e-shard`** leg runs half of `smoke` and `chromium` (`--shard=N/2`, with `PW_STATEFUL_CHAIN=0`, so no stateful project), and **`e2e-stateful`** names the two stateful specs, so it runs `setup`, the first pass and the seeded second pass. Each leaves one blob report. The **`e2e`** job merges them and judges the merged report as one run:
+CI splits the browser run over three jobs. Each **`e2e-shard`** leg runs half of `smoke` and `chromium` (`--shard=N/2`, with `PW_STATEFUL_CHAIN=0`, so no stateful project). **`e2e-stateful`** makes three runs, each on a gateway and home of its own: the `matrix` home, the `idle` home, and the two stateful specs named, so it runs `setup`, the first pass and the seeded second pass. Each run leaves one blob report (`shard-1`, `shard-2`, `matrix`, `idle`, `stateful`). The **`e2e`** job merges them and judges the merged report as one run:
 
 - `merge-legs.mjs` refuses to merge when a leg left no blob (or two), naming the leg: a leg that never ran or never finished is a red, not a smaller report. It writes the seed and order the second pass ran in over the metadata, which Playwright's merge takes from one blob.
 - `assert-no-route-skips.mjs`, as before.
@@ -69,9 +73,9 @@ Whether the check is required on pull requests is a branch-protection setting th
 
 | Command | What it does |
 |---|---|
-| `npm run e2e` | Everything, as **two** invocations: the non-visual specs, then the visual rail on its own fresh gateway — **must be zero-diff / zero serious-critical** |
+| `npm run e2e` | Everything, as **four** invocations: the non-visual specs, the matrix and the idle-cost probe each on a home of its own, then the visual rail on its own fresh gateway — **must be zero-diff / zero serious-critical** |
 | `npm run e2e:visual` | Visual regression only |
-| `npm run e2e:ui` | The UI quality check's browser matrix only (`surfaces.spec.ts` and its control, and the idle-cost probe); add `--update-snapshots` to rewrite its baselines. Its other two parts are `npm run ui:ratchet` and `npm run design:detect` |
+| `npm run e2e:ui` | The UI quality check's browser matrix only (`surfaces.spec.ts` and its control, then the idle-cost probe, each on a home of its own); `npx playwright test e2e/surfaces.spec.ts --update-snapshots` rewrites the matrix's baselines. Its other two parts are `npm run ui:ratchet` and `npm run design:detect` |
 | `npm run e2e:a11y` | The Session Map axe scans only |
 | `npm run e2e:update` | **Regenerate** the visual baselines — visual-only, INTENTIONALLY, when a real visual change is expected |
 | `npm run e2e:report` | Open the last HTML report |

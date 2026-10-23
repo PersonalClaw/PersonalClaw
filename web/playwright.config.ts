@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 import { readdirSync } from 'node:fs'
-import { SPEC_ISOLATION, STATEFUL_SPECS, seededOrder, unclassified } from './e2e/isolation'
-import { choosePlaces, cleanUpRunAtExit, gatewayEnvPrefix } from './e2e/runPlaces'
+import { ALONE_HOMES, ALONE_SPECS, SPEC_ISOLATION, STATEFUL_SPECS, homeOf, seededOrder, unclassified } from './e2e/isolation'
+import { RUN_TIMEZONE, choosePlaces, cleanUpRunAtExit, gatewayEnvPrefix } from './e2e/runPlaces'
 
 // ── Playwright visual-regression + a11y harness ────────────────────────────
 // The SAFETY RAIL for design-system consistency work: every
@@ -30,6 +30,15 @@ import { choosePlaces, cleanUpRunAtExit, gatewayEnvPrefix } from './e2e/runPlace
 // listener. axe then reports a clean tree for 96 surfaces it never actually
 // visited, and the one test that noticed (`command palette [opened]`) failed on
 // its mounted-ness floor while naming the palette instead of the missing backend.
+
+// ── The run's one timezone, the runner's and its workers' too ──────────────
+// The specs build fixed clocks and stubbed reads in Node, before the browser sees them: the week
+// the matrix stubs places its fires with local `Date`s and names its zone with `Intl`, and a
+// FIXED_CLOCK time without an offset is local too. Left to the machine, this Mac's runner put every
+// fire 8 hours from where CI's did, and named America/Los_Angeles where CI names UTC (#3905). So the
+// runner reads RUN_TIMEZONE too, set here before any spec is loaded, and every worker, which this
+// config's environment starts, inherits it.
+process.env.TZ = RUN_TIMEZONE
 
 // ── Where this run lives: a home and two ports of its own ───────────────────
 // Two runs on one machine must not meet. The runner's first load of this config makes the
@@ -269,6 +278,30 @@ if (process.env.PW_STATEFUL_ONLY === undefined) {
 }
 const STATEFUL_ONLY = process.env.PW_STATEFUL_ONLY === '1'
 
+// A spec that runs alone (`alone` in e2e/isolation.ts) runs in an invocation of its own, on the
+// gateway and home this config makes for that invocation, as the visual rail does: its home's
+// project is in the list only when the file filter names that home's specs and nothing else
+// (`npm run e2e:ui` runs each home so). `chromium` never runs them, so a full run leaves them out,
+// and a filter that names one beside any other spec is refused here, before a server starts.
+// Decided once, in the runner, and handed to the workers through the environment.
+if (process.env.PW_ALONE_HOME === undefined) {
+  const homes = new Set(
+    fileFilters(process.argv).map((f) => {
+      const base = f.split('/').pop() ?? f
+      const spec = base ? ALONE_SPECS.find((s) => f.endsWith(s) || s.includes(base)) : undefined
+      return spec ? homeOf(spec) : ''
+    }),
+  )
+  if (homes.size > 1 && [...homes].some(Boolean)) {
+    throw new Error(
+      `e2e/isolation.ts runs ${ALONE_SPECS.join(', ')} alone, each home (${Object.keys(ALONE_HOMES).join(', ')}) in an ` +
+        'invocation of its own (npm run e2e:ui); this run names them beside other specs',
+    )
+  }
+  process.env.PW_ALONE_HOME = homes.size === 1 ? [...homes][0] : ''
+}
+const ALONE_HOME = process.env.PW_ALONE_HOME
+
 // The local pre-push browser check runs the smoke project alone, which needs no gateway, so
 // the gateway is not booted for it.
 const ONLY_SMOKE = !!process.env.PW_ONLY_SMOKE
@@ -293,6 +326,8 @@ export default defineConfig({
     gatewayPort: String(GATEWAY_PORT),
     storageState: STORAGE_STATE,
     isolation: Object.fromEntries(Object.entries(SPEC_ISOLATION).map(([spec, { mode }]) => [spec, mode])),
+    isolationHome: Object.fromEntries(ALONE_SPECS.map((spec) => [spec, homeOf(spec)])),
+    timezone: RUN_TIMEZONE,
   },
   // Baselines are platform-qualified (see snapshotPathTemplate) so a mac dev
   // and linux CI keep separate goldens.
@@ -360,6 +395,8 @@ export default defineConfig({
     // the harness starts. Point PW_BASE_URL/STORAGE_STATE at your own pair (plus
     // PW_NO_SERVER=1) to drive an already-running gateway instead.
     storageState: STORAGE_STATE,
+    // The run's one timezone, which the gateway reads too (RUN_TIMEZONE, e2e/runPlaces.ts).
+    timezoneId: RUN_TIMEZONE,
   },
   projects: [
     // A full run's outermost project: it holds no test, and owns the last pass (see above).
@@ -389,12 +426,23 @@ export default defineConfig({
       // before any spec here; it is not one of these dependencies, because a dependency that fails
       // skips its dependents, and a red smoke would then hide every shared spec in the run.
       dependencies: ['setup'],
-      // Every spec but the smoke and the stateful set. Not `visual.spec.ts`: a testIgnore would
+      // Every spec but the smoke, the stateful set and the specs that run alone. Not `visual.spec.ts`: a testIgnore would
       // hide it from its own `--project=chromium` invocation, so `--grep-invert @visual` leaves it
       // out of this one.
-      testIgnore: fileMatcher(['smoke.spec.ts', ...STATEFUL_SPECS]),
+      testIgnore: fileMatcher(['smoke.spec.ts', ...STATEFUL_SPECS, ...ALONE_SPECS]),
       ...(STATEFUL_CHAIN && !STATEFUL_ONLY ? { teardown: 'stateful' } : {}),
     },
+    // A home of its own: the one project of an invocation that names only that home's specs.
+    ...(ALONE_HOME
+      ? [
+          {
+            name: ALONE_HOME,
+            use: { ...devices['Desktop Chrome'] },
+            testMatch: fileMatcher(ALONE_HOMES[ALONE_HOME]),
+            dependencies: ['setup'],
+          },
+        ]
+      : []),
     ...(STATEFUL_CHAIN
       ? [
           {

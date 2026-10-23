@@ -71,6 +71,14 @@ export function userHomeFor(home: string): string {
   return join(dirname(home), `user-home-for-${basename(home)}`)
 }
 
+/** The one timezone a run reads, the gateway's (`TZ`, which `gatewayEnvPrefix` sets) and the
+ *  browser's (`use.timezoneId` in playwright.config.ts). Whatever the machine's own was, a time on
+ *  a surface read differently on each, so a baseline taken on one was a red on the other: a
+ *  trigger's next run said PDT on the Mac that took it and UTC on CI (#3905). `Etc/UTC`, not
+ *  `UTC`, because a Linux runner's own zone is spelled so, and the gateway names the zone it read.
+ *  `src/design/e2eTimezone.test.ts` names any spec that sets a timezone of its own. */
+export const RUN_TIMEZONE = 'Etc/UTC'
+
 /** Every variable the gateway reads to find a folder outside its home. Each is taken out of the
  *  gateway's environment (`gatewayEnvPrefix`), so the gateway finds those folders under the run's
  *  `HOME` or not at all, never where the machine's shell points them.
@@ -147,6 +155,10 @@ export function gatewayEnvPrefix(): string {
     `K="$(awk '${credentialNamesAwk()}')" || exit 1;`,
     `unset ${GATEWAY_UNSET.join(' ')} ${GATEWAY_CREDENTIAL_NAMES.join(' ')} $K K;`,
     'HOME="$U"; export HOME;',
+    `TZ=${RUN_TIMEZONE}; export TZ;`,
+    // Loopback, whatever the shell that started the run says: the gateway's own default, pinned so
+    // an inherited PERSONALCLAW_BIND_HOST can never open a test gateway to the network.
+    'PERSONALCLAW_BIND_HOST=127.0.0.1; export PERSONALCLAW_BIND_HOST;',
   ].join(' ')
 }
 

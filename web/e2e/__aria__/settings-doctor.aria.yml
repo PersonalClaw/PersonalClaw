@@ -89,7 +89,7 @@
   - group: POSIX resource-limits (rlimit) availability POSIX resource limits (rlimit) available — the gateway raises its own NOFILE ceiling at boot and the sandbox shim can apply rlimit ceilings.
   - text: Scheduling
   - button "Investigate in chat"
-  - group: Wall-clock timezone for timed triggers timed triggers resolve to America/Los_Angeles (from machine, UTC-#)
+  - group: Wall-clock timezone for timed triggers timed triggers resolve to Etc/UTC (from machine, UTC+#)
   - text: Automations
   - button "Investigate in chat"
   - group: The automations file can be read The automations file can be read.

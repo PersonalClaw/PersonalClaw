@@ -1284,12 +1284,12 @@ jobs:
     #     (PW_STATEFUL_CHAIN=0). Playwright splits by test count, not time, so leg 1 held the
     #     smoke, a11y and the first walkthrough rows, and leg 2 the rest of walkthrough (#3941
     #     since put surfaces.spec.ts where a11y's route scans and walkthrough were);
-    #   · `e2e-stateful`: the stateful set, one spec at a time, then once more in an order drawn
-    #     from a seed the report names. It is its own job because a step of one leg only is a
-    #     step the catalogue cannot run (tools/ci/catalogue.toml runs a sharded job's every step on
-    #     every shard), and it is meant to cost a runner, not wall time: two specs, expected to
-    #     be shorter than either leg (to be read from the first finished runs of this layout);
-    #   · `e2e`: merges the three blob reports into the run's one report and judges it.
+    #   · `e2e-stateful`: the runs on a home of their own. The UI quality matrix and the idle-cost
+    #     probe, each alone (#3905), then the stateful set, one spec at a time, then once more in
+    #     an order drawn from a seed the report names. It is its own job because a step of one leg
+    #     only is a step the catalogue cannot run (tools/ci/catalogue.toml runs a sharded job's
+    #     every step on every shard), and the matrix leaving these legs is most of what it adds;
+    #   · `e2e`: merges the five blob reports into the run's one report and judges it.
     # Each leg downloads the build `web` stamped, installs Chromium and boots a gateway and home of
     # its own (web/e2e/runPlaces.ts). web/e2e/isolation.ts says which spec is shared, which serial,
     # and why. The preview refuses a dist that does not match this checkout before any test runs.
@@ -1396,7 +1396,14 @@ jobs:
           retention-days: 7
 
   e2e-stateful:
-    # ── The stateful set, then its seeded second pass, on a gateway of its own (#3939) ───────────
+    # ── The runs on a gateway and home of their own (#3939, #3905) ──────────────────────────────
+    # Each `playwright test` here makes a gateway and home for itself, which no other run writes to.
+    # First the specs web/e2e/isolation.ts runs alone, each home in a run of its own: the UI quality
+    # matrix and its control, which hold every surface to baselines taken on a home nothing else
+    # wrote to, and the idle-cost probe, which counts what an idle page schedules. In the shared
+    # project they measured the threads, chats and turns the other specs left. Then the stateful
+    # set. Each later run is `!cancelled()`, so a red one does not hide the rest.
+    #
     # The specs web/e2e/isolation.ts calls serial write what the shared specs read, so they run
     # apart from them: one at a time (`stateful`), then once more each in an order drawn from a
     # seed (`stateful-again-1`, `stateful-again-2`), so a stateful spec that passes only after the
@@ -1409,9 +1416,10 @@ jobs:
     needs: [changes, tree-check, web]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e-stateful')) }}
     runs-on: ubuntu-24.04
-    # The set took under a minute of main's one-job run (695.9-752.2 s of run 39174942130), before
-    # this job's own install and boot; 15 is slack for a loaded runner.
-    timeout-minutes: 15
+    # The set took under a minute of main's one-job run (695.9-752.2 s of run 39174942130), and
+    # the matrix about 27 minutes of test time over three workers, some 9 minutes, on eeedb789's
+    # shards (run 39991844871); 30 is slack for a loaded runner and three boots.
+    timeout-minutes: 30
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -1458,7 +1466,21 @@ jobs:
             exit 1
           fi
           node -e "require('playwright').chromium.launch().then((browser) => browser.close())"
+      - name: the UI quality matrix and its control, on a home of their own (web/e2e/isolation.ts)
+        working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report-matrix.json
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/matrix
+        run: npx playwright test e2e/surfaces.spec.ts e2e/surfaceMatrix.control.spec.ts
+      - name: the idle-cost probe, on a home of its own
+        if: ${{ !cancelled() }}
+        working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report-idle.json
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/idle
+        run: npx playwright test e2e/idleCost.spec.ts
       - name: the stateful set, then its second pass in a seeded order (web/e2e/isolation.ts)
+        if: ${{ !cancelled() }}
         working-directory: web
         env:
           PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report.json
@@ -1478,7 +1500,7 @@ jobs:
         with:
           name: e2e-reports-stateful
           path: |
-            web/e2e-report.json
+            web/e2e-report*.json
             web/test-results/
             web/playwright-report/
           if-no-files-found: ignore
@@ -1523,7 +1545,8 @@ jobs:
       # npm from the REPO ROOT (single-root workspace lockfile — npm/cli#4828).
       - name: npm ci (root)
         run: npm ci
-      # Each leg's blob under a folder named for its leg: blob-report/shard-1, shard-2, stateful.
+      # Each leg's blob under a folder named for its leg: blob-report/shard-1, shard-2, and the
+      # e2e-stateful job's matrix, idle and stateful.
       - name: every leg's blob report
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -1534,7 +1557,7 @@ jobs:
       - name: merge the legs into the run's one report (a leg that left no blob is a red)
         if: ${{ !cancelled() }}
         working-directory: web
-        run: node e2e/merge-legs.mjs blob-report shard-1 shard-2 stateful
+        run: node e2e/merge-legs.mjs blob-report shard-1 shard-2 matrix idle stateful
       - name: every authenticated route was actually SCANNED (not skipped)
         if: ${{ !cancelled() }}
         working-directory: web
@@ -1615,7 +1638,7 @@ jobs:
       - name: merge the legs into the run's one report
         if: ${{ !cancelled() }}
         working-directory: web
-        run: node e2e/merge-legs.mjs blob-report shard-1 shard-2 stateful
+        run: node e2e/merge-legs.mjs blob-report shard-1 shard-2 matrix idle stateful
       - name: the raw-control ratchet
         if: ${{ !cancelled() }}
         run: npm run ui:ratchet

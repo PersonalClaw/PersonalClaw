@@ -107,6 +107,55 @@ function judge(rows: Row[], metadata?: Record<string, unknown>) {
   return node('assert-one-run.mjs', [path])
 }
 
+// The homes a spec runs alone on (`alone` in isolation.ts): each is the one project of an
+// invocation that ran nothing else, so the merged report holds each of those specs to its own.
+const ALONE_GOOD: Row[] = [
+  ...GOOD,
+  { project: 'setup', file: 'auth.setup.ts', title: 'authenticate' },
+  { project: 'setup', file: 'auth.setup.ts', title: 'authenticate' },
+  { project: 'matrix', file: 'surfaces.spec.ts', title: 'Chat (#/chat)', annotations: isolated('alone') },
+  { project: 'idle', file: 'idleCost.spec.ts', title: 'Chat idles', annotations: isolated('alone') },
+]
+const ALONE_METADATA = {
+  ...METADATA,
+  isolation: { ...METADATA.isolation, 'surfaces.spec.ts': 'alone', 'idleCost.spec.ts': 'alone' },
+  isolationHome: { 'surfaces.spec.ts': 'matrix', 'idleCost.spec.ts': 'idle' },
+}
+
+describe('assert-one-run holds each spec that runs alone to its own home', () => {
+  it('passes a run with each home there, and names them', () => {
+    const ran = judge(ALONE_GOOD, ALONE_METADATA)
+    expect(ran.stderr).toBe('')
+    expect(ran.status).toBe(0)
+    expect(ran.stdout).toMatch(/idleCost\.spec\.ts, surfaces\.spec\.ts each on a home of its own/)
+  })
+
+  const PLANTS: Array<[string, Row[], RegExp]> = [
+    [
+      'the matrix ran beside the shared specs',
+      ALONE_GOOD.map((r) => (r.file === 'surfaces.spec.ts' ? { ...r, project: 'chromium' } : r)),
+      /surfaces\.spec\.ts is alone on the matrix home but ran in the chromium project/,
+    ],
+    [
+      'a home is missing from the merge',
+      ALONE_GOOD.filter((r) => r.project !== 'idle'),
+      /idleCost\.spec\.ts did not run on its own home \(idle\)/,
+    ],
+    [
+      'a shared spec ran on a home of its own',
+      [...ALONE_GOOD, { project: 'matrix', file: 'a11y.spec.ts', title: 'Home', annotations: isolated('shared') }],
+      /a11y\.spec\.ts is shared but ran in the matrix project, a home of its own for other specs/,
+    ],
+  ]
+  for (const [name, rows, message] of PLANTS) {
+    it(`names it when ${name}`, () => {
+      const ran = judge(rows, ALONE_METADATA)
+      expect(ran.status).toBe(1)
+      expect(ran.stderr).toMatch(message)
+    })
+  }
+})
+
 describe('assert-one-run holds the merged report to one run', () => {
   it('passes a good run, and says what it checked', () => {
     const ran = judge(GOOD)
