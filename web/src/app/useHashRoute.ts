@@ -19,7 +19,8 @@ import { redirectFor } from './routeRedirects'
  *
  *  `navigate(path, { replace })` sets the full `#/<path>` (path may include its
  *  own `?query`). `setQuery(patch, { replace })` merges query params onto the
- *  CURRENT route+sub without touching the path. Default is push (a history
+ *  CURRENT route+sub without touching the path, and only while that route+sub is
+ *  still the page the hook rendered: a page's late write never lands on another's. Default is push (a history
  *  entry); pass `replace: true` to overwrite the current entry instead. Pass
  *  `remount: true` when the update is a navigation for the page: it bumps
  *  `navEpoch` as `navigate` does, so a page keyed on it mounts afresh.
@@ -162,8 +163,16 @@ export function useHashRoute(fallback: string): HashRoute {
     apply(clean, !!opts?.replace, true)
   }
 
+  // A page's query belongs to that page's history entry. `setQuery` is made for the page this hook
+  // last rendered (`state`), and a call that lands once another page is in the bar is that page's
+  // late write, not a change to the one now showing: dropped, never merged onto it. The code
+  // cockpit opened at its bare address writes its first change (`diff=`) when the workspace's
+  // changes arrive; pressed Back before then, that write used to land on the page before (CI read
+  // Settings with `?diff=…` in its address: compatibilityFixtures.spec.ts, #3905).
+  const ownPage = { route: state.route, sub: state.sub }
   const setQuery = (patch: Record<string, string | null | undefined>, opts?: { replace?: boolean; remount?: boolean }) => {
     const cur = parseHash(fallback)
+    if (cur.route !== ownPage.route || cur.sub !== ownPage.sub) return
     const merged = { ...cur.query }
     for (const [k, v] of Object.entries(patch)) {
       if (v == null || v === '') delete merged[k]
