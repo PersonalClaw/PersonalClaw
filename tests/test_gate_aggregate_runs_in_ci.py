@@ -8,9 +8,9 @@ reached CI not at all.
 
 This rail asserts the CALL SITE. The distinction matters more than usual here, because
 the step's own explanatory comment contains the words ``make gates`` — so a substring
-search over ``ci.yml`` would report the aggregate "wired" even if the ``run:`` line were
-deleted, which is precisely the shape of the defect this file exists to prevent. Every
-assertion below keys on a parsed ``run:`` line.
+search over a workflow would report the aggregate "wired" even if the ``run:`` line were
+deleted, which is precisely the shape of the defect this file exists to prevent. Its
+source-tree check keys on the catalogue's argv steps, which both of CI's shapes run.
 """
 
 from __future__ import annotations

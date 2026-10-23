@@ -126,6 +126,12 @@ source root itself" row of `tests/rails/test_ci_contract.py` fails on a test tha
 roots on its own. A test that must walk one itself goes in `NOT_THROUGH_THE_INDEX` in
 `tests/private_walkers.py`, by `file::function`, with the reason it cannot use the index.
 
+A rail that holds what CI runs (a job runs this file, sets that lever, checks that output) reads
+the catalogue's steps through `tests/ci_catalogue_steps.py` rather than a workflow's `run:`
+lines. Both of CI's shapes run them: `ci.yml`'s jobs, held to them token for token by the
+contract row "every catalogue command is the workflow's", and the tier workflows' stage jobs
+through `run-job`. The rails census counts a test that reads them as reading the tree.
+
 ## A test that needs another timeout
 
 Every test runs under the suite's default cap, `--timeout` in `pyproject.toml`'s addopts. A

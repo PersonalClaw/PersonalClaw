@@ -11,6 +11,7 @@ import re
 
 import pytest
 import website_installer_shared
+from ci_catalogue_steps import read, text
 from website_installer_shared import (
     _ROOT,
     REQUIRE_ENV,
@@ -198,14 +199,14 @@ class TestLiveInstallerLegIsWired:
 
 
 class TestLintJobChecksTheInstaller:
-    """The every-PR half of the linter claim, which cannot skip."""
+    """The every-PR half of the linter claim, which cannot skip. Read from the catalogue's
+    ``static`` job, which ci.yml's lint job and the tier workflows' static entry both run
+    (``tests/ci_catalogue_steps.py``)."""
 
     @pytest.fixture(scope="class")
     @classmethod
     def lint_body(cls) -> str:
-        present = jobs(_CI.read_text(encoding="utf-8"))
-        assert "lint" in present, f"ci.yml has no lint job (has: {sorted(present)})"
-        return present["lint"]
+        return text(read().job("static"))
 
     def test_lint_runs_shellcheck_on_the_installer(self, lint_body: str) -> None:
         """The INVOCATION, not the word.
@@ -219,7 +220,7 @@ class TestLintJobChecksTheInstaller:
             r"shellcheck\s+(?:-\S+\s+)*-s\s+sh\s+\S*deploy/website/install\.sh",
             code_only(lint_body),
         ), (
-            "ci.yml's lint job never invokes `shellcheck -s sh deploy/website/install.sh`, "
+            "the static job never invokes `shellcheck -s sh deploy/website/install.sh`, "
             "so the header's shellcheck-clean claim rests on nothing again."
         )
 
@@ -236,12 +237,12 @@ class TestLintJobChecksTheInstaller:
         for tool in ("sh -n", "dash -n"):
             assert re.search(
                 rf"{re.escape(tool)}\s+\S*deploy/website/install\.sh", code
-            ), f"ci.yml's lint job does not run `{tool}` on the installer"
+            ), f"the static job does not run `{tool}` on the installer"
 
     def test_lint_sets_the_require_proof_lever(self, lint_body: str) -> None:
         """Without the lever, a runner image that drops shellcheck turns red into skip."""
         assert REQUIRE_ENV in code_only(lint_body), (
-            f"ci.yml's lint job does not set {REQUIRE_ENV}, so a missing shellcheck or "
+            f"the static job does not set {REQUIRE_ENV}, so a missing shellcheck or "
             "dash would silently skip the cases that prove the installer lints."
         )
 

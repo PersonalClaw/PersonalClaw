@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 
+from ci_catalogue_steps import read
 from mobile_shell_shared import MOBILE, REPO_ROOT
 
 
@@ -25,6 +26,9 @@ def test_the_mobile_tier_is_wired_the_way_the_ci_rail_requires():
     manifest = json.loads((MOBILE / "package.json").read_text(encoding="utf-8"))
     assert manifest["scripts"]["test"] == "node --test test/*.test.mjs"
     # The native builds are NOT a CI tier: they need Xcode and the Android SDK.
-    ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "npm run test:mobile" in ci
-    assert "cap build" not in ci, "a native build in CI would need Xcode and the Android SDK"
+    # Read from the catalogue, which both of CI's shapes run (tests/ci_catalogue_steps.py).
+    commands = [" ".join(s.argv) for job in read().jobs for s in job.command]
+    assert "npm run test:mobile" in commands
+    assert not [
+        c for c in commands if "cap build" in c
+    ], "a native build in CI would need Xcode and the Android SDK"
