@@ -2452,3 +2452,4 @@ its reviewer, an added environment, classic protection put back, a removed requi
 required check bound to another App, an added bypass actor, a ruleset with no file, a deleted
 ruleset, a bypass used in the week, and an answer the API refused, each fails; the unchanged
 answers pass.
+scratch proof pull request line, merged into scratch/main-protect-proof only
