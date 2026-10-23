@@ -569,3 +569,70 @@ def test_main_exits_2_on_an_unreadable_expected_file(tmp_path: Path) -> None:
     path = tmp_path / "expected.json"
     path.write_text("{}", encoding="utf-8")
     assert sr.main(["--expected", str(path)]) == 2
+
+
+class FakeQuery:
+    """Answers the merge-methods query with one fixed answer, and counts what it was asked."""
+
+    def __init__(self, status: int, body: object) -> None:
+        self.answer = (status, body)
+        self.asked: list[dict[str, object]] = []
+
+    def __call__(self, text: str, variables: Any) -> tuple[int, object]:
+        assert "mergeCommitAllowed" in text
+        self.asked.append(dict(variables))
+        return self.answer
+
+
+def _hide_merge_methods(answers: dict[str, tuple[int, object]]) -> None:
+    """A read-only credential's repository answer: no allow_* fields."""
+    status, body = answers[f"/repos/{REPO}"]
+    assert isinstance(body, dict)
+    answers[f"/repos/{REPO}"] = (
+        status,
+        {k: v for k, v in body.items() if not k.startswith("allow_")},
+    )
+
+
+def _with_queries(*queries: FakeQuery) -> list[str]:
+    answers = _answers()
+    _hide_merge_methods(answers)
+    api = FakeAPI(answers)
+    return [d.line() for d in sr.report({REPO: EXPECTED}, api, api, list(queries))]
+
+
+MERGE = {"mergeCommitAllowed": False, "squashMergeAllowed": True, "rebaseMergeAllowed": False}
+
+
+def test_merge_methods_a_read_token_cannot_see_are_read_through_graphql() -> None:
+    query = FakeQuery(200, {"data": {"repository": MERGE}})
+    assert _with_queries(query) == []
+    assert query.asked == [{"owner": "owner", "name": "project"}]
+
+
+def test_a_merge_method_back_on_is_drift_through_graphql_too() -> None:
+    query = FakeQuery(200, {"data": {"repository": dict(MERGE, rebaseMergeAllowed=True)}})
+    lines = _with_queries(query)
+    assert lines == [f"{REPO} merge methods: allow_rebase_merge expected false, live true"]
+
+
+def test_the_second_credential_is_asked_when_the_first_is_refused() -> None:
+    refused = FakeQuery(200, {"errors": [{"message": "Resource not accessible"}]})
+    shown = FakeQuery(200, {"data": {"repository": MERGE}})
+    assert _with_queries(refused, shown) == []
+    assert len(refused.asked) == len(shown.asked) == 1
+
+
+def test_merge_methods_no_credential_shows_fail_as_not_read() -> None:
+    refused = FakeQuery(200, {"errors": [{"message": "Resource not accessible"}]})
+    lines = _with_queries(refused)
+    assert len(lines) == 1 and lines[0].startswith(f"{REPO} merge methods: not read")
+    assert "Resource not accessible" in lines[0]
+    lines = _with_queries()
+    assert len(lines) == 1 and "no GraphQL credential" in lines[0]
+
+
+def test_a_graphql_answer_missing_a_method_fails_as_not_read() -> None:
+    query = FakeQuery(200, {"data": {"repository": {"mergeCommitAllowed": False}}})
+    lines = _with_queries(query)
+    assert len(lines) == 1 and "not read" in lines[0]

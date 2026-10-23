@@ -74,6 +74,15 @@ SETTINGS = (
 #: ``fetch(path)`` returns the HTTP status and the decoded JSON body (None when there is none,
 #: the error text when the API gave no answer).
 Fetch = Callable[[str], tuple[int, object]]
+#: ``query(text, variables)`` asks the GraphQL API, and answers as a fetch does.
+Query = Callable[[str, Mapping[str, object]], tuple[int, object]]
+
+#: The merge methods, which the repository answer shows only to a caller that may push, so a
+#: read-only credential is asked through GraphQL instead.
+MERGE_METHODS_QUERY = (
+    "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) "
+    "{ mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed } }"
+)
 
 
 @dataclass(frozen=True)
@@ -137,6 +146,50 @@ def github_fetch(token: str | None) -> Fetch:
             return 0, f"{type(error).__name__}: {error}"
 
     return fetch
+
+
+def github_query(token: str | None) -> Query:
+    def query(text: str, variables: Mapping[str, object]) -> tuple[int, object]:
+        body = json.dumps({"query": text, "variables": dict(variables)}).encode()
+        request = urllib.request.Request(API + "/graphql", data=body, method="POST")
+        request.add_header("Accept", "application/vnd.github+json")
+        if token:
+            request.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+                return response.status, json.loads(response.read() or b"null")
+        except urllib.error.HTTPError as error:
+            return error.code, None
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            return 0, f"{type(error).__name__}: {error}"
+
+    return query
+
+
+def _merge_methods(repo: str, queries: Sequence[Query]) -> dict[str, object] | Unread:
+    """The merge methods from GraphQL, asked of each credential in turn until one shows them."""
+    owner, _, name = repo.partition("/")
+    why = "merge methods not shown, and no GraphQL credential to ask"
+    for query in queries:
+        status, body = query(MERGE_METHODS_QUERY, {"owner": owner, "name": name})
+        data = body.get("data") if isinstance(body, dict) else None
+        found = (data or {}).get("repository") if isinstance(data, dict) else None
+        keys = {
+            "allow_merge_commit": "mergeCommitAllowed",
+            "allow_squash_merge": "squashMergeAllowed",
+            "allow_rebase_merge": "rebaseMergeAllowed",
+        }
+        if (
+            status == 200
+            and isinstance(found, dict)
+            and all(isinstance(found.get(v), bool) for v in keys.values())
+        ):
+            return {k: found[v] for k, v in keys.items()}
+        errors = body.get("errors") if isinstance(body, dict) else None
+        why = f"merge methods not shown; GraphQL answered {status}" + (
+            f": {errors[0].get('message')}" if isinstance(errors, list) and errors else ""
+        )
+    return Unread(why)
 
 
 def _unread(path: str, status: int, body: object) -> Unread:
@@ -390,7 +443,9 @@ def _environments(fetch: Fetch, repo: str) -> object:
     return out
 
 
-def read_settings(repo: str, public: Fetch, admin: Fetch | None) -> dict[str, object]:
+def read_settings(
+    repo: str, public: Fetch, admin: Fetch | None, queries: Sequence[Query] = ()
+) -> dict[str, object]:
     """Every setting in ``SETTINGS`` but ``allowed bypass``, as the API answers it, or Unread."""
     no_token = Unread(
         "no SETTINGS_READ_TOKEN: administration read needs the maintainer's read-only token"
@@ -411,7 +466,7 @@ def read_settings(repo: str, public: Fetch, admin: Fetch | None) -> dict[str, ob
             for k in ("allow_merge_commit", "allow_squash_merge", "allow_rebase_merge")
         }
         live["merge methods"] = (
-            methods if None not in methods.values() else Unread("merge methods not shown")
+            methods if None not in methods.values() else _merge_methods(repo, queries)
         )
         sa = meta.get("security_and_analysis")
         keys = ("secret_scanning", "secret_scanning_push_protection", "dependabot_security_updates")
@@ -501,12 +556,15 @@ def compare(repo: str, expected: Mapping[str, Any], live: Mapping[str, object]) 
 
 
 def report(
-    expected: Mapping[str, Mapping[str, Any]], public: Fetch, admin: Fetch | None
+    expected: Mapping[str, Mapping[str, Any]],
+    public: Fetch,
+    admin: Fetch | None,
+    queries: Sequence[Query] = (),
 ) -> list[Drift]:
     drift: list[Drift] = []
     for repo in sorted(expected):
         drift += compare_rulesets(repo, ruleset_files(public, repo), live_rulesets(public, repo))
-        drift += compare(repo, expected[repo], read_settings(repo, public, admin))
+        drift += compare(repo, expected[repo], read_settings(repo, public, admin, queries))
         if admin is None:
             drift.append(Drift(repo, "bypass use", "none", Unread("no SETTINGS_READ_TOKEN")))
         else:
@@ -603,10 +661,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError) as error:
         print(f"settings-report: {error}", file=sys.stderr)
         return 2
-    public = github_fetch(os.environ.get("GH_TOKEN") or None)
+    job_token = os.environ.get("GH_TOKEN") or None
+    public = github_fetch(job_token)
     read_token = os.environ.get("SETTINGS_READ_TOKEN") or None
     admin = github_fetch(read_token) if read_token else None
-    drift = report(expected, public, admin)
+    # GraphQL needs a credential: the read token first, then the job token.
+    queries = [github_query(t) for t in (read_token, job_token) if t]
+    drift = report(expected, public, admin, queries)
     body = markdown(drift, args.run_url)
     print(body, end="")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
