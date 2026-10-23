@@ -565,7 +565,10 @@ test.describe('an old address opens its new home, and Back returns to the page b
 
   test("#/loops/<id> of a code loop opens its cockpit at #/code/<id>", async ({ context, page }) => {
     await answerTheCockpit(context)
-    const lands = `code/${CODE}`
+    // A cockpit opened at its bare address opens its review on the first uncommitted change and
+    // names it in the address, a replace (2c704fcc6, #3821): so the new home's entry ends as the
+    // cockpit with that change named, on the way in and after Forward alike (#3905).
+    const lands = `code/${CODE}?diff=${encodeURIComponent(CHANGED)}`
     const before = await followFromThePageBefore(page, `loops/${CODE}`)
     await expect.poll(() => page.evaluate(() => location.hash)).toBe(`#/${lands}`)
     await expect(page.getByRole('button', { name: 'Raised bed planner', exact: true })).toBeVisible()
