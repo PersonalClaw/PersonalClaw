@@ -10,13 +10,14 @@ holds it once ``ci.yml`` is gone.
 
 from __future__ import annotations
 
-from rails_repo import REPO
+from pathlib import Path
 
 from tools.ci import catalogue
 from tools.ci.catalogue import Catalogue, Job, Step
 
-#: The tree's catalogue.
-CATALOGUE = REPO / catalogue.CATALOGUE
+#: The tree's catalogue. A rail and a suite module both import this module, so the path comes from
+#: this file, not from ``tests/rails/rails_repo.py``, which only a rail can import.
+CATALOGUE = Path(__file__).resolve().parents[1] / catalogue.CATALOGUE
 
 
 def read() -> Catalogue:
