@@ -21,7 +21,10 @@
  *     nothing, and `personalclaw://threads/new?prompt=<draft>` opens a new thread with the draft in
  *     its composer, unsent. The draft is a word of the run's own, and it never leaves the page: no
  *     request's body or non-GET address and no WebSocket frame carries it. Reloading the address
- *     the link left, and the same link again, bring back the same draft and still send nothing;
+ *     the link left, and the same link again, bring back the same draft and still send nothing.
+ *     `personalclaw://code/<id>?pane=changes&diff=<file>&task=<task>` opens the cockpit of the
+ *     paused code loop the stub backend seeds (`CODE_LOOP`), and acts on neither: nothing that
+ *     leaves the page carries the loop's id or the task's;
  *   - and nothing threw: no JavaScript error in the main process, no uncaught one in the page.
  *
  * It prints one line per step, and `SHELL_SMOKE {"ok":…}` last; it exits 0 only when ok. Where
@@ -42,6 +45,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 
+const { CODE_LOOP } = require("./writeStubBackend");
+
 const DEFAULT_TIMEOUT_MS = 150_000;
 /** What Electron prints when main.js throws, a missing module included. */
 const MAIN_ERROR = /A JavaScript error occurred in the main process|Uncaught Exception|Error: Cannot find module/;
@@ -53,8 +58,16 @@ const DEVTOOLS_SWITCH = "--remote-debugging-pipe";
 /** A link to a route, and one to no route the app has. */
 const SETTINGS_LINK = "personalclaw://settings";
 const NO_ROUTE_LINK = "personalclaw://nowhere-the-app-has";
+/** A code cockpit's link, as one is shared: its changes pane on one file, and its open task. */
+const COCKPIT_LINK = `personalclaw://code/${CODE_LOOP.id}?pane=changes&diff=${encodeURIComponent(CODE_LOOP.diff)}&task=${CODE_LOOP.task}`;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** What JSON's quoting leaves raw that could end a script or a line, each as its escape. */
+const UNSAFE = { "<": "\\u003C", ">": "\\u003E", "/": "\\u002F", "\\": "\\\\", "\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t", "\0": "\\0", "\u2028": "\\u2028", "\u2029": "\\u2029" };
+/** *value* as a string literal inside an expression the page evaluates: JSON's quoting, with every
+ * character that could end a script or a line in it escaped as well. */
+const literal = (value) => JSON.stringify(String(value)).replace(/[<>\b\f\n\r\t\0\u2028\u2029]/g, (c) => UNSAFE[c]);
 
 /** Whether the app needs a virtual display to start: Linux with none set. */
 const needsDisplay = (env = process.env) => process.platform === "linux" && !env.DISPLAY && !env.WAYLAND_DISPLAY;
@@ -271,14 +284,14 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, fi
     let mounted = false;
     while (!mounted) {
       if (Date.now() > end) return fail(`the chat shell did not mount: no ${COMPOSER} on #/chat`);
-      mounted = await evaluate(`Boolean(document.querySelector(${JSON.stringify(COMPOSER)}))`).catch(() => false);
+      mounted = await evaluate(`Boolean(document.querySelector(${literal(COMPOSER)}))`).catch(() => false);
       if (!mounted) await wait(250);
     }
     step(`the chat shell mounted: ${COMPOSER} on #/chat`);
 
     // 3. Links from other apps move the page and act on nothing (#3827).
     const hash = () => evaluate("location.hash");
-    const composerText = () => evaluate(`document.querySelector(${JSON.stringify(COMPOSER)})?.textContent ?? ""`).catch(() => "");
+    const composerText = () => evaluate(`document.querySelector(${literal(COMPOSER)})?.textContent ?? ""`).catch(() => "");
     const until = async (what, test, ms = 20_000) => {
       const by = Math.min(end, Date.now() + ms);
       for (;;) {
@@ -341,6 +354,21 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, fi
     if ((await hash()) !== address || text.split(draft).length !== 2) return fail(`the same link again left ${await hash()} with ${JSON.stringify(text)}, not the one draft on ${address}`);
     step("reloading the address and the same link again brought back the same draft, and sent nothing");
 
+    // A cockpit's link opens the seeded loop's cockpit, and acts on neither the loop nor the task.
+    const acted = async () => [...(await leftThePage(CODE_LOOP.id)), ...(await leftThePage(CODE_LOOP.task))];
+    const named = `[...document.querySelectorAll("button")].some((b) => b.textContent.trim() === ${literal(CODE_LOOP.name)})`;
+    const drawn = async () => (await hash()).startsWith(`#/code/${CODE_LOOP.id}?`) && (await evaluate(named));
+    await hand(COCKPIT_LINK);
+    const reached = await until("the cockpit", async () => (await drawn()) || (await acted()).length > 0);
+    let done = await acted();
+    if (done.length) return fail(`the cockpit link acted on the loop: ${done.join("; ")}`);
+    if (!reached) return fail(`${COCKPIT_LINK} did not open ${CODE_LOOP.name}'s cockpit: the page is on ${await hash()}`);
+    const at = await hash();
+    await wait(2000);
+    done = await acted();
+    if (done.length) return fail(`the cockpit link acted on the loop: ${done.join("; ")}`);
+    step(`${COCKPIT_LINK} opened ${at}, ${CODE_LOOP.name}'s cockpit, and acted on nothing`);
+
     // 4. Nothing threw on the way.
     return await settle();
   } finally {
@@ -374,7 +402,7 @@ function cliOptions(argv) {
   };
 }
 
-module.exports = { COMPOSER, DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
+module.exports = { COCKPIT_LINK, COMPOSER, DEVTOOLS_SWITCH, literal, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
 
 if (require.main === module) {
   const { executable, ...options } = cliOptions(process.argv.slice(2));

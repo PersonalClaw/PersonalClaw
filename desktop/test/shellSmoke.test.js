@@ -7,8 +7,9 @@ const { spawnSync } = require("node:child_process");
 const { PassThrough } = require("node:stream");
 const asar = require("@electron/asar");
 
-const { stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
-const { DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
+const { CODE_LOOP, SEED_CODE_LOOP, stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
+const { COCKPIT_LINK, DEVTOOLS_SWITCH, LOOPBACK_PAGE, literal, MAIN_ERROR, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
+const { parseDeepLink } = require("../deepLinks");
 const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, packArchive, plantedCopy, shellSources } = require("./smoke/packedApp");
 
 // ── The packed shell's smoke, its parts (#3942) ───────────────────────────────────────────────
@@ -31,6 +32,20 @@ describe("the stub backend", () => {
     assert.match(text, /export PERSONALCLAW_SCRIPTED_MODEL_SCRIPT='.*web\/e2e\/fixtures\/scripted-chat\.json'/);
     assert.match(text, /exec '[^']*personalclaw' "\$@"\n$/);
     for (const seed of ["config.json", "triggers.json"]) assert.ok(fs.existsSync(path.join(dir, "gateway-home", seed)), `seeded with ${seed}`);
+    assert.match(text, /python3?' -c '/, "the code loop is seeded by the checkout's Python");
+  });
+
+  it("seeds the paused code loop the cockpit link opens, before the gateway starts, and never in the default home", () => {
+    const given = { home: "/h", workspace: "/w", scripted: "/s", command: "/v/bin/personalclaw", src: "/src", pidFile: "/p" };
+    const lines = stubScript({ ...given, python: "/v/bin/python" }).split("\n");
+    const seed = lines.findIndex((l) => l.startsWith("'/v/bin/python' -c "));
+    assert.ok(seed > 0 && seed < lines.findIndex((l) => l.startsWith("exec ")), "the seed runs before the gateway");
+    assert.ok(!stubScript(given).includes(" -c "), "no seed without a Python to run it");
+    assert.match(CODE_LOOP.id, /^[a-f0-9]{8}$/, "an id the loop store takes");
+    assert.match(SEED_CODE_LOOP, /if not os\.environ\.get\('PERSONALCLAW_HOME'\) or uses_default_home\(\):\n {4}sys\.exit\(/, "refused before anything is imported that writes");
+    assert.ok(SEED_CODE_LOOP.indexOf("sys.exit(") < SEED_CODE_LOOP.indexOf("store.create("), "the refusal comes first");
+    assert.match(SEED_CODE_LOOP, new RegExp(`if store\\.get\\("${CODE_LOOP.id}"\\) is None:`), "seeded once, however often the gateway starts");
+    assert.match(SEED_CODE_LOOP, /kind='code'.*status='paused'/, "a code loop nothing runs");
   });
 
   it("runs as the gateway would be run, and leaves the pid the smoke stops it by", () => {
@@ -100,6 +115,20 @@ describe("a link the smoke hands the app (#3827)", () => {
       sent({ method: "POST", url: "http://localhost:1/api/chat", postData: "something else" }),
     ];
     assert.deepEqual(carriedOut(events, MARK, "s"), []);
+  });
+
+  it("puts a value in an expression the page evaluates as a string, and nothing that could end the script", () => {
+    for (const value of ["Smoke cockpit", '[aria-label="Message input"]', "</script><img src=x>", "a\u2028b\u2029c", "back\\slash"]) {
+      const text = literal(value);
+      assert.equal(new Function(`return ${text};`)(), value, "it reads back as the value");
+      assert.doesNotMatch(text, /[<>\u2028\u2029]/, "no character a script or a line could end on");
+    }
+  });
+
+  it("opens the seeded cockpit by a link a user could be sent: its changes pane on one file, and a task", () => {
+    const parsed = parseDeepLink(COCKPIT_LINK);
+    assert.equal(parsed.ok, true, parsed.reason);
+    assert.equal(parsed.hash, `#/code/${CODE_LOOP.id}?pane=changes&diff=${encodeURIComponent(CODE_LOOP.diff)}&task=${CODE_LOOP.task}`);
   });
 
   it("hands a link over as a second launch does: the app's own arguments and the link, and no DevTools pipe", () => {
@@ -251,7 +280,7 @@ describe("the packed app", () => {
     assert.equal(fs.readlinkSync(path.join(copy, "chrome-sandbox")), path.join(app, "chrome-sandbox"));
   });
 
-  it("plants the two link controls in deepLinks.js: one drops every link, one sends the draft it fills", async () => {
+  it("plants the three link controls in deepLinks.js: one drops every link, one sends the draft it fills, one resumes the cockpit it opens", async () => {
     const source = fs.readFileSync(path.join(__dirname, "..", "deepLinks.js"), "utf8");
     const app = await unpacked({ "deepLinks.js": source });
     for (const control of CONTROLS.slice(2)) {
@@ -262,7 +291,11 @@ describe("the packed app", () => {
   });
 
   it("a control is caught only for its own reason", () => {
-    const [missing, preload, dropped, sends] = CONTROLS;
+    const [missing, preload, dropped, sends, resumes] = CONTROLS;
+    assert.equal(CONTROLS.length, 5);
+    assert.equal(resumes.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://localhost:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), true);
+    assert.equal(resumes.reads({ ok: false, reason: "the draft left the page: a WebSocket frame carried it", mainOutput: "" }), false);
+    assert.equal(sends.reads({ ok: false, reason: "the cockpit link acted on the loop: a WebSocket frame carried it", mainOutput: "" }), false);
     assert.equal(dropped.reads({ ok: false, reason: "personalclaw://settings did not open #/settings: the page stayed on #/chat", mainOutput: "" }), true);
     assert.equal(dropped.reads({ ok: false, reason: "the draft left the page: a WebSocket frame carried it", mainOutput: "" }), false);
     assert.equal(sends.reads({ ok: false, reason: "the draft left the page: a WebSocket frame carried it", mainOutput: "" }), true);

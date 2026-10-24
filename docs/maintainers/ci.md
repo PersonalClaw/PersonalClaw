@@ -754,9 +754,13 @@ port, load the gateway's origin and draw the chat. It then hands the running app
 opens `#/settings`, a link to no route moves nothing, and a new thread's `?prompt=` link shows its
 draft in the composer and sends nothing, which it reads off every request body, non-GET address
 and WebSocket frame the page sends. Reloading the address the link left, and the same link
-again, bring back the same draft and still send nothing. Four planted copies must each fail for
-their own reason: the asar without a module `main.js` requires, a preload that throws, a shell
-that drops every link, and one whose link delivery presses Enter on the draft. A backend change
+again, bring back the same draft and still send nothing. A code cockpit's link,
+`personalclaw://code/<id>?pane=changes&diff=<file>&task=<task>`, opens the cockpit of a paused
+code loop the stub backend seeds before its gateway starts (in the smoke's own home: the seed
+refuses the default one), and nothing that leaves the page carries the loop's id or the task's.
+Five planted copies must each fail for their own reason: the asar without a module `main.js`
+requires, a preload that throws, a shell that drops every link, one whose link delivery presses
+Enter on the draft, and one whose link delivery resumes the cockpit's loop. A backend change
 is e2e's to catch: the smoke proves the shell starts, draws and follows a link, not the gateway.
 It is a fast smoke from the source tree, never a packaged-release test. The browser run's inputs
 are the whole tree less the paths
