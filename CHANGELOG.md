@@ -22,6 +22,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The waiting list's ring no longer puts an error in the gateway's log when it cannot be sent. When something waiting on you is asked or answered, open pages are told a moment later, from a timer. A failed send there went into the gateway's event loop, where the ring's other failures are dropped quietly. Now it is dropped the same way, and open pages still see the change on their next poll.**
 - **Switching off, updating or uninstalling an app no longer pauses the gateway while it looks for a task the app left running. It used to collect and read every object the gateway held, which took about a second in a large gateway; it now reads only the tasks that are still scheduled.**
 
+### For maintainers
+
+- **Nothing in a release is published before the owner approves it, and an approval holds only for the build it was given: a release whose artifacts are built again publishes nothing until it is approved again.**
+
 ## [0.2.7] — 2026-10-23
 
 A polish release before 0.3.0. A running turn's status now sits at the bottom of the chat, just above the composer. The code map finds definitions again on a machine that had not fetched its grammars, four controls that were hard to press on a phone are 44 px targets, Back from the code cockpit lands on a clean page, and a new loop's composer fits one row at 600 px. The gateway image, its agent CLIs and the desktop app take security fixes. No upgrade step is needed.

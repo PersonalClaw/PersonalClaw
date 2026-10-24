@@ -208,15 +208,24 @@ PUBLISHES = {
 MANIFEST_DIGEST = "${{ needs.artifacts.outputs.manifest-digest }}"
 
 
-#: The files a publish job's compare runs, both standard library alone: all a job holding the
-#: OIDC token may check out, sparsely and without keeping the token in the checkout.
-COMPARE_FILES = ["tools/ci/release_targets.py", "tools/ci/release_manifest.py"]
+#: The files a gated publish job's checks run (its approval, its target against the manifest),
+#: each standard library alone: all a job holding the OIDC token may check out, sparsely and
+#: without keeping the token in the checkout.
+COMPARE_FILES = [
+    "tools/ci/release_approval.py",
+    "tools/ci/release_targets.py",
+    "tools/ci/release_manifest.py",
+]
+#: The environments the owner approves a release in: each gated job's gate.
+GATES = {"release", "release-client"}
+#: What a job's permissions hold that publishes: its token can write somewhere public.
+PUBLISHING = {"contents", "packages", "id-token", "attestations", "deployments"}
 #: Jobs holding the OIDC token that check out more, and why: none.
 CHECKS_OUT_MORE: dict[str, str] = {}
 
 
 def _sparse_problems(job_id: str, job: dict[str, Any]) -> list[str]:
-    """A job holding `id-token: write` checks out only the compare's files, or nothing."""
+    """A job holding `id-token: write` checks out only its checks' files, or nothing."""
     if (job.get("permissions") or {}).get("id-token") != "write" or job_id in CHECKS_OUT_MORE:
         return []
     out: list[str] = []
@@ -231,10 +240,39 @@ def _sparse_problems(job_id: str, job: dict[str, Any]) -> list[str]:
             or given.get("persist-credentials") is not False
         ):
             out.append(
-                f"{job_id} holds the OIDC token and checks out more than the compare's files "
+                f"{job_id} holds the OIDC token and checks out more than its checks' files "
                 f"({paths or 'the whole tree'})"
             )
     return out
+
+
+def _approves(step: dict[str, Any], job_id: str, environment: str) -> bool:
+    """Whether *step* holds this job's own approval to this attempt's manifest (#3911)."""
+    run = " ".join(str(step.get("run") or "").split())
+    return (
+        "python3 -I tools/ci/release_approval.py" in run
+        and f"--job {job_id} " in run
+        and f"--environment {environment} " in run
+        and '--attempt "$GITHUB_RUN_ATTEMPT"' in run
+        and (step.get("env") or {}).get("GH_TOKEN") == "${{ github.token }}"
+    )
+
+
+def _publishes(job: dict[str, Any]) -> bool:
+    permissions = job.get("permissions") or {}
+    return bool(job.get("environment")) or any(
+        permissions.get(scope) == "write" for scope in PUBLISHING
+    )
+
+
+def _gated(jobs: dict[str, Any], job_id: str, seen: frozenset[str] = frozenset()) -> bool:
+    """Whether *job_id* is behind a gate: in one of GATES, or waiting on a job that is."""
+    job = jobs.get(job_id) or {}
+    if str(job.get("environment") or "") in GATES:
+        return True
+    needs = job.get("needs") or []
+    needs = [needs] if isinstance(needs, str) else list(needs)
+    return any(_gated(jobs, n, seen | {job_id}) for n in needs if n not in seen)
 
 
 def _compares(step: dict[str, Any]) -> bool:
@@ -281,6 +319,26 @@ def release_problems(release_text: str) -> list[str]:
             out.append(f"{job_id} does not wait on every artifact being built and smoked")
     for job_id, job in jobs.items():
         out.extend(_sparse_problems(job_id, job))
+        # Nothing becomes public before the owner approves this build: every job that can
+        # publish is behind a gate, its own or one it waits on (#3911).
+        if job_id != "artifacts" and _publishes(job) and not _gated(jobs, job_id):
+            out.append(
+                f"{job_id} can publish before the owner's approval: it has no path to a gate"
+            )
+        environment = str(job.get("environment") or "")
+        if environment in GATES:
+            steps = _steps(job)
+            approval = next(
+                (i for i, step in enumerate(steps) if _approves(step, job_id, environment)), None
+            )
+            first_write = next(
+                (i for i, step in enumerate(steps) if PUBLISHES.get(job_id, lambda _: False)(step)),
+                None,
+            )
+            if approval is None or (first_write is not None and approval > first_write):
+                out.append(
+                    f"{job_id} publishes without holding its approval to this attempt's manifest"
+                )
     for job_id, writes in PUBLISHES.items():
         steps = _steps(jobs.get(job_id) or {})
         write = next((i for i, step in enumerate(steps) if writes(step)), None)
@@ -696,6 +754,19 @@ def test_a_manifest_command_that_would_fail_on_the_runner_is_caught(
     assert any(said in p for p in problems), problems
 
 
+#: Anchors of the gate's plants: the images and attest jobs waiting on `pypi`, and the
+#: client's approval step.
+IMAGES_GATED = "    needs: [artifacts, pypi]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 30"
+ATTEST_GATED = (
+    "    needs: [artifacts, pypi]\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n"
+    "    permissions:\n      id-token: write"
+)
+CLIENT_APPROVAL = (
+    'python3 -I tools/ci/release_approval.py --repository "$GITHUB_REPOSITORY"\n'
+    '          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --job pypi-client'
+)
+
+
 def test_a_release_that_builds_or_publishes_on_its_own_is_caught() -> None:
     release, _, _ = _texts()
     assert release_problems(release) == []
@@ -762,13 +833,36 @@ def test_a_release_that_builds_or_publishes_on_its_own_is_caught() -> None:
         ),
         (
             release.replace(
-                "          sparse-checkout: |\n            tools/ci/release_targets.py\n"
+                IMAGES_GATED, IMAGES_GATED.replace("[artifacts, pypi]", "[artifacts]"), 1
+            ),
+            "images can publish before the owner's approval",
+        ),
+        (
+            release.replace(
+                ATTEST_GATED, ATTEST_GATED.replace("[artifacts, pypi]", "[artifacts]"), 1
+            ),
+            "attest can publish before the owner's approval",
+        ),
+        (
+            release.replace("--job pypi\n", "--job pypi-x\n", 1),
+            "pypi publishes without holding its approval",
+        ),
+        (
+            release.replace(
+                CLIENT_APPROVAL, CLIENT_APPROVAL.replace("release_approval.py", "true #"), 1
+            ),
+            "pypi-client publishes without holding its approval",
+        ),
+        (
+            release.replace(
+                "          sparse-checkout: |\n            tools/ci/release_approval.py\n"
+                "            tools/ci/release_targets.py\n"
                 "            tools/ci/release_manifest.py\n"
                 "          sparse-checkout-cone-mode: false\n",
                 "",
                 1,
             ),
-            "pypi holds the OIDC token and checks out more than the compare's files",
+            "pypi holds the OIDC token and checks out more than its checks' files",
         ),
         (
             release.replace(
@@ -778,11 +872,11 @@ def test_a_release_that_builds_or_publishes_on_its_own_is_caught() -> None:
                 "          sparse-checkout-cone-mode: false\n",
                 1,
             ),
-            "pypi holds the OIDC token and checks out more than the compare's files",
+            "pypi holds the OIDC token and checks out more than its checks' files",
         ),
         (
             release.replace("          sparse-checkout-cone-mode: false\n", "", 1),
-            "pypi holds the OIDC token and checks out more than the compare's files",
+            "pypi holds the OIDC token and checks out more than its checks' files",
         ),
         (
             release.replace(
