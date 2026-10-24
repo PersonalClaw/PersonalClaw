@@ -1879,9 +1879,10 @@ runs them beside its own tests rather than all of `tests/rails` (#3920).
 ## Local runs
 
 `python -m tools.ci run-job <id> [--shard i/N]` runs one catalogue job here, and
-`python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse]` runs every job of a tier
-(`tools/ci/jobs.py`). `make check` is `run change --working-tree` and `make gate` is
-`run merge`. A run reuses a job's recorded pass by the rules under "Verdict reuse".
+`python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse] [--admission-wait S]` runs
+every job of a tier (`tools/ci/jobs.py`). `make check` is `run change --working-tree` and
+`make gate` is `run merge`. A run reuses a job's recorded pass by the rules under "Verdict
+reuse", and starts each job once the host has the memory it needs (seam 1, under "The seams").
 
 - **CI's commands.** A job's toolchain installs run first, as `ci.yml` runs them, then each step,
   word for word. A step's environment is built from nothing: what a GitHub runner gives every
@@ -2243,9 +2244,19 @@ clones on one host, which the public runner leaves out.
 - **Identity:** none of its own; the jobs it schedules record the tree and the partner revisions.
 - **Receipt:** it writes none. The run's own job records are the evidence, and admission leaves
   them unchanged; its log of waits and peak memory is diagnostic only.
-- **Without it:** `make check` and `make gate` run directly, with the catalogue's worker counts.
-  The public runner does not schedule by memory yet: the loader reads and checks `mem_gb`, and
-  nothing acts on it. A per-job CPU and memory budget is #3920's.
+- **Without it:** the public runner admits by memory within one run (`tools/ci/admission.py`,
+  #3920). Off GitHub, `make check` and `make gate` start each job only once the host's free
+  memory (`MemAvailable` on Linux; the free, inactive and speculative pages on macOS) holds what
+  it needs: its workers times the peak memory of its largest process the last time it ran in
+  this clone, else the catalogue's `mem_gb`, else 1 GB a worker. A job just started, by this run
+  or another clone's, has not grown to its peak, so the free reading does not show it yet: each
+  admitted job enters its need in a ledger the machine shares (`admission-ledger.json` under
+  `personalclaw-ci` in the user's cache folder), and admission counts each entry until its job
+  ends, its run's process is gone, or it is 120 s old, checking and entering under one lock. A
+  job that needs more than the host holds, or is still waiting after `--admission-wait` (30
+  minutes), is not run, and the run is partial (exit 2). A memory reading it cannot take admits
+  every job, a ledger it cannot use counts nothing, and the run says so. On GitHub every job
+  starts at once. It reads no container VM's memory.
 
 **2. Culprit-isolating batch validation.** Retired. It validated several branches together;
 with no batch step there is nothing to publish.
