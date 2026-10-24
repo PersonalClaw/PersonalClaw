@@ -163,6 +163,31 @@ describe('planted idle work fails the probe, each kind by name', () => {
     }
   })
 
+  it("a spring's tail that moves nothing in the window names what moved just before it", () => {
+    // The loop keeps asking for frames after its last visible change, so the window's `moved` is
+    // empty; the element it was moving changed a moment before the window opened.
+    const tail = document.createElement('div')
+    tail.setAttribute('aria-label', 'Planted spring')
+    document.body.append(tail)
+    try {
+      const { sample } = probe((page) => {
+        let n = 0
+        const step = () => {
+          n++
+          if (n < 40) tail.style.transform = `translateY(${40 - n}px)`
+          if (n < 400) page.requestAnimationFrame(step)
+        }
+        page.setTimeout(() => page.requestAnimationFrame(step), 300)
+      }, { page: { document, MutationObserver } })
+      expect(sample.moved).toEqual({})
+      expect(sample.movedBefore?.[0]).toMatchObject({ el: 'html>body>div[Planted spring]' })
+      expect(idleCostFindings(sample)).toContainEqual(
+        expect.stringMatching(/^nothing changed while it framed; just before the window: html>body>div\[Planted spring\] \(\d+ times, last \d+ ms before\)/))
+    } finally {
+      tail.remove()
+    }
+  })
+
   it('a frame loop started before the window names the stack that started it', () => {
     // CI's idle Chat asked for six frames from motion's own loop, which a load had started before
     // the window opened (#3905): its frames name only the loop's line, so the start is named too.

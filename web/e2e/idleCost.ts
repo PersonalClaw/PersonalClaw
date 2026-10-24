@@ -69,6 +69,9 @@ export interface IdleSample {
   pushes: Record<string, number>
   /** The elements whose `style` or `class` changed, by a short path: what the frames moved. */
   moved?: Record<string, number>
+  /** The elements that changed in the 2 s before the window opened, latest first: how many times,
+   *  and the ms before the opening of the last change. Reported with a frame finding only. */
+  movedBefore?: { el: string; n: number; msBefore: number }[]
   /** The start of each frame loop the window's frames belong to (a request made outside any
    *  frame), most frames first: when, in ms from the window's opening (negative: before it), and
    *  the stack that made it. */
@@ -114,6 +117,9 @@ export function idleCostFindings(sample: IdleSample): string[] {
     }
     const moved = worst(sample.moved ?? {}).slice(0, MOVED_NAMED)
     if (moved.length) out.push(`while it framed, these changed: ${moved.map(([el, n]) => `${el} (${plural(n, 'time')})`).join(', ')}`)
+    else if (sample.movedBefore?.length) {
+      out.push(`nothing changed while it framed; just before the window: ${sample.movedBefore.slice(0, MOVED_NAMED).map((x) => `${x.el} (${plural(x.n, 'time')}, last ${x.msBefore} ms before)`).join(', ')}`)
+    }
   }
   for (const [source, n] of worst(sample.timers)) {
     if (n > allowed) out.push(source.replace(' at ', ` fired ${n} times in ${window} idle, more than once a second: `))
@@ -341,11 +347,20 @@ export function installIdleProbe(win: Window = window): void {
     for (let e: Element | null = el; e && e.tagName && bits.length < 3; e = e.parentElement) bits.unshift(label(e))
     return bits.join('>')
   }
+  // And what moved just before: every change, armed or not, by element, with when it last changed.
+  // A spring's tail can run into the window after its last visible change, so the window's own
+  // `moved` is empty while its frames run; the element was still moving a moment before.
+  let lately: Record<string, { n: number; last: number }> = {}
   const record = (list: MutationRecord[]) => {
-    if (!armed) return
+    const now = w.performance.now()
     for (const m of list) {
       const key = pathTo(m.target as Element)
-      if (key in moved || Object.keys(moved).length < 40) bump(moved, key)
+      const seen = lately[key]
+      if (!seen && Object.keys(lately).length >= 200) {
+        for (const [k, x] of Object.entries(lately)) if (now - x.last > 3_000) delete lately[k]
+      }
+      if (seen) { seen.n++; seen.last = now } else if (Object.keys(lately).length < 200) lately[key] = { n: 1, last: now }
+      if (armed && (key in moved || Object.keys(moved).length < 40)) bump(moved, key)
     }
   }
   const Observer = w.MutationObserver
@@ -354,6 +369,8 @@ export function installIdleProbe(win: Window = window): void {
 
   w.__pcIdleCost = {
     arm() {
+      // Changes not yet delivered were made before the window: they are `lately`'s, not its.
+      if (observer) record(observer.takeRecords())
       frames = {}
       timers = {}
       delays = {}
@@ -375,6 +392,10 @@ export function installIdleProbe(win: Window = window): void {
         named[source.replace(' at ', `(${lo === hi ? lo : `${lo}-${hi}`} ms) at `)] = n
       }
       // The starts of the bursts the window's frames belong to, most frames first.
+      const movedBefore = Object.entries(lately)
+        .filter(([, x]) => x.last <= openedAt && openedAt - x.last <= 2_000)
+        .sort((a, b) => b[1].last - a[1].last).slice(0, 10)
+        .map(([el, x]) => ({ el, n: x.n, msBefore: Math.round(openedAt - x.last) }))
       const woke = Object.entries(byBurst).sort((a, b) => b[1] - a[1])
         .map(([id]) => starts[Number(id)]).filter(Boolean)
         .map((x) => ({ ms: Math.round(x.at - openedAt), stack: x.stack }))
@@ -382,6 +403,7 @@ export function installIdleProbe(win: Window = window): void {
       return {
         windowMs: Math.round(w.performance.now() - openedAt), frames, timers: named, requests, pushes,
         ...(observer ? { moved } : {}), ...(woke.length ? { wakes: woke } : {}),
+        ...(woke.length && movedBefore.length ? { movedBefore } : {}),
       }
     },
   }
