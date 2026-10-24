@@ -43,7 +43,6 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from table_rows import row
 
-from personalclaw.dashboard import handlers_system
 from personalclaw.dashboard.handlers import knowledge as kn_handlers
 from personalclaw.dashboard.handlers_system import api_healthz
 from personalclaw.dashboard.routes import _register_upload_routes
@@ -160,14 +159,19 @@ class _NoCpu:
     thread blocked on a read, a write, a sleep or a lock is not ready to run, so nothing it waits
     on is ever in the count.
 
-    Linux counts them for each thread, as ``run_delay`` in its ``schedstat``, so the count for a
-    set of threads is exactly theirs: the loop thread's own for a step (:meth:`loop_waited`, read
-    from a file the loop thread holds open), and the loop thread's with the worker's that read
-    the disk for a health check, for its answer (:meth:`waited`).
+    What the probe leaves out, of a step and of a health check's answer alike, is the loop
+    thread's own count. Its ready time and its blocked time never overlap, so a step or an answer
+    less it still holds every block of the loop. Two threads' counts can overlap: a worker that
+    served a health check can wait for a CPU while the loop is blocked on a read, and an answer
+    less both would lose the block.
+
+    Linux counts them for each thread, as ``run_delay`` in its ``schedstat``, so the loop
+    thread's count is exactly its own (:meth:`loop_waited`, read from a file the loop thread
+    holds open).
 
     macOS counts them only for the whole process: ``ri_runnable_time`` is the time its threads
     were running or ready to run, so less the CPU time they used, the time they were ready. So
-    :meth:`waited` counts for the given threads only the ready time no other thread can account
+    :meth:`waited` counts for the loop thread only the ready time no other thread can account
     for. Any other thread that ran, or was ready, between two :meth:`snapshot` calls could have
     been ready for all of that time less its CPU, and that much is taken off the process's count,
     which stops at 0. A thread neither running nor ready at either end that used no CPU between
@@ -280,10 +284,9 @@ class _Probe:
     Inside a step of :data:`_COUNTED` or longer, the time the loop thread spent ready to run with
     no CPU (:class:`_NoCpu`) is left out: a loaded runner stretches a step without the loop
     waiting on anything, and a step's own waits are never in that count. A step is never counted
-    as less than the CPU time the loop thread used in it. Inside a health check's answer, the
-    time left out is that of the threads that served it: the loop thread and the worker that read
-    the disk for it (``_identity``). The wall times are reported beside (:attr:`worst_step_wall`,
-    :attr:`slowest_answer_wall`).
+    as less than the CPU time the loop thread used in it. A health check's answer leaves out the
+    same: the time the loop thread spent ready with no CPU, never another thread's. The wall
+    times are reported beside (:attr:`worst_step_wall`, :attr:`slowest_answer_wall`).
 
     A 10 ms tick is kept beside it, and its longest gap (:attr:`worst_gap`) is reported: that gap
     is wall time between two turns, the selector's wait included, which is why it is not the
@@ -293,7 +296,6 @@ class _Probe:
         self.client = client
         self.asking = asking
         self.no_cpu = _NoCpu()
-        self.serving: set[int] = set()
         self.worst_step = 0.0
         self.worst_step_was = ""
         self.worst_step_wall = 0.0
@@ -335,21 +337,12 @@ class _Probe:
         return run
 
     async def during(self, work):
-        identity = handlers_system._identity
-
-        def served(*args, **kwargs):
-            self.serving.add(threading.get_native_id())
-            return identity(*args, **kwargs)
-
         self.no_cpu.open()
         try:
-            with (
-                patch.object(handlers_system, "_identity", served),
-                patch.object(
-                    asyncio.events.Handle,
-                    "_run",
-                    self._timed(threading.get_ident(), asyncio.events.Handle._run),
-                ),
+            with patch.object(
+                asyncio.events.Handle,
+                "_run",
+                self._timed(threading.get_ident(), asyncio.events.Handle._run),
             ):
                 return await self._during(work)
         finally:
@@ -368,15 +361,19 @@ class _Probe:
                 last = now
 
         async def ask() -> None:
+            loop = {threading.get_native_id()}
             while not stop.is_set():
-                self.serving = {threading.get_native_id()}
-                first = self.no_cpu.snapshot()
+                own = self.no_cpu.loop_waited()
+                first = self.no_cpu.snapshot() if own is None else None
                 asked = time.monotonic()
                 r = await self.client.get("/api/healthz")
                 await r.read()
                 assert r.status == 200
                 now = time.monotonic()
-                waited = self.no_cpu.waited(first, self.no_cpu.snapshot(), self.serving)
+                if own is not None:
+                    waited = max(0.0, self.no_cpu.loop_waited() - own)
+                else:
+                    waited = self.no_cpu.waited(first, self.no_cpu.snapshot(), loop)
                 self.slowest_answer = max(self.slowest_answer, max(0.0, now - asked - waited))
                 self.slowest_answer_wall = max(self.slowest_answer_wall, now - asked)
                 if started and not finished:
