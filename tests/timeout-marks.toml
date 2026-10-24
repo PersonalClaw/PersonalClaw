@@ -28,11 +28,6 @@ cap = 300
 reason = "runs a pytest collection of a whole module in a child interpreter"
 
 [[mark]]
-site = "tests/test_browse_live_legs_run_in_ci.py::test_every_browse_proof_module_runs_on_the_merge_gate"
-cap = 300
-reason = "a census of the tree: 84-99 s of the default under coverage on CI (2026-10-14/15)"
-
-[[mark]]
 site = "tests/test_bundled_model_gate.py::test_the_drive_completes_a_first_turn_on_the_signed_off_weight"
 cap = 840
 reason = "a cold cache's first fetch of the signed-off weight (600 s), the drive (180 s) and a minute to check the copy"
