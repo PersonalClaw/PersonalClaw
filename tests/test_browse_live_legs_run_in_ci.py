@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import unicodedata
 
 import browse_chrome
 import pytest
@@ -132,6 +133,17 @@ def calls_the_browser_gate(source: str) -> list[str]:
     return hits
 
 
+def may_call_the_browser_gate(source: str) -> bool:
+    """Whether *source* names ``browse_chrome`` at all, read as Python reads an identifier.
+
+    :func:`calls_the_browser_gate` finds a call only through a name the module imported from
+    ``browse_chrome``, and an import names the module. So a module whose text never names it calls
+    no gate, and is not parsed: the walk over every test module parses the few that do. The text
+    is read in its NFKC form because the parser reads identifiers that way, so an import spelled
+    in compatibility characters still names the module."""
+    return browse_chrome.__name__ in unicodedata.normalize("NFKC", source)
+
+
 def browse_proof_modules() -> set[str]:
     """Test modules that can skip on a missing browser — derived, never listed.
 
@@ -139,11 +151,12 @@ def browse_proof_modules() -> set[str]:
     ``pytest.raises``) is still named on the leg. That costs a second of runtime and removes a
     judgement call from a rail whose whole job is to not need one.
     """
-    return {
-        f"tests/{path.name}"
-        for path in sorted(_TESTS.glob("test_*.py"))
-        if calls_the_browser_gate(path.read_text(encoding="utf-8"))
-    }
+    found: set[str] = set()
+    for path in sorted(_TESTS.glob("test_*.py")):
+        source = path.read_text(encoding="utf-8")
+        if may_call_the_browser_gate(source) and calls_the_browser_gate(source):
+            found.add(f"tests/{path.name}")
+    return found
 
 
 def the_leg(cat: Catalogue) -> Job:
@@ -185,9 +198,6 @@ def test_the_module_walk_is_not_vacuous() -> None:
     assert "tests/browse_chrome.py" not in modules, "the lookup module is not a test module"
 
 
-# A census of the tree: under coverage on CI it took 84-99 s of the suite's 120 s (2026-10-14/15).
-# It gets the 300 s the inert-surface census's tests have (tests/test_inert_surface_baseline.py).
-@pytest.mark.timeout(300)
 def test_every_browse_proof_module_runs_on_the_merge_gate() -> None:
     """A module that imports the browser gate but runs on no leg skips forever."""
     leg = the_leg(read())
@@ -368,3 +378,50 @@ class TestTheDetectors:
         assert not calls_the_browser_gate(
             source
         ), f"the detector invented a gate from a mention:\n{source}"
+
+
+# ── the walk reads only the modules that can call the gate ────────────────────
+#
+# A module calls a gate only through a name it imported from ``browse_chrome``, so a module whose
+# text never names ``browse_chrome`` calls none, and the walk does not parse it. Python reads an
+# identifier as its NFKC form, so the text is read that way too: an import spelled in compatibility
+# characters is still the module's name.
+
+_GATED = "import browse_chrome as bc\n\n\ndef test_it():\n    bc.chrome_or_skip()\n"
+
+
+def test_the_walk_parses_only_the_modules_that_name_the_browser_module(monkeypatch) -> None:
+    parsed: list[str] = []
+    parse = ast.parse
+
+    def counting(source, *args, **kwargs):
+        parsed.append(source)
+        return parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counting)
+    modules = browse_proof_modules()
+    naming = [
+        path
+        for path in sorted(_TESTS.glob("test_*.py"))
+        if "browse_chrome" in unicodedata.normalize("NFKC", path.read_text(encoding="utf-8"))
+    ]
+    assert modules and len(parsed) == len(
+        naming
+    ), f"{len(parsed)} modules parsed for {len(naming)} that name browse_chrome"
+
+
+def test_a_module_that_never_names_the_browser_module_is_not_parsed() -> None:
+    assert not may_call_the_browser_gate("def test_it(:\n    chrome_or_skip()\n")
+
+
+def test_a_module_that_imports_the_browser_module_is_read() -> None:
+    assert may_call_the_browser_gate(_GATED)
+    assert calls_the_browser_gate(_GATED) == ["chrome_or_skip() at line 5"]
+
+
+def test_an_import_spelled_in_compatibility_characters_is_read() -> None:
+    # A fullwidth "b" (U+FF42): the parser reads the identifier as browse_chrome, so must the walk.
+    spelled = _GATED.replace("import browse_chrome", "import \uff42rowse_chrome")
+    assert "browse_chrome" not in spelled
+    assert calls_the_browser_gate(spelled) == ["chrome_or_skip() at line 5"]
+    assert may_call_the_browser_gate(spelled)
