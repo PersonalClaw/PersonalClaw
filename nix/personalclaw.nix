@@ -21,12 +21,13 @@
   fetchurl,
   runCommand,
   autoPatchelfHook,
+  zlib,
   python313,
 }:
 
 let
   # nixpkgs' python313, with the packages nixpkgs cannot supply at a version this wheel accepts
-  # built from the wheels the release's uv.lock pins: croniter, sqlite-vec,
+  # built from the wheels the release's uv.lock pins: certifi, croniter, pillow, sqlite-vec,
   # tree-sitter-language-pack and urllib3, each for the reason nix/pins.toml gives beside it.
   # Pinned that way they ARE the release's dependencies, the same files `uv sync --locked`
   # installs, never a newer or older version that happens to satisfy the bounds; the bounds
@@ -39,6 +40,7 @@ let
         stdenv
         fetchurl
         autoPatchelfHook
+        zlib
         python313
         ;
     } (lib.importTOML ./pins.toml).package)

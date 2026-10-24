@@ -34,6 +34,10 @@ PINS_FILE = REPO / "nix" / "pins.toml"
 #: accepts, and why. A new one shows up as a red `next release` step in the `nix` workflow,
 #: which builds the checkout's own wheel against the checkout's own lock.
 PINS = {
+    "certifi": (
+        "the release's floor is certifi>=2026.10.19, the bundle that drops the root certificates "
+        "whose intermediate keys were compromised, and nixpkgs carries 2026.1.4."
+    ),
     "croniter": (
         "the release asks for croniter>=2.0,<3, the cron grammar its expression corpus was "
         "measured against, and nixpkgs carries 6.x."
@@ -46,6 +50,10 @@ PINS = {
         "the release needs 1.15.7 or later, the first that reads the setting that keeps its "
         "grammars in PersonalClaw's home, and nixpkgs carries 1.4.1, a Rust build that "
         "bundles its grammars in the store."
+    ),
+    "pillow": (
+        "the release asks for Pillow>=13,<14, the first release that fixes the JPEG decoder's "
+        "heap overflow and eight other image advisories, and nixpkgs carries 12.3.0."
     ),
     "urllib3": "the release's floor is urllib3>=2.8.0, and nixpkgs carries 2.7.0.",
 }

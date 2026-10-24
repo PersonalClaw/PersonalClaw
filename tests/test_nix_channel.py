@@ -14,6 +14,7 @@ that can move a bound.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -94,6 +95,23 @@ def test_every_pin_is_a_published_wheel_with_its_digest() -> None:
 
 
 # ── scripts/nix_pins.py ──────────────────────────────────────────────────────────────────────
+
+
+PYTHON_NIX = REPO_ROOT / "nix" / "python.nix"
+
+
+def test_every_pin_is_imported_by_the_name_its_build_checks() -> None:
+    """nix/python.nix checks each pin's wheel by importing it: as the distribution's name with
+    ``_`` for ``-``, unless its ``importNames`` names another module (Pillow is ``PIL``). A pin
+    neither name reaches fails that check on every system, which only a Nix build would show."""
+    table = re.search(r"importNames = \{(.*?)\};", PYTHON_NIX.read_text(encoding="utf-8"), re.S)
+    assert table, "nix/python.nix has no importNames table"
+    names = dict(re.findall(r'^\s*([\w-]+) = "([\w.]+)";$', table.group(1), re.M))
+    for pin in nix_pins.PINS:
+        module = names.get(pin, pin.replace("-", "_"))
+        assert (
+            importlib.util.find_spec(module) is not None
+        ), f"{pin} is checked as {module}, no module"
 
 
 def test_render_copies_each_pinned_entry_verbatim_and_nothing_else() -> None:
