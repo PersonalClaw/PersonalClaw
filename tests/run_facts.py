@@ -4,11 +4,11 @@ The telemetry collector (``tools/ci/telemetry.py``) reads, from each junit repor
 its tests ran on and the number of xdist workers they shared, so the shard planner keeps one
 platform's and one ``-n``'s seconds apart. Each process adds both as junit properties to its
 first test case: ``ci_platform`` (OS, machine and Python, as ``linux-x86_64-3.12.15``) and
-``ci_workers`` (the number of xdist workers, ``0`` for one process). On Linux it also records
-``ci_cpu``, the CPU model ``/proc/cpuinfo`` names: GitHub's Linux hosts come in models whose
+``ci_workers`` (the number of xdist workers, ``0`` for one process). On Linux and macOS it also
+records ``ci_cpu``, the CPU model the host names: GitHub's Linux hosts come in models whose
 speeds differ by about 1.5x, and a shard's every file runs slower together on a slower one, so
-the planner weighs each report's seconds by its model. Under xdist each worker records its
-own, and they agree.
+the planner weighs each report's seconds by its model, and a macOS leg's spread can be split by
+host the same way. Under xdist each worker records its own, and they agree.
 
 The three names are the collector's (``telemetry.PLATFORM_PROPERTY``,
 ``telemetry.WORKERS_PROPERTY``), written out here rather than imported:
@@ -19,6 +19,7 @@ loads that conftest with only ``tests/`` on its path, where ``tools`` cannot be 
 
 from __future__ import annotations
 
+import ctypes
 import functools
 import platform
 import sys
@@ -32,6 +33,9 @@ WORKERS_PROPERTY = "ci_workers"
 CPU_PROPERTY = "ci_cpu"
 
 CPUINFO = Path("/proc/cpuinfo")
+#: Where macOS names its CPU model, and the library that reads it with no child process.
+BRAND_SYSCTL = b"machdep.cpu.brand_string"
+LIBSYSTEM = "/usr/lib/libSystem.B.dylib"
 
 
 def platform_id() -> str:
@@ -42,8 +46,10 @@ def platform_id() -> str:
 
 @functools.cache
 def cpu_model() -> str | None:
-    """The CPU model Linux's ``/proc/cpuinfo`` names first, or None: off Linux, or when it
-    cannot be read."""
+    """The CPU model the host names: the first ``model name`` in Linux's ``/proc/cpuinfo``, or
+    macOS's ``machdep.cpu.brand_string``. None elsewhere, or when it cannot be read."""
+    if sys.platform == "darwin":
+        return sysctl_string(BRAND_SYSCTL)
     if not sys.platform.startswith("linux"):
         return None
     try:
@@ -54,6 +60,22 @@ def cpu_model() -> str | None:
         if line.startswith("model name") and ":" in line:
             return line.split(":", 1)[1].strip() or None
     return None
+
+
+def sysctl_string(name: bytes) -> str | None:
+    """A string sysctl, read with libSystem's ``sysctlbyname``, or None: where there is no
+    libSystem, or no such sysctl."""
+    try:
+        libsystem = ctypes.CDLL(LIBSYSTEM, use_errno=True)
+        size = ctypes.c_size_t(0)
+        if libsystem.sysctlbyname(name, None, ctypes.byref(size), None, 0) != 0 or not size.value:
+            return None
+        value = ctypes.create_string_buffer(size.value)
+        if libsystem.sysctlbyname(name, value, ctypes.byref(size), None, 0) != 0:
+            return None
+    except (OSError, AttributeError):
+        return None
+    return value.value.decode("utf-8", errors="replace").strip() or None
 
 
 class _FirstTest:

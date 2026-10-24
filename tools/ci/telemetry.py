@@ -31,9 +31,9 @@ short fails the collection.
 **Where each test ran.** The suite records, on each process's first test case, its platform
 (OS, machine and Python) and its number of xdist workers (``tests/run_facts.py``). Every test
 line of that report carries them, so a reader can keep one platform's and one worker count's
-seconds apart. On Linux it also records the host's CPU model, and the run line's ``cpus`` maps
-each report to it (null for a report that recorded none), so a reader can weigh a report's
-seconds by how fast its host model is.
+seconds apart. On Linux and macOS it also records the host's CPU model, and the run line's
+``cpus`` maps each report to it (null for a report that recorded none), so a reader can weigh a
+report's seconds by how fast its host model is.
 
 **The CPU model** (version 3). Version 3 adds the run line's ``cpus`` and changes nothing else,
 so every reader takes a version 1 or 2 history (:data:`READS`) as one whose reports recorded no
