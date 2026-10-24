@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Memory search finds what a memory says and its file's own name, not where its file is: a word in your home folder's path (a folder named for a person, a project or a tool) no longer matches every memory, and a memory is still found by its name (`preferences`, `projects`, a history file's day). An index made before this is rebuilt from the memory files the first time it is opened.**
 - **The waiting list's ring no longer puts an error in the gateway's log when it cannot be sent. When something waiting on you is asked or answered, open pages are told a moment later, from a timer. A failed send there went into the gateway's event loop, where the ring's other failures are dropped quietly. Now it is dropped the same way, and open pages still see the change on their next poll.**
 - **Switching off, updating or uninstalling an app no longer pauses the gateway while it looks for a task the app left running. It used to collect and read every object the gateway held, which took about a second in a large gateway; it now reads only the tasks that are still scheduled.**
+- **Stopping or restarting PersonalClaw lets the scheduled backup step that is running finish first, for up to 30 seconds. The stop used to leave that step running on its own after the rest had stopped, and a Restart could cut an export short.**
 
 ### For maintainers
 

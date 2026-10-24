@@ -552,6 +552,59 @@ def test_end_to_end_a_thread_that_outlives_its_test_fails_the_session_naming_it(
     assert sorted(p.name for p in home.iterdir()) == []
 
 
+def test_end_to_end_a_loop_step_left_on_its_executor_names_the_test_whose_loop_ran_it(
+    tmp_path,
+) -> None:
+    """The breadth canary leg's shape (#4768): a test's gateway loop handed a step to the loop's
+    default executor, the loop's task was cancelled as the test ended, and the loop was closed
+    the way pytest-asyncio closes it, which does not wait for the executor. The executor's
+    thread (``asyncio_0``) ran the step on into the next test's setup."""
+    proc, home, work = _inner_session(
+        tmp_path,
+        """
+        import asyncio, os, time
+        from pathlib import Path
+
+        HOME = Path.home() / ".personalclaw"
+
+        def _step():
+            time.sleep(0.5)
+            try:
+                os.mkdir(HOME)
+            except Exception:
+                pass
+
+        def test_its_loop_hands_a_step_to_the_executor():
+            loop = asyncio.new_event_loop()
+
+            async def tick():
+                await loop.run_in_executor(None, _step)
+
+            task = loop.create_task(tick())
+            loop.run_until_complete(asyncio.sleep(0.05))
+            task.cancel()
+            loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+            loop.close()
+
+        def test_bystander():
+            time.sleep(2.0)
+        """,
+        made=False,
+    )
+    out = proc.stdout
+    assert "2 passed" in out, "neither test is blamed: the bystander is innocent" + out[-3000:]
+    assert proc.returncode == 1, "…and the SESSION fails, because a refusal belongs to no test"
+    report = (work / real_home_guard.REPORT_RELPATH).read_text()
+    for text in (report, out):
+        assert "os.mkdir:" in text
+        assert (
+            "on thread 'asyncio_0', started by "
+            "test_inner.py::test_its_loop_hands_a_step_to_the_executor" in text
+        ), text[-3000:]
+        assert "of test_inner.py::test_bystander, which did not start this thread" in text
+    assert not home.exists(), "refused, so the step made no home"
+
+
 def test_end_to_end_a_clean_session_still_writes_its_verdict(tmp_path) -> None:
     proc, _home, work = _inner_session(tmp_path, "def test_fine():\n    assert True\n")
     assert proc.returncode == 0, proc.stdout[-2000:]

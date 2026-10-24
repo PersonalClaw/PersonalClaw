@@ -53,6 +53,11 @@ DRILL_SECS = 30 * 24 * 60 * 60
 # responsive after a sleep, long enough to cost nothing.
 TICK_SECS = 5 * 60
 
+# How long the gateway's stop waits for the step the loop is running (`DurabilityService.aclose`)
+# before cancelling it. A step is a snapshot, an export or a maintenance pass: seconds on a home
+# of ordinary size.
+CLOSE_TIMEOUT_SECS = 30.0
+
 _STATE_FILE = "durability_state.json"
 
 # job name -> the `durability_state.json` key whose cadence `_due()` measures. One map, so
@@ -1456,10 +1461,14 @@ class DurabilityService:
         # `DashboardState.notify`-shaped callable, or None for headless runs.
         self._notifier = notifier
         self._task: asyncio.Task | None = None
+        # Set by `aclose`: the loop ends after the step it is running, rather than being
+        # cancelled in the middle of it.
+        self._closing = asyncio.Event()
 
     async def start(self) -> None:
         if self._task is not None:
             return
+        self._closing = asyncio.Event()
         self._task = asyncio.create_task(self._loop())
         # Time-travel's debouncer rides the atomic-write seam, not this loop, so it
         # is installed here rather than inside `_loop`: it must be listening from
@@ -1492,6 +1501,26 @@ class DurabilityService:
         except Exception:  # noqa: BLE001 — following writes must never block boot
             logger.warning("durability: could not follow configuration writes", exc_info=True)
 
+    async def aclose(self, timeout: float = CLOSE_TIMEOUT_SECS) -> None:
+        """Stop the way the gateway stops it: the loop ends after the step it is running, and this
+        waits for that step, up to *timeout*, before `stop` cancels what is left.
+
+        Cancelling alone ends the loop's await, not the executor thread running the step: on CI a
+        step outlived the gateway that started it and reached for the default home once the
+        test's home was undone (#4768)."""
+        from personalclaw.cancellation import cancel_and_wait
+
+        task = self._task
+        self._closing.set()
+        if task is not None and not task.done():
+            _, left = await asyncio.wait({task}, timeout=timeout)
+            if left:
+                logger.warning(
+                    "durability: a step was still running after %.0f s; cancelled", timeout
+                )
+                await cancel_and_wait(left, what="durability loop")
+        self.stop()
+
     def stop(self) -> None:
         if self._task is not None:
             self._task.cancel()
@@ -1509,17 +1538,30 @@ class DurabilityService:
         except Exception:  # noqa: BLE001
             logger.debug("durability: export follower uninstall failed", exc_info=True)
 
+    async def _stopped_before_next_tick(self) -> bool:
+        """Wait out one tick. True when the gateway's shutdown or `aclose` came first."""
+        from personalclaw import shutdown_event
+
+        waits = {
+            asyncio.ensure_future(shutdown_event.wait()),
+            asyncio.ensure_future(self._closing.wait()),
+        }
+        try:
+            done, _ = await asyncio.wait(
+                waits, timeout=self._tick_secs, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            for wait in waits:
+                wait.cancel()
+        return bool(done)
+
     async def _loop(self) -> None:
         from personalclaw import shutdown_event
 
         first = True
         while not shutdown_event.is_set():
-            if not first:
-                try:
-                    await asyncio.wait_for(shutdown_event.wait(), timeout=self._tick_secs)
-                    return  # shutdown signalled
-                except asyncio.TimeoutError:
-                    pass
+            if not first and await self._stopped_before_next_tick():
+                return  # shutdown signalled, or `aclose`
             first = False
             # Graph maintenance rides THIS tick — the alternative is a second periodic
             # loop, and `gateway.py`'s own rule is one dispatch path "rather than two that
@@ -1534,6 +1576,8 @@ class DurabilityService:
                 raise
             except Exception:  # noqa: BLE001 — maintenance must never break the backup tick
                 logger.warning("graph maintenance tick failed", exc_info=True)
+            if self._closing.is_set():
+                return  # `aclose`: the step in progress is done, and no other starts
             # The eval substrate's cadences (ablation runner + model-upgrade watchdog).
             # Also outside the `enabled()` gate below, for the same reason: `evals.enabled` is
             # their switch, and `durability.auto_backup` must not quietly be a second one.
@@ -1545,6 +1589,8 @@ class DurabilityService:
                 raise
             except Exception:  # noqa: BLE001 — evals must never break the backup tick
                 logger.warning("evals maintenance tick failed", exc_info=True)
+            if self._closing.is_set():
+                return
             # Run retention + footprint reclaim. Awaited rather than pushed to an executor
             # like its two neighbours, because the run-retention pruner is genuinely async — it
             # tears a run's workspace down before sweeping its directory — and it pushes its own
@@ -1556,6 +1602,8 @@ class DurabilityService:
                 raise
             except Exception:  # noqa: BLE001 — reclaim must never break the backup tick
                 logger.warning("footprint maintenance tick failed", exc_info=True)
+            if self._closing.is_set():
+                return
             if not enabled():
                 continue
             try:
