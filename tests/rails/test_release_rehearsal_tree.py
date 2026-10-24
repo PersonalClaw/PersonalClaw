@@ -194,10 +194,12 @@ RELEASE_CONCURRENCY = {"group": "release", "cancel-in-progress": False}
 
 #: Each job that writes to a publish target, and its writing steps. Before the first of them it
 #: reads what the target holds and holds that against the approved manifest (#3911), so a run
-#: again or resumed writes nothing over an object it did not build. `pypi-client` builds the
-#: client itself, so it joins once the client is in the manifest.
+#: again or resumed writes nothing over an object it did not build.
 PUBLISHES = {
     "pypi": lambda step: str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish@"),
+    "pypi-client": lambda step: str(step.get("uses", "")).startswith(
+        "pypa/gh-action-pypi-publish@"
+    ),
     "images": lambda step: "skopeo copy" in str(step.get("run") or ""),
     "notes": lambda step: re.search(r"\bgh release (create|upload)\b", str(step.get("run") or ""))
     is not None,
@@ -209,9 +211,8 @@ MANIFEST_DIGEST = "${{ needs.artifacts.outputs.manifest-digest }}"
 #: The files a publish job's compare runs, both standard library alone: all a job holding the
 #: OIDC token may check out, sparsely and without keeping the token in the checkout.
 COMPARE_FILES = ["tools/ci/release_targets.py", "tools/ci/release_manifest.py"]
-#: Jobs holding the OIDC token that still check out more, and why. `pypi-client` builds the
-#: client itself until the client is built with the rest of the release.
-CHECKS_OUT_MORE = {"pypi-client": "builds the client at publish time"}
+#: Jobs holding the OIDC token that check out more, and why: none.
+CHECKS_OUT_MORE: dict[str, str] = {}
 
 
 def _sparse_problems(job_id: str, job: dict[str, Any]) -> list[str]:
@@ -753,6 +754,14 @@ def test_a_release_that_builds_or_publishes_on_its_own_is_caught() -> None:
         ),
         (
             release.replace(
+                "python3 -I tools/ci/release_targets.py pypi --project personalclaw-client",
+                "true",
+                1,
+            ),
+            "pypi-client writes before it holds what its target has",
+        ),
+        (
+            release.replace(
                 "          sparse-checkout: |\n            tools/ci/release_targets.py\n"
                 "            tools/ci/release_manifest.py\n"
                 "          sparse-checkout-cone-mode: false\n",
@@ -798,3 +807,102 @@ def test_a_release_that_builds_or_publishes_on_its_own_is_caught() -> None:
     ]:
         assert planted != release, said
         assert any(said in p for p in release_problems(planted)), (said, release_problems(planted))
+
+
+def client_problems(release_text: str, artifacts_text: str) -> list[str]:
+    """personalclaw-client is built, smoked and recorded with the rest of the release, and
+    `pypi-client` publishes that build and builds nothing (#3911)."""
+    out: list[str] = []
+    build = _steps((_load(artifacts_text).get("jobs") or {}).get("build") or {})
+    runs = [str(step.get("run") or "") for step in build]
+    built = next(
+        (i for i, run in enumerate(runs) if "uv build packages/personalclaw-client-py" in run), None
+    )
+    smoked = next(
+        (
+            i
+            for i, run in enumerate(runs)
+            if 'version("personalclaw-client")' in run and "PersonalClawClient" in run
+        ),
+        None,
+    )
+    uploaded = next(
+        (
+            i
+            for i, step in enumerate(build)
+            if (step.get("with") or {}).get("name") == "dist-client"
+        ),
+        None,
+    )
+    if built is None:
+        out.append("the build job does not build the client")
+    if smoked is None or built is None or smoked < built:
+        out.append(
+            "the client's wheel is not smoked, its version held to the release's, after it is built"
+        )
+    if uploaded is None or smoked is None or uploaded < smoked:
+        out.append("the client is not handed on (dist-client) after its smoke")
+    if not any("--artifact 'dist-client/*'" in run for run in runs):
+        out.append("the client is not in the build's record of what it built")
+    if 'cp "$A"/dist-client/*.whl "$A"/dist-client/*.tar.gz staged/' not in artifacts_text:
+        out.append("the client is not staged, so the manifest does not record it")
+    client = _steps((_load(release_text).get("jobs") or {}).get("pypi-client") or {})
+    if any(
+        "uv build" in str(step.get("run") or "")
+        or str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+        for step in client
+    ):
+        out.append(
+            "pypi-client builds the client itself, not the one artifacts smoked and recorded"
+        )
+    if not any((step.get("with") or {}).get("name") == "dist-client" for step in client):
+        out.append("pypi-client does not publish the dist-client artifacts built")
+    return out
+
+
+def test_the_client_is_built_smoked_and_recorded_with_the_release() -> None:
+    release, artifacts, _ = _texts()
+    assert client_problems(release, artifacts) == []
+    for planted_release, planted_artifacts, said in [
+        (
+            release.replace(
+                "      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33"
+                " # v1.14.2\n        with:\n          packages-dir: dist-client/",
+                "      - run: uv build packages/personalclaw-client-py --out-dir dist-client\n"
+                "      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33"
+                " # v1.14.2\n        with:\n          packages-dir: dist-client/",
+                1,
+            ),
+            artifacts,
+            "pypi-client builds the client itself",
+        ),
+        (
+            release,
+            artifacts.replace(
+                "          uv build packages/personalclaw-client-py --out-dir dist-client\n", "", 1
+            ),
+            "the build job does not build the client",
+        ),
+        (
+            release,
+            artifacts.replace(
+                'release, got = sys.argv[1], version("personalclaw-client")', "got = release = 1", 1
+            ),
+            "is not smoked, its version held to the release's",
+        ),
+        (
+            release,
+            artifacts.replace("--artifact 'dist-client/*' ", "", 1),
+            "not in the build's record",
+        ),
+        (
+            release,
+            artifacts.replace(
+                '          cp "$A"/dist-client/*.whl "$A"/dist-client/*.tar.gz staged/\n', "", 1
+            ),
+            "the manifest does not record it",
+        ),
+    ]:
+        assert (planted_release, planted_artifacts) != (release, artifacts), said
+        found = client_problems(planted_release, planted_artifacts)
+        assert any(said in p for p in found), (said, found)

@@ -125,6 +125,32 @@ jobs:
           # its images, as this release.
           python scripts/verify_wheel.py --wheel "dist/*.whl" \
             --release-version "${{ steps.ver.outputs.version }}"
+      - name: Build the client's sdist + wheel
+        # personalclaw-client is built here with core (#3911), so the release publishes the client
+        # this run built, smoked and recorded in its manifest, never one `pypi-client` builds at
+        # publish time. Into dist-client/, apart from dist/: PyPI's core job is handed dist/ alone.
+        run: |
+          uv build packages/personalclaw-client-py --out-dir dist-client
+      - name: Smoke the client from its wheel alone (release-blocking)
+        # The wheel, installed into a scratch venv with its own dependency, imports and is the
+        # release's version: lockstep, its version is core's wheel's, which verify_wheel.py above
+        # holds to the tag (tests/test_version_consistency.py keeps the sources in step).
+        run: |
+          set -euo pipefail
+          core=$(cd dist && ls personalclaw-[0-9]*.whl)
+          uv venv .venv-client-smoke
+          uv pip install --python .venv-client-smoke dist-client/personalclaw_client-*.whl
+          .venv-client-smoke/bin/python - "$(printf '%s' "$core" | cut -d- -f2)" <<'PY'
+          import sys
+          from importlib.metadata import version
+
+          from personalclaw_client import PersonalClawClient
+
+          release, got = sys.argv[1], version("personalclaw-client")
+          if got != release:
+              sys.exit(f"the client's wheel is {got}, not the release's {release}")
+          print(f"personalclaw-client {got} imports ({PersonalClawClient.__name__}) and is the release's")
+          PY
       - name: Resolve this release's CHANGELOG section
         # Found by VERSION, not by spelling (`scripts/release_version.py`, the updater's
         # parse), so a heading the cut spelled `0.3.0-rc.1` or `0.3.0rc1` is this tag's
@@ -217,6 +243,12 @@ jobs:
           retention-days: ${{ inputs.retention-days }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          name: dist-client
+          path: dist-client/
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
           name: release-notes
           path: release-notes.md
           if-no-files-found: error
@@ -226,7 +258,7 @@ jobs:
         # the actions this job's own set-up log shows (tools/ci/build_identity.py).
         run: >-
           python3 -I tools/ci/build_identity.py record --out build-record --name build
-          --artifact 'dist/*' --artifact wheel-sbom/personalclaw-wheel.spdx.json
+          --artifact 'dist/*' --artifact 'dist-client/*' --artifact wheel-sbom/personalclaw-wheel.spdx.json
           --tool "python=$(uv run --no-project python -c 'import platform; print(platform.python_version())')"
           --tool "uv=$(uv --version)" --tool "node=$(node --version)" --tool "npm=$(npm --version)"
       - name: Upload the build record
@@ -874,6 +906,7 @@ jobs:
           A="$RUNNER_TEMP/artifacts"
           mkdir staged indexes
           cp "$A"/dist/*.whl "$A"/dist/*.tar.gz staged/
+          cp "$A"/dist-client/*.whl "$A"/dist-client/*.tar.gz staged/
           cp "$A"/desktop-linux/*.AppImage "$A"/desktop-linux/*.deb "$A"/desktop-mac-*/*.dmg staged/
           # Every desktop-mac leg's dmg, each named for its arch.
           for arch in arm64 x64; do

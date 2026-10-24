@@ -12,6 +12,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **Every release ships a Mac dmg for Intel beside the Apple-silicon one: `PersonalClaw-<version>-x64.dmg`, built and started on an Intel runner, with its own Intel backend. cryptography publishes no Intel-Mac build since 49.0.0, so the Intel backend carries one CI compiles from the locked source, statically linked to the runner's OpenSSL (3.6.3 at this writing; each release's build record names its own).**
 - **`personalclaw doctor --crypto` checks the cryptography library an install carries: a Fernet round trip and an X.509 certificate made and parsed back, with its version and its OpenSSL's.**
+- **The `personalclaw-client` package on PyPI is now built, smoked and recorded with the rest of each release: its wheel is installed and imported on its own, checked to be the release's version, and its digest is in the release manifest beside every other artifact's. It used to be built from source at the moment it was published, and nothing checked it first.**
 
 ### Fixed
 

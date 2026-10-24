@@ -3786,7 +3786,7 @@ ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "the workflow sets another value",
-                ".github/workflows/release.yml",
+                ".github/workflows/release-artifacts.yml",
                 _PREFERENCE,
                 "  UV_PYTHON_PREFERENCE: system\n",
             ),
