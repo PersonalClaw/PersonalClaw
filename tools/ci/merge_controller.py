@@ -19,7 +19,10 @@ failing closed:
    approval gate, so no head's code runs in the base repository without the approval its own run
    needed. A head with no such run gets no trusted run. Until that run reports, the head has no
    verdict, which a required check reads as not passed.
-3. The head is not behind ``main``, so the squash commit lands the tree the run tested.
+3. The head is not behind ``main``, so the squash commit lands the tree the run tested. This is
+   read before the definitions: a head ``main`` has moved past is red, told to update, and starts
+   no trusted run, since against ``main``'s tip it would read as changing every definition
+   ``main`` changed since.
 
 **The trusted run.** ``trusted`` builds one commit through the API with the controller App's
 token: ``main``'s tip as its parent, ``main``'s definitions, and every other path as the head
@@ -525,6 +528,13 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         base = main_tip(get, repo)
         _, base_tree = api_tree(get, repo, base)
         tree_oid, head_tree = api_tree(get, repo, head)
+        behind = behind_by(get, repo, base, head)
+        if behind and run.candidate is None:
+            # Checked before the definitions: against main's tip, a head main has moved past
+            # would read as changing every definition main changed since, and it must update
+            # before any run of it can count.
+            stale = f"the head is {behind} commits behind main: update the branch"
+            return Outcome(posting=_red(run, [stale], head))
         if run.candidate is None:
             comparison = trust.compare_trees(base_tree, head_tree, base=base, head=head)
             if not comparison.trusted:
@@ -571,7 +581,6 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             judged = f"a run of main's definitions on its tree (`{run.head_sha}`)"
         reasons, labels = results_reasons(get, repo, run)
         reasons += dependency_review_reasons(get, repo, head)
-        behind = behind_by(get, repo, base, head)
         if behind:
             reasons.append(f"the head is {behind} commits behind main: update the branch")
         records = evidence(get, repo, run) if not reasons else {}

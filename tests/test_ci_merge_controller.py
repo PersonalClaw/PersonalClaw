@@ -710,3 +710,15 @@ def test_a_review_run_that_is_not_a_pull_requests_posts_nothing() -> None:
     assert (
         "not a pull request's dependency review" in mc.judge(api, REPO, REVIEW_RUN, CONTROLLER).why
     )
+
+
+def test_a_head_main_has_moved_past_is_told_to_update_and_starts_no_trusted_run() -> None:
+    api = FakeApi()
+    api.tree(MAIN, {MERGE_PATH: MERGE_YML + "# main moved on\n", "README.md": "hi\n"})
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 4}
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert outcome.dispatch is None, "a head behind main starts no trusted run"
+    assert outcome.posting is not None and outcome.posting.conclusion == "failure"
+    assert outcome.posting.output["title"] == (
+        "Red: the head is 4 commits behind main: update the branch"
+    )
