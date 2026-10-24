@@ -1,0 +1,11 @@
+{
+  "image": "mcr.microsoft.com/playwright@sha256:d65108d1a8095d8b0c4a5e32bf1807a40a5ce90ff0c78473e1116b1c243235e8",
+  "platform": "linux/amd64",
+  "playwright": "1.64.1",
+  "browser": "chromium 156.0.8078.4",
+  "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+  "fonts": {
+    "count": 130,
+    "sha256": "95c4ef5b85ec48593a255ce13d4901ebba9f1fb8166c8a7e80a5aa38a6ff6dc5"
+  }
+}

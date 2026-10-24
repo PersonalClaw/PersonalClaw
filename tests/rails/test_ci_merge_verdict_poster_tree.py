@@ -193,6 +193,18 @@ _DISPATCH_TOKEN = (
             "runs on",
         ),
         (
+            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n',
+            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n'
+            "  workflow_dispatch: {}\n",
+            "runs on",
+        ),
+        (
+            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n',
+            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n'
+            "  push:\n",
+            "runs on",
+        ),
+        (
             "  check_run:\n    types: [completed]\n",
             "  check_run:\n    types: [completed, created]\n",
             "runs on",

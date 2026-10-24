@@ -1,0 +1,75 @@
+# Refresh visual baselines: regenerates the container-made baselines inside the pinned Playwright
+# image (web/e2e/visual-image.json, linux/amd64 by digest), the one environment they are made and
+# compared in (#3943). It runs on dispatch alone, commits nothing and holds no write token.
+#
+# The checkout is set up as the browser legs set it up (the locked venv, the root's npm ci, the
+# one vite build and its stamp), then web/e2e/run-pinned.mjs runs each suite with `--update`
+# against the image's browser: it probes the image's browser build, renderer and fonts into
+# web/e2e/visual-environment.json, serves the image's browser on 127.0.0.1, and runs the suite on
+# the runner, gateway included, so that only the rendering is the image's. The UI matrix
+# (e2e/surfaces.spec.ts) writes its accessibility trees and findings, and the visual spec its
+# screenshots, each in an invocation of its own on a fresh home, as both require.
+#
+# Flow: dispatch on the branch whose change moves a surface, download the `visual-baselines`
+# artifact, read each diff, and commit the intended ones with the manifest in a pull request
+# whose body names the change in light and dark (#3811). No bot commits.
+name: Refresh visual baselines
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own (see ci.yml's env).
+  UV_PYTHON_PREFERENCE: only-managed
+
+concurrency:
+  group: visual-baselines-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: "3.12.15"
+          node: "true"
+      # The harness starts `../.venv/bin/personalclaw` on the runner, as in every browser leg.
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: npm ci (root)
+        run: npm ci
+      - name: build (vite)
+        run: npm run build
+      - name: stamp the build (scripts/spa_dist_freshness.py)
+        run: python3 scripts/spa_dist_freshness.py stamp
+      - name: the UI matrix's baselines, made against the pinned browser
+        working-directory: web
+        run: node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts
+      - name: the visual baselines, made against the pinned browser
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/run-pinned.mjs --update -- e2e/visual.spec.ts
+      - name: Upload the baselines and their manifest
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: visual-baselines
+          path: |
+            web/e2e/visual-environment.json
+            web/e2e/__screenshots__/
+            web/e2e/__aria__/*-linux.aria.yml
+            web/e2e/__ui-baselines__/*-linux.json
+          if-no-files-found: error
+          retention-days: 7

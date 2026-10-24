@@ -380,6 +380,7 @@ def test_the_corpus_holds_lines_the_reader_reads_and_lines_it_refuses():
     assert len(read) >= 25 and len(refused) >= 4, (len(read), len(refused))
 
 
+@pytest.mark.timeout(50)
 @seed(20261018)
 @settings(
     max_examples=400,

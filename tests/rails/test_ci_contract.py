@@ -1300,6 +1300,22 @@ def _add_to_job(workflow: str, text: str) -> Callable[[Path], None]:
 
 
 _LINT_PERMISSIONS = "    permissions:\n      contents: read\n      pull-requests: read\n"
+_DISPATCHED = "on:\n  workflow_dispatch: {}\n"
+
+
+def _flipped(rel: str) -> Callable[[Path], None]:
+    """The tree's pr.yml or merge.yml as #3915's flip runs it: on every pull request too."""
+
+    def plant(root: Path) -> None:
+        text = (REPO / rel).read_text(encoding="utf-8")
+        assert text.count(_DISPATCHED) == 1, f"{rel} no longer opens on a dispatch alone"
+        _write(
+            root, rel, text.replace(_DISPATCHED, "on:\n  pull_request:\n  workflow_dispatch: {}\n")
+        )
+
+    return plant
+
+
 _CALLS_REUSABLE = "  called:\n    uses: ./.github/workflows/reusable.yml\n"
 
 NO_TRUSTED_CHECKOUT_OF_CANDIDATE_CODE = Row(
@@ -1433,6 +1449,40 @@ NO_CANDIDATE_JOB_HOLDS_A_WRITE_OR_A_SECRET = Row(
             ),
         ),
         Control("a secret in a workflow that runs only on main passes", _nothing, fails=False),
+        Control(
+            "pr.yml on every pull request, as the flip runs it, passes",
+            _flipped(_PR_YML),
+            fails=False,
+        ),
+        Control(
+            "merge.yml on every pull request, as the flip runs it, passes",
+            _flipped(_MERGE_YML),
+            fails=False,
+        ),
+        Control(
+            "pr.yml on every pull request with a secret in a step fails",
+            _both(
+                _flipped(_PR_YML),
+                _replace(
+                    "pr.yml",
+                    "GH_TOKEN: ${{ github.token }}",
+                    "GH_TOKEN: ${{ secrets.CONTROLLER_APP_KEY }}",
+                ),
+            ),
+            expect="pr.yml",
+        ),
+        Control(
+            "merge.yml on every pull request with a write token fails",
+            _both(
+                _flipped(_MERGE_YML),
+                _replace(
+                    "merge.yml",
+                    "      pull-requests: read   # `commits/{sha}/pulls`",
+                    "      pull-requests: write   # `commits/{sha}/pulls`",
+                ),
+            ),
+            expect="merge.yml",
+        ),
         Control(
             "permissions: {} passes",
             _replace("ci.yml", _LINT_PERMISSIONS, "    permissions: {}\n"),
@@ -7362,19 +7412,37 @@ _SCAFFOLD_MARKS = (
     'site = "tests/test_slow.py::_SHARED"\n'
     "cap = 240\n"
     'reason = "a mark a decorator reuses, by a name bound to a constant"\n'
+    "\n[[mark]]\n"
+    'site = "tests/test_slow.py::ROW_TIMEOUTS[a slow row]"\n'
+    "cap = 90\n"
+    'reason = "a table row\'s own mark, keyed by its name"\n'
 )
+
+
+def _plant_and_list(rel: str, text: str, site: str, cap: int) -> Callable[[Path], None]:
+    """*text* appended to *rel*, and its mark listed with a reason, as a reviewed entry would be."""
+
+    def plant(root: Path) -> None:
+        _append(rel, text)(root)
+        _append(
+            timeout_marks.LIST,
+            f'\n[[mark]]\nsite = "{site}"\ncap = {cap}\nreason = "listed, with a reason"\n',
+        )(root)
+
+    return plant
 
 
 def _timeout_scaffold(root: Path) -> None:
     """A tree where the rule holds: one listed decorator, one listed mark held in a name whose cap
-    is a module constant, and a test with no mark."""
+    is a module constant, a listed mark keyed by a table row's name, and a test with no mark."""
     _write(
         root,
         _MARKED_TEST,
         "import pytest\n\n_CAP = 200 + 40\n_SHARED = pytest.mark.timeout(_CAP)\n\n\n"
         "@pytest.mark.timeout(300)\ndef test_it_is_slow():\n    pass\n\n\n"
         "@_SHARED\ndef test_it_shares_a_cap():\n    pass\n\n\n"
-        "def test_it_is_quick():\n    pass\n",
+        "def test_it_is_quick():\n    pass\n\n\n"
+        'ROW_TIMEOUTS = {"a slow row": pytest.mark.timeout(90)}\n',
     )
     _write(root, timeout_marks.LIST, _SCAFFOLD_MARKS)
 
@@ -7400,7 +7468,7 @@ EVERY_TIMEOUT_MARK_IS_LISTED = Row(
                 "    for item in items:\n"
                 "        item.add_marker(pytest.mark.timeout(60))\n",
             ),
-            expect="tests/conftest.py::pytest_collection_modifyitems sets a 60 s timeout",
+            expect="tests/conftest.py::pytest_collection_modifyitems caps every test it reaches",
         ),
         Control(
             "a module's pytestmark",
@@ -7408,7 +7476,42 @@ EVERY_TIMEOUT_MARK_IS_LISTED = Row(
                 "tests/test_planted.py",
                 "import pytest\n\npytestmark = [pytest.mark.anyio, pytest.mark.timeout(500)]\n",
             ),
-            expect="tests/test_planted.py::pytestmark sets a 500 s timeout",
+            expect="tests/test_planted.py::pytestmark caps every test it reaches",
+        ),
+        Control(
+            "a listed module's pytestmark, still a blanket",
+            _plant_and_list(
+                "tests/test_planted.py",
+                "import pytest\n\npytestmark = pytest.mark.timeout(500)\n",
+                "tests/test_planted.py::pytestmark",
+                500,
+            ),
+            expect="tests/test_planted.py::pytestmark caps every test it reaches",
+        ),
+        Control(
+            "a listed mark in a conftest, still a blanket",
+            _plant_and_list(
+                "tests/sub/conftest.py",
+                "import pytest\n\n\n@pytest.fixture\ndef slow(request):\n"
+                "    request.node.add_marker(pytest.mark.timeout(60))\n",
+                "tests/sub/conftest.py::slow",
+                60,
+            ),
+            expect="tests/sub/conftest.py::slow caps every test it reaches",
+        ),
+        _plant(
+            "an unlisted row in a table of marks",
+            _MARKED_TEST,
+            '{"a slow row": pytest.mark.timeout(90)}',
+            '{"a slow row": pytest.mark.timeout(90), "another": pytest.mark.timeout(70)}',
+            expect="tests/test_slow.py::ROW_TIMEOUTS[another] sets a 70 s timeout",
+        ),
+        _plant(
+            "a table row's cap changed without its entry",
+            _MARKED_TEST,
+            '{"a slow row": pytest.mark.timeout(90)}',
+            '{"a slow row": pytest.mark.timeout(95)}',
+            expect="ROW_TIMEOUTS[a slow row] sets 95 s where tests/timeout-marks.toml lists 90 s",
         ),
         Control(
             "a mark through `from pytest import mark as m`",
@@ -7488,6 +7591,156 @@ EVERY_TIMEOUT_MARK_IS_LISTED = Row(
 )
 
 ROWS = (*ROWS, EVERY_TIMEOUT_MARK_IS_LISTED)
+
+
+# ── The suite's default cap is set once ─────────────────────────────────────────────────────
+#
+# Every test runs under timeout_marks.DEFAULT seconds, the one `--timeout` in pyproject.toml's
+# addopts (#3926). A step, a package's pytest config, an ini key or PYTEST_TIMEOUT that passes
+# another would give a whole job a second default, which no mark and no reason names.
+
+_DEFAULT_CAP = f"--timeout={timeout_marks.DEFAULT}"
+_CAP_CATALOGUE = "tools/ci/catalogue.toml"
+_CAP_STEP = 'argv = ["uv", "run", "pytest", "-n", "auto", "tests"]'
+
+
+def _default_scaffold(root: Path) -> None:
+    """A tree where the cap is set once: pyproject's addopts, and a catalogue step, a package, a
+    Makefile target, a workflow and a script that run pytest without one."""
+    _write(
+        root,
+        "pyproject.toml",
+        f'[tool.pytest.ini_options]\naddopts = ["--verbose", "{_DEFAULT_CAP}"]\n'
+        'timeout_method = "signal"\n',
+    )
+    _write(
+        root,
+        "packages/client/pyproject.toml",
+        '[tool.pytest.ini_options]\naddopts = ["-q"]\ntestpaths = ["tests"]\n',
+    )
+    _write(
+        root,
+        _CAP_CATALOGUE,
+        '[[job]]\nid = "suite"\n\n[job.env]\nPYTHONHASHSEED = "0"\n\n'
+        f"[[job.command]]\n{_CAP_STEP}\n\n"
+        '[[job]]\nid = "e2e"\n\n[[job.command]]\n'
+        'argv = ["npx", "playwright", "test", "--timeout", "60000"]\n',
+    )
+    _write(root, "Makefile", "test:\n\t$(PYTHON) -m pytest -n auto --dist worksteal tests\n")
+    _write(
+        root,
+        ".github/workflows/ci.yml",
+        "jobs:\n  e2e:\n    steps:\n      - run: npx playwright test --timeout 60000\n",
+    )
+    _write(root, "scripts/run_suite.sh", '#!/bin/sh\nexec python -m pytest tests "$@"\n')
+    # A test's own child pytest, over a scratch tree it built, is under the test's own cap.
+    _write(
+        root,
+        "tests/test_child.py",
+        'import subprocess\n\n\ndef test_it():\n    subprocess.run(["pytest", "--timeout=1"])\n',
+    )
+
+
+THE_DEFAULT_CAP_IS_SET_ONCE = Row(
+    name="the-suite-default-cap-is-set-once-in-pyproject",
+    check=timeout_marks.default_violations,
+    scaffold=_default_scaffold,
+    controls=(
+        _plant(
+            "the default raised",
+            "pyproject.toml",
+            _DEFAULT_CAP,
+            "--timeout=120",
+            expect=f"must pass the default cap once, as {_DEFAULT_CAP}",
+        ),
+        _plant(
+            "the default removed",
+            "pyproject.toml",
+            f', "{_DEFAULT_CAP}"',
+            "",
+            expect="it passes none",
+        ),
+        _plant(
+            "a second cap in addopts",
+            "pyproject.toml",
+            f'"{_DEFAULT_CAP}"',
+            f'"{_DEFAULT_CAP}", "--timeout=300"',
+            expect="must pass the default cap once",
+        ),
+        _plant(
+            "the cap as an ini key",
+            "pyproject.toml",
+            'timeout_method = "signal"',
+            "timeout = 300",
+            expect="pyproject.toml sets pytest-timeout's timeout ini key",
+        ),
+        _plant(
+            "the cap made to leave fixtures out",
+            "pyproject.toml",
+            'timeout_method = "signal"',
+            "timeout_func_only = true",
+            expect="sets pytest-timeout's timeout_func_only ini key",
+        ),
+        _plant(
+            "a package's own cap",
+            "packages/client/pyproject.toml",
+            'addopts = ["-q"]',
+            'addopts = ["-q", "--timeout=600"]',
+            expect="packages/client/pyproject.toml's addopts passes a cap of its own",
+        ),
+        _plant(
+            "a catalogue step's own cap",
+            _CAP_CATALOGUE,
+            _CAP_STEP,
+            'argv = ["uv", "run", "pytest", "-n", "auto", "--timeout=90", "tests"]',
+            expect="the catalogue's suite passes pytest a cap",
+        ),
+        _plant(
+            "a catalogue step's ini override",
+            _CAP_CATALOGUE,
+            _CAP_STEP,
+            'argv = ["uv", "run", "pytest", "-o", "timeout=90", "tests"]',
+            expect="the catalogue's suite passes pytest a cap",
+        ),
+        _plant(
+            "a catalogue job's PYTEST_TIMEOUT",
+            _CAP_CATALOGUE,
+            'PYTHONHASHSEED = "0"',
+            'PYTEST_TIMEOUT = "90"',
+            expect="the catalogue's suite sets PYTEST_TIMEOUT in its env",
+        ),
+        _plant(
+            "a catalogue step's PYTEST_TIMEOUT",
+            _CAP_CATALOGUE,
+            _CAP_STEP,
+            _CAP_STEP + '\nenv = { PYTEST_TIMEOUT = "90" }',
+            expect="the catalogue's suite sets PYTEST_TIMEOUT on a step",
+        ),
+        _plant(
+            "a Makefile target's own cap",
+            "Makefile",
+            "--dist worksteal tests",
+            "--dist worksteal --timeout=0 tests",
+            expect="Makefile:2 passes pytest a cap of its own",
+        ),
+        _plant(
+            "a workflow's PYTEST_TIMEOUT",
+            ".github/workflows/ci.yml",
+            "jobs:\n",
+            "env:\n  PYTEST_TIMEOUT: 90\njobs:\n",
+            expect=".github/workflows/ci.yml:2 passes pytest a cap of its own",
+        ),
+        _plant(
+            "a script's own cap",
+            "scripts/run_suite.sh",
+            "pytest tests",
+            "pytest --timeout=600 tests",
+            expect="scripts/run_suite.sh:2 passes pytest a cap of its own",
+        ),
+    ),
+)
+
+ROWS = (*ROWS, THE_DEFAULT_CAP_IS_SET_ONCE)
 
 
 # ── The suite's temporary folders stay outside the runner's home ─────────────────────────────
@@ -8519,14 +8772,14 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             _CI,
             "uv run pytest tests/test_website_installer.py --junitxml",
             "uv run pytest --junitxml",
-            expect="static: command step 9",
+            expect="static: command step 10",
         ),
         _plant(
             "ci.yml's rails-checks job no longer running the npm floors' tests",
             _CI,
             "run: uv run pytest tests/test_npm_advisory_floors.py --junitxml",
             "run: uv run pytest --junitxml",
-            expect="rails-checks: command step 4",
+            expect="rails-checks: command step 3",
         ),
         _plant(
             "the first random-order seed drawn from another number than the run's",
@@ -8730,7 +8983,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n',
             '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n' * 2,
-            expect="rails-checks: command step 4 repeats command step 3",
+            expect="rails-checks: command step 3 repeats command step 2",
         ),
         _plant(
             "one line held by two entries",
@@ -9444,7 +9697,7 @@ _RUNNER_PYPROJECT = (
     '[project]\nname = "planted"\ndependencies = ["aiohttp>=3"]\n\n'
     "[project.optional-dependencies]\n"
     'dev = [\n    "pytest>=7",\n    "pytest-xdist>=3",\n]\n\n'
-    '[tool.pytest.ini_options]\naddopts = ["--timeout=120"]\n'
+    '[tool.pytest.ini_options]\naddopts = ["--timeout=30"]\n'
 )
 _RUNNER_PACKAGE = "packages/client/pyproject.toml"
 _RUNNER_PACKAGE_TOML = (
@@ -9541,7 +9794,7 @@ PYTEST_RETRIES_ONCE_FRESH_ON_ITS_BUDGET = Row(
     controls=(
         Control(
             "a second retry in addopts",
-            _edit(_PYPROJECT, '"--timeout=120"', '"--timeout=120", "--reruns=2"'),
+            _edit(_PYPROJECT, '"--timeout=30"', '"--timeout=30", "--reruns=2"'),
             expect="pyproject.toml's addopts passes --reruns,",
         ),
         Control(
@@ -13825,7 +14078,632 @@ A_PULL_REQUEST_RUN_NEVER_REPLAYS = _toolchain_row(
 ROWS = (*ROWS, A_PULL_REQUEST_RUN_NEVER_REPLAYS)
 
 
-@pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
+# ── Every pytest step writes JUnit, and every install off the lock is named (#3909) ───────────
+# A catalogue entry's pytest step writes a JUnit report (`--junitxml`), unless it only collects
+# (`--collect-only`), so what a job's tests did is read from a report and never from its exit
+# alone. A step that installs or fetches packages the lock does not hold is named in its entry's
+# `install_exemptions`, word for word, with the reason it may: `uv pip install`, `uv tool
+# install`, `uv add`, `pip install` however its interpreter is spelled (also behind `uv run` and
+# its options, read with their values), `uv run --with`/`--with-editable`/`--with-requirements`,
+# `uvx` and `uv tool run`, and `npm install`. An `npx` step runs a bin that the nearest
+# `package-lock.json` above its workdir installs (a `bin` of one of its `packages`), so it fetches
+# nothing. An exemption names an install its entry's steps run, so the list cannot outlive what
+# it excused. The locked installs are the toolchain's (`uv-sync`, `npm-ci`), which the loader
+# refuses as steps.
+
+_ENV_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+_PYTHON_WORD = re.compile(r"(?:\S*/)?python(?:\d+(?:\.\d+)*)?")
+_PIP_WORD = re.compile(r"(?:\S*/)?pip(?:\d+(?:\.\d+)*)?")
+
+
+#: `uv run`'s options that take a value, so the word after one is its value, not the command.
+_UV_RUN_VALUED = frozenset(
+    {
+        "--directory",
+        "--project",
+        "--python",
+        "-p",
+        "--extra",
+        "--group",
+        "--only-group",
+        "--no-group",
+        "--package",
+        "--env-file",
+        "--index",
+        "--default-index",
+        "--index-url",
+        "-i",
+        "--extra-index-url",
+        "--find-links",
+        "-f",
+        "--config-file",
+        "--cache-dir",
+        "--with",
+        "--with-editable",
+        "--with-requirements",
+        "--color",
+        "--python-preference",
+        "--resolution",
+        "--prerelease",
+        "--exclude-newer",
+        "--link-mode",
+        "--refresh-package",
+        "--upgrade-package",
+        "-P",
+        "--reinstall-package",
+    }
+)
+#: `uv run`'s options that add packages to the run beside the lock's.
+_UV_RUN_ADDS = ("--with", "--with-editable", "--with-requirements")
+
+
+def _fetches_off_the_lock(words: list[str]) -> bool:
+    """Whether *words*, from their first, install packages other than from a lock."""
+    if words[:3] in (["uv", "pip", "install"], ["uv", "tool", "install"], ["uv", "tool", "run"]):
+        return True
+    if words[:2] == ["uv", "add"] or words[:1] == ["uvx"]:
+        return True
+    if words and _PYTHON_WORD.fullmatch(words[0]) and words[1:4] == ["-m", "pip", "install"]:
+        return True
+    if words and _PIP_WORD.fullmatch(words[0]) and words[1:2] == ["install"]:
+        return True
+    return words[:2] in (["npm", "install"], ["npm", "i"])
+
+
+def _off_the_lock(argv: tuple[str, ...]) -> bool:
+    """Whether a step's words install or fetch packages the lock does not hold."""
+    words = list(argv)
+    while words and _ENV_WORD.fullmatch(words[0]):
+        words = words[1:]
+    if words[:2] != ["uv", "run"]:
+        return _fetches_off_the_lock(words)
+    rest = words[2:]
+    while rest and rest[0].startswith("-"):
+        flag, valued = rest[0].split("=", 1)[0], "=" not in rest[0]
+        if flag in _UV_RUN_ADDS:
+            return True
+        rest = rest[2:] if valued and flag in _UV_RUN_VALUED else rest[1:]
+    # An install anywhere after `uv run` is one, however its options were spelled.
+    return any(_fetches_off_the_lock(rest[i:]) for i in range(len(rest)))
+
+
+def _lock_bins(root: Path, workdir: str) -> set[str] | None:
+    """The bins the nearest ``package-lock.json`` above ``root/workdir`` installs; None when
+    there is none or it cannot be read."""
+    where = (root / workdir).resolve() if workdir else root.resolve()
+    for folder in (where, *where.parents):
+        lock = folder / "package-lock.json"
+        if lock.is_file():
+            try:
+                packages = json.loads(lock.read_text(encoding="utf-8")).get("packages") or {}
+            except (OSError, ValueError, AttributeError):
+                return None
+            bins: set[str] = set()
+            for key, entry in packages.items():
+                found = entry.get("bin") if isinstance(entry, dict) else None
+                if isinstance(found, dict):
+                    bins |= {str(name) for name in found}
+                elif isinstance(found, str):
+                    bins.add(key.rsplit("/", 1)[-1])
+            return bins
+        if folder == root.resolve():
+            break
+    return None
+
+
+def _npx_problem(root: Path, step: catalogue.Step) -> str | None:
+    """Why an ``npx`` step may fetch a package the lock does not hold; None when it runs a bin
+    the lock installs, or is no ``npx`` step."""
+    words = list(step.argv)
+    while words and _ENV_WORD.fullmatch(words[0]):
+        words = words[1:]
+    if words[:1] != ["npx"]:
+        return None
+    rest = words[1:]
+    while rest and rest[0].startswith("-"):
+        if rest[0].split("=", 1)[0] in ("--package", "-p"):
+            return "names a package to fetch (--package)"
+        rest = rest[1:]
+    if not rest:
+        return "runs no bin"
+    name = rest[0]
+    bins = _lock_bins(root, step.workdir)
+    if bins is None:
+        return f"runs `{name}` with no package-lock.json above {step.workdir or 'the root'}"
+    if name not in bins:
+        return f"runs `{name}`, which no package of its lock installs as a bin"
+    return None
+
+
+def _junit_and_lock_check(root: Path) -> list[str]:
+    try:
+        cat = catalogue.read(root)
+    except catalogue.CatalogueError as exc:
+        return [f"the catalogue cannot be read: {exc}"]
+    bad: list[str] = []
+    for job in cat.jobs:
+        for step in job.command:
+            args = catalogue.pytest_args(step.argv)
+            if (
+                args is not None
+                and not {"--collect-only", "--co"} & set(args)
+                and not any(w.startswith(("--junitxml", "--junit-xml")) for w in args)
+            ):
+                bad.append(f"{job.id}: `{shlex.join(step.argv)}` runs pytest and writes no JUnit")
+        for step in job.command:
+            why = _npx_problem(root, step)
+            if why:
+                bad.append(f"{job.id}: `{shlex.join(step.argv)}` {why}, so it may fetch it")
+        installs = [" ".join(step.argv) for step in job.command if _off_the_lock(step.argv)]
+        named = {exemption.install for exemption in job.install_exemptions}
+        for install in installs:
+            if install not in named:
+                bad.append(
+                    f"{job.id}: `{install}` installs off the lock, and no install_exemptions "
+                    "entry names it with its reason"
+                )
+        for install in sorted(named - set(installs)):
+            bad.append(f"{job.id}: the exemption for `{install}` names no install its steps run")
+    return bad
+
+
+def _catalogue_only_scaffold(root: Path) -> None:
+    """The tree's catalogue, and the lock its ``npx`` steps resolve their bins from."""
+    for rel in (catalogue.CATALOGUE, "package-lock.json"):
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+
+
+_CLIENT_TEST = '"packages/personalclaw-client-py/tests", "--junitxml=reports/junit-client.xml"]'
+_CLIENT_EXEMPTION = (
+    '  { install = "uv pip install --python .venv-client packages/personalclaw-client-py[dev]", '
+    'reason = "the client is not part of core\'s uv workspace and has no lock of its own" },\n'
+)
+_CLIENT_LAST_STEP = '"--junitxml=reports/junit-client.xml"] },\n]\n'
+
+
+def _client_step(argv: str, workdir: str = "") -> tuple[str, str]:
+    """The client entry's command with one more step, *argv* given as TOML list items."""
+    where = f', workdir = "{workdir}"' if workdir else ""
+    return _CLIENT_LAST_STEP, _CLIENT_LAST_STEP[:-2] + f"  {{ argv = [{argv}]{where} }},\n]\n"
+
+
+EVERY_PYTEST_STEP_WRITES_JUNIT_AND_EVERY_UNLOCKED_INSTALL_IS_NAMED = Row(
+    name="every-pytest-step-writes-junit-and-every-install-off-the-lock-is-named",
+    check=_junit_and_lock_check,
+    scaffold=_catalogue_only_scaffold,
+    controls=(
+        _plant(
+            "a pytest step that writes no JUnit",
+            catalogue.CATALOGUE,
+            _CLIENT_TEST,
+            '"packages/personalclaw-client-py/tests"]',
+            expect="runs pytest and writes no JUnit",
+        ),
+        _plant(
+            "a pytest step that only collects needs no JUnit",
+            catalogue.CATALOGUE,
+            *_client_step('"uv", "run", "pytest", "--collect-only", "-q", "tests"'),
+            fails=False,
+        ),
+        _plant(
+            "an unlocked install with its exemption taken away",
+            catalogue.CATALOGUE,
+            _CLIENT_EXEMPTION,
+            "",
+            expect="installs off the lock",
+        ),
+        _plant(
+            "an exemption that names no step",
+            catalogue.CATALOGUE,
+            _CLIENT_EXEMPTION,
+            _CLIENT_EXEMPTION + '  { install = "uv pip install gone", reason = "it was once" },\n',
+            expect="names no install its steps run",
+        ),
+        *(
+            _plant(
+                f"`{argv}` as a step with no exemption",
+                catalogue.CATALOGUE,
+                *_client_step(argv),
+                expect="installs off the lock",
+            )
+            for argv in (
+                '"npm", "install"',
+                '"python3", "-m", "pip", "install", "requests"',
+                '".venv/bin/pip", "install", "requests"',
+                '"FOO=1", "uv", "tool", "install", "ruff"',
+                '"uv", "run", "pip", "install", "requests"',
+                '"uv", "run", "--directory", "web", "pip", "install", "x"',
+                '"uv", "run", "--project=web", "python", "-m", "pip", "install", "x"',
+                '"uv", "run", "--with", "requests", "python", "x.py"',
+                '"uv", "run", "--with-requirements", "r.txt", "python", "x.py"',
+                '"uvx", "ruff", "check"',
+                '"uv", "tool", "run", "ruff", "check"',
+            )
+        ),
+        _plant(
+            "`npx playwright` in web runs a bin the lock installs",
+            catalogue.CATALOGUE,
+            *_client_step('"npx", "playwright", "--version"', workdir="web"),
+            fails=False,
+        ),
+        _plant(
+            "`npx` of a package the lock does not hold",
+            catalogue.CATALOGUE,
+            *_client_step('"npx", "cowsay", "moo"', workdir="web"),
+            expect="which no package of its lock installs as a bin",
+        ),
+        _plant(
+            "`npx --package` names a package to fetch",
+            catalogue.CATALOGUE,
+            *_client_step('"npx", "--package", "cowsay", "cowsay", "moo"', workdir="web"),
+            expect="names a package to fetch",
+        ),
+        _plant(
+            "a step that builds, not installs, is no install",
+            catalogue.CATALOGUE,
+            *_client_step('"uv", "run", "python", "-m", "pip", "--version"'),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EVERY_PYTEST_STEP_WRITES_JUNIT_AND_EVERY_UNLOCKED_INSTALL_IS_NAMED)
+
+
+# ── The pre-push hook runs the change tier, and runs nothing of its own (#3920) ──────────────
+
+_PREPUSH = "scripts/run_prepush.sh"
+
+#: The programs a check command starts: a hook line naming one runs a check of its own.
+_CHECK_PROGRAMS = frozenset(
+    {
+        "black",
+        "isort",
+        "flake8",
+        "mypy",
+        "ruff",
+        "pylint",
+        "pytest",
+        "vitest",
+        "jest",
+        "playwright",
+        "npm",
+        "npx",
+        "pnpm",
+        "yarn",
+        "node",
+        "tsc",
+        "eslint",
+        "prettier",
+        "shellcheck",
+        "dash",
+        "uv",
+        "uvx",
+        "make",
+    }
+)
+
+#: How the hook runs the change tier, which is all it may run.
+_HOOK_RUNS_THE_TIER = re.compile(r'"\$python" -m tools\.ci run change --pre-push\b')
+
+
+def _hook_command_lines(text: str) -> list[str]:
+    """The hook's lines that may start a program: no comment, no ``echo`` or ``printf`` (their
+    words are prose), and no comment trailing a command."""
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or re.match(r"(echo|printf)\b", line):
+            continue
+        lines.append(re.sub(r"\s+#\s.*$", "", line))
+    return lines
+
+
+def _hook_check(root: Path) -> list[str]:
+    text = (root / _PREPUSH).read_text(encoding="utf-8")
+    bad: list[str] = []
+    if not _HOOK_RUNS_THE_TIER.search(text):
+        bad.append(f"{_PREPUSH} does not run `python -m tools.ci run change --pre-push`")
+    for line in _hook_command_lines(text):
+        words = set(re.findall(r"[\w./-]+", line))
+        named = {w.rsplit("/", 1)[-1] for w in words} & _CHECK_PROGRAMS
+        named |= {w for w in words if w.endswith(".py") or w.startswith("scripts/")}
+        if named:
+            bad.append(
+                f"{_PREPUSH} runs a check command of its own: `{line}` ({', '.join(sorted(named))})"
+            )
+    return bad
+
+
+def _hook_scaffold(root: Path) -> None:
+    _write(root, _PREPUSH, (REPO / _PREPUSH).read_text(encoding="utf-8"))
+
+
+_HOOK_EXIT = 'echo "pre-push: the run took $(($(date +%s) - started))s."\n'
+
+THE_PRE_PUSH_HOOK_RUNS_NO_CHECK_COMMAND = Row(
+    name="the-pre-push-hook-runs-the-change-tier-and-no-check-command-of-its-own",
+    check=_hook_check,
+    scaffold=_hook_scaffold,
+    controls=(
+        *(
+            _plant(
+                f"a `{line}` line in the hook",
+                _PREPUSH,
+                _HOOK_EXIT,
+                _HOOK_EXIT + line + "\n",
+                expect="runs a check command of its own",
+            )
+            for line in (
+                ".venv/bin/black --check src/personalclaw tests",
+                "npm ci",
+                '"$python" scripts/check_asset_licenses.py',
+                "uv run pytest tests/test_x.py || status=1",
+            )
+        ),
+        _plant(
+            "a hook that no longer runs the tier",
+            _PREPUSH,
+            '"$python" -m tools.ci run change --pre-push',
+            '"$python" -m tools.ci run-job static',
+            expect="does not run `python -m tools.ci run change --pre-push`",
+        ),
+        _plant(
+            "a check named only in the hook's prose",
+            _PREPUSH,
+            _HOOK_EXIT,
+            _HOOK_EXIT + 'echo "run black and mypy before you push"  # prose\n',
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, THE_PRE_PUSH_HOOK_RUNS_NO_CHECK_COMMAND)
+
+#: The pytest options that take the next word as their value, so that word is no path.
+_PYTEST_VALUE_OPTIONS = frozenset(
+    {
+        "-n",
+        "--numprocesses",
+        "--dist",
+        "-k",
+        "-m",
+        "-p",
+        "-c",
+        "-o",
+        "-W",
+        "--shard-list",
+        "--maxfail",
+        "--tb",
+        "--rootdir",
+        "--basetemp",
+        "--junitxml",
+        "--junit-xml",
+        "--durations",
+        "--timeout",
+        "--deselect",
+        "--ignore",
+        "--confcutdir",
+    }
+)
+
+
+def _runs_a_test_suite(argv: Sequence[str]) -> str:
+    """Why a step runs a test suite, too slow for a push; empty for a step that does not. pytest
+    over named files does not; over a folder, or over no path at all, it does."""
+    args = catalogue.pytest_args(argv)
+    if args is not None:
+        if catalogue.collect_only(argv):
+            return ""
+        paths: list[str] = []
+        skip = False
+        for word in args:
+            if skip:
+                skip = False
+            elif word.startswith("-"):
+                skip = word in _PYTEST_VALUE_OPTIONS
+            else:
+                paths.append(word)
+        if not paths:
+            return "pytest over no path, so the whole suite"
+        folders = [w for w in paths if not w.split("::", 1)[0].endswith(".py")]
+        return f"pytest over {', '.join(folders)}" if folders else ""
+    words = list(argv)
+    names = [w.rsplit("/", 1)[-1] for w in words]
+    if "vitest" in names:
+        return "vitest"
+    if "playwright" in names and "test" in words[names.index("playwright") + 1 :]:
+        return "playwright test"
+    if names and names[0] in ("npm", "pnpm", "yarn"):
+        rest = words[1:]
+        script = rest[1] if rest[:1] == ["run"] and len(rest) > 1 else rest[0] if rest else ""
+        if script.startswith("test"):
+            return f"`{shlex.join(words)}`"
+    if names and names[0] == "make" and any(w.startswith("test") for w in words[1:]):
+        return f"`{shlex.join(words)}`"
+    return ""
+
+
+def _prepush_check(root: Path) -> list[str]:
+    try:
+        cat = catalogue.read(root)
+    except catalogue.CatalogueError as exc:
+        return [f"the catalogue cannot be read: {exc}"]
+    bad = []
+    for job in cat.tier("change"):
+        if not job.prepush:
+            continue
+        for step in job.command:
+            why = _runs_a_test_suite(step.argv)
+            if why:
+                bad.append(
+                    f"{job.id}: `{shlex.join(step.argv)}` runs {why} in the change tier, which "
+                    "the pre-push hook runs; its entry must say prepush = false and leave it to CI"
+                )
+    return bad
+
+
+_STATIC_LAST_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },\n]\n'
+
+
+def _static_step(argv: str) -> tuple[str, str]:
+    """static's command with one more step, *argv* given as TOML list items."""
+    return _STATIC_LAST_STEP, _STATIC_LAST_STEP[:-2] + f"  {{ argv = [{argv}] }},\n]\n"
+
+
+A_CHANGE_TIER_TEST_SUITE_IS_LEFT_TO_CI = Row(
+    name="a-change-tier-job-that-runs-a-test-suite-is-left-to-ci-not-the-pre-push-hook",
+    check=_prepush_check,
+    scaffold=_catalogue_only_scaffold,
+    controls=(
+        *(
+            _plant(
+                f"`{argv}` in a job the hook runs",
+                catalogue.CATALOGUE,
+                *_static_step(argv),
+                expect="its entry must say prepush = false",
+            )
+            for argv in (
+                '"uv", "run", "pytest", "-q", "tests", "--junitxml=reports/x.xml"',
+                '"uv", "run", "pytest", "--junitxml=reports/x.xml"',
+                '"uv", "run", "pytest", "-k", "tests", "--junitxml=r.xml"',
+                '"npm", "run", "test:web"',
+                '"npm", "test"',
+                '"make", "test"',
+                '"make", "test-visual"',
+                '"npx", "vitest", "run"',
+                '"npx", "playwright", "test", "--project=smoke"',
+            )
+        ),
+        _plant(
+            "the rails job's prepush = false taken away",
+            catalogue.CATALOGUE,
+            "prepush = false  # all of tests/rails",
+            "# all of tests/rails",
+            expect="rails: ",
+        ),
+        _plant(
+            "pytest over named files is no suite",
+            catalogue.CATALOGUE,
+            *_static_step('"uv", "run", "pytest", "tests/test_x.py::test_it", "--junitxml=r.xml"'),
+            fails=False,
+        ),
+        _plant(
+            "pytest that only collects is no suite",
+            catalogue.CATALOGUE,
+            *_static_step('"uv", "run", "pytest", "--collect-only", "-q", "tests"'),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, A_CHANGE_TIER_TEST_SUITE_IS_LEFT_TO_CI)
+
+#: The workflows a release runs; one that runs the render smoke is a copy of it.
+_RELEASE_WORKFLOWS = ("release.yml", "release-artifacts.yml", "release-tag.yml")
+_SMOKE_PROJECT = re.compile(r"\bplaywright\s+test\b[^\n]*--project[= ]smoke\b")
+
+
+def _render_smoke_check(root: Path) -> list[str]:
+    try:
+        cat = catalogue.read(root)
+    except catalogue.CatalogueError as exc:
+        return [f"the catalogue cannot be read: {exc}"]
+    merge = [
+        j.id
+        for j in cat.tier("merge")
+        if any(_SMOKE_PROJECT.search(" ".join(s.argv)) for s in j.command)
+    ]
+    release = [
+        name
+        for name in _RELEASE_WORKFLOWS
+        if _SMOKE_PROJECT.search(
+            (root / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        )
+    ]
+    if merge or release:
+        return []
+    return [
+        "no merge-tier job and no release workflow runs the render smoke (Playwright's `smoke` "
+        "project), and the pre-push hook no longer runs it, so no copy is left"
+    ]
+
+
+def _render_smoke_scaffold(root: Path) -> None:
+    _catalogue_only_scaffold(root)
+    for name in _RELEASE_WORKFLOWS:
+        rel = f".github/workflows/{name}"
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+
+
+_E2E_SMOKE = '"npx", "playwright", "test", "--project=smoke", "--project=chromium"'
+_E2E_NO_SMOKE = '"npx", "playwright", "test", "--project=chromium"'
+
+
+def _release_runs_the_smoke(root: Path) -> None:
+    rel = ".github/workflows/release-artifacts.yml"
+    text = (root / rel).read_text(encoding="utf-8")
+    _write(root, rel, text + "        run: npx playwright test --project=smoke\n")
+
+
+THE_RENDER_SMOKE_HAS_A_COPY_IN_CI = Row(
+    name="the-render-smoke-runs-in-the-merge-tier-or-the-release",
+    check=_render_smoke_check,
+    scaffold=_render_smoke_scaffold,
+    controls=(
+        _plant(
+            "the merge tier's smoke project taken away, with none in the release",
+            catalogue.CATALOGUE,
+            _E2E_SMOKE,
+            _E2E_NO_SMOKE,
+            expect="no copy is left",
+        ),
+        Control(
+            "the merge tier's taken away, with a release workflow's kept",
+            lambda root: (
+                _plant("", catalogue.CATALOGUE, _E2E_SMOKE, _E2E_NO_SMOKE).plant(root),
+                _release_runs_the_smoke(root),
+            ),
+            False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, THE_RENDER_SMOKE_HAS_A_COPY_IN_CI)
+
+
+#: The rows that need more than the suite's default cap, each with its own, keyed by the row's
+#: name. tests/timeout-marks.toml lists each one, as ``ROW_TIMEOUTS[<row>]``, with why.
+ROW_TIMEOUTS = {
+    "every rail lives in tests/rails": pytest.mark.timeout(190),
+    "every catalogue command is the workflow's": pytest.mark.timeout(120),
+    "every workflow that runs on pull_request is cancelled when the pull request closes": (
+        pytest.mark.timeout(80)
+    ),
+    "every-timeout-mark-is-listed-with-its-reason": pytest.mark.timeout(80),
+    "no-workflow-job-outside-the-catalogue-runs-a-test": pytest.mark.timeout(90),
+    "every fail-closed test module carries the security marker": pytest.mark.timeout(70),
+    "each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job": (
+        pytest.mark.timeout(70)
+    ),
+    "no test takes an unlisted fixed wait of half a second or more": pytest.mark.timeout(60),
+    "no test walks a source root itself": pytest.mark.timeout(50),
+    "no workflow that runs candidate code posts the merge-verdict check": pytest.mark.timeout(60),
+    "every concurrency group a candidate joins keys on its pull request or its head": (
+        pytest.mark.timeout(50)
+    ),
+    "nothing-throws-an-exit-status-away-unseen": pytest.mark.timeout(40),
+}
+
+
+def table_params(rows: Sequence[Row], timeouts: dict[str, Any]) -> list[Any]:
+    """Each row as a test parameter named by the row, carrying its own mark when it has one."""
+    unknown = sorted(set(timeouts) - {row.name for row in rows})
+    assert not unknown, f"a timeout is keyed by no row of the table: {unknown}"
+    return [pytest.param(row, marks=timeouts.get(row.name, ()), id=row.name) for row in rows]
+
+
+@pytest.mark.parametrize("row", table_params(ROWS, ROW_TIMEOUTS))
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

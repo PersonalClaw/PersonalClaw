@@ -211,7 +211,6 @@ def _usable_runtime(scratch: Path) -> str | None:
     return None
 
 
-@pytest.mark.timeout(240)
 def test_compose_config_succeeds_from_a_scratch_directory(tmp_path):
     container_runtime.require(*_RUNTIMES)
     scratch = tmp_path / "scratch"

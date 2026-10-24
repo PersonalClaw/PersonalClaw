@@ -35,6 +35,7 @@ def _paths(routes: tuple[dict, ...]) -> list[str]:
     return [r["path"] for r in routes]
 
 
+@pytest.mark.timeout(40)
 def test_the_census_is_read_once_for_the_process() -> None:
     first = route_census.routes()
     assert len(first) >= 500, f"only {len(first)} routes — vacuous"

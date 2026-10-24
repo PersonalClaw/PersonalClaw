@@ -136,7 +136,7 @@ _register(
         "command — the CLI invokes harness.scanner when this profile is selected).",
         # `scan` is a MARKER profile: it has no shell command because the scanner runs
         # in-process (harness/scanner.py) via the CLI's _run_scan_if_selected, so it can be
-        # diff-line-scoped. Selecting it (by a task spec or a forced-profile rule) triggers
+        # diff-line-scoped. Selecting it (by a task spec) triggers
         # the scan; there is nothing to resolve into resolve_commands().
         commands=(),
     )

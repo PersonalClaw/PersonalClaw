@@ -729,6 +729,7 @@ export async function expectRouteScreenshot(
       `quieter host.`,
   ).toEqual([])
   await pinGreeting(page)
+  await pinRunHome(page)
   await expect(page).toHaveScreenshot(`${name}.png`, {
     fullPage: true,
     animations: 'disabled',
@@ -746,6 +747,24 @@ export async function pinGreeting(page: Page): Promise<void> {
     const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
     for (let n = walk.nextNode(); n; n = walk.nextNode()) {
       if (n.nodeValue && said.test(n.nodeValue)) n.nodeValue = n.nodeValue.replace(said, 'Good afternoon')
+    }
+  })
+}
+
+/** The run's home is a fresh `mkdtemp` folder, `personalclaw-e2e-` and six random characters
+ *  (`runPlaces.ts`), and the Files explorer shows the workspace inside it, so a golden named one run's
+ *  folder and every later run differed from it by that word. It is written as one folder before the
+ *  capture, in text and in fields; its type, place and colour are still photographed. The
+ *  accessibility trees fold it the same way (`surfaceChecks.ts`, `<e2e home>`). */
+export async function pinRunHome(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const pin = (text: string) => text.replace(/personalclaw-e2e-[A-Za-z0-9]{6}/g, 'personalclaw-e2e-000000')
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+      if (n.nodeValue?.includes('personalclaw-e2e-')) n.nodeValue = pin(n.nodeValue)
+    }
+    for (const field of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')) {
+      if (field.value.includes('personalclaw-e2e-')) field.value = pin(field.value)
     }
   })
 }

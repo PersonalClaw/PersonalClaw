@@ -46,7 +46,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 from typing import IO
@@ -211,6 +211,10 @@ class Result:
     returncode: int
     violations: tuple[str, ...]
     interrupted: bool = False
+    #: The peak memory of the job's largest process, in MB, when the job ended on its own: what
+    #: ``wait4`` reports of the process and every process under it that was waited for. A
+    #: measurement, not part of how the run ended, so two results compare without it.
+    peak_mb: int | None = field(default=None, compare=False)
 
 
 class _Noted:
@@ -243,19 +247,39 @@ def _group_alive(pgid: int) -> bool:
     return True
 
 
-def _wait(proc: subprocess.Popen[bytes], timeout: float, noted: _Noted) -> bool:
+def _reaped(proc: subprocess.Popen[bytes], peaks: list[int]) -> bool:
+    """Whether the job's process has ended, reaped here by ``wait4`` when it can be, which gives
+    what Popen does not: the peak memory of the largest process under it, kept in *peaks*."""
+    if proc.returncode is not None:
+        return True
+    if not hasattr(os, "wait4"):
+        return proc.poll() is not None
+    try:
+        pid, status, usage = os.wait4(proc.pid, os.WNOHANG)
+    except ChildProcessError:
+        return proc.poll() is not None
+    if pid == 0:
+        return False
+    proc.returncode = os.waitstatus_to_exitcode(status)
+    # ``ru_maxrss`` is in bytes on macOS and in kB on Linux.
+    peaks.append(usage.ru_maxrss // (1024 * 1024 if sys.platform == "darwin" else 1024))
+    return True
+
+
+def _wait(
+    proc: subprocess.Popen[bytes], timeout: float, noted: _Noted, peaks: list[int] | None = None
+) -> bool:
     """Wait until the job ends, *timeout* seconds pass or the runner is signalled. Whether the
     time ran out."""
     deadline = time.monotonic() + timeout
+    kept = [] if peaks is None else peaks
     while not noted.signals:
+        if _reaped(proc, kept):
+            return False
         left = deadline - time.monotonic()
         if left <= 0:
-            return proc.poll() is None
-        try:
-            proc.wait(timeout=min(left, _POLL))
-        except subprocess.TimeoutExpired:
-            continue
-        return False
+            return not _reaped(proc, kept)
+        time.sleep(min(left, _POLL))
     return False
 
 
@@ -395,6 +419,7 @@ def run_job(
     noted = _Noted()
     handlers: dict[int, object] = {}
     timed_out = False
+    peaks: list[int] = []
     try:
         for signum in (signal.SIGINT, signal.SIGTERM):
             handlers[signum] = signal.signal(signum, noted)
@@ -415,7 +440,7 @@ def run_job(
             )
             copier.start()
         try:
-            timed_out = _wait(proc, timeout, noted)
+            timed_out = _wait(proc, timeout, noted, peaks)
             if timed_out and before_stop is not None and proc.poll() is None:
                 try:
                     before_stop(proc.pid)
@@ -455,4 +480,5 @@ def run_job(
         returncode=proc.returncode,
         violations=tuple(violations),
         interrupted=bool(noted.signals),
+        peak_mb=peaks[0] if peaks else None,
     )

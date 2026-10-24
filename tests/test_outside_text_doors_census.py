@@ -344,15 +344,18 @@ def door_problems(sources: dict[str, str]) -> list[str]:
 # ── the rails ──
 
 
+@pytest.mark.timeout(50)
 def test_every_place_core_fences_or_screens_text_for_a_model_is_listed():
     assert door_problems(_tree()) == []
 
 
+@pytest.mark.timeout(50)
 def test_the_one_function_both_screens_and_fences_and_nothing_else_does_both():
     found = scan(_tree())
     assert found["fence"] & found["screen"] == {THE_DOOR}
 
 
+@pytest.mark.timeout(50)
 def test_the_census_reads_the_whole_tree():
     """Vacuity: a scan that stopped matching would pass with nothing found. Floored at what it
     finds today."""
@@ -392,6 +395,7 @@ def accept(text):
 """
 
 
+@pytest.mark.timeout(40)
 def test_a_new_door_that_fences_without_the_screen_fails_the_census():
     tree = {**_tree(), "planted.py": _PLANTED_FENCE}
     assert door_problems(tree) == [
@@ -400,6 +404,7 @@ def test_a_new_door_that_fences_without_the_screen_fails_the_census():
     ]
 
 
+@pytest.mark.timeout(50)
 def test_a_new_screen_beside_the_door_fails_the_census():
     tree = {**_tree(), "planted.py": _PLANTED_SCREEN}
     assert door_problems(tree) == [
@@ -504,6 +509,7 @@ def instruction_problems(sources: dict[str, str]) -> list[str]:
     return problems
 
 
+@pytest.mark.timeout(40)
 def test_the_owner_s_instruction_reaches_an_event_only_from_her_settings():
     assert instruction_problems(_tree()) == []
 
@@ -543,6 +549,7 @@ def test_an_inbox_that_takes_an_instruction_in_unchecked_fails_the_census():
     ]
 
 
+@pytest.mark.timeout(50)
 def test_a_door_that_stops_going_through_the_one_function_fails_the_census():
     tree = _tree()
     rel = "channel_history.py"

@@ -49,8 +49,7 @@ from harness.diff import (
     has_fix_shaped_commit,
     touches_specs,
 )
-from harness.profiles import get_profile, resolve_commands
-from harness.selection import forced_profiles
+from harness.profiles import HARNESS_PY, get_profile, resolve_commands
 from harness.specs import (
     KIND_TASK,
     Spec,
@@ -255,17 +254,16 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def _run_diff(args: argparse.Namespace) -> int:
-    """Diff-aware run: force profiles from the touched areas, union with any task spec's
-    declared profiles, then execute. The diff can only ADD profiles, never remove."""
+    """Diff-aware run: the change tier's jobs the diff reaches, as CI's planner picks them
+    (``python -m tools.ci run change --changed --working-tree``, #3945), then any task spec's
+    declared profiles. The harness keeps no path rules of its own: what a change must pass is
+    the catalogue's declared inputs and its tested overrides, read the same way CI reads them."""
     diff = compute_diff()
     if not diff.files:
         print(f"{_WARN}no changed files vs {diff.base[:12]} — nothing to run")
         return 0
 
-    forced = forced_profiles(diff.files)
     print(f"changed files vs {diff.base[:12]}: {len(diff.files)}")
-    for fp in forced:
-        print(f"  forced [{fp.profile}]: {'; '.join(fp.reasons)}")
 
     # Same-PR rule: a fix-shaped change should add/update a spec in the same change,
     # moving "every fixed bug becomes permanent" from private memory into the versioned repo.
@@ -279,7 +277,7 @@ def _run_diff(args: argparse.Namespace) -> int:
 
     profiles: list[str] = []
     tests: list[str] = []
-    # A task spec can add more (its profiles/tests) on top of the forced set.
+    # A task spec can add more (its profiles/tests) on top of what the planner picks.
     if args.task:
         specs = _load_or_die()
         task = _find_task(specs, args.task)
@@ -287,14 +285,10 @@ def _run_diff(args: argparse.Namespace) -> int:
             print(f"{_FAIL} no task spec with id {args.task!r}", file=sys.stderr)
             return 2
         profiles, _rules, tests = _resolved_for_task(specs, task)
-    for fp in forced:
-        if fp.profile not in profiles:
-            profiles.append(fp.profile)
 
-    cmds = [rc.command for rc in resolve_commands(profiles, tests)]
+    planned = f"{HARNESS_PY} -m tools.ci run change --changed --working-tree"
+    cmds = [planned, *(rc.command for rc in resolve_commands(profiles, tests))]
     scan_rc = _run_scan_if_selected(profiles, diff=diff)
-    if not cmds:
-        return scan_rc
     return _execute(cmds, dry_run=args.dry_run) or scan_rc
 
 

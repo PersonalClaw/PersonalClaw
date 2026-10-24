@@ -16,10 +16,6 @@
 #   alone, and pyproject.toml declares no readme). The jobs whose tests read README.md name it
 #   (python-suite) or declare the whole tree, and the image smoke's own workflow runs on it
 #   through its paths: list.
-# - The harness keeps its own replay rule until it calls this planner: a change to
-#   web/src/pages/chat/, web/src/pages/loops/ or src/personalclaw/dashboard/sse.py forces the
-#   harness replay, which guards the stream-coalescer, run-fold and journal-to-widget-stream bug
-#   classes. No CI job runs replay, so no override names it.
 
 # The workflows that define the jobs and gate them.
 [[override]]
@@ -71,3 +67,12 @@ reason = "what the single-container image smoke builds and judges; the smoke is 
 paths = ["scripts/sdk_signature_snapshot.py"]
 jobs = ["apps-contract"]
 reason = "scripts/apps_sdk_contract.py imports it to compare the published SDK signatures, so a change to it re-runs the apps contract"
+
+# Replay's paths: the rule harness/selection.py kept until `harness run --diff` asked this planner
+# (#3945). Replay is no job of its own: web-unit runs the frontend fold's replay
+# (web/src/harness/replayFold.test.ts) and python-suite the backend stream's
+# (tests/test_harness_replay.py, tests/test_harness_replay_scenarios.py).
+[[override]]
+paths = ["web/src/pages/chat/", "web/src/pages/loops/", "src/personalclaw/dashboard/sse.py"]
+jobs = ["web-unit", "python-suite"]
+reason = "replay guards the stream-coalescer (chat), run-fold (loops) and journal-to-widget-stream (sse.py) bug classes: web-unit runs the frontend fold's replay, python-suite the backend stream's"

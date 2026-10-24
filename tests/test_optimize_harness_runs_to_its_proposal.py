@@ -353,6 +353,7 @@ def _pending() -> list[Any]:
 # ── the budget ───────────────────────────────────────────────────────────────
 
 
+@pytest.mark.timeout(40)
 @pytest.mark.anyio
 async def test_a_search_stops_before_its_next_cycle_would_pass_its_budget(space: Path) -> None:
     """🔴 Red before: nothing in a template run measured its spend, so the search ran past its
@@ -394,6 +395,7 @@ async def test_a_search_stops_before_its_next_cycle_would_pass_its_budget(space:
 # ── the score, and the bar it must beat ──────────────────────────────────────
 
 
+@pytest.mark.timeout(40)
 @pytest.mark.anyio
 async def test_a_later_candidate_that_scores_lower_is_not_admitted(space: Path) -> None:
     """🔴 Red before: every candidate was held to the floor the search started from, so the second
@@ -441,7 +443,7 @@ async def test_a_refiners_claimed_score_is_not_the_candidates_score(space: Path)
 # processes of their own: 42-69 s on CI's plain legs, 64-120 s under coverage, where the suite's
 # 120 s stopped it (2026-10-15). A search asking for more than 12 is the point, so the timeout is
 # raised, not the work cut.
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(190)
 @pytest.mark.anyio
 async def test_max_iterations_is_the_number_of_candidates_the_search_tries(space: Path) -> None:
     """🔴 Red before: the loop stopped at 12 cycles whatever ``max_iterations`` said, and a
@@ -463,6 +465,7 @@ async def test_max_iterations_is_the_number_of_candidates_the_search_tries(space
 # ── the positive control: a search within its budget files its winner ────────
 
 
+@pytest.mark.timeout(60)
 @pytest.mark.anyio
 async def test_a_search_within_its_budget_whose_candidates_improve_files_its_winner(
     space: Path,
@@ -508,6 +511,7 @@ async def test_a_search_within_its_budget_whose_candidates_improve_files_its_win
     assert TEMPLATE_REFINER_TOOLS == ["refiner_evidence", "propose_template_diff"]
 
 
+@pytest.mark.timeout(40)
 @pytest.mark.anyio
 async def test_the_winner_is_filed_by_the_gateway_and_raised_in_the_inbox(
     space: Path, monkeypatch

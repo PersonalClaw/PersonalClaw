@@ -206,6 +206,7 @@ def _mixed(pieces: list[str], n: int, seed: int) -> list[str]:
     return out
 
 
+@pytest.mark.timeout(80)
 def test_the_regex_gives_the_old_verdict_on_every_line(home):
     """The cheap half, over the whole grid and the test commands: the same yes or no."""
     new, old = security._get_sensitive_re(), _old_regex()
@@ -223,6 +224,7 @@ def test_the_regex_gives_the_old_verdict_on_every_line(home):
     assert len(lines) > 50_000 and 1_000 < hits < len(lines) - 1_000, (len(lines), hits)
 
 
+@pytest.mark.timeout(60)
 def test_the_screen_gives_the_old_answer_on_the_screens_real_inputs(home):
     """The whole screen, refusal string and all: every test command, a seeded sample of the grid,
     and a seeded mix that names paths more than once. Every answer the screen gives occurs."""

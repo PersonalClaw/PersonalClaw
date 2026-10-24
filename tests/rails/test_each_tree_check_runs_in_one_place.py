@@ -44,9 +44,9 @@ from tools.ci.tree_checks import CHECKS, module_copies
 
 #: The calls that still run a check on the real tree in the suite. None is left: the gate
 #: aggregate's tests run every gate on stubs, the render tests render a small tree of their
-#: own, and each real-tree check is its owning job's (``scripts/gate_report.py`` and
-#: ``scripts/check_asset_licenses.py`` in rails-checks, ``harness validate`` and the whole-tree
-#: ``harness scan`` in harness) or a rail's, for what that job does not check.
+#: own, and each real-tree check is its owning job's (``scripts/gate_report.py`` in
+#: rails-checks, ``scripts/check_asset_licenses.py`` in static, ``harness validate`` and the
+#: whole-tree ``harness scan`` in harness) or a rail's, for what that job does not check.
 #: ``(check, "path::test")``; a new copy fails.
 KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset()
 
@@ -211,6 +211,7 @@ def _diff(found: set[tuple[str, str]], known: frozenset[tuple[str, str]], what: 
     return lines
 
 
+@pytest.mark.timeout(80)
 def test_no_whole_tree_check_gains_a_copy_in_the_suite() -> None:
     problems = _diff(copies(REPO), KNOWN_COPIES, "real-tree run in the suite")
     assert not problems, (
@@ -311,6 +312,7 @@ def test_the_maintainer_docs_name_each_job_the_shards_leave_a_file_to() -> None:
     assert not missing, f"ci.md's paragraph on shards.JOB_OWNED names no file in {missing}"
 
 
+@pytest.mark.timeout(70)
 def test_no_suite_module_starts_reading_docs() -> None:
     problems = [
         f"a new reader of docs/ in the suite: {m}"

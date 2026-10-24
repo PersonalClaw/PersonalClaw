@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 
+import pytest
 import source_index
 from rails_repo import REPO
 from spawn_ceiling_audit_shared import _SPAWN_CALLEES, _callee, _census, _normalize, _src_root
@@ -103,6 +104,7 @@ def test_the_builders_are_found_in_the_tree():
     assert "installer_env" not in builders  # a copy of the gateway's environment
 
 
+@pytest.mark.timeout(40)
 def test_the_census_is_the_ceiling_audits():
     """Same universe as the ceiling audit, so a new spawn is classified in both."""
     assert set(_sources(_trees())) == set(_census())

@@ -564,6 +564,7 @@ def _no_test_ran(root: Path) -> bool:
     return not list(ET.parse(root / "junit.xml").iter("testcase"))
 
 
+@pytest.mark.timeout(60)
 @_WORKERS
 def test_a_test_marked_security_at_collection_is_never_quarantined(
     tmp_path: Path, workers: int

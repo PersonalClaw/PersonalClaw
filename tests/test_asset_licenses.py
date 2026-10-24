@@ -3,7 +3,7 @@
 Every font, image, binary and fixture the repository ships has a recorded source, version,
 licence and notice. One test reads the real npm licence records; the rest drive the checker
 over a throwaway git repository, so each rule is shown refusing the thing it exists to refuse.
-The checker's run on the real tree is the rails-checks job's.
+The checker's run on the real tree is the static job's.
 """
 
 from __future__ import annotations

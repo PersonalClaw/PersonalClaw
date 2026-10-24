@@ -559,8 +559,23 @@ An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `
 uses), `install_exemptions`, each exemption with its reason, `retiring`, the issue that
 retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catalogue"), and
 `lint_feedback`: a failed step's output is the pull request's lint remediation, which
-`pr-feedback.yml` posts. One job sets it, of the change tier. A key the
-reader does not know is refused, so a misspelt field fails rather than being ignored.
+`pr-feedback.yml` posts. One job sets it, of the change tier. `prepush = false` leaves a
+change-tier job out of `run change --pre-push`, the pre-push hook's run, for a test suite CI
+gates; every other change-tier job runs in it. A key the reader does not know is refused, so a
+misspelt field fails rather than being ignored.
+
+Every pytest step writes a JUnit report (`--junitxml`) unless it only collects (`--collect-only`),
+and `junit` lists what the steps write. Every step that installs or fetches packages the lock does
+not hold is named in `install_exemptions`, word for word, with the reason it may: `uv pip install`,
+`uv tool install`, `uv add`, `pip install` however its interpreter is spelled (also behind
+`uv run` and its options, read with their values), `uv run --with`, `--with-editable` and
+`--with-requirements`, `uvx` and `uv tool run`, and `npm install`. An `npx` step runs a bin that
+the nearest `package-lock.json` above its workdir installs, so it fetches nothing; `npx
+--package` is refused. An exemption that names no install of the entry's steps fails too, so the
+list cannot outlive what it excused. The locked installs are the toolchain's (`uv-sync`,
+`npm-ci`), which the reader refuses as steps. The
+contract table's row "every-pytest-step-writes-junit-and-every-install-off-the-lock-is-named"
+holds both, with a plant for each install form.
 
 `workers` is the job's worker count, a whole number or `auto`. Every pytest step's `-n` must equal
 it, and a step that passes `-n` needs it. `workers_env` names the variable through which another
@@ -721,8 +736,9 @@ overrides (`--areas`, beside the catalogue by default):
   (`apps-contract`).
 - **Always planned:** the `rails` job (all three legs) and `rails-checks`, whose `rails check`
   holds every rail to exactly one leg, every `security` job, every `live` job, and each job an
-  `after` of a planned one names. `rails-checks` also runs the asset licences, the gate
-  aggregate and the npm advisory floors. The loader refuses a merge tier whose rails run in
+  `after` of a planned one names. `rails-checks` also runs the gate aggregate and the npm
+  advisory floors; the asset licences are `static`'s, whose inputs are the whole tree, so the
+  pre-push hook checks them too. The loader refuses a merge tier whose rails run in
   legs without `rails-checks`, as it refuses one without `rails`.
 - **Fail-safe: the whole tier.** An empty diff, a path no input but the whole tree names, a
   path that is not a plain path inside the repository (empty, absolute, `..`, not in its
@@ -1092,6 +1108,40 @@ any file under `tools/`, `scripts/`, `src/` or `.github/` that names `ci.yml` in
 `tests/rails/baselines/ci-yml-readers.sites.jsonl` lists it with its reason. That list only
 shrinks: against the gate's base a line the base lacks fails, `added` and a reason or not. The
 change that retires `ci.yml` lands with it empty.
+
+## The pinned browser image
+
+Every container-made baseline is made and compared in one environment (#3943): the official
+Playwright image for the locked Playwright, named in `web/e2e/visual-image.json` by the digest of
+its `linux/amd64` manifest, with the tag and the index digest it was read from beside it.
+`tests/rails/test_pinned_playwright_image_tree.py` holds the pin's Playwright to the one the lock
+resolves for `@playwright/test` (its `playwright`'s own `playwright-core`, not the older top-level
+one another package brings), so a Playwright bump moves the lock and the pin in one change, and
+fails any tracked file but the pin that names the image, by a tag or by a digest.
+
+`web/e2e/run-pinned.mjs` runs one Playwright invocation against that image's browser. Only the
+browser runs in the image, since the browser, the fonts and the renderer decide the pixels. The
+test runner, the harness and the gateway it boots stay on the runner as in every browser leg, so
+what the gateway sees (its network, tmux, docker) is the same as in every other run. On a
+`linux/amd64` host it mounts the checkout and its own Node read-only at their own paths, so
+nothing is installed. The image serves its browser with the locked playwright-core's `run-server`,
+bound to 127.0.0.1 on the host's network and refused if it says otherwise, and the run connects
+through Playwright's own `PW_TEST_CONNECT_WS_ENDPOINT`. None of the caller's variables enter the
+image. Before the invocation it probes the image in a container with no network
+(`web/e2e/visual-environment.mjs`: the image, its platform, the Playwright version, the browser
+build, the WebGL renderer, and the fonts as a count and one sha256), and:
+
+- a compare run fails when the probe differs from `web/e2e/visual-environment.json`, the manifest
+  committed with the baselines, or when there is none, before any baseline is read, and passes
+  `--update-snapshots=none`, so a missing baseline fails rather than being written;
+- an update run (`--update`) writes the manifest from the probe and rewrites the suite's baselines.
+
+Any other host is refused for now: automated contributors run it through CI alone.
+`.github/workflows/visual-baselines.yml` ("Refresh visual baselines") is the update path. On
+dispatch it sets the checkout up as a browser leg does, runs the UI matrix and the visual spec
+each with `--update` in an invocation of its own, and uploads the manifest and the `-linux` sets
+as the `visual-baselines` artifact. It commits nothing and holds no write token; a lane reads each
+diff and commits the intended ones in a pull request that names the change in light and dark.
 
 ## A push to main, and the nightly breadth
 
@@ -1794,12 +1844,48 @@ the suite's.
 Not yet: the nightly map build in breadth's coverage leg, `tools/ci/select.py` reading the map,
 shadow mode, and the recall study.
 
+## The rails a change can break
+
+`python -m tools.ci rails select --paths <path>...` (`tools/ci/rails_select.py`) prints the
+rails a change of those paths can break, one per line (`--why` adds the reason for each). A lane
+runs them beside its own tests rather than all of `tests/rails` (#3920).
+
+- **The record.** A rails leg of a push to main arms `tests/rails_reads.py`: a JUnit report
+  named `junit-rails-<leg>.xml`, with `GITHUB_EVENT_NAME` `push` and `GITHUB_REF`
+  `refs/heads/main` (or `PERSONALCLAW_RAILS_READS=1`, for a record made by hand). A pull
+  request's leg records nothing and pays none of its time. It writes `rails-reads-<leg>.json` beside the report, and the leg
+  uploads it as the artifact `rails-reads-<leg>`. It charges each read to the rail module
+  running. A read is a walk or file asked of the source index, a repository file opened or
+  stat'd (a path not there included), a folder listed, a module looked for and not found, or a
+  child started. A helper's cache and a module imported once answer only the first rail. So each
+  read is also charged to the code that made it, and each import statement run is an edge:
+  a rail reads what every module it imports read for any rail. A rail module with a failed test
+  is `unrecorded`.
+- **The harness.** The run's own setup is the `harness`: conftest, the plugin and guard modules
+  it loads from `tests/`, the files they open, `pyproject.toml` and `uv.lock`. Its stats are not
+  reads: pytest's collection asks `shard_list` about every file under `tests/`. A fixture the
+  harness defines (a conftest fence, a guard's) runs as the harness, setup and teardown, so what
+  it reads inside a rail's test is the harness's read, not the rail's. A package module the
+  harness imports is no part of it: conftest's registry fences import some two hundred, and each
+  selects only the rails that read it. An import-time break in one fails the change's own tests,
+  which load the same harness.
+- **Only main's record.** With no `--map`, the command reads the newest push run of main made in
+  the last day that holds a record. It takes only the run's own artifacts, by name and size, and
+  only a member recorded on the run's own commit. `--map <file>` reads record files instead.
+- **What selects a rail:** a changed path it read; for a path added or removed since the record's
+  commit, a listing of its folder (or the nearest folder that commit held); and, for every rail,
+  a path the harness reads (its own files, never a package module).
+- **What is always selected:** `tests/rails/test_ci_contract.py`, a rail that starts a child
+  (nothing a child reads is recorded), a rail the record does not hold or left unrecorded, and
+  every rail when there is no record or it is older than a day.
+
 ## Local runs
 
 `python -m tools.ci run-job <id> [--shard i/N]` runs one catalogue job here, and
-`python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse]` runs every job of a tier
-(`tools/ci/jobs.py`). `make check` is `run change --working-tree` and `make gate` is
-`run merge`. A run reuses a job's recorded pass by the rules under "Verdict reuse".
+`python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse] [--admission-wait S]` runs
+every job of a tier (`tools/ci/jobs.py`). `make check` is `run change --working-tree` and
+`make gate` is `run merge`. A run reuses a job's recorded pass by the rules under "Verdict
+reuse", and starts each job once the host has the memory it needs (seam 1, under "The seams").
 
 - **CI's commands.** A job's toolchain installs run first, as `ci.yml` runs them, then each step,
   word for word. A step's environment is built from nothing: what a GitHub runner gives every
@@ -2161,9 +2247,19 @@ clones on one host, which the public runner leaves out.
 - **Identity:** none of its own; the jobs it schedules record the tree and the partner revisions.
 - **Receipt:** it writes none. The run's own job records are the evidence, and admission leaves
   them unchanged; its log of waits and peak memory is diagnostic only.
-- **Without it:** `make check` and `make gate` run directly, with the catalogue's worker counts.
-  The public runner does not schedule by memory yet: the loader reads and checks `mem_gb`, and
-  nothing acts on it. A per-job CPU and memory budget is #3920's.
+- **Without it:** the public runner admits by memory within one run (`tools/ci/admission.py`,
+  #3920). Off GitHub, `make check` and `make gate` start each job only once the host's free
+  memory (`MemAvailable` on Linux; the free, inactive and speculative pages on macOS) holds what
+  it needs: its workers times the peak memory of its largest process the last time it ran in
+  this clone, else the catalogue's `mem_gb`, else 1 GB a worker. A job just started, by this run
+  or another clone's, has not grown to its peak, so the free reading does not show it yet: each
+  admitted job enters its need in a ledger the machine shares (`admission-ledger.json` under
+  `personalclaw-ci` in the user's cache folder), and admission counts each entry until its job
+  ends, its run's process is gone, or it is 120 s old, checking and entering under one lock. A
+  job that needs more than the host holds, or is still waiting after `--admission-wait` (30
+  minutes), is not run, and the run is partial (exit 2). A memory reading it cannot take admits
+  every job, a ledger it cannot use counts nothing, and the run says so. On GitHub every job
+  starts at once. It reads no container VM's memory.
 
 **2. Culprit-isolating batch validation.** Retired. It validated several branches together;
 with no batch step there is nothing to publish.
@@ -2172,12 +2268,19 @@ with no batch step there is nothing to publish.
 before a push is the repository's own hook and `make gate`, and reuse is the public verdict
 store.
 
-- **The hook today** (`.githooks/pre-push`, which runs `scripts/run_prepush.sh`) checks Python
-  lint when the outgoing commits touch Python, and runs the clean-install, build and
-  render-smoke chain for frontend changes headed for `main`, a release branch or a tag; on a
-  topic branch CI is that chain's gate. It refuses an outgoing ref that is not this worktree's
-  `HEAD`. It checks the working tree, and does not refuse a dirty one. A hook that runs the
-  catalogue's change tier is #3920's and is not built.
+- **The hook** (`.githooks/pre-push`, which runs `scripts/run_prepush.sh`, #3920) runs the
+  change tier from the catalogue: `run change --pre-push --changed --working-tree --fail-fast
+  --workers 2`, with the merge base with `origin/main` as `--base`. `--pre-push` leaves out each
+  job whose entry says `prepush = false`, a test suite too slow for a push, whose gate is CI;
+  today the hook runs `static` (lint, types, the asset licences and the installer's checks). It
+  runs no check command of its own, so a job added to the change tier runs in it with no edit to
+  the script. A red run refuses the push; a partial one lets it through, and says so. It refuses
+  an outgoing ref that is not this worktree's `HEAD`, checks the working tree, and does not
+  refuse a dirty one. Three contract rows hold it: the hook runs no check command (a planted
+  `black` line fails); a change-tier job that runs a test suite (pytest over a folder or no path,
+  vitest, `playwright test`, `npm run test*`, `make test*`) says `prepush = false`; and the
+  render smoke, which the hook no longer runs, still runs in the merge tier (`e2e-shard`'s
+  `smoke` project) or a release workflow.
 - **Inputs of reuse:** the verdict store's key (see "Verdict reuse"): the job's entry, its exact
   steps, the selection, the commit's tree, each partner repository's commit (the apps partner
   among them), each lock file's digest, the toolchain, the OS and architecture, the container,

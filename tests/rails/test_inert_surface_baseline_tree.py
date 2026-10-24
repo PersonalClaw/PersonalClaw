@@ -28,7 +28,10 @@ from rails_repo import REPO
 from scripts import generate_inert_surface_baseline as inert
 from scripts.generate_inert_surface_baseline import (
     KIND_CONFIG_READER,
+    _attribute_names_in_src,
     _enum_members,
+    _inert_enum_members,
+    _iterated_enum_classes,
     _parse,
     _src_py_files,
     build_inventory,
@@ -41,7 +44,7 @@ def _inventory() -> dict:
     return build_inventory()
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(140)
 def test_every_inert_surface_is_listed_with_its_reason():
     """Every surface the census finds is a line of :data:`inert.SITES`, and every line is a
     surface it finds. A new one fails by name: add the missing writer or reader. A wired one
@@ -86,7 +89,7 @@ def _planted(root: Path) -> list[str]:
     return [site for site in inert.sites(build_inventory(root)) if site.startswith(planted)]
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(120)
 def test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line(tmp_path):
     """The positive control, on the real list: the tree's surfaces with a planted module's fail,
     naming its unread enum member and its unimported export, and its read member is no site; the
@@ -113,7 +116,7 @@ def test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line(tmp_path):
     assert (REPO / inert.SITES).read_text(encoding="utf-8") == listed
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(120)
 def test_the_real_config_reader_census_fires_and_clears_an_accessor():
     """Vacuity + real-tree calibration in both directions."""
     inv = _inventory()
@@ -140,7 +143,7 @@ def test_the_real_config_reader_census_fires_and_clears_an_accessor():
         assert f"{KIND_CONFIG_READER}:{wired}" not in flagged
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(100)
 def test_the_enum_census_still_finds_a_nontrivial_population():
     """Vacuity guard. Clearing a whole class per iteration site is a broad clear, so a bug
     that over-cleared (or a detector that silently matched everything) would leave the enum
@@ -172,3 +175,30 @@ def test_the_enum_census_still_finds_a_nontrivial_population():
         "the enum census reports (almost) nothing — whole-class clearing has over-reached; "
         "shrink the detected shapes rather than trusting a suspiciously clean census"
     )
+
+
+# A census of the tree, moved here from tests/test_inert_surface_baseline.py so it runs once, in
+# the rails job, not in every suite leg (#3929): it took 57 s of that file's 66 s on a Linux leg
+# (2026-10-24), and 85-95 s under coverage (2026-10-14/15).
+@pytest.mark.timeout(200)
+def test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen():
+    """The finding itself, on the real tree: ``Lineage`` is recognised as iterated (its
+    validation set in ``workflows/publish.py``) and no ``Lineage`` member is reported.
+
+    If the validation that iterates ``Lineage`` is ever deleted, this test SHOULD red — the
+    members would then genuinely be unreachable."""
+    files = _src_py_files()
+    enum_names: dict[Path, set[str]] = {}
+    for f in files:
+        tree = _parse(f)
+        if tree is None:
+            continue
+        names = {cls for cls, _ in _enum_members(tree)}
+        if names:
+            enum_names[f.resolve()] = names
+    iterated = _iterated_enum_classes(files, enum_names)
+    publish = next(f for f in files if f.as_posix().endswith("workflows/publish.py"))
+    assert (publish.resolve(), "Lineage") in iterated
+
+    inert = {surface for _, surface in _inert_enum_members(files, _attribute_names_in_src(files))}
+    assert not [s for s in inert if s.startswith("Lineage.")], sorted(inert)

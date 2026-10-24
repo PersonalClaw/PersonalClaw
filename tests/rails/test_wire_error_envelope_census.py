@@ -452,6 +452,7 @@ _PLANTED_MODULE_REL = "src/personalclaw/dashboard/handlers/planted.py"
 _PLANTED_PAYLOAD_SITE = f"{_PLANTED_MODULE_REL}::api_planted::web.json_response(body, status=400)"
 
 
+@pytest.mark.timeout(60)
 def test_a_planted_unclassifiable_payload_fails_by_name_and_a_fixed_one_by_its_line():
     """The positive control, on the real list: the tree's sites with a planted module's two
     bodies built in a local fail, naming each (the second in the handler as ``#2``), and its

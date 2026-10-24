@@ -335,6 +335,7 @@ def test_the_two_steps_answer_as_the_regex_on_seeded_random_lines(home):
     assert 1_000 < hits < len(lines) - 1_000, hits
 
 
+@pytest.mark.timeout(90)
 def test_the_two_steps_answer_as_the_regex_on_the_screens_inputs(home):
     """The grid and the test commands the other credential-screen proof uses, and seeded mixes of
     them, normalised as the screen normalises them."""
@@ -352,6 +353,7 @@ def test_the_two_steps_answer_as_the_regex_on_the_screens_inputs(home):
     assert len(lines) > 50_000 and 1_000 < hits < len(lines) - 1_000, (len(lines), hits)
 
 
+@pytest.mark.timeout(50)
 def test_the_screen_gives_the_old_answer_refusal_string_and_all(home):
     rng = random.Random(20261021)
     tests = _test_commands(home, home.parent / "data")

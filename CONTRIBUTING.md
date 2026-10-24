@@ -328,58 +328,55 @@ ErrorBoundary fallback and no widget's "Couldn't show …" notice. Run it on its
 with `make web-build` (which stamps the build) and then
 `cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps`. The
 preview refuses a dist whose stamp does not match the sources, so an unstamped or
-stale build fails before any test. The
-repository-owned pre-push hook (`npm run hooks:install`, one-time) runs the
-whole chain — clean `npm ci` (this is what catches declared-vs-resolved
-lockfile skew), typecheck, vitest, build, stamp, render smoke — automatically whenever
-outgoing commits touch `web/`, `package.json`, or `package-lock.json`, and needs the
-repo's `.venv` to stamp the build. In CI the smoke runs in whichever `e2e-shard` leg
-Playwright's split gives it, against the build the `web` job stamped and uploaded, and the
-`e2e` job judges the report merged from every leg.
+stale build fails before any test. In CI the smoke runs on every pull request, in whichever
+`e2e-shard` leg Playwright's split gives it, against the build the `web` job stamped and
+uploaded, and the `e2e` job judges the report merged from every leg. That is its gate: the
+pre-push hook does not run it, and a contract row holds the merge tier to it.
 
-"Outgoing commits" means **what your branch adds on top of `main`**, measured
-from the merge-base with `origin/main` — not the range between your branch and
-whatever the remote still points at. Those differ the moment you rebase: the old
-remote tip stops being an ancestor, and the naive range then spans every `main`
-commit in between, so a backend-only branch would pay the whole frontend chain
-for somebody else's `web/` work. Fetch `main` occasionally and the scoping stays
-tight; on a clone with no `origin/main` (a fork tracking `upstream`) the hook
-falls back to the wider range, which over-gates rather than under-gates.
+**The pre-push hook** (`npm run hooks:install`, one-time) runs the change tier's jobs from
+`tools/ci/catalogue.toml` on the working tree, as CI runs them:
+`python -m tools.ci run change --pre-push --changed --working-tree --fail-fast --workers 2`.
+A job whose entry says `prepush = false` is a test suite, and CI is its gate: the rails, the
+security corpus, the client's suite and the web suite. Today the hook runs `static`, in about two
+minutes:
 
-The same pre-push hook also checks **Python lint** (black, isort, flake8 over
-`src/personalclaw`, `tests`, `harness`, `scripts`, the same scope as CI) whenever
-outgoing commits touch those paths. pre-commit only formats what a commit
-*stages*, so commits made before the hooks were installed, or with `--no-verify`,
-would otherwise reach CI unformatted. If it fails, run `make format` then `make
-lint` and commit the result.
+- black, isort, flake8 and mypy, over the same scope as CI;
+- the bundled-app lint;
+- the **asset licence check**. A new fixture, screenshot, font or binary must be recorded in
+  `ASSET_LICENSES.json` (see the licence-record rule under [Pull requests](#pull-requests));
+- the installer's checks and the harness's.
 
-It also runs the **asset licence check** (`python3 scripts/check_asset_licenses.py`, under a
-second) whenever the outgoing commits add or rename a tracked file outside `src/`. A new
-fixture, screenshot, font or binary must be recorded in `ASSET_LICENSES.json` (see the
-licence-record rule under [Pull requests](#pull-requests)); the gate fails with the check's
-own message, naming each file it found unrecorded, before CI or a release build does.
+A job added to the change tier runs in the hook with no edit to it. A red job refuses the push.
+For lint, run `make format` then `make lint` and commit the result. A job this machine cannot
+run (a missing tool), or one that never got its memory, makes the run partial: the push goes
+through, and CI runs every job.
 
-`scripts/` is in that list because the pre-commit hook formats it and nothing
+"Outgoing commits" means **what your branch adds on top of `main`**. The run's base is the
+merge-base with `origin/main`, not the range between your branch and whatever the remote still
+points at. Those differ the moment you rebase: the old remote tip stops being an ancestor, and
+the naive range then spans every `main` commit in between. Fetch `main` occasionally and the
+scoping stays tight. On a clone with no `origin/main` (a fork tracking `upstream`), the hook
+falls back to the wider range, which runs more rather than less.
+
+`scripts/` is in the lint scope because the pre-commit hook formats it and nothing
 used to check it: `make lint`, CI and pre-push all skipped the tree while
 pre-commit rewrote staged `scripts/*.py` with black and isort, so the gate a
 contributor ran and the hook that edited their files disagreed. **mypy is the one
-tool the list omits** — `scripts/` does not pass it yet, and the Makefile's
+tool the list omits**: `scripts/` does not pass it yet, and the Makefile's
 `lint:` comment records the measured count, so the gap is a known scope rather
 than another blind spot.
 
-**Both halves check the working tree, so the push must come from the worktree
-that owns the branch.** The outgoing commits decide *which* halves run; what
-they then check is `git rev-parse --show-toplevel`. Those agree only when the
-ref you are pushing is what this worktree has `HEAD` on, so the hook refuses any
-outgoing ref that is not — naming both commits and pointing at `git worktree
-list`. Pushing `some-branch` from a checkout sitting on `main` would otherwise
-scope the gate by `some-branch`'s diff and then validate `main`'s tree: green,
-and proof of nothing about what shipped. Push one ref per worktree rather than
-batching several into one `git push` to pay the chain's cost once. A branch
-deletion carries no commits and is not affected.
+**The hook checks the working tree, so the push must come from the worktree that owns the
+branch.** The outgoing commits decide which jobs run; what they then check is
+`git rev-parse --show-toplevel`. Those agree only when the ref you are pushing is what this
+worktree has `HEAD` on, so the hook refuses any outgoing ref that is not, naming both commits
+and pointing at `git worktree list`. Pushing `some-branch` from a checkout sitting on `main`
+would otherwise scope the run by `some-branch`'s diff and then check `main`'s tree: green, and
+proof of nothing about what shipped. Push one ref per worktree. A branch deletion carries no
+commits and is not affected.
 
 The same bar applies to dependency updates: a Dependabot or manual bump of
-React or the build toolchain merges only after this gate is green — reviewing
+React or the build toolchain merges only after CI's render smoke is green. Reviewing
 the diff is not sufficient for changes whose failure mode is invisible to
 static checks.
 

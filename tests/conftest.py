@@ -16,6 +16,7 @@ import in_flight
 import native_omp_guard
 import pycache_guard
 import pytest
+import rails_reads
 import random_order
 import real_home_guard
 import run_facts
@@ -298,6 +299,9 @@ def pytest_configure(config):
     # The tests started and not finished, beside the JUnit report, so a hung shard names its test
     # (tests/in_flight.py). The controller's alone; a worker arms nothing.
     in_flight.configure(config)
+    # What each rail read, beside a rails leg's JUnit report, for `rails select`
+    # (tests/rails_reads.py). Armed by `junit-rails-<leg>.xml` alone.
+    rails_reads.configure(config, source_index)
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
     config.pluginmanager.register(
         state_leak_guard.Plugin(config, listening=lambda: frozenset(port_guard.GUARD.own_ports())),
@@ -379,19 +383,6 @@ settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 _HAS_GIT = shutil.which("git") is not None
 
 requires_git = pytest.mark.skipif(not _HAS_GIT, reason="git not available")
-
-_WORKFLOWS_TEST_TIMEOUT_SECONDS = 46
-
-
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Give workflow tests a measured ceiling without replacing an explicit one."""
-    for item in items:
-        if (
-            item.path.name.startswith("test_workflows_")
-            and item.get_closest_marker("timeout") is None
-        ):
-            item.add_marker(pytest.mark.timeout(_WORKFLOWS_TEST_TIMEOUT_SECONDS))
-
 
 # ── The source index warms outside every test's timeout ─────────────────
 # A tree rail reads the source tree through tests/source_index.py, which walks the four roots and

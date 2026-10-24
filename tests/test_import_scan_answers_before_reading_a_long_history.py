@@ -395,6 +395,7 @@ print(json.dumps({
 """
 
 
+@pytest.mark.timeout(40)
 def test_a_scan_holds_no_conversation_and_the_reading_pass_one_at_a_time(machine):
     """The listing is titles and counts; a conversation's messages are read when it is imported.
     On origin/main every conversation's messages were held by the scan at once (1.1 GB for the
@@ -412,6 +413,7 @@ def test_a_scan_holds_no_conversation_and_the_reading_pass_one_at_a_time(machine
     assert found["unread_after"] == 0, "what the pass read is what the next scan answers from"
 
 
+@pytest.mark.timeout(50)
 def test_a_looked_then_read_listing_is_the_listing_a_full_read_makes(machine):
     """Parity: after the reading pass, the listing a looking scan gives is — field for field —
     the one reading every file first gives, which is what the step showed before this change."""
@@ -578,6 +580,7 @@ def test_after_an_import_the_history_is_listed_and_kept_searchable_without_rerea
     assert [r["key"] for r in session_search.search_sessions("zebra")] == [listed[0]["key"]]
 
 
+@pytest.mark.timeout(50)
 @pytest.mark.asyncio
 async def test_a_history_imports_as_a_job_within_a_generous_ceiling(machine):
     """End to end over the route: every conversation of a 1,500-file history lands, as a job

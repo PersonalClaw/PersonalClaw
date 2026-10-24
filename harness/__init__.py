@@ -9,8 +9,9 @@ machine-checked institutional knowledge:
   tasks) as markdown + YAML frontmatter, with shape validation.
 - ``harness.profiles`` — profile → concrete command mapping (``fast``/``web``/``replay``/
   ``full``/``scan``) so ``explain``/``run`` can print/execute what a change owes.
-- ``harness.scanner`` — static architectural-boundary scanner; ``harness.selection``
-  + ``harness.diff`` — diff-aware required-check selection.
+- ``harness.scanner`` — static architectural-boundary scanner; ``harness.diff`` — the
+  changed files that ``run --diff`` hands CI's planner (``python -m tools.ci run change
+  --changed``), which picks what the change must pass: the harness keeps no path rules of its own.
 - ``harness.replay`` + ``harness.baselines`` — event-trace replay regression. The
   recorder half lives in core (``personalclaw.trace_recorder``); core can't import here.
 - ``harness.cli`` — ``python -m harness  validate | explain | run | scan | replay``.

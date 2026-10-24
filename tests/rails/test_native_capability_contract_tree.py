@@ -59,6 +59,7 @@ def _bundle_owned() -> list[tuple[str, AppManifest]]:
     return out
 
 
+@pytest.mark.timeout(50)
 @pytest.mark.parametrize("bundle_name", [n for n, _ in _bundle_owned()])
 def test_bundle_owned_capability_has_no_core_implementation(bundle_name):
     """No core module implements, imports or resolves a bundle-owned provider.

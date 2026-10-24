@@ -45,8 +45,8 @@ env:
 jobs:
   rerun:
     runs-on: ubuntu-24.04
-    # Ten rounds of at most ten tests, each under its 120 s timeout, within the rerun's own
-    # 25 minutes, and the toolchain's install.
+    # Ten rounds of at most ten tests, each under its own cap (30 s, or its mark's), within
+    # the rerun's own 25 minutes, and the toolchain's install.
     timeout-minutes: 35
     permissions:
       contents: read

@@ -447,6 +447,7 @@ def test_the_first_write_makes_the_home_private(tmp_path: Path, what: str) -> No
         assert target_line == "file 0o600", f"{written} in the home: {target_line}"
 
 
+@pytest.mark.timeout(40)
 def test_the_offline_reference_renders_without_touching_a_home(tmp_path: Path) -> None:
     """``python -m personalclaw.manifest_reference`` generates checked-in markdown. It has no
     business with any home — not the owner's, and not a scratch one either."""

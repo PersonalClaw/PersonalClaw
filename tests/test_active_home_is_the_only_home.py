@@ -162,6 +162,7 @@ def _tree_resolutions() -> dict[str, list[tuple[int, str]]]:
     return out
 
 
+@pytest.mark.timeout(50)
 def test_no_module_but_the_loader_resolves_the_home():
     """🪤 The rail. A second resolver fails here with its file and line."""
     offenders = [
@@ -180,6 +181,7 @@ def test_no_module_but_the_loader_resolves_the_home():
     )
 
 
+@pytest.mark.timeout(50)
 def test_the_scan_sees_the_resolvers_own_rule():
     """🪤 Vacuity floor, on real code: the loader DOES read the variable and DOES build the
     default home — that is its job — so a scan that stopped seeing either would find them gone

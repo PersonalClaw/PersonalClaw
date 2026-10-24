@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
 from rails_repo import REPO
 from the_suite_never_reaches_the_machines_keychain_shared import _reaches_around
 
@@ -25,6 +26,7 @@ _SKIPPED = (
 )
 
 
+@pytest.mark.timeout(40)
 def test_no_test_switches_the_keychain_but_through_the_stub():
     """🔴 Thirty-odd tests each patched the store's keyring probe (``_usable_keyring``) for
     themselves, which the conftest switch made redundant. A test that switches the store on, or

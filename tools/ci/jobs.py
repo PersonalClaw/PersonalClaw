@@ -66,6 +66,11 @@ its receipt, ``reuse-receipt.json``; each other job runs, and a clean pass of a 
 recorded. ``--no-reuse`` reads no recorded pass and still records. A working-tree run and
 ``run-job`` never read or write the store.
 
+**Admission.** Off GitHub, ``run <tier>`` starts each job only once the machine has the memory
+it needs, its workers times its last peak here (:mod:`tools.ci.admission`); a job still waiting
+after ``--admission-wait`` is not run (partial). Admission decides when a job starts, never what
+it runs.
+
 A local result never stands in for GitHub's: a local record names no run, so a run's verdict
 (``verdict --records --run-id``) reads it red, and no workflow reads the store. A local
 ``--workers N`` replaces the catalogue's worker count, is refused on GitHub, is written in
@@ -94,7 +99,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import capabilities, catalogue, plan, run, shards, verdict, verdict_store
+from . import admission, capabilities, catalogue, plan, run, shards, verdict, verdict_store
 from .catalogue import Catalogue, Job, Step
 
 #: What a GitHub-hosted runner gives every step that a step run here gets too: ``CI``, which the
@@ -175,15 +180,20 @@ class Host:
     path: str  # the PATH every step gets
     on_github: bool = False
     lister: Callable[[int], list[str]] | None = None
+    #: The memory a tier run admits each job by (tools/ci/admission.py): this machine's off
+    #: GitHub, where a runner holds one job; ``None`` starts every job at once.
+    memory: admission.Memory | None = field(default=None, compare=False)
 
     @classmethod
     def this(cls, root: Path) -> Host:
         family = {"darwin": "macos-", "linux": "ubuntu-"}.get(sys.platform, "")
+        on_github = bool(os.environ.get("GITHUB_ACTIONS"))
         return cls(
             root=root,
             family=family,
             path=os.environ.get("PATH", os.defpath),
-            on_github=bool(os.environ.get("GITHUB_ACTIONS")),
+            on_github=on_github,
+            memory=None if on_github else admission.Memory.this(),
         )
 
 
@@ -199,6 +209,9 @@ class Options:
     #: Read the verdict store and skip a job it holds a clean pass of (``--no-reuse`` turns it
     #: off: every job runs, and each clean pass is still recorded).
     reuse: bool = True
+    #: How long a job of a local tier run may wait for the memory it needs before the run gives
+    #: it up (``--admission-wait``; tools/ci/admission.py).
+    admission_wait: float = admission.WAIT_S
 
 
 @dataclass
@@ -219,6 +232,9 @@ class Outcome:
     #: The tests its JUnit reports say were skipped, as ``classname::name``: neither an expected
     #: failure nor a quarantined one. Read only from a job that passed.
     skipped: list[str] = field(default_factory=list)
+    #: The peak memory of the largest process of any of its steps, in MB, of the steps that
+    #: ended on their own (``run.Result.peak_mb``).
+    peak_mb: int | None = None
 
 
 # ── what a job needs, and whether it can run here ────────────────────────────────────────────
@@ -1384,6 +1400,7 @@ def run_one(
     code = run.OK
     interrupted = False
     rerun: dict[str, object] | None = None
+    peaks: list[int] = []
 
     def bounded(
         n: int, ran: list[tuple[list[str], int, float]], words: Sequence[str], bound: float
@@ -1409,6 +1426,8 @@ def run_one(
             budget=bound if bound <= left else total,
         )
         ran.append((list(words), result.returncode, time.monotonic() - began))
+        if result.peak_mb is not None:
+            peaks.append(result.peak_mb)
         return result
 
     for n, (argv, workdir, env) in enumerate(planned, 1):
@@ -1445,6 +1464,8 @@ def run_one(
             output=kept,
         )
         steps.append((argv, result.returncode, time.monotonic() - began))
+        if result.peak_mb is not None:
+            peaks.append(result.peak_mb)
         if result.code != run.OK:
             reasons.extend(f"step {n}: {v}" for v in result.violations)
             # A lint step that exited non-zero on its own, as ci.yml's lint job hands its
@@ -1514,7 +1535,14 @@ def run_one(
                 reasons.append(f"its junit {report} is unreadable: {exc}")
                 code = run.RED
 
-    outcome = Outcome(key, code, reasons, interrupted=interrupted, skipped=skipped)
+    outcome = Outcome(
+        key,
+        code,
+        reasons,
+        interrupted=interrupted,
+        skipped=skipped,
+        peak_mb=max(peaks) if peaks else None,
+    )
     if options.working_tree and off_its_platform(job, host):
         outcome.off_platform = job.platform
         outcome.reasons.append(
@@ -1970,6 +1998,7 @@ def run_tier(
     overrides: Sequence[catalogue.Override] = (),
     fail_fast: bool = False,
     fingerprint: Fingerprint = capabilities.fingerprint,
+    pre_push: bool = False,
 ) -> tuple[int, list[Outcome], verdict.Verdict]:
     """Run every job of ``tier`` here, and judge each job's records against the head and the
     partner revisions it reads. ``changed``: only the jobs the diff from the base plans, with
@@ -1979,7 +2008,12 @@ def run_tier(
     holds a clean pass of on this tree is not run, and counts by its receipt
     (:func:`verdict_store.judge_reused`), since it leaves no job record. Each job of a reusable
     class that passed is recorded. The receipt goes to ``work/`` :data:`RECEIPT`.
-    ``fingerprint`` reads the host's capabilities, for a test to stand in for."""
+    ``fingerprint`` reads the host's capabilities, for a test to stand in for. ``pre_push``: only
+    the jobs whose entries leave them to the pre-push hook (``prepush``), as it runs them.
+
+    With ``host.memory`` each job starts only once the machine has the memory it needs
+    (tools/ci/admission.py): a job that never gets it is not run (partial). Each job that ran
+    records its peak for the next run to reckon by."""
     jobs = list(cat.tier(tier))
     if not jobs:
         raise Unreadable(f"the {tier} tier has no job in the catalogue, so a run proves nothing")
@@ -1991,6 +2025,11 @@ def run_tier(
         for reason in chosen.full_reasons:
             print(f"plan: the whole tier: {reason}", file=sys.stderr)
         jobs = [j for j in jobs if j.id in chosen.jobs]
+    if pre_push:
+        left = sorted(j.id for j in jobs if not j.prepush)
+        if left:
+            print(f"pre-push: left to CI (prepush = false): {', '.join(left)}", file=sys.stderr)
+        jobs = [j for j in jobs if j.prepush]
     jobs = ordered(jobs)
     now = time.time()
     reuse = (
@@ -2005,6 +2044,8 @@ def run_tier(
     expected = {job.id: verdict.Identity(head, external_revisions([job], host)) for job in jobs}
     outcomes: list[Outcome] = []
     planned: dict[str, list[str]] = {}
+    memory = host.memory
+    peaks = admission.Peaks(_peaks_path(host) if memory is not None else None)
     for job in jobs:
         for shard in range(1, job.shards + 1) if job.shards > 1 else [None]:
             planned.setdefault(job.id, []).append(key_of(job, shard))
@@ -2023,7 +2064,27 @@ def run_tier(
             if reuse is not None and reuse.reused(job.id) is not None and line is not None:
                 outcomes.append(Outcome(key_of(job, shard), run.OK, [line], reused=True))
                 continue
-            outcome = run_one(cat, job, shard, host, options, work)
+            if memory is not None and not cannot_run_here(
+                job, host, working_tree=options.working_tree
+            ):
+                need, how = admission.need_mb(
+                    workers=max(1, int(_worker_count(job, options) or 1)),
+                    peak_mb=peaks.get(job.id),
+                    declared_gb=job.mem_gb,
+                )
+                refused = admission.admit(
+                    key_of(job, shard), need, how, memory, wait_s=options.admission_wait
+                )
+                if refused is not None:
+                    outcomes.append(Outcome(key_of(job, shard), run.PARTIAL, [refused], ran=False))
+                    continue
+            try:
+                outcome = run_one(cat, job, shard, host, options, work)
+            finally:
+                if memory is not None:
+                    admission.release(memory)
+            if outcome.ran and outcome.peak_mb is not None:
+                peaks.record(job.id, outcome.peak_mb)
             if line is not None and outcome.ran:
                 outcome.reasons.insert(0, line)
             outcomes.append(outcome)
@@ -2059,6 +2120,15 @@ def run_tier(
         tests.extend(each.tests)
     judged = verdict.Verdict(green=not reasons, reasons=tuple(reasons), tests=tuple(tests))
     return _tier_code(outcomes, unproven=not judged.green), outcomes, judged
+
+
+def _peaks_path(host: Host) -> Path | None:
+    """Where this clone keeps its jobs' peak memory: beside the verdict store, in the git common
+    folder every worktree shares; ``None`` outside a clone."""
+    try:
+        return verdict_store.Store.for_repo(host.root).root.parent / admission.PEAKS_FILE
+    except verdict_store.Refused:
+        return None
 
 
 def _tier_code(outcomes: Sequence[Outcome], *, unproven: bool = False) -> int:
@@ -2158,6 +2228,7 @@ def _setup(args: argparse.Namespace) -> tuple[Catalogue, Host, Options, Path]:
         workers=args.workers,
         working_tree=args.working_tree,
         reuse=not getattr(args, "no_reuse", False),
+        admission_wait=getattr(args, "admission_wait", None) or admission.WAIT_S,
     )
     return cat, host, options, work
 
@@ -2218,7 +2289,8 @@ def run_job_main(argv: list[str]) -> int:
 
 
 def run_main(argv: list[str]) -> int:
-    """``python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse]``."""
+    """``python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse] [--pre-push]
+    [--admission-wait SECONDS]``."""
     parser = _parser(
         "run", "Run every job of a tier here, and judge their records (none with --working-tree)."
     )
@@ -2230,6 +2302,18 @@ def run_main(argv: list[str]) -> int:
         action=_OnceFlag,
         help="run every job, reusing no recorded pass; each clean pass is still recorded",
     )
+    parser.add_argument(
+        "--pre-push",
+        action=_OnceFlag,
+        help="only the jobs the pre-push hook runs: those whose entries do not say prepush = false",
+    )
+    parser.add_argument(
+        "--admission-wait",
+        type=float,
+        action=verdict._Once,
+        help=f"how long a job may wait for memory before it is not run, in seconds (default "
+        f"{admission.WAIT_S:g})",
+    )
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -2238,6 +2322,8 @@ def run_main(argv: list[str]) -> int:
     try:
         if args.tier not in catalogue.TIERS:
             raise Unreadable(f"{args.tier!r} is not a tier: one of {', '.join(catalogue.TIERS)}")
+        if args.admission_wait is not None and not args.admission_wait > 0:
+            raise Unreadable("--admission-wait is a number of seconds above 0")
         cat, host, options, work = _setup(args)
         overrides = plan.read_beside(_catalogue_path(args), cat) if args.changed else ()
         code, outcomes, judged = run_tier(
@@ -2249,6 +2335,7 @@ def run_main(argv: list[str]) -> int:
             changed=args.changed,
             overrides=overrides,
             fail_fast=args.fail_fast,
+            pre_push=args.pre_push,
         )
     except (Unreadable, catalogue.CatalogueError, ValueError, OSError) as exc:
         problems = exc.problems if isinstance(exc, catalogue.CatalogueError) else [str(exc)]

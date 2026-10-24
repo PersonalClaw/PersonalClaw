@@ -8,24 +8,14 @@
 # act; a mark that is deleted takes its entry with it.
 
 [[mark]]
-site = "tests/conftest.py::pytest_collection_modifyitems"
-cap = 46
-reason = "the workflow family's measured ceiling, given to every test_workflows_* test with no mark of its own; tests/test_pytest_workflows_timeout.py pins the policy"
-
-[[mark]]
 site = "tests/rails/test_keychain_namespace_census.py::test_every_keychain_call_names_the_homes_own_namespace"
-cap = 300
-reason = "a census of the tree: 55-90 s of the default under coverage on CI (2026-10-14/15)"
+cap = 60
+reason = "a census of the package for every keychain call; 26 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/rails/test_keychain_namespace_census.py::test_the_census_reads_the_real_keychain_calls"
-cap = 300
-reason = "a census of the tree: 90-98 s of the default under coverage on CI (2026-10-14/15)"
-
-[[mark]]
-site = "tests/rails/test_source_index.py::test_collecting_the_copy_rail_parses_nothing_from_test_code"
-cap = 300
-reason = "runs a pytest collection of a whole module in a child interpreter"
+cap = 40
+reason = "a census of the package for every keychain call, built once for the module by whichever of its tests runs first (_census); 20 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/test_bundled_model_gate.py::test_the_drive_completes_a_first_turn_on_the_signed_off_weight"
@@ -39,135 +29,740 @@ reason = "a cold cache's first fetch of the signed-off weight (600 s), the drive
 
 [[mark]]
 site = "tests/test_child_output_reaches_the_log_masked.py::test_every_log_sink_the_tree_makes_masks_what_it_writes"
-cap = 300
-reason = "a census of the tree: 50-112 s of the default under coverage on CI (2026-10-14/15)"
-
-[[mark]]
-site = "tests/test_compose_standalone.py::test_compose_config_succeeds_from_a_scratch_directory"
-cap = 240
-reason = "drives a real container runtime's compose config, each runtime probe allowed 30 s"
+cap = 150
+reason = "a census of every log sink the package makes, each driven; 72 s on CI at worst (breadth's coverage leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/test_container_runtime_census.py::test_the_census_sees_the_modules_that_drive_a_runtime"
-cap = 300
-reason = "a census of the tree: 77-91 s of the default under coverage on CI (2026-10-14/15)"
-
-[[mark]]
-site = "tests/test_container_runtime_census.py::test_the_tests_that_drive_a_runtime_skip_without_the_opt_in"
-cap = 300
-reason = "runs the tests that drive a runtime in a child pytest, with stand-in runtimes on PATH"
+cap = 150
+reason = "a census of every test module for a container runtime it drives; 74 s on CI at worst (breadth's coverage leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_seed_tasks_seeds_the_named_scratch_home"
-cap = 300
-reason = "runs the dev tool as a program against a real gateway the module starts on a scratch home"
-
-[[mark]]
-site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_a_validator_is_clean_on_the_named_scratch_home"
-cap = 300
-reason = "runs the dev tool as a program against a real gateway the module starts on a scratch home"
-
-[[mark]]
-site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_the_tool_universe_validator_runs_its_checks_on_the_named_scratch_home"
-cap = 300
-reason = "runs the dev tool as a program against a real gateway the module starts on a scratch home"
-
-[[mark]]
-site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_the_classify_smoke_reads_the_named_scratch_homes_models"
-cap = 300
-reason = "runs the dev tool as a program against a real gateway the module starts on a scratch home"
+cap = 50
+reason = "the dev tool run as a program against a real gateway on a scratch home; 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/test_document_parser_limits.py::TestBlockCap.test_the_issue_repro_is_bounded_at_the_real_cap"
-cap = 600
-reason = "walks the shipped 20,000-block cap itself, which is the point of the test; no assertion is relaxed to fit the default"
-
-[[mark]]
-site = "tests/test_evals_benchmark_binding.py::test_two_arms_whose_staged_artifacts_differ_score_differently"
-cap = 300
-reason = "the real eval matrix, a spawned child per cell, against a local endpoint"
+cap = 50
+reason = "walks the shipped 20,000-block cap itself, which is the point of the test; 21 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_every_inert_surface_is_listed_with_its_reason"
-cap = 300
-reason = "builds the inert-surface census of the whole tree"
+cap = 140
+reason = "the inert-surface census: every export of the package read against every signature, built once for the module by whichever of its tests runs first (_inventory); 68 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line"
-cap = 300
-reason = "builds the inert-surface census of the whole tree, and of a planted one"
+cap = 120
+reason = "the inert-surface census, built once for the module by whichever of its tests runs first (_inventory); 57 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_real_config_reader_census_fires_and_clears_an_accessor"
-cap = 300
-reason = "builds the inert-surface census of the whole tree"
+cap = 120
+reason = "the inert-surface census, built once for the module by whichever of its tests runs first (_inventory); 57 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_inert_surface_baseline.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
-cap = 300
-reason = "a census of the tree: 85-95 s of the default under coverage on CI (2026-10-14/15)"
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
+cap = 200
+reason = "the inert-surface census over the package, against a planted lineage; 100 s on CI at worst (breadth's coverage leg, 2026-10-24); a rail since #5472, run once a run"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_enum_census_still_finds_a_nontrivial_population"
-cap = 300
-reason = "builds the inert-surface census of the whole tree"
-
-[[mark]]
-site = "tests/test_inert_surface_baseline.py::test_an_export_named_by_another_exports_signature_is_not_inert"
-cap = 300
-reason = "reads the SDK export census over the whole tree"
-
-[[mark]]
-site = "tests/test_inert_surface_baseline.py::test_an_export_reachable_from_no_published_signature_is_still_inert"
-cap = 300
-reason = "reads the SDK export census over the whole tree"
-
-[[mark]]
-site = "tests/test_inert_surface_baseline.py::test_a_type_that_names_only_itself_does_not_clear_itself"
-cap = 300
-reason = "reads the SDK export census over the whole tree"
-
-[[mark]]
-site = "tests/test_inert_surface_baseline.py::test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_justified"
-cap = 300
-reason = "computes the surface closure over the whole tree"
-
-[[mark]]
-site = "tests/test_inert_surface_baseline.py::test_an_exported_functions_signature_clears_an_export_in_both_directions"
-cap = 300
-reason = "reads the SDK export census and the surface closure over the whole tree"
-
-[[mark]]
-site = "tests/test_memory_daily_digest.py::pytestmark"
-cap = 300
-reason = "the first test on a fresh worker pays the memory stack's first-touch import, starved past the default under heavy local contention"
+cap = 100
+reason = "the enum census over every module of the package; 49 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/test_optimize_harness_runs_to_its_proposal.py::test_max_iterations_is_the_number_of_candidates_the_search_tries"
-cap = 300
-reason = "thirteen cycles of the search, each running its steps as processes of their own: 42-69 s plain and 64-120 s under coverage on CI (2026-10-15)"
+cap = 190
+reason = "thirteen cycles of the search as it ships, each step a personalclaw process of its own; 91 s on CI at worst (breadth's coverage leg, 2026-10-24)"
 
 [[mark]]
 site = "tests/rails/test_provider_instance_secrets_tree.py::test_every_config_bearing_surface_also_preserves_secrets_if_it_writes"
-cap = 300
-reason = "a census of the tree: 80-97 s of the default under coverage on CI (2026-10-14/15)"
+cap = 50
+reason = "a census of the package for every config-bearing surface; 23 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_pytest_workflows_timeout.py::test_an_explicit_workflows_timeout_is_not_overwritten"
-cap = 17
-reason = "a mark built as data, to prove the workflow family's hook keeps an explicit one; it caps no test"
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[every rail lives in tests/rails]"
+cap = 190
+reason = "the rails census over the tree: every test module parsed and walked; 94 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_sdist_bundles_spa.py::test_a_wheel_rebuilt_from_the_sdist_carries_the_whole_dashboard"
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[every catalogue command is the workflow's]"
+cap = 120
+reason = "74 planted controls, each the catalogue and both workflows read and matched token for token; 58 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[every workflow that runs on pull_request is cancelled when the pull request closes]"
+cap = 80
+reason = "18 planted controls, each every workflow's groups evaluated against event contexts; 37 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[every-timeout-mark-is-listed-with-its-reason]"
+cap = 80
+reason = "the walk of every module under tests/ for its marks, and 17 planted controls; 36 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[no-workflow-job-outside-the-catalogue-runs-a-test]"
+cap = 90
+reason = "47 planted controls, each every workflow's jobs read against the catalogue; 41 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[every fail-closed test module carries the security marker]"
+cap = 70
+reason = "the security census over every test module, and 9 planted controls; 30 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job]"
+cap = 70
+reason = "27 planted controls, each the catalogue's tiers read for every whole-tree check; 34 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[no test takes an unlisted fixed wait of half a second or more]"
+cap = 60
+reason = "the fixed-wait census over every test module, and 5 planted controls; 27 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[no test walks a source root itself]"
+cap = 50
+reason = "the private-walk census over every test module, and 12 planted controls; 24 s on CI (main x3, S27, breadth; 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[no workflow that runs candidate code posts the merge-verdict check]"
+cap = 60
+reason = "29 planted controls, each every workflow read for what posts the verdict; 27 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[every concurrency group a candidate joins keys on its pull request or its head]"
+cap = 50
+reason = "35 planted controls, each every workflow's concurrency groups read; 24 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[nothing-throws-an-exit-status-away-unseen]"
+cap = 40
+reason = "the masking census over every workflow and script, and 11 planted controls; 18 s on CI (main x3, S27, breadth; 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_supply_chain_contract.py::ROW_TIMEOUTS[run-install]"
+cap = 90
+reason = "101 planted controls, each the row's own supply-chain rules over a scaffold copy of the tree's files; 121 s on CI before #5362 ran only the row's rules, 9.5 s on this machine after (2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_supply_chain_contract.py::ROW_TIMEOUTS[run-install-scripts]"
+cap = 40
+reason = "57 planted controls, each the row's own supply-chain rules over a scaffold copy of the tree's files; 68 s on CI before #5362 ran only the row's rules, 5.7 s on this machine after (2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_agent_safety_rules_census_tree.py::test_every_site_that_names_its_agent_hands_it_its_own_instructions"
+cap = 50
+reason = "a census of the package for every site that builds an agent; 22 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_archive_writer_census.py::test_no_archive_is_written_around_the_private_writer"
+cap = 40
+reason = "a census of the package for every archive and export write; 16 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_browser_gate_stays_out_of_pytest_tree.py::TestNoPytestModuleShellsTheBrowserGate.test_no_collected_module_launches_the_browser"
+cap = 40
+reason = "a census of every test module for a browser launch; 18 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_by_name_load_census_tree.py::test_every_package_module_a_site_loads_is_carried"
+cap = 40
+reason = "a census of the package for every module loaded by name; 19 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_capabilities_tree.py::test_the_prefilter_and_a_full_parse_find_the_same_probes"
+cap = 70
+reason = "a full parse of the tree, held against the prefilter it proves; 35 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_python_suite_inputs_tree.py::test_the_census_is_not_vacuous"
+cap = 40
+reason = "a census of every path the suite's modules read; 17 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_each_tree_check_runs_in_one_place.py::test_no_suite_module_starts_reading_docs"
+cap = 70
+reason = "a census of every suite module for a whole-tree check or a docs read; 31 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_each_tree_check_runs_in_one_place.py::test_no_whole_tree_check_gains_a_copy_in_the_suite"
+cap = 80
+reason = "a census of every suite module for a whole-tree check or a docs read; 37 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_event_loop_whole_file_census.py::test_nothing_new_on_the_event_loop_copies_moves_or_hashes_a_whole_file"
+cap = 50
+reason = "a census of the package for whole-file work on the event loop; 24 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_http_error_codes_append_only_tree.py::test_a_planted_dynamic_code_site_fails_by_name_and_a_fixed_one_by_its_line"
+cap = 50
+reason = "a census of the package's error-code sites, then a planted and a fixed one; 22 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_native_capability_contract_tree.py::test_bundle_owned_capability_has_no_core_implementation"
+cap = 50
+reason = "a census of the package for each bundle-owned capability; 21 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_resilience_degraded_lint_tree.py::test_every_one_shot_call_site_is_mapped"
+cap = 40
+reason = "a census of the package for every one-shot call site; 18 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_stored_upload_scan_census.py::test_every_route_that_reads_an_uploaded_body_is_named"
+cap = 40
+reason = "a census of the routes for every one that reads an uploaded body; 16 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_structural_baseline_tree.py::test_committed_baseline_is_not_stale_on_the_shrink_side"
+cap = 70
+reason = "each structural ratchet's baseline rendered fresh from the tree; 34 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_wire_error_envelope_census.py::test_a_planted_unclassifiable_payload_fails_by_name_and_a_fixed_one_by_its_line"
+cap = 60
+reason = "the error-envelope census over every route, then a planted and a fixed payload; 26 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_headless_gateway_serves_its_channels.py::test_a_headless_gateway_answers_its_channel_through_the_door"
+cap = 50
+reason = "a real gateway started in a child process and driven over its channel; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_headless_gateway_serves_its_channels.py::test_a_headless_gateway_serves_no_dashboard_page_and_answers_its_clients"
+cap = 40
+reason = "a real gateway started in a child process and driven over its channel; 17 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_headless_gateway_serves_its_channels.py::test_the_full_gateway_answers_the_same_channel_and_serves_the_dashboard"
+cap = 50
+reason = "a real gateway started in a child process and driven over its channel; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_headless_run_ends_the_work_it_started.py::test_a_read_only_run_whose_timeout_passes_stops_its_turn_and_names_no_grant"
+cap = 70
+reason = "Stop does not end a turn while a tool call runs (#5363): the run waits out the test's own 30 s hold; 31 s on every leg (2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_headless_run_ends_the_work_it_started.py::test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway"
+cap = 70
+reason = "Stop does not end a turn while a tool call runs (#5363): the run waits out the test's own 30 s hold; 31 s on every leg (2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_test_never_inherits_a_running_gateways_address.py::test_a_run_started_from_a_gateways_shell_does_not_inherit_its_address"
+cap = 50
+reason = "a child pytest run from a gateway's shell; 23 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_text_that_cannot_be_masked_is_withheld.py::test_no_masker_in_the_tree_falls_back_to_the_text_it_could_not_mask"
+cap = 90
+reason = "a census of the package for every masker and its fallback; 41 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_workflow_step_works_in_its_own_runs_folder.py::test_an_in_place_run_admits_only_its_own_projects_tree"
+cap = 40
+reason = "real workflow runs, each step spawned in its runs folder; 16 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_active_home_is_the_only_home.py::test_no_module_but_the_loader_resolves_the_home"
+cap = 50
+reason = "a census of the package for every place that resolves the home; 22 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_active_home_is_the_only_home.py::test_the_scan_sees_the_resolvers_own_rule"
+cap = 50
+reason = "a census of the package for every place that resolves the home; 22 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_agent_reference.py::test_checked_in_reference_matches_a_fresh_render"
+cap = 40
+reason = "renders the offline reference: the route census over the whole package, parsed once since #5359 (7.8 s to 3.0 s locally); 35 s on CI before it (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_agent_reference.py::test_reference_examples_carry_no_invented_params"
+cap = 40
+reason = "renders the offline reference: the route census over the whole package, parsed once since #5359 (7.8 s to 3.0 s locally); 33 s on CI before it (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_agent_reference.py::test_reference_has_the_four_expected_files"
+cap = 40
+reason = "renders the offline reference: the route census over the whole package, parsed once since #5359 (7.8 s to 3.0 s locally); 35 s on CI before it (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_agent_reference.py::test_tools_reference_lists_every_provider"
+cap = 40
+reason = "renders the offline reference: the route census over the whole package, parsed once since #5359 (7.8 s to 3.0 s locally); 34 s on CI before it (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_app_api_permission_scope.py::test_no_registered_route_under_an_owner_only_root_is_app_reachable"
+cap = 40
+reason = "the route census over the whole package, parsed once since #5359 (7.8 s to 3.0 s locally); 33 s on CI before it (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_app_api_permission_scope.py::test_no_registry_root_is_a_fiction"
+cap = 40
+reason = "the route census over the whole package, parsed once since #5359 (7.8 s to 3.0 s locally); 32 s on CI before it (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_baseline_denylist_integrity.py::TestSharedSource.test_no_module_keeps_a_second_in_code_copy_of_the_baseline"
+cap = 50
+reason = "a census of the package for a second copy of the baseline denylist; 20 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_baseline_denylist_integrity.py::TestStrictlyAdditiveUserConfig.test_the_effective_set_is_a_superset_of_the_baseline_for_any_user_config"
+cap = 60
+reason = "the effective denylist built once for each baseline entry given as a user's config; 28 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_denied_cross_site_frame_is_blanked_and_the_page_keeps_working"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle; 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_by_name_load_census.py::TestTheBundleNamesOnlyWhatExists.test_every_name_is_a_module_of_the_package"
+cap = 40
+reason = "a census of the package's by-name loads against the desktop bundle; 15 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_by_name_load_census.py::TestTheNativeAppsReachTheBundle.test_every_factory_is_carried_or_ships_as_package_data"
+cap = 40
+reason = "a census of the package's by-name loads against the desktop bundle; 15 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_ci_report.py::test_what_each_added_run_costs_the_reader_falls_off_and_90_days_stay_under_512_mb"
+cap = 170
+reason = "the report read over 90 days of generated history, measured run by run; 82 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_container_runtime_census.py::test_no_test_drives_a_container_runtime_without_asking_the_opt_in"
 cap = 180
-reason = "builds an sdist with the real build backend, then a wheel from it"
+reason = "a census of every test module for a container runtime it drives; 86 s on CI at worst (breadth's coverage leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_verify_wheel_contract.py::test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one"
-cap = 240
-reason = "builds a real wheel and sdist with the build backend and inspects both"
+site = "tests/test_context.py::TestMemoryScopedByCwdProperty.test_memory_scoped_by_cwd_in_build_session_context"
+cap = 40
+reason = "a hypothesis property: a session context built for each generated working directory; 15 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_verify_wheel_contract.py::test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe"
-cap = 240
-reason = "drives the wheel gate through main() with its real install probe in a child process"
+site = "tests/test_dependency_bounds.py::test_the_locked_pyav_decodes_audio_through_faster_whisper"
+cap = 40
+reason = "the locked PyAV decoding real audio through faster-whisper; 17 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_document_parser_limits.py::TestKnownCleanCorpus.test_an_ordinary_large_spreadsheet_is_not_refused"
+cap = 40
+reason = "the parsers over the issue's real-size documents at the real caps; 16 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_every_database_in_a_backup_is_one_consistent_file.py::test_a_declared_store_held_open_is_in_the_snapshot_whole"
+cap = 40
+reason = "a real snapshot of a home whose stores are held open; 18 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_import_scan_answers_before_reading_a_long_history.py::test_a_history_imports_as_a_job_within_a_generous_ceiling"
+cap = 50
+reason = "a long generated history scanned and imported for real; 20 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_import_scan_answers_before_reading_a_long_history.py::test_a_looked_then_read_listing_is_the_listing_a_full_read_makes"
+cap = 50
+reason = "a long generated history scanned and imported for real; 20 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_import_scan_answers_before_reading_a_long_history.py::test_a_scan_holds_no_conversation_and_the_reading_pass_one_at_a_time"
+cap = 40
+reason = "a long generated history scanned and imported for real; 18 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_importing_personalclaw_touches_no_home.py::test_the_offline_reference_renders_without_touching_a_home"
+cap = 40
+reason = "renders the offline reference in a child process, parsed once since #5359 (7.8 s to 3.0 s locally); 32 s on CI before it (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_knowledge_longrun_validation.py::test_health_over_a_hundred_item_store"
+cap = 50
+reason = "a hundred-item knowledge store built and checked for real; 21 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_mcp_import_from_claude_code_keeps_the_server.py::test_an_imported_server_is_kept_and_still_runs_after_a_restart"
+cap = 50
+reason = "a real MCP server imported, then started again after a restart; 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_mcp_import_list_shows_no_secret_and_reads_claude_config_dir.py::test_claude_code_is_read_and_written_where_claude_config_dir_puts_it"
+cap = 40
+reason = "the agent CLI's config read and written in a child process; 17 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_one_gateway_per_home.py::test_the_claim_ends_with_its_process"
+cap = 60
+reason = "real gateway processes claiming one home, one killed; 29 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_optimize_harness_runs_to_its_proposal.py::test_a_later_candidate_that_scores_lower_is_not_admitted"
+cap = 40
+reason = "the optimize harness running real workflow searches to a proposal; 18 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_optimize_harness_runs_to_its_proposal.py::test_a_search_stops_before_its_next_cycle_would_pass_its_budget"
+cap = 40
+reason = "the optimize harness running real workflow searches to a proposal; 19 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_optimize_harness_runs_to_its_proposal.py::test_a_search_within_its_budget_whose_candidates_improve_files_its_winner"
+cap = 60
+reason = "the optimize harness running real workflow searches to a proposal; 25 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_optimize_harness_runs_to_its_proposal.py::test_the_winner_is_filed_by_the_gateway_and_raised_in_the_inbox"
+cap = 40
+reason = "the optimize harness running real workflow searches to a proposal; 17 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_outside_text_doors_census.py::test_a_door_that_stops_going_through_the_one_function_fails_the_census"
+cap = 50
+reason = "the outside-text census over the package, run again for each planted door; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_outside_text_doors_census.py::test_a_new_door_that_fences_without_the_screen_fails_the_census"
+cap = 40
+reason = "the outside-text census over the package, run again for each planted door; 17 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_outside_text_doors_census.py::test_a_new_screen_beside_the_door_fails_the_census"
+cap = 50
+reason = "the outside-text census over the package, run again for each planted door; 25 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_outside_text_doors_census.py::test_every_place_core_fences_or_screens_text_for_a_model_is_listed"
+cap = 50
+reason = "the outside-text census over the package, run again for each planted door; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_outside_text_doors_census.py::test_the_census_reads_the_whole_tree"
+cap = 50
+reason = "the outside-text census over the package, run again for each planted door; 23 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_outside_text_doors_census.py::test_the_one_function_both_screens_and_fences_and_nothing_else_does_both"
+cap = 50
+reason = "the outside-text census over the package, run again for each planted door; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_outside_text_doors_census.py::test_the_owner_s_instruction_reaches_an_event_only_from_her_settings"
+cap = 40
+reason = "the outside-text census over the package, run again for each planted door; 16 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_provider_availability_never_blocks.py::test_a_hook_that_never_returns_is_unknown_at_the_deadline_and_its_child_is_killed"
+cap = 40
+reason = "a hook that never returns, held to its real deadline and its child killed; 15 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_python_children_in_the_desktop_app.py::test_the_bundle_carries_every_declared_module"
+cap = 40
+reason = "every child interpreter the package starts, found and checked against the bundle; 17 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_quarantine.py::test_a_test_marked_security_at_collection_is_never_quarantined"
+cap = 60
+reason = "a child pytest over a planted suite, on two xdist workers; 27 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_raw_durable_write_reds_the_gate.py::test_a_delegating_wrapper_does_not_red_this_gate"
+cap = 70
+reason = "the durable-write gate run over the whole tree, clean and with a plant; 34 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_raw_durable_write_reds_the_gate.py::test_a_raw_durable_write_reds_this_gate"
+cap = 110
+reason = "the durable-write gate run over the whole tree, clean and with a plant; 53 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_raw_durable_write_reds_the_gate.py::test_the_clean_tree_passes_this_gate"
+cap = 110
+reason = "the durable-write gate run over the whole tree, clean and with a plant; 51 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_route_census.py::test_the_census_is_read_once_for_the_process"
+cap = 40
+reason = "the route census over the whole package, read twice, parsed once since #5359 (7.8 s to 3.0 s locally); 29 s on CI before it (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_run_facts.py::test_each_process_records_its_platform_and_worker_count_once"
+cap = 50
+reason = "a child pytest on xdist workers, its junit read back; 21 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_schedule_history.py::test_no_job_exceeds_its_SHARE_after_a_trim"
+cap = 40
+reason = "the schedule history appended, rotated and trimmed at its real sizes; 16 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_schedule_history.py::test_the_index_stays_NEWEST_FIRST"
+cap = 50
+reason = "the schedule history appended, rotated and trimmed at its real sizes; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_shell_syntax_splits_a_line_as_bash_does.py::test_a_generated_line_is_read_as_bash_runs_it"
+cap = 50
+reason = "hypothesis-generated lines, each read by the shell reader and by a real bash; 24 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_test_values_have_no_real_token_format.py::test_a_provider_key_prefix_appears_only_where_the_shape_is_tested"
+cap = 60
+reason = "a census of every test module's string values against the published token formats; 25 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_test_values_have_no_real_token_format.py::test_no_test_value_has_a_published_token_format"
+cap = 50
+reason = "a census of every test module's string values against the published token formats; 24 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_the_credential_screen_checks_a_long_command_in_bounded_time.py::test_the_regex_gives_the_old_verdict_on_every_line"
+cap = 80
+reason = "the credential screen and the old regex over the long-command corpora (256 KB lines); security-marked; 36 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_the_credential_screen_checks_a_long_command_in_bounded_time.py::test_the_screen_gives_the_old_answer_on_the_screens_real_inputs"
+cap = 60
+reason = "the credential screen and the old regex over the long-command corpora (256 KB lines); security-marked; 26 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_the_credential_screen_checks_a_repeated_read_command_in_bounded_time.py::test_the_screen_gives_the_old_answer_refusal_string_and_all"
+cap = 50
+reason = "the credential screen and a copy of the old loop over the repeated-read corpora; security-marked; 22 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_the_credential_screen_checks_a_repeated_read_command_in_bounded_time.py::test_the_two_steps_answer_as_the_regex_on_the_screens_inputs"
+cap = 90
+reason = "the credential screen and a copy of the old loop over the repeated-read corpora; security-marked; 40 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_the_credential_screen_reads_each_distinct_part_of_a_long_command_once.py::test_every_screen_gives_the_same_answer"
+cap = 120
+reason = "the four screens and a copy of the old loop over the long-command corpora, each line repeated; security-marked; 56 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_the_credential_screen_reads_each_distinct_part_of_a_long_command_once.py::test_the_reading_names_the_same_paths_in_the_same_order"
+cap = 50
+reason = "the four screens and a copy of the old loop over the long-command corpora, each line repeated; security-marked; 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_the_credential_screen_reads_each_distinct_part_of_a_long_command_once.py::test_with_the_real_budget_every_screen_gives_the_answer_it_gave"
+cap = 110
+reason = "the four screens and a copy of the old loop over the long-command corpora, each line repeated; security-marked; 52 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_the_overlay_store_follows_the_skills_folder_it_is_asked_about.py::test_a_test_that_moved_the_skills_folder_leaves_the_next_ones_overlays_alone"
+cap = 60
+reason = "a child pytest over a planted suite, in its real order; 25 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_transcript_never_drops_user_content.py::test_a_long_answer_keeps_its_prompt_and_survives_a_restart"
+cap = 40
+reason = "a long answer's transcript written, then opened from disk and restored as a boot restores it; 18 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_trigger_budget_gate.py::test_a_24H_STORM_drops_NOTHING"
+cap = 50
+reason = "a 24-hour trigger storm run through the budget gate; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_by_name_load_census_tree.py::test_the_census_is_not_vacuous"
+cap = 40
+reason = "a census of the package for every module loaded by name, built once for the module by whichever of its tests runs first (census); 19 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_by_name_load_census_tree.py::test_the_census_finds_what_the_desktop_app_lost"
+cap = 40
+reason = "a census of the package for every module loaded by name, built once for the module by whichever of its tests runs first (census); 19 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_by_name_load_census_tree.py::test_every_load_site_is_followed_or_classified"
+cap = 40
+reason = "a census of the package for every module loaded by name, built once for the module by whichever of its tests runs first (census); 19 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_by_name_load_census_tree.py::test_every_other_module_a_site_loads_is_carried_or_left_out_on_purpose"
+cap = 40
+reason = "a census of the package for every module loaded by name, built once for the module by whichever of its tests runs first (census); 19 s on CI at worst (breadth's night, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_python_suite_inputs_tree.py::test_a_tracked_top_level_entry_the_list_does_not_name_fails"
+cap = 40
+reason = "a census of every path the suite's modules read, built once for the module by whichever of its tests runs first (swept); 17 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_python_suite_inputs_tree.py::test_the_flake_is_left_out_on_purpose_and_plans_the_whole_tier"
+cap = 40
+reason = "a census of every path the suite's modules read, built once for the module by whichever of its tests runs first (swept); 17 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_event_loop_whole_file_census.py::test_the_census_sees_the_large_file_paths_hand_their_work_off"
+cap = 50
+reason = "a census of the package for whole-file work on the event loop, built once for the module by whichever of its tests runs first (_package_census); 24 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_stored_upload_scan_census.py::test_every_route_that_stores_an_upload_hands_it_to_the_scan"
+cap = 40
+reason = "a census of the routes for every one that reads an uploaded body, built once for the module by whichever of its tests runs first (_package_census); 16 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_stored_upload_scan_census.py::test_the_census_sees_the_upload_routes"
+cap = 40
+reason = "a census of the routes for every one that reads an uploaded body, built once for the module by whichever of its tests runs first (_package_census); 16 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_denied_same_site_frame_is_blanked_as_it_starts_or_when_it_commits"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_denied_frame_nested_in_an_allowed_frame_is_blanked"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_an_allowed_frame_nested_in_an_allowed_frame_runs"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_frame_that_moves_itself_to_a_denied_host_is_blanked"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_dedicated_worker_runs_exactly_where_the_page_guard_does_not_reach"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_denied_frame_in_an_allowed_frames_process_is_blanked"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_an_allowed_frame_inside_a_sandboxed_frame_runs"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_denied_frame_removed_or_re_pointed_never_costs_the_page"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_going_back_after_a_frame_was_blanked_leaves_the_page"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_going_back_after_a_cross_site_frame_was_blanked_leaves_the_page"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_page_back_from_the_cache_with_a_denied_frame_live_has_it_blanked"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_going_back_past_the_page_a_teardown_left_never_asks_its_host_again"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_busy_frame_holds_neither_a_new_frame_nor_a_read"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_the_run_tab_never_holds_a_service_worker_and_lets_worklets_run"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_browse_cdp_live.py::test_a_pdf_and_an_embedded_pdf_are_shown"
+cap = 130
+reason = "a real Chromium through every frame case, each with a fixed 2-3 s settle, built once for the module by whichever of its tests runs first (frames); 60 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_a_validator_is_clean_on_the_named_scratch_home"
+cap = 50
+reason = "the dev tool run as a program against a real gateway on a scratch home, built once for the module by whichever of its tests runs first (scratch_gateway); 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_the_tool_universe_validator_runs_its_checks_on_the_named_scratch_home"
+cap = 50
+reason = "the dev tool run as a program against a real gateway on a scratch home, built once for the module by whichever of its tests runs first (scratch_gateway); 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_dev_tools_act_only_on_a_named_scratch_home.py::test_the_classify_smoke_reads_the_named_scratch_homes_models"
+cap = 50
+reason = "the dev tool run as a program against a real gateway on a scratch home, built once for the module by whichever of its tests runs first (scratch_gateway); 21 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_a_stop_never_waits_forever_on_a_cancelled_task_tree.py::test_no_stop_waits_without_a_bound_on_a_task_it_cancelled"
+cap = 40
+reason = "a census of the package for every stop that cancels a task tree; 18 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_provider_instance_secrets_tree.py::test_no_config_carrying_wire_shape_escapes_the_census"
+cap = 40
+reason = "a census of the package for every config-bearing surface; 18 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_provider_instance_secrets_tree.py::test_no_route_hands_a_provider_config_to_the_wire_unmasked"
+cap = 40
+reason = "a census of the package for every config-bearing surface; 19 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_provider_instance_secrets_tree.py::test_the_scan_is_not_vacuous"
+cap = 40
+reason = "a census of the package for every config-bearing surface; 19 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_provider_instance_secrets_tree.py::test_values_the_census_cannot_classify_do_not_grow"
+cap = 40
+reason = "a census of the package for every config-bearing surface; 19 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_spawn_env_audit_tree.py::test_the_census_is_the_ceiling_audits"
+cap = 40
+reason = "a census of the package for every child it spawns and the environment it hands it; 16 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_the_suite_never_reaches_the_machines_keychain_tree.py::test_no_test_switches_the_keychain_but_through_the_stub"
+cap = 40
+reason = "a census of every test module for a switch of the keychain; 16 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_workflow_definition_writer_census_tree.py::test_the_census_reads_every_kind_of_door"
+cap = 40
+reason = "a census of the package for every workflow-definition writer; 19 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_config_loader.py::TestConfigLoaderProperties.test_load_to_dict_round_trip"
+cap = 40
+reason = "a hypothesis property: each generated config written and loaded back; 18 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_a_stage_gate_judges_what_the_stage_did.py::test_a_stage_that_changed_two_files_passes_on_what_its_gate_observed"
+cap = 50
+reason = "a code loop driven to its stage gate for real: a worktree per task, the merge, and each check the supervisor runs as a child process; 20 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/test_schedule_history.py::test_a_NOISY_job_does_not_evict_every_OTHER_automation"
+cap = 40
+reason = "the schedule history appended, rotated and trimmed at its real sizes; 15 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_rails_select_names_the_rails_a_change_reads_tree.py::test_each_break_selects_the_rail_it_broke_and_an_unread_path_neither"
+cap = 120
+reason = "a child pytest of two rails with every read it makes recorded on the real tree, built by this test as its module fixture; 27 s locally and past 30 s on CI (rails (1), 2026-10-24), and the child is held to 100 s"

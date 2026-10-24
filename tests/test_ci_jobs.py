@@ -18,8 +18,9 @@ import time
 from pathlib import Path
 
 import pytest
+from test_ci_admission import _Machine
 
-from tools.ci import catalogue, jobs, run, verdict
+from tools.ci import admission, catalogue, jobs, run, verdict
 from tools.ci.catalogue import Catalogue, Env, Job, Step
 
 pytestmark = pytest.mark.security
@@ -1511,6 +1512,107 @@ def test_a_tier_with_no_job_is_input_it_cannot_run(repo, tmp_path):
         )
 
 
+# Admission: a local tier run starts each job once the machine has its memory (#3920)
+
+
+def _touch(marker: Path) -> str:
+    return f"open({str(marker)!r}, 'w').close()"
+
+
+def test_a_tier_starts_one_job_at_once_and_holds_the_next_until_its_memory_is_free(
+    repo, tmp_path, capsys
+):
+    """The plant: ``a`` declares 1 GB and 2 GB is free, so it starts at once; ``b`` declares
+    4 GB, so it waits until the machine frees it, then runs."""
+    machine = _Machine(2048, 2048, 8192)
+    ran_a, ran_b = tmp_path / "ran-a", tmp_path / "ran-b"
+    code, outcomes, judged = _tier(
+        repo,
+        tmp_path,
+        _job("a", _touch(ran_a), mem_gb=1),
+        _job("b", _touch(ran_b), mem_gb=4),
+        host=_host(repo, memory=machine.memory()),
+    )
+    assert code == run.OK and judged.green, [o.reasons for o in outcomes]
+    assert ran_a.exists() and ran_b.exists()
+    assert machine.sleeps == [admission.POLL_S]
+    said = capsys.readouterr().err
+    assert "admission: [b] waits: it needs 4096 MB" in said
+    assert "admission: [b] starts: 8192 MB free" in said
+    assert "[a] waits" not in said
+
+
+def test_a_tier_releases_each_job_s_ledger_entry_as_it_ends(repo, tmp_path):
+    """Each job enters its need in the machine's ledger; once it ends the entry is gone, so the
+    next job of the run is not held back by the one before it."""
+    machine = _Machine(3000)
+    ledger = tmp_path / "ledger.json"
+    code, outcomes, _ = _tier(
+        repo,
+        tmp_path,
+        _job("a", "pass", mem_gb=2),
+        _job("b", "pass", mem_gb=2),
+        host=_host(repo, memory=machine.memory(ledger)),
+    )
+    assert code == run.OK, [o.reasons for o in outcomes]
+    assert machine.sleeps == [], "a job waited on the entry of one that had ended"
+    assert json.loads(ledger.read_text()) == []
+
+
+def test_a_job_that_never_gets_its_memory_is_not_run_and_the_tier_is_partial(repo, tmp_path):
+    machine = _Machine(512)
+    ran = tmp_path / "ran"
+    code, outcomes, judged = _tier(
+        repo,
+        tmp_path,
+        _job("b", _touch(ran), mem_gb=1),
+        host=_host(repo, memory=machine.memory()),
+        options=jobs.Options(admission_wait=10),
+    )
+    assert code == run.PARTIAL and not judged.green
+    assert not ran.exists(), "the job started without its memory"
+    (outcome,) = outcomes
+    assert not outcome.ran
+    assert outcome.reasons == [
+        "not run: it needs 1024 MB (the catalogue's mem_gb = 1), and 512 MB was free after 10s"
+        " of waiting"
+    ]
+
+
+def test_a_job_s_peak_here_takes_the_place_of_its_declaration_on_the_next_run(repo, tmp_path):
+    """A job declaring more than the machine holds is not run, until a run here has measured
+    what it takes: then its peak decides."""
+    host = _host(repo, memory=_Machine(4096, total=8192).memory())
+    runs = iter(range(3))
+
+    def tier(job: Job) -> tuple[int, list[jobs.Outcome]]:
+        work = tmp_path / f"work-{next(runs)}"
+        code, outcomes, _ = jobs.run_tier(
+            Catalogue((job,)), "change", host, jobs.Options(reuse=False), work
+        )
+        return code, outcomes
+
+    big = _job("big", "pass", mem_gb=1000)
+    code, outcomes = tier(big)
+    assert code == run.PARTIAL and "this machine has 8192 MB in all" in outcomes[0].reasons[0]
+
+    code, outcomes = tier(dataclasses.replace(big, mem_gb=1))
+    assert code == run.OK, outcomes[0].reasons
+    kept = Path(_git(repo, "rev-parse", "--absolute-git-dir")) / admission.PEAKS_FILE
+    measured = admission.Peaks(kept).get("big")
+    assert measured is not None and 0 < measured < 4096, measured
+
+    code, outcomes = tier(big)
+    assert code == run.OK, outcomes[0].reasons
+
+
+def test_this_host_admits_by_memory_off_github_and_not_on_it(tmp_path, monkeypatch):
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    assert isinstance(jobs.Host.this(tmp_path).memory, admission.Memory)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert jobs.Host.this(tmp_path).memory is None
+
+
 def test_a_job_env_naming_a_runner_variable_is_refused_before_any_job_runs(repo, tmp_path):
     marker = tmp_path / "ran"
     first = _job("first", f"open({str(marker)!r}, 'w')")
@@ -1570,6 +1672,56 @@ def test_changed_leaves_out_a_job_whose_inputs_the_diff_does_not_touch(repo, tmp
         changed=True,
     )
     assert [o.key for o in outcomes] == ["t"] and code == run.OK and judged.green
+
+
+def test_a_pre_push_run_leaves_a_job_whose_entry_says_prepush_false_to_ci(repo, tmp_path, capsys):
+    """``run change --pre-push``, the hook's run: a job whose entry says ``prepush = false``
+    is not run, and the run says it left it to CI."""
+    ran = tmp_path / "ran-suite"
+    lint = _job("lint", "pass")
+    suite = _job("suite", f"open({str(ran)!r}, 'w').close()", prepush=False)
+    code, outcomes, _ = jobs.run_tier(
+        Catalogue((lint, suite)),
+        "change",
+        _host(repo),
+        jobs.Options(working_tree=True),
+        tmp_path / "work",
+        pre_push=True,
+    )
+    assert code == run.OK and [o.key for o in outcomes] == ["lint"]
+    assert not ran.exists(), "the pre-push run ran a job left to CI"
+    assert "pre-push: left to CI (prepush = false): suite" in capsys.readouterr().err
+
+
+def test_run_takes_pre_push_once(monkeypatch):
+    seen: list[bool] = []
+
+    def fake_tier(cat, tier, host, options, work, **kw):
+        seen.append(kw["pre_push"])
+        return run.OK, [], jobs.verdict.Verdict(green=True, reasons=())
+
+    monkeypatch.setattr(jobs, "run_tier", fake_tier)
+    assert jobs.run_main(["change", "--pre-push", "--working-tree", "--out", "x"]) == run.OK
+    assert jobs.run_main(["change", "--working-tree", "--out", "y"]) == run.OK
+    assert seen == [True, False]
+    assert jobs.run_main(["change", "--pre-push", "--pre-push"]) == run.PARTIAL
+
+
+def test_run_takes_the_admission_wait_it_is_given(monkeypatch):
+    """A caller may bound the wait for memory, as the pre-push hook does with a minute: a job
+    that cannot get its memory in that time is not run, rather than holding a push for the
+    run's half hour."""
+    seen: list[float] = []
+
+    def fake_tier(cat, tier, host, options, work, **kw):
+        seen.append(options.admission_wait)
+        return run.OK, [], jobs.verdict.Verdict(green=True, reasons=())
+
+    monkeypatch.setattr(jobs, "run_tier", fake_tier)
+    assert jobs.run_main(["change", "--working-tree", "--admission-wait", "60", "--out", "x"]) == 0
+    assert jobs.run_main(["change", "--working-tree", "--out", "y"]) == run.OK
+    assert seen == [60.0, admission.WAIT_S]
+    assert jobs.run_main(["change", "--working-tree", "--admission-wait", "0"]) == run.PARTIAL
 
 
 def test_changed_runs_the_job_a_file_moved_out_of(repo, tmp_path):

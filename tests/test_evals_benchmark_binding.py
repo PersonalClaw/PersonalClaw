@@ -533,7 +533,6 @@ The deployment codeword is {token}. When asked for it, answer exactly {token}.
 """
 
 
-@pytest.mark.timeout(300)
 def test_two_arms_whose_staged_artifacts_differ_score_differently(
     tmp_path, monkeypatch, echo_endpoint
 ):

@@ -34,6 +34,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+import pytest
 from dependency_bounds_shared import (
     _MUST_BE_BOUNDED,
     _MUST_KEEP_A_CEILING,
@@ -207,6 +208,7 @@ def test_the_keyword_the_av_ceiling_protects_is_still_passed() -> None:
     )
 
 
+@pytest.mark.timeout(40)
 def test_the_locked_pyav_decodes_audio_through_faster_whisper(tmp_path: Path) -> None:
     """The behaviour itself: faster-whisper's decoder reads a WAV with the PyAV this environment
     installed from the lock. It runs in a child process, for the reason above."""

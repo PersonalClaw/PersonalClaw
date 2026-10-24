@@ -20,7 +20,6 @@ harness/
   validate_refs.py  # live reference resolution (pytest --collect-only, AST fallback)
   profiles.py    # profile → concrete command mapping (fast/web/replay/full/scan)
   scanner.py     # static architectural-boundary scanner (7 checks, WHAT/WHY/FIX)
-  selection.py   # touched-area → forced-profile mapping (diff-aware selection)
   diff.py        # git diff introspection (changed files/lines, fix-shaped commits)
   replay.py      # event-trace replay + metrics (dup rate, order, fanout, latency)
   baselines.py   # baseline gating (hard thresholds + drift; missing-scenario-fails)
@@ -143,15 +142,19 @@ clean HEAD** (a scanner that cries wolf erodes the whole harness):
 | `no-naive-transcript-cut` | WARNING | transcript slices use the orphan-drop walk-back |
 
 ERROR checks are exactly-derivable set invariants; WARNING checks are heuristics (advisory,
-never a hard stop). `run --diff` scopes the line-based heuristics to the lines a diff
-touched, so advisories are about *your* change.
+never a hard stop). `scan --diff`, and `run --diff` with a task spec that names `scan`, scope
+the line-based heuristics to the lines a diff touched, so advisories are about *your* change.
 
 ### Diff-aware selection
 
-`run --diff` computes the touched files vs the merge-base and **forces** the profiles that
-guard them, independent of what the task spec claims — touching `web/src/pages/chat/`
-forces `replay`; touching `config/loader.py` or `action_providers/` forces `scan`. The
-spec author can add requirements; the diff can only add more, never remove.
+`run --diff` runs the change tier's jobs the diff reaches, as CI's planner picks them
+(`python -m tools.ci run change --changed --working-tree`, #3945), then the task spec's
+profiles on top. The harness keeps no path rules of its own: the catalogue's declared inputs
+and its tested overrides (`tools/ci/areas.toml`) decide, the same way for a local run and for
+CI. Touching `web/src/pages/chat/`, `web/src/pages/loops/` or `dashboard/sse.py` plans
+`web-unit`, whose vitest runs the frontend fold's replay; `static` runs the boundary scanner
+over the whole tree. The spec author can add requirements; the diff can only add more, never
+remove.
 
 ## Usage
 
@@ -163,7 +166,7 @@ Run on the repo venv, from the repo root:
 .venv/bin/python -m harness validate --strict # a warning fails too (what CI runs)
 .venv/bin/python -m harness explain T1.foo    # what commands/rules/tests a task owes
 .venv/bin/python -m harness run T1.foo         # execute the task's required profiles
-.venv/bin/python -m harness run --diff         # diff-aware selection
+.venv/bin/python -m harness run --diff         # the change tier's jobs the diff reaches (CI's planner)
 .venv/bin/python -m harness scan               # boundary scanner, every tracked file (what CI runs)
 .venv/bin/python -m harness scan --diff --base <sha>  # only what changed since <sha>
 .venv/bin/python -m harness fanout-measure obs.json  # token-matched fan-out verdict

@@ -27,8 +27,6 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-import pytest
-
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _MANIFEST = _REPO_ROOT / "MANIFEST.in"
 
@@ -144,7 +142,6 @@ def test_a_dist_directory_without_its_index_is_not_bundled(tmp_path: Path) -> No
     assert shipped == set(), f"a dist with no index.html was bundled: {sorted(shipped)}"
 
 
-@pytest.mark.timeout(180)
 def test_a_wheel_rebuilt_from_the_sdist_carries_the_whole_dashboard(tmp_path: Path) -> None:
     """The published sdist is enough to rebuild the user-facing wheel, dashboard included."""
     project = _fixture_project(tmp_path, dist_files={**_SPA, **_ASSET})

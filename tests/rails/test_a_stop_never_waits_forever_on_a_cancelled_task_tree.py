@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
 import source_index
 from rails_repo import REPO
 
@@ -170,6 +171,7 @@ def _unbounded_waits(root: Path) -> set[str]:
     return found
 
 
+@pytest.mark.timeout(40)
 def test_no_stop_waits_without_a_bound_on_a_task_it_cancelled():
     found = _unbounded_waits(_SRC)
     new = sorted(found - set(_ALLOWED))

@@ -22,6 +22,8 @@ import re
 import time
 from pathlib import Path
 
+import pytest
+
 import personalclaw.manifest_reference as ref_mod
 from personalclaw.manifest_reference import reference_dir, render_reference
 
@@ -58,6 +60,7 @@ _STALE_REMEDY = (
 )
 
 
+@pytest.mark.timeout(40)
 def test_checked_in_reference_matches_a_fresh_render():
     """Every shipped reference file byte-matches a fresh render — no manual drift.
 
@@ -103,6 +106,7 @@ def test_checked_in_reference_matches_a_fresh_render():
     assert not mismatches, _STALE_REMEDY + "\n" + "\n".join(mismatches)
 
 
+@pytest.mark.timeout(40)
 def test_reference_has_the_four_expected_files():
     """index/tools/routes/providers all render (a dropped section would be a regression)."""
     assert set(render_reference()) == {"index.md", "tools.md", "routes.md", "providers.md"}
@@ -118,6 +122,7 @@ def test_route_signature_prefix_is_stripped():
     assert summary("List all scheduled jobs.", "GET") == "List all scheduled jobs."
 
 
+@pytest.mark.timeout(40)
 def test_tools_reference_lists_every_provider():
     """Each tool provider heading appears — the reference covers the whole surface."""
     tools_md = render_reference()["tools.md"]
@@ -135,6 +140,7 @@ def test_tools_reference_lists_every_provider():
         assert f"## {p}" in tools_md, f"{p} missing from tools.md"
 
 
+@pytest.mark.timeout(40)
 def test_reference_examples_carry_no_invented_params():
     """Every ```json example block in tools.md is valid JSON (faithful args).
 

@@ -77,9 +77,6 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
     'Lays out a scratch repository of the repository\'s shape (the freshness script, web/ sources, a ' +
     'stamped dist and a preview that serves it) and a stand-in spec, to prove the real config\'s preview ' +
     'server refuses a stale or unstamped dist before any test runs, naming the freshness check.',
-  'design/platformBaselines.test.ts':
-    'Writes planted CI reports, and the -linux set `e2e/platform-baselines.mjs` writes from them, under ' +
-    'a temporary folder, to prove it writes each surface\'s two files and refuses a report missing a theme or a tree.',
   'design/uiQualityReport.test.ts':
     'Writes planted merged reports, and a step summary file, under a temporary folder for the UI ' +
     'quality check\'s report, to prove it names every failed step and reds on a report that measured nothing.',
@@ -93,6 +90,10 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
   'design/e2eHarnessHome.test.ts':
     'Lays out a stand-in user home, a symlink into it and a stand-in CLI script, to prove a spec ' +
     'refuses an unset or default gateway home before the CLI starts.',
+  'design/pinnedRun.test.ts':
+    'Lays out a scratch web/ (the pin, the lock, and the manifest an update writes) for ' +
+    '`e2e/run-pinned.mjs` to read and write, to prove each refusal and that an update writes the ' +
+    'manifest from the probe while a compare holds the probe to it.',
   'design/uiMatrixSteps.test.ts':
     'Writes planted Playwright JSON reports for `e2e/assert-no-route-skips.mjs` to read, to prove ' +
     'the report checker fails a skipped scan, a missing scan and a scan short of one matrix step.',

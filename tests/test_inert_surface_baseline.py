@@ -92,11 +92,8 @@ from scripts.generate_inert_surface_baseline import (
     SITES,
     _attribute_names_in_src,
     _ConfigFieldDeclaration,
-    _enum_members,
     _inert_config_reader_paths,
     _inert_enum_members,
-    _iterated_enum_classes,
-    _parse,
     _repo_root,
     _src_py_files,
     build_inventory,
@@ -343,6 +340,8 @@ def test_config_reader_reproduces_the_two_paid_for_findings(tmp_path):
 # `Lineage.INFORMED_BY` and `Lineage.RELATED` are reachable and were reported anyway. These
 # tests pin both directions of the corrected rule against a FIXTURE tree — never by adding
 # dead code to `src/` — plus a vacuity guard that the real census still finds a population.
+# The finding itself, on the real tree, is the rails'
+# (tests/rails/test_inert_surface_baseline_tree.py).
 
 
 def _fixture_tree(tmp_path: Path, modules: dict[str, str]) -> list[Path]:
@@ -452,32 +451,6 @@ def test_iterating_one_enum_does_not_clear_a_same_named_enum_elsewhere(tmp_path)
         },
     )
     assert inert == {"Shadow.A_ONLY"}, sorted(inert)
-
-
-# A census of the tree: under coverage on CI it took 85-95 s of the suite's 120 s (2026-10-14/15).
-# It gets the 300 s this file's other census tests have.
-@pytest.mark.timeout(300)
-def test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen():
-    """The finding itself, on the real tree: ``Lineage`` is recognised as iterated (its
-    validation set in ``workflows/publish.py``) and no ``Lineage`` member is reported.
-
-    If the validation that iterates ``Lineage`` is ever deleted, this test SHOULD red — the
-    members would then genuinely be unreachable."""
-    files = _src_py_files()
-    enum_names: dict[Path, set[str]] = {}
-    for f in files:
-        tree = _parse(f)
-        if tree is None:
-            continue
-        names = {cls for cls, _ in _enum_members(tree)}
-        if names:
-            enum_names[f.resolve()] = names
-    iterated = _iterated_enum_classes(files, enum_names)
-    publish = next(f for f in files if f.as_posix().endswith("workflows/publish.py"))
-    assert (publish.resolve(), "Lineage") in iterated
-
-    inert = {surface for _, surface in _inert_enum_members(files, _attribute_names_in_src(files))}
-    assert not [s for s in inert if s.startswith("Lineage.")], sorted(inert)
 
 
 # ── The value-lookup ruling (NOT a widening — a pinned decision) ─────────────────────────
@@ -701,7 +674,6 @@ def _reported_sdk_exports() -> set[str]:
     }
 
 
-@pytest.mark.timeout(300)
 @pytest.mark.parametrize(
     "tranche,pinned",
     [
@@ -738,7 +710,6 @@ def test_an_export_named_by_another_exports_signature_is_not_inert(tranche, pinn
     )
 
 
-@pytest.mark.timeout(300)
 def test_an_export_reachable_from_no_published_signature_is_still_inert():
     """Direction two — the teeth. A type exported for no reason is genuinely inert.
 
@@ -830,7 +801,6 @@ def test_an_export_reachable_from_no_published_signature_is_still_inert():
     )
 
 
-@pytest.mark.timeout(300)
 def test_a_type_that_names_only_itself_does_not_clear_itself():
     """Ruling one, UNCHANGED by #3511: a self-edge is not a reader.
 
@@ -879,7 +849,6 @@ def test_a_type_that_names_only_itself_does_not_clear_itself():
         )
 
 
-@pytest.mark.timeout(300)
 def test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_justified():
     """The one exclusion from #3511's 22, and the three things that keep it from rotting.
 
@@ -943,7 +912,6 @@ def test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_just
     )
 
 
-@pytest.mark.timeout(300)
 def test_an_exported_functions_signature_clears_an_export_in_both_directions():
     """Ruling two, INVERTED by #3511: an exported FUNCTION is an owner, in ONE walk.
 

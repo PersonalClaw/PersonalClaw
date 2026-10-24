@@ -173,6 +173,7 @@ def _write_chat(tmp_path: Path, key: str, count: int) -> list[str]:
 # ── 1. A long answer ─────────────────────────────────────────────────────────
 
 
+@pytest.mark.timeout(40)
 @pytest.mark.asyncio
 @pytest.mark.parametrize("restore", [False, True], ids=["opened-from-disk", "restored-at-boot"])
 async def test_a_long_answer_keeps_its_prompt_and_survives_a_restart(

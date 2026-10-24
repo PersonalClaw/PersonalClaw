@@ -243,7 +243,6 @@ def pytest_collection_finish(session):
 """
 
 
-@pytest.mark.timeout(300)
 def test_collecting_the_copy_rail_parses_nothing_from_test_code(tmp_path):
     """It used to build its table at import and parse the whole package to name its ids."""
     _write(tmp_path, "count_parses.py", _COUNT_PARSES.format(tests=str(TESTS)))

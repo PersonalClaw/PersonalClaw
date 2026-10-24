@@ -205,6 +205,7 @@ def _servers(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8")).get("mcpServers", {})
 
 
+@pytest.mark.timeout(50)
 def test_an_imported_server_is_kept_and_still_runs_after_a_restart(world) -> None:
     claude_before = world["claude"].read_bytes()
 
