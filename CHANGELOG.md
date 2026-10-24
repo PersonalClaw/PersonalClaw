@@ -21,6 +21,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The code map finds definitions again on a machine that had not fetched its grammars yet. GitHub's answer to a grammar download now carries a header longer than PersonalClaw's HTTP client would read, so each fetch failed and the code map answered that a Python, TypeScript, JavaScript, Rust or Go symbol was not in the index. PersonalClaw now reads response headers up to 32 KiB, and still refuses one far past that.**
 
+### Security
+
+- **The desktop app runs Electron 44.9.1, which stops trusting the compromised eMudhra intermediate certificates (GHSA-jr5w-w6x2-84p9, high).**
+
 ## [0.2.6] — 2026-10-22
 
 The app's redesign. Home is what needs you, what is running and what finished, and starts a new thread from one line. Everything waiting on you is one list, which Home, the phone companion, the menu bar and the new desktop buddy all read. The buddy is one orb that stays where you put it, with what it says on a card beside it, and it is off until you turn on Show Buddy. The sidebar shows every destination and keeps its place, and a chat gets a Session Map rail, an Activity rail and a side pane that expands, moves and remembers its side. Loops and code sessions read like chats. No upgrade step is needed.

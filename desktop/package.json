@@ -15,7 +15,7 @@
     "dist:linux-dir": "electron-builder --linux dir --publish never --config.electronVersion=$(node -p \"require('electron/package.json').version\")"
   },
   "devDependencies": {
-    "electron": "^44.7.2",
+    "electron": "^44.9.1",
     "electron-builder": "^26.15.3"
   },
   "build": {
