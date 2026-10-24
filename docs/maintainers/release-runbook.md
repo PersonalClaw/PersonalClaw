@@ -45,6 +45,17 @@ Two consequences worth knowing before you start:
   environments. Nothing reaches PyPI until you approve both in the run's UI.
 - **Publishing is idempotent.** Both PyPI jobs use `skip-existing`, so re-running
   a release whose version is already published no-ops instead of failing.
+- **A re-run writes nothing it did not build.** Before `pypi`, `images` and `notes` write, each
+  reads what its target already holds (PyPI's files for the version, the registry's index under
+  this release's own tag, the tag's Release's assets) and holds it against the run's approved
+  manifest (`tools/ci/release_targets.py`, then `release-manifest compare`). An object there with
+  another digest fails the job before anything is written; an identical one is resumed; and a
+  target it cannot read refuses rather than reading as empty. A name the target holds that the
+  manifest does not, for this version, refuses too. So a re-run only fills in what a failed run
+  left out, and changes nothing already published: `notes` uploads just the assets a Release
+  lacks. For an image only the release's own tag, `:X.Y.Z`, is compared: `:X.Y`, `:latest` and
+  `:beta` move from release to release by design, so they name an earlier release's index until
+  this one moves them. `pypi-client` joins once the client is in the manifest.
 - **One release at a time.** Every release run shares the concurrency group `release`, which never
   cancels. A second tag's run waits, unstarted, until the first has finished, its approvals
   included. GitHub keeps one waiting run per group, so a third tag's run would replace the waiting
@@ -519,6 +530,8 @@ then still holds no secret, and adding the rule and the secret afterwards is the
 | `build` fails at "Verify the wheel contract" on the tag | the tag was cut before the bump merged | nothing has published: **delete the tag**, merge the bump, tag its merge commit |
 | `build` fails at "SBOM of the wheel as installed" | `uv.lock` is stale (no re-lock in the bump), or syft cataloged less than the venv holds | nothing has published: fix on `main`, then **delete and re-push the tag** |
 | Website parity job red | its pins point at the wrong SHA | almost always the annotated-tag dereference above |
+| "What PyPI holds", "What the registry holds" or "What the Release holds" fails: `differs` or `unexpected` | the target holds an object of that name this run did not build: a run before it published a different build (its `artifacts` were rebuilt in between), or something was uploaded by hand | nothing more was written. Do not replace a published object: find which run published it (its digest is in that run's manifest), and ship the fix as the next patch |
+| one of those steps fails: `cannot read` | PyPI, the registry or the GitHub API did not answer, or answered something other than the object or its "not there" | nothing was written: re-run the failed job once the target answers |
 | `website-follow` skipped the nudge | the `website-follow` environment holds no `WEBSITE_DISPATCH_TOKEN` | harmless; the daily watchdog covers it |
 | A `v*` tag with no GitHub Release, and no `release.yml` run for it, or only a cancelled one | its run waited behind another release and a later run replaced it in the `release` group (`release-tag.yml` refuses to tag while a release runs, so only a tag made around it gets here) | nothing of it was published: once no release is running, start its release on the tag itself, `gh workflow run release.yml -R PersonalClaw/PersonalClaw --ref vX.Y.Z`, and approve it as usual |
 
