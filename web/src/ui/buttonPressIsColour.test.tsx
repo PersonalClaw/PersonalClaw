@@ -26,22 +26,42 @@ import { SearchField } from './SearchField'
 // The colour half: each tier carries an `active:` tint, the same shade its hover already shows, so a
 // press is visible on a touch screen too, where no hover precedes it.
 
-async function settle(ms: number) {
-  await act(async () => { await new Promise((r) => setTimeout(r, ms)) })
+const SCALE = /scale\([^)]*\)/
+
+/** *n* animation frames, the clock framer's springs and gestures write on. */
+async function frames(n: number) {
+  await act(async () => {
+    for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(() => r(undefined)))
+  })
 }
+
+const scaleOf = (el: HTMLElement) => SCALE.exec(el.getAttribute('style') ?? '')?.[0] ?? ''
+
+/** Frames in a row the element must show no scale before a gesture. A frame that lands where a
+ *  spring crosses 1 writes `transform: none` mid-flight, and the clear-X's last swing below 1 after
+ *  such a frame lasts about 190 ms (11 frames idle), so 15 quiet frames outlast it. */
+const QUIET = 15
 
 /** The inline scale framer wrote for the gesture, or '' when it wrote none.
  *
- *  The mount settles first: SearchField's clear-X pops in on a spring when a value appears (a kept
- *  entrance), and read mid-flight that pop would pass for a press. */
+ *  The mount settles first, read off the element: SearchField's clear-X pops in on a spring when a
+ *  value appears (a kept entrance), and read mid-flight that pop passes for a press. The pop takes
+ *  about 480 ms idle, so this waits until the element has shown no scale for `QUIET` frames,
+ *  rather than for a fixed time: a fixed 500 ms raced it, and main's run 40108768003 read the pop
+ *  at `scale(0.877…)`. Then the gesture gets eight frames (about the 120 ms the measurements above
+ *  took idle), so a slow runner only makes the read later. */
 async function transformAfter(el: HTMLElement, gesture: 'press' | 'hover'): Promise<string> {
-  await settle(500)
+  for (let quiet = 0, waited = 0; quiet < QUIET; waited++) {
+    if (waited === 400) throw new Error(`the mount never settled: ${el.getAttribute('style')}`)
+    await frames(1)
+    quiet = scaleOf(el) ? 0 : quiet + 1
+  }
   await act(async () => {
     if (gesture === 'press') fireEvent.pointerDown(el, { button: 0, isPrimary: true, pointerType: 'mouse' })
     else fireEvent.pointerEnter(el, { isPrimary: true, pointerType: 'mouse' })
   })
-  await settle(120)
-  return /scale\([^)]*\)/.exec(el.getAttribute('style') ?? '')?.[0] ?? ''
+  await frames(8)
+  return scaleOf(el)
 }
 
 const TIERS: [string, () => HTMLElement][] = [
