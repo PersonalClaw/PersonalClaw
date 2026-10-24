@@ -1674,6 +1674,56 @@ def test_changed_leaves_out_a_job_whose_inputs_the_diff_does_not_touch(repo, tmp
     assert [o.key for o in outcomes] == ["t"] and code == run.OK and judged.green
 
 
+def test_a_pre_push_run_leaves_a_job_whose_entry_says_prepush_false_to_ci(repo, tmp_path, capsys):
+    """``run change --pre-push``, the hook's run: a job whose entry says ``prepush = false``
+    is not run, and the run says it left it to CI."""
+    ran = tmp_path / "ran-suite"
+    lint = _job("lint", "pass")
+    suite = _job("suite", f"open({str(ran)!r}, 'w').close()", prepush=False)
+    code, outcomes, _ = jobs.run_tier(
+        Catalogue((lint, suite)),
+        "change",
+        _host(repo),
+        jobs.Options(working_tree=True),
+        tmp_path / "work",
+        pre_push=True,
+    )
+    assert code == run.OK and [o.key for o in outcomes] == ["lint"]
+    assert not ran.exists(), "the pre-push run ran a job left to CI"
+    assert "pre-push: left to CI (prepush = false): suite" in capsys.readouterr().err
+
+
+def test_run_takes_pre_push_once(monkeypatch):
+    seen: list[bool] = []
+
+    def fake_tier(cat, tier, host, options, work, **kw):
+        seen.append(kw["pre_push"])
+        return run.OK, [], jobs.verdict.Verdict(green=True, reasons=())
+
+    monkeypatch.setattr(jobs, "run_tier", fake_tier)
+    assert jobs.run_main(["change", "--pre-push", "--working-tree", "--out", "x"]) == run.OK
+    assert jobs.run_main(["change", "--working-tree", "--out", "y"]) == run.OK
+    assert seen == [True, False]
+    assert jobs.run_main(["change", "--pre-push", "--pre-push"]) == run.PARTIAL
+
+
+def test_run_takes_the_admission_wait_it_is_given(monkeypatch):
+    """A caller may bound the wait for memory, as the pre-push hook does with a minute: a job
+    that cannot get its memory in that time is not run, rather than holding a push for the
+    run's half hour."""
+    seen: list[float] = []
+
+    def fake_tier(cat, tier, host, options, work, **kw):
+        seen.append(options.admission_wait)
+        return run.OK, [], jobs.verdict.Verdict(green=True, reasons=())
+
+    monkeypatch.setattr(jobs, "run_tier", fake_tier)
+    assert jobs.run_main(["change", "--working-tree", "--admission-wait", "60", "--out", "x"]) == 0
+    assert jobs.run_main(["change", "--working-tree", "--out", "y"]) == run.OK
+    assert seen == [60.0, admission.WAIT_S]
+    assert jobs.run_main(["change", "--working-tree", "--admission-wait", "0"]) == run.PARTIAL
+
+
 def test_changed_runs_the_job_a_file_moved_out_of(repo, tmp_path):
     """A move is two changes: the job whose inputs lost the file runs, and so does the job whose
     inputs gained it. A diff that reads the move as a rename names only where the file went."""

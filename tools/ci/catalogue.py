@@ -194,6 +194,7 @@ _KEYS = frozenset(
         "install_exemptions",
         "retiring",
         "lint_feedback",
+        "prepush",
     }
 )
 _STEP_KEYS = frozenset({"argv", "workdir", "env"})
@@ -365,6 +366,9 @@ class Job:
     #: stage job to upload as ``lint-feedback``, which ``pr-feedback.yml`` posts. One job, of the
     #: change tier, which ``pr.yml`` runs on every pull request.
     lint_feedback: bool = False
+    #: ``run change --pre-push``, the pre-push hook's run, runs it as a job of the change tier.
+    #: ``false`` leaves it to CI, for a job too slow for a push (#3920).
+    prepush: bool = True
 
     def placeholders(self) -> set[str]:
         """Every placeholder the job names: in a step's argv or env, or in its own env, which
@@ -443,11 +447,11 @@ class _Fields:
             return default
         return value
 
-    def flag(self, name: str) -> bool:
-        value = self.raw.get(name, False)
+    def flag(self, name: str, default: bool = False) -> bool:
+        value = self.raw.get(name, default)
         if not isinstance(value, bool):
             self.fault(name, "is true or false")
-            return False
+            return default
         return value
 
     def count(self, name: str, default: int | None) -> int | None:
@@ -748,6 +752,7 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         needs_node=fields.flag("needs_node"),
         needs_browser=fields.flag("needs_browser"),
         lint_feedback=fields.flag("lint_feedback"),
+        prepush=fields.flag("prepush", True),
         after=fields.strings("after"),
         install_exemptions=tuple(exemptions),
         retiring=retiring,

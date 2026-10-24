@@ -714,10 +714,18 @@ def test_a_live_value_that_is_not_a_boolean_is_refused(value: str) -> None:
     assert "rails: live is true or false" in problems
 
 
-@pytest.mark.parametrize("flag", ["needs_node", "needs_browser"])
+@pytest.mark.parametrize("flag", ["needs_node", "needs_browser", "prepush"])
 def test_each_flag_that_is_not_a_boolean_is_refused(flag: str) -> None:
     problems = _refused(_with("timeout_min = 10", f'timeout_min = 10\n{flag} = "true"'))
     assert f"rails: {flag} is true or false" in problems
+
+
+def test_a_job_is_the_pre_push_hook_s_unless_its_entry_leaves_it_to_ci() -> None:
+    """``prepush`` is true unless an entry says false, so a job added to the change tier runs in
+    the hook with no other edit (#3920)."""
+    cat = catalogue.load(_in_job("rails", "timeout_min = 10", "timeout_min = 10\nprepush = false"))
+    assert {job.id: job.prepush for job in cat.jobs}["rails"] is False
+    assert all(job.prepush for job in cat.jobs if job.id != "rails")
 
 
 def test_a_change_tier_job_may_be_the_lint_feedback_job() -> None:
