@@ -836,11 +836,12 @@ _MAIN_ONLY_ENVIRONMENTS = {
 }
 _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
 #: The main-only jobs that run on another trigger: the merge verdict's poster and its trusted
-#: run's maker, in a `workflow_run` listener that runs on nothing else. GitHub runs a listener
-#: from the default branch, so no candidate's run can name the environment through it either.
+#: run's maker, in a listener of runs (`workflow_run`) and checks (`check_run`), with a
+#: schedule, that runs on nothing else. GitHub runs all three from the default branch, so no
+#: candidate's run can name the environment through them either.
 _LISTENER_ONLY = {
-    ("merge-verdict.yml", "post"): {"workflow_run"},
-    ("merge-verdict.yml", "trusted"): {"workflow_run"},
+    ("merge-verdict.yml", "post"): {"workflow_run", "check_run", "schedule"},
+    ("merge-verdict.yml", "trusted"): {"workflow_run", "check_run", "schedule"},
 }
 #: The one publishing permission a workflow other than release.yml may hold, by workflow and job:
 #: release-push-proof.yml runs release.yml's own image push to a scratch package no release names,
