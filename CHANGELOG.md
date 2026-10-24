@@ -8,24 +8,34 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-10-23
+
+A polish release before 0.3.0. A running turn's status now sits at the bottom of the chat, just above the composer. The code map finds definitions again on a machine that had not fetched its grammars, four controls that were hard to press on a phone are 44 px targets, Back from the code cockpit lands on a clean page, and a new loop's composer fits one row at 600 px. The gateway image, its agent CLIs and the desktop app take security fixes. No upgrade step is needed.
+
 ### Changed
 
-- **`main` is protected by a checked-in ruleset with no bypass for anyone, the maintainer included: a change reaches it only as the merge of a pull request with every conversation resolved, never by a direct push, a force push or a deletion (`.github/rulesets/main-protect.json`, in core and in the apps). A weekly read-only report compares the live repository settings with the checked-in ones and opens an issue on any drift.**
-- **CI's supply chain is pinned and checked in PersonalClaw, its apps and its website: every action is pinned to a commit SHA and GitHub refuses one that is not, every workflow container and image base is pinned to a digest, secret scanning and push protection are on, a pull request that adds a dependency with a known vulnerability fails dependency review, and a job may hold a write permission only where a checked-in list names it. A weekly check opens an issue when a pinned workflow image's tag moves.**
-- **A release builds and smokes every artifact, and records each in one digest-bound manifest, before anything publishes: the images it pushes are the layouts it smoked, byte for byte, and the weekly rehearsal runs the same build.**
-- **A release tag is created only for a commit whose own push run on `main` is green: one still running, red, cancelled or superseded by a newer push is refused, with a link to the run.**
-- **The release manifest records what built each artifact as it ran: the runner image, every action its job downloaded with the SHA it resolved to, every base image by digest, and the Python, uv, Node and npm versions, and refuses an artifact with any of them missing.**
 - **A running turn's status sits at the bottom of the chat, just above the composer, wherever you have scrolled, and goes when the turn ends: the orb in the turn's state, what it is doing (the tool by name while one runs), a word that turns over while it works, the time since it began, the tokens the model reported for the turn (none until one is reported, never an estimate) and Stop, which Esc presses too. The animated orb at the head of the reply is gone. Under reduced motion the word holds still and the orb draws one frame.**
 
 ### Fixed
 
 - **The code map finds definitions again on a machine that had not fetched its grammars yet. GitHub's answer to a grammar download now carries a header longer than PersonalClaw's HTTP client would read, so each fetch failed and the code map answered that a Python, TypeScript, JavaScript, Rust or Go symbol was not in the index. PersonalClaw now reads response headers up to 32 KiB, and still refuses one far past that.**
+- **Four controls that were hard to press on a phone are 44 px targets on screens under 1024 px: Settings › Chat's "Keep my question in view" switch, All tasks in the Projects header, and a Discover tip's link and its dismiss. They look as they did; only the area you can press grew.**
+- **Back from the code cockpit lands on the page you came from, clean. Pressed before the cockpit's changes had loaded, it used to carry the cockpit's first changed file into that page's address.**
+- **A new loop's composer keeps its footer on one row at 600 px. Under 768 px its Reports pill shows only its bell, with its setting in its name and tooltip, so Send no longer wraps below the pills.**
+- **Moving between pages quickly no longer leaves an unhandled error in the console when the browser skips the page transition.**
 
 ### Security
 
-- **The desktop app runs Electron 44.9.1, which stops trusting the compromised eMudhra intermediate certificates (GHSA-jr5w-w6x2-84p9, high).**
-- **The gateway image's agent CLIs install body-parser 2.4.0, which fixes a denial of service through trailing bytes after a compressed request body (GHSA-27r3-jxmh-p828, high).**
 - **The gateway image installs filelock 4.2.1 and setuptools 84.1.0, which fix filelock's ReadWriteLock reopening its lock database through a planted symlink (GHSA-v4x8-3wr5-3wq8, high) and two Windows-only lock flaws (GHSA-9vhv-jxww-xfm5, GHSA-567q-5qvw-pf92), and setuptools' Windows path escape through `namespace_packages.txt` (GHSA-xmj3-9gf7-h52w). The wheel builds on setuptools 84.1.0 too.**
+- **The gateway image's agent CLIs install body-parser 2.4.0, which fixes a denial of service through trailing bytes after a compressed request body (GHSA-27r3-jxmh-p828, high).**
+- **The desktop app runs Electron 44.9.1, which stops trusting the compromised eMudhra intermediate certificates (GHSA-jr5w-w6x2-84p9, high).**
+
+### For maintainers
+
+- **`main` takes a change only as a merged pull request, under a checked-in ruleset no one can bypass (`.github/rulesets/main-protect.json`), and a weekly report compares the live repository settings with the checked-in ones.**
+- **CI's supply chain is pinned: actions by commit SHA, workflow containers and image bases by digest, with secret scanning, push protection, dependency review, and a checked-in list of the write permissions a job may hold.**
+- **A release builds and smokes every artifact once, through `release-artifacts.yml`, and records each in a digest-bound manifest with what built it: the runner image, every action by SHA, every base image by digest and the toolchain. The images it pushes are the layouts it smoked, and the weekly rehearsal runs the same build.**
+- **A release tag is created only by the release controller's App, through `release-tag.yml`, and only for a `main` commit whose own push run is green.**
 
 ## [0.2.6] — 2026-10-22
 
