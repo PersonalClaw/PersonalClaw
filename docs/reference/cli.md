@@ -327,7 +327,7 @@ reads as registered and not tested.
 |---|---|
 | `--start-agent-clis` | Also start each of those agent CLIs once — its ACP handshake and one empty session, what its Test does — to check it runs and is signed in, and record the answer for its card. |
 | `--paths` | Print the resolved install paths (reference docs, config, skills, install dir) as `key<TAB>path` lines, and exit. |
-| `--crypto` | Check the cryptography library this install carries: a Fernet round trip and an X.509 certificate made and parsed back, after its version and its OpenSSL's, as `key<TAB>value` lines. Exits 1 if either check fails. |
+| `--crypto` | Check the cryptography library this install carries: a Fernet round trip and an X.509 certificate made and parsed back, after its version and its OpenSSL's, as `key<TAB>value` lines. Exits 1 if either check fails, or, naming why on stderr, if cryptography cannot load. |
 | `--rebuild-routing-stats` | Refold `routing_stats.json` from the model-call audit log, and exit. |
 
 ## Gateway lifecycle

@@ -287,7 +287,8 @@ def _doctor_crypto() -> None:
 
     A Fernet round trip (AES and HMAC, through the OpenSSL it carries), and an X.509 certificate
     made, written as PEM and parsed back (its own ASN.1 reader), after the versions of
-    cryptography and of that OpenSSL. Any failure is named on its line and exits 1.
+    cryptography and of that OpenSSL. Any failure is named on its line and exits 1. A
+    cryptography that cannot load leaves nothing to check: that refusal goes to stderr.
 
     No Intel-Mac wheel of cryptography exists past 48.0.1, so the Intel Mac app builds the locked
     release from its sdist, statically linked to the build runner's OpenSSL, and the release's
@@ -306,7 +307,7 @@ def _doctor_crypto() -> None:
         from cryptography.hazmat.primitives.serialization import Encoding
         from cryptography.x509.oid import NameOID
     except Exception as exc:  # noqa: BLE001 - a library that cannot load is what this reports
-        print(f"cryptography\tFAILED: {exc}")
+        print(f"cryptography\tFAILED: {exc}", file=sys.stderr)
         raise SystemExit(1) from None
     print(f"cryptography\t{cryptography.__version__}")
     print(f"openssl\t{backend.openssl_version_text()}")

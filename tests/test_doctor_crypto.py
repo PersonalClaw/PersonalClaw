@@ -45,7 +45,11 @@ def test_a_library_that_cannot_load_fails_the_check(monkeypatch, capsys) -> None
     with pytest.raises(SystemExit) as exited:
         cli_doctor._doctor_crypto()
     assert exited.value.code == 1
-    assert "cryptography\tFAILED: " in capsys.readouterr().out
+    # Nothing can be checked, so this is a refusal and it goes to stderr. The dmg smoke captures
+    # stdout and stops on the exit status, so a line on stdout would never reach its log.
+    printed = capsys.readouterr()
+    assert printed.out == ""
+    assert printed.err.startswith("cryptography\tFAILED: ")
 
 
 def test_the_flag_reaches_the_check(monkeypatch) -> None:
