@@ -1701,6 +1701,8 @@ def test_run_takes_pre_push_once(monkeypatch):
         return run.OK, [], jobs.verdict.Verdict(green=True, reasons=())
 
     monkeypatch.setattr(jobs, "run_tier", fake_tier)
+    # A push from a checkout, as the pre-push hook makes one: a runner refuses `--working-tree`.
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     assert jobs.run_main(["change", "--pre-push", "--working-tree", "--out", "x"]) == run.OK
     assert jobs.run_main(["change", "--working-tree", "--out", "y"]) == run.OK
     assert seen == [True, False]
@@ -1718,6 +1720,7 @@ def test_run_takes_the_admission_wait_it_is_given(monkeypatch):
         return run.OK, [], jobs.verdict.Verdict(green=True, reasons=())
 
     monkeypatch.setattr(jobs, "run_tier", fake_tier)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)  # a local push, as above
     assert jobs.run_main(["change", "--working-tree", "--admission-wait", "60", "--out", "x"]) == 0
     assert jobs.run_main(["change", "--working-tree", "--out", "y"]) == run.OK
     assert seen == [60.0, admission.WAIT_S]
