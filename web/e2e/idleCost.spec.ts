@@ -67,6 +67,36 @@ test.describe('UI quality: idle cost', { tag: '@ui-quality' }, () => {
     })
   }
 
+  test("a fresh Chat's composer mounts at rest, and still rises when it is focused (#/chat)", async ({ page }) => {
+    // R6 (#3905): with no `initial`, the composer's card sprang on every mount from no radius and no
+    // shadow to its resting shape, about half a second of frames, and on a slow runner the idle
+    // window opened while the spring's tail still asked for them. The card now mounts at rest.
+    // Claw Arcade is the identity whose composer has the decorative light, so focusing it rises the
+    // composer to meet you on a spring: the half that must still move.
+    const CARD = '[data-composer-stage] .bg-surface-container.px-m.py-s'
+    const RISE = '[data-composer-stage] > div.relative.w-full > div.relative'
+    await page.addInitScript(([card, rise]) => {
+      localStorage.setItem('personality', 'claw-arcade')
+      const w = window as typeof window & { __writes?: { card: number; rise: number } }
+      const writes = { card: 0, rise: 0 }
+      w.__writes = writes
+      new MutationObserver((list) => {
+        for (const m of list) {
+          const el = m.target as Element
+          if (el.matches?.(card)) writes.card += 1
+          if (el.matches?.(rise)) writes.rise += 1
+        }
+      }).observe(document, { subtree: true, attributes: true, attributeFilter: ['style'] })
+    }, [CARD, RISE])
+    const writes = () => page.evaluate(() => (window as typeof window & { __writes?: { card: number; rise: number } }).__writes!)
+    await gotoRoute(page, 'chat')
+    const atRest = await writes()
+    expect(atRest.card, 'the card writes its resting style once, with no spring to it').toBeLessThanOrEqual(2)
+    await page.getByRole('textbox', { name: 'Message input' }).click()
+    await expect.poll(async () => (await writes()).rise - atRest.rise, { message: 'focus rises the composer on a spring', timeout: 3_000 })
+      .toBeGreaterThan(5)
+  })
+
   test('the probe sees the wave backdrop ask for frames (#/chat)', async ({ page }, info) => {
     await seedBackdrop(page, 'waves')
     const findings = await idleCost(page, info, 'chat')

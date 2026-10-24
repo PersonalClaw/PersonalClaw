@@ -363,6 +363,7 @@ export function Composer({
             a static outline. */}
         {light && (
           <motion.div aria-hidden className="absolute -inset-px"
+            initial={false}
             animate={{
               opacity: dragOver ? [0.7 + expr(0.3, 0.4), 0.85 + expr(0.15, 0.4), 0.7 + expr(0.3, 0.4)] : focused ? 0.55 + expr(0.4, 0.4) : 0,
               borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'calc(var(--radius-xli) + 1px)',
@@ -375,6 +376,12 @@ export function Composer({
             sits in. The wide glow is the halo's job (DotGlow), which fades before edges.
             Without the light a focused composer keeps its Rest shadow and wears `FOCUS_RING`. */}
         <motion.div
+          // `initial={false}`: the card mounts at rest. With no `initial`, motion animated it from the
+          // element's own first style (no radius, no shadow) to its resting shape on every mount: a
+          // spring of about half a second that no one asked for, and on a slow machine its tail was
+          // still asking for frames when an idle Chat was measured (#3905, R6). Focus and drag-over
+          // still spring, from the resting values.
+          initial={false}
           animate={{ boxShadow: awake ? 'var(--shadow-composer-focus)' : 'var(--shadow-rest)', borderRadius: (isMobile && !focused && !dragOver) ? 'var(--radius-2xl)' : 'var(--radius-xli)' }}
           transition={spring.spatialDefault}
           style={!light && focused ? FOCUS_RING : undefined}
