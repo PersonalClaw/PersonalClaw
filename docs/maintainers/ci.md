@@ -1794,6 +1794,41 @@ the suite's.
 Not yet: the nightly map build in breadth's coverage leg, `tools/ci/select.py` reading the map,
 shadow mode, and the recall study.
 
+## The rails a change can break
+
+`python -m tools.ci rails select --paths <path>...` (`tools/ci/rails_select.py`) prints the
+rails a change of those paths can break, one per line (`--why` adds the reason for each). A lane
+runs them beside its own tests rather than all of `tests/rails` (#3920).
+
+- **The record.** A rails leg of a push to main arms `tests/rails_reads.py`: a JUnit report
+  named `junit-rails-<leg>.xml`, with `GITHUB_EVENT_NAME` `push` and `GITHUB_REF`
+  `refs/heads/main` (or `PERSONALCLAW_RAILS_READS=1`, for a record made by hand). A pull
+  request's leg records nothing and pays none of its time. It writes `rails-reads-<leg>.json` beside the report, and the leg
+  uploads it as the artifact `rails-reads-<leg>`. It charges each read to the rail module
+  running. A read is a walk or file asked of the source index, a repository file opened or
+  stat'd (a path not there included), a folder listed, a module looked for and not found, or a
+  child started. A helper's cache and a module imported once answer only the first rail. So each
+  read is also charged to the code that made it, and each import statement run is an edge:
+  a rail reads what every module it imports read for any rail. A rail module with a failed test
+  is `unrecorded`.
+- **The harness.** The run's own setup is the `harness`: conftest, the plugin and guard modules
+  it loads from `tests/`, the files they open, `pyproject.toml` and `uv.lock`. Its stats are not
+  reads: pytest's collection asks `shard_list` about every file under `tests/`. A fixture the
+  harness defines (a conftest fence, a guard's) runs as the harness, setup and teardown, so what
+  it reads inside a rail's test is the harness's read, not the rail's. A package module the
+  harness imports is no part of it: conftest's registry fences import some two hundred, and each
+  selects only the rails that read it. An import-time break in one fails the change's own tests,
+  which load the same harness.
+- **Only main's record.** With no `--map`, the command reads the newest push run of main made in
+  the last day that holds a record. It takes only the run's own artifacts, by name and size, and
+  only a member recorded on the run's own commit. `--map <file>` reads record files instead.
+- **What selects a rail:** a changed path it read; for a path added or removed since the record's
+  commit, a listing of its folder (or the nearest folder that commit held); and, for every rail,
+  a path the harness reads (its own files, never a package module).
+- **What is always selected:** `tests/rails/test_ci_contract.py`, a rail that starts a child
+  (nothing a child reads is recorded), a rail the record does not hold or left unrecorded, and
+  every rail when there is no record or it is older than a day.
+
 ## Local runs
 
 `python -m tools.ci run-job <id> [--shard i/N]` runs one catalogue job here, and

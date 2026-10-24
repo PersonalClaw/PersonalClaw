@@ -15,6 +15,8 @@ forty times, each inside some test's timeout. Every such rail now asks this modu
 - ``PARSES`` counts every parse this module made. Parsing a file a second time raises
   ``DoubleParse`` where it happens: two caches of the same file in one process are the waste this
   module exists to end. ``tests/rails/test_source_index.py`` holds the process to it.
+- ``INDEX.observers`` are told of each walk and file a caller asks for, cached or not, so the
+  record of what each rail reads (``tests/rails_reads.py``) sees an answer that read nothing.
 
 ``warm()`` walks every root and parses the package. The suite's runtest hook in
 ``tests/conftest.py`` calls it before the first test whose module reads this index, wrapped
@@ -30,7 +32,7 @@ import gc
 import sys
 import time
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import ModuleType
 
@@ -47,6 +49,9 @@ ROOTS = {
     "docs": "docs",
     "workflows": ".github/workflows",
 }
+
+#: The suffix a walk keeps, by its name; a walk not named keeps every file.
+SUFFIXES = {"package": ".py"}
 
 #: Each walk's vacuity floor: about nine tenths of what the tree held when the floor was set
 #: (1,466 package modules of 1,770 tracked package files, 2,220 web source files, 112 docs
@@ -91,14 +96,25 @@ class SourceIndex:
         self._walks: dict[str, tuple[Path, ...]] = {}
         self._texts: dict[Path, str] = {}
         self._trees: dict[Path, ast.Module] = {}
+        #: Told of each walk (``"walk"``, its name) and file (``"file"``, its path) a caller asks
+        #: for, cached or not, outside :meth:`warm`: the record of what each rail reads
+        #: (``tests/rails_reads.py``), since a cached answer reads nothing an audit hook sees.
+        self.observers: list[Callable[[str, object], None]] = []
+        self._warming = False
+
+    def _tell(self, kind: str, value: object) -> None:
+        if self.observers and not self._warming:
+            for observer in self.observers:
+                observer(kind, value)
 
     def files(self, name: str) -> tuple[Path, ...]:
         """Every file under the root named *name* in ``ROOTS``, sorted, at least its floor."""
+        self._tell("walk", name)
         if name not in self._walks:
             base = self.root / ROOTS[name]
             found = tuple(sorted(p for p in base.rglob("*") if p.is_file()))
-            if name == "package":
-                found = tuple(p for p in found if p.suffix == ".py")
+            if name in SUFFIXES:
+                found = tuple(p for p in found if p.suffix == SUFFIXES[name])
             floor = self.floors[name]
             if len(found) < floor:
                 raise VacuousWalk(
@@ -129,21 +145,28 @@ class SourceIndex:
 
     def text(self, path: Path) -> str:
         self._refuse_unheld(path, "text")
+        self._tell("file", path)
         if path not in self._texts:
             self._texts[path] = path.read_text(encoding="utf-8")
         return self._texts[path]
 
     def tree(self, path: Path) -> ast.Module:
         self._refuse_unheld(path, "tree")
+        self._tell("file", path)
         if path not in self._trees:
             self._trees[path] = _parse(path, self.text(path), self.rel(path))
         return self._trees[path]
 
     def warm(self) -> None:
-        for name in ROOTS:
-            self.files(name)
-        for path in self.files("package"):
-            self.tree(path)
+        # The warm-up is no rail's read: each rail's own asks are told, as they come.
+        self._warming = True
+        try:
+            for name in ROOTS:
+                self.files(name)
+            for path in self.files("package"):
+                self.tree(path)
+        finally:
+            self._warming = False
 
 
 INDEX = SourceIndex(REPO)
