@@ -115,8 +115,43 @@ def test_a_cpu_model_that_cannot_be_read_is_none(tmp_path: Path, monkeypatch) ->
         run_facts.cpu_model.cache_clear()
 
 
+def test_the_cpu_model_is_read_from_macos_sysctl(monkeypatch) -> None:
+    """macOS names its model in ``machdep.cpu.brand_string``, not in a file."""
+    read: list[bytes] = []
+
+    def sysctl(name: bytes) -> str:
+        read.append(name)
+        return "Apple M1 (Virtual)"
+
+    monkeypatch.setattr(run_facts, "sysctl_string", sysctl)
+    monkeypatch.setattr(run_facts.sys, "platform", "darwin")
+    run_facts.cpu_model.cache_clear()
+    try:
+        assert run_facts.cpu_model() == "Apple M1 (Virtual)"
+        assert read == [run_facts.BRAND_SYSCTL]
+    finally:
+        run_facts.cpu_model.cache_clear()
+
+
+def test_the_sysctl_read_is_the_one_macos_gives() -> None:
+    """On macOS, what ``sysctlbyname`` reads is what ``sysctl -n`` prints; with no libSystem, as
+    on Linux, nothing is read. A sysctl that does not exist reads as None on both."""
+    got = run_facts.sysctl_string(run_facts.BRAND_SYSCTL)
+    if sys.platform == "darwin":
+        printed = subprocess.run(
+            ["sysctl", "-n", run_facts.BRAND_SYSCTL.decode()],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        assert got and got == printed
+    else:
+        assert got is None
+    assert run_facts.sysctl_string(b"no.such.sysctl") is None
+
+
 def test_the_first_test_records_the_cpu_model_when_there_is_one(monkeypatch) -> None:
-    """Off Linux there is no model to read, so the subprocess run above records none; this pins
+    """Off Linux and macOS there is no model to read, so a run there records none; this pins
     that a model, when read, is written beside the platform and the worker count."""
 
     class _Item:

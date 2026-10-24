@@ -1395,7 +1395,7 @@ model (`ci_cpu`), and the plan weighs its seconds by it: a model's factor is the
 the input runs' reports on that model, of what the report ran against what its files' plain
 medians planned, and each report's seconds are divided by it before the median is taken. The
 factors come from the three input runs only, never from the run being planned (`--run-id`), and
-a report with no recorded model (macOS, or a history from before it was recorded) weighs as it
+a report with no recorded model (one from before it was recorded, on macOS until #3923) weighs as it
 ran. Replayed on one of those runs, judged with each shard's time divided by its host's factor,
 this planned 1.10x where the plain medians planned 1.17x. In plain wall time no plan made in
 advance can do better than the hosts the run draws, so the 1.15x bar is judged that way: each
@@ -1614,7 +1614,8 @@ the shard planner and the weekly report read it.
   (OS, machine and Python) and its number of xdist workers (`tests/run_facts.py`), and every test
   line of that report carries them. The planner keeps one platform's and one `-n`'s seconds
   apart, so a leg that moves to another `-n` plans from the first run that recorded it. On Linux
-  it also records the host's CPU model, and the run line's `cpus` maps each report to it (null
+  and macOS it also records the host's CPU model (`/proc/cpuinfo`'s, or the
+  `machdep.cpu.brand_string` sysctl), and the run line's `cpus` maps each report to it (null
   where none was recorded), which the planner weighs seconds by.
 - **Versions.** Version 3 added the run line's `cpus` and nothing else, and version 4 the job
   record lines and nothing else. The planner, the report and the parity check read versions 1 to
