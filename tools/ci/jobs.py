@@ -114,6 +114,19 @@ INSTALL_ARGV: dict[str, tuple[str, ...]] = {
     "electron": ("sh", "tools/ci/install_electron.sh"),
 }
 
+#: The marker run-job gives a command that runs Electron's setuid sandbox helper
+#: (``tools/ci/sandbox_helper.sh``) on a GitHub-hosted Linux runner, so the helper gives it root's
+#: 4755 there and nowhere else: each step's environment is built from nothing, so the
+#: ``GITHUB_ACTIONS`` and ``RUNNER_ENVIRONMENT`` the helper reads under a workflow step never reach
+#: it under run-job (merge.yml run 40053059413's web-build). run-job reads the runner from its own
+#: process environment (:func:`github_hosted_linux`), and gives the marker to the ``electron``
+#: install and to a step that runs the helper itself, and to no other command. No catalogue entry
+#: may set it (``catalogue.RUN_JOB_SETS``).
+SANDBOX_HELPER_ENV = "PCLAW_SANDBOX_HELPER_HOST"
+SANDBOX_HELPER_HOSTED = "github-hosted"
+#: A step that runs the helper itself, as desktop-smoke does on the packed app.
+SANDBOX_HELPER_STEP: tuple[str, ...] = ("sh", "tools/ci/sandbox_helper.sh")
+
 #: The `chromium` install's bounds and commands beside :data:`INSTALL_ARGV`'s, as CI's browser legs
 #: run them since #5265 (:func:`install_chromium`): Playwright's build without apt, a check that it
 #: starts, and its system libraries from apt only when that check fails. A hung apt mirror then
@@ -1324,13 +1337,16 @@ def run_one(
     base_env = _base_env(job, host, options)
 
     planned: list[tuple[list[str], str, dict[str, str]]] = [
-        (list(INSTALL_ARGV[tool]), "", {}) for tool in job.toolchain if tool in INSTALL_ARGV
+        (list(INSTALL_ARGV[tool]), "", _helper_env(INSTALL_ARGV[tool], host))
+        for tool in job.toolchain
+        if tool in INSTALL_ARGV
     ]
     # The first command step's number: the installs before it leave no remediation.
     first_command = len(planned) + 1
     for step in job.command:
         env = {name: _render(value, values) for name, value in {**job.env, **step.env}.items()}
-        planned.append((_step_argv(step, job, values, options), step.workdir, env))
+        argv = _step_argv(step, job, values, options)
+        planned.append((argv, step.workdir, {**env, **_helper_env(argv, host)}))
 
     total = (
         options.deadline_s if options.deadline_s is not None else job.timeout_min * 60 - MARGIN_S
@@ -1576,6 +1592,32 @@ def _as_written(job: Job, options: Options) -> list[tuple[str, Sequence[str]]]:
     ]
     steps += [(step.workdir, _step_argv(step, job, _AS_WRITTEN, options)) for step in job.command]
     return steps
+
+
+def _is_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
+def github_hosted_linux(host: Host) -> bool:
+    """Whether run-job runs on a GitHub-hosted Linux runner, as its own process environment says:
+    on GitHub, ``RUNNER_ENVIRONMENT`` is ``github-hosted`` (a self-hosted runner says
+    ``self-hosted``) and the image names itself (``ImageOS``), on Linux. Nothing a step sets
+    reaches this process, and a caller here is not on GitHub."""
+    return (
+        host.on_github
+        and _is_linux()
+        and os.environ.get("RUNNER_ENVIRONMENT") == SANDBOX_HELPER_HOSTED
+        and bool(os.environ.get("ImageOS"))
+    )
+
+
+def _helper_env(argv: Sequence[str], host: Host) -> dict[str, str]:
+    """:data:`SANDBOX_HELPER_ENV` for a command that runs the sandbox helper, on a GitHub-hosted
+    Linux runner; nothing for any other command or host."""
+    runs_it = tuple(argv[:2]) in (INSTALL_ARGV["electron"], SANDBOX_HELPER_STEP)
+    if runs_it and github_hosted_linux(host):
+        return {SANDBOX_HELPER_ENV: SANDBOX_HELPER_HOSTED}
+    return {}
 
 
 def runner_of(job: Job, host: Host) -> dict[str, str]:

@@ -917,6 +917,163 @@ def test_a_toolchain_that_cannot_be_read_leaves_the_record_naming_none(repo, tmp
     assert _record(outcome)["toolchain"] is None
 
 
+# ── Electron's sandbox helper: root's 4755 on a GitHub-hosted Linux runner alone ─────────────
+
+_HELPER = jobs.SANDBOX_HELPER_STEP + ("node_modules/electron/dist/chrome-sandbox",)
+
+
+def _hosted(monkeypatch, *, linux=True, environment="github-hosted", image="ubuntu24"):
+    """A GitHub run, on a runner as given, as run-job reads its own process environment."""
+    monkeypatch.setenv("RUNNER_TEMP", str(Path(os.environ.get("TMPDIR", "/tmp"))))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setattr(jobs, "_is_linux", lambda: linux)
+    for name, value in (("RUNNER_ENVIRONMENT", environment), ("ImageOS", image)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+
+
+def _envs_given(repo, tmp_path, monkeypatch, host) -> dict[tuple[str, ...], dict[str, str]]:
+    """Each command's environment as run-job hands it to run.run_job, for a job that installs
+    Electron and runs the helper as a step of its own beside another step."""
+    given: dict[tuple[str, ...], dict[str, str]] = {}
+
+    def fake_run_job(argv, *, env, **kw) -> run.Result:
+        given[tuple(argv)] = dict(env)
+        return run.Result(run.OK, 0, ())
+
+    monkeypatch.setattr(run, "run_job", fake_run_job)
+    job = _job("desktop", steps=(Step(_HELPER), Step((PY, "-c", "pass"))), toolchain=("electron",))
+    assert _run(repo, job, tmp_path, host=host).code == run.OK
+    return given
+
+
+def test_the_marker_reaches_only_the_commands_that_run_the_helper(repo, tmp_path, monkeypatch):
+    _hosted(monkeypatch)
+    given = _envs_given(repo, tmp_path, monkeypatch, _host(repo, on_github=True))
+    marker = {jobs.SANDBOX_HELPER_ENV: jobs.SANDBOX_HELPER_HOSTED}
+    assert given[jobs.INSTALL_ARGV["electron"]].items() >= marker.items()
+    assert given[_HELPER].items() >= marker.items()
+    assert jobs.SANDBOX_HELPER_ENV not in given[(PY, "-c", "pass")]
+    # Neither of the variables a workflow step would read reaches any command.
+    for env in given.values():
+        assert "GITHUB_ACTIONS" not in env and "RUNNER_ENVIRONMENT" not in env
+
+
+@pytest.mark.parametrize(
+    ("on_github", "runner"),
+    [
+        pytest.param(False, {}, id="a local run on a runner-shaped shell"),
+        pytest.param(True, {"environment": "self-hosted"}, id="a self-hosted runner"),
+        pytest.param(True, {"environment": None}, id="a runner that names no environment"),
+        pytest.param(True, {"image": None}, id="a runner that names no image"),
+        pytest.param(True, {"linux": False}, id="a GitHub-hosted macOS runner"),
+    ],
+)
+def test_off_a_github_hosted_linux_runner_no_command_gets_the_marker(
+    repo, tmp_path, monkeypatch, on_github, runner
+):
+    _hosted(monkeypatch, **runner)
+    # Forged in the caller's shell: a step's environment is built from nothing, so it never
+    # reaches a step, and run-job gives it only from its own reading of the runner.
+    monkeypatch.setenv(jobs.SANDBOX_HELPER_ENV, jobs.SANDBOX_HELPER_HOSTED)
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    given = _envs_given(repo, tmp_path, monkeypatch, _host(repo, on_github=on_github))
+    assert len(given) == 3
+    assert not [argv for argv, env in given.items() if jobs.SANDBOX_HELPER_ENV in env]
+
+
+def _helper_repo(repo: Path, tmp_path: Path, uname: str) -> tuple[str, Path]:
+    """The real helper in the planted checkout, beside a helper file to act on; and a PATH whose
+    `uname` says *uname* and whose `sudo` only logs what it was asked."""
+    script = Path(REPO, "tools/ci/sandbox_helper.sh").read_text(encoding="utf-8")
+    (repo / "tools/ci").mkdir(parents=True, exist_ok=True)
+    (repo / "tools/ci/sandbox_helper.sh").write_text(script, encoding="utf-8")
+    (repo / "node_modules/electron/dist").mkdir(parents=True)
+    (repo / "node_modules/electron/dist/chrome-sandbox").write_text("helper\n")
+    with (repo / ".gitignore").open("a") as ignore:
+        ignore.write("node_modules/\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "the helper")
+    stubs = tmp_path / "helper-stubs"
+    stubs.mkdir()
+    log = tmp_path / "sudo.log"
+    for name, body in (
+        ("uname", f"echo {uname}"),
+        ("sudo", f'echo "$*" >> {log}'),
+    ):
+        (stubs / name).write_text(f"#!/bin/sh\n{body}\n")
+        (stubs / name).chmod(0o755)
+    return f"{stubs}{os.pathsep}{os.environ['PATH']}", log
+
+
+def test_a_local_run_with_the_marker_forged_in_the_shell_never_gives_the_helper_root(
+    repo, tmp_path, monkeypatch
+):
+    path, log = _helper_repo(repo, tmp_path, "Linux")
+    monkeypatch.setenv(jobs.SANDBOX_HELPER_ENV, jobs.SANDBOX_HELPER_HOSTED)
+    monkeypatch.setenv("RUNNER_ENVIRONMENT", "github-hosted")
+    monkeypatch.setenv("ImageOS", "ubuntu24")
+    outcome = _run(
+        repo, _job("desktop", steps=(Step(_HELPER),)), tmp_path, host=_host(repo, path=path)
+    )
+    assert outcome.code == run.OK, outcome.reasons
+    assert not log.exists(), log.read_text()
+
+
+def test_on_a_github_hosted_linux_runner_the_helper_is_given_root(repo, tmp_path, monkeypatch):
+    """The control, through run-job and the real script: the marker run-job gives is what the
+    helper acts on."""
+    path, log = _helper_repo(repo, tmp_path, "Linux")
+    _hosted(monkeypatch)
+    host = _host(repo, on_github=True, path=path)
+    outcome = _run(repo, _job("desktop", steps=(Step(_HELPER),)), tmp_path, host=host)
+    assert outcome.code == run.OK, outcome.reasons
+    helper = "node_modules/electron/dist/chrome-sandbox"
+    assert log.read_text().splitlines() == [f"chown root:root {helper}", f"chmod 4755 {helper}"]
+
+
+@pytest.mark.parametrize(
+    ("env", "uname", "gives_root"),
+    [
+        pytest.param({"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}, "Linux",
+                     True, id="a workflow step on a GitHub-hosted Linux runner"),
+        pytest.param({jobs.SANDBOX_HELPER_ENV: jobs.SANDBOX_HELPER_HOSTED}, "Linux", True,
+                     id="run-job's marker on Linux"),
+        pytest.param({"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "self-hosted"}, "Linux",
+                     False, id="a self-hosted runner"),
+        pytest.param({"GITHUB_ACTIONS": "true"}, "Linux", False, id="GITHUB_ACTIONS alone"),
+        pytest.param({jobs.SANDBOX_HELPER_ENV: "yes"}, "Linux", False, id="another marker value"),
+        pytest.param({jobs.SANDBOX_HELPER_ENV: jobs.SANDBOX_HELPER_HOSTED}, "Darwin", False,
+                     id="the marker off Linux"),
+        pytest.param({}, "Linux", False, id="a Linux host that says nothing"),
+    ],
+)  # fmt: skip
+def test_the_helper_gives_root_only_where_its_caller_says_github_hosted_linux(
+    tmp_path, env, uname, gives_root
+):
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    log = tmp_path / "sudo.log"
+    for name, body in (("uname", f"echo {uname}"), ("sudo", f'echo "$*" >> {log}')):
+        (stubs / name).write_text(f"#!/bin/sh\n{body}\n")
+        (stubs / name).chmod(0o755)
+    helper = tmp_path / "chrome-sandbox"
+    helper.write_text("helper\n")
+    done = subprocess.run(
+        ["sh", str(Path(REPO, "tools/ci/sandbox_helper.sh")), str(helper)],
+        env={"PATH": f"{stubs}{os.pathsep}{os.defpath}", **env},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert log.exists() is gives_root, done.stdout
+    if not gives_root:
+        assert "left as it is" in done.stdout
+
+
 # ── the lint remediation (#3915) ──────────────────────────────────────────────────────────────
 
 _LINT_RED = "import sys; print('src/x.py:1:1: F401 unused'); raise SystemExit(1)"

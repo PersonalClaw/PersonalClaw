@@ -10,7 +10,10 @@ const path = require("node:path");
 // `tools/ci/install_electron.sh`, and a packed app's, in the desktop smoke (#3942).
 // `GITHUB_ACTIONS=true` is set on self-hosted runners too, so every `sudo` line sits inside a
 // guard that names Linux, GitHub Actions and a github-hosted runner: the bit is never set on a
-// machine someone else owns.
+// machine someone else owns. Under `tools/ci run-job` a step gets neither variable, so the guard
+// also takes run-job's marker, `PCLAW_SANDBOX_HELPER_HOST=github-hosted`, which run-job gives the
+// helper's callers only after reading a GitHub-hosted runner from its own environment
+// (tools/ci/jobs.py SANDBOX_HELPER_ENV); the guard names Linux either way.
 
 const CI = path.join(__dirname, "..", "..", "tools", "ci");
 const SCRIPT = path.join(CI, "sandbox_helper.sh");
@@ -30,7 +33,12 @@ function sudoLines(src) {
   return out;
 }
 
-const NAMES = [/\$\(uname -s\)" = Linux/, /"\$\{GITHUB_ACTIONS:-\}" = true/, /"\$\{RUNNER_ENVIRONMENT:-\}" = github-hosted/];
+const NAMES = [
+  /\$\(uname -s\)" = Linux/,
+  /"\$\{GITHUB_ACTIONS:-\}" = true/,
+  /"\$\{RUNNER_ENVIRONMENT:-\}" = github-hosted/,
+  /"\$\{PCLAW_SANDBOX_HELPER_HOST:-\}" = github-hosted/,
+];
 
 describe("install_electron.sh", () => {
   it("sets no bit itself: the toolchain's helper goes through sandbox_helper.sh", () => {
@@ -41,7 +49,7 @@ describe("install_electron.sh", () => {
 });
 
 describe("sandbox_helper.sh", () => {
-  it("sets the helper's bit only inside a guard naming Linux, GitHub Actions and a github-hosted runner", () => {
+  it("sets the helper's bit only inside a guard naming Linux, GitHub Actions and a github-hosted runner, or run-job's marker", () => {
     const lines = sudoLines(fs.readFileSync(SCRIPT, "utf8"));
     assert.deepEqual(lines.map((l) => l.line), [
       'sudo chown root:root "$helper"',

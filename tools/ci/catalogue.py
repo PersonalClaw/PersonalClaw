@@ -526,6 +526,12 @@ def _value_faults(value: str) -> Iterator[str]:
             )
 
 
+#: What ``run-job`` alone gives a step, from its own reading of the runner: the marker that says
+#: it runs on a GitHub-hosted Linux runner, given only to the commands that run Electron's setuid
+#: sandbox helper (``tools/ci/jobs.py`` ``SANDBOX_HELPER_ENV``). No entry may set it.
+RUN_JOB_SETS = frozenset({"PCLAW_SANDBOX_HELPER_HOST"})
+
+
 def _env(fields: _Fields, where: str, raw: object) -> Env:
     """An env table: variable names, each a string value that reads nothing around the catalogue."""
     if not isinstance(raw, dict) or not all(
@@ -538,6 +544,10 @@ def _env(fields: _Fields, where: str, raw: object) -> Env:
             fields.fault(where, f"name {name!r} is not a variable name ([A-Z_][A-Z0-9_]*)")
         elif run.runner_owns(name):
             fields.fault(where, f"name {name!r} is the runner's: a job may not set it")
+        elif name in RUN_JOB_SETS:
+            fields.fault(
+                where, f"name {name!r} is run-job's, from the runner: a job may not set it"
+            )
         for fault in _value_faults(value):
             fields.fault(f"{where} {name}", fault)
     return Env(raw)
