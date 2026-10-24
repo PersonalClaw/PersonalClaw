@@ -5,8 +5,8 @@ here first. [`web/DESIGN.md`](../../web/DESIGN.md) wins every conflict.
 
 ## Purpose
 
-One small orb at the head of the reply shows what the agent is doing in a chat turn, and says it in
-one static line. It goes still the moment the owner is needed. It replaces the pulsing "Thinking…"
+One small orb in the turn's status row, pinned above the composer, shows what the agent is doing in
+a chat turn, and says it in one static line. It goes still the moment the owner is needed. It replaces the pulsing "Thinking…"
 indicator and the composer halo as the working signal, so the default look needs no light around
 the composer to show that the agent is at work. With no turn running, nothing on the page animates.
 
@@ -53,7 +53,7 @@ The exact words and their lengths per surface are #3899's.
 | `input` | waiting on the owner's answer | waiting | a still frame with a "?" badge in the info tone | the phase's line: the question |
 | `done` | finished | quiet | a still mark in the rest colour, faded within 300 ms | the turn's ending line, such as "Done in 12 seconds" |
 | `error` | failed | blocked | a still mark in the rest colour with a "×" badge in the danger tone | the turn's ending line, such as "Stopped: the reason" |
-| `idle` | nothing queued or running | quiet | no orb at the head of a reply; in an empty chat, the 64 px still mark in the rest colour | none |
+| `idle` | nothing queued or running | quiet | no status row; in an empty chat, the 64 px still mark in the rest colour | none |
 
 The status text is the gateway's line for the phase (`work_phase`'s `line`). When the line is
 empty it is the phase's own word from the phase contract (`web/src/lib/workPhase.ts`), never a stock
@@ -82,14 +82,15 @@ differ by glyph as well as tone, so no two waiting or failed states are told apa
 
 ## Placement
 
-- **The turn head, 20 px:** at the start of the assistant's reply slot, left of the status line. It
-  stays as the reply's mark while the text streams, and settles to a still mark when the turn ends,
-  then fades, so a finished reply carries no mark and a reloaded chat reads as the live one did.
-  Before the reply's first word it stands where the reply will be, under the owner's message, and
-  it is one element throughout, so the reply's slot appearing under it restarts neither its timing
-  nor its drawing.
+- **The turn's status row, 20 px:** one row pinned at the bottom of the conversation, just above
+  the composer and outside the transcript's scroll (`web/src/ui/TurnStatusRow.tsx`, `web/REDESIGN.md`
+  §5 "Live state sits at the bottom"). It shows whenever a turn runs, wherever the owner has
+  scrolled, and goes when the turn ends, so a finished reply carries no mark and the head of a
+  reply never animates. Beside the orb are the status line, a word that turns over while the turn
+  works (never said, and still under reduced motion), the time since the turn began, the tokens the
+  model reported for it (none until one is reported) and Stop, which Esc presses too.
 - **The history peek, 20 px:** the chat history's peek panel heads the peeked chat's running reply
-  with the same head as the chat, from that chat's run state and its `work_phase` frames, so it says
+  with a turn head (`web/src/pages/chat/transcript/TurnHead.tsx`), from that chat's run state and its `work_phase` frames, so it says
   what a turn started anywhere is doing, and a message sent from the peek is waiting to start until
   the gateway says more.
 - **The send button:** while a turn runs, it is the Stop control, morphed from the send arrow with

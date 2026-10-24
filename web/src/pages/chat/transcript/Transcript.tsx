@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { api } from '../../../lib/api'
 import { useQuery } from '../../../lib/data'
@@ -23,15 +23,15 @@ import { AssistantSegments } from './AssistantSegments'
 import { UserEditor } from './UserEditor'
 import { RewindDivider } from './RewindDivider'
 import { SelectionQuote } from './SelectionQuote'
-import { TurnHead } from './TurnHead'
 import { QuestionInView } from './QuestionInView'
 
 // ── The chat's transcript region ──────────────────────────────────────────────────────────────
 //
 // The Session Map's gutter rail and the scrolling transcript beside it: the find bar, the
 // select-to-quote toolbar, every turn with its actions, the follow-up chips and check-work offer
-// under the last one, the head of the running reply (the agent orb and its line) and the live
-// regions that narrate the turn. Its state and its actions are `useTranscript`'s; the turns are the
+// under the last one, and the live regions that narrate the turn. What the running turn is doing
+// now is not here: it is the live status row pinned above the composer (`ui/TurnStatusRow`), so it
+// stays in view however far the turn runs. Its state and its actions are `useTranscript`'s; the turns are the
 // stream's.
 
 /** The transcript's bottom fade: opaque down to its bottom padding (`py-2xl` on the turn
@@ -42,7 +42,7 @@ const TRANSCRIPT_END_FADE = 'linear-gradient(to bottom, black calc(100% - var(--
 
 export function Transcript({ transcript, stream, sessionId, memoryMode, navigate, onOpenFile: setOpenFile, onQuote: quoteToComposer, onPickFollowup, send, speak, speakingTurn, mapAudio = false }: {
   transcript: ReturnType<typeof useTranscript>
-  stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'streaming' | 'turnPhase' | 'turnLine' | 'turnEnding' | 'srAnnounce' | 'followups' | 'setFollowups' | 'followupsNeed' | 'checkWorkOffer' | 'setCheckWorkOffer' | 'subagents'>
+  stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'streaming' | 'srAnnounce' | 'followups' | 'setFollowups' | 'followupsNeed' | 'checkWorkOffer' | 'setCheckWorkOffer' | 'subagents'>
   sessionId: string | null
   memoryMode: string
   navigate: (p: string, opts?: { replace?: boolean }) => void
@@ -57,8 +57,8 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
   /** The owner turned on Settings › Speech › "Session Map reacts to audio". */
   mapAudio?: boolean
 }) {
-  const { scrollRef, endRef, followTurnRef, followEnd, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode } = transcript
-  const { sessionRef, turns, streaming, turnPhase, turnLine, turnEnding, srAnnounce, followups, setFollowups, followupsNeed, checkWorkOffer, setCheckWorkOffer } = stream
+  const { scrollRef, endRef, followTurnRef, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode } = transcript
+  const { sessionRef, turns, streaming, srAnnounce, followups, setFollowups, followupsNeed, checkWorkOffer, setCheckWorkOffer } = stream
   // The latest question, which "Keep my question in view" pins while a long reply streams.
   const lastQuestion = turns.map((t) => t.role).lastIndexOf('user')
   const [questionNode, setQuestionNode] = useState<HTMLElement | null>(null)
@@ -69,9 +69,6 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
   // config default, so an unresolved read shows nothing rather than flashing times on and off.
   const { data: showTimestamps } = useQuery('chat:show-timestamps', () => api.dashboardConfig().then((c) => c.show_timestamps), { persist: true })
   const stampOf = (turn: { ts?: string }) => (showTimestamps ? turn.ts : undefined)
-  // Where the running reply's head sits: before the reply once the turn has one, else after the last
-  // turn (her message), where the reply will be.
-  const headAt = turns.length > 0 && turns[turns.length - 1].role === 'assistant' ? turns.length - 1 : turns.length
   // ── SESSION MAP RAIL + TRANSCRIPT ────────────────────────────────────────────
   // 🔑 THE RAIL IS A SIBLING OF THE SCROLLER, NOT A CHILD OF IT, and that IS the
   // "stays fixed while the transcript scrolls" requirement rather than a styling
@@ -124,7 +121,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
               it out streams (Settings › Chat). */}
           <QuestionInView streaming={streaming} node={questionNode} scrollRef={scrollRef}
             question={lastQuestion >= 0 ? turns[lastQuestion].segments.map((s) => (s.kind === 'text' ? s.text : '')).join('') : ''} />
-          {withTurnHead(turns.map((turn, i) => {
+          {turns.map((turn, i) => {
             const isLast = i === turns.length - 1
             const turnTextOf = (t: ChatTurn) => t.segments.map((s) => (s.kind === 'text' ? s.text : '')).join('')
             return (
@@ -186,13 +183,7 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
                 )}
               </div>
             )
-          }), headAt, (
-            // One orb per turn, at the head of its reply: after her message until the reply has a
-            // slot, then leading it, tucked close to it. One keyed element in the same list, so it
-            // keeps its timing and its drawing when the reply's slot appears under it.
-            <TurnHead key="turn-head" running={streaming} phase={turnPhase} line={turnLine} ending={turnEnding} onShown={followEnd}
-              className={headAt < turns.length ? 'mb-[calc(var(--spacing-s)_-_var(--spacing-2xl))]' : undefined} />
-          ))}
+          })}
           {/* A step of this turn waiting for a busy local model: why, and what next. */}
           {streaming && sessionId && <ModelWaits session={sessionId} className="py-s" />}
           <div ref={endRef} />
@@ -211,9 +202,4 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
       </div>
     </div>
   )
-}
-
-/** `rows` with `head` put in at `at`. */
-function withTurnHead(rows: ReactNode[], at: number, head: ReactNode): ReactNode[] {
-  return [...rows.slice(0, at), head, ...rows.slice(at)]
 }

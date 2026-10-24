@@ -31,6 +31,7 @@ import { useChatHeader } from './chat/header/useChatHeader'
 import { ChatHeader } from './chat/header/ChatHeader'
 import { ChatHero } from './chat/hero/ChatHero'
 import { MissingChat } from './chat/MissingChat'
+import { TurnStatusRow } from '../ui/TurnStatusRow'
 import { type RouteProps } from '../app/useQueryState'
 import { useViewModes } from '../app/viewModes'
 
@@ -38,6 +39,10 @@ import { useViewModes } from '../app/viewModes'
  *  #/chat/new is a fresh NEW chat (reachable via "New chat" on the history page
  *  and the "History" button on the new-chat page); opening a session deep-links
  *  to #/chat/<sessionKey>. No left sidebar. */
+
+/** The running turn's status row's height, which a folded composer's room grows by while a turn
+ *  runs: the row and the gap under it, at its tallest (a 44 px Stop at the compact widths). */
+const STATUS_ROW_ROOM = '3.5rem'
 
 export function ChatPage({ sub, navigate, navEpoch = 0, query, setQuery }: { sub: string; navigate: (p: string, opts?: { replace?: boolean }) => void; navEpoch?: number; query?: Record<string, string>; setQuery?: RouteProps['setQuery'] }) {
   const seg = (sub || '').split('/')[0]
@@ -235,7 +240,9 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
         <div className="relative flex h-full min-w-0 flex-col" data-thread-surface=""
           data-memory-mode={memoryMode !== 'persistent' ? memoryMode : undefined}
           style={{
-            ...(folded ? { '--composer-fold-room': FOLD_ROOM } : {}),
+            // Folded, the composer floats over the transcript's end, and the running turn's status row
+            // above it with it: the end makes room for both.
+            ...(folded ? { '--composer-fold-room': stream.streaming ? `calc(${FOLD_ROOM} + ${STATUS_ROW_ROOM})` : FOLD_ROOM } : {}),
             ...(memoryMode !== 'persistent' ? { backgroundColor: PRIVATE_THREAD_TINT } : {}),
           } as React.CSSProperties}>
           {/* The composer's light, staged in THIS column rather than the page: its box is
@@ -289,6 +296,15 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                     onReturnToLatest={() => scrollToLatest(endRef.current)}
                   />
                 </span>
+                {/* What the running turn is doing now, pinned here above the composer whatever the
+                    transcript's scroll, and gone when it ends. Outside the transcript's scroll, it
+                    takes its own height, so it never covers the last message. */}
+                <div className="pointer-events-auto mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
+                  {/* A turn whose last frame said how it ended is over, though its stream has not closed. */}
+                  <TurnStatusRow running={stream.streaming && !stream.turnEnding} phase={stream.turnPhase} line={stream.turnLine}
+                    startedAt={stream.turnStart ? Date.parse(stream.turnStart) || null : null} usage={stream.turnUsage}
+                    onStop={composer.stop} onShown={transcript.followEnd} className="mb-s" />
+                </div>
                 <ComposerFold folded={folded} onUnfold={() => setReading(false)} composerRef={composerRef} draft={input}
                   onType={(key) => setInput((prev) => prev + key)}>
                   {stage}
