@@ -12,7 +12,10 @@ the recorded files. The same files and durations always give the same buckets.
 **The durations source is #3948's telemetry record.** :class:`TelemetryRecord` reads each file's
 median first-attempt seconds over the leg's own reports in the newest three main runs whose
 history ``tools/ci/telemetry.py`` wrote, the one writer of CI telemetry, and nothing else. Until
-the first collected main run there is no record, and the plan uses equal weights and says so.
+the first collected main run there is no record, and the plan uses equal weights and says so. A
+file whose runs differ by half its median or more (:data:`WIDE`) weighs its 75th percentile over
+them instead (:func:`typical`): a file that swings is planned nearer its slow runs, since the
+slowest shard is what the run waits for (#3923).
 
 **Seconds are weighed by the host they ran on.** GitHub's Linux hosts come in CPU models whose
 speeds differ by about 1.5x, and every file of a shard runs slower together on a slower one. So
@@ -342,6 +345,34 @@ def _medians(runs: Sequence[Mapping[str, float]]) -> dict[str, float]:
     }
 
 
+#: A file whose runs' range is at least this share of its median is a wide one, and weighs its
+#: 75th percentile (:func:`typical`). Over run 40112658197's three input runs,
+#: test_raw_durable_write_reds_the_gate.py ranged 87% of its median and
+#: test_container_runtime_census.py 51%, and each ran 24-32 s past its median in that run.
+WIDE = 0.5
+
+
+def typical(seconds: Sequence[float]) -> float:
+    """What a file weighs, from its seconds in each run it was recorded in: the median, or, for
+    a wide file (its range at least :data:`WIDE` of its median), the 75th percentile, read
+    inclusive of the runs' own values."""
+    middle = statistics.median(seconds)
+    if len(seconds) < 2 or max(seconds) - min(seconds) < WIDE * middle:
+        return middle
+    return statistics.quantiles(seconds, n=4, method="inclusive")[2]
+
+
+def _typicals(runs: Sequence[Mapping[str, float]]) -> tuple[dict[str, float], int]:
+    """Each file's :func:`typical` weight over ``runs``, and how many weigh their percentile."""
+    out: dict[str, float] = {}
+    wide = 0
+    for path in sorted({p for s in runs for p in s}):
+        seconds = [s[path] for s in runs if path in s]
+        out[path] = typical(seconds)
+        wide += out[path] != statistics.median(seconds)
+    return out, wide
+
+
 def _describe(identity: Identity) -> str:
     platform, workers = identity
     return f"{platform or 'an unrecorded platform'}, {workers or 'an unrecorded number of'} workers"
@@ -481,14 +512,15 @@ class TelemetryRecord:
                 for path, value in by_file.items():
                     seconds[path] = seconds.get(path, 0.0) + value / factor
             normalized.append(seconds)
-        merged = _medians(normalized)
+        merged, wide = _typicals(normalized)
         runs = ", ".join(str(run) for run, _, _ in read)
         hosts = ", ".join(f"{m} {f:.2f}" for m, f in factors.items()) or "none recorded"
         if unrecorded:
             hosts += "; an unrecorded CPU model weighs as it ran"
         return merged, (
             f"the median of telemetry runs {runs}' {leg.report_prefix}* first attempts"
-            f" on {_describe(identity)}, by host factor ({hosts})"
+            f" on {_describe(identity)}, by host factor ({hosts}); {wide} wide"
+            f" file{'' if wide == 1 else 's'} by {'its' if wide == 1 else 'their'} 75th percentile"
         )
 
 

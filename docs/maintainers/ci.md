@@ -1412,6 +1412,13 @@ One run is not enough: a file's seconds swing with the runner it lands on (one f
 1.06x where one run planned up to 1.30x. Red runs count because their reports still time every
 file they ran; reading green runs only froze the source for as long as `main` was red.
 
+A file whose three runs differ by half its median or more weighs its 75th percentile over them
+instead (`shards.WIDE`, `shards.typical`), so a file that swings is planned nearer its slow runs:
+the slowest shard is what a run waits for. Over run 40112658197's three input runs,
+`test_raw_durable_write_reds_the_gate.py` ranged 87% of its median and
+`test_container_runtime_census.py` 51%, and each ran 24-32 s past its median in that run. The
+plan's line says how many files weigh their percentile.
+
 What no plan can balance is the runner itself. Over the same seven runs, all of one shard's
 files together ran 0.66-1.52x their median on Linux and 0.70-1.95x on macOS, the whole
 shard at once, as a slower host does. So each shard's log ends with "shard collection and

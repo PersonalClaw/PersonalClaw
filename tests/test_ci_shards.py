@@ -745,17 +745,50 @@ def test_the_record_gives_each_files_median_over_the_newest_three_runs_first_att
     gh = _Gh(
         {
             50: _history(
-                50, ("junit-test-shard-1", t, 2.0), ("junit-test-shard-2", "tests.test_a.K::u", 1.0)
+                50, ("junit-test-shard-1", t, 3.0), ("junit-test-shard-2", "tests.test_a.K::u", 1.0)
             ),
-            40: _history(40, ("junit-test-shard-1", t, 90.0)),
+            40: _history(40, ("junit-test-shard-1", t, 4.5)),
             30: _history(30, ("junit-test-shard-1", t, 4.0), ("junit-test-macos-1", t, 500.0)),
             20: _history(20, ("junit-test-shard-1", t, 900.0)),
         }
     )
     durations, said = _record(gh).durations(LEG, FILES)
-    assert durations == {"tests/test_a.py": 4.0}, "median of 3, 90 and 4; macOS's is another leg"
+    assert durations == {"tests/test_a.py": 4.0}, "median of 4, 4.5 and 4; macOS's is another leg"
     assert "telemetry runs 50, 40, 30" in said and LINUX in said and "4 workers" in said
     assert 20 not in gh.downloads, "a fourth run is never read"
+
+
+@pytest.mark.parametrize(
+    "seconds, weight",
+    [
+        ([10.0, 11.0, 12.0], 11.0),
+        ([10.0, 30.0, 60.0], 45.0),
+        ([30.0, 60.0, 10.0], 45.0),
+        ([8.0, 10.0, 13.0], 11.5),
+        ([7.0], 7.0),
+        ([10.0, 30.0], 25.0),
+    ],
+    ids=["narrow", "wide", "wide, any order", "range exactly half the median", "one run", "two"],
+)
+def test_a_file_weighs_its_median_or_when_its_runs_vary_widely_its_75th_percentile(
+    seconds: list[float], weight: float
+) -> None:
+    assert shards.typical(seconds) == weight
+
+
+def test_a_wide_file_in_the_record_lands_by_its_75th_percentile() -> None:
+    """The planted record: test_a swings (10, 30 and 60 s), test_b does not (10, 11 and 12 s).
+    test_a weighs 45 s, nearer its slow runs than its median of 30, and test_b its median."""
+    a, b = "tests.test_a::t", "tests.test_b::t"
+    gh = _Gh(
+        {
+            run: _history(run, ("junit-test-shard-1", a, ta), ("junit-test-shard-1", b, tb))
+            for run, ta, tb in ((50, 60.0, 10.0), (40, 10.0, 12.0), (30, 30.0, 11.0))
+        }
+    )
+    durations, said = _record(gh).durations(LEG, ["tests/test_a.py", "tests/test_b.py"])
+    assert durations == {"tests/test_a.py": 45.0, "tests/test_b.py": 11.0}, durations
+    assert "1 wide file by its 75th percentile" in said, said
 
 
 #: A leg of main's push runs in either shape, as merge.yml's shard-plan names it.
@@ -777,8 +810,8 @@ def test_a_main_push_leg_reads_merge_yml_s_runs_then_ci_yml_s() -> None:
     gh = _Gh(
         {
             60: None,
-            50: _history(50, ("junit-test-shard-1", t, 2.0)),
-            40: _history(40, ("junit-test-shard-1", t, 90.0)),
+            50: _history(50, ("junit-test-shard-1", t, 3.8)),
+            40: _history(40, ("junit-test-shard-1", t, 4.5)),
             30: _history(30, ("junit-test-shard-1", t, 4.0)),
         }
     )
@@ -930,9 +963,9 @@ def test_the_record_reads_only_the_platform_and_workers_its_newest_history_recor
     t = "tests.test_a::t"
     gh = _Gh(
         {
-            50: _history(50, ("junit-test-shard-1", t, 3.0, LINUX, 3)),
+            50: _history(50, ("junit-test-shard-1", t, 3.5, LINUX, 3)),
             40: _history(40, ("junit-test-shard-1", t, 9.0, LINUX, 2)),
-            30: _history(30, ("junit-test-shard-1", t, 5.0, LINUX, 3)),
+            30: _history(30, ("junit-test-shard-1", t, 4.5, LINUX, 3)),
             20: _history(20, ("junit-test-shard-1", t, 9.0, "darwin-arm64-3.13.16", 3)),
         }
     )
@@ -1024,16 +1057,18 @@ def test_a_report_with_no_recorded_cpu_model_keeps_its_seconds() -> None:
         }
     )
     durations, said = _record(gh).durations(LEG, FILES)
-    # test_a: 20 / 2 (slow), then 20 and 10 as they ran: the median is 10, against 13.3 if the
-    # unrecorded reports took a factor of their own (ran / planned 1.0 and 0.5: 0.75).
-    assert durations["tests/test_a.py"] == 10.0
+    # test_a: 20 / 2 (slow), then 20 and 10 as they ran: 10, 20 and 10, a wide file, so its 75th
+    # percentile, 15. Had the unrecorded reports taken a factor of their own (ran / planned 1.0
+    # and 0.5: 0.75), they would read 26.7 and 13.3, and weigh 20.
+    assert durations["tests/test_a.py"] == shards.typical([10.0, 20.0, 10.0]) == 15.0
     assert "an unrecorded CPU model weighs as it ran" in said, said
 
 
 @pytest.mark.parametrize("version", [1, 2], ids=["version 1", "version 2"])
 def test_an_older_history_is_still_read_and_weighs_as_it_ran(version: int) -> None:
     """Histories written before the CPU model was recorded stay readable for as long as they
-    are kept: none records a model, so every factor is 1.0 and the plan is the plain median."""
+    are kept: none records a model, so every factor is 1.0 and each file weighs its plain
+    seconds."""
     gh = _Gh(
         {
             50: _hosted(50, 20.0, 10.0, 10.0, (SLOW, FAST, FAST), version=version),
@@ -1043,9 +1078,9 @@ def test_an_older_history_is_still_read_and_weighs_as_it_ran(version: int) -> No
     )
     durations, said = _record(gh).durations(LEG, FILES)
     assert durations == {
-        "tests/test_a.py": 20.0,
-        "tests/sub/test_s.py": 10.0,
-        "tests/test_ab.py": 10.0,
+        "tests/test_a.py": shards.typical([20.0, 20.0, 10.0]),
+        "tests/sub/test_s.py": shards.typical([10.0, 20.0, 10.0]),
+        "tests/test_ab.py": shards.typical([10.0, 10.0, 20.0]),
     }
     assert "runs 50, 40, 30" in said
 
