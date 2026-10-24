@@ -9,6 +9,7 @@ things :func:`release` has to report or clean because Python cannot unload them 
 from __future__ import annotations
 
 import asyncio
+import gc
 import sys
 import textwrap
 import threading
@@ -241,6 +242,82 @@ def test_a_task_still_suspended_in_the_apps_code_needs_a_restart(root):
         task = loop.create_task(_load(root).poll_forever(event))
         loop.run_until_complete(asyncio.sleep(0))  # the task starts and suspends in app code
         left = app_code.release(APP).left_running
+        task.cancel()
+        loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+    finally:
+        loop.close()
+    assert left == ["a task its previous version started is still running (poll_forever)"]
+
+
+def test_a_task_suspended_in_core_code_that_awaits_the_apps_needs_a_restart(root):
+    """The app's coroutine awaited by one of core's: the task is core's, the wait the app's."""
+    _write(
+        root / "provider.py",
+        """
+        async def poll_forever(event):
+            await event.wait()
+        """,
+    )
+
+    async def core_wrapper(coro):
+        return await coro
+
+    loop = asyncio.new_event_loop()
+    try:
+        event = asyncio.Event()
+        task = loop.create_task(core_wrapper(_load(root).poll_forever(event)))
+        loop.run_until_complete(asyncio.sleep(0))
+        left = app_code.release(APP).left_running
+        task.cancel()
+        loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+    finally:
+        loop.close()
+    assert left == ["a task its previous version started is still running (poll_forever)"]
+
+
+def test_a_task_of_core_code_alone_is_not_the_apps(root):
+    _write(root / "provider.py", "VALUE = 1\n")
+    _load(root)
+
+    async def core_wait(event):
+        await event.wait()
+
+    loop = asyncio.new_event_loop()
+    try:
+        event = asyncio.Event()
+        task = loop.create_task(core_wait(event))
+        loop.run_until_complete(asyncio.sleep(0))
+        left = app_code.release(APP).left_running
+        task.cancel()
+        loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
+    finally:
+        loop.close()
+    assert left == []
+
+
+def test_a_release_reads_the_live_tasks_and_not_the_whole_heap(root, monkeypatch):
+    """A full collection and a walk of every object scale with the process, not the app: on a
+    gateway, or a test worker that holds a parsed tree, that was seconds a release."""
+    _write(
+        root / "provider.py",
+        """
+        async def poll_forever(event):
+            await event.wait()
+        """,
+    )
+
+    def refused(*_args, **_kwargs):
+        raise AssertionError("a release walked the whole heap")
+
+    loop = asyncio.new_event_loop()
+    try:
+        event = asyncio.Event()
+        task = loop.create_task(_load(root).poll_forever(event))
+        loop.run_until_complete(asyncio.sleep(0))
+        monkeypatch.setattr(gc, "get_objects", refused)
+        monkeypatch.setattr(gc, "collect", refused)
+        left = app_code.release(APP).left_running
+        monkeypatch.undo()
         task.cancel()
         loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
     finally:

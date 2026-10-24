@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import contextlib
-import gc
 import importlib.util
 import json
 import os
@@ -38,7 +36,6 @@ import py_compile
 import re
 import subprocess
 import sys
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -707,27 +704,6 @@ def test_local_source_install_registers_the_provider(
         registry.deregister(app.name)
 
 
-@contextlib.contextmanager
-def _collections_see_only_this_test() -> Iterator[None]:
-    """The heap the test found, frozen out of every collection until it ends.
-
-    Each unload walks the heap for a coroutine the app left suspended, after a full collection
-    (``app_code._coroutines_suspended_in``), and the test below unloads once per type. On a suite
-    worker that had run thousands of tests first, each pass walked every object those left, and
-    the unloads ran past the per-test timeout on CI (#3905). An app's coroutine can only have been
-    made by the test, after the freeze, so each unload still sees every one. Nothing is frozen when
-    something else already froze the heap.
-    """
-    if gc.get_freeze_count():
-        yield
-        return
-    gc.freeze()
-    try:
-        yield
-    finally:
-        gc.unfreeze()
-
-
 def test_every_type_registers_through_its_own_handler(
     subtests: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -749,23 +725,22 @@ def test_every_type_registers_through_its_own_handler(
     apps.mkdir(parents=True, exist_ok=True)
     registry = get_provider_registry()
     assert len(ALL_TYPES) == len(PROVIDER_TYPES), "a type was dropped from the table"
-    with _collections_see_only_this_test():
-        for provider_type in ALL_TYPES:
-            with row(subtests, provider_type=provider_type):
-                app = _generate(provider_type, apps)
-                manifest = _check_manifest(app)
-                before = sorted(ext.name for ext in registry.list_extensions())
-                try:
-                    app_runtime.load(manifest)
-                    ext = registry.get(app.name)
-                    assert ext is not None, f"{provider_type}: nothing registered in the registry"
-                    assert ext.enabled, f"{provider_type}: registered but not enabled — {ext.error}"
-                    assert ext.error == "", f"{provider_type}: {ext.error}"
-                    assert ext.provider_config.type == provider_type
-                finally:
-                    app_runtime.unload(app.name, manifest, forget=True)
-                after = sorted(ext.name for ext in registry.list_extensions())
-                assert after == before, f"{provider_type}: the unload left the registry at {after}"
+    for provider_type in ALL_TYPES:
+        with row(subtests, provider_type=provider_type):
+            app = _generate(provider_type, apps)
+            manifest = _check_manifest(app)
+            before = sorted(ext.name for ext in registry.list_extensions())
+            try:
+                app_runtime.load(manifest)
+                ext = registry.get(app.name)
+                assert ext is not None, f"{provider_type}: nothing registered in the registry"
+                assert ext.enabled, f"{provider_type}: registered but not enabled — {ext.error}"
+                assert ext.error == "", f"{provider_type}: {ext.error}"
+                assert ext.provider_config.type == provider_type
+            finally:
+                app_runtime.unload(app.name, manifest, forget=True)
+            after = sorted(ext.name for ext in registry.list_extensions())
+            assert after == before, f"{provider_type}: the unload left the registry at {after}"
 
 
 # ---------------------------------------------------------------------------

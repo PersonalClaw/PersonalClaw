@@ -36,8 +36,8 @@ platform, and must be able to import this without importing it.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
-import gc
 import importlib
 import importlib.machinery
 import logging
@@ -305,19 +305,42 @@ def _threads_running(prefixes: tuple[str, ...]) -> set[str]:
     return {names.get(ident, f"thread {ident}") for ident in seen or ()}
 
 
+def _live_tasks() -> list[asyncio.Task[Any]]:
+    """Every task of every event loop in the process that has not finished.
+
+    asyncio registers each task it schedules, on whatever loop, in one weak set (and an eager
+    task, while it runs eagerly, in another), and :func:`asyncio.all_tasks` reads them a loop at a
+    time. Read whole, they are every task the process can still run, whichever thread's loop holds
+    it: a few hundred objects, where a walk of the heap reads every one the process holds. The
+    two sets are asyncio's own, read as they are on the Pythons ``requires-python`` allows; a
+    Python without them fails ``tests/test_app_code.py`` rather than counting nothing. When
+    ``requires-python`` takes in 3.14, check them again: 3.14 changed how asyncio tracks tasks.
+    """
+    registry = asyncio.tasks
+    tasks = [*registry._scheduled_tasks, *registry._eager_tasks]  # type: ignore[attr-defined]
+    return [task for task in tasks if not task.done()]
+
+
 def _coroutines_suspended_in(prefixes: tuple[str, ...]) -> set[str]:
-    """Coroutines of code from under *prefixes* that have started and not finished.
+    """Coroutines of code from under *prefixes* that a live task is waiting in.
 
     A task an app started and never stopped holds one: it is the app's previous code, waiting
-    to run again. The collection first, so a finished task nothing refers to is not counted.
+    to run again. So does a task of core's that awaits a coroutine of the app's. Each live task's
+    chain of awaits is followed from its coroutine down, and each coroutine of the app's in it
+    counts. A coroutine of the app's that no live task waits in will not run again, and a task
+    that finished holds nothing, so neither is counted. Only the live tasks are read
+    (:func:`_live_tasks`), never the whole heap: what a release costs is the app's, not the
+    process's.
     """
-    gc.collect()
     found: set[str] = set()
-    for obj in gc.get_objects():
+    for task in _live_tasks():
+        awaited: object = task.get_coro()
+        seen = 0
         # The exact type, not `isinstance`: that reads `__class__`, which a proxy answers with
-        # code of its own, and every object the process holds is asked.
-        if type(obj) is not types.CoroutineType or obj.cr_frame is None:
-            continue
-        if _under(obj.cr_code.co_filename, prefixes):
-            found.add(obj.cr_code.co_qualname)
+        # code of its own. A chain is short; the bound keeps a cycle from holding the release.
+        while type(awaited) is types.CoroutineType and seen < 1000:
+            seen += 1
+            if awaited.cr_frame is not None and _under(awaited.cr_code.co_filename, prefixes):
+                found.add(awaited.cr_code.co_qualname)
+            awaited = awaited.cr_await
     return found
