@@ -242,8 +242,15 @@ _BUILD_LINE = f"        run: {_BUILD_RUN}\n"
 )
 def test_a_planted_edit_of_the_image_build_fails(rel: str, old: str, new: str, says: str) -> None:
     texts = _texts()
-    assert texts[rel].count(old) >= 1, f"the plant's anchor is gone: {old!r}"
-    texts[rel] = texts[rel].replace(old, new, 1)
+    start, end = 0, len(texts[rel])
+    if rel == _CATALOGUE:
+        # Within the image entry: other entries name some of the same paths.
+        start = texts[rel].index('\nid = "image"\n')
+        end = texts[rel].find("\n[[job]]", start)
+        end = len(texts[rel]) if end < 0 else end
+    part = texts[rel][start:end]
+    assert part.count(old) >= 1, f"the plant's anchor is gone: {old!r}"
+    texts[rel] = texts[rel][:start] + part.replace(old, new, 1) + texts[rel][end:]
     found = _problems(texts, _dockerfile(), _tracked())
     assert any(says in p for p in found), found
 
