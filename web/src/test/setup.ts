@@ -4,8 +4,20 @@
 // before this file; Vitest runs `afterEach` hooks last registered first, so the cleanup below runs
 // before those resets, as it did when both lived here.
 import '@testing-library/jest-dom/vitest'
+import * as webStreams from 'node:stream/web'
 import { cleanup, configure } from '@testing-library/react'
-import { afterEach } from 'vitest'
+import { afterAll, afterEach } from 'vitest'
+
+// The `dom` project runs each file in a VM context (`pool: 'vmForks'`, vitest.config.ts), whose
+// globals are jsdom's: Node's web streams (ReadableStream, TransformStream, ...) are not among them.
+// A file that builds a jsdom of its own (`src/ui/widget/reactFrame.test.ts`) loads jsdom's bundled
+// undici, which needs them as it loads. Each one the context lacks is Node's own, as a file under
+// the forks pool saw it; one the context has is left as it is.
+for (const [name, value] of Object.entries(webStreams)) {
+  if (!(name in globalThis)) {
+    Object.defineProperty(globalThis, name, { value, writable: true, configurable: true })
+  }
+}
 
 // `waitFor`'s default timeout is 1000 ms, and it was never raised when this suite's real
 // wall-clock was measured. #1675 raised vitest's `testTimeout` 5 s → 20 s on the finding that
@@ -89,3 +101,20 @@ if (typeof globalThis.Path2D === 'undefined') {
 }
 
 afterEach(() => { cleanup() })
+
+// The `dom` project runs its files in VM contexts (`pool: 'vmForks'`, vitest.config.ts), many in
+// one process. Vitest holds a `vi.mock` or `vi.doMock` until the next import applies it, in a queue
+// that process shares, so a file whose last tests queue a mock and import nothing after it hands
+// that mock to the next file the process runs, which then imports the mock in place of the module.
+// Under the forks pool the queue ended with the file's process; here whatever a file leaves queued
+// is dropped as it ends. A Vitest that no longer keeps the queue there fails every file, loudly,
+// rather than let the leak back in unseen.
+afterAll(() => {
+  const mocker = (globalThis as { __vitest_mocker__?: { constructor: { pendingIds?: unknown } } })
+    .__vitest_mocker__
+  const queued = mocker?.constructor.pendingIds
+  if (!Array.isArray(queued)) {
+    throw new Error("setup.ts: Vitest's queue of pending mocks is not where this file drops a file's leftovers; re-check that a VM context's mocks end with its file")
+  }
+  queued.length = 0
+})

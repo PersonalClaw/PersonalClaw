@@ -14,8 +14,9 @@ import { indexTree } from './src/test/sourceTreeIndex'
 // jest-dom matchers, React cleanup, stand-ins for what jsdom lacks); `node` runs the test files
 // that never reach a DOM, which then stop paying for one: building a jsdom window was 42% of a
 // whole run's time. Which `.test.ts` files are `node` is decided from their source, and what they
-// import, by `src/test/domCensus.ts`; every `.test.tsx` file is `dom`. Both projects reset the
-// module state every file needs (`resetModuleState.ts`).
+// import, by `src/test/domCensus.ts`; every `.test.tsx` file is `dom`. A third, `dom-forks`, runs
+// the few `dom` files a VM context cannot hold (`FORKS_FILES`) as `dom` once ran them. Every
+// project resets the module state every file needs (`resetModuleState.ts`).
 //
 // The tree is listed once, here: the census reads that listing, and every test file gets it
 // (`provide`), so a tree-scanning file reads `src/` and `e2e/` off it instead of walking them
@@ -23,8 +24,12 @@ import { indexTree } from './src/test/sourceTreeIndex'
 const WEB = import.meta.dirname
 const TREE = indexTree(WEB)
 const NODE_FILES = census(WEB, TREE[join(WEB, 'src')]).node
+/** The `dom` files that replace what a VM context cannot (`window.location`, unforgeable once the
+ *  jsdom window is the context's global), so they run on the forks pool, a process each: just the
+ *  one test that `tab.reload` is the browser's own reload, which every other test spies on. */
+const FORKS_FILES = ['src/lib/tab.test.ts']
 
-/** What both projects share. */
+/** What every project shares. */
 const shared = {
   globals: true,
   // Vitest turns every stylesheet import into an empty string, a `?raw` read included. Widget
@@ -90,9 +95,22 @@ export default defineConfig({
           ...shared,
           name: 'dom',
           environment: 'jsdom',
+          // Each file in a VM context of its own (#3940). A file keeps its own mocks, modules and
+          // jsdom window, as under the default forks pool, but a worker builds them without a new
+          // process each time: on two fixed samples of this project's files that took 2.6-3x
+          // less time, the environment's share falling from about a third to under a twentieth.
+          // A worker keeps every file's world until it is recycled, so it is recycled once its
+          // heap passes 1 GB: one then peaked near 2.2 GB on a 180-file sample, where at 2 GB of
+          // heap one reached 3.6 GB over this project, so four on a GitHub runner's 16 GB stay
+          // near 9. A worker's files do share its process, which is why `setup.ts` drops the
+          // mocks a file leaves queued. A context holds jsdom's globals, not all of Node's:
+          // `setup.ts` gives it Node's web streams. The few files a VM context cannot hold run in
+          // `dom-forks`.
+          pool: 'vmForks',
+          vmMemoryLimit: '1GB',
           setupFiles: ['./src/test/resetModuleState.ts', './src/test/setup.ts'],
           include: ['src/**/*.{test,spec}.{ts,tsx}'],
-          exclude: NODE_FILES,
+          exclude: [...NODE_FILES, ...FORKS_FILES],
         },
       },
       {
@@ -103,6 +121,17 @@ export default defineConfig({
           environment: 'node',
           setupFiles: ['./src/test/resetModuleState.ts'],
           include: NODE_FILES,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          ...shared,
+          name: 'dom-forks',
+          environment: 'jsdom',
+          // The default forks pool: each file in a process of its own, its globals Node's own.
+          setupFiles: ['./src/test/resetModuleState.ts', './src/test/setup.ts'],
+          include: FORKS_FILES,
         },
       },
     ],

@@ -11557,13 +11557,15 @@ _HARNESS_GATES = {
 }
 _REPLAY_FOLD = "web/src/harness/replayFold.test.ts"
 _VITEST_CONFIG = "web/vitest.config.ts"
-#: The vitest config's three lines that decide its file set, as this row reads them: the dom
-#: project's include, its exclude of the node files, and the node project's include of them.
-#: Any other shape is refused, so a narrowed set cannot pass unread.
+#: The vitest config's four lines that decide its file set, as this row reads them: the dom
+#: project's include, its exclude of the node files and the forks files, the node project's
+#: include of the node files, and the dom-forks project's include of the forks files. Any other
+#: shape is refused, so a narrowed set cannot pass unread.
 _VITEST_SET_LINES = (
     "include: ['src/**/*.{test,spec}.{ts,tsx}'],",
-    "exclude: NODE_FILES,",
+    "exclude: [...NODE_FILES, ...FORKS_FILES],",
     "include: NODE_FILES,",
+    "include: FORKS_FILES,",
 )
 _SLICES = re.compile(r"^_EXPECTED_SLICES = \{([^}]*)\}$", re.M)
 
@@ -11723,8 +11725,15 @@ THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER = Row(
         _plant(
             "the harness folder excluded",
             _VITEST_CONFIG,
-            "exclude: NODE_FILES,",
-            "exclude: [...NODE_FILES, 'src/harness/**'],",
+            "exclude: [...NODE_FILES, ...FORKS_FILES],",
+            "exclude: [...NODE_FILES, ...FORKS_FILES, 'src/harness/**'],",
+            expect="which this row does not read",
+        ),
+        _plant(
+            "the forks project's files dropped",
+            _VITEST_CONFIG,
+            "include: FORKS_FILES,",
+            "include: [],",
             expect="which this row does not read",
         ),
         _moved(

@@ -1,7 +1,7 @@
 import { type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import type { Theme } from './routes'
-import { MOUSE_ONLY, CLIPPED_RING } from './nonAxeA11yChecks'
+import { MOUSE_ONLY, CLIPPED_RING } from './nonAxeA11yScripts'
 import { PALETTE_SEARCH_LABEL } from '../src/app/paletteSearchLabel'
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'

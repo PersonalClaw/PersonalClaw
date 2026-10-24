@@ -6,6 +6,9 @@ import { clockTime } from '../../lib/epoch'
 import type { Loop, RunningList, RunningRow } from '../../lib/api'
 import type { WsMessage } from '../../lib/useChatSocket'
 
+/** The test environment's jsdom, which Vitest puts on the global. */
+declare const jsdom: { reconfigure(settings: { url: string }): void }
+
 // ── The phone's Running section is the running list (#3889) ─────────────────────────────────────
 //
 // `#/companion`'s Running section read the loops and listed the steerable ones, and nothing else:
@@ -383,8 +386,11 @@ describe('a phone that slept through a restart says nothing it cannot know', () 
 describe('a phone away from the gateway tells only a restart its rows can bound', () => {
   // A page served from another machine: a network stands between it and the gateway, so a drop
   // may be the network's, and the gateway may have gone on and ended work before it restarted.
-  beforeEach(() => { vi.stubGlobal('location', new URL('https://gateway.example/#/companion')) })
-  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+  // The page's own address moves there: a Location cannot be replaced, in a browser or in the VM
+  // context this file runs in (vitest.config.ts), so jsdom is told the page's address instead.
+  const home = location.href
+  beforeEach(() => { jsdom.reconfigure({ url: 'https://gateway.example/#/companion' }) })
+  afterEach(() => { jsdom.reconfigure({ url: home }); vi.useRealTimers() })
 
   /** Restart on a gateway that has been up `uptime` seconds, whose own clock reads `skew` ms off. */
   const restartUp = async (uptime: number, skew = 0) => {
