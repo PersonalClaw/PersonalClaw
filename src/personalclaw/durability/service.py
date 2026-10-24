@@ -54,9 +54,10 @@ DRILL_SECS = 30 * 24 * 60 * 60
 TICK_SECS = 5 * 60
 
 # How long the gateway's stop waits for the step the loop is running (`DurabilityService.aclose`)
-# before cancelling it. A step is a snapshot, an export or a maintenance pass: seconds on a home
-# of ordinary size.
-CLOSE_TIMEOUT_SECS = 30.0
+# before cancelling it. It waits inside the stop's own limit (`gateway._SHUTDOWN_SECS`, 7 s), beside
+# every other cleanup, so it is a share of that, as the running chat turns' 3 s is: a step that
+# takes longer is cancelled, as every step was before.
+CLOSE_TIMEOUT_SECS = 3.0
 
 _STATE_FILE = "durability_state.json"
 

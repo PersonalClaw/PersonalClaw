@@ -174,8 +174,15 @@ _AUTONOMY_PROPOSAL_INTERVAL_SECS = 6 * 60 * 60
 _STAGED_APPLY_POLL_SECS = 30.0
 
 # The whole stop's time limit. A stop still running then is left where it stands: the process
-# exits, or its new image starts, anyway, and the log names what it was still stopping.
-_SHUTDOWN_SECS = 10.0
+# exits, or its new image starts, anyway, and the log names what it was still stopping. With
+# `_UNWIND_SECS` and a margin it fits the shortest stop window PersonalClaw ships under: Docker's,
+# which sends SIGKILL 10 s after SIGTERM (`docker stop`, and compose files that set no
+# `stop_grace_period`). At 10 s the supervisor killed a stop that used its whole limit before it
+# exited. `tests/test_a_stop_never_waits_forever_on_a_cancelled_task.py` holds the budget.
+_SHUTDOWN_SECS = 7.0
+
+# How long a stop that ran out of time is given to unwind once it is cancelled.
+_UNWIND_SECS = 1.0
 
 # How long a stop waits for the chat turns it ends to say so, before it saves the chats. Out of
 # the stop's whole time limit (`_SHUTDOWN_SECS`): a turn cancelled at an await ends at once, and
@@ -5503,7 +5510,7 @@ class GatewayOrchestrator:
             )
             # Cancelled, and given a moment to unwind; a step that does not is left behind.
             stop.cancel()
-            await asyncio.wait({stop}, timeout=1.0)
+            await asyncio.wait({stop}, timeout=_UNWIND_SECS)
         elif stop.cancelled() or stop.exception() is not None:
             error = None if stop.cancelled() else stop.exception()
             logger.error(

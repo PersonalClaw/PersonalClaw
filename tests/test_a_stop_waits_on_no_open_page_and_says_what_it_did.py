@@ -36,7 +36,22 @@ _PROMPT_SECS = 5.0
 
 @pytest.fixture(autouse=True)
 def _clean(tmp_path, monkeypatch):
-    """A private home, no sign-in, and no restart request or stop signal leaking out."""
+    """A private home, no sign-in, and no restart request or stop signal leaking out.
+
+    The boot's first durability tick does nothing here. Its step (a snapshot, an export, a drill)
+    is one the stop waits for, up to `CLOSE_TIMEOUT_SECS`, and
+    `test_the_durability_step_ends_with_its_gateway.py` holds that wait; on a busy runner it was
+    still running when these stopped. So what these time is the stop's wait on a page or a
+    request alone."""
+    from personalclaw.durability import service as durability
+
+    async def _no_footprint() -> None:
+        return None
+
+    monkeypatch.setattr(durability, "_tick_graph_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(durability, "_tick_evals_watchdog", lambda *_a, **_k: None)
+    monkeypatch.setattr(durability, "_tick_footprint_maintenance", _no_footprint)
+    monkeypatch.setattr(durability, "run_due_jobs", lambda *_a, **_k: [])
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     monkeypatch.setenv("PERSONALCLAW_AUTH_MODE", "none")
     monkeypatch.setattr(restart_request, "_pending", None)
