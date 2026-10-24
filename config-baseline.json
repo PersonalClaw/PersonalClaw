@@ -1,6 +1,6 @@
 [
   {
-    "default": false,
+    "default": true,
     "path": "agent.acp_concurrent_sessions",
     "sensitive": false,
     "type": "bool"
