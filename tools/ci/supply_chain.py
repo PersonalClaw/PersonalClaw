@@ -70,6 +70,8 @@ from . import shell_installs
 
 POLICY_FILE = "tools/ci/supply-chain.toml"
 DEPENDABOT_FILE = ".github/dependabot.yml"
+#: The folder GitHub reads workflows from, and so the one this check reads them from.
+WORKFLOW_FOLDER = ".github/workflows"
 EXCEPTION_MAX_DAYS = 30
 #: The rules an exception may waive. A write is audited in the policy, never waived for a month.
 WAIVABLE = ("action-sha", "image-digest", "run-install", "setup-floating", "node-eol")
@@ -119,7 +121,7 @@ _NOT_A_DOCKERFILE = (".py", ".md", ".ts", ".json", ".yml", ".yaml", ".toml", ".s
 
 
 def is_workflow(rel: str) -> bool:
-    return rel.startswith(".github/workflows/") and rel.endswith(WORKFLOW_SUFFIXES)
+    return rel.startswith(f"{WORKFLOW_FOLDER}/") and rel.endswith(WORKFLOW_SUFFIXES)
 
 
 def is_dockerfile(name: str) -> bool:
@@ -178,7 +180,7 @@ def _opens_a_shell(path: Path) -> bool:
 def tree_paths(root: Path) -> list[Path]:
     """The files ``check`` reads."""
     return [
-        *sorted(p for p in root.glob(".github/workflows/*") if p.suffix in WORKFLOW_SUFFIXES),
+        *sorted(p for p in root.glob(f"{WORKFLOW_FOLDER}/*") if p.suffix in WORKFLOW_SUFFIXES),
         *action_paths(root),
         *dockerfile_paths(root),
         *script_paths(root),
@@ -2234,11 +2236,20 @@ def apply_exceptions(
     return [v for v in found if v not in waived] + own
 
 
-def check(tree: Tree, today: datetime.date | None = None) -> list[Violation]:
-    """Every supply-chain violation in *tree*, after the policy's exceptions."""
+def check(
+    tree: Tree, today: datetime.date | None = None, rules: Collection[str] = ()
+) -> list[Violation]:
+    """Every supply-chain violation in *tree*, after the policy's exceptions.
+
+    *rules*, when given, are the only rules the caller reads, and only they are run: the contract
+    table's rows each read one or two, over a hundred trees a row. An exception waives a violation
+    of its own scope alone, so the answer for those rules is the same. A caller that reads the
+    exceptions' own problems (``exception``) gets every rule run, since an exception that matches
+    nothing is one."""
     today = today or datetime.date.today()
     policy = read_policy(tree.get(POLICY_FILE, ""))
-    rules: list[tuple[str, Callable[[], list[Violation]]]] = [
+    every = not rules or "exception" in rules
+    checks: list[tuple[str, Callable[[], list[Violation]]]] = [
         ("action-sha", lambda: action_sha(tree)),
         ("image-digest", lambda: image_digest(tree)),
         ("run-install", lambda: run_install(tree)),
@@ -2249,11 +2260,13 @@ def check(tree: Tree, today: datetime.date | None = None) -> list[Violation]:
         ("release-tooling", lambda: release_tooling(tree)),
     ]
     found: list[Violation] = []
-    for rule, run in rules:
+    for rule, run in checks:
+        if not every and rule not in rules:
+            continue
         try:
             found += run()
         except (AttributeError, TypeError, KeyError, IndexError) as error:
             message = f"could not read the tree: {type(error).__name__}: {error}"
             found.append(Violation(rule, ".", "unreadable", message))
-    unwaivable = workflow_yaml(tree)
+    unwaivable = workflow_yaml(tree) if every or "workflow-yaml" in rules else []
     return apply_exceptions(found, policy, today) + unwaivable + policy.problems

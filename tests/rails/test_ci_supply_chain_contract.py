@@ -121,7 +121,7 @@ def _supply_row(name: str, rules: tuple[str, ...], controls: tuple[Control, ...]
     """A row over *rules*, or over every rule and the exceptions when *rules* is empty."""
 
     def check(root: Path) -> list[str]:
-        found = supply_chain.check(supply_chain.read_tree(root))
+        found = supply_chain.check(supply_chain.read_tree(root), rules=rules)
         return [str(v) for v in found if not rules or v.rule in rules]
 
     return Row(name=name, check=check, scaffold=_copy_supply_chain_files, controls=controls)
