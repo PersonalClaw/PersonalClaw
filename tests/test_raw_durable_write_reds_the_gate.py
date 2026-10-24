@@ -115,6 +115,7 @@ def _plant(tmp_path: Path, source: str) -> Path:
 # ── The three legs ───────────────────────────────────────────────────────────
 
 
+@pytest.mark.timeout(110)
 def test_the_clean_tree_passes_this_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """The GREEN direction, and it comes first on purpose. A gate that reds on the clean tree
     too is a broken runner, not enforcement — and it would make the planted red below
@@ -126,6 +127,7 @@ def test_the_clean_tree_passes_this_gate(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
 
+@pytest.mark.timeout(110)
 def test_a_raw_durable_write_reds_this_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -155,6 +157,7 @@ def test_a_raw_durable_write_reds_this_gate(
     )
 
 
+@pytest.mark.timeout(70)
 def test_a_delegating_wrapper_does_not_red_this_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

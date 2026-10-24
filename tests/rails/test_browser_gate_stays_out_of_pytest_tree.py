@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
 from browser_gate_stays_out_of_pytest_shared import (
     _ROOT,
     _TESTS,
@@ -22,6 +23,7 @@ def _collectible_modules() -> list[pathlib.Path]:
 
 
 class TestNoPytestModuleShellsTheBrowserGate:
+    @pytest.mark.timeout(40)
     def test_no_collected_module_launches_the_browser(self):
         modules = _collectible_modules()
         assert len(modules) > 100, (

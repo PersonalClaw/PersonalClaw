@@ -385,6 +385,7 @@ def _resolved(census: dict[str, list[Site]]) -> dict[str, set[str]]:
     return out
 
 
+@pytest.mark.timeout(40)
 def test_the_census_is_not_vacuous(census):
     """A floor: the walk finds the loads it exists for, the agent's tool modules among them."""
     for key in (
@@ -398,6 +399,7 @@ def test_the_census_is_not_vacuous(census):
     assert len(census) >= 25, sorted(census)
 
 
+@pytest.mark.timeout(40)
 @pytest.mark.parametrize("module", _LOST_IN_THE_DESKTOP_APP)
 def test_the_census_finds_what_the_desktop_app_lost(census, module):
     """The positive control: each module the bundle left out is one a site is found loading."""
@@ -405,6 +407,7 @@ def test_the_census_finds_what_the_desktop_app_lost(census, module):
     assert module in loaded
 
 
+@pytest.mark.timeout(40)
 def test_every_load_site_is_followed_or_classified(census):
     unfollowed = sorted(
         key
@@ -420,6 +423,7 @@ def test_every_load_site_is_followed_or_classified(census):
     assert not stale, f"classified sites that load nothing any more: {stale}"
 
 
+@pytest.mark.timeout(40)
 def test_every_package_module_a_site_loads_is_carried(census, manifest):
     """The rail the desktop app needed: a module the package loads by name is in the bundle."""
     carried = set(manifest.by_name_modules(_REPO)) | set(manifest.sdk_submodules(_REPO))
@@ -467,6 +471,7 @@ def _imported_in_the_package(skip: Path | None = None) -> set[str]:
     return tops
 
 
+@pytest.mark.timeout(40)
 def test_every_other_module_a_site_loads_is_carried_or_left_out_on_purpose(census):
     """A library loaded by its name reaches the bundle only if the analysis sees it elsewhere
     (an import statement in the package), the spec collects it, or the spec excludes it, the

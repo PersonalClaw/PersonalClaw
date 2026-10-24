@@ -432,6 +432,7 @@ def _answered_on_the_channel(gateway: _Gateway, text: str) -> list[dict[str, str
     )
 
 
+@pytest.mark.timeout(50)
 def test_a_headless_gateway_answers_its_channel_through_the_door(start_gateway, home):
     gateway = start_gateway("--headless")
 
@@ -442,6 +443,7 @@ def test_a_headless_gateway_answers_its_channel_through_the_door(start_gateway, 
     assert "no channel app is configured" not in gateway.log(), gateway.evidence()
 
 
+@pytest.mark.timeout(40)
 def test_a_headless_gateway_serves_no_dashboard_page_and_answers_its_clients(start_gateway, home):
     gateway = start_gateway("--headless")
 
@@ -490,6 +492,7 @@ def test_without_its_pages_the_route_table_is_the_same_api():
     assert {path for _method, path in full - headless} == PAGES
 
 
+@pytest.mark.timeout(50)
 def test_the_full_gateway_answers_the_same_channel_and_serves_the_dashboard(start_gateway, home):
     """The positive control: the same home, started as the full gateway."""
     gateway = start_gateway()

@@ -31,6 +31,7 @@ _name_st = st.text(
 class TestMemoryScopedByCwdProperty:
     # Filesystem-fallback memory is partitioned by the session's working
     # directory: build_session_context(cwd=...) must look memory up by that cwd.
+    @pytest.mark.timeout(40)
     @given(cwd=_name_st)
     @settings(deadline=None)
     def test_memory_scoped_by_cwd_in_build_session_context(self, cwd: str, tmp_path_factory):

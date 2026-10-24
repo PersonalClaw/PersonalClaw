@@ -406,9 +406,7 @@ def _sink_problems(tree: ast.AST, handler_classes: set[str]) -> tuple[list[str],
     return problems, sinks
 
 
-# A census of the tree: under coverage on CI it took 50-112 s of the suite's 120 s (2026-10-14/15).
-# It gets the 300 s the inert-surface census's tests have (tests/test_inert_surface_baseline.py).
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(150)
 def test_every_log_sink_the_tree_makes_masks_what_it_writes():
     """``gateway.log``, the console stream a service manager keeps, and the Logs page's buffer
     and live stream: a record reaches each through a handler, and the handler's formatter is

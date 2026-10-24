@@ -91,6 +91,7 @@ _PLANTED_REL = "src/personalclaw/dashboard/handlers/planted.py"
 _PLANTED_SITE = f"{_PLANTED_REL}::api_planted::json_error(f'planted_{{exc}}', status=400)"
 
 
+@pytest.mark.timeout(50)
 def test_a_planted_dynamic_code_site_fails_by_name_and_a_fixed_one_by_its_line():
     """The positive control, on the real list: the tree's sites with a planted module's two
     computed codes fail, naming each (the second in the handler as ``#2``), and the literal one

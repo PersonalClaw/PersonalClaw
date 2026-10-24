@@ -7362,19 +7362,37 @@ _SCAFFOLD_MARKS = (
     'site = "tests/test_slow.py::_SHARED"\n'
     "cap = 240\n"
     'reason = "a mark a decorator reuses, by a name bound to a constant"\n'
+    "\n[[mark]]\n"
+    'site = "tests/test_slow.py::ROW_TIMEOUTS[a slow row]"\n'
+    "cap = 90\n"
+    'reason = "a table row\'s own mark, keyed by its name"\n'
 )
+
+
+def _plant_and_list(rel: str, text: str, site: str, cap: int) -> Callable[[Path], None]:
+    """*text* appended to *rel*, and its mark listed with a reason, as a reviewed entry would be."""
+
+    def plant(root: Path) -> None:
+        _append(rel, text)(root)
+        _append(
+            timeout_marks.LIST,
+            f'\n[[mark]]\nsite = "{site}"\ncap = {cap}\nreason = "listed, with a reason"\n',
+        )(root)
+
+    return plant
 
 
 def _timeout_scaffold(root: Path) -> None:
     """A tree where the rule holds: one listed decorator, one listed mark held in a name whose cap
-    is a module constant, and a test with no mark."""
+    is a module constant, a listed mark keyed by a table row's name, and a test with no mark."""
     _write(
         root,
         _MARKED_TEST,
         "import pytest\n\n_CAP = 200 + 40\n_SHARED = pytest.mark.timeout(_CAP)\n\n\n"
         "@pytest.mark.timeout(300)\ndef test_it_is_slow():\n    pass\n\n\n"
         "@_SHARED\ndef test_it_shares_a_cap():\n    pass\n\n\n"
-        "def test_it_is_quick():\n    pass\n",
+        "def test_it_is_quick():\n    pass\n\n\n"
+        'ROW_TIMEOUTS = {"a slow row": pytest.mark.timeout(90)}\n',
     )
     _write(root, timeout_marks.LIST, _SCAFFOLD_MARKS)
 
@@ -7400,7 +7418,7 @@ EVERY_TIMEOUT_MARK_IS_LISTED = Row(
                 "    for item in items:\n"
                 "        item.add_marker(pytest.mark.timeout(60))\n",
             ),
-            expect="tests/conftest.py::pytest_collection_modifyitems sets a 60 s timeout",
+            expect="tests/conftest.py::pytest_collection_modifyitems caps every test it reaches",
         ),
         Control(
             "a module's pytestmark",
@@ -7408,7 +7426,42 @@ EVERY_TIMEOUT_MARK_IS_LISTED = Row(
                 "tests/test_planted.py",
                 "import pytest\n\npytestmark = [pytest.mark.anyio, pytest.mark.timeout(500)]\n",
             ),
-            expect="tests/test_planted.py::pytestmark sets a 500 s timeout",
+            expect="tests/test_planted.py::pytestmark caps every test it reaches",
+        ),
+        Control(
+            "a listed module's pytestmark, still a blanket",
+            _plant_and_list(
+                "tests/test_planted.py",
+                "import pytest\n\npytestmark = pytest.mark.timeout(500)\n",
+                "tests/test_planted.py::pytestmark",
+                500,
+            ),
+            expect="tests/test_planted.py::pytestmark caps every test it reaches",
+        ),
+        Control(
+            "a listed mark in a conftest, still a blanket",
+            _plant_and_list(
+                "tests/sub/conftest.py",
+                "import pytest\n\n\n@pytest.fixture\ndef slow(request):\n"
+                "    request.node.add_marker(pytest.mark.timeout(60))\n",
+                "tests/sub/conftest.py::slow",
+                60,
+            ),
+            expect="tests/sub/conftest.py::slow caps every test it reaches",
+        ),
+        _plant(
+            "an unlisted row in a table of marks",
+            _MARKED_TEST,
+            '{"a slow row": pytest.mark.timeout(90)}',
+            '{"a slow row": pytest.mark.timeout(90), "another": pytest.mark.timeout(70)}',
+            expect="tests/test_slow.py::ROW_TIMEOUTS[another] sets a 70 s timeout",
+        ),
+        _plant(
+            "a table row's cap changed without its entry",
+            _MARKED_TEST,
+            '{"a slow row": pytest.mark.timeout(90)}',
+            '{"a slow row": pytest.mark.timeout(95)}',
+            expect="ROW_TIMEOUTS[a slow row] sets 95 s where tests/timeout-marks.toml lists 90 s",
         ),
         Control(
             "a mark through `from pytest import mark as m`",
@@ -7488,6 +7541,156 @@ EVERY_TIMEOUT_MARK_IS_LISTED = Row(
 )
 
 ROWS = (*ROWS, EVERY_TIMEOUT_MARK_IS_LISTED)
+
+
+# ── The suite's default cap is set once ─────────────────────────────────────────────────────
+#
+# Every test runs under timeout_marks.DEFAULT seconds, the one `--timeout` in pyproject.toml's
+# addopts (#3926). A step, a package's pytest config, an ini key or PYTEST_TIMEOUT that passes
+# another would give a whole job a second default, which no mark and no reason names.
+
+_DEFAULT_CAP = f"--timeout={timeout_marks.DEFAULT}"
+_CAP_CATALOGUE = "tools/ci/catalogue.toml"
+_CAP_STEP = 'argv = ["uv", "run", "pytest", "-n", "auto", "tests"]'
+
+
+def _default_scaffold(root: Path) -> None:
+    """A tree where the cap is set once: pyproject's addopts, and a catalogue step, a package, a
+    Makefile target, a workflow and a script that run pytest without one."""
+    _write(
+        root,
+        "pyproject.toml",
+        f'[tool.pytest.ini_options]\naddopts = ["--verbose", "{_DEFAULT_CAP}"]\n'
+        'timeout_method = "signal"\n',
+    )
+    _write(
+        root,
+        "packages/client/pyproject.toml",
+        '[tool.pytest.ini_options]\naddopts = ["-q"]\ntestpaths = ["tests"]\n',
+    )
+    _write(
+        root,
+        _CAP_CATALOGUE,
+        '[[job]]\nid = "suite"\n\n[job.env]\nPYTHONHASHSEED = "0"\n\n'
+        f"[[job.command]]\n{_CAP_STEP}\n\n"
+        '[[job]]\nid = "e2e"\n\n[[job.command]]\n'
+        'argv = ["npx", "playwright", "test", "--timeout", "60000"]\n',
+    )
+    _write(root, "Makefile", "test:\n\t$(PYTHON) -m pytest -n auto --dist worksteal tests\n")
+    _write(
+        root,
+        ".github/workflows/ci.yml",
+        "jobs:\n  e2e:\n    steps:\n      - run: npx playwright test --timeout 60000\n",
+    )
+    _write(root, "scripts/run_suite.sh", '#!/bin/sh\nexec python -m pytest tests "$@"\n')
+    # A test's own child pytest, over a scratch tree it built, is under the test's own cap.
+    _write(
+        root,
+        "tests/test_child.py",
+        'import subprocess\n\n\ndef test_it():\n    subprocess.run(["pytest", "--timeout=1"])\n',
+    )
+
+
+THE_DEFAULT_CAP_IS_SET_ONCE = Row(
+    name="the-suite-default-cap-is-set-once-in-pyproject",
+    check=timeout_marks.default_violations,
+    scaffold=_default_scaffold,
+    controls=(
+        _plant(
+            "the default raised",
+            "pyproject.toml",
+            _DEFAULT_CAP,
+            "--timeout=120",
+            expect=f"must pass the default cap once, as {_DEFAULT_CAP}",
+        ),
+        _plant(
+            "the default removed",
+            "pyproject.toml",
+            f', "{_DEFAULT_CAP}"',
+            "",
+            expect="it passes none",
+        ),
+        _plant(
+            "a second cap in addopts",
+            "pyproject.toml",
+            f'"{_DEFAULT_CAP}"',
+            f'"{_DEFAULT_CAP}", "--timeout=300"',
+            expect="must pass the default cap once",
+        ),
+        _plant(
+            "the cap as an ini key",
+            "pyproject.toml",
+            'timeout_method = "signal"',
+            "timeout = 300",
+            expect="pyproject.toml sets pytest-timeout's timeout ini key",
+        ),
+        _plant(
+            "the cap made to leave fixtures out",
+            "pyproject.toml",
+            'timeout_method = "signal"',
+            "timeout_func_only = true",
+            expect="sets pytest-timeout's timeout_func_only ini key",
+        ),
+        _plant(
+            "a package's own cap",
+            "packages/client/pyproject.toml",
+            'addopts = ["-q"]',
+            'addopts = ["-q", "--timeout=600"]',
+            expect="packages/client/pyproject.toml's addopts passes a cap of its own",
+        ),
+        _plant(
+            "a catalogue step's own cap",
+            _CAP_CATALOGUE,
+            _CAP_STEP,
+            'argv = ["uv", "run", "pytest", "-n", "auto", "--timeout=90", "tests"]',
+            expect="the catalogue's suite passes pytest a cap",
+        ),
+        _plant(
+            "a catalogue step's ini override",
+            _CAP_CATALOGUE,
+            _CAP_STEP,
+            'argv = ["uv", "run", "pytest", "-o", "timeout=90", "tests"]',
+            expect="the catalogue's suite passes pytest a cap",
+        ),
+        _plant(
+            "a catalogue job's PYTEST_TIMEOUT",
+            _CAP_CATALOGUE,
+            'PYTHONHASHSEED = "0"',
+            'PYTEST_TIMEOUT = "90"',
+            expect="the catalogue's suite sets PYTEST_TIMEOUT in its env",
+        ),
+        _plant(
+            "a catalogue step's PYTEST_TIMEOUT",
+            _CAP_CATALOGUE,
+            _CAP_STEP,
+            _CAP_STEP + '\nenv = { PYTEST_TIMEOUT = "90" }',
+            expect="the catalogue's suite sets PYTEST_TIMEOUT on a step",
+        ),
+        _plant(
+            "a Makefile target's own cap",
+            "Makefile",
+            "--dist worksteal tests",
+            "--dist worksteal --timeout=0 tests",
+            expect="Makefile:2 passes pytest a cap of its own",
+        ),
+        _plant(
+            "a workflow's PYTEST_TIMEOUT",
+            ".github/workflows/ci.yml",
+            "jobs:\n",
+            "env:\n  PYTEST_TIMEOUT: 90\njobs:\n",
+            expect=".github/workflows/ci.yml:2 passes pytest a cap of its own",
+        ),
+        _plant(
+            "a script's own cap",
+            "scripts/run_suite.sh",
+            "pytest tests",
+            "pytest --timeout=600 tests",
+            expect="scripts/run_suite.sh:2 passes pytest a cap of its own",
+        ),
+    ),
+)
+
+ROWS = (*ROWS, THE_DEFAULT_CAP_IS_SET_ONCE)
 
 
 # ── The suite's temporary folders stay outside the runner's home ─────────────────────────────
@@ -9444,7 +9647,7 @@ _RUNNER_PYPROJECT = (
     '[project]\nname = "planted"\ndependencies = ["aiohttp>=3"]\n\n'
     "[project.optional-dependencies]\n"
     'dev = [\n    "pytest>=7",\n    "pytest-xdist>=3",\n]\n\n'
-    '[tool.pytest.ini_options]\naddopts = ["--timeout=120"]\n'
+    '[tool.pytest.ini_options]\naddopts = ["--timeout=30"]\n'
 )
 _RUNNER_PACKAGE = "packages/client/pyproject.toml"
 _RUNNER_PACKAGE_TOML = (
@@ -9541,7 +9744,7 @@ PYTEST_RETRIES_ONCE_FRESH_ON_ITS_BUDGET = Row(
     controls=(
         Control(
             "a second retry in addopts",
-            _edit(_PYPROJECT, '"--timeout=120"', '"--timeout=120", "--reruns=2"'),
+            _edit(_PYPROJECT, '"--timeout=30"', '"--timeout=30", "--reruns=2"'),
             expect="pyproject.toml's addopts passes --reruns,",
         ),
         Control(
@@ -14097,7 +14300,38 @@ EVERY_PYTEST_STEP_WRITES_JUNIT_AND_EVERY_UNLOCKED_INSTALL_IS_NAMED = Row(
 ROWS = (*ROWS, EVERY_PYTEST_STEP_WRITES_JUNIT_AND_EVERY_UNLOCKED_INSTALL_IS_NAMED)
 
 
-@pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
+#: The rows that need more than the suite's default cap, each with its own, keyed by the row's
+#: name. tests/timeout-marks.toml lists each one, as ``ROW_TIMEOUTS[<row>]``, with why.
+ROW_TIMEOUTS = {
+    "every rail lives in tests/rails": pytest.mark.timeout(190),
+    "every catalogue command is the workflow's": pytest.mark.timeout(120),
+    "every workflow that runs on pull_request is cancelled when the pull request closes": (
+        pytest.mark.timeout(80)
+    ),
+    "every-timeout-mark-is-listed-with-its-reason": pytest.mark.timeout(80),
+    "no-workflow-job-outside-the-catalogue-runs-a-test": pytest.mark.timeout(90),
+    "every fail-closed test module carries the security marker": pytest.mark.timeout(70),
+    "each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job": (
+        pytest.mark.timeout(70)
+    ),
+    "no test takes an unlisted fixed wait of half a second or more": pytest.mark.timeout(60),
+    "no test walks a source root itself": pytest.mark.timeout(50),
+    "no workflow that runs candidate code posts the merge-verdict check": pytest.mark.timeout(60),
+    "every concurrency group a candidate joins keys on its pull request or its head": (
+        pytest.mark.timeout(50)
+    ),
+    "nothing-throws-an-exit-status-away-unseen": pytest.mark.timeout(40),
+}
+
+
+def table_params(rows: Sequence[Row], timeouts: dict[str, Any]) -> list[Any]:
+    """Each row as a test parameter named by the row, carrying its own mark when it has one."""
+    unknown = sorted(set(timeouts) - {row.name for row in rows})
+    assert not unknown, f"a timeout is keyed by no row of the table: {unknown}"
+    return [pytest.param(row, marks=timeouts.get(row.name, ()), id=row.name) for row in rows]
+
+
+@pytest.mark.parametrize("row", table_params(ROWS, ROW_TIMEOUTS))
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

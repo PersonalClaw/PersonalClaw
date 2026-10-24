@@ -11,6 +11,7 @@ import tempfile
 import unittest.mock
 from pathlib import Path
 
+import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
@@ -281,6 +282,7 @@ class TestConfigLoaderProperties:
     """Property-based tests for the config loader validation logic."""
 
     # Property: AppConfig load/to_dict round-trip
+    @pytest.mark.timeout(40)
     @given(config=_personalclaw_config_st)
     @settings(deadline=None)
     def test_load_to_dict_round_trip(

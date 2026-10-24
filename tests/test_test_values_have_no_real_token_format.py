@@ -30,6 +30,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 
 #: Published formats (rule 1). Written with character classes so this file matches none of them.
@@ -241,6 +243,7 @@ def _id_census(paths: list[Path]) -> dict[str, list[str]]:
     return out
 
 
+@pytest.mark.timeout(50)
 def test_no_test_value_has_a_published_token_format():
     real = {path: hits for path, (hits, _) in _census().items() if hits}
     assert real == {}, (
@@ -250,6 +253,7 @@ def test_no_test_value_has_a_published_token_format():
     )
 
 
+@pytest.mark.timeout(60)
 def test_a_provider_key_prefix_appears_only_where_the_shape_is_tested():
     prefixed = {path for path, (_, hits) in _census().items() if hits}
     new = sorted(prefixed - _SHAPE_TESTS)

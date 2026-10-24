@@ -347,6 +347,7 @@ def _write_config(home: Path, security_section: dict) -> None:
 
 
 class TestStrictlyAdditiveUserConfig:
+    @pytest.mark.timeout(60)
     def test_the_effective_set_is_a_superset_of_the_baseline_for_any_user_config(self, tmp_path):
         """The property, over a generated + adversarial input space.
 
@@ -470,6 +471,7 @@ class TestSharedSource:
         assert "mkfs" in decision.reason
         assert len(shell_denylist.BUILTIN_DENIED_COMMAND_PATTERNS) == 119
 
+    @pytest.mark.timeout(50)
     def test_no_module_keeps_a_second_in_code_copy_of_the_baseline(self):
         """Two copies is how the two paths drift. Only ``shell_denylist.py`` may name the
         packaged file, and nothing may re-declare the patterns.

@@ -426,6 +426,7 @@ def test_restart_still_replaces_the_running_gateway(
         pass  # already reaped by subprocess's own clean-up of the Popen `restart` let go
 
 
+@pytest.mark.timeout(60)
 def test_the_claim_ends_with_its_process(world: _World) -> None:
     """A gateway killed outright lets go of its home, and a child it started that outlives it does
     not keep the claim: a fresh start serves, though the killed one's record is still there."""

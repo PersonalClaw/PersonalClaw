@@ -57,6 +57,7 @@ def _run(tmp_path: Path, *args: str) -> list[dict[str, str]]:
     ]
 
 
+@pytest.mark.timeout(50)
 @pytest.mark.parametrize("workers, expected", [([], 0), (["-n", "2"], 2)], ids=["one", "xdist"])
 def test_each_process_records_its_platform_and_worker_count_once(
     workers: list[str], expected: int, tmp_path: Path

@@ -26,6 +26,7 @@ def _committed() -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@pytest.mark.timeout(70)
 @pytest.mark.parametrize("ratchet", gen.RATCHETS)
 def test_committed_baseline_is_not_stale_on_the_shrink_side(ratchet):
     """The complement of the rise check: a committed counter ABOVE the current one means a

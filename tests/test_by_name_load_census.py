@@ -32,6 +32,7 @@ import json
 from pathlib import Path
 
 import by_name_load_census_shared
+import pytest
 from by_name_load_census_shared import _LOST_IN_THE_DESKTOP_APP, _REPO, _SPEC, _texts
 
 manifest = by_name_load_census_shared.manifest
@@ -47,6 +48,7 @@ manifest = by_name_load_census_shared.manifest
 
 
 class TestTheNativeAppsReachTheBundle:
+    @pytest.mark.timeout(40)
     def test_every_factory_is_carried_or_ships_as_package_data(self, manifest):
         """A factory in core is a module the bundle carries; one in the app's own folder is a
         file the bundle carries as package data, read by its path."""
@@ -69,6 +71,7 @@ class TestTheNativeAppsReachTheBundle:
 
 
 class TestTheBundleNamesOnlyWhatExists:
+    @pytest.mark.timeout(40)
     def test_every_name_is_a_module_of_the_package(self, manifest):
         """The build looks for each name, so a name that is no module warns on every build."""
         modules = manifest.package_modules(_REPO)

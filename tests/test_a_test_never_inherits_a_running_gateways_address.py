@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import env_guard
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,6 +35,7 @@ def test_no_test_starts_with_a_running_gateways_address() -> None:
     assert leaked == [], f"a test inherited {', '.join(leaked)} from the shell that ran pytest"
 
 
+@pytest.mark.timeout(50)
 def test_a_run_started_from_a_gateways_shell_does_not_inherit_its_address() -> None:
     """The rail in place: a run of the test above, started with every kind of gateway variable
     set, still finds none of them."""
