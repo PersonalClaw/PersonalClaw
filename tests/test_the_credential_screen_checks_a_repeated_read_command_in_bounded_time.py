@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import random
 import re
-import time
 from pathlib import Path
 
+import cpu_budget
 import pytest
 from table_rows import row
 from test_the_credential_screen_checks_a_long_command_in_bounded_time import (
@@ -380,15 +380,6 @@ def test_the_screen_gives_the_old_answer_refusal_string_and_all(home):
 LONG = 256 * 1024
 
 
-def _seconds(fn) -> float:
-    """The CPU time this process spends on a second call of *fn*. CPU time, not the wall clock:
-    other processes on a loaded machine stretch the wall clock without adding any work."""
-    fn()  # build the regex and its parts once, as a running gateway already has
-    started = time.process_time()
-    fn()
-    return time.process_time() - started
-
-
 @pytest.mark.parametrize(
     "build",
     [
@@ -403,7 +394,7 @@ def test_a_256_kb_line_that_repeats_a_command_is_checked_in_under_a_second(home,
     at 40 KB, measured). Measured on this tree at 256 KB: 0.23 to 0.44 s for the whole screen."""
     text = build()
     assert len(text) >= LONG - 64
-    took = _seconds(lambda: security.is_sensitive_bash_command(text))
+    took = cpu_budget.seconds(lambda: security.is_sensitive_bash_command(text))
     assert security.is_sensitive_bash_command(text) is None
     assert took < 1.0, f"{took:.2f}s"
 
@@ -428,7 +419,7 @@ def test_a_256_kb_line_of_commands_that_reads_a_credential_is_refused_in_under_a
     text = build()
     assert len(text) >= LONG
     refused = security._SHELL_REFUSAL[security.CREDENTIAL]
-    took = _seconds(lambda: security.is_sensitive_bash_command(text))
+    took = cpu_budget.seconds(lambda: security.is_sensitive_bash_command(text))
     assert security.is_sensitive_bash_command(text) == refused
     assert took < 1.0, f"{took:.2f}s"
 
@@ -441,7 +432,7 @@ def test_a_256_kb_word_of_interpreter_names_run_together_is_searched_in_under_a_
     text = "pythonnodeperl" * (LONG // 14 + 1) + " x"
     assert len(text) >= LONG
     normalised = strip_shell_quotes(security._normalise_for_matching(text))
-    took = _seconds(lambda: security._reads_credential_folder(normalised))
+    took = cpu_budget.seconds(lambda: security._reads_credential_folder(normalised))
     assert security._reads_credential_folder(normalised) is False
     assert security.is_sensitive_bash_command(text) is None
     assert took < 1.0, f"{took:.2f}s"

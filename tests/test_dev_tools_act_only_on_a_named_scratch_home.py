@@ -86,10 +86,18 @@ _NOTHING_NAMED = "Name the scratch home this runs against"
 _DEFAULT_NAMED = "resolves to the default home"
 
 
+#: The variables that start coverage in a child (``patch = ["subprocess"]`` passes the run's
+#: configuration as ``COVERAGE_PROCESS_CONFIG``). Breadth's coverage leg sets them, and a child
+#: that starts coverage opens its data file with ``sqlite3`` as it exits, which the trap refuses
+#: as a reach for a database. These programs are run to prove a refusal, not to be measured.
+_COVERAGE_STARTS = ("COVERAGE_PROCESS_CONFIG", "COVERAGE_PROCESS_START", "COV_CORE_")
+
+
 @dataclass
 class _Machine:
     """A scratch user's machine: their HOME, the default home inside it, and the environment a
-    program run there gets (no PersonalClaw setting from the shell that runs the suite)."""
+    program run there gets (no PersonalClaw setting from the shell that runs the suite, and no
+    coverage: :data:`_COVERAGE_STARTS`)."""
 
     root: Path
 
@@ -102,7 +110,11 @@ class _Machine:
         return self.user_home / ".personalclaw"
 
     def env(self, **extra: str) -> dict[str, str]:
-        env = {k: v for k, v in os.environ.items() if not k.startswith("PERSONALCLAW_")}
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith(("PERSONALCLAW_", *_COVERAGE_STARTS))
+        }
         env.update(HOME=str(self.user_home), **extra)
         return env
 
