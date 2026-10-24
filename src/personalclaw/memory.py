@@ -1099,15 +1099,26 @@ class MemoryStore:
                 conn.close()
                 raise
             conn.close()
-            conn = self._rebuild_in_place()
+            conn = self._rebuild_in_place(unless_current=True)
         self._recovered()
         return conn
 
-    def _rebuild_in_place(self) -> sqlite3.Connection:
+    def _rebuild_in_place(self, *, unless_current: bool = False) -> sqlite3.Connection:
         """Drop the index's table and make it again in the same database, holding every memory
-        file. FTS5 drops the tables it keeps for the index with it, and nothing else."""
+        file. FTS5 drops the tables it keeps for the index with it, and nothing else.
+
+        One transaction, from the drop to the last row: SQLite commits a ``DROP`` or a ``CREATE``
+        on its own otherwise, and a store opening the index between them and the rows read the
+        new table empty, so a search found nothing. Now another store reads the index as it was
+        until the whole rebuild commits, and a store of this process that finds it old waits on
+        :data:`_REPAIR_LOCK` for it. With *unless_current*, an index another process rebuilt while
+        this one waited for the write lock is used as it is."""
         conn = connect(str(self._index_db))
         try:
+            conn.execute("BEGIN IMMEDIATE")
+            if unless_current and _current_schema(conn):
+                conn.commit()
+                return conn
             conn.execute(f"DROP TABLE IF EXISTS {_FTS_TABLE}")
             conn.execute(_CREATE_FTS)
             self._fill(conn)

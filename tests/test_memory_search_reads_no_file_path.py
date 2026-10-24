@@ -126,9 +126,9 @@ def test_two_stores_opening_an_old_index_at_once_rebuild_it_once(home, monkeypat
     rebuilds: list[int] = []
     rebuild = MemoryStore._rebuild_in_place
 
-    def counted(self: MemoryStore) -> object:
+    def counted(self: MemoryStore, **how: bool) -> object:
         rebuilds.append(1)
-        return rebuild(self)
+        return rebuild(self, **how)
 
     monkeypatch.setattr(MemoryStore, "_rebuild_in_place", counted)
     stores = [MemoryStore(), MemoryStore()]
@@ -146,3 +146,67 @@ def test_two_stores_opening_an_old_index_at_once_rebuild_it_once(home, monkeypat
         thread.join(timeout=30)
     assert found == [["projects.md"], ["projects.md"]], found
     assert rebuilds == [1], "one rebuild; the other store finds the index current"
+
+
+def test_a_search_while_another_store_rebuilds_the_index_finds_what_the_files_say(
+    home, monkeypatch
+) -> None:
+    """The guarantee: a search never reads a half-rebuilt index. One store is held inside its
+    rebuild, its rows not yet written, while a second searches: the second finds the memory, after
+    the rebuild or from the index as it was, and never an empty index. The hold is bounded, so a
+    search that is kept waiting for the rebuild lets it go on."""
+    MemoryStore().init()
+    db = home / "memory_index.db"
+    _old_index(db, OLD_SCHEMAS["0.2.7"])
+    filling = threading.Event()
+    searched = threading.Event()
+    fill = MemoryStore._fill
+
+    def held(self: MemoryStore, conn: object) -> int:
+        if not filling.is_set():
+            filling.set()
+            searched.wait(timeout=0.3)
+        return fill(self, conn)
+
+    monkeypatch.setattr(MemoryStore, "_fill", held)
+    found: dict[str, list[str]] = {}
+
+    def rebuild() -> None:
+        found["rebuilding"] = _names(MemoryStore().search("projects"))
+
+    def search() -> None:
+        assert filling.wait(timeout=30), "the first store never reached its rebuild"
+        found["during"] = _names(MemoryStore().search("projects"))
+        searched.set()
+
+    threads = [threading.Thread(target=rebuild), threading.Thread(target=search)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert found == {"rebuilding": ["projects.md"], "during": ["projects.md"]}, found
+
+
+def test_an_index_another_process_rebuilt_while_this_one_waited_is_used_as_it_is(
+    home, monkeypatch
+) -> None:
+    """Another process does not share this one's repair lock, so the rebuild looks at the index
+    again once it holds the database's write lock: a current index is used as it is, not rebuilt
+    a second time."""
+    MemoryStore().init()
+    _old_index(home / "memory_index.db", OLD_SCHEMAS["0.2.7"])
+    assert _names(MemoryStore().search("projects")) == ["projects.md"], "rebuilt, so current"
+    fills: list[int] = []
+    fill = MemoryStore._fill
+
+    def counted(self: MemoryStore, conn: object) -> int:
+        fills.append(1)
+        return fill(self, conn)
+
+    monkeypatch.setattr(MemoryStore, "_fill", counted)
+    store = MemoryStore()
+    store._rebuild_in_place(unless_current=True).close()
+    assert fills == [], "a current index is not rebuilt"
+    store._rebuild_in_place().close()
+    assert fills == [1], "a repair rebuilds whatever the schema"
+    assert _names(store.search("projects")) == ["projects.md"]
