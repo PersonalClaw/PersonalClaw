@@ -12,6 +12,9 @@ it with a tag and a commit. It refuses, naming why, unless:
 - the commit's own push run on ``main`` is green (#3911, :func:`main_push_green`): read in each
   workflow a push to ``main`` runs in, the newer shape first (``workflows.MAIN_PUSH``,
   ``merge.yml`` once #3915's flip lands, ``ci.yml`` until then), so the gate outlives the flip.
+- no ``release.yml`` run is still going (#3911, :func:`no_release_running`): every release
+  shares one concurrency group, where GitHub keeps one waiting run, so a tag made behind a
+  running release could have its run replaced by the next and never be released.
 
 With ``--rehearsal`` the tag it checks for, and creates, is ``rehearsal-<tag>``: every check and
 the App are the same, and no ``v*`` rule or release trigger sees it, so the whole path can be
@@ -229,6 +232,48 @@ def create(repository: str, tag: str, commit: str, post: Post) -> str:
     return sha
 
 
+RELEASE_WORKFLOW = "release.yml"
+#: Every state a run is in before it finishes, as the API's ``status`` filter names them.
+UNFINISHED = ("queued", "in_progress", "waiting", "requested", "pending", "action_required")
+
+
+def no_release_running(repository: str, get: Get) -> None:
+    """Refuse (``trust.Refused``) while any ``release.yml`` run of *repository* has not finished,
+    naming it.
+
+    Every release shares one concurrency group (``release.yml``'s ``concurrency``), which never
+    cancels the run that is publishing but keeps only one run waiting: a tag made while a release
+    runs waits behind it, and a third tag's run would replace it, leaving that tag with no
+    release. A tag made only once the last release finished starts the one run, so through this
+    path none is ever replaced. An answer it cannot read refuses, never reads as no release."""
+    for status in UNFINISHED:
+        path = (
+            f"/repos/{repository}/actions/workflows/{RELEASE_WORKFLOW}/runs"
+            f"?status={status}&per_page=100"
+        )
+        try:
+            answer = get(path)
+        except (OSError, ValueError) as error:
+            raise trust.Refused(
+                f"cannot read {RELEASE_WORKFLOW}'s {status} runs: {error}"
+            ) from None
+        listed = answer.get("workflow_runs") if isinstance(answer, dict) else None
+        if not isinstance(listed, list):
+            raise trust.Refused(f"cannot read {RELEASE_WORKFLOW}'s {status} runs: {answer!r}")
+        for run in listed:
+            if (
+                isinstance(run, dict)
+                and run.get("status") != "completed"
+                and str(run.get("path", "")).split("@", 1)[0] == WORKFLOW_DIR + RELEASE_WORKFLOW
+            ):
+                url = run.get("html_url") or f"run {run.get('id')}"
+                raise trust.Refused(
+                    f"{RELEASE_WORKFLOW}'s run for {run.get('head_branch')} ({url}) is "
+                    f"{run.get('status')}: a tag made now would wait behind it, where the next "
+                    "could replace it. Tag once that release has finished"
+                )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tools.ci release-tag", description=(__doc__ or "").split("\n")[0]
@@ -253,8 +298,13 @@ def main(argv: list[str] | None = None) -> int:
         runs_token = os.environ.get("RUNS_TOKEN")
         if not runs_token:
             raise trust.Refused("no RUNS_TOKEN: the job's token reads the commit's push run")
-        run = main_push_green(args.repository, args.commit, github_get(runs_token))
-        print(f"may tag: {args.commit} on main as {name}; its push run on main is green: {run}")
+        get = github_get(runs_token)
+        run = main_push_green(args.repository, args.commit, get)
+        no_release_running(args.repository, get)
+        print(
+            f"may tag: {args.commit} on main as {name}; its push run on main is green: {run}; "
+            "no release is running"
+        )
         if args.create:
             token = os.environ.get("GH_TOKEN")
             if not token:
