@@ -78,8 +78,11 @@ is read in each workflow a push to `main` runs in, the newer shape first (`workf
 `merge.yml` once #3915's flip lands, `ci.yml` until then), and the first with a run for the
 commit decides, so a red there is never passed over for the other's green. Its newest run must
 have completed with success: one still going, failed, cancelled, or whose gate read a shard as
-superseded or unproven is refused, naming the run. The job reads it with its own token, given
-`actions: read` for that alone. Only then is the App's token made, asked for `contents: write`
+superseded or unproven is refused, naming the run. No `release.yml` run may be unfinished
+either (`release_tag.no_release_running`: queued, in progress, waiting or any other state before
+it completes), named when one is: every release shares one concurrency group, where GitHub keeps
+one waiting run and a newer one replaces it, so a tag made behind a running release could be left
+with no release. The job reads both with its own token, given `actions: read` for that alone. Only then is the App's token made, asked for `contents: write`
 alone and handed only to the step that creates the annotated tag and its ref. The job runs only
 on `main`, in the `ci-controller` environment, which deploys only from `main` and holds the
 App's key. The trusted `merge-verdict` (#3910) and the breadth evidence (#3913) join the gate

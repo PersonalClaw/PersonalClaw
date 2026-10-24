@@ -16,6 +16,14 @@ on:
   # the tag. The weekly rehearsal (release-rehearsal.yml) runs all of the build on main instead.
   workflow_dispatch:
 
+# One release at a time, whatever its tag, and never cancelled (#3911): a second release waits until
+# the first has finished publishing, its approvals included, and a release that is publishing is
+# never stopped. GitHub keeps one waiting run per group: a third would replace the waiting second,
+# never the one running, so release-tag.yml makes no tag while a release.yml run is unfinished.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 permissions:
   contents: read
 

@@ -189,10 +189,23 @@ def _waits_on(jobs: dict, job_id: str, target: str, seen: frozenset = frozenset(
     )
 
 
+#: The one release group: a group per tag would let two tags publish at once.
+RELEASE_CONCURRENCY = {"group": "release", "cancel-in-progress": False}
+
+
 def release_problems(release_text: str) -> list[str]:
-    """release.yml builds through release-artifacts.yml, and publishes only after all of it."""
-    jobs = _load(release_text).get("jobs") or {}
+    """release.yml builds through release-artifacts.yml, and publishes only after all of it, one
+    release at a time."""
+    workflow = _load(release_text)
+    jobs = workflow.get("jobs") or {}
     out: list[str] = []
+    # One group for every release, whatever its tag, never cancelled: a second release waits for
+    # the first to finish publishing, and a release that is publishing is never stopped (#3911).
+    if workflow.get("concurrency") != RELEASE_CONCURRENCY:
+        out.append(
+            f"release.yml's concurrency is {workflow.get('concurrency')!r}, not "
+            f"{RELEASE_CONCURRENCY!r}, so two releases could publish at once"
+        )
     calls = [job_id for job_id, job in jobs.items() if job.get("uses") == CALL]
     if calls != ["artifacts"]:
         return [f"release.yml calls release-artifacts.yml as {calls}, not once as job artifacts"]
@@ -643,6 +656,18 @@ def test_a_release_that_builds_or_publishes_on_its_own_is_caught() -> None:
                 1,
             ),
             "images builds again",
+        ),
+        (
+            release.replace("concurrency:\n  group: release\n  cancel-in-progress: false\n", "", 1),
+            "two releases could publish at once",
+        ),
+        (
+            release.replace("  cancel-in-progress: false\n", "  cancel-in-progress: true\n", 1),
+            "two releases could publish at once",
+        ),
+        (
+            release.replace("  group: release\n", "  group: release-${{ github.ref }}\n", 1),
+            "two releases could publish at once",
         ),
     ]:
         assert planted != release, said

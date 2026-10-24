@@ -45,6 +45,12 @@ Two consequences worth knowing before you start:
   environments. Nothing reaches PyPI until you approve both in the run's UI.
 - **Publishing is idempotent.** Both PyPI jobs use `skip-existing`, so re-running
   a release whose version is already published no-ops instead of failing.
+- **One release at a time.** Every release run shares the concurrency group `release`, which never
+  cancels. A second tag's run waits, unstarted, until the first has finished, its approvals
+  included. GitHub keeps one waiting run per group, so a third tag's run would replace the waiting
+  second, never the one running. So `release-tag.yml` refuses to make a tag while any
+  `release.yml` run is queued, waiting or in progress, and names that run: tag once it has
+  finished. A tag whose run was replaced anyway is in "If something goes wrong".
 
 ### What a tag publishes
 
@@ -514,6 +520,7 @@ then still holds no secret, and adding the rule and the secret afterwards is the
 | `build` fails at "SBOM of the wheel as installed" | `uv.lock` is stale (no re-lock in the bump), or syft cataloged less than the venv holds | nothing has published: fix on `main`, then **delete and re-push the tag** |
 | Website parity job red | its pins point at the wrong SHA | almost always the annotated-tag dereference above |
 | `website-follow` skipped the nudge | the `website-follow` environment holds no `WEBSITE_DISPATCH_TOKEN` | harmless; the daily watchdog covers it |
+| A `v*` tag with no GitHub Release, and no `release.yml` run for it, or only a cancelled one | its run waited behind another release and a later run replaced it in the `release` group (`release-tag.yml` refuses to tag while a release runs, so only a tag made around it gets here) | nothing of it was published: once no release is running, start its release on the tag itself, `gh workflow run release.yml -R PersonalClaw/PersonalClaw --ref vX.Y.Z`, and approve it as usual |
 
 **A published version is immutable.** PyPI does not allow re-uploading a
 version, so a bad release is fixed by publishing the next patch — never by trying

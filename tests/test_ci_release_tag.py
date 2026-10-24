@@ -423,3 +423,64 @@ def test_main_refuses_without_the_token_that_reads_the_runs(
     assert "no RUNS_TOKEN" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         release_tag.main(argv)  # the repository is required: there is no tag without the gate
+
+
+# ── no tag while a release runs (#3911) ───────────────────────────────────────────────────────
+
+
+def _release(status: str, *, tag: str = "v1.2.2", number: int = 41) -> dict[str, object]:
+    """A release.yml run of *tag* in *status*: a tag's push, as the API lists it."""
+    return _run("release.yml", status=status, conclusion=None, number=number, branch=tag)
+
+
+@pytest.mark.parametrize("status", release_tag.UNFINISHED)
+def test_a_release_that_has_not_finished_refuses_a_new_tag_naming_it(status: str) -> None:
+    get = FakeGet(release_yml=[_release(status)])
+    with pytest.raises(trust.Refused) as refused:
+        release_tag.no_release_running(REPOSITORY, get)
+    said = str(refused.value)
+    assert "v1.2.2" in said and status in said and said.count("/actions/runs/1041") == 1, said
+
+
+def test_finished_releases_and_other_workflows_runs_refuse_nothing() -> None:
+    finished = {**_release("completed"), "conclusion": "success"}
+    elsewhere = _run("ci.yml", status="in_progress", conclusion=None)
+    get = FakeGet(release_yml=[finished, elsewhere], ci_yml=[elsewhere])
+    release_tag.no_release_running(REPOSITORY, get)
+    asked = [p for p in get.paths if f"/actions/workflows/{release_tag.RELEASE_WORKFLOW}/" in p]
+    assert sorted(p.split("status=")[1].split("&")[0] for p in asked) == sorted(
+        release_tag.UNFINISHED
+    ), "every state a run has before it finishes is asked about"
+    assert all(p.startswith(f"/repos/{REPOSITORY}/") for p in get.paths)
+
+
+def test_releases_the_gate_cannot_read_refuse_the_tag_rather_than_pass_it() -> None:
+    def failing(path: str) -> object:
+        raise OSError("connection reset")
+
+    with pytest.raises(trust.Refused, match="cannot read release.yml"):
+        release_tag.no_release_running(REPOSITORY, failing)
+    with pytest.raises(trust.Refused, match="cannot read release.yml"):
+        release_tag.no_release_running(REPOSITORY, lambda path: {"message": "Bad credentials"})
+
+
+def test_main_creates_no_tag_while_a_release_runs(
+    planted: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The plant: a release in progress, and a commit that may otherwise be tagged."""
+    commit = str(planted["readme"])
+    post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/v1.2.3"}))
+    monkeypatch.setattr(release_tag, "github_post", lambda token: post)
+    running = FakeGet(ci_yml=[_run("ci.yml", sha=commit)], release_yml=[_release("in_progress")])
+    monkeypatch.setattr(release_tag, "github_get", lambda token: running)
+    monkeypatch.setenv("GH_TOKEN", "an-app-token")
+    monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
+    argv = ["--tag", "v1.2.3", "--commit", commit, "--repo", str(planted["repo"])]
+    assert release_tag.main([*argv, "--repository", REPOSITORY, "--create"]) == 1
+    out = capsys.readouterr().out
+    assert "release.yml's run for v1.2.2" in out and "in_progress" in out, out
+    assert post.calls == [], "no tag is made while a release runs"
+    assert release_tag.main([*argv, "--repository", REPOSITORY, "--create", "--rehearsal"]) == 1
+    assert post.calls == [], "a rehearsal is held to it as the release is"
