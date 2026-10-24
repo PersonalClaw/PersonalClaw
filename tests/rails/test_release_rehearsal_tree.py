@@ -269,7 +269,12 @@ def _build(job: str, artifacts: list[str], *, tools: str = "", bases: int = 0) -
     """One build as tools/ci/build_identity.py collects it: what ran, and what it built."""
     return {
         "job": job,
-        "runner": {"image": "ubuntu-24.04", "version": "1"},
+        "runner": {
+            "image": "ubuntu-24.04",
+            "version": "1",
+            "image_os": "ubuntu24",
+            "image_version": "1",
+        },
         "actions": [{"action": "actions/checkout", "ref": "v7", "sha": "a" * 40}],
         "toolchain": {tool: tools or None for tool in ("python", "uv", "node", "npm")},
         "bases": [{"image": "pkg:docker/python@3", "digest": "sha256:" + "b" * 64}] * bases,

@@ -14,8 +14,9 @@ tools/ci/release_manifest.py``, the way a trusted job runs the default branch's 
 
 - ``write`` stages a folder, the images' raw index bytes and the builds into a manifest
   (:func:`staged`, :func:`image_from_index`, :func:`build`). Each build is one job's: the runner
-  image its set-up log reported, every action it downloaded with its SHA, the base images that ran
-  with their digests, the Python, uv, Node and npm versions it used, and the artifacts it built.
+  image its set-up log reported and the one the image itself names, every action it downloaded
+  with its SHA, the base images that ran with their digests, the Python, uv, Node and npm
+  versions it used, and the artifacts it built.
   Every file and image is one build's, and a build that lacks any of these is refused: an image's
   names its bases and may name no host tool, and a file's names all four tools. The folder holds
   only regular files and folders with plain names: a symlink, a special file, a file or folder it
@@ -66,7 +67,7 @@ FILE_KEYS = frozenset({"digest", "size"})
 IMAGE_KEYS = frozenset({"index", "platforms"})
 SOURCE_KEYS = frozenset({"ref", "commit"})
 BUILD_KEYS = frozenset({"job", "runner", "actions", "toolchain", "bases", "artifacts"})
-RUNNER_KEYS = frozenset({"image", "version"})
+RUNNER_KEYS = frozenset({"image", "version", "image_os", "image_version"})
 ACTION_KEYS = frozenset({"action", "ref", "sha"})
 BASE_KEYS = frozenset({"image", "digest"})
 #: The tools each build names: every one for a file's build; an image's build is its bases.
@@ -410,6 +411,8 @@ def _check_builds(builds: Any, files: set[str], images: set[str]) -> None:
         runner = _exact(entry["runner"], RUNNER_KEYS, f"{job}'s runner")
         _text(runner["image"], f"{job}: its runner image")
         _text(runner["version"], f"{job}: its runner image version")
+        _text(runner["image_os"], f"{job}: its runner's own image")
+        _text(runner["image_version"], f"{job}: its runner's own image version")
         actions = entry["actions"]
         if not isinstance(actions, list) or not actions:
             raise Refused(f"{job}: names no action its set-up downloaded")

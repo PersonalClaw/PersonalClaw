@@ -138,7 +138,12 @@ def test_an_immutable_action_package_is_recorded_by_its_source_commit() -> None:
 def test_a_build_is_its_record_and_its_own_jobs_set_up_log() -> None:
     (build,) = bi.collect([_record()], JOBS, _logs())
     assert build["job"] == "artifacts / build"
-    assert build["runner"] == {"image": "ubuntu-24.04", "version": "20261012.334.1"}
+    assert build["runner"] == {
+        "image": "ubuntu-24.04",
+        "version": "20261012.334.1",
+        "image_os": "ubuntu24",
+        "image_version": "20261012.334.1",
+    }
     assert {"action": "someone/nested", "ref": "v1", "sha": NESTED} in build["actions"]
     assert build["toolchain"] == {
         "python": "3.12.15",
@@ -151,6 +156,18 @@ def test_a_build_is_its_record_and_its_own_jobs_set_up_log() -> None:
         "personalclaw-0.2.6.tar.gz",
     ]
     assert build["bases"] == []
+
+
+def test_a_runner_whose_image_and_set_up_log_disagree_keeps_both() -> None:
+    # Rehearsal run 40028736768's desktop-linux job: on an ubuntu-24.04 runner, ImageVersion read
+    # 20261023.334.3 while the set-up log reported 20261012.334.1. GitHub said both.
+    (build,) = bi.collect([_record(image_version="20261023.334.3")], JOBS, _logs())
+    assert build["runner"] == {
+        "image": "ubuntu-24.04",
+        "version": "20261012.334.1",
+        "image_os": "ubuntu24",
+        "image_version": "20261023.334.3",
+    }
 
 
 def test_an_image_build_names_its_image_and_its_bases_and_no_host_toolchain() -> None:
@@ -182,7 +199,8 @@ def test_an_image_build_names_its_image_and_its_bases_and_no_host_toolchain() ->
             "no job of this run ran on GitHub Actions 9",
         ),
         ([_record()], JOBS + [JOBS[0]], "2 jobs of this run ran on GitHub Actions 1000131001"),
-        ([_record(image_version="20261019.1.0")], JOBS, "its set-up log says 20261012.334.1"),
+        ([_record(image_version=" ")], JOBS, "names no image_version"),
+        ([_record(image_os="")], JOBS, "names no image_os"),
         ([_record(version=99)], JOBS, "not a version 1 build record"),
         ([_record(), _record()], JOBS, "recorded twice"),
         ([], JOBS, "no build record"),
