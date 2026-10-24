@@ -514,12 +514,15 @@ def register_lifecycle_hooks(app: web.Application) -> None:
         registered here and reads the service off the state. Nothing stopped it before. The
         debouncer is process-wide and runs its own thread, so it outlived the gateway that
         installed it: the commits it still held were never flushed, and the next gateway in the
-        same process was handed the old debouncer, bound to the old home."""
+        same process was handed the old debouncer, bound to the old home.
+
+        It waits for the step the loop is running (``aclose``): a cancel alone left that step's
+        executor thread running past the gateway's stop (#4768)."""
         svc = getattr(app_["state"], "_durability_svc", None)
         if svc is None:
             return
         try:
-            svc.stop()
+            await svc.aclose()
         except Exception:
             logger.debug("durability shutdown failed", exc_info=True)
 
