@@ -36,7 +36,24 @@ test('the non-axe detectors still recognise the defects they exist for', async (
     btn.style.cssText = 'width:120px;height:32px;outline:2px solid red;outline-offset:0'
     btn.textContent = 'probe-clipped'
     clip.appendChild(btn)
-    host.append(mouseOnly, clip)
+    // 3. a container that hides x and scrolls y, as the sidebar's nav does: a button at its scroll
+    //    edge loses its ring only across the axis it scrolls, so it is a scrollport's edge, not a clip
+    const scroller = document.createElement('div')
+    scroller.style.cssText = 'overflow-x:hidden;overflow-y:auto;width:140px;height:64px'
+    const above = document.createElement('div')
+    above.style.cssText = 'height:8px'
+    const below = document.createElement('div')
+    below.style.cssText = 'height:40px'
+    const atEdge = document.createElement('button')
+    atEdge.style.cssText = 'display:block;margin:0 10px;width:120px;height:32px;outline:2px solid red;outline-offset:0'
+    atEdge.textContent = 'probe-scroll-edge'
+    // 4. and one in the same container that fills the axis it HIDES: that ring is clipped
+    const acrossHidden = document.createElement('button')
+    acrossHidden.style.cssText = 'display:block;width:140px;height:24px;outline:2px solid red;outline-offset:0'
+    acrossHidden.textContent = 'probe-hidden-axis'
+    // 24 + 8 + 32: the button's bottom is the scroller's, and the 40 below it make the scroller scroll
+    scroller.append(acrossHidden, above, atEdge, below)
+    host.append(mouseOnly, clip, scroller)
     document.body.appendChild(host)
   })()`)
 
@@ -51,6 +68,14 @@ test('the non-axe detectors still recognise the defects they exist for', async (
     clipped.join('\n'),
     'the clipped-ring detector no longer finds an outward ring inside an overflow-hidden parent',
   ).toContain('probe-clipped')
+  expect(
+    clipped.join('\n'),
+    'a ring clipped across the axis its container hides is still a clip when the other axis scrolls',
+  ).toContain('probe-hidden-axis')
+  expect(
+    clipped.join('\n'),
+    "a ring at a scroll edge is a scrollport's edge, not a clip, when the container hides the other axis",
+  ).not.toContain('probe-scroll-edge')
 
   // And the negative half: the FIX must not register as a defect, or the rail would punish the
   // correct shape. A negative outline-offset draws the ring inside the clip.

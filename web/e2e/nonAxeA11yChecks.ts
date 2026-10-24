@@ -52,7 +52,11 @@ import { expect, type Page } from '@playwright/test'
 //     where the cursor is DECLARED (its parent is not pointer) is the promise.
 //   · **Scrollports.** Counting `overflow: auto/scroll` as clipping gave 67 hits across five routes,
 //     nearly all `[bottom]` — the signature of an element at a scroll container's current edge. A
-//     ring clipped by a scrollport scrolls into view; it is not the defect.
+//     ring clipped by a scrollport scrolls into view; it is not the defect. That holds per AXIS: a
+//     container that hides one axis and scrolls the other (the sidebar's nav, `overflow-y-auto
+//     overflow-x-hidden`) clips a ring only across the axis it hides. Counting both of its axes
+//     reported the nav's Automations button on CI, sitting at the nav's scroll edge with 2 px of
+//     its ring below it (#3905).
 //   · **The app shell.** `html, body, #root { overflow: hidden }` is this app's own layout, so every
 //     element below the fold reported a phantom loss of 300–2000px against it. A ring is only truly
 //     clipped when the element is ALREADY INSIDE the clipper and the ring alone falls outside, which
@@ -147,6 +151,10 @@ export const CLIPPED_RING = `() => {
       if (['hidden','clip'].includes(c.overflowX) || ['hidden','clip'].includes(c.overflowY)) { cl = p; break }
     }
     if (!cl) continue
+    // Only the axes the clipper HIDES clip a ring: across an axis it scrolls, it is a scrollport.
+    const clipStyle = getComputedStyle(cl)
+    const hidesX = ['hidden','clip'].includes(clipStyle.overflowX)
+    const hidesY = ['hidden','clip'].includes(clipStyle.overflowY)
     const cr = cl.getBoundingClientRect()
     const insideClipper = r.top >= cr.top - 1 && r.left >= cr.left - 1 && r.right <= cr.right + 1 && r.bottom <= cr.bottom + 1
     if (!insideClipper) continue
@@ -155,7 +163,8 @@ export const CLIPPED_RING = `() => {
       top: cr.top - (r.top - need), left: cr.left - (r.left - need),
       right: (r.right + need) - cr.right, bottom: (r.bottom + need) - cr.bottom,
     }
-    const bad = Object.entries(lost).filter(([, v]) => v > 0.5 && v <= 6)
+    const hides = { top: hidesY, bottom: hidesY, left: hidesX, right: hidesX }
+    const bad = Object.entries(lost).filter(([side, v]) => hides[side] && v > 0.5 && v <= 6)
     if (!bad.length) continue
     // The CLIPPER is named too, because that is often where the fix belongs. The first version
     // reported only the focused control, which sent me to a shared primitive (ui/IconButton, ~200
