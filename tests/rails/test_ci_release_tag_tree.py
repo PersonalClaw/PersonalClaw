@@ -1,10 +1,11 @@
 """``.github/workflows/release-tag.yml``'s trust shape: the one way a ``v*`` tag is made (#4584).
 
 It runs only on a dispatch, its one job only on main, in the ``ci-controller`` environment, with
-``contents: read``, ``actions: read`` and ``issues: read``. The dispatch inputs reach the steps
-only as environment variables, never as text in a command. ``python -m tools.ci release-tag``
-checks the commit and the tag, and reads the commit's push run on main, its breadth and the
-issues that own breadth's advisory reds with the job's own token (#3911), before the release
+``contents: read``, ``actions: read``, ``issues: read``, ``checks: read`` and
+``pull-requests: read``. The dispatch inputs reach the steps only as environment variables, never
+as text in a command. ``python -m tools.ci release-tag`` checks the commit and the tag, and reads
+the commit's push run on main, the merge controller's verdict on it, its breadth and the issues
+that own breadth's advisory reds with the job's own token (#3911), before the release
 controller's App token is made; that token is asked for ``contents: write`` alone and reaches
 only the step that creates the tag. Each rule fails on a planted edit of the real file.
 """
@@ -25,7 +26,7 @@ _CHECK, _TOKEN, _CREATE = (
 )
 _APP_ACTION = "actions/create-github-app-token@"
 _REHEARSE = 'if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi'
-#: The job's own token, which reads the commit's push run on main and nothing else.
+#: The job's own token, which reads the commit's push run on main and its verdict, nothing else.
 _RUNS_TOKEN = "${{ github.token }}"
 _GATE = '--repository "$GITHUB_REPOSITORY"'
 
@@ -48,7 +49,13 @@ def _problems(text: str) -> list[str]:
         found.append(f"the job runs on {job.get('if')!r}, not main alone")
     if job.get("environment") != "ci-controller":
         found.append(f"the job deploys to {job.get('environment')!r}")
-    if job.get("permissions") != {"contents": "read", "actions": "read", "issues": "read"}:
+    if job.get("permissions") != {
+        "contents": "read",
+        "actions": "read",
+        "issues": "read",
+        "checks": "read",
+        "pull-requests": "read",
+    }:
         found.append(f"the job holds {job.get('permissions')!r}")
     steps = job.get("steps") or []
     names = [s.get("name") for s in steps]
@@ -153,6 +160,8 @@ def test_the_tagging_workflow_checks_first_and_hands_the_token_to_one_step() -> 
             "the job holds",
         ),
         ("      issues: read\n", "      issues: write\n", "the job holds"),
+        ("      checks: read\n", "      checks: write\n", "the job holds"),
+        ("      pull-requests: read\n", "", "the job holds"),
         (
             '--commit "$COMMIT" --repository "$GITHUB_REPOSITORY" "${more[@]}"',
             '--commit "$COMMIT" "${more[@]}"',
