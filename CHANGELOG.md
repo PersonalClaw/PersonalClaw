@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A release builds and smokes every artifact, and records each in one digest-bound manifest, before anything publishes: the images it pushes are the layouts it smoked, byte for byte, and the weekly rehearsal runs the same build.**
 - **A release tag is created only for a commit whose own push run on `main` is green: one still running, red, cancelled or superseded by a newer push is refused, with a link to the run.**
 - **The release manifest records what built each artifact as it ran: the runner image, every action its job downloaded with the SHA it resolved to, every base image by digest, and the Python, uv, Node and npm versions, and refuses an artifact with any of them missing.**
+- **A running turn's status sits at the bottom of the chat, just above the composer, wherever you have scrolled, and goes when the turn ends: the orb in the turn's state, what it is doing (the tool by name while one runs), a word that turns over while it works, the time since it began, the tokens the model reported for the turn (none until one is reported, never an estimate) and Stop, which Esc presses too. The animated orb at the head of the reply is gone. Under reduced motion the word holds still and the orb draws one frame.**
 
 ### Fixed
 

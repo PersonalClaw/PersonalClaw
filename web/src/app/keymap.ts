@@ -30,7 +30,7 @@ export type CommandId =
   | 'prev-message' | 'next-message'
   | 'new-chat'
   | `chat-${(typeof THREAD_NUMBERS)[number]}`
-  | 'approve-focused' | 'restore-last-prompt'
+  | 'approve-focused' | 'restore-last-prompt' | 'stop-turn'
 
 export interface KeyBinding {
   id: CommandId
@@ -95,6 +95,12 @@ export const KEYMAP: readonly KeyBinding[] = [
   {
     id: 'restore-last-prompt', label: 'Restore the last prompt', keywords: 'history recall previous', scope: 'focused',
     chords: ['arrowup'], disabledReason: 'Press it in an empty composer',
+  },
+  // The running turn's status row handles it (`ui/TurnStatusRow`): never from a dialog, a menu that
+  // took the key, or a field of its own.
+  {
+    id: 'stop-turn', label: 'Stop the running turn', keywords: 'interrupt cancel halt abort', scope: 'focused',
+    chords: ['escape'], disabledReason: 'Press it in a chat while a turn runs',
   },
 ]
 

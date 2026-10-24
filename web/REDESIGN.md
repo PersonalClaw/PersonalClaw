@@ -188,6 +188,22 @@ new chrome.
     on a key or when they start typing. The whole height goes to the text being read. It folds to
     one line over the end of the transcript, which says what it opens and shows the start of a
     draft, and it also comes back on that line or on focus, with everything it held.
+12. **Live state sits at the bottom.** What a running turn is doing now is one row pinned at the
+    bottom of the conversation, just above the composer, outside the transcript's scroll. It shows
+    whenever a turn runs, wherever the owner has scrolled, and goes when the turn ends. Nothing at
+    the head of the turn animates: this row is the turn's one live indicator. It holds the orb in
+    the turn's own state (thinking, running a tool by name, writing, or waiting on the owner), a
+    short word that turns over while the turn works, the time since it began, the tokens the model
+    reported for it (in and out, and nothing at all until one is reported, never an estimate), and
+    Stop, which Esc presses too. A turn can run to hundreds of rows while the transcript follows
+    its end, and the reader's eye is at the bottom, so that is where its state belongs.
+    - The state is said once per change, politely. The turning word is decoration and is never
+      said, and under reduced motion it does not turn and the orb holds still.
+    - Stop is a 44 px target at compact widths. Esc stops the turn from anywhere but a dialog, a
+      menu that took the key, or a field of its own, such as a rename. The composer is the one field
+      it stops from.
+    - The row takes its own height, so it never covers the last message, and when it appears the
+      transcript keeps its end in view above it.
 
 ## 6. Keyboard model
 

@@ -338,6 +338,11 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // How the turn this view follows ended, from its last frame (`done` or `error`, and its ending
   // line), for the head of its reply to settle on; cleared when the next turn starts.
   const [turnEnding, setTurnEnding] = useState<TurnEnding | null>(null)
+  // When the running turn began, as its run state says (`turn.started_at`), and the usage its
+  // runtime has reported for it (`token_usage` frames), which stays null until one is said: the
+  // live status row shows what was reported, never an estimate.
+  const [turnStart, setTurnStart] = useState<string | null>(null)
+  const [turnUsage, setTurnUsage] = useState<{ input: number; output: number } | null>(null)
   const runSeqRef = useRef(0)
   // The running turn's name and when the gateway started it, from its run state, kept for the
   // frame that says it ended: with that frame's time they say how long its answer worked
@@ -424,6 +429,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     // started being said): the time its answer's folded work says.
     const began = runningTurnRef.current
     runningTurnRef.current = rs.turn ? { id: String(rs.turn.message_id ?? ''), start: String(rs.turn.started_at ?? '') } : null
+    // A turn that is not the one held starts with nothing reported.
+    if (runningTurnRef.current?.id !== began?.id) setTurnUsage(null)
+    setTurnStart(runningTurnRef.current?.start || null)
     if (!running && from === 'frame' && began?.start && rs.since) {
       const run = { ...began, end: rs.since }
       setTurns((prev) => withRunEnded(prev, run))
@@ -854,6 +862,15 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         })
         break
       }
+      // What the runtime reported a model call of this chat's turn used. Counted for the turn that
+      // runs; a frame with no running turn here says nothing about one.
+      case 'token_usage': {
+        if (!streamingRef.current) break
+        const input = Number(d.input) || 0
+        const output = Number(d.output) || 0
+        if (input || output) setTurnUsage((u) => ({ input: (u?.input ?? 0) + input, output: (u?.output ?? 0) + output }))
+        break
+      }
       case 'context_usage':
         // A non-number `pct` (null) is the backend saying "not measured" — clear the
         // ring rather than leaving a stale or fabricated percentage on screen. A frame
@@ -1240,7 +1257,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     bookmarks, setBookmarks,
     // The live turn: the streaming claim, how it ends, what it is doing, whether it takes a steer.
     streaming, streamingRef, markStreaming, sayTurnEnded, srAnnounce, turnSeqRef, stoppedTurnRef,
-    takesSteers, takesSteersRef, turnPhase, turnLine, turnEnding, sessionSkillsEpoch, wsConnected,
+    takesSteers, takesSteersRef, turnPhase, turnLine, turnEnding, turnStart, turnUsage, sessionSkillsEpoch, wsConnected,
     // The read that opened the session.
     loadingHistory, missing, setMissing, loadFailure, setLoadAttempt,
     // What the frames and the reads say beside the transcript.

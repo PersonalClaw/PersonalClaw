@@ -2,13 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import { runState, runningState } from '../../test/runState'
 
-// ── One orb at the head of each reply, for the whole turn ───────────────────────────────────────
+// ── One live orb for the running turn, in its status row above the composer ───────────────────
 //
 // The chat's turn had two indicators and a gap between them: a "Thinking" label with rotating
 // stock phrases until the reply's first word, and then nothing while the reply streamed, its tools
-// ran or it waited on her. Now the turn has one orb, at the head of its reply, driven only by the
-// turn's `work_phase` frames: it changes with the phase, its line is the gateway's, and it settles
-// and goes when the turn ends. The frames below are what the gateway sends for one turn.
+// ran or it waited on her. Then it had one orb at the head of its reply, which a long turn scrolled
+// out of view while the transcript followed its end. Now the running turn has one orb, in its live
+// status row pinned above the composer and outside the transcript (`ui/TurnStatusRow`), driven only
+// by the turn's `work_phase` frames: it changes with the phase, its line is the gateway's, and it
+// goes when the turn ends. Nothing in the transcript draws a live orb. The frames below are what the
+// gateway sends for one turn.
 
 const SESSION = 'chat-4-orb'
 
@@ -87,8 +90,8 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals() })
 
 const orbs = () => document.querySelectorAll('[data-agent-orb]')
-const head = () => document.querySelector('[data-turn-head]') as HTMLElement | null
-const line = () => document.querySelector('[data-turn-line]')?.textContent
+const head = () => document.querySelector('[data-turn-status]') as HTMLElement | null
+const line = () => document.querySelector('[data-turn-state]')?.textContent
 
 /** The chat open and idle, then a turn starting on it: her question, and the turn waiting to start. */
 async function aTurnStarts() {
@@ -114,7 +117,7 @@ async function aTurnStarts() {
   await waitFor(() => expect(screen.queryByText('which stage is the run on?')).not.toBeNull())
 }
 
-describe('a running turn has one orb, at the head of its reply', () => {
+describe('a running turn has one live orb, in its status row above the composer', () => {
   it('follows the turn’s phases from waiting to start to its ending, and goes', async () => {
     await aTurnStarts()
     await waitFor(() => expect(line()).toBe('Waiting to start'))
@@ -123,16 +126,18 @@ describe('a running turn has one orb, at the head of its reply', () => {
     pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'thinking', line: 'Thinking', seq: 2 }) })
     await waitFor(() => expect(line()).toBe('Thinking'))
 
-    // The first word of the reply: the reply now has a slot, and the orb is at its head.
+    // The first word of the reply: the reply streams in the transcript, and the orb stays in its
+    // row, outside the transcript's scroll and just above the composer.
     pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'streaming', line: 'Writing', seq: 3 }) })
     pushFrame('chat_chunk', { content: 'The run is on the deploy stage.' })
     await waitFor(() => expect(screen.queryByText('The run is on the deploy stage.')).not.toBeNull())
     expect(line()).toBe('Writing')
     expect(orbs()).toHaveLength(1)
-    const reply = screen.getByText('The run is on the deploy stage.')
-    const question = screen.getByText('which stage is the run on?')
-    expect(question.compareDocumentPosition(head()!) & Node.DOCUMENT_POSITION_FOLLOWING, 'the head follows her question').toBeTruthy()
-    expect(head()!.compareDocumentPosition(reply) & Node.DOCUMENT_POSITION_FOLLOWING, 'the head leads the reply').toBeTruthy()
+    const transcript = document.querySelector('[data-transcript-scroll]')!
+    expect(transcript.contains(head()), 'the row is not in the transcript, so its scroll never takes it away').toBe(false)
+    expect(transcript.querySelector('[data-agent-orb]'), 'no live orb in the transcript').toBeNull()
+    const composer = screen.getByRole('textbox', { name: 'Message input' })
+    expect(head()!.compareDocumentPosition(composer) & Node.DOCUMENT_POSITION_FOLLOWING, 'the row sits above the composer').toBeTruthy()
 
     // A step, and the wait on her OK: the same orb, its line the gateway's, still while it waits.
     pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'tool', line: 'Terminal git log', seq: 4 }) })
@@ -142,17 +147,16 @@ describe('a running turn has one orb, at the head of its reply', () => {
     expect((orbs()[0] as HTMLElement).dataset.agentOrb).toBe('still')
     expect(orbs()).toHaveLength(1)
 
-    // The turn's last frame says how it ended, and then the turn is done.
+    // The turn's last frame says how it ended: the turn is over, and its row goes.
     pushFrame('work_phase', { ...runState({ session: SESSION, phase: 'done', line: 'Done in 9 seconds', last_outcome: 'complete', seq: 6 }) })
-    await waitFor(() => expect(line()).toBe('Done in 9 seconds'))
-    pushFrame('chat_done', { outcome: 'complete' })
     await waitFor(() => expect(head()).toBeNull())
+    pushFrame('chat_done', { outcome: 'complete' })
     expect(orbs()).toHaveLength(0)
   })
 
   it('the Stop control’s sweep goes still with the orb while the turn waits on her, and turns again after', async () => {
     await aTurnStarts()
-    const sweep = () => screen.getByRole('button', { name: 'Stop' }).closest('[data-stop-sweep]')?.getAttribute('data-stop-sweep')
+    const sweep = () => screen.getByRole('button', { name: /^Stop$/ }).closest('[data-stop-sweep]')?.getAttribute('data-stop-sweep')
     pushFrame('work_phase', { ...runningState({ session: SESSION, phase: 'tool', line: 'Terminal git log', seq: 2 }) })
     await waitFor(() => expect(line()).toBe('Terminal git log'))
     // Positive control: a running step sweeps, so "still" below is the wait's and nothing else's.
