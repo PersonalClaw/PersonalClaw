@@ -1998,6 +1998,7 @@ def run_tier(
     overrides: Sequence[catalogue.Override] = (),
     fail_fast: bool = False,
     fingerprint: Fingerprint = capabilities.fingerprint,
+    pre_push: bool = False,
 ) -> tuple[int, list[Outcome], verdict.Verdict]:
     """Run every job of ``tier`` here, and judge each job's records against the head and the
     partner revisions it reads. ``changed``: only the jobs the diff from the base plans, with
@@ -2007,7 +2008,8 @@ def run_tier(
     holds a clean pass of on this tree is not run, and counts by its receipt
     (:func:`verdict_store.judge_reused`), since it leaves no job record. Each job of a reusable
     class that passed is recorded. The receipt goes to ``work/`` :data:`RECEIPT`.
-    ``fingerprint`` reads the host's capabilities, for a test to stand in for.
+    ``fingerprint`` reads the host's capabilities, for a test to stand in for. ``pre_push``: only
+    the jobs whose entries leave them to the pre-push hook (``prepush``), as it runs them.
 
     With ``host.memory`` each job starts only once the machine has the memory it needs
     (tools/ci/admission.py): a job that never gets it is not run (partial). Each job that ran
@@ -2023,6 +2025,11 @@ def run_tier(
         for reason in chosen.full_reasons:
             print(f"plan: the whole tier: {reason}", file=sys.stderr)
         jobs = [j for j in jobs if j.id in chosen.jobs]
+    if pre_push:
+        left = sorted(j.id for j in jobs if not j.prepush)
+        if left:
+            print(f"pre-push: left to CI (prepush = false): {', '.join(left)}", file=sys.stderr)
+        jobs = [j for j in jobs if j.prepush]
     jobs = ordered(jobs)
     now = time.time()
     reuse = (
@@ -2282,7 +2289,7 @@ def run_job_main(argv: list[str]) -> int:
 
 
 def run_main(argv: list[str]) -> int:
-    """``python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse]
+    """``python -m tools.ci run <tier> [--changed] [--fail-fast] [--no-reuse] [--pre-push]
     [--admission-wait SECONDS]``."""
     parser = _parser(
         "run", "Run every job of a tier here, and judge their records (none with --working-tree)."
@@ -2294,6 +2301,11 @@ def run_main(argv: list[str]) -> int:
         "--no-reuse",
         action=_OnceFlag,
         help="run every job, reusing no recorded pass; each clean pass is still recorded",
+    )
+    parser.add_argument(
+        "--pre-push",
+        action=_OnceFlag,
+        help="only the jobs the pre-push hook runs: those whose entries do not say prepush = false",
     )
     parser.add_argument(
         "--admission-wait",
@@ -2323,6 +2335,7 @@ def run_main(argv: list[str]) -> int:
             changed=args.changed,
             overrides=overrides,
             fail_fast=args.fail_fast,
+            pre_push=args.pre_push,
         )
     except (Unreadable, catalogue.CatalogueError, ValueError, OSError) as exc:
         problems = exc.problems if isinstance(exc, catalogue.CatalogueError) else [str(exc)]

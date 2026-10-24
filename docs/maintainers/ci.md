@@ -559,8 +559,10 @@ An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `
 uses), `install_exemptions`, each exemption with its reason, `retiring`, the issue that
 retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catalogue"), and
 `lint_feedback`: a failed step's output is the pull request's lint remediation, which
-`pr-feedback.yml` posts. One job sets it, of the change tier. A key the
-reader does not know is refused, so a misspelt field fails rather than being ignored.
+`pr-feedback.yml` posts. One job sets it, of the change tier. `prepush = false` leaves a
+change-tier job out of `run change --pre-push`, the pre-push hook's run, for a test suite CI
+gates; every other change-tier job runs in it. A key the reader does not know is refused, so a
+misspelt field fails rather than being ignored.
 
 Every pytest step writes a JUnit report (`--junitxml`) unless it only collects (`--collect-only`),
 and `junit` lists what the steps write. Every step that installs or fetches packages the lock does
