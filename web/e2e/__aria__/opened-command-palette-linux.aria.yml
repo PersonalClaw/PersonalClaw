@@ -101,4 +101,5 @@
   - option "Open thread # in the sidebar Action · Ctrl+#"
   - option "Approve the focused request Move focus to an approval, then press the key there Action · Ctrl+Enter" [disabled]
   - option "Restore the last prompt Press it in an empty composer Action · ↑" [disabled]
+  - option "Stop the running turn Press it in a chat while a turn runs Action · Esc" [disabled]
 - text: navigate select Ctrl+K or Ctrl+Shift+P toggle
