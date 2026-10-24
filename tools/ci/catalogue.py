@@ -150,6 +150,10 @@ PLACEHOLDERS: dict[str, tuple[str, ...]] = {
     # The run's number, which every attempt of the run keeps: the randomized-order leg's seeds
     # are drawn from it. It is another value every run, so a job that names it is never reused.
     "run_number": ("${{ github.run_number }}",),
+    # The gateway image an entry smokes, by its content ID (``sha256:...``), never a tag: the
+    # workflow's build step makes it with main's layer cache and hands run-job its ``imageid``,
+    # and a local run builds it plainly first. A job that names it is planned with that build.
+    "image": ("$IMAGE",),
 }
 
 #: The job-level variables a placeholder's workflow spelling reads, and nothing else: ``PY``
