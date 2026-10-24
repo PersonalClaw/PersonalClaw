@@ -28,7 +28,10 @@ from rails_repo import REPO
 from scripts import generate_inert_surface_baseline as inert
 from scripts.generate_inert_surface_baseline import (
     KIND_CONFIG_READER,
+    _attribute_names_in_src,
     _enum_members,
+    _inert_enum_members,
+    _iterated_enum_classes,
     _parse,
     _src_py_files,
     build_inventory,
@@ -172,3 +175,30 @@ def test_the_enum_census_still_finds_a_nontrivial_population():
         "the enum census reports (almost) nothing — whole-class clearing has over-reached; "
         "shrink the detected shapes rather than trusting a suspiciously clean census"
     )
+
+
+# A census of the tree, moved here from tests/test_inert_surface_baseline.py so it runs once, in
+# the rails job, not in every suite leg (#3929): it took 57 s of that file's 66 s on a Linux leg
+# (2026-10-24), and 85-95 s under coverage (2026-10-14/15).
+@pytest.mark.timeout(300)
+def test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen():
+    """The finding itself, on the real tree: ``Lineage`` is recognised as iterated (its
+    validation set in ``workflows/publish.py``) and no ``Lineage`` member is reported.
+
+    If the validation that iterates ``Lineage`` is ever deleted, this test SHOULD red — the
+    members would then genuinely be unreachable."""
+    files = _src_py_files()
+    enum_names: dict[Path, set[str]] = {}
+    for f in files:
+        tree = _parse(f)
+        if tree is None:
+            continue
+        names = {cls for cls, _ in _enum_members(tree)}
+        if names:
+            enum_names[f.resolve()] = names
+    iterated = _iterated_enum_classes(files, enum_names)
+    publish = next(f for f in files if f.as_posix().endswith("workflows/publish.py"))
+    assert (publish.resolve(), "Lineage") in iterated
+
+    inert = {surface for _, surface in _inert_enum_members(files, _attribute_names_in_src(files))}
+    assert not [s for s in inert if s.startswith("Lineage.")], sorted(inert)
