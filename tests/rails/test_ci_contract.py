@@ -13825,6 +13825,278 @@ A_PULL_REQUEST_RUN_NEVER_REPLAYS = _toolchain_row(
 ROWS = (*ROWS, A_PULL_REQUEST_RUN_NEVER_REPLAYS)
 
 
+# ── Every pytest step writes JUnit, and every install off the lock is named (#3909) ───────────
+# A catalogue entry's pytest step writes a JUnit report (`--junitxml`), unless it only collects
+# (`--collect-only`), so what a job's tests did is read from a report and never from its exit
+# alone. A step that installs or fetches packages the lock does not hold is named in its entry's
+# `install_exemptions`, word for word, with the reason it may: `uv pip install`, `uv tool
+# install`, `uv add`, `pip install` however its interpreter is spelled (also behind `uv run` and
+# its options, read with their values), `uv run --with`/`--with-editable`/`--with-requirements`,
+# `uvx` and `uv tool run`, and `npm install`. An `npx` step runs a bin that the nearest
+# `package-lock.json` above its workdir installs (a `bin` of one of its `packages`), so it fetches
+# nothing. An exemption names an install its entry's steps run, so the list cannot outlive what
+# it excused. The locked installs are the toolchain's (`uv-sync`, `npm-ci`), which the loader
+# refuses as steps.
+
+_ENV_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*")
+_PYTHON_WORD = re.compile(r"(?:\S*/)?python(?:\d+(?:\.\d+)*)?")
+_PIP_WORD = re.compile(r"(?:\S*/)?pip(?:\d+(?:\.\d+)*)?")
+
+
+#: `uv run`'s options that take a value, so the word after one is its value, not the command.
+_UV_RUN_VALUED = frozenset(
+    {
+        "--directory",
+        "--project",
+        "--python",
+        "-p",
+        "--extra",
+        "--group",
+        "--only-group",
+        "--no-group",
+        "--package",
+        "--env-file",
+        "--index",
+        "--default-index",
+        "--index-url",
+        "-i",
+        "--extra-index-url",
+        "--find-links",
+        "-f",
+        "--config-file",
+        "--cache-dir",
+        "--with",
+        "--with-editable",
+        "--with-requirements",
+        "--color",
+        "--python-preference",
+        "--resolution",
+        "--prerelease",
+        "--exclude-newer",
+        "--link-mode",
+        "--refresh-package",
+        "--upgrade-package",
+        "-P",
+        "--reinstall-package",
+    }
+)
+#: `uv run`'s options that add packages to the run beside the lock's.
+_UV_RUN_ADDS = ("--with", "--with-editable", "--with-requirements")
+
+
+def _fetches_off_the_lock(words: list[str]) -> bool:
+    """Whether *words*, from their first, install packages other than from a lock."""
+    if words[:3] in (["uv", "pip", "install"], ["uv", "tool", "install"], ["uv", "tool", "run"]):
+        return True
+    if words[:2] == ["uv", "add"] or words[:1] == ["uvx"]:
+        return True
+    if words and _PYTHON_WORD.fullmatch(words[0]) and words[1:4] == ["-m", "pip", "install"]:
+        return True
+    if words and _PIP_WORD.fullmatch(words[0]) and words[1:2] == ["install"]:
+        return True
+    return words[:2] in (["npm", "install"], ["npm", "i"])
+
+
+def _off_the_lock(argv: tuple[str, ...]) -> bool:
+    """Whether a step's words install or fetch packages the lock does not hold."""
+    words = list(argv)
+    while words and _ENV_WORD.fullmatch(words[0]):
+        words = words[1:]
+    if words[:2] != ["uv", "run"]:
+        return _fetches_off_the_lock(words)
+    rest = words[2:]
+    while rest and rest[0].startswith("-"):
+        flag, valued = rest[0].split("=", 1)[0], "=" not in rest[0]
+        if flag in _UV_RUN_ADDS:
+            return True
+        rest = rest[2:] if valued and flag in _UV_RUN_VALUED else rest[1:]
+    # An install anywhere after `uv run` is one, however its options were spelled.
+    return any(_fetches_off_the_lock(rest[i:]) for i in range(len(rest)))
+
+
+def _lock_bins(root: Path, workdir: str) -> set[str] | None:
+    """The bins the nearest ``package-lock.json`` above ``root/workdir`` installs; None when
+    there is none or it cannot be read."""
+    where = (root / workdir).resolve() if workdir else root.resolve()
+    for folder in (where, *where.parents):
+        lock = folder / "package-lock.json"
+        if lock.is_file():
+            try:
+                packages = json.loads(lock.read_text(encoding="utf-8")).get("packages") or {}
+            except (OSError, ValueError, AttributeError):
+                return None
+            bins: set[str] = set()
+            for key, entry in packages.items():
+                found = entry.get("bin") if isinstance(entry, dict) else None
+                if isinstance(found, dict):
+                    bins |= {str(name) for name in found}
+                elif isinstance(found, str):
+                    bins.add(key.rsplit("/", 1)[-1])
+            return bins
+        if folder == root.resolve():
+            break
+    return None
+
+
+def _npx_problem(root: Path, step: catalogue.Step) -> str | None:
+    """Why an ``npx`` step may fetch a package the lock does not hold; None when it runs a bin
+    the lock installs, or is no ``npx`` step."""
+    words = list(step.argv)
+    while words and _ENV_WORD.fullmatch(words[0]):
+        words = words[1:]
+    if words[:1] != ["npx"]:
+        return None
+    rest = words[1:]
+    while rest and rest[0].startswith("-"):
+        if rest[0].split("=", 1)[0] in ("--package", "-p"):
+            return "names a package to fetch (--package)"
+        rest = rest[1:]
+    if not rest:
+        return "runs no bin"
+    name = rest[0]
+    bins = _lock_bins(root, step.workdir)
+    if bins is None:
+        return f"runs `{name}` with no package-lock.json above {step.workdir or 'the root'}"
+    if name not in bins:
+        return f"runs `{name}`, which no package of its lock installs as a bin"
+    return None
+
+
+def _junit_and_lock_check(root: Path) -> list[str]:
+    try:
+        cat = catalogue.read(root)
+    except catalogue.CatalogueError as exc:
+        return [f"the catalogue cannot be read: {exc}"]
+    bad: list[str] = []
+    for job in cat.jobs:
+        for step in job.command:
+            args = catalogue.pytest_args(step.argv)
+            if (
+                args is not None
+                and not {"--collect-only", "--co"} & set(args)
+                and not any(w.startswith(("--junitxml", "--junit-xml")) for w in args)
+            ):
+                bad.append(f"{job.id}: `{shlex.join(step.argv)}` runs pytest and writes no JUnit")
+        for step in job.command:
+            why = _npx_problem(root, step)
+            if why:
+                bad.append(f"{job.id}: `{shlex.join(step.argv)}` {why}, so it may fetch it")
+        installs = [" ".join(step.argv) for step in job.command if _off_the_lock(step.argv)]
+        named = {exemption.install for exemption in job.install_exemptions}
+        for install in installs:
+            if install not in named:
+                bad.append(
+                    f"{job.id}: `{install}` installs off the lock, and no install_exemptions "
+                    "entry names it with its reason"
+                )
+        for install in sorted(named - set(installs)):
+            bad.append(f"{job.id}: the exemption for `{install}` names no install its steps run")
+    return bad
+
+
+def _catalogue_only_scaffold(root: Path) -> None:
+    """The tree's catalogue, and the lock its ``npx`` steps resolve their bins from."""
+    for rel in (catalogue.CATALOGUE, "package-lock.json"):
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+
+
+_CLIENT_TEST = '"packages/personalclaw-client-py/tests", "--junitxml=reports/junit-client.xml"]'
+_CLIENT_EXEMPTION = (
+    '  { install = "uv pip install --python .venv-client packages/personalclaw-client-py[dev]", '
+    'reason = "the client is not part of core\'s uv workspace and has no lock of its own" },\n'
+)
+_CLIENT_LAST_STEP = '"--junitxml=reports/junit-client.xml"] },\n]\n'
+
+
+def _client_step(argv: str, workdir: str = "") -> tuple[str, str]:
+    """The client entry's command with one more step, *argv* given as TOML list items."""
+    where = f', workdir = "{workdir}"' if workdir else ""
+    return _CLIENT_LAST_STEP, _CLIENT_LAST_STEP[:-2] + f"  {{ argv = [{argv}]{where} }},\n]\n"
+
+
+EVERY_PYTEST_STEP_WRITES_JUNIT_AND_EVERY_UNLOCKED_INSTALL_IS_NAMED = Row(
+    name="every-pytest-step-writes-junit-and-every-install-off-the-lock-is-named",
+    check=_junit_and_lock_check,
+    scaffold=_catalogue_only_scaffold,
+    controls=(
+        _plant(
+            "a pytest step that writes no JUnit",
+            catalogue.CATALOGUE,
+            _CLIENT_TEST,
+            '"packages/personalclaw-client-py/tests"]',
+            expect="runs pytest and writes no JUnit",
+        ),
+        _plant(
+            "a pytest step that only collects needs no JUnit",
+            catalogue.CATALOGUE,
+            *_client_step('"uv", "run", "pytest", "--collect-only", "-q", "tests"'),
+            fails=False,
+        ),
+        _plant(
+            "an unlocked install with its exemption taken away",
+            catalogue.CATALOGUE,
+            _CLIENT_EXEMPTION,
+            "",
+            expect="installs off the lock",
+        ),
+        _plant(
+            "an exemption that names no step",
+            catalogue.CATALOGUE,
+            _CLIENT_EXEMPTION,
+            _CLIENT_EXEMPTION + '  { install = "uv pip install gone", reason = "it was once" },\n',
+            expect="names no install its steps run",
+        ),
+        *(
+            _plant(
+                f"`{argv}` as a step with no exemption",
+                catalogue.CATALOGUE,
+                *_client_step(argv),
+                expect="installs off the lock",
+            )
+            for argv in (
+                '"npm", "install"',
+                '"python3", "-m", "pip", "install", "requests"',
+                '".venv/bin/pip", "install", "requests"',
+                '"FOO=1", "uv", "tool", "install", "ruff"',
+                '"uv", "run", "pip", "install", "requests"',
+                '"uv", "run", "--directory", "web", "pip", "install", "x"',
+                '"uv", "run", "--project=web", "python", "-m", "pip", "install", "x"',
+                '"uv", "run", "--with", "requests", "python", "x.py"',
+                '"uv", "run", "--with-requirements", "r.txt", "python", "x.py"',
+                '"uvx", "ruff", "check"',
+                '"uv", "tool", "run", "ruff", "check"',
+            )
+        ),
+        _plant(
+            "`npx playwright` in web runs a bin the lock installs",
+            catalogue.CATALOGUE,
+            *_client_step('"npx", "playwright", "--version"', workdir="web"),
+            fails=False,
+        ),
+        _plant(
+            "`npx` of a package the lock does not hold",
+            catalogue.CATALOGUE,
+            *_client_step('"npx", "cowsay", "moo"', workdir="web"),
+            expect="which no package of its lock installs as a bin",
+        ),
+        _plant(
+            "`npx --package` names a package to fetch",
+            catalogue.CATALOGUE,
+            *_client_step('"npx", "--package", "cowsay", "cowsay", "moo"', workdir="web"),
+            expect="names a package to fetch",
+        ),
+        _plant(
+            "a step that builds, not installs, is no install",
+            catalogue.CATALOGUE,
+            *_client_step('"uv", "run", "python", "-m", "pip", "--version"'),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, EVERY_PYTEST_STEP_WRITES_JUNIT_AND_EVERY_UNLOCKED_INSTALL_IS_NAMED)
+
+
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest

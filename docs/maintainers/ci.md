@@ -562,6 +562,19 @@ retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catal
 `pr-feedback.yml` posts. One job sets it, of the change tier. A key the
 reader does not know is refused, so a misspelt field fails rather than being ignored.
 
+Every pytest step writes a JUnit report (`--junitxml`) unless it only collects (`--collect-only`),
+and `junit` lists what the steps write. Every step that installs or fetches packages the lock does
+not hold is named in `install_exemptions`, word for word, with the reason it may: `uv pip install`,
+`uv tool install`, `uv add`, `pip install` however its interpreter is spelled (also behind
+`uv run` and its options, read with their values), `uv run --with`, `--with-editable` and
+`--with-requirements`, `uvx` and `uv tool run`, and `npm install`. An `npx` step runs a bin that
+the nearest `package-lock.json` above its workdir installs, so it fetches nothing; `npx
+--package` is refused. An exemption that names no install of the entry's steps fails too, so the
+list cannot outlive what it excused. The locked installs are the toolchain's (`uv-sync`,
+`npm-ci`), which the reader refuses as steps. The
+contract table's row "every-pytest-step-writes-junit-and-every-install-off-the-lock-is-named"
+holds both, with a plant for each install form.
+
 `workers` is the job's worker count, a whole number or `auto`. Every pytest step's `-n` must equal
 it, and a step that passes `-n` needs it. `workers_env` names the variable through which another
 tool reads it: `web-unit`'s `VITEST_MAX_WORKERS`, which `ci.yml` sets to the runner's core count.
