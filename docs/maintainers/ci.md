@@ -758,9 +758,14 @@ again, bring back the same draft and still send nothing. A code cockpit's link,
 `personalclaw://code/<id>?pane=changes&diff=<file>&task=<task>`, opens the cockpit of a paused
 code loop the stub backend seeds before its gateway starts (in the smoke's own home: the seed
 refuses the default one), and nothing that leaves the page carries the loop's id or the task's.
-Five planted copies must each fail for their own reason: the asar without a module `main.js`
-requires, a preload that throws, a shell that drops every link, one whose link delivery presses
-Enter on the draft, and one whose link delivery resumes the cockpit's loop. A backend change
+`personalclaw://threads/new?mode=plan` opens a new thread in Plan and writes nothing. Each of
+those two addresses, copied, brings back the same review or task mode in the same window (a
+reload) and in a new one (a new document at the address in the same signed-in session, by way of
+`about:blank`, its session storage cleared and its script state gone), and sends
+the gateway nothing but reads. Six planted copies must each fail for their own reason: the asar
+without a module `main.js` requires, a preload that throws, a shell that drops every link, one
+whose link delivery presses Enter on the draft, one whose link delivery resumes the cockpit's
+loop, and a preload that sends a write from each page a reopened address loads. A backend change
 is e2e's to catch: the smoke proves the shell starts, draws and follows a link, not the gateway.
 It is a fast smoke from the source tree, never a packaged-release test. The browser run's inputs
 are the whole tree less the paths

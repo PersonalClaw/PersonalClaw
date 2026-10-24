@@ -11,7 +11,7 @@
  * `check` lists the asar against `build.files` and exits 1 naming any entry it lacks, or any file
  * in it that carries a remote-debugging switch: the smoke's DevTools pipe is the harness's alone,
  * and the app never opens a debugging port or pipe of its own. `controls`
- * runs the smoke on five planted copies, which must each fail for their own reason:
+ * runs the smoke on six planted copies, which must each fail for their own reason:
  *
  *   - the asar without a module `main.js` requires, which must fail at launch naming it: what only
  *     the packed app shows (`packaging.test.js` reads the source, not the asar);
@@ -21,7 +21,9 @@
  *   - a shell whose link delivery also presses Enter in the composer once the page shows a draft:
  *     a link that acts, which the smoke must see leave the page;
  *   - a shell whose link delivery resumes the loop a cockpit's link opens: a cockpit link that
- *     acts.
+ *     acts;
+ *   - a preload that, on every page a cockpit's or a task mode's address loads, sends a write: an
+ *     address that replays something when it is reopened.
  */
 
 const fs = require("node:fs");
@@ -107,6 +109,14 @@ const PLANTED_RESUME = [
   "(() => { const h = window.location.hash; if (!h.startsWith(\"#/code/\")) return;",
   "  fetch(\"/api/loops/\" + h.slice(7).split(\"?\")[0] + \"/resume\", { method: \"POST\" }).catch(() => {});",
   "})();",
+].join(" ");
+
+/** What the replaying control appends to the preload: a write from each page a reopened address loads. */
+const PLANTED_REPLAY = [
+  "\n;window.addEventListener(\"load\", () => {",
+  "  const h = window.location.hash;",
+  "  if (h.startsWith(\"#/code/\") || h.includes(\"mode=\")) fetch(\"/api/chat/sessions\", { method: \"POST\" }).catch(() => {});",
+  "});\n",
 ].join(" ");
 
 /** The executable and the asar of the app unpacked at *dir* (electron-builder's `linux-unpacked`). */
@@ -198,6 +208,11 @@ const CONTROLS = [
     plant: (tree) => rewrite(tree, "deepLinks.js", "return `window.location.hash = ${JSON.stringify(hash)};`;", `return \`window.location.hash = \${JSON.stringify(hash)}; ${PLANTED_RESUME}\`;`),
     reads: (r) => /the cockpit link acted on the loop/.test(r.reason || ""),
   },
+  {
+    name: "a preload that sends a write from each page a reopened address loads",
+    plant: (tree) => fs.appendFileSync(path.join(tree, "preload.js"), PLANTED_REPLAY),
+    reads: (r) => /reopened in .* replayed a write/.test(r.reason || ""),
+  },
 ];
 
 async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = {}) {
@@ -216,7 +231,7 @@ async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = 
   return results;
 }
 
-module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_RESUME, PLANTED_SEND, asarSources, debugSwitchProblems, missingEntries, packArchive, packed, plantedCopy, runControls, shellSources };
+module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_REPLAY, PLANTED_RESUME, PLANTED_SEND, asarSources, debugSwitchProblems, missingEntries, packArchive, packed, plantedCopy, runControls, shellSources };
 
 if (require.main === module) {
   const [cmd, dir, ...rest] = process.argv.slice(2);

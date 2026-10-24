@@ -24,7 +24,12 @@
  *     the link left, and the same link again, bring back the same draft and still send nothing.
  *     `personalclaw://code/<id>?pane=changes&diff=<file>&task=<task>` opens the cockpit of the
  *     paused code loop the stub backend seeds (`CODE_LOOP`), and acts on neither: nothing that
- *     leaves the page carries the loop's id or the task's;
+ *     leaves the page carries the loop's id or the task's. `personalclaw://threads/new?mode=plan`
+ *     opens a new thread in Plan (#4894) and writes nothing;
+ *   - a copied address brings back the same state, the cockpit's review (#4941) and the thread's
+ *     task mode, in the same window (a reload) and in a new one (a new document at that address
+ *     in the same signed-in session, its session storage cleared, by way of about:blank), and
+ *     replays nothing: no request to the gateway's API but reads;
  *   - and nothing threw: no JavaScript error in the main process, no uncaught one in the page.
  *
  * It prints one line per step, and `SHELL_SMOKE {"ok":…}` last; it exits 0 only when ok. Where
@@ -58,6 +63,8 @@ const DEVTOOLS_SWITCH = "--remote-debugging-pipe";
 /** A link to a route, and one to no route the app has. */
 const SETTINGS_LINK = "personalclaw://settings";
 const NO_ROUTE_LINK = "personalclaw://nowhere-the-app-has";
+/** A new thread's link that names its task mode (#4894). */
+const MODE_LINK = "personalclaw://threads/new?mode=plan";
 /** A code cockpit's link, as one is shared: its changes pane on one file, and its open task. */
 const COCKPIT_LINK = `personalclaw://code/${CODE_LOOP.id}?pane=changes&diff=${encodeURIComponent(CODE_LOOP.diff)}&task=${CODE_LOOP.task}`;
 
@@ -369,6 +376,66 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, fi
     if (done.length) return fail(`the cockpit link acted on the loop: ${done.join("; ")}`);
     step(`${COCKPIT_LINK} opened ${at}, ${CODE_LOOP.name}'s cockpit, and acted on nothing`);
 
+    // A copied address brings back the same state, in the same window and in a new one, and replays
+    // nothing (#4894's task mode, #4941's cockpit review). The same window reloads the address. A new
+    // one is a new document at the copied address in the same signed-in session, as pasting it into
+    // a new window loads it: its session storage cleared, as a new window's starts empty, then
+    // about:blank, then the address. A move to it from the same origin would change only the hash
+    // and keep the page's script state, so a marker set before leaving must be gone after. Nothing
+    // it sends may write: no request to the gateway's API other than a read.
+    const loadedSince = (from) => cdp.events.slice(from).some((e) => e.method === "Page.loadEventFired" && e.sessionId === sessionId);
+    const writesSince = (from) =>
+      cdp.events
+        .slice(from)
+        .filter((e) => e.method === "Network.requestWillBeSent" && e.sessionId === sessionId)
+        .map((e) => e.params.request)
+        .filter((r) => !["GET", "HEAD", "OPTIONS"].includes(r.method) && r.url.startsWith(`${origin}/api/`))
+        .map((r) => `${r.method} ${r.url}`);
+    const reopened = async (address, shows, what) => {
+      for (const where of ["the same window", "a new one"]) {
+        const from = cdp.events.length;
+        if (where === "the same window") {
+          await cdp.send("Page.reload", {}, sessionId);
+        } else {
+          await evaluate("window.__smokeMarker = true; sessionStorage.clear(); true");
+          const blank = cdp.events.length;
+          await cdp.send("Page.navigate", { url: "about:blank" }, sessionId);
+          if (!(await until("about:blank", async () => loadedSince(blank)))) return `the page did not leave ${address} for about:blank`;
+          const fresh = cdp.events.length;
+          await cdp.send("Page.navigate", { url: `${origin}/${address}` }, sessionId);
+          if (!(await until("the new page", async () => loadedSince(fresh)))) return `${address} did not load as a new page`;
+          if ((await evaluate("window.__smokeMarker === true")) !== false) return `${address} opened in the same document, not a new one`;
+        }
+        if (!(await until(what, async () => (await hash()) === address && (await shows())))) {
+          return `${address} did not bring back ${what} in ${where}: the page is on ${await hash()}`;
+        }
+        await wait(1500);
+        const wrote = writesSince(from);
+        if (wrote.length) return `${address} reopened in ${where} replayed a write: ${wrote.join("; ")}`;
+      }
+      return null;
+    };
+    let missed = await reopened(at, drawn, `${CODE_LOOP.name}'s review`);
+    if (missed) return fail(missed);
+    if ((await acted()).length) return fail(`the cockpit link acted on the loop: ${(await acted()).join("; ")}`);
+    step(`${at} brought back ${CODE_LOOP.name}'s review in the same window and in a new one, and wrote nothing`);
+
+    const modePill = `[...document.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") || b.textContent.trim()).find((n) => n.startsWith("Task mode:")) ?? ""`;
+    const inPlan = async () => (await evaluate(modePill)) === "Task mode: Plan";
+    const modeFrom = cdp.events.length;
+    await hand(MODE_LINK);
+    if (!(await until("the mode", async () => (await hash()).startsWith("#/chat/new") && (await inPlan())))) {
+      return fail(`${MODE_LINK} did not open a new thread in Plan: the page is on ${await hash()}, its pill says ${JSON.stringify(await evaluate(modePill).catch(() => ""))}`);
+    }
+    const planned = await hash();
+    await wait(1500);
+    let wrote = writesSince(modeFrom);
+    if (wrote.length) return fail(`${MODE_LINK} wrote: ${wrote.join("; ")}`);
+    step(`${MODE_LINK} opened ${planned} in Plan, and wrote nothing`);
+    missed = await reopened(planned, inPlan, "the thread in Plan");
+    if (missed) return fail(missed);
+    step(`${planned} brought back the thread in Plan in the same window and in a new one, and wrote nothing`);
+
     // 4. Nothing threw on the way.
     return await settle();
   } finally {
@@ -402,7 +469,7 @@ function cliOptions(argv) {
   };
 }
 
-module.exports = { COCKPIT_LINK, COMPOSER, DEVTOOLS_SWITCH, literal, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
+module.exports = { COCKPIT_LINK, COMPOSER, DEVTOOLS_SWITCH, MODE_LINK, literal, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
 
 if (require.main === module) {
   const { executable, ...options } = cliOptions(process.argv.slice(2));
