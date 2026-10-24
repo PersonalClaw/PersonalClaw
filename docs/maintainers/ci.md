@@ -208,7 +208,7 @@ is exit 0 with the `accepted:` line. Every rule fails closed:
   tree as the API reads it (a squash-merged head is not on `main`, so local git cannot); a
   controller revision on `main`; and every external revision the caller expects.
 
-Nothing posts the record yet: the controller workflow and its App come later in #3910.
+`.github/workflows/merge-verdict.yml` posts the record (the next section).
 `tests/test_ci_merge_verdict.py` holds each rule on planted check runs.
 
 ### The merge controller's decision
@@ -242,6 +242,43 @@ no workflow calls it yet.
 - **A pull request's reading:** it judges with `verdict.decide`, never `decide_main_push`, so a
   cancelled planned job stays red as cancelled and is never read as superseded. A red on an
   earlier attempt is not in `needs`; reading it from the API is the controller workflow's job.
+
+### The merge controller's poster
+
+`.github/workflows/merge-verdict.yml` posts `merge-verdict` on a head each time a Merge run
+(`merge.yml`) completes. It is a `workflow_run` listener, so GitHub runs main's copy of it and of
+the `tools/ci` it runs, whatever the candidate brings. `python -m tools.ci merge-controller
+decide` (`tools/ci/merge_controller.py`) reads everything through the API by the run's id:
+the run, every attempt's jobs, both trees (`trust.compare_trees` over blobs the API returns, so
+nothing of the candidate is fetched or checked out), the comparison with `main` and the run's
+artifact digests. The rules, in order:
+
+- **Which runs post:** only this repository's `merge.yml`, completed, on a `pull_request` or a
+  dispatch. Another workflow named Merge, which a candidate can add, a push and a schedule post
+  nothing.
+- **Not judged:** a head that changes a CI definition, against `main`'s tip. Its run used its own
+  definitions, so its `results` say nothing about `main`'s. Until a run of `main`'s definitions
+  on such a head exists (#4584 step 4), its verdict is red, named as not judged.
+- **Up to date:** a head behind `main` is red, so the squash lands the tree the run tested.
+- **The run's verdict:** merge.yml's `results` job, which judges the run with main's
+  `verdict.py`, concluded `success` on every attempt. Missing, cancelled, skipped or red on any
+  attempt is red, and a rerun never turns a red into a green.
+- **The receipt:** a green names the controller's commit on `main`, the head and its tree, the
+  runner and the definitions commit, and the digests of the run's `ci-record-*` artifacts as the
+  API reports them. With no record artifact there is no evidence, so no green. The partner head
+  is not recorded yet; the partner rule comes with the apps half of #3910.
+
+The verdict is `success` or `failure`, never neutral; an answer the API would not give is
+`failure`, named as unread. The job reads with its own token (`contents: read`, `actions:
+read`), in the `ci-controller` environment, which only `main` may deploy to. Only when there is
+a verdict to post does it mint the controller App's token, with `checks: write` alone, and only
+the step that posts holds it. `post` refuses a body that is not one completed `merge-verdict`
+check run, or a green without its receipt.
+
+It is advisory: `main-protect` does not require `merge-verdict` yet. It will once #3915's flip is
+live and three pull requests' posted verdicts have matched their real results (#3910's plan,
+piece 5). `tests/test_ci_merge_controller.py` drives the rules against a fake API, and
+`tests/rails/test_ci_merge_verdict_poster_tree.py` holds the workflow's shape.
 
 ### Reachability
 
