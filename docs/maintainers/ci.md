@@ -296,7 +296,11 @@ artifact digests. The rules, in order:
   when GitHub's CodeQL workflow completes (followed by name, matched by its run's path), when the
   summary check completes (`check_run`, which starts a runner only for code scanning's CodeQL
   check), and every ten minutes, for open pull requests whose newest verdict is a waiting red,
-  posting only a verdict that changed.
+  posting only a verdict that changed. The CodeQL workflow's wake is proved: the completion of
+  main's CodeQL run 40071173659 started poster run 40072081053. The schedule stays all the same,
+  for one gap: that wake fires when the run completes, right after its last language uploads,
+  and a head judged before that upload is processed waits with nothing left to wake it, since
+  the summary check fired at the first upload. The schedule closes that gap and nothing else.
 - **The receipt:** a green names the controller's commit on `main`, the head and its tree, the
   runner and the definitions commit, and the digests of the run's `ci-record-*` artifacts as the
   API reports them. With no record artifact there is no evidence, so no green. The partner head

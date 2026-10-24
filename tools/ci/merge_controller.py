@@ -53,7 +53,9 @@ also sweeps away any trusted-run branch older than a day.
    ``neutral`` on most pull requests. A red whose only reasons are CodeQL still running or still
    processing is marked waiting, and the poster judges such heads again: every ten minutes, for
    the open pull requests whose newest verdict is a waiting red, posting only what changed; and
-   when GitHub's CodeQL workflow or its summary check completes.
+   when GitHub's CodeQL workflow or its summary check completes. The workflow's wake fires (proved
+   on main), but at the run's completion, which can come before its last upload is processed,
+   so the schedule stays for that gap.
 7. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
    this controller's commit on ``main``, the head and its tree, the runner and the definitions
    commit, and the digests of the run's ``ci-record-*`` artifacts as the API reports them. A run
