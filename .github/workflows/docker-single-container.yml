@@ -166,7 +166,7 @@ jobs:
           context: .
           file: deploy/docker/Dockerfile.backend
           target: runtime
-          load: true
+          outputs: type=docker,compression=uncompressed
           push: false
           provenance: false
           sbom: false
