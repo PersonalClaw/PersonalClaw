@@ -38,6 +38,45 @@ const SOURCE = /\.(js|cjs|mjs|html|json)$/;
 /** The module the first control removes: `main.js` requires it, and no fallback covers it. */
 const PLANTED_MISSING = "doorbell.js";
 
+/** The size the archive at *dest* has once it is whole: its 8-byte size field, its header, and
+ * the end of the last file packed after it, as the header itself says. */
+function archiveSize(dest) {
+  const { header, headerSize } = asar.getRawHeader(dest);
+  let end = 0;
+  const walk = (node) => {
+    for (const entry of Object.values(node.files || {})) {
+      if (entry.files) walk(entry);
+      else if (!entry.unpacked && entry.offset !== undefined) end = Math.max(end, Number(entry.offset) + entry.size);
+    }
+  };
+  walk(header);
+  return 8 + headerSize + end;
+}
+
+/**
+ * Pack *src* into the archive *dest*, and return once the archive is whole. asar.createPackage
+ * (3.4.1) resolves once its write stream's end is asked for, not once its bytes are on disk, so
+ * a copy or a read taken then can be short of the last file. The header is written first, so this
+ * waits for the size the header promises, and refuses after *timeoutMs*, naming how short it is.
+ */
+async function packArchive(src, dest, { create = asar.createPackage, timeoutMs = 30_000 } = {}) {
+  await create(src, dest);
+  const by = Date.now() + timeoutMs;
+  for (;;) {
+    let want = null;
+    try {
+      want = archiveSize(dest);
+    } catch {
+      // The header is not all there yet.
+    }
+    const got = fs.statSync(dest).size;
+    if (want !== null && got >= want) break;
+    if (Date.now() > by) throw new Error(`${path.basename(dest)} is ${got} of the ${want ?? "?"} bytes its header promises after ${timeoutMs} ms`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  asar.uncache(dest);
+}
+
 /** Rewrite *file* in the extracted *tree*: *find* must be there once. */
 function rewrite(tree, file, find, replace) {
   const p = path.join(tree, file);
@@ -118,8 +157,7 @@ async function plantedCopy(dir, plant) {
   asar.extractAll(appAsar, tree);
   plant(tree);
   fs.rmSync(appAsar);
-  await asar.createPackage(tree, appAsar);
-  asar.uncache(appAsar);
+  await packArchive(tree, appAsar);
   fs.rmSync(tree, { recursive: true, force: true });
   return copy;
 }
@@ -164,7 +202,7 @@ async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = 
   return results;
 }
 
-module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_SEND, asarSources, debugSwitchProblems, missingEntries, packed, plantedCopy, runControls, shellSources };
+module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_SEND, asarSources, debugSwitchProblems, missingEntries, packArchive, packed, plantedCopy, runControls, shellSources };
 
 if (require.main === module) {
   const [cmd, dir, ...rest] = process.argv.slice(2);
