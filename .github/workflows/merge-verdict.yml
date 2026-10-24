@@ -10,9 +10,11 @@
 # The verdict is green only when the head changes no CI definition (tools/ci/trust.py), is up to
 # date with main, merge.yml's `results` job, which judges the run with main's verdict.py, passed
 # on every attempt, and the head's dependency review (dependency-review.yml, main's copy) passed
-# (#4585 step 6). Anything else, an answer the API would not give included, posts failure, never
-# neutral. A completed Dependency review run judges its head again from the head's own completed
-# Merge run, so the two may finish in either order.
+# (#4585 step 6), and CodeQL analysed the head in every language main's analyses name, with no
+# alert of the pull request's own. Anything else, an answer the API would not give included,
+# posts failure, never neutral. A completed Dependency review run, or code scanning's CodeQL
+# check, judges its head again from the head's own completed Merge run, so they may finish in any
+# order.
 #
 # A head that changes a CI definition is not judged by its own run, which used its own
 # definitions: that run posts nothing, and the `trusted` job makes main's definitions on the
@@ -38,11 +40,15 @@ on:
   workflow_run:
     workflows: ["Merge", "Dependency review"]
     types: [completed]
+  # Code scanning's CodeQL check, completed, wakes the poster to judge its head again; its
+  # conclusion is never read. Every other check run posts nothing.
+  check_run:
+    types: [completed]
 
 # One post per Merge run and attempt, never cancelled: each run's verdict is its own check run,
 # and verify-check-run reads the newest.
 concurrency:
-  group: merge-verdict-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  group: merge-verdict-${{ github.event.workflow_run.id || github.event.check_run.id }}-${{ github.event.workflow_run.run_attempt }}
   cancel-in-progress: false
 
 permissions:
@@ -54,8 +60,9 @@ jobs:
     timeout-minutes: 10
     environment: ci-controller
     permissions:
-      contents: read   # main's tip, both trees and the comparison
-      actions: read    # the run, every attempt's jobs and the run's artifact digests
+      contents: read          # main's tip, both trees and the comparison
+      actions: read           # the run, every attempt's jobs and the run's artifact digests
+      security-events: read   # CodeQL's analyses on main and the open alerts on main and the head
     outputs:
       dispatch: ${{ steps.decide.outputs.dispatch }}
       base: ${{ steps.decide.outputs.base }}
@@ -74,11 +81,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          CHECK_RUN_ID: ${{ github.event.check_run.id }}
         run: |
           set -euo pipefail
-          python3 -m tools.ci merge-controller decide --repo "$GITHUB_REPOSITORY" \
-            --run-id "$RUN_ID" --controller-revision "$GITHUB_SHA" \
-            --out "$RUNNER_TEMP/merge-verdict.json"
+          if [ -n "$RUN_ID" ]; then which=(--run-id "$RUN_ID"); else which=(--check-run-id "$CHECK_RUN_ID"); fi
+          python3 -m tools.ci merge-controller decide --repo "$GITHUB_REPOSITORY" "${which[@]}" \
+            --controller-revision "$GITHUB_SHA" --out "$RUNNER_TEMP/merge-verdict.json"
       - name: the controller's token
         id: controller
         if: steps.decide.outputs.post == 'true'

@@ -1,7 +1,7 @@
 """``.github/workflows/merge-verdict.yml``: the merge verdict's poster keeps its trust shape.
 
-It runs only as a ``workflow_run`` listener of Merge and Dependency review, so GitHub runs main's
-copy. It names nothing
+It runs only as a ``workflow_run`` listener of Merge and Dependency review and a listener of
+completed check runs, so GitHub runs main's copy. It names nothing
 of the candidate (no ``workflow_run.head*`` anywhere), checks out only the default branch and
 keeps no credential. ``post`` reads with its own token (``contents`` and ``actions``, read) and
 mints the controller App's token, with ``checks: write`` alone, only when there is a verdict to
@@ -84,7 +84,8 @@ def _problems(text: str) -> list[str]:
         "workflow_run": {
             "workflows": [workflows.NAMES[workflows.MERGE], "Dependency review"],
             "types": ["completed"],
-        }
+        },
+        "check_run": {"types": ["completed"]},
     }
     if on != want:
         found.append(f"runs on {on!r}, not only a completed Merge run")
@@ -97,7 +98,11 @@ def _problems(text: str) -> list[str]:
         found.append("the job can be skipped, so a run could post nothing")
     if job.get("environment") != "ci-controller":
         found.append(f"the job deploys to {job.get('environment')!r}")
-    if job.get("permissions") != {"contents": "read", "actions": "read"}:
+    if job.get("permissions") != {
+        "contents": "read",
+        "actions": "read",
+        "security-events": "read",
+    }:
         found.append(f"the job holds {job.get('permissions')!r}")
     steps = _steps(job)
     found += _checkout_problems("the post job", steps)
@@ -149,7 +154,17 @@ _DISPATCH_TOKEN = (
 @pytest.mark.parametrize(
     "old, new, says",
     [
-        ("    types: [completed]\n", "    types: [completed]\n  pull_request:\n", "runs on"),
+        (
+            '    workflows: ["Merge", "Dependency review"]\n    types: [completed]\n',
+            '    workflows: ["Merge", "Dependency review"]\n    types: [completed]\n'
+            "  pull_request:\n",
+            "runs on",
+        ),
+        (
+            "  check_run:\n    types: [completed]\n",
+            "  check_run:\n    types: [completed, created]\n",
+            "runs on",
+        ),
         ('workflows: ["Merge", "Dependency review"]', 'workflows: ["Merge", "PR"]', "runs on"),
         ('workflows: ["Merge", "Dependency review"]', 'workflows: ["Merge"]', "runs on"),
         (
@@ -160,16 +175,17 @@ _DISPATCH_TOKEN = (
         ),
         (
             "    timeout-minutes: 10\n    environment: ci-controller\n    permissions:\n"
-            "      contents: read   # main's tip",
+            "      contents: read          # main's tip",
             "    timeout-minutes: 10\n    environment: release\n    permissions:\n"
-            "      contents: read   # main's tip",
+            "      contents: read          # main's tip",
             "the job deploys to",
         ),
         (
-            "      actions: read    #",
-            "      checks: write\n      actions: read    #",
+            "      actions: read           #",
+            "      checks: write\n      actions: read           #",
             "the job holds",
         ),
+        ("      security-events: read   #", "      security-events: write   #", "the job holds"),
         (
             _POST_CHECKOUT,
             _POST_CHECKOUT.replace("persist-credentials: false", "fetch-depth: 1"),

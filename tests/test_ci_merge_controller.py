@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,9 @@ DIGEST = "sha256:" + "d" * 64
 WF = trust.DEFINITION_ROOTS[0]
 MERGE_PATH = mc.MERGE_WORKFLOW
 MERGE_YML = "name: Merge\non:\n  workflow_dispatch: {}\njobs: {}\n"
+
+
+_PULL_NUMBER = re.compile(r"refs/pull/([0-9]+)/head")
 
 
 def _oid(text: str) -> str:
@@ -51,6 +55,44 @@ class FakeApi:
         self.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 0}
         self.artifacts({"ci-record-unit": DIGEST, "web-dist": "sha256:" + "e" * 64})
         self.review(HEAD, ("completed", "success"))
+        self.codeql(HEAD)
+
+    def codeql(
+        self,
+        head: str,
+        status: str = "completed",
+        jobs: Mapping[str, str | None] | None = None,
+        branch: str = "refs/pull/12/head",
+        pull_alerts: tuple[int, ...] = (3,),
+        main_alerts: tuple[int, ...] = (1, 2, 3),
+        languages: tuple[str, ...] = ("actions", "javascript-typescript", "python"),
+        path: str = mc.CODEQL_WORKFLOW,
+    ) -> None:
+        """GitHub's dynamic CodeQL run on the head, main's analyses and both refs' open alerts."""
+        run = {"id": 800, "path": path, "head_sha": head, "status": status, "head_branch": branch}
+        self.answers[f"/repos/{REPO}/actions/runs?head_sha={head}&per_page=100"] = {
+            "total_count": 1,
+            "workflow_runs": [run],
+        }
+        done = jobs if jobs is not None else {f"Analyze ({lang})": "success" for lang in languages}
+        listed = [{"name": n, "conclusion": c} for n, c in done.items()]
+        self.answers[f"/repos/{REPO}/actions/runs/800/jobs?per_page=100&page=1"] = {
+            "total_count": len(listed),
+            "jobs": listed,
+        }
+        self.answers[f"/repos/{REPO}/code-scanning/analyses?ref=refs/heads/main&per_page=100"] = [
+            {"analysis_key": mc.CODEQL_ANALYSIS, "category": f"/language:{lang}"}
+            for lang in languages
+        ]
+        alerts = "/repos/{REPO}/code-scanning/alerts?state=open&ref={ref}&per_page=100&page=1"
+        number = _PULL_NUMBER.search(branch)
+        if number:
+            self.answers[alerts.format(REPO=REPO, ref=f"refs/pull/{number[1]}/head")] = [
+                {"number": n} for n in pull_alerts
+            ]
+        self.answers[alerts.format(REPO=REPO, ref="refs/heads/main")] = [
+            {"number": n} for n in main_alerts
+        ]
 
     def review(self, head: str, *runs: tuple[str, str | None], path: str = "") -> None:
         """The head's dependency-review runs, oldest first."""
@@ -722,3 +764,102 @@ def test_a_head_main_has_moved_past_is_told_to_update_and_starts_no_trusted_run(
     assert outcome.posting.output["title"] == (
         "Red: the head is 4 commits behind main: update the branch"
     )
+
+
+# ── CodeQL, read from what it ran (#4585 step 6) ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "plant, says",
+    [
+        (dict(status="in_progress"), "CodeQL's analysis of the head is 'in_progress'"),
+        (
+            dict(
+                jobs={
+                    "Analyze (actions)": "success",
+                    "Analyze (javascript-typescript)": "success",
+                    "Analyze (python)": "failure",
+                }
+            ),
+            "`Analyze (python)` is 'failure'",
+        ),
+        (
+            dict(jobs={"Analyze (actions)": "success", "Analyze (python)": "success"}),
+            "`Analyze (javascript-typescript)` is None",
+        ),
+        (dict(pull_alerts=(3, 9)), "CodeQL finds 1 alerts this pull request brings (#9)"),
+        (dict(branch="main"), "is not a pull request's"),
+        (dict(path=f"{WF}codeql.yml"), "CodeQL has not analysed the head yet"),
+    ],
+)
+def test_codeql_that_did_not_pass_on_the_head_is_red(plant: dict[str, Any], says: str) -> None:
+    api = FakeApi()
+    api.codeql(HEAD, **plant)
+    assert says in _red(api).output["summary"]
+
+
+def test_an_alert_main_already_has_is_not_the_pull_requests() -> None:
+    api = FakeApi()
+    api.codeql(HEAD, pull_alerts=(1, 2, 3), main_alerts=(1, 2, 3, 4))
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success"
+    assert "found no alert it brings" in found.output["summary"]
+
+
+def test_every_language_main_analyses_is_required() -> None:
+    api = FakeApi()
+    api.codeql(HEAD, languages=("actions", "go"))
+    api.answers[f"/repos/{REPO}/actions/runs/800/jobs?per_page=100&page=1"] = {
+        "total_count": 1,
+        "jobs": [{"name": "Analyze (actions)", "conclusion": "success"}],
+    }
+    assert "`Analyze (go)` is None" in _red(api).output["summary"]
+
+
+CHECK = 66
+
+
+def _check(api: FakeApi, **fields: Any) -> None:
+    check = {
+        "id": CHECK,
+        "name": "CodeQL",
+        "status": "completed",
+        "conclusion": "neutral",
+        "head_sha": HEAD,
+        "app": {"id": mc.CODEQL_APP_ID, "slug": "github-advanced-security"},
+    }
+    api.answers[f"/repos/{REPO}/check-runs/{CHECK}"] = {**check, **fields}
+
+
+def test_the_codeql_check_wakes_the_poster_and_its_neutral_counts_for_nothing() -> None:
+    api = FakeApi()
+    _check(api)
+    _merge_runs(api, OWN_MERGE, [RUN])
+    outcome = mc.judge_check(api, REPO, CHECK, CONTROLLER)
+    assert outcome.posting is not None and outcome.posting.conclusion == "success"
+    assert outcome.posting.head_sha == HEAD
+
+
+@pytest.mark.parametrize(
+    "fields, says",
+    [
+        ({"app": {"id": 5444147, "slug": "personalclaw-ci-controller"}}, "not code scanning's"),
+        ({"name": "merge-verdict"}, "not a completed CodeQL check"),
+        ({"status": "in_progress"}, "not a completed CodeQL check"),
+    ],
+)
+def test_any_other_check_run_posts_nothing(fields: dict[str, Any], says: str) -> None:
+    api = FakeApi()
+    _check(api, **fields)
+    outcome = mc.judge_check(api, REPO, CHECK, CONTROLLER)
+    assert outcome.posting is None and outcome.dispatch is None and says in outcome.why
+
+
+def test_decide_takes_a_check_run_id(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
+    api = FakeApi()
+    _check(api, app={"id": 1, "slug": "someone"})
+    argv = ["decide", "--repo", REPO, "--check-run-id", str(CHECK)]
+    argv += ["--controller-revision", CONTROLLER, "--out", str(tmp_path / "v.json")]
+    assert mc.main(argv, get=api) == 0
+    assert "post=false" in (tmp_path / "outputs").read_text()

@@ -249,7 +249,7 @@ no workflow calls it yet.
 ### The merge controller's poster
 
 `.github/workflows/merge-verdict.yml` posts `merge-verdict` on a head each time a Merge run
-(`merge.yml`) or a Dependency review run completes. It is a `workflow_run` listener, so GitHub
+(`merge.yml`) or a Dependency review run completes, or code scanning's CodeQL check does. It is a `workflow_run` listener, so GitHub
 runs main's copy of it and of
 the `tools/ci` it runs, whatever the candidate brings. `python -m tools.ci merge-controller
 decide` (`tools/ci/merge_controller.py`) reads everything through the API by the run's id:
@@ -281,9 +281,16 @@ artifact digests. The rules, in order:
   is still running or did not pass is red. The poster also follows Dependency review: when one
   completes, it judges that head again from the head's own completed Merge run, or from its
   trusted run for a head that changes a definition, and starts nothing. So the two finish in
-  either order. CodeQL is not an input yet: its pull-request check reads `neutral` on most pull
-  requests, because GitHub computes it when the first language's analysis uploads, before the
-  other two exist.
+  either order.
+- **CodeQL, read from what it ran:** the newest run of GitHub's dynamic CodeQL workflow
+  (`dynamic/github-code-scanning/codeql`) on the head finished, with an `Analyze (<language>)`
+  job concluded `success` for each language `main`'s default-setup analyses name, and no alert
+  open on the pull request's ref (`refs/pull/<n>/head`) that is not open on `main`. A scratch pull
+  request that planted one `js/code-injection` showed exactly that alert there and not on
+  `main`, with all three analyses green. The `CodeQL` summary check is never read for its
+  conclusion: GitHub computes it when the first language's analysis uploads, so it reads
+  `neutral` on most pull requests. Its completion only wakes the poster (`check_run`), which
+  judges that head again; every other check run posts nothing.
 - **The receipt:** a green names the controller's commit on `main`, the head and its tree, the
   runner and the definitions commit, and the digests of the run's `ci-record-*` artifacts as the
   API reports them. With no record artifact there is no evidence, so no green. The partner head
@@ -291,7 +298,7 @@ artifact digests. The rules, in order:
 
 The verdict is `success` or `failure`, never neutral; an answer the API would not give is
 `failure`, named as unread. The `post` job reads with its own token (`contents: read`,
-`actions: read`), in the `ci-controller` environment, which only `main` may deploy to. Only when
+`actions: read`, `security-events: read`), in the `ci-controller` environment, which only `main` may deploy to. Only when
 there is a verdict to post does it mint the controller App's token, with `checks: write` alone,
 and only the step that posts holds it. The `trusted` job, in the same environment, mints it with
 `contents: write` alone, for the step that makes the trusted run's commit. `post` refuses a body that is not one completed `merge-verdict`

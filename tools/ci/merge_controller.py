@@ -42,9 +42,15 @@ also sweeps away any trusted-run branch older than a day.
    of ``dependency-review.yml`` on the head, main's copy, concluded ``success``. One that has
    not run, is still running or did not pass is red. When a Dependency review run completes, the
    poster judges its head again from the head's own completed Merge run (or its trusted run), so
-   the two may finish in either order. It is the one input besides the run: CodeQL's PR check
-   is not read until it reports reliably.
-6. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
+   the two may finish in either order.
+6. CodeQL analysed the head in every language ``main``'s CodeQL analyses name, and the pull
+   request brings no alert of its own: the newest run of GitHub's dynamic CodeQL workflow on the
+   head finished, with an ``Analyze (<language>)`` job that concluded ``success`` for each of
+   ``main``'s languages, and no alert is open on the pull request's ref that is not open on
+   ``main``. The ``CodeQL`` summary check is never read for its conclusion: GitHub computes it
+   when the first language's analysis uploads, so it reads ``neutral`` on most pull requests.
+   Its completion only wakes the poster, which judges the head again as for a review.
+7. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
    this controller's commit on ``main``, the head and its tree, the runner and the definitions
    commit, and the digests of the run's ``ci-record-*`` artifacts as the API reports them. A run
    with no record artifact has no evidence, so no green.
@@ -86,6 +92,14 @@ MERGE_WORKFLOW = f".github/workflows/{workflows.MERGE}"
 JUDGED_EVENTS = frozenset({"pull_request", "workflow_dispatch"})
 #: The dependency review: a pull_request_target workflow, so the run is main's copy.
 DEPENDENCY_REVIEW = ".github/workflows/dependency-review.yml"
+#: GitHub's dynamic CodeQL workflow (code scanning's default setup), by its run path.
+CODEQL_WORKFLOW = "dynamic/github-code-scanning/codeql"
+#: The analysis key default setup's CodeQL analyses carry.
+CODEQL_ANALYSIS = "dynamic/github-code-scanning/codeql:analyze"
+#: The App that posts the ``CodeQL`` summary check, whose completion wakes the poster.
+CODEQL_APP_ID = 57789
+_CODEQL_CHECK = "CodeQL"
+_PULL_HEAD = re.compile(r"refs/pull/(?P<number>[1-9][0-9]*)/head")
 #: The branch a trusted run of a head is made on: this prefix, then the head's full id.
 TRUSTED_PREFIX = "trusted-run/"
 #: A trusted-run branch older than this is swept away, whatever became of its run.
@@ -424,6 +438,85 @@ def dependency_review_reasons(get: Get, repo: str, head: str) -> list[str]:
     return []
 
 
+def _all_pages(get: Get, path: str) -> list[Mapping[str, Any]]:
+    """Every item of a listing that is a bare list, page by page until a short page."""
+    found: list[Mapping[str, Any]] = []
+    joiner = "&" if "?" in path else "?"
+    for page in range(1, _MAX_PAGES + 1):
+        batch = _read(get, f"{path}{joiner}per_page={_PER_PAGE}&page={page}")
+        if not isinstance(batch, list) or not all(isinstance(i, Mapping) for i in batch):
+            raise Unread(f"{path} is not a list of objects")
+        found += batch
+        if len(batch) < _PER_PAGE:
+            return found
+    raise Unread(f"{path} has more than {_MAX_PAGES} pages")
+
+
+def codeql_languages(get: Get, repo: str) -> frozenset[str]:
+    """The languages main's default-setup CodeQL analyses name (``/language:<name>``)."""
+    analyses = _read(get, f"/repos/{repo}/code-scanning/analyses?ref=refs/heads/main&per_page=100")
+    if not isinstance(analyses, list):
+        raise Unread("main's code scanning analyses are not a list")
+    languages = {
+        str(a["category"]).removeprefix("/language:")
+        for a in analyses
+        if isinstance(a, Mapping)
+        and a.get("analysis_key") == CODEQL_ANALYSIS
+        and str(a.get("category", "")).startswith("/language:")
+    }
+    if not languages:
+        raise Unread("main has no default-setup CodeQL analysis, so no language to require")
+    return frozenset(languages)
+
+
+def codeql_reasons(get: Get, repo: str, head: str) -> list[str]:
+    """Why CodeQL's analysis of the head does not pass (rule 6), or nothing."""
+    query = urllib.parse.urlencode({"head_sha": head, "per_page": _PER_PAGE})
+    answer = _read(get, f"/repos/{repo}/actions/runs?{query}")
+    runs = answer.get("workflow_runs") if isinstance(answer, Mapping) else None
+    if not isinstance(runs, list):
+        raise Unread(f"{head}'s runs are not a list")
+    ours = [
+        r
+        for r in runs
+        if isinstance(r, Mapping)
+        and str(r.get("path", "")).startswith(CODEQL_WORKFLOW)
+        and r.get("head_sha") == head
+        and _int(r.get("id")) is not None
+    ]
+    if not ours:
+        return ["CodeQL has not analysed the head yet"]
+    newest = max(ours, key=lambda r: int(r["id"]))
+    if newest.get("status") != "completed":
+        return [f"CodeQL's analysis of the head is {newest.get('status')!r}, not finished"]
+    pull = _PULL_HEAD.fullmatch(str(newest.get("head_branch") or ""))
+    if pull is None:
+        return ["CodeQL's analysis of the head is not a pull request's"]
+    jobs = _pages(get, f"/repos/{repo}/actions/runs/{newest['id']}/jobs", "jobs")
+    done = {str(j.get("name")): j.get("conclusion") for j in jobs}
+    reasons = [
+        f"CodeQL's `Analyze ({lang})` is {done.get(f'Analyze ({lang})')!r}"
+        for lang in sorted(codeql_languages(get, repo))
+        if done.get(f"Analyze ({lang})") != "success"
+    ]
+    if reasons:
+        return reasons
+    ref = f"refs/pull/{pull['number']}/head"
+    alerts = "/repos/{repo}/code-scanning/alerts?state=open&ref={ref}"
+    on_pull = {_int(a.get("number")) for a in _all_pages(get, alerts.format(repo=repo, ref=ref))}
+    on_main = {
+        _int(a.get("number"))
+        for a in _all_pages(get, alerts.format(repo=repo, ref="refs/heads/main"))
+    }
+    brought = sorted(n for n in on_pull - on_main if n is not None)
+    if None in on_pull:
+        raise Unread("an alert on the pull request names no number")
+    if brought:
+        named = ", ".join(f"#{n}" for n in brought[:10])
+        return [f"CodeQL finds {len(brought)} alerts this pull request brings ({named})"]
+    return []
+
+
 def _latest_merge_run(get: Get, repo: str, **query: str) -> int | None:
     params = urllib.parse.urlencode({**query, "status": "completed", "per_page": _PER_PAGE})
     answer = _read(get, f"/repos/{repo}/actions/workflows/{workflows.MERGE}/runs?{params}")
@@ -439,14 +532,34 @@ def _latest_merge_run(get: Get, repo: str, **query: str) -> int | None:
 
 
 def decide_review(get: Get, repo: str, run: Mapping[str, Any], controller_revision: str) -> Outcome:
-    """A completed Dependency review run: judge its head again from the head's own completed
-    pull_request Merge run, or, for a head that changes a definition, from its trusted run.
-    Nothing is dispatched from here; the head's own Merge run does that."""
+    """A completed Dependency review run: judge its head again (:func:`rejudge`)."""
     head = run.get("head_sha")
     if run.get("event") != "pull_request_target" or not isinstance(head, str):
         return Outcome(why=f"run {run.get('id')} is not a pull request's dependency review")
     if not _SHA.fullmatch(head):
         raise Unread(f"dependency review run {run.get('id')} names no head")
+    return rejudge(get, repo, head, controller_revision)
+
+
+def judge_check(get: Get, repo: str, check_id: int, controller_revision: str) -> Outcome:
+    """A completed check run: only the ``CodeQL`` summary check, from GitHub's code scanning
+    App, wakes the poster, and only to judge its head again. Its conclusion is never read."""
+    check = _read(get, f"/repos/{repo}/check-runs/{check_id}")
+    app = check.get("app") if isinstance(check, Mapping) else None
+    if not isinstance(app, Mapping) or _int(app.get("id")) != CODEQL_APP_ID:
+        return Outcome(why=f"check run {check_id} is not code scanning's")
+    if check.get("name") != _CODEQL_CHECK or check.get("status") != "completed":
+        return Outcome(why=f"check run {check_id} is not a completed {_CODEQL_CHECK} check")
+    head = check.get("head_sha")
+    if not isinstance(head, str) or not _SHA.fullmatch(head):
+        raise Unread(f"check run {check_id} names no head")
+    return rejudge(get, repo, head, controller_revision)
+
+
+def rejudge(get: Get, repo: str, head: str, controller_revision: str) -> Outcome:
+    """Judge a head again from its own completed pull_request Merge run, or, for a head that
+    changes a definition, from its trusted run. Nothing is dispatched from here; the head's own
+    Merge run does that."""
     own = _latest_merge_run(get, repo, head_sha=head, event="pull_request")
     if own is None:
         return Outcome(why=f"{head} has no completed Merge run of its own to judge yet")
@@ -581,6 +694,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             judged = f"a run of main's definitions on its tree (`{run.head_sha}`)"
         reasons, labels = results_reasons(get, repo, run)
         reasons += dependency_review_reasons(get, repo, head)
+        reasons += codeql_reasons(get, repo, head)
         if behind:
             reasons.append(f"the head is {behind} commits behind main: update the branch")
         records = evidence(get, repo, run) if not reasons else {}
@@ -604,6 +718,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             f"- the definitions that ran are main's at `{base}`",
             "- the head is up to date with main",
             "- its dependency review passed",
+            "- CodeQL analysed every language main has, and found no alert it brings",
             f"- {len(records)} job records, their digests in the receipt below",
             "",
             ADVISORY,
@@ -776,7 +891,9 @@ def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | No
     sub = parser.add_subparsers(dest="command", required=True)
     one = sub.add_parser("decide", help="judge a Merge run and write the check run to post")
     one.add_argument("--controller-revision", required=True)
-    one.add_argument("--run-id", required=True, type=int)
+    which = one.add_mutually_exclusive_group(required=True)
+    which.add_argument("--run-id", type=int, help="a completed run of Merge or Dependency review")
+    which.add_argument("--check-run-id", type=int, help="a completed CodeQL check run")
     one.add_argument("--out", required=True, type=Path)
     two = sub.add_parser("post", help="post the check run with the App's token (GH_TOKEN)")
     two.add_argument("--body", required=True, type=Path)
@@ -797,7 +914,12 @@ def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | No
     writer = api or github_api(token)
     if args.command == "decide":
         try:
-            outcome = judge(reader, args.repo, args.run_id, args.controller_revision)
+            if args.run_id is not None:
+                outcome = judge(reader, args.repo, args.run_id, args.controller_revision)
+            else:
+                outcome = judge_check(
+                    reader, args.repo, args.check_run_id, args.controller_revision
+                )
         except Unread as exc:
             print(f"::error title=merge verdict unread::{exc}")
             return 2
