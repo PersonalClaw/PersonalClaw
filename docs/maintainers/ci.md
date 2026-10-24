@@ -2014,7 +2014,14 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
 
 - **A folder of its own.** Each job gets a new scratch folder, which only its owner can open, with
   its own home and temporary folder. A folder that already exists is refused, so no earlier job's
-  home or record is reused.
+  home or record is reused. It is never inside the checkout: a local run's folder is
+  (`.local/run-job/<run>`), so its jobs' scratch folders go in a folder of the run's own in the
+  system's temporary folder (`jobs.scratch_base`). Inside it, a tree a test plants in its
+  temporary folder is one git answers for as the checkout's, whose `.gitignore` names `.local/`,
+  and a rail that asks git what the tree holds hears nothing: the licence rail's planted CLA file
+  passed there (#3920). On GitHub the run's folder is the runner's temporary folder already.
+  That folder is removed when the run ends, so job homes do not pile up there, unless
+  `--keep-scratch` keeps it; the receipt's `scratch` names its path and whether it was kept.
 - **An environment built from nothing.** The job sees only its `PATH`, the scratch `HOME` and
   `TMPDIR`, a fixed locale (`LANG` and `LC_ALL` are `C.UTF-8`), git's variables, and what the job
   declares. No token, ssh agent or `GIT_DIR` of the caller's reaches it. A declared variable that

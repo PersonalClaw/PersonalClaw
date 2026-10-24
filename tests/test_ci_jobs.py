@@ -553,6 +553,29 @@ def test_runner_temp_is_the_jobs_own_temporary_folder(repo, tmp_path):
     assert where.is_dir()
 
 
+def test_a_local_runs_jobs_get_their_scratch_outside_the_checkout(repo, tmp_path):
+    """A local run's folder is inside the checkout (``.local/run-job/<run>``), so its jobs'
+    homes and temporary folders go in the system's temporary folder: a tree a test plants there
+    is git's to read as its own, never the checkout's, which ignores ``.local/``. Before, a
+    licence rail asking git about a planted tree there heard nothing and passed (#3920)."""
+    out = tmp_path / "where"
+    program = (
+        "import os, subprocess, sys\n"
+        "planted = os.path.join(sys.argv[1], 'planted')\n"
+        "os.makedirs(planted)\n"
+        "top = subprocess.run(['git', '-C', planted, 'rev-parse', '--show-toplevel'],\n"
+        "                     capture_output=True, text=True)\n"
+        "open(sys.argv[2], 'w').write(sys.argv[1] + '\\n' + top.stdout.strip())\n"
+    )
+    job = _job("tmp", steps=(Step((PY, "-c", program, "{runner_temp}", str(out))),))
+    work = repo / ".local" / "run-job" / "planted"
+    done = jobs.run_one(Catalogue((job,)), job, None, _host(repo), jobs.Options(), work)
+    assert done.code == run.OK, done.reasons
+    where, _, top = out.read_text().partition("\n")
+    assert not Path(where).resolve().is_relative_to(repo.resolve()), where
+    assert top != str(repo.resolve()), "git read the planted tree as the checkout's"
+
+
 def test_a_job_on_a_dirty_checkout_runs_but_leaves_no_record(repo, tmp_path):
     (repo / "tests" / "test_a.py").write_text("def test_it():\n    assert True\n")
     outcome = _run(repo, _job("dirty", "pass"), tmp_path)
