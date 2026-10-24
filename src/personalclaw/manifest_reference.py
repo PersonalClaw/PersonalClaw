@@ -162,27 +162,6 @@ def _route_source_files() -> list[Path]:
     return sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
 
 
-def _handler_docstrings() -> dict[str, str]:
-    """Map every function name in the package to its docstring.
-
-    A global index: handlers are referenced at registration as a bare name
-    (``api_autonudge_list``) or an attribute (``handlers.api_spawn``,
-    ``_up.api_uploads_init``); in every form the callable's own name is the final
-    identifier, so one flat name→docstring index resolves them all. First
-    definition wins on the rare duplicate — deterministic under the sorted walk.
-    """
-    index: dict[str, str] = {}
-    for py in _route_source_files():
-        tree = ast.parse(py.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name in index:
-                    continue
-                doc = ast.get_docstring(node) or ""
-                index[node.name] = doc
-    return index
-
-
 def _handler_name(node: ast.expr | None) -> str:
     """The final identifier of a handler reference (``a.b.c`` → ``c``, ``x`` → ``x``)."""
     if isinstance(node, ast.Attribute):
@@ -201,13 +180,26 @@ def _routes_from_ast() -> list[dict[str, Any]]:
     live ``/api/manifest`` walk. Scans the whole package (see
     :func:`_route_source_files`) so entity families registered from outside
     ``dashboard/`` are not invisible here.
+
+    Each file is parsed and walked once, for its routes and its functions' docstrings
+    both. Handlers are referenced at registration as a bare name (``api_autonudge_list``)
+    or an attribute (``handlers.api_spawn``, ``_up.api_uploads_init``); in every form the
+    callable's own name is the final identifier, so one flat name→docstring index resolves
+    them all, and a route's summary is read once the whole package's index is known: its
+    handler may be defined in a file read after the one that registers it. The first
+    definition of a name wins on the rare duplicate, and the first registration of a
+    route — both deterministic under the sorted walk.
     """
-    docs = _handler_docstrings()
+    docs: dict[str, str] = {}
     seen: set[tuple[str, str]] = set()
-    out: list[dict[str, Any]] = []
+    found: list[tuple[str, str, str]] = []
     for py in _route_source_files():
         tree = ast.parse(py.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name not in docs:
+                    docs[node.name] = ast.get_docstring(node) or ""
+                continue
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
             verb = node.func.attr
@@ -229,16 +221,16 @@ def _routes_from_ast() -> list[dict[str, Any]]:
             seen.add(key)
             handler_idx = path_idx + 1
             handler = node.args[handler_idx] if len(node.args) > handler_idx else None
-            doc = docs.get(_handler_name(handler), "")
-            summary = _summary_for_method(doc, method)
-            out.append(
-                {
-                    "method": method,
-                    "path": path,
-                    "summary": summary,
-                    "agent_callable": path.startswith("/api/") and not path.startswith("/api/ws"),
-                }
-            )
+            found.append((method, path, _handler_name(handler)))
+    out = [
+        {
+            "method": method,
+            "path": path,
+            "summary": _summary_for_method(docs.get(handler, ""), method),
+            "agent_callable": path.startswith("/api/") and not path.startswith("/api/ws"),
+        }
+        for method, path, handler in found
+    ]
     out.sort(key=lambda d: (d["path"], d["method"]))
     return out
 
