@@ -256,9 +256,18 @@ artifact digests. The rules, in order:
 - **Which runs post:** only this repository's `merge.yml`, completed, on a `pull_request` or a
   dispatch. Another workflow named Merge, which a candidate can add, a push and a schedule post
   nothing.
-- **Not judged:** a head that changes a CI definition, against `main`'s tip. Its run used its own
-  definitions, so its `results` say nothing about `main`'s. Until a run of `main`'s definitions
-  on such a head exists (#4584 step 4), its verdict is red, named as not judged.
+- **A head that changes a CI definition,** against `main`'s tip, is judged by a run of `main`'s
+  definitions on its tree, never by its own run, which posts nothing (#4584 step 4). The
+  `trusted` job builds one commit through the API with the controller App's token: `main`'s tip
+  as its parent, `main`'s definitions, and every other path as the head has it. It points
+  `trusted-run/<head>` at it and runs `main`'s merge.yml there with its own token, which holds
+  `actions: write` alone. The commit changes no workflow file against its parent, and every
+  push trigger here is `main`'s alone, so the push starts nothing; its caches belong to that
+  branch, never to `main`. When that run completes, its verdict is posted on the head, only if
+  its commit still has a parent on `main`, `main`'s tip's definitions and the head's every other
+  path. One whose definitions `main` has moved past is made again; any other is red. Then the
+  branch is deleted. Until that run reports, the head has no verdict, which a required check
+  reads as not passed.
 - **Up to date:** a head behind `main` is red, so the squash lands the tree the run tested.
 - **The run's verdict:** merge.yml's `results` job, which judges the run with main's
   `verdict.py`, concluded `success` on every attempt. Missing, cancelled, skipped or red on any
@@ -269,10 +278,11 @@ artifact digests. The rules, in order:
   is not recorded yet; the partner rule comes with the apps half of #3910.
 
 The verdict is `success` or `failure`, never neutral; an answer the API would not give is
-`failure`, named as unread. The job reads with its own token (`contents: read`, `actions:
-read`), in the `ci-controller` environment, which only `main` may deploy to. Only when there is
-a verdict to post does it mint the controller App's token, with `checks: write` alone, and only
-the step that posts holds it. `post` refuses a body that is not one completed `merge-verdict`
+`failure`, named as unread. The `post` job reads with its own token (`contents: read`,
+`actions: read`), in the `ci-controller` environment, which only `main` may deploy to. Only when
+there is a verdict to post does it mint the controller App's token, with `checks: write` alone,
+and only the step that posts holds it. The `trusted` job, in the same environment, mints it with
+`contents: write` alone, for the step that makes the trusted run's commit. `post` refuses a body that is not one completed `merge-verdict`
 check run, or a green without its receipt.
 
 It is advisory: `main-protect` does not require `merge-verdict` yet. It will once #3915's flip is

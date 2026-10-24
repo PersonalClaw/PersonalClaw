@@ -832,12 +832,16 @@ _MAIN_ONLY_ENVIRONMENTS = {
     ("settings-report.yml", "report"): "settings-report",
     ("release-tag.yml", "tag"): "ci-controller",
     ("merge-verdict.yml", "post"): "ci-controller",
+    ("merge-verdict.yml", "trusted"): "ci-controller",
 }
 _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
-#: The one main-only job that runs on another trigger: the merge verdict's poster, a
-#: `workflow_run` listener and nothing else. GitHub runs a listener from the default branch, so
-#: no candidate's run can name the environment through it either.
-_LISTENER_ONLY = {("merge-verdict.yml", "post"): {"workflow_run"}}
+#: The main-only jobs that run on another trigger: the merge verdict's poster and its trusted
+#: run's maker, in a `workflow_run` listener that runs on nothing else. GitHub runs a listener
+#: from the default branch, so no candidate's run can name the environment through it either.
+_LISTENER_ONLY = {
+    ("merge-verdict.yml", "post"): {"workflow_run"},
+    ("merge-verdict.yml", "trusted"): {"workflow_run"},
+}
 #: The one publishing permission a workflow other than release.yml may hold, by workflow and job:
 #: release-push-proof.yml runs release.yml's own image push to a scratch package no release names,
 #: and deletes it (#3911; tests/rails/test_release_push_proof_tree.py holds that). It may hold
