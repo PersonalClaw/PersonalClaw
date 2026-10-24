@@ -63,9 +63,9 @@ cap = 120
 reason = "the inert-surface census, built once for the module by whichever of its tests runs first (_inventory); 57 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
-site = "tests/test_inert_surface_baseline.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
 cap = 200
-reason = "the inert-surface census over the package, against a planted lineage; 100 s on CI at worst (breadth's coverage leg, 2026-10-24)"
+reason = "the inert-surface census over the package, against a planted lineage; 100 s on CI at worst (breadth's coverage leg, 2026-10-24); a rail since #5472, run once a run"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_enum_census_still_finds_a_nontrivial_population"
