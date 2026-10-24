@@ -52,11 +52,19 @@ import posixpath
 import re
 import subprocess
 import tomllib
-from collections.abc import Iterable, Mapping
-from functools import lru_cache
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+from job_reads import (
+    forget,
+    literal,
+    python_names,
+    python_reads,
+    top_entries,
+    tracked_dirs,
+    tracked_paths,
+)
 from rails_repo import REPO
 
 from tools.ci import audit, catalogue
@@ -80,139 +88,12 @@ _BACKEND_CONFIG = ("pyproject.toml", "setup.py", "setup.cfg", "MANIFEST.in")
 #: The licence files setuptools ships when ``license-files`` is not set.
 _DEFAULT_LICENSE_FILES = ("LICEN[CS]E*", "COPYING*", "NOTICE*", "AUTHORS*")
 
-_PATH_CALLS = frozenset({"join", "joinpath", "Path", "PurePath", "PurePosixPath"})
-
-
-@lru_cache(maxsize=None)
-def _tracked(root: Path) -> frozenset[str]:
-    out = subprocess.run(
-        ["git", "-C", str(root), "ls-files"], capture_output=True, text=True, check=True
-    ).stdout
-    return frozenset(out.splitlines())
-
-
-@lru_cache(maxsize=None)
-def _dirs(root: Path) -> frozenset[str]:
-    """Every folder above a tracked path."""
-    return frozenset(
-        p.rsplit("/", i)[0] for p in _tracked(root) for i in range(1, p.count("/") + 1)
-    )
-
-
-def _forget() -> None:
-    _tracked.cache_clear()
-    _dirs.cache_clear()
-
-
-def _tops(tracked: Iterable[str]) -> frozenset[str]:
-    return frozenset(p.split("/")[0] for p in tracked)
-
-
-# ── what a Python file names ─────────────────────────────────────────────────────────────────
-
-
-def _literal(node: ast.AST) -> str | None:
-    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
-
-
-def _run_from_a_top(parts: list[ast.AST], tops: frozenset[str]) -> list[ast.Constant]:
-    """The literal run of ``parts`` from its first literal whose first part is a top-level
-    entry, up to the first part that is not a literal."""
-    for i, part in enumerate(parts):
-        text = _literal(part)
-        if text is not None and text.strip("/").split("/")[0] in tops:
-            run: list[ast.Constant] = []
-            for later in parts[i:]:
-                if _literal(later) is None:
-                    break
-                run.append(later)  # type: ignore[arg-type]
-            return run
-    return []
-
-
-def _joined(node: ast.AST, inner: set[int]) -> list[ast.AST] | None:
-    """The parts a path expression joins: a ``/`` chain or a join call's arguments. The chain's
-    inner ``/`` nodes go into ``inner``, so a chain is read once, whole, from its outermost."""
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-        if id(node) in inner:
-            return None
-        chain: list[ast.AST] = []
-        current: ast.AST = node
-        while isinstance(current, ast.BinOp) and isinstance(current.op, ast.Div):
-            inner.add(id(current))
-            chain.insert(0, current.right)
-            current = current.left
-        return [current, *chain]
-    if isinstance(node, ast.Call):
-        func = node.func
-        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
-        if name in _PATH_CALLS:
-            return list(node.args)
-    return None
-
-
-def python_names(root: Path, rel: str, tops: frozenset[str]) -> set[str]:
-    """Each repository path the Python file ``rel`` names. A file it cannot parse fails: what
-    the census cannot read, it cannot account for."""
-    try:
-        tree = ast.parse((root / rel).read_text(encoding="utf-8"))
-    except (SyntaxError, UnicodeDecodeError) as exc:
-        raise AssertionError(f"{rel} cannot be parsed, so the census cannot read it: {exc}")
-    # A bare literal naming a top-level file names that file; one naming a folder may be any word.
-    top_files = tops - _dirs(root)
-    used: set[int] = set()
-    inner: set[int] = set()
-    found: set[str] = set()
-    for node in ast.walk(tree):
-        parts = _joined(node, inner)
-        run = _run_from_a_top(parts, tops) if parts else []
-        if run:
-            used.update(id(n) for n in run)
-            found.add("/".join(n.value.strip("/") for n in run))
-    assigned = {
-        id(node.value)
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None
-    }
-    for node in ast.walk(tree):
-        text = _literal(node)
-        if text is None or id(node) in used:
-            continue
-        text = text.strip().removeprefix("./").rstrip("/")
-        if not text or "\n" in text or " " in text or len(text) > 300:
-            continue
-        if text.split("/")[0] not in tops:
-            continue
-        if "/" in text or text in top_files or id(node) in assigned:
-            found.add(text)
-    return found
-
-
-def python_reads(root: Path, scripts: Iterable[str]) -> dict[str, str]:
-    """Each path ``scripts`` name, followed into every tracked Python file one of them names."""
-    tracked = _tracked(root)
-    tops = _tops(tracked)
-    found: dict[str, str] = {}
-    todo = list(scripts)
-    seen: set[str] = set()
-    while todo:
-        rel = todo.pop()
-        if rel in seen:
-            continue
-        seen.add(rel)
-        found.setdefault(rel, "a step runs it")
-        for path in sorted(python_names(root, rel, tops)):
-            found.setdefault(path, f"named by {rel}")
-            if path.endswith(".py") and path in tracked:
-                todo.append(path)
-    return found
-
 
 # ── each job's census ────────────────────────────────────────────────────────────────────────
 
 
 def _toolchain_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
-    tracked = _tracked(root)
+    tracked = tracked_paths(root)
     return {
         name: f"its toolchain's {word} reads it"
         for word in job.toolchain
@@ -223,18 +104,18 @@ def _toolchain_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
 
 def _step_paths(job: catalogue.Job, root: Path) -> set[str]:
     """Each argument of the job's steps that is a tracked path, extras (``[dev]``) cut off."""
-    tracked = _tracked(root)
-    known = tracked | _dirs(root)
+    tracked = tracked_paths(root)
+    known = tracked | tracked_dirs(root)
     words = (w.split("[")[0].rstrip("/") for step in job.command for w in step.argv)
     return {w for w in words if w in known}
 
 
 def client_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
     found = {p: "a step names it" for p in _step_paths(job, root)}
-    folders = [p for p in found if p in _dirs(root)]
-    tops = _tops(_tracked(root))
+    folders = [p for p in found if p in tracked_dirs(root)]
+    tops = top_entries(tracked_paths(root))
     for folder in folders:
-        for rel in sorted(p for p in _tracked(root) if p.startswith(folder + "/")):
+        for rel in sorted(p for p in tracked_paths(root) if p.startswith(folder + "/")):
             if not rel.endswith(".py"):
                 continue
             depth = rel.count("/") - folder.count("/") - 1
@@ -253,7 +134,7 @@ def _climbs(root: Path, rel: str, depth: int) -> list[str]:
     tree = ast.parse((root / rel).read_text(encoding="utf-8"))
     out: list[str] = []
     for node in ast.walk(tree):
-        text = _literal(node)
+        text = literal(node)
         if text is not None and (text == ".." or text.startswith("../")):
             out.append(".")
         if (
@@ -287,7 +168,7 @@ def _manifest_in(root: Path) -> set[str]:
 
 
 def package_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
-    tracked = _tracked(root)
+    tracked = tracked_paths(root)
     found = {n: "setuptools reads it" for n in _BACKEND_CONFIG if n in tracked}
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     meta = project.get("project", {})
@@ -533,8 +414,8 @@ def web_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
     whenever it is named, since a test that names one imports or evaluates it; a Python file only
     when the code runs it (it is inside a child's argv), since a Python file a web test names is
     a twin whose text it reads or a source it holds itself to."""
-    tracked = _tracked(root)
-    tops = _tops(tracked)
+    tracked = tracked_paths(root)
+    tops = top_entries(tracked)
     workspaces = _step_workspaces(root, job)
     found = {w: "a step runs in it" for w in workspaces}
     if workspaces:
@@ -556,7 +437,7 @@ def web_reads(root: Path, job: catalogue.Job) -> dict[str, str]:
         for path, run in sorted(names.items()):
             if path.split("/")[0] in workspaces:
                 continue
-            if path in tracked or path in _dirs(root):
+            if path in tracked or path in tracked_dirs(root):
                 found.setdefault(path, f"{'run' if run else 'named'} by {rel}")
             runs_python = path.endswith(".py") and (run or rel.endswith(".py"))
             if path in tracked and (_JS_SCRIPT.search(path) or runs_python):
@@ -582,8 +463,8 @@ _CENSUS = {
 def _through(root: Path, path: str) -> list[str]:
     """What an untracked path is read through: a workspace folder with the root's npm
     manifests, else the tracked folder above it. The root itself is reached by no input."""
-    tracked = _tracked(root)
-    if path == "." or path in tracked or path in _dirs(root):
+    tracked = tracked_paths(root)
+    if path == "." or path in tracked or path in tracked_dirs(root):
         return [path]
     top = path.split("/")[0]
     if top in _workspaces(root):
@@ -591,7 +472,7 @@ def _through(root: Path, path: str) -> list[str]:
     parts = path.split("/")
     while parts:
         parts.pop()
-        if "/".join(parts) in _dirs(root):
+        if "/".join(parts) in tracked_dirs(root):
             return ["/".join(parts)]
     return []
 
@@ -599,7 +480,7 @@ def _through(root: Path, path: str) -> list[str]:
 def _reached(inputs: tuple[str, ...], path: str, root: Path) -> bool:
     if path == ".":
         return any(planner.whole_tree(s) for s in inputs)
-    if path in _dirs(root):
+    if path in tracked_dirs(root):
         return planner.reaches(inputs, path + "/x")
     return planner.reaches(inputs, path)
 
@@ -651,7 +532,7 @@ def test_the_wheel_check_loads_the_manifest_script_by_its_path() -> None:
         if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "spec_from_file_location"
     ]
     assert loads, "verify_wheel.py loads no script by path any more: drop the entry"
-    named = python_names(REPO, "scripts/verify_wheel.py", _tops(_tracked(REPO)))
+    named = python_names(REPO, "scripts/verify_wheel.py", top_entries(tracked_paths(REPO)))
     assert "scripts/backend_bundle_manifest.py" in named, sorted(named)
 
 
@@ -718,7 +599,7 @@ def _git_tree(tmp_path: Path, files: Mapping[str, str]) -> Path:
         (tmp_path / rel).write_text(text, encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
     subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
-    _forget()
+    forget()
     return tmp_path
 
 
@@ -769,7 +650,7 @@ def test_a_client_file_that_reads_outside_its_folder_fails(
         job = _client_job()
         assert uncovered(job.inputs, client_reads(root, job), root) == missing
     finally:
-        _forget()
+        forget()
 
 
 def test_a_new_npm_lock_the_audit_audits_is_a_read(tmp_path: Path) -> None:
@@ -791,7 +672,7 @@ def test_a_new_npm_lock_the_audit_audits_is_a_read(tmp_path: Path) -> None:
         assert "deploy/docker/tools/package.json" in reads, reads
         assert "web/package.json" in reads, reads
     finally:
-        _forget()
+        forget()
 
 
 def test_a_script_a_step_script_names_is_followed(tmp_path: Path) -> None:
@@ -809,7 +690,7 @@ def test_a_script_a_step_script_names_is_followed(tmp_path: Path) -> None:
         assert reads["docs/b.md"] == "named by scripts/b.py"
         assert "docs" not in reads, "a joined run is the path it joins, not its first folder"
     finally:
-        _forget()
+        forget()
 
 
 def test_a_bare_top_level_name_is_a_read_only_when_joined_or_assigned(tmp_path: Path) -> None:
@@ -823,7 +704,7 @@ def test_a_bare_top_level_name_is_a_read_only_when_joined_or_assigned(tmp_path: 
     try:
         assert python_names(root, "scripts/a.py", frozenset({"docs", "scripts"})) == {"docs"}
     finally:
-        _forget()
+        forget()
 
 
 def test_an_untracked_build_output_is_read_through_its_sources(tmp_path: Path) -> None:
@@ -844,7 +725,7 @@ def test_an_untracked_build_output_is_read_through_its_sources(tmp_path: Path) -
             "package-lock.json (web/dist: MANIFEST.in adds it)",
         ]
     finally:
-        _forget()
+        forget()
 
 
 _WEB_PACKAGE = '{"workspaces": ["web"], "scripts": {"test:web": "npm run test --workspace=web"}}\n'
@@ -933,7 +814,7 @@ def test_a_web_file_that_reads_outside_its_workspace_is_a_read(
         job = _web_job()
         assert uncovered(job.inputs, web_reads(root, job), root) == missing
     finally:
-        _forget()
+        forget()
 
 
 def test_the_web_steps_name_the_workspaces_they_run_in(tmp_path: Path) -> None:
@@ -943,4 +824,4 @@ def test_the_web_steps_name_the_workspaces_they_run_in(tmp_path: Path) -> None:
         assert _step_workspaces(root, job) == ["web"]
         assert uncovered(("docs/",), web_reads(root, job), root) == ["web (a step runs in it)"]
     finally:
-        _forget()
+        forget()

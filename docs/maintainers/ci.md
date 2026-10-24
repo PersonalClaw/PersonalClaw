@@ -826,7 +826,17 @@ scripts it runs. One run of each job's steps under a file-read recorder found no
 path outside those lists but `mobile/package.json`, now listed, and `web-build`'s licence check,
 whose whole-tree half is `static`'s on every change. `tests/rails/test_ci_job_inputs_tree.py` holds
 each of the five to a census of its reads, with a planted read per form the census follows and a
-dropped entry per list. A docs page none of them reads plans none of them. `desktop-smoke`'s are `desktop/` and
+dropped entry per list. A docs page none of them reads plans none of them.
+
+Three workflows of their own, no catalogue job, start by a `paths:` filter instead of the plan:
+`nix.yml`, `action-pins.yml` and `release-image-tooling.yml` (`docker-single-container.yml`'s
+filter is the `image` entry's inputs, held by `tests/rails/test_ci_image_tree.py`).
+`tests/rails/test_workflow_path_filters_tree.py` holds each filter to a census of what its jobs
+read: the workflow's file, each local action a step uses, each path a `run:` step names (each
+Python script followed into what it names), and for a step that runs `nix`, the flake, its lock
+and every path a `.nix` file names relative to itself. Every trigger's list is the same, a new
+filtered workflow fails until the rail holds it, and a step that builds the project (`uv build`)
+names its reason, since no filter names the whole project. `desktop-smoke`'s are `desktop/` and
 `web/`, the shell and the dashboard it loads (#3942): it packs the shell with electron-builder's
 Linux dir build on a stub backend that runs the checkout's gateway, holds the packed `app.asar`
 to `build.files`, starts the app under Xvfb and watches it, over a DevTools pipe rather than a

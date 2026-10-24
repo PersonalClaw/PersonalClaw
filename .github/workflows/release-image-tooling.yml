@@ -15,7 +15,9 @@
 #
 # A workflow of its own because its trigger is a path filter: docker-single-container.yml's
 # filter would have to name the release's workflows, and every change to them would then pay for
-# that workflow's hour-long gateway image build as well.
+# that workflow's hour-long gateway image build as well. The filter also names the layout reader
+# `layout-smoke` runs, and tests/rails/test_workflow_path_filters_tree.py holds it to every path
+# the jobs read.
 #
 # `pin-smoke` builds a two-line image for both platforms and keeps it in BuildKit's cache: the
 # `RUN` executes once per platform, the arm64 one under the pinned QEMU, inside the pinned BuildKit.
@@ -27,6 +29,7 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/release-artifacts.yml
       - .github/workflows/release-image-tooling.yml
+      - tools/ci/oci_layout.py
   workflow_dispatch:
 
 # Same branch-keyed dedupe as ci.yml; see the two traps documented in its `concurrency` block.
