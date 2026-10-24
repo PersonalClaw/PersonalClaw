@@ -15,11 +15,13 @@ import ast
 import copy
 import dataclasses
 import hashlib
+import io
 import json
 import math
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -139,6 +141,7 @@ def _answers(head: str = HEAD) -> dict[str, Any]:
             "conclusion": "success",
             "run_attempt": 1,
             "run_started_at": "2027-01-15T08:00:00Z",
+            "updated_at": "2027-01-15T08:40:00Z",
             "html_url": f"https://example.com/runs/{RUN}/attempts/1",
         },
         JOBS: {
@@ -949,6 +952,311 @@ def test_a_pass_with_a_quarantined_failure_is_never_replayed(
     assert decision.replayed is replayed, decision.reason
     if not replayed:
         assert "quarantined" in decision.reason
+
+
+# ── The source run's records, as the push reads them from its artifacts ─────────────────────
+
+ARTIFACTS = f"/repos/{REPO}/actions/runs/{RUN}/artifacts"
+#: attempt 1 ran from 08:00 to 08:40; an artifact it uploaded was made in between.
+MADE = "2027-01-15T08:10:00Z"
+
+
+def _archive(record: bytes, *members: str) -> bytes:
+    """A zip holding *record* under each member name (one, ``<slug>.json``, by default)."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zipped:
+        for member in members or ("record.json",):
+            zipped.writestr(member, record)
+    return buffer.getvalue()
+
+
+def _artifact(key: str, artifact_id: int, **fields: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "id": artifact_id,
+        "name": verdict.record_artifact(key, run_id=RUN, attempt=1),
+        "workflow_run": {"id": RUN},
+        "created_at": MADE,
+        "expired": False,
+        "size_in_bytes": 1000,
+    }
+    entry.update(fields)
+    return entry
+
+
+def _uploaded(
+    files: dict[str, bytes] | None = None,
+) -> tuple[dict[str, Any], dict[str, bytes]]:
+    """The answers with the run's artifacts listed, and each archive by its download path: a
+    record per key, a report and a later attempt's record beside them."""
+    answers = _answers()
+    archives: dict[str, bytes] = {}
+    listed = []
+    for n, (key, record) in enumerate((files or _files()).items(), 1):
+        listed.append(_artifact(key, n))
+        archives[f"/repos/{REPO}/actions/artifacts/{n}/zip"] = _archive(record)
+    listed.append({**_artifact("rails", 90), "name": "reports-rails-1"})
+    listed.append(
+        {**_artifact("rails", 91), "name": verdict.record_artifact("rails", run_id=RUN, attempt=2)}
+    )
+    answers[ARTIFACTS] = {"total_count": len(listed), "artifacts": listed}
+    return answers, archives
+
+
+def _fetch(archives: dict[str, bytes], fetched: list[str] | None = None):
+    def binary(path: str) -> bytes:
+        if fetched is not None:
+            fetched.append(path)
+        if path not in archives:
+            raise OSError(f"no planted archive for {path}")
+        return archives[path]
+
+    return binary
+
+
+def _read(answers: dict[str, Any], archives: dict[str, bytes]) -> list[bytes]:
+    return main_replay.source_records(_Api(answers), _fetch(archives), repo=REPO, run_id=RUN)
+
+
+def test_the_source_runs_records_are_its_attempt_1_record_artifacts() -> None:
+    answers, archives = _uploaded()
+    fetched: list[str] = []
+    got = main_replay.source_records(
+        _Api(answers), _fetch(archives, fetched), repo=REPO, run_id=RUN
+    )
+    assert sorted(got) == sorted(_files().values())
+    # The report and the later attempt's record are never downloaded.
+    assert sorted(fetched) == sorted(archives)
+    # And end to end: decide reads them through the same reader, and replays.
+    api = _Api(answers)
+    replay = main_replay.decide(
+        api,
+        **_kwargs(
+            records=lambda run: main_replay.source_records(
+                api, _fetch(archives), repo=REPO, run_id=run
+            )
+        ),
+    )
+    assert _replayed(replay) == set(REPLAYABLE), replay.lines()
+
+
+def _listing(edit):
+    def plant(answers: dict[str, Any], archives: dict[str, bytes]) -> None:
+        edit(answers[ARTIFACTS])
+
+    return plant
+
+
+def _first(**fields: Any):
+    return _listing(lambda page: page["artifacts"][0].update(fields))
+
+
+def _holds(archive: bytes):
+    def plant(answers: dict[str, Any], archives: dict[str, bytes]) -> None:
+        archives[f"/repos/{REPO}/actions/artifacts/1/zip"] = archive
+
+    return plant
+
+
+#: Each shape the push cannot trust: a record artifact forged or malformed in the source run.
+FORGED = {
+    "uploaded by another run": _first(workflow_run={"id": RUN + 1}),
+    "uploaded by no run": _first(workflow_run=None),
+    "named for attempt 1 and made after it ended": _first(created_at="2027-01-15T09:00:00Z"),
+    "named for attempt 1 and made before it began": _first(created_at="2027-01-15T07:00:00Z"),
+    "made at no time": _first(created_at=None),
+    "an archive over the bound": _first(size_in_bytes=3 * 1024 * 1024),
+    "an archive of no size": _first(size_in_bytes=None),
+    "no artifact id": _first(id="1"),
+    "an archive of two files": _holds(_archive(_record("rails"), "a.json", "b.json")),
+    "an archive that is not a zip": _holds(b"not a zip"),
+    "another key's record under rails's name": _holds(_archive(_record("served"))),
+    "another run's record under this run's name": _holds(_archive(_record("rails", run_id=1))),
+    "attempt 2's record under attempt 1's name": _holds(_archive(_record("rails", attempt=2))),
+    "a record the reader refuses": _holds(_archive(b"{}")),
+    "a listing with no count": _listing(lambda page: page.pop("total_count")),
+    "a listing shorter than its count": _listing(lambda page: page.update(total_count=99)),
+    "a listing that is not a list": _listing(lambda page: page.update(artifacts={})),
+    "an entry that is not an artifact": _listing(lambda page: page["artifacts"].append("x")),
+}
+
+
+def test_a_record_artifact_it_cannot_trust_runs_every_job(subtests: Any) -> None:
+    assert len(FORGED) == 18
+    for name, plant in FORGED.items():
+        with row(subtests, shape=name):
+            answers, archives = _uploaded()
+            plant(answers, archives)
+            with pytest.raises(main_replay.Unanswered):
+                _read(answers, archives)
+            api = _Api(answers)
+            replay = main_replay.decide(
+                api,
+                **_kwargs(
+                    records=lambda run: main_replay.source_records(
+                        api, _fetch(archives), repo=REPO, run_id=run
+                    )
+                ),
+            )
+            assert _replayed(replay) == set(), (name, replay.lines())
+            assert "could not find out" in replay.reason, replay.reason
+
+
+def test_an_expired_or_later_attempts_record_is_passed_over_and_its_job_runs() -> None:
+    for plant in (
+        _first(expired=True),
+        _first(name=verdict.record_artifact("rails", run_id=RUN, attempt=2)),
+    ):
+        answers, archives = _uploaded()
+        plant(answers, archives)
+        api = _Api(answers)
+        replay = main_replay.decide(
+            api,
+            **_kwargs(
+                records=lambda run: main_replay.source_records(
+                    api, _fetch(archives), repo=REPO, run_id=run
+                )
+            ),
+        )
+        assert _replayed(replay) == set(REPLAYABLE) - {"rails"}, replay.lines()
+
+
+def test_every_page_of_the_artifacts_is_read_against_one_count() -> None:
+    answers, archives = _uploaded()
+    listed = answers[ARTIFACTS]["artifacts"]
+    filler = [{"id": 1000 + n, "name": f"reports-x-{n}"} for n in range(150)]
+    whole = [*filler, *listed]
+    pages = [whole[:100], whole[100:200]]
+
+    class Paged(_Api):
+        def __call__(self, path: str) -> Any:
+            if path.startswith(ARTIFACTS + "?"):
+                self.read.append(path)
+                page = int(path.rsplit("page=", 1)[1])
+                return {"total_count": len(whole), "artifacts": pages[page - 1]}
+            return super().__call__(path)
+
+    got = main_replay.source_records(Paged(answers), _fetch(archives), repo=REPO, run_id=RUN)
+    assert sorted(got) == sorted(_files().values())
+
+    class Moving(Paged):
+        def __call__(self, path: str) -> Any:
+            answer = super().__call__(path)
+            if path.endswith("page=2"):
+                answer = {**answer, "total_count": len(whole) + 1}
+            return answer
+
+    with pytest.raises(main_replay.Unanswered, match="count moved"):
+        main_replay.source_records(Moving(answers), _fetch(archives), repo=REPO, run_id=RUN)
+
+
+# ── The command ─────────────────────────────────────────────────────────────────────────────
+
+
+def _command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *args: str,
+    event: str = "push",
+    plan: object = ("rails", "served", "web-unit", "python-suite"),
+) -> tuple[int, _Api, list[str], Path]:
+    """Run ``python -m tools.ci replay`` on planted answers and artifacts, PLAN as main's
+    catalogue; its exit, the API reads, the archives fetched, and the folder it wrote in."""
+    answers, archives = _uploaded()
+    api, fetched = _Api(answers), []
+    monkeypatch.setattr(main_replay.catalogue, "read", lambda root: catalogue.Catalogue(PLAN))
+    for name, value in {
+        "GITHUB_EVENT_NAME": event,
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_REPOSITORY": REPO,
+        "GITHUB_SHA": SHA,
+        "BEFORE": BEFORE,
+        "GITHUB_OUTPUT": str(tmp_path / "output"),
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    }.items():
+        monkeypatch.setenv(name, value)
+    (tmp_path / "plan.json").write_text(json.dumps(list(plan) if isinstance(plan, tuple) else plan))
+    argv = [
+        "--plan",
+        str(tmp_path / "plan.json"),
+        "--controller-revision",
+        CONTROLLER,
+        "--receipt",
+        str(tmp_path / "receipt.json"),
+        "--image",
+        f"ubuntu-24.04={IMAGE}",
+        "--toolchain",
+        "python=3.12.15",
+        *args,
+    ]
+    code = main_replay.main(
+        argv,
+        get=api,
+        binary=_fetch(archives, fetched),
+        verified=lambda head: None,
+        clock=lambda: NOW,
+    )
+    return code, api, fetched, tmp_path
+
+
+def test_the_command_writes_each_decision_its_outputs_and_the_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _, fetched, folder = _command(tmp_path, monkeypatch)
+    assert code == 0
+    output = (folder / "output").read_text()
+    assert f"replayed={json.dumps(sorted(REPLAYABLE))}\n" in output
+    assert "replays=true\n" in output
+    receipt = json.loads((folder / "receipt.json").read_text())
+    trust.receipt_from(receipt)
+    assert receipt["images"] == IMAGES and receipt["source_run"]["id"] == RUN
+    assert receipt["toolchain"] == {"python": "3.12.15"}
+    printed = capsys.readouterr().out
+    assert f"replayed rails from {WORKFLOW} run {RUN}, attempt 1" in printed
+    assert "ran python-suite:" in printed
+    assert "the push's replay" in (folder / "summary").read_text()
+    assert fetched, "the records were never fetched"
+
+
+def test_the_command_on_a_pull_request_replays_nothing_and_reads_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, api, fetched, folder = _command(tmp_path, monkeypatch, event="pull_request")
+    assert code == 0
+    assert "replayed=[]\nreplays=false\n" in (folder / "output").read_text()
+    assert api.read == [] and fetched == []
+    receipt = json.loads((folder / "receipt.json").read_text())
+    assert all(job["decision"] == "run" for job in receipt["jobs"])
+
+
+@pytest.mark.parametrize(
+    ("args", "plan", "why"),
+    [
+        pytest.param((), {"rails": 1}, "not a JSON list", id="a plan that is not a list"),
+        pytest.param((), ("rails", "nightly"), "main's catalogue lacks", id="an unknown job"),
+        pytest.param(("--image", "ubuntu-24.04"), None, "NAME=VALUE", id="an image of no ="),
+        pytest.param(("--image", f"ubuntu-24.04={IMAGE}"), None, "twice", id="a label twice"),
+        pytest.param(("--toolchain", "python="), None, "NAME=VALUE", id="an empty version"),
+    ],
+)
+def test_the_commands_own_inputs_are_refused_before_anything_is_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    args: tuple[str, ...],
+    plan: object,
+    why: str,
+) -> None:
+    kwargs = {} if plan is None else {"plan": plan}
+    code, api, fetched, folder = _command(tmp_path, monkeypatch, *args, **kwargs)
+    assert code == 2 and why in capsys.readouterr().err
+    assert api.read == [] and fetched == []
+    assert not (folder / "output").exists() and not (folder / "receipt.json").exists()
+
+
+def test_the_command_is_tools_cis_replay() -> None:
+    from tools.ci import __main__ as commands
+
+    assert "replay" in commands.COMMANDS
 
 
 # ── The module ──────────────────────────────────────────────────────────────────────────────

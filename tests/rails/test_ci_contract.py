@@ -13633,6 +13633,142 @@ ROWS = (
 )
 
 
+# ── A pull request's run never replays (#3919) ───────────────────────────────────────────────
+
+#: How a step runs the push's replay: the command, or its module by name, anywhere in the step.
+_REPLAY_CALL = re.compile(r"\btools\.ci\s+replay\b|\bmain_replay\b")
+#: The events a pull request's own run is.
+_PULL_REQUEST_EVENTS = ("pull_request", "pull_request_target")
+#: The status functions an `if:` may call, each of which may be true or false on any run.
+_STATUS_FUNCTIONS = ("always()", "success()", "failure()", "cancelled()")
+
+
+def _could_run(condition: object, event: str) -> bool:
+    """Whether an `if:` may be true on a run of *event*, whatever the status functions say.
+    Text outside one `${{ }}` makes the condition a string, which is always true. A condition
+    this row cannot evaluate raises ValueError, never reads as false."""
+    if condition is None:
+        return True
+    if isinstance(condition, bool):
+        return condition
+    text = str(condition).strip()
+    whole = _EXPRESSION.fullmatch(text)
+    if whole is not None:
+        text = whole.group(1)
+    elif "${{" in text:
+        return True
+    context = {"github": {"event_name": event, "ref": "refs/pull/42/merge", "event": {}}}
+    for values in itertools.product(("true", "false"), repeat=len(_STATUS_FUNCTIONS)):
+        filled = text
+        for function, value in zip(_STATUS_FUNCTIONS, values):
+            filled = filled.replace(function, value)
+        if _expression(context, filled):
+            return True
+    return False
+
+
+def replay_violations(tree: Tree) -> list[str]:
+    """A pull request's run never replays: every step that runs the push's replay
+    (``python -m tools.ci replay``, ``tools/ci/main_replay.py``), a local action's steps
+    included, is guarded by its own `if:` or its job's so that it cannot run on a
+    ``pull_request`` or ``pull_request_target`` event, whatever the workflow's triggers are now.
+    The replay refuses such an event itself (``main_replay.decide``); this holds the call."""
+    from tools.ci import __main__ as commands
+
+    bad: list[str] = []
+    if "replay" not in commands.COMMANDS:
+        bad.append("tools.ci has no replay command, so this row's detector names nothing")
+    for name, job_id, job, step in _steps(tree):
+        if not _REPLAY_CALL.search(str(step)):
+            continue
+        for event in _PULL_REQUEST_EVENTS:
+            try:
+                runs = _could_run(job.get("if"), event) and _could_run(step.get("if"), event)
+            except ValueError as exc:
+                bad.append(
+                    f"{name}:{job_id} runs the push's replay behind an if: this row cannot read"
+                    f" ({exc})"
+                )
+                break
+            if runs:
+                bad.append(
+                    f"{name}:{job_id} runs the push's replay on a {event} run: a pull request's"
+                    " run never replays (#3919)"
+                )
+                break
+    return bad
+
+
+def _replay_job(job_if: str = "", step_if: str = "", run: str = "") -> str:
+    """A job that runs the push's replay, guarded as given."""
+    job_guard = f"    if: {job_if}\n" if job_if else ""
+    step_guard = f"        if: {step_if}\n" if step_if else ""
+    command = run or "python3 -m tools.ci replay --plan plan.json"
+    return (
+        f"  replay:\n{job_guard}    runs-on: ubuntu-24.04\n    steps:\n"
+        f"      - name: the push's replay\n{step_guard}        run: {command}\n"
+    )
+
+
+def _adds(rel: str, name: str, job: str, *, fails: bool = True, expect: str = "") -> Control:
+    return _plant(name, rel, "\njobs:\n", "\njobs:\n" + job, fails=fails, expect=expect)
+
+
+def _replay_in_a_local_action(root: Path) -> None:
+    _write(
+        root,
+        ".github/actions/replay/action.yml",
+        "name: replay\ndescription: the push's replay\nruns:\n  using: composite\n  steps:\n"
+        "    - shell: bash\n      run: python3 -m tools.ci replay --plan plan.json\n",
+    )
+    rel = ".github/workflows/merge.yml"
+    text = (root / rel).read_text(encoding="utf-8")
+    job = (
+        "  replay:\n    runs-on: ubuntu-24.04\n    steps:\n      - uses: ./.github/actions/replay\n"
+    )
+    _write(root, rel, text.replace("\njobs:\n", "\njobs:\n" + job, 1))
+
+
+_PUSH = "github.event_name == 'push'"
+A_PULL_REQUEST_RUN_NEVER_REPLAYS = _toolchain_row(
+    "a pull request's run never replays",
+    replay_violations,
+    (
+        _adds(_MERGE_YML, "an unguarded replay in merge.yml", _replay_job(),
+              expect="merge.yml:replay runs the push's replay on a pull_request run"),
+        _adds(_PR_YML, "an unguarded replay in pr.yml", _replay_job(),
+              expect="pr.yml:replay runs the push's replay on a pull_request run"),
+        _adds(_MERGE_YML, "a replay behind always()", _replay_job(job_if="always()"),
+              expect="on a pull_request run"),
+        _adds(_MERGE_YML, "a replay behind !cancelled()",
+              _replay_job(step_if="${{ !cancelled() }}"), expect="on a pull_request run"),
+        _adds(_MERGE_YML, "a guard that lets pull_request_target through",
+              _replay_job(step_if="github.event_name != 'pull_request'"),
+              expect="on a pull_request_target run"),
+        _adds(_MERGE_YML, "a guard with text outside its expression",
+              _replay_job(step_if=f"${{{{ {_PUSH} }}}} and nothing else"),
+              expect="on a pull_request run"),
+        _adds(_MERGE_YML, "a guard the row cannot read",
+              _replay_job(step_if="contains(github.event_name, 'push')"),
+              expect="behind an if: this row cannot read"),
+        _adds(_MERGE_YML, "the module run by its file",
+              _replay_job(run='python3 "$RUNNER_TEMP/main_replay.py" --plan plan.json'),
+              expect="merge.yml:replay runs the push's replay"),
+        Control("a replay in a local action", _replay_in_a_local_action,
+                expect="merge.yml:replay runs the push's replay on a pull_request run"),
+        _adds(_MERGE_YML, "a replay guarded on its step to a push passes",
+              _replay_job(step_if=_PUSH), fails=False),
+        _adds(_MERGE_YML, "a replay guarded on its job to a push to main passes",
+              _replay_job(job_if=f"${{{{ {_PUSH} && github.ref == 'refs/heads/main' }}}}"),
+              fails=False),
+        _adds(_MERGE_YML, "a status function beside the push guard passes",
+              _replay_job(step_if=f"${{{{ !cancelled() && {_PUSH} }}}}"), fails=False),
+    ),
+)  # fmt: skip
+
+ROWS = (*ROWS, A_PULL_REQUEST_RUN_NEVER_REPLAYS)
+
+
 @pytest.mark.parametrize("row", ROWS, ids=lambda row: row.name)
 def test_the_ci_contract_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest

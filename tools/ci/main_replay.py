@@ -5,11 +5,12 @@ it lands the very tree that run tested, a job that passed there need not run aga
 job runs. :func:`decide` says which, per planned job, and writes the push's reuse receipt. It
 replaces ``tools/ci/tree_tested.py``'s all-or-nothing answer with one per job (#3919).
 
-Nothing calls it yet: the push's plan job in ``merge.yml`` will, once that workflow writes a
-verdict file per job (#3915) and the controller App posts the merge verdict (#4584). The caller
-passes in what only it can read: the planned jobs (from ``main``'s own catalogue), the verdict
-files of a run's first attempt, and whether the controller's merge verdict on the head counts
-(``tools/ci/merge_verdict.py``).
+``python -m tools.ci replay`` (:func:`main`) is the push stage's call, and nothing makes it yet:
+``merge.yml`` will, once #3915's flip gives it its push trigger and #3910's controller App posts
+the merge verdict. The caller passes in what only it can read: the planned jobs (from ``main``'s
+own catalogue), the verdict files of a run's first attempt (:func:`source_records` reads them
+from the run's artifacts), whether the controller's merge verdict on the head counts
+(``tools/ci/merge_verdict.py``), and the image each runner label runs now.
 
 **Nothing replays,** and every planned job runs, unless all of these hold:
 
@@ -66,17 +67,23 @@ raises once its own inputs are in order: any error reading the API, the files or
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
+import os
+import platform
 import re
+import sys
+import time
 import urllib.parse
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from . import verdict
+from . import catalogue, merge_verdict, telemetry, tree_tested, verdict
 from .capabilities import ABSENT
 from .catalogue import NEVER, Job, Reuse
 from .tree_tested import (
@@ -646,3 +653,192 @@ def decide(
         source.run_url,
         receipt,
     )
+
+
+# ── the source run's records ──────────────────────────────────────────────────────────────────
+
+Binary = Callable[[str], bytes]
+"""One API read of bytes: a path under the API root to what it answers (an artifact's zip)."""
+
+#: The most pages of a run's artifacts read: a merge-tier run uploads a few per job.
+_ARTIFACT_PAGES = 10
+
+
+def source_records(get: Get, binary: Binary, *, repo: str, run_id: int) -> list[bytes]:
+    """The job records attempt 1 of run *run_id* uploaded, each as the bytes of its one record.
+
+    Every artifact the run lists is read, page by page against a count that holds from page to
+    page. Of the record artifacts (``ci-record-``), each must name this run as the one that
+    uploaded it; one named for a later attempt is that attempt's and is passed over, and an
+    expired one too, so its job has no verdict file and runs. One named for attempt 1 must have
+    been made while attempt 1 ran, within the archive bound, and hold the one record its own name
+    names, of this run and attempt 1, read as the telemetry collector reads one
+    (``telemetry.record_bytes``). Anything else raises, and the replay runs every job."""
+    where = f"/repos/{repo}/actions/runs/{run_id}"
+    attempt = _mapping(get(f"{where}/attempts/1"), "attempt 1")
+    since = telemetry._at(attempt.get("run_started_at"))
+    until = telemetry._at(attempt.get("updated_at"))
+    if since is None or until is None:
+        raise Unanswered(f"attempt 1 of run {run_id} names no start or no end")
+    artifacts: list[object] = []
+    total: int | None = None
+    for page in range(1, _ARTIFACT_PAGES + 1):
+        answer = _mapping(
+            get(f"{where}/artifacts?per_page={_PER_PAGE}&page={page}"), f"run {run_id}'s artifacts"
+        )
+        count = answer.get("total_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise Unanswered(f"run {run_id}'s artifacts name no count, so one may be unseen")
+        if total is not None and count != total:
+            raise Unanswered(f"run {run_id}'s artifact count moved from {total} to {count}")
+        total = count
+        listed = answer.get("artifacts")
+        if not isinstance(listed, list):
+            raise Unanswered(f"run {run_id}'s artifacts are not a list")
+        artifacts.extend(listed)
+        if len(artifacts) >= total or not listed:
+            break
+    if len(artifacts) != total:
+        raise Unanswered(f"{len(artifacts)} of run {run_id}'s {total} artifacts were listed")
+    suffix = f"-{run_id}-1"
+    records: list[bytes] = []
+    for artifact in artifacts:
+        if not isinstance(artifact, Mapping):
+            raise Unanswered(f"run {run_id} lists an artifact that is not one")
+        name = artifact.get("name")
+        if not isinstance(name, str) or not name.startswith(verdict.RECORD_ARTIFACT_PREFIX):
+            continue
+        made_by = artifact.get("workflow_run")
+        if not isinstance(made_by, Mapping) or made_by.get("id") != run_id:
+            raise Unanswered(f"{name} was not uploaded by run {run_id}")
+        if not name.endswith(suffix) or artifact.get("expired"):
+            continue
+        made = telemetry._at(artifact.get("created_at"))
+        if made is None or not since <= made <= until:
+            raise Unanswered(f"{name} is named for attempt 1 and was not made while it ran")
+        size = artifact.get("size_in_bytes")
+        bound = telemetry.MAX_RECORD_ARCHIVE_BYTES
+        if isinstance(size, bool) or not isinstance(size, int) or not 0 <= size <= bound:
+            raise Unanswered(f"{name}: an archive of {size!r} bytes, not one within {bound}")
+        identifier = artifact.get("id")
+        if isinstance(identifier, bool) or not isinstance(identifier, int):
+            raise Unanswered(f"{name} names no artifact id")
+        data = binary(f"/repos/{repo}/actions/artifacts/{identifier}/zip")
+        if not isinstance(data, bytes) or len(data) > bound:
+            raise Unanswered(f"{name}: the archive read is not bytes within {bound}")
+        try:
+            raw, _ = telemetry.record_bytes(name, data, run_id, 1)
+        except telemetry.CollectError as exc:
+            raise Unanswered(str(exc)) from None
+        records.append(raw)
+    return records
+
+
+# ── the command ───────────────────────────────────────────────────────────────────────────────
+
+
+def _pairs(values: Sequence[str], what: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for value in values:
+        name, sep, text = value.partition("=")
+        if not sep or not name or not text or name in out:
+            raise Refused(f"{what} {value!r} is not NAME=VALUE, or names {name!r} twice")
+        out[name] = text
+    return out
+
+
+def _verifier(api: str, token: str, repo: str, git_dir: Path) -> Verified:
+    """Whether the controller's merge verdict on a head counts (``merge_verdict.verify``)."""
+
+    def verified(head: str) -> str | None:
+        result = merge_verdict.verify(
+            merge_verdict.github_get(api, token), repo=repo, sha=head, git_dir=git_dir
+        )
+        return None if isinstance(result, merge_verdict.Accepted) else result.reason
+
+    return verified
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    get: Get | None = None,
+    binary: Binary | None = None,
+    verified: Verified | None = None,
+    clock: Callable[[], float] = time.time,
+) -> int:
+    """``python -m tools.ci replay``: the push's plan job's answer, per planned job, from the
+    run's own environment (``GITHUB_EVENT_NAME``, ``GITHUB_REF``, ``GITHUB_REPOSITORY``,
+    ``GITHUB_SHA``, and ``BEFORE``, the commit the push replaced), with ``GH_TOKEN`` for the API.
+    It prints a line per planned key, writes ``replayed=`` (the keys replayed, as JSON) and
+    ``replays=`` to ``GITHUB_OUTPUT``, the reason and the lines to ``GITHUB_STEP_SUMMARY``, and
+    the receipt to ``--receipt``. Exit 0 with an answer, which may be "every job runs"; 2 when
+    the caller's own inputs are not what they must be, and then nothing is read."""
+    parser = argparse.ArgumentParser(prog="python -m tools.ci replay", description=__doc__)
+    parser.add_argument("--plan", required=True, type=Path, help="a JSON list of planned job ids")
+    parser.add_argument("--root", type=Path, default=catalogue.REPO, help="main's own checkout")
+    parser.add_argument("--image", action="append", default=[], metavar="LABEL=IMAGE")
+    parser.add_argument("--toolchain", action="append", default=[], metavar="NAME=VERSION")
+    parser.add_argument("--controller-revision", required=True)
+    parser.add_argument("--receipt", type=Path, required=True)
+    parser.add_argument("--workflow", default=WORKFLOW)
+    args = parser.parse_args(argv)
+    env = os.environ
+    repo = env.get("GITHUB_REPOSITORY", "")
+    api, token = env.get("GITHUB_API_URL", "https://api.github.com"), env.get("GH_TOKEN", "")
+    try:
+        ids = json.loads(args.plan.read_text(encoding="utf-8"))
+        if not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
+            raise Refused(f"{args.plan} is not a JSON list of job ids")
+        cat = catalogue.read(args.root)
+        known = {job.id for job in cat.jobs}
+        unknown = sorted(set(ids) - known)
+        if unknown:
+            raise Refused(f"the plan names {', '.join(unknown)}, which main's catalogue lacks")
+        plan = [cat.job(i) for i in ids]
+        images = _pairs(args.image, "the image")
+        toolchain = _pairs(args.toolchain, "the toolchain") or {"python": platform.python_version()}
+    except (Refused, OSError, ValueError, catalogue.CatalogueError) as exc:
+        print(f"replay: {exc}", file=sys.stderr)
+        return 2
+    reader = get or tree_tested.github_get(api, token)
+    fetch = binary or (lambda path: telemetry._gh_binary("api", path.lstrip("/")))
+    try:
+        replay = decide(
+            reader,
+            event=env.get("GITHUB_EVENT_NAME", ""),
+            ref=env.get("GITHUB_REF", ""),
+            repo=repo,
+            sha=env.get("GITHUB_SHA", ""),
+            before=env.get("BEFORE", ""),
+            plan=plan,
+            records=lambda run: source_records(reader, fetch, repo=repo, run_id=run),
+            verified=verified or _verifier(api, token, repo, args.root),
+            now=clock(),
+            controller_revision=args.controller_revision,
+            toolchain=toolchain,
+            images=images,
+            workflow=args.workflow,
+        )
+    except Refused as exc:
+        print(f"replay: {exc}", file=sys.stderr)
+        return 2
+    lines = replay.lines()
+    receipt = replay.receipt or {
+        "reason": replay.reason,
+        "jobs": [d.to_json() for d in replay.jobs],
+    }
+    args.receipt.write_text(json.dumps(receipt, sort_keys=True, indent=1) + "\n", encoding="utf-8")
+    replayed = sorted(d.key for d in replay.jobs if d.replayed)
+    print(replay.reason)
+    for line in lines:
+        print(line)
+    outputs = f"replayed={json.dumps(replayed)}\nreplays={'true' if replayed else 'false'}\n"
+    summary = "\n".join([f"### {args.workflow}: the push's replay", "", replay.reason + ".", ""])
+    summary += "".join(f"- {line}\n" for line in lines)
+    for name, content in (("GITHUB_OUTPUT", outputs), ("GITHUB_STEP_SUMMARY", summary)):
+        target = env.get(name)
+        if target:
+            with open(target, "a", encoding="utf-8") as handle:
+                handle.write(content)
+    return 0

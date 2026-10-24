@@ -42,6 +42,14 @@ def _merge_controller(argv: list[str]) -> int:
     return merge_controller.main(argv)
 
 
+def _replay(argv: list[str]) -> int:
+    # Imported when called, as the verifier is: the push's replay reads the merge verdict through
+    # tools/ci/trust.py, which no other command, and so no ordinary CI run, loads.
+    from . import main_replay
+
+    return main_replay.main(argv)
+
+
 def _verify_check_run(argv: list[str]) -> int:
     # Imported when called: the other commands, which every CI run starts, load neither the
     # verifier nor tools/ci/trust.py.
@@ -64,6 +72,7 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "rails": rails_census.main,
     "release-manifest": release_manifest.main,
     "release-tag": _release_tag,
+    "replay": _replay,
     "report": report.main,
     "run": jobs.run_main,
     "run-job": jobs.run_job_main,
