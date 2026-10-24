@@ -1,0 +1,58 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - heading "Good <time of day>, Keyur" [level=#]
+  - button "New thread"
+  - radiogroup "View":
+    - radio "Attention" [checked]
+    - radio "Overview"
+  - region "Home":
+    - textbox "Start something":
+      - /placeholder: "Start something: type it and press Enter for a new thread"
+    - radiogroup "Show":
+      - radio "All" [checked]
+      - radio "Needs You"
+      - radio "Running Now"
+      - radio "Recent and completed"
+    - region "Needs You":
+      - heading "Needs You" [level=#]
+      - paragraph: Nothing is waiting on you.
+      - button "Show health-check status"
+      - button "Break a goal into tasks"
+      - button "Save a note to my knowledge base"
+      - button "Run a command and explain the output"
+      - button "What can you help me with?"
+      - button "Set up a daily briefing"
+      - button "Refresh"
+    - region "Running Now":
+      - heading "Running Now" [level=#]
+      - paragraph: Nothing is running right now.
+    - region "Recent and completed":
+      - heading "Recent and completed" [level=#]
+      - paragraph: Nothing has finished lately, and you have no threads yet.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

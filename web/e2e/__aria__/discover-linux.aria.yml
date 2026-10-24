@@ -1,0 +1,75 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - heading "Discover #" [level=#]
+  - paragraph: Replay the tour
+  - paragraph: The two-minute walk through the sidebar, chat, the Inbox, approvals and Settings. Escape ends it at any point.
+  - button "Start the tour"
+  - paragraph: The parts of PersonalClaw you haven’t tried yet. Each tip links straight into the feature; dismiss any you’re not interested in.
+  - heading "Talk to it" [level=#]
+  - paragraph: Start a conversation
+  - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.
+  - button "Open Chat"
+  - button "Dismiss — don't suggest this again"
+  - heading "Let it work" [level=#]
+  - paragraph: Hand off a goal to run on its own
+  - paragraph: A goal loop keeps working toward an outcome across many turns while you're away, checking in only when it needs you. Launch one from a project.
+  - button "Open Loops"
+  - button "Dismiss — don't suggest this again"
+  - paragraph: Automate on a schedule or an event
+  - paragraph: Triggers run a prompt on a clock or when something happens — a morning briefing, a nightly digest, a reaction to a new file. Set one and forget it.
+  - button "Set up a trigger"
+  - button "Dismiss — don't suggest this again"
+  - heading "Stay organized" [level=#]
+  - paragraph: Track work as tasks
+  - paragraph: Tasks give long-running or multi-step work a home with state you can watch — and PersonalClaw can pick them up and drive them for you.
+  - button "Open Tasks"
+  - button "Dismiss — don't suggest this again"
+  - paragraph: Group related work into a project
+  - paragraph: A project bundles a workspace, its context, and its loops so everything about one effort stays together — and agents inherit that context automatically.
+  - button "Open Projects"
+  - button "Dismiss — don't suggest this again"
+  - paragraph: Route messages into one inbox
+  - paragraph: The Inbox gathers what arrives from your connected sources into one triage feed, so PersonalClaw can act on it instead of it being scattered.
+  - button "Open Inbox"
+  - button "Dismiss — don't suggest this again"
+  - heading "Give it context" [level=#]
+  - paragraph: Build a knowledge base it can draw on
+  - paragraph: Save documents, notes, and facts to the knowledge base and PersonalClaw retrieves the relevant pieces on its own the next time they matter.
+  - button "Open Knowledge"
+  - button "Dismiss — don't suggest this again"
+  - paragraph: See what it remembers about you
+  - paragraph: PersonalClaw remembers preferences and facts across conversations. Review and curate that memory so it keeps working from an accurate picture of you.
+  - button "Review Memory"
+  - button "Dismiss — don't suggest this again"
+  - heading "Extend it" [level=#]
+  - paragraph: Teach it a reusable skill
+  - paragraph: A skill is a saved way of doing something PersonalClaw can reach for by name later — codify a workflow once instead of re-explaining it every time.
+  - button "Browse Skills"
+  - button "Dismiss — don't suggest this again"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

@@ -89,7 +89,7 @@ export function writeSet(surfaces, platform, into) {
 function main(argv) {
   const intoAt = argv.indexOf('--into')
   const into = intoAt >= 0 ? resolve(argv[intoAt + 1] ?? '') : dirname(fileURLToPath(import.meta.url))
-  const [path, platform] = argv.filter((_, i) => i !== intoAt && i !== intoAt + 1)
+  const [path, platform] = intoAt >= 0 ? argv.filter((_, i) => i !== intoAt && i !== intoAt + 1) : argv
   if (!path || !/^[a-z0-9]+$/.test(platform ?? '')) {
     console.error('usage: node e2e/platform-baselines.mjs <e2e-report.json> <platform> [--into <e2e dir>]')
     process.exit(2)

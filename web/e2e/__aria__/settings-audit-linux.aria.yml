@@ -1,0 +1,53 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Audit log
+  - heading "Audit log" [level=#]
+  - paragraph: What your agent did — every tool call, API access, approval and denial, hash-chained and tamper-evident.
+  - group "Filter by outcome":
+    - button "All" [pressed]
+    - button "Denied"
+    - button "Failed"
+    - button "Needs confirmation"
+    - button "Succeeded"
+  - textbox "Filter by operation"
+  - button "Filters"
+  - button "Refresh the audit log"
+  - button "Verify"
+  - button "Export"
+  - button "Rotate"
+  - button "success tool_invocation shell · git status #:#:#"
+  - button "ok api_access devices_listed #:#:#"
+  - button "denied tool_invocation shell #:#:#"
+  - button "error api_access durability_export #:#:#"
+  - button "needs_confirm tool_invocation write_file · notes/today.md #:#:#"
+  - button "fail_open api_access tool_policy.no_session_key #:#:#"
+  - paragraph: All # matching events shown.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

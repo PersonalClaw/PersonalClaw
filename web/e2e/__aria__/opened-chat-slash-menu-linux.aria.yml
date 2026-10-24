@@ -1,0 +1,65 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Chat history"
+  - button "More actions"
+  - img "Nothing running"
+  - heading "Good <time of day>, Keyur" [level=#]
+  - textbox "Message input"
+  - button "Add to message"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - 'button "Reply style: Agent default"': Agent default
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
+  - button "Optimize prompt (⌘↵)"
+  - button "Voice input"
+  - button "Hands-free voice"
+  - button "Send message"
+  - 'button "Project: No project"': No project
+  - button "Show health-check status"
+  - button "Break a goal into tasks"
+  - button "Save a note to my knowledge base"
+  - button "Run a command and explain the output"
+  - button "What can you help me with?"
+  - button "Set up a daily briefing"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
+- listbox "Slash commands":
+  - option "/help List available slash commands" [selected]
+  - option "/optimize Optimize a prompt, then send it"
+  - option "/clear Start a fresh chat"
+  - option "/prompts Open the saved-prompt palette"
+  - option "/model Switch the model for this chat"
+  - option "/agent Switch the agent for this chat"
+  - option "/effort Set reasoning effort for this chat"
+  - option "/project Scope this new chat to a project"
+  - option "/goal Start a goal loop on a task, from a new chat"
+  - option "/tools Open the Tools page"
+  - option "/undo Roll back the last N conversation turns"
+  - option "/rewind-to-turn Put back the agent's file edits after turn N (not a command's)"
+  - option "/compact Compact the conversation to free context"
+  - option "/context Show what fills the context window, part by part"

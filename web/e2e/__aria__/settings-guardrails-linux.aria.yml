@@ -1,0 +1,75 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Guardrails
+  - heading "Guardrails" [level=#]
+  - paragraph: The personal safety floor — a daily spend ceiling, an outbound secret scan, circuit breakers for a failing provider and a failing tool loop, and a kill switch. The budget, scan and kill switch bind unattended work only; the breakers apply to any run, including this chat.
+  - heading "Incident kill switch" [level=#]
+  - paragraph: Suspend ALL unattended work — cron jobs, hooks, event triggers, subagent spawns — at once. Interactive chat keeps working. Resume is explicit.
+  - text: Incident mode Off — automation runs normally.
+  - switch "Incident mode"
+  - heading "Daily budget" [level=#]
+  - paragraph: Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. Each ceiling resets at midnight. # = unlimited.
+  - text: Max tokens / day Counts every unattended call, local models' too. At the ceiling, unattended runs are skipped (a cron fire is paused, a subagent spawn refused) until it resets.
+  - status
+  - spinbutton "Max tokens / day": "#"
+  - text: Max dollars / day A call that costs money starts only when what it may cost fits in what is left beside what the calls already running have set aside, so calls running together stay within it; one can still cost more than it set aside. A model with no price is refused, and one that costs nothing keeps running. Prices are estimates, set in Settings → Usage → Model prices.
+  - status
+  - text: $
+  - spinbutton "Max dollars / day": "#"
+  - text: Max tokens / run Per single unattended run (a goal-loop cycle, a cron fire). # = unlimited.
+  - status
+  - spinbutton "Max tokens / run": "#"
+  - heading "Outbound scan" [level=#]
+  - paragraph: How a prompt bound for a model that runs off this machine is handled when it contains secrets or PII. A model that runs on this machine always warns (its prompt never leaves your machine); a model your Ollama answers from its cloud runs off it.
+  - text: Scan mode warn = log & send · redact = substitute & send · block = refuse the call.
+  - 'button "Scan mode: Warn"': Warn
+  - 'button "Scan mode: Redact" [pressed]': Redact
+  - 'button "Scan mode: Block"': Block
+  - heading "Provider circuit breaker" [level=#]
+  - paragraph: "Per-provider fail-fast: after N consecutive failures a provider's breaker opens, so unattended runs fail in microseconds during an outage instead of stacking timeouts."
+  - text: Failure threshold Consecutive failures before the breaker opens.
+  - status
+  - spinbutton "Failure threshold": "#"
+  - text: Recovery seconds How long an open breaker waits before a half-open probe.
+  - status
+  - spinbutton "Recovery seconds": "#"
+  - heading "Tool-loop breaker" [level=#]
+  - paragraph: A run that keeps failing the same tool is told to change approach, then refused, and finally stopped outright. This is that last step — the point where the whole run is abandoned rather than allowed to spend the rest of its budget repeating a failure.
+  - text: Abort after tool failures Counts every failing tool call in one run, not just repeats of the same one. Applies to built-in tools and to an external CLI agent's alike.
+  - status
+  - spinbutton "Abort after tool failures": "#"
+  - heading "Earned autonomy" [level=#]
+  - paragraph: Every automated action starts at the rung it was declared with and can only climb when you say so. A single rejection, thumbs-down or undo drops it back immediately and starts a cooldown.
+  - text: "inbox.reply_draft drafts only leaves this machine This action drafts only because that is the rung it was declared with; it has never been promoted. # of # clean approvals so far. action.browse asks first leaves this machine This action asks first because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it asks first. computer_use.drive asks first leaves this machine This action asks first because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it asks first. action.create_task runs with undo This action runs on its own because that is the rung it was declared with; it has never been promoted. When it runs with nobody watching, it runs with undo. Already at its ceiling: it runs on its own. action.inbox_op runs with undo This action runs with undo because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs with undo. action.artifact_inspect runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.artifact_write runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.best_of_n runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.call_app_route runs on its own leaves this machine This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.check_work runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.digest runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.execute_code runs on its own leaves this machine This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.knowledge_read runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.knowledge_write runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.notify runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.optimize_file runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.optimize_score runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.self_remediation runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.selfqa_evidence runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.selfqa_finding runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.selfqa_triage runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.send_message runs on its own leaves this machine This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.spawn_turn runs on its own leaves this machine This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. action.web_fetch runs on its own leaves this machine This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. inbox.classify runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. sessions.auto_tag runs on its own This action runs on its own because that is the rung it was declared with; it has never been promoted. Already at its ceiling: it runs on its own. Automatic actions you can still undo Nothing is waiting to be undone."
+  - heading "Provider health" [level=#]
+  - paragraph: Derived from the model-call audit — breaker state, latency, and recent failures per provider. No data leaves your machine.
+  - text: No background model calls recorded yet.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

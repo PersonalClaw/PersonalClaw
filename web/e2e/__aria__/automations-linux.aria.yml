@@ -1,0 +1,54 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Automations":
+    - radio "Automations" [checked]
+    - radio "Workflows"
+  - heading "Automations" [level=#]
+  - button "New trigger"
+  - searchbox "Search triggers"
+  - radiogroup "Triggers view":
+    - radio "List" [checked]
+    - radio "Week"
+  - button "Filter & sort": Filter
+  - status
+  - region "Not on a clock":
+    - heading "Not on a clock" [level=#]
+    - button "Heartbeat tasks"
+    - text: Heartbeat tasks · disabled every #s Heartbeat tasks Silent runs on its own <last run>
+    - button "Identity report"
+    - text: Identity report · disabled At #:# <am/pm> UTC, on day # of the month Identity report Silent runs on its own <last run>
+    - button "Monthly usage recap"
+    - text: Monthly usage recap · disabled At #:# <am/pm> UTC, on day # of the month Usage recap Silent runs on its own <last run>
+    - button "Morning source digest"
+    - text: Morning source digest · disabled At #:# <am/pm> UTC Source digest Silent runs on its own <last run>
+    - button "Notification digest"
+    - text: Notification digest · disabled At #:# <am/pm> UTC Notification digest Silent runs on its own <last run>
+    - button "Self-remediation"
+    - text: "Self-remediation · disabled adaptive — every #m with nothing to repair, #m while repairing (now: every #m) Self-Remediation Reports to the Inbox runs on its own never"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

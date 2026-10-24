@@ -1,0 +1,41 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: <theme>
+  - heading "<theme>" [level=#]
+  - paragraph: "This machine, read live: health, versions, and what the agent is running."
+  - heading "Health" [level=#]
+  - text: <uptime> uptime v#.#.# <platform> <cpu> cpu #.#/#.#GB mem ↓#.#MB/s ↑#KB/s net #/#GB disk #.# load · #cpu # triggers # subagents
+  - button "Details →"
+  - paragraph:
+    - text: Which local models are holding memory, with Unload and the memory meter, is in
+    - button "Settings › Models"
+    - text: .
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

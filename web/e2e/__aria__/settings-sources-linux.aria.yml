@@ -1,0 +1,64 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Watched sources
+  - heading "Watched sources" [level=#]
+  - paragraph: Poll feeds, pages and local directories into your knowledge library on a schedule. Off parks the loop — nothing is fetched.
+  - heading "Polling" [level=#]
+  - paragraph: How often sources are checked, and the floor that keeps polling polite.
+  - text: Watched sources Enable the poll engine. Off parks the loop; sources you add are not fetched until you turn it back on.
+  - status
+  - switch "Watched sources" [checked]
+  - text: Default poll interval (seconds) How often a source is polled when it does not set its own interval. Clamped up to the network floor for a source that fetches; a folder on this machine can be polled as often as once a minute.
+  - spinbutton "Default poll interval (seconds)": "#"
+  - status
+  - text: Network poll floor (seconds) The fastest any network source is polled regardless of its own setting — the rate floor that keeps a poll from being abusive to the target server. A folder on this machine is not held to it.
+  - spinbutton "Network poll floor (seconds)": "#"
+  - status
+  - heading "Limits" [level=#]
+  - paragraph: Bounds so a busy feed or a runaway config cannot flood ingestion.
+  - text: Max active sources Cap on how many enabled sources the engine arms per tick.
+  - spinbutton "Max active sources": "#"
+  - status
+  - text: Max items per poll How many new items one poll may ingest before the rest wait for the next cycle.
+  - spinbutton "Max items per poll": "#"
+  - status
+  - heading "Artifacts" [level=#]
+  - paragraph: Artifacts you and the agent write, mirrored into knowledge search.
+  - text: "Index artifacts for search Make text artifacts (markdown, HTML, text, JSON, CSV) findable from knowledge search. They stay in the Artifacts library and are never listed as knowledge items — only found by a search. Indexing is local: a mirrored artifact never reaches a model. Off stops indexing new changes and removes nothing already indexed."
+  - status
+  - switch "Index artifacts for search" [checked]
+  - heading "Watched scratchpad" [level=#]
+  - paragraph: A notes file whose jotted todos become plan proposals you accept — never runs on its own.
+  - text: Scratchpad path Full path to a local notes file. Each new actionable line becomes a PROPOSED plan in your inbox, linked back to its source line. Checked (- [x]) and struck-through lines are ignored. Leave empty to turn this off — no file is read.
+  - textbox "Scratchpad path":
+    - /placeholder: ~/notes/today.md
+  - button "Save" [disabled]
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

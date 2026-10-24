@@ -1,0 +1,416 @@
+- main:
+  - heading "Buddy playground" [level=#]
+  - paragraph: "The buddy's real state machine and orb, played with made-up work. Nothing here reaches the gateway: an answer is only written in the log."
+  - radiogroup "Playground view":
+    - radio "Play"
+    - radio "A day"
+    - radio "Card" [checked]
+    - radio "Poses"
+  - radiogroup "Screen width":
+    - radio "# wide"
+    - radio "# wide"
+    - radio "# wide"
+    - radio "Full" [checked]
+  - status: An answer on a card is written here and never sent.
+  - figure "An approval, two more waiting":
+    - heading "An approval, two more waiting" [level=#]
+    - text: Needs your OK
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes needs your OK: Bash"
+      - paragraph: Needs your OK · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - group "Permission needed to run Bash":
+        - alert: Permission needed
+        - text: Bash
+        - group "Tool arguments": git push origin release-notes
+        - paragraph: Publish the release notes branch
+        - paragraph: From chat “Release notes”
+        - term: Waiting
+        - definition: #h
+        - paragraph: Deny ends this turn.
+        - button "Allow Bash": Allow
+        - button "Deny Bash. Deny ends this turn.": Deny
+      - paragraph: +# waiting
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - list:
+          - listitem:
+            - img "Working"
+            - text: "Nightly digest: Reading the inbox"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Nightly digest — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Planning"
+            - text: "Weekly report: planning"
+            - paragraph: Planning · updated #:# <am/pm>
+            - link "Open Weekly report — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "A question":
+    - heading "A question" [level=#]
+    - text: Waiting for your answer
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes asks: Which branch should I use?"
+      - paragraph: Waiting for your answer · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - group "Question for you":
+        - alert: Question for you
+        - paragraph: From Release notes
+        - text: Branch
+        - paragraph: Which branch should I use?
+        - radiogroup "Which branch should I use?":
+          - radio "main The release branch"
+          - radio "next The next minor"
+        - 'textbox "Your own answer to: Which branch should I use?"':
+          - /placeholder: Or answer in your own words
+        - button "Send answer" [disabled]
+        - button "Skip these questions — the agent goes on without your answer": Skip
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - list:
+          - listitem:
+            - img "Working"
+            - text: "Nightly digest: Reading the inbox"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Nightly digest — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Planning"
+            - text: "Weekly report: planning"
+            - paragraph: Planning · updated #:# <am/pm>
+            - link "Open Weekly report — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "An error":
+    - heading "An error" [level=#]
+    - text: Stopped
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes stopped: The tests failed"
+      - paragraph: Stopped · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - group "Release notes stopped":
+        - paragraph: "Release notes stopped: The tests failed"
+        - link "Open Release notes":
+          - /url: "#/buddy/playground?tab=card&open=w#"
+          - text: Open
+        - button "Dismiss"
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - list:
+          - listitem:
+            - img "Working"
+            - text: "Nightly digest: Reading the inbox"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Nightly digest — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Planning"
+            - text: "Weekly report: planning"
+            - paragraph: Planning · updated #:# <am/pm>
+            - link "Open Weekly report — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "Five pieces of work in sight":
+    - heading "Five pieces of work in sight" [level=#]
+    - text: Searching
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes: searching changelog style"
+      - paragraph: Searching · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - list:
+          - listitem:
+            - img "Working"
+            - text: "Nightly digest: Reading the inbox"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Nightly digest — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Planning"
+            - text: "Weekly report: planning"
+            - paragraph: Planning · updated #:# <am/pm>
+            - link "Open Weekly report — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Thinking"
+            - text: "Check the links: thinking"
+            - paragraph: Thinking · updated #:# <am/pm>
+            - link "Open Check the links — helper":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Writing"
+            - text: "Trip to Lisbon: writing"
+            - paragraph: Writing · updated #:# <am/pm>
+            - link "Open Trip to Lisbon — chat":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Waiting to start"
+            - text: "Tidy downloads: waiting to start"
+            - paragraph: Waiting to start · updated #:# <am/pm>
+            - link "Open Tidy downloads — automation":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "The focused work finished":
+    - heading "The focused work finished" [level=#]
+    - text: Done
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: Release notes is done in <countdown> #s
+      - paragraph: Done · updated #:# <am/pm>
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - list:
+          - listitem:
+            - img "Working"
+            - text: "Nightly digest: Reading the inbox"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Nightly digest — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Planning"
+            - text: "Weekly report: planning"
+            - paragraph: Planning · updated #:# <am/pm>
+            - link "Open Weekly report — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Thinking"
+            - text: "Check the links: thinking"
+            - paragraph: Thinking · updated #:# <am/pm>
+            - link "Open Check the links — helper":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Writing"
+            - text: "Trip to Lisbon: writing"
+            - paragraph: Writing · updated #:# <am/pm>
+            - link "Open Trip to Lisbon — chat":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Waiting to start"
+            - text: "Tidy downloads: waiting to start"
+            - paragraph: Waiting to start · updated #:# <am/pm>
+            - link "Open Tidy downloads — automation":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "Nothing else running":
+    - heading "Nothing else running" [level=#]
+    - text: Searching
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes: searching changelog style"
+      - paragraph: Searching · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - paragraph: Nothing else is running.
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "Many pieces of work":
+    - heading "Many pieces of work" [level=#]
+    - text: Searching
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes: searching changelog style"
+      - paragraph: Searching · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - list:
+          - listitem:
+            - img "Working"
+            - text: "Batch item #: Reading a page"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Batch item # — chat":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Working"
+            - text: "Batch item #: Reading a page"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Batch item # — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Working"
+            - text: "Batch item #: Reading a page"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Batch item # — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Working"
+            - text: "Batch item #: Reading a page"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Batch item # — helper":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Working"
+            - text: "Batch item #: Reading a page"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Batch item # — chat":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Working"
+            - text: "Batch item #: Reading a page"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Batch item # — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+        - button "Show all #"
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "Reconnecting":
+    - heading "Reconnecting" [level=#]
+    - text: Searching
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes: searching changelog style"
+      - paragraph: Searching · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - status: Reconnecting… what shows here may be out of date.
+        - list:
+          - listitem:
+            - img "Working"
+            - text: "Nightly digest: Reading the inbox"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Nightly digest — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Planning"
+            - text: "Weekly report: planning"
+            - paragraph: Planning · updated #:# <am/pm>
+            - link "Open Weekly report — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "The list could not be read":
+    - heading "The list could not be read" [level=#]
+    - text: Searching
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes: searching changelog style"
+      - paragraph: Searching · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - paragraph: Could not read what is running.
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+  - figure "Interrupted and just finished, about to fold":
+    - heading "Interrupted and just finished, about to fold" [level=#]
+    - text: Searching
+    - group "Release notes":
+      - heading "Release notes" [level=#]
+      - paragraph: "Release notes: searching changelog style"
+      - paragraph: Searching · updated #:# <am/pm>
+      - paragraph: # steps done
+      - list "The run":
+        - listitem: "Done: Group them by area"
+        - listitem: "Searching: changelog style"
+        - listitem: "Next: Write the notes"
+      - region "In sight · #":
+        - heading "In sight · #" [level=#]
+        - list:
+          - listitem:
+            - img "Working"
+            - text: "Nightly digest: Reading the inbox"
+            - paragraph: Working · updated #:# <am/pm>
+            - link "Open Nightly digest — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Planning"
+            - text: "Weekly report: planning"
+            - paragraph: Planning · updated #:# <am/pm>
+            - link "Open Weekly report — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+        - list "Just finished":
+          - listitem:
+            - img "Working"
+            - text: Inbox sweep
+            - paragraph: Interrupted · The gateway restarted while it ran.
+            - link "Open Inbox sweep — loop":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Done"
+            - text: Photo backup
+            - paragraph: Done · ended #:# <am/pm>
+            - link "Open Photo backup — workflow run":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+          - listitem:
+            - img "Stopped"
+            - text: Draft the invite
+            - paragraph: Stopped · ended #:# <am/pm>
+            - link "Open Draft the invite — chat":
+              - /url: "#/buddy/playground?tab=card&open=w#"
+              - text: Open
+      - link "Open in PersonalClaw":
+        - /url: "#/mission-control"
+      - status: Folding in # seconds; pointing at the card or tabbing into it keeps it open.

@@ -1,0 +1,127 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Speech & Transcription
+  - heading "Speech & Transcription" [level=#]
+  - paragraph: How voice input, spoken replies, and transcription behave. The vocabulary below biases ALL transcription — microphone input and knowledge audio/video ingestion alike. The model for each use case is bound in Models — these are the provider-agnostic settings on top of it.
+  - heading "Speech-to-text" [level=#]
+  - paragraph: Transcribe microphone input into the composer.
+  - text: Enable speech-to-text No model bound for this use case — bind one in Models to use this. no model
+  - switch "Enable speech-to-text" [checked] [disabled]
+  - text: Model Bound to the STT use case — change it in Models. none
+  - button "Bind the STT model in Models"
+  - button "Add or download models in Providers"
+  - status
+  - heading "Text-to-speech" [level=#]
+  - paragraph: Hear replies read out, from the Speak button on a reply or on their own.
+  - text: Enable text-to-speech No model bound for this use case — bind one in Models to use this. no model
+  - switch "Enable text-to-speech" [disabled]
+  - text: Model Bound to the TTS use case — change it in Models. none
+  - button "Bind the TTS model in Models"
+  - button "Add or download models in Providers"
+  - status
+  - heading "Voices" [level=#]
+  - paragraph: A voice profile is what renders speech — which engine, how it is conditioned, and whose consent is on record. Bind one per surface, or set a default for everything.
+  - paragraph: No voice profiles yet — the built-in voice speaks everywhere. Turn your current text-to-speech selection into a profile in one step, then bind it per channel or agent.
+  - button "Migrate current voice"
+  - button "Create one manually"
+  - heading "Where each voice speaks" [level=#]
+  - paragraph: An explicit request wins, then this surface's binding, then the default, then the built-in voice. The effective column is the resolver's own answer, not a guess.
+  - table "Voice bindings":
+    - caption: Voice bindings
+    - rowgroup:
+      - row "Surface Voice Effective Actions":
+        - columnheader "Surface"
+        - columnheader "Voice"
+        - columnheader "Effective"
+        - columnheader "Actions"
+    - rowgroup:
+      - row "Everywhere Not bound built-in voice —":
+        - cell "Everywhere"
+        - cell "Not bound"
+        - cell "built-in voice"
+        - cell "—"
+  - heading "Hands-free voice" [level=#]
+  - paragraph: Keep listening and send only when you say a confirmation phrase. The mic button stays push-to-talk; these settings shape the hands-free loop beside it.
+  - text: Push-to-talk shortcut Used by the desktop app for global push-to-talk. A browser tab has no global shortcuts, so this is saved for when you run the desktop app.
+  - 'button "Push-to-talk shortcut: ⌘⇧Space — activate to change"': ⌘⇧Space
+  - status
+  - text: Confirmation phrases Dictation accumulates in the composer until one of these ends what you just said — so a half-finished thought is never sent. do it
+  - button "Remove do it"
+  - text: go ahead
+  - button "Remove go ahead"
+  - text: send it
+  - button "Remove send it"
+  - text: execute
+  - button "Remove execute"
+  - textbox "Confirmation phrases":
+    - /placeholder: ""
+  - status
+  - text: Exit phrases Saying one of these throws the accumulated dictation away. cancel
+  - button "Remove cancel"
+  - text: never mind
+  - button "Remove never mind"
+  - text: forget it
+  - button "Remove forget it"
+  - textbox "Exit phrases":
+    - /placeholder: ""
+  - status
+  - text: Mute while speaking Release the microphone and discard what it captured while a reply plays aloud. This is what stops the assistant hearing itself.
+  - status
+  - switch "Mute while speaking" [checked]
+  - text: Echo filter Also drop any transcription that repeats three consecutive words the assistant just spoke — the backstop for speaker bleed.
+  - status
+  - switch "Echo filter" [checked]
+  - text: Clean text before speaking Strip code blocks, shorten URLs to their domain and paths to their filename, and drop CLI flags. The transcript always keeps the full text.
+  - status
+  - switch "Clean text before speaking" [checked]
+  - text: Voice-origin disclaimer Tell the model a message was dictated so it self-corrects misheard words instead of confidently misreading them.
+  - status
+  - switch "Voice-origin disclaimer" [checked]
+  - text: Session Map reacts to audio A chat's Session Map moves with a reply being read aloud, audio or video playing in the chat, and your microphone while you dictate. It never opens the microphone itself and keeps nothing it hears. With reduced motion it shows a still Playing or Listening mark instead.
+  - status
+  - switch "Session Map reacts to audio"
+  - heading "Vocabulary & corrections" [level=#]
+  - paragraph: Your personal lexicon — the terms that bias every transcription (mic input and knowledge audio/video ingestion) toward how you actually spell things, and the learned fixes that auto-correct mis-heard words. Built from the names in your knowledge graph, people first, and kept in step with it as your library grows; add your own, or turn off a wrong one.
+  - textbox "Add a vocabulary term":
+    - /placeholder: Add a term (e.g. Kubernetes, K#s)…
+  - button "Add" [disabled]
+  - button "Rebuild"
+  - paragraph: # in your lexicon.
+  - text: No terms yet. The people, projects and other names found in your knowledge library appear here by themselves; add one above to start now.
+  - heading "Learned corrections" [level=#]
+  - paragraph: Teach the transcriber a fix — when it hears the first word, it writes the second. Toggle “always” to auto-apply next time.
+  - textbox "Mis-heard word":
+    - /placeholder: Heard (e.g. cube control)…
+  - textbox "Correct word":
+    - /placeholder: Meant (e.g. kubectl)…
+  - button "Add" [disabled]
+  - text: No learned corrections yet. Teach one above — it applies to mic dictation and knowledge audio alike.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

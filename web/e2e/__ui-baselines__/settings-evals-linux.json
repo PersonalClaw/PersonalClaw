@@ -1,0 +1,158 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "a \"Learning\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Evals enabled\"",
+        "input",
+        "input \"Ablation cadence (days)\"",
+        "input \"Default eval budget (USD)\"",
+        "input \"Judge agreement floor\"",
+        "input \"Study runs per arm (k)\""
+      ],
+      "390": [
+        "a \"Learning\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Evals enabled\"",
+        "input",
+        "input \"Ablation cadence (days)\"",
+        "input \"Default eval budget (USD)\"",
+        "input \"Judge agreement floor\"",
+        "input \"Study runs per arm (k)\""
+      ],
+      "412": [
+        "a \"Learning\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Evals enabled\"",
+        "input",
+        "input \"Ablation cadence (days)\"",
+        "input \"Default eval budget (USD)\"",
+        "input \"Judge agreement floor\"",
+        "input \"Study runs per arm (k)\""
+      ],
+      "768": [
+        "a \"Learning\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Evals enabled\"",
+        "input",
+        "input \"Ablation cadence (days)\"",
+        "input \"Default eval budget (USD)\"",
+        "input \"Judge agreement floor\"",
+        "input \"Study runs per arm (k)\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "a \"Learning\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Evals enabled\"",
+        "input",
+        "input \"Ablation cadence (days)\"",
+        "input \"Default eval budget (USD)\"",
+        "input \"Judge agreement floor\"",
+        "input \"Study runs per arm (k)\""
+      ],
+      "390": [
+        "a \"Learning\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Evals enabled\"",
+        "input",
+        "input \"Ablation cadence (days)\"",
+        "input \"Default eval budget (USD)\"",
+        "input \"Judge agreement floor\"",
+        "input \"Study runs per arm (k)\""
+      ],
+      "412": [
+        "a \"Learning\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Evals enabled\"",
+        "input",
+        "input \"Ablation cadence (days)\"",
+        "input \"Default eval budget (USD)\"",
+        "input \"Judge agreement floor\"",
+        "input \"Study runs per arm (k)\""
+      ],
+      "768": [
+        "a \"Learning\"",
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"No changes to save\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Evals enabled\"",
+        "input",
+        "input \"Ablation cadence (days)\"",
+        "input \"Default eval budget (USD)\"",
+        "input \"Judge agreement floor\"",
+        "input \"Study runs per arm (k)\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

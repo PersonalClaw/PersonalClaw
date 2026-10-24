@@ -1,0 +1,60 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "390": [
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "412": [
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "768": [
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ]
+    },
+    "known": {}
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "390": [
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "412": [
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ],
+      "768": [
+        "button \"Open the full dashboard\"",
+        "button \"Paired devices\"",
+        "button \"Refresh what is waiting on you\"",
+        "pre[role=group] \"Tool arguments\""
+      ]
+    },
+    "known": {}
+  }
+}

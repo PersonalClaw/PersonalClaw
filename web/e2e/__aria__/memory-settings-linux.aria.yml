@@ -1,0 +1,105 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Library":
+    - radio "Knowledge"
+    - radio "Memory" [checked]
+    - radio "Files"
+    - radio "Artifacts"
+  - heading "Memory" [level=#]
+  - paragraph: Explore and manage what the <theme> remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.
+  - text: # Semantic # Episodic # Events # Embedded · no model bound
+  - tablist "Memory view":
+    - tab "Studio"
+    - tab "Health"
+    - tab "Recall"
+    - tab "Inspect"
+    - tab "Audit"
+    - tab "Settings" [selected]
+  - heading "Retention" [level=#]
+  - paragraph: When idle conversations roll up into memory, how sure a learned fact must be to stay, and how long history is kept.
+  - text: Idle before history rollup (hours) A conversation idle this long gets consolidated into memory.
+  - spinbutton "Idle before history rollup (hours)": "#"
+  - text: Learned-fact confidence How confident an automatically learned fact must be before memory keeps it (#–#). Facts you add yourself are always kept. Higher keeps fewer, surer facts; lower keeps more, and more of them will be wrong.
+  - spinbutton "Learned-fact confidence": "#.#"
+  - text: Max history age (days) History older than this is pruned.
+  - spinbutton "Max history age (days)": "#"
+  - status
+  - heading "Injection & behavior" [level=#]
+  - paragraph: How memory is surfaced to the agent each turn, and whether it acts proactively.
+  - text: L# manifest injection Inject a small always-on manifest of your most-recalled facts; the agent pulls deeper memory on demand. Off = inject full semantic + episodic every turn (legacy).
+  - switch "L# manifest injection" [checked]
+  - text: Active recall On an interactive turn, surface query-relevant memory just before the reply — bounded by a timeout + circuit breaker.
+  - switch "Active recall" [checked]
+  - text: "Proactive check-ins Experimental: let the agent infer future check-ins from conversation and deliver one natural reminder per window via the heartbeat. Off by default; high-confidence only, capped per day, one-tap dismiss."
+  - switch "Proactive check-ins"
+  - text: Entity graph Link each memory to the people, projects and tools it names, so “what do I know about X?” can follow those links instead of relying on search alone. Costs no tokens — matching is exact-name. Off = recall behaves as it does today; existing links are kept.
+  - switch "Entity graph" [checked]
+  - text: "Volunteer related memory When a message mentions someone or something the entity graph knows, offer up to # linked memories for that turn — including ones that share no words with what you typed. Needs the entity graph. Off by default: it puts context in front of the model you didn't ask for. The Health tab reports how often what it volunteered was actually used."
+  - switch "Volunteer related memory"
+  - text: "Topology orientation At the start of a new session, add a tiny map of the neighbourhoods in your memory graph (“people around project X”) so the assistant knows which areas exist before it searches. Off by default: it spends a little context every new session, and says nothing useful until the graph has distinct groups."
+  - switch "Topology orientation"
+  - text: Attribute claims to who said them Record WHOSE claim a memory is (you, the assistant, a named person, an outside source) and render it that way (“Alex believes…”). Second-hand claims are capped lower, and a lower-authority claim can never retire something you said. Off = every memory is stored unattributed, exactly as before.
+  - switch "Attribute claims to who said them"
+  - text: Slots budget (characters) How much of every session's context the always-injected Slots block may cost — persona, preferences, pending items and the rest. This is a spend you pay constantly, so it is bounded at #-#. The per-slot caps that decide which single register is full are fixed in code.
+  - spinbutton "Slots budget (characters)": "#"
+  - status
+  - heading "Learned preferences" [level=#]
+  - paragraph: What the assistant has inferred about how you like to work, and how strongly it currently believes each one. Pin the ones it must keep; forget the ones it got wrong.
+  - paragraph: Nothing inferred yet. Say how you want something done — “keep answers short”, “always use pytest, not unittest” — and it shows up here once it has been observed.
+  - heading "Consolidation" [level=#]
+  - paragraph: Force an immediate consolidation pass instead of waiting for idle rollup.
+  - button "Consolidate now"
+  - heading "Memory vault (Obsidian)" [level=#]
+  - paragraph: Project memory into a browsable markdown vault — YAML frontmatter + [[wikilinks]] + graph view — and optionally edit it back.
+  - text: Vault mode No vault is written. "Sync now" still produces a one-shot export you can look at.
+  - combobox "Vault mode":
+    - option "Off — no vault" [selected]
+    - option "Mirror — write memory out, read-only"
+    - option "Two-way — read my edits back in"
+  - text: Vault folder A plain name lands under ~/.personalclaw; an absolute path is used as-is (point it at an Obsidian vault to open memory there). Only the default location is covered by
+  - code: personalclaw snapshot
+  - text: .
+  - textbox "Vault folder":
+    - /placeholder: memory-vault
+    - text: memory-vault
+  - button "Save" [disabled]
+  - paragraph: <e2e home>/memory-vault · not yet generated
+  - button "Sync now"
+  - status
+  - heading "Daily digests" [level=#]
+  - paragraph: Per-day rollups of memory activity — 'what happened on day D'. Built automatically on the maintenance cadence; browsable in the Obsidian vault too.
+  - button "Build / refresh"
+  - text: # digests
+  - heading "No daily digests yet" [level=#]
+  - paragraph: A digest is one day's memory activity rolled up — 'what happened on day D'. They build on the maintenance cadence, or press Build / refresh above.
+  - heading "Maintenance" [level=#]
+  - paragraph: Migrate legacy memory or restore from an export.
+  - button "Import from JSON"
+  - paragraph: No legacy markdown memory to migrate.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

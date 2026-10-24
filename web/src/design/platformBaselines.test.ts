@@ -92,6 +92,17 @@ describe('platform-baselines.mjs writes a platform\'s set from a CI run', () => 
     expect(JSON.parse(readFileSync(join(into, '__ui-baselines__', 'chat-linux.json'), 'utf8')).light).toEqual(entry('button "Send"'))
   })
 
+  it('reads the report it is given when no --into is named, and writes where the matrix reads', () => {
+    // A refused report, so nothing is written into the real e2e folder: the point is that the
+    // report's path is read as the first argument (it once was dropped without --into).
+    const dir = scratch()
+    const path = join(dir, 'e2e-report.json')
+    writeFileSync(path, JSON.stringify(report([])))
+    const out = spawnSync(process.execPath, [join(E2E, 'platform-baselines.mjs'), path, 'linux'], { cwd: WEB, encoding: 'utf8' })
+    expect(out.status, out.stderr).toBe(1)
+    expect(out.stderr).toMatch(/holds no platform-baseline attachment/)
+  })
+
   const PLANTS: Array<[string, Array<{ name: string; body: string }>, RegExp]> = [
     ['a surface attached one theme', WHOLE.filter((a) => !a.name.endsWith('-dark.json')), /chat attached no dark theme/],
     ['a surface attached no tree', WHOLE.filter((a) => !a.name.endsWith('.aria.yml')), /chat attached no accessibility tree/],

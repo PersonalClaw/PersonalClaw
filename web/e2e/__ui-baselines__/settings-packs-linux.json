@@ -1,0 +1,134 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Suggest packs\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Project fingerprinting\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Suggest packs\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Project fingerprinting\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Suggest packs\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Project fingerprinting\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"Suggest packs\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Project fingerprinting\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Suggest packs\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Project fingerprinting\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Suggest packs\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Project fingerprinting\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Suggest packs\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Project fingerprinting\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"Suggest packs\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Project fingerprinting\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

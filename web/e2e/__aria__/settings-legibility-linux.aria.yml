@@ -1,0 +1,54 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Legibility
+  - heading "Legibility" [level=#]
+  - paragraph: "How PersonalClaw describes its own capabilities — to you on the dashboard, and to the external agents you point at your projects. Both are proposals: nothing here is ever enabled on your behalf."
+  - heading "Always-on skills" [level=#]
+  - paragraph: Skills injected into every session in full, before you type. Read from the same string the session itself receives, so this list cannot drift from the real prompt.
+  - paragraph: "No skill is always-on yet. Set “always: true in a skill's SKILL.md frontmatter” to inject one into every session; every other skill loads only when it’s relevant."
+  - heading "Project instructions" [level=#]
+  - paragraph: Documents a project-bound session inlines into every turn. The overview is current state and editable here; the ledgers are append-only history.
+  - combobox "Show project instructions for":
+    - option "Choose a project…" [selected]
+    - option "Personal"
+    - option "Repeatable"
+  - paragraph: Pick a project to see the instruction documents its sessions receive.
+  - heading "Discover" [level=#]
+  - paragraph: A curated tour of the parts of PersonalClaw you haven't tried yet, on the dashboard and the Discover hub.
+  - text: Discover tips Show the dashboard Discover section and the Discover hub — hand-picked tips that guide you to features like Chat, Tasks, Projects, Knowledge, and Automation, each a deep link to try it. A tip auto-hides once you've used that feature; dismiss hides one forever. Nothing is ever enabled on your behalf.
+  - status
+  - switch "Discover tips" [checked]
+  - heading "Context for external agents" [level=#]
+  - paragraph: Write your rules and scored context into project files that other AI tools read.
+  - text: Context files Let PClaw render a marker-fenced block into an opted-in project's CLAUDE.md / AGENTS.md / .cursorrules. Only content inside the PCLAW markers is managed; the rest of the file is never touched. Regeneration is manual per project.
+  - status
+  - switch "Context files"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

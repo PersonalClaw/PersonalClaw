@@ -1,0 +1,51 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: AI feedback
+  - heading "AI feedback" [level=#]
+  - paragraph: Every 👍/👎 you leave on an AI judgment (inbox triage, drafts, digests, loop findings) is attributed to the source that produced it — the bound prompt, judge, or rule. A source that keeps being wrong asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing. Everything here is deterministic counting; nothing leaves this machine.
+  - heading "Judgment sources" [level=#]
+  - paragraph: Rolling #-day window · accuracy shown after # verdicts. History restarts when you rebind a prompt (a new prompt is a new source).
+  - text: No feedback yet — 👍/👎 appear on inbox classifications, drafted replies, digests, loop findings, and synthesized skills. Verdicts collect here per judgment source.
+  - heading "Tuning" [level=#]
+  - paragraph: When a source has enough verdicts to judge, how far back they count, and how bad it has to get before PersonalClaw asks you to retire it.
+  - text: Collect feedback Show 👍/👎 on AI judgment outputs and track per-source accuracy. Off means the thumbs never render, so nothing new is attributed — verdicts already recorded are kept.
+  - status
+  - switch "Collect feedback" [checked]
+  - text: Minimum verdicts How many verdicts a source needs before its accuracy is shown or acted on. Below this the row reads “collecting” and no number is shown.
+  - spinbutton "Minimum verdicts": "#"
+  - status
+  - text: Attribution window (days) How far back verdicts count toward a source's rolling accuracy. Older verdicts stop counting rather than being deleted.
+  - spinbutton "Attribution window (days)": "#"
+  - status
+  - text: Retire threshold Accuracy below which a source (with enough verdicts) earns a “retire this rule?” proposal — and stops surfacing where that kind of source has a surfacing gate. #.# means “wrong more than # times in #”.
+  - spinbutton "Retire threshold": "#.#"
+  - status
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

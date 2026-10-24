@@ -1,0 +1,49 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills" [checked]
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts"
+    - radio "Apps"
+    - radio "Store"
+  - heading "Skills" [level=#]
+  - radiogroup "Skills view":
+    - radio "Installed"
+    - radio "Browse" [checked]
+    - radio "Proposals"
+  - searchbox "Search marketplace"
+  - combobox "Marketplace":
+    - option "All marketplaces" [selected]
+    - option "native"
+  - status
+  - heading "Browse skills" [level=#]
+  - paragraph: Search all marketplaces for skills to install — the agent loads them when relevant.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

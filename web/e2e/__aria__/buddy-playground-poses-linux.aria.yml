@@ -1,0 +1,57 @@
+- main:
+  - heading "Buddy playground" [level=#]
+  - paragraph: "The buddy's real state machine and orb, played with made-up work. Nothing here reaches the gateway: an answer is only written in the log."
+  - radiogroup "Playground view":
+    - radio "Play"
+    - radio "A day"
+    - radio "Card"
+    - radio "Poses" [checked]
+  - group "Look":
+    - heading "Look" [level=#]
+    - paragraph: These are the app's own settings, as in Settings → Design.
+    - radiogroup "Colour scheme":
+      - radio "Coral" [checked]
+      - radio "Jade"
+      - radio "Mono"
+    - radiogroup "<theme> or <theme>":
+      - radio "<theme>" [checked]
+      - radio "<theme>"
+    - text: Bounciness
+    - slider "Bounciness": "#"
+    - text: Expressiveness
+    - slider "Expressiveness": "#.#"
+    - paragraph: Reduced motion is off, from your <theme>'s setting.
+  - region "The quiet family":
+    - heading "The quiet family" [level=#]
+    - list:
+      - listitem: Done Done Done Done
+      - listitem: Nothing running Nothing running Nothing running Nothing running
+  - region "The active family":
+    - heading "The active family" [level=#]
+    - list:
+      - listitem: Waiting to start Waiting to start Waiting to start Waiting to start
+      - listitem: Thinking Thinking Thinking Thinking
+      - listitem: Searching Searching Searching Searching
+      - listitem: Working Working Working Working
+      - listitem: Planning Planning Planning Planning
+      - listitem: Handing off Handing off Handing off Handing off
+      - listitem: Writing Writing Writing Writing
+      - listitem: Listening Listening Listening Listening
+      - listitem: PersonalClaw is restarting PersonalClaw is restarting PersonalClaw is restarting PersonalClaw is restarting
+  - region "The waiting family":
+    - heading "The waiting family" [level=#]
+    - list:
+      - listitem: Needs your OK Needs your OK Needs your OK Needs your OK
+      - listitem: Waiting for your answer Waiting for your answer Waiting for your answer Waiting for your answer
+  - region "The blocked family":
+    - heading "The blocked family" [level=#]
+    - list:
+      - listitem: Stopped Stopped Stopped Stopped
+      - listitem: Can't reach PersonalClaw Can't reach PersonalClaw Can't reach PersonalClaw Can't reach PersonalClaw
+  - region "The focused card's orb":
+    - heading "The focused card's orb" [level=#]
+    - list:
+      - listitem: Done
+      - listitem: Working
+      - listitem: Needs your OK
+      - listitem: Stopped

@@ -1,0 +1,50 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Chat history"
+  - button "More actions"
+  - img "Nothing running"
+  - heading "Good <time of day>, Keyur" [level=#]
+  - textbox "Message input"
+  - button "Add to message"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - 'button "Reply style: Agent default"': Agent default
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
+  - button "Optimize prompt (⌘↵)" [disabled]
+  - button "Voice input"
+  - button "Hands-free voice"
+  - button "Send message" [disabled]
+  - 'button "Project: No project"': No project
+  - button "Show health-check status"
+  - button "Break a goal into tasks"
+  - button "Save a note to my knowledge base"
+  - button "Run a command and explain the output"
+  - button "What can you help me with?"
+  - button "Set up a daily briefing"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
