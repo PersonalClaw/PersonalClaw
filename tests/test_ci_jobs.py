@@ -868,6 +868,55 @@ def test_a_record_on_github_names_the_runs_id_and_attempt(repo, tmp_path, monkey
     assert (_record(outcome)["run_id"], _record(outcome)["attempt"]) == (18273645546, 3)
 
 
+def test_a_record_names_the_runner_image_and_the_toolchain_it_ran_on(repo, tmp_path, monkeypatch):
+    """A push replays a pass only on the image its label runs now and the toolchain main's
+    catalogue names (tools/ci/main_replay.py), so a record names both (#3919)."""
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("ImageOS", "ubuntu24")
+    monkeypatch.setenv("ImageVersion", "20270110.1")
+    stubs = _stubs(tmp_path, "uv")
+    host = _host(repo, on_github=True, path=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    job = _job("a", "pass", toolchain=("uv",), python="3.12.15")
+    record = _record(_run(repo, job, tmp_path, host=host))
+    assert record["runner"] == {
+        "label": "ubuntu-24.04",
+        "image": "ubuntu24/20270110.1",
+        "os": sys.platform,
+        "arch": jobs.host_platform.machine(),
+    }
+    # The toolchain as a key reads it: the catalogue's Python and each program's identity.
+    assert record["toolchain"]["python"] == "3.12.15"
+    assert record["toolchain"]["uv"] == jobs.capabilities.identity(stubs / "uv")
+    assert record["toolchain"][f"program:{PY}"] == jobs.capabilities.identity(PY)
+
+
+def test_the_image_a_record_names_is_the_containers_the_runners_or_none(repo, monkeypatch):
+    monkeypatch.setenv("ImageOS", "ubuntu24")
+    monkeypatch.setenv("ImageVersion", "20270110.1")
+    github, here = _host(repo, on_github=True), _host(repo)
+    container = "ghcr.io/example/runner@sha256:" + "1" * 64
+    assert jobs.runner_of(_job("c", "pass", container=container), github)["image"] == container
+    assert jobs.runner_of(_job("c", "pass", container=container), here)["image"] == container
+    assert jobs.runner_of(_job("a", "pass"), github)["image"] == "ubuntu24/20270110.1"
+    # A bare host here names none, and so does a runner that sets no image, as a self-hosted one.
+    assert jobs.runner_of(_job("a", "pass"), here)["image"] == ""
+    monkeypatch.delenv("ImageVersion")
+    assert jobs.runner_of(_job("a", "pass"), github)["image"] == ""
+    assert jobs.runner_of(_job("m", "pass", platform="macos-15"), github)["label"] == "macos-15"
+
+
+def test_a_toolchain_that_cannot_be_read_leaves_the_record_naming_none(repo, tmp_path, monkeypatch):
+    def unreadable(*args, **kw):
+        raise jobs.capabilities.Refused("planted: cannot be read")
+
+    monkeypatch.setattr(jobs, "_toolchain", unreadable)
+    outcome = _run(repo, _job("a", "pass"), tmp_path)
+    assert outcome.code == run.OK, outcome.reasons
+    assert _record(outcome)["toolchain"] is None
+
+
 # ── the lint remediation (#3915) ──────────────────────────────────────────────────────────────
 
 _LINT_RED = "import sys; print('src/x.py:1:1: F401 unused'); raise SystemExit(1)"

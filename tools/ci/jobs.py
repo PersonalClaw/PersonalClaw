@@ -20,7 +20,9 @@ Each job (each shard of a sharded one) leaves one record (:func:`verdict.job_rec
 result, the head it ran on, the partner revisions it read, the run and its attempt (on GitHub,
 ``$GITHUB_RUN_ID`` and ``$GITHUB_RUN_ATTEMPT``, either refused before any step when it cannot be
 read; locally, no run and attempt 1), the diagnostic rerun (below), which quarantined tests
-failed, and each step's argv, exit and seconds. A record is left only when the checkout was
+failed, what it ran on (:func:`runner_of`: the catalogue's label, the image and the machine) and
+its toolchain's identities, as a key reads them, and each step's argv, exit and seconds. A record
+is left only when the checkout was
 clean, at the same head, before and after the job, and each partner checkout the job reads was
 at the same head before and after it: otherwise the head or partner revision it would name is
 not what it ran.
@@ -1502,6 +1504,13 @@ def run_one(
             outcome.code = run.PARTIAL
         return outcome
     word = {run.OK: verdict.SUCCESS, run.RED: verdict.FAILURE}.get(code, verdict.CANCELLED)
+    # The toolchain as a key reads it. One that cannot be read leaves the record naming none,
+    # which no push replays.
+    toolchain: dict[str, str] | None
+    try:
+        toolchain = _toolchain(job, host, _as_written(job, options), {})
+    except (capabilities.Refused, Unreadable):
+        toolchain = None
     text = verdict.job_record(
         key=key,
         result=word,
@@ -1513,6 +1522,8 @@ def run_one(
         quarantined=quarantined,
         plan=plan,
         workers=options.workers,
+        runner=runner_of(job, host),
+        toolchain=toolchain,
     )
     out = work / "records" / f"{slug}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1555,6 +1566,35 @@ def _identity(program: str, host: Host, seen: dict[str, str]) -> str:
     if found not in seen:
         seen[found] = capabilities.identity(found)
     return seen[found]
+
+
+def _as_written(job: Job, options: Options) -> list[tuple[str, Sequence[str]]]:
+    """Each install and step of *job* with the folder it runs in, its placeholders unfilled
+    (:data:`_AS_WRITTEN`), as a key and a record's toolchain read them."""
+    steps: list[tuple[str, Sequence[str]]] = [
+        ("", INSTALL_ARGV[tool]) for tool in job.toolchain if tool in INSTALL_ARGV
+    ]
+    steps += [(step.workdir, _step_argv(step, job, _AS_WRITTEN, options)) for step in job.command]
+    return steps
+
+
+def runner_of(job: Job, host: Host) -> dict[str, str]:
+    """What a record says *job* ran on (``verdict.RUNNER_KEYS``): its catalogue runner label; the
+    image, which is the container's for a job in one, ``<ImageOS>/<ImageVersion>`` on a
+    GitHub-hosted runner (empty when either is unset, as on a self-hosted one) and empty for a
+    bare host here; and this machine's OS and architecture. A push replays a pass only on the
+    image it runs now (``tools/ci/main_replay.py``), and an empty one never."""
+    image = ""
+    if job.container is not None:
+        image = job.container
+    elif host.on_github and os.environ.get("ImageOS") and os.environ.get("ImageVersion"):
+        image = f"{os.environ['ImageOS']}/{os.environ['ImageVersion']}"
+    return {
+        "label": job.platform,
+        "image": image,
+        "os": sys.platform,
+        "arch": host_platform.machine(),
+    }
 
 
 def _toolchain(
@@ -1607,10 +1647,7 @@ def _key_inputs(
     and the commit ``{base}`` names when a step diffs from it. Locks, the toolchain and each
     step's own program, the platform, the container and the host's capabilities complete it."""
     seen = {} if seen is None else seen
-    steps: list[tuple[str, Sequence[str]]] = [
-        ("", INSTALL_ARGV[tool]) for tool in job.toolchain if tool in INSTALL_ARGV
-    ]
-    steps += [(step.workdir, _step_argv(step, job, _AS_WRITTEN, options)) for step in job.command]
+    steps = _as_written(job, options)
     locks = {
         rel: _sha256((host.root / rel).read_bytes()) for rel in LOCKS if (host.root / rel).is_file()
     }

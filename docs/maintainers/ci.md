@@ -1888,13 +1888,24 @@ calls it yet: `merge.yml`'s plan job will, once that workflow writes a verdict f
   run on the head green on attempt 1, a later run's red does not stop the first run's green from
   replaying. What a later run found reaches the push only through the merge verdict, whose newest
   run on the head decides, so a later red verdict stops every replay.
+- **The tree is not every input a pass stood on.** Each job record names what the job ran on
+  (the catalogue's runner label; the image, `<ImageOS>/<ImageVersion>` on a GitHub-hosted runner
+  and a container job's own image) and its toolchain's identities, as a key reads them
+  (`job-record/3`; `jobs.runner_of`). A job replays only from a record of the source run itself
+  (its `run_id`, so a record another run or a local run wrote is never read as this run's), run
+  under the label `main`'s catalogue gives the job, on the image that label runs now (the
+  caller's `images`, as the push read them; a container job's image is its catalogue's), never
+  an empty one, with the Python `main`'s catalogue names and an identity for every word of its
+  toolchain. A moved image, another toolchain, a label the push holds no image for, or a record
+  that names neither (a `job-record/2` one, which every other reader still reads) runs the job.
 - **A pass that read a partner repository never replays** on a push, whatever its class: the push
   has no partner head to hold the pull request's to. `apps-contract`, which reads the apps
   partner, is `never` today and runs on its class; were it made `tree`, its partner read would
   still keep it running.
 - **The receipt** carries the trust receipt's fields (the pushed commit, its tree, the toolchain,
   and the sha256 of the plan, of attempt 1's job list and of each replayed verdict file), the
-  source run and each job's decision and why.
+  source run, the images the push compared, and each job's decision, why, and the image a
+  replayed pass ran on.
 
 `tests/test_ci_main_replay.py` plants the API answers and the verdict files, each written by
 `verdict.job_record`, and the quarantined one by `run-job` itself.

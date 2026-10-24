@@ -144,6 +144,11 @@ class JobResult:
     run_id: int | None = None
     tests: tuple[FailedTest, ...] = ()
     own_partners: bool = False
+    #: What a per-job record says the job ran on (:data:`RUNNER_KEYS`) and its toolchain's
+    #: identities, by toolchain word; None for a record that names neither (an older schema's, or
+    #: one written without them) and for a ``needs`` result.
+    runner: Mapping[str, str] | None = None
+    toolchain: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -448,8 +453,11 @@ def from_needs(text: str, identity: Identity, attempt: int = 1) -> list[JobResul
 
 
 #: The per-job record ``python -m tools.ci run-job`` writes: its schema name, and its fields.
-JOB_RECORD_SCHEMA = "personalclaw.ci.job-record/2"
-_RECORD_KEYS = frozenset(
+#: Version 3 adds what the job ran on and its toolchain (#3919), which a push to main holds a
+#: replayed pass to; a version-2 record is still read, and names neither.
+JOB_RECORD_SCHEMA = "personalclaw.ci.job-record/3"
+_SCHEMA_2 = "personalclaw.ci.job-record/2"
+_RECORD_KEYS_2 = frozenset(
     {
         "schema",
         "key",
@@ -465,6 +473,11 @@ _RECORD_KEYS = frozenset(
         "steps",
     }
 )
+_RECORD_KEYS = _RECORD_KEYS_2 | {"runner", "toolchain"}
+#: What a record's ``runner`` names: the catalogue's runner label the job ran under, the image it
+#: ran on (``<ImageOS>/<ImageVersion>`` on a GitHub-hosted runner, the container image for a job
+#: in one, empty for a bare host that names none), and the OS and architecture.
+RUNNER_KEYS = frozenset({"label", "image", "os", "arch"})
 _STEP_RECORD_KEYS = frozenset({"argv", "exit", "seconds"})
 _RERUN_KEYS = frozenset({"argv", "exit", "tests"})
 _RERUN_TEST_KEYS = frozenset({"test", "rerun_result", "why"})
@@ -497,6 +510,8 @@ def job_record(
     quarantined: Sequence[str] = (),
     plan: str | None = None,
     workers: int | None = None,
+    runner: Mapping[str, str] | None = None,
+    toolchain: Mapping[str, str] | None = None,
 ) -> str:
     """One job's (or one shard's) result as the JSON :func:`from_job_records` reads.
 
@@ -508,7 +523,9 @@ def job_record(
     null when it was not rerun) and ``why``. Only a failure carries one, and it never changes
     ``result``. ``quarantined`` names the quarantined tests that failed, for a reader that keeps
     only a clean pass. ``plan`` is where a sharded job's list came from (one of :data:`PLANS`),
-    ``workers`` a worker count a local run set in place of the catalogue's.
+    ``workers`` a worker count a local run set in place of the catalogue's. ``runner`` is what the
+    job ran on (:data:`RUNNER_KEYS`) and ``toolchain`` its toolchain's identities; either is
+    written null when not given, and a record that names none is never replayed on a push.
     """
     record: dict[str, object] = {
         "schema": JOB_RECORD_SCHEMA,
@@ -523,6 +540,10 @@ def job_record(
         "quarantined": list(quarantined),
         "plan": plan,
         "workers": workers,
+        "runner": dict(runner) if isinstance(runner, Mapping) else runner,
+        "toolchain": (
+            dict(sorted(toolchain.items())) if isinstance(toolchain, Mapping) else toolchain
+        ),
         "steps": [
             {"argv": list(argv), "exit": code, "seconds": round(seconds, 3)}
             for argv, code, seconds in steps
@@ -609,10 +630,13 @@ def _one_record(text: str, n: int) -> JobResult:
         raise Refused(f"{where} is not JSON: {exc}") from None
     if not isinstance(data, dict):
         raise Refused(f"{where} must be an object, got {type(data).__name__}")
-    if set(data) != _RECORD_KEYS:
-        raise Refused(f"{where} must hold exactly {sorted(_RECORD_KEYS)}, got {sorted(data)}")
-    if data["schema"] != JOB_RECORD_SCHEMA:
-        raise Refused(f"{where} has schema {data['schema']!r}, not {JOB_RECORD_SCHEMA!r}")
+    # A version-2 record holds version 2's fields; any other is held to this version's.
+    schema = data.get("schema")
+    keys = _RECORD_KEYS_2 if schema == _SCHEMA_2 else _RECORD_KEYS
+    if set(data) != keys:
+        raise Refused(f"{where} must hold exactly {sorted(keys)}, got {sorted(data)}")
+    if schema not in (JOB_RECORD_SCHEMA, _SCHEMA_2):
+        raise Refused(f"{where} has schema {schema!r}, not {JOB_RECORD_SCHEMA!r} or {_SCHEMA_2!r}")
     key = data["key"]
     if not isinstance(key, str) or not key:
         raise Refused(f"{where} names no job key")
@@ -658,13 +682,32 @@ def _one_record(text: str, n: int) -> JobResult:
             raise Refused(f"{where}: a step's seconds must be a number, finite and 0 or more")
     if data["result"] == SUCCESS and any(step["exit"] != 0 for step in steps):
         raise Refused(f"{where} says success, and a step exited non-zero")
+    runner = data.get("runner")
+    if runner is not None and (
+        not isinstance(runner, dict)
+        or set(runner) != RUNNER_KEYS
+        or not all(isinstance(v, str) for v in runner.values())
+        or not all(runner[k] for k in ("label", "os", "arch"))
+    ):
+        raise Refused(
+            f"{where}: runner must be null or name exactly {sorted(RUNNER_KEYS)} as strings,"
+            " the label, OS and architecture not empty"
+        )
+    toolchain = data.get("toolchain")
+    if toolchain is not None and (
+        not isinstance(toolchain, dict)
+        or not all(isinstance(k, str) and k and isinstance(v, str) for k, v in toolchain.items())
+    ):
+        raise Refused(f"{where}: toolchain must be null or an object of strings, by toolchain word")
     attempt = data["attempt"]
     tests = [
         FailedTest(key, attempt, t["test"], t["rerun_result"] or NOT_CLASSIFIED, t["why"])
         for t in (data["rerun"] or {}).get("tests", [])
     ]
     tests += [FailedTest(key, attempt, test, QUARANTINED, WAIVED) for test in quarantined]
-    return JobResult(key, data["result"], identity, attempt, run_id, tuple(tests), True)
+    return JobResult(
+        key, data["result"], identity, attempt, run_id, tuple(tests), True, runner, toolchain
+    )
 
 
 def from_job_records(texts: Iterable[str]) -> list[JobResult]:
