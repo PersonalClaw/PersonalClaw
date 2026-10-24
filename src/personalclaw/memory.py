@@ -299,10 +299,21 @@ INDEX_FILE = "memory_index.db"
 SET_ASIDE_MARK = record_files.SET_ASIDE_MARK
 
 _FTS_TABLE = "memory_fts"
-_CREATE_FTS = (
-    f"CREATE VIRTUAL TABLE IF NOT EXISTS {_FTS_TABLE} USING fts5("
-    "path, content, tokenize='porter unicode61')"
-)
+#: Each row's absolute file path is stored, never searched (``UNINDEXED``), so a word in the
+#: home's own path (a folder named for a person, a project or a tool) does not match every memory
+#: file; its name inside the memory folder (``name``: ``preferences.md``, ``history/<day>.md``)
+#: is searched with what it says, so a memory is still found by its own name. ``content`` stays
+#: column 1, which ``snippet`` reads. An index an earlier schema made is rebuilt from the files when
+#: it is opened (:meth:`MemoryStore._upgrade`).
+_FTS_COLUMNS = "path UNINDEXED, content, name, tokenize='porter unicode61'"
+_CREATE_FTS = f"CREATE VIRTUAL TABLE IF NOT EXISTS {_FTS_TABLE} USING fts5({_FTS_COLUMNS})"
+
+
+def _current_schema(conn: sqlite3.Connection) -> bool:
+    """Whether the index's table is the one :data:`_CREATE_FTS` makes."""
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?", (_FTS_TABLE,)).fetchone()
+    return bool(row) and f"fts5({_FTS_COLUMNS})" in str(row[0])
+
 
 #: Each keyword index this process could not build or keep up to date with the memory files → why,
 #: in one clause. Cleared when the index is next rebuilt from the files. Keyed by the index's file,
@@ -980,6 +991,9 @@ class MemoryStore:
         :class:`KeywordIndexUnavailable` when it cannot be used, having recorded why."""
         try:
             conn = self._try_create_db()
+            if not _current_schema(conn):
+                conn.close()
+                return self._upgrade()
             if self.search_degraded():
                 try:
                     self._fill(conn)
@@ -1006,7 +1020,10 @@ class MemoryStore:
         """Make the index hold exactly the memory files. Returns how many."""
         files = self._indexable_files()
         conn.execute(f"DELETE FROM {_FTS_TABLE}")
-        conn.executemany(f"INSERT INTO {_FTS_TABLE} (path, content) VALUES (?, ?)", files)
+        conn.executemany(
+            f"INSERT INTO {_FTS_TABLE} (path, content, name) VALUES (?, ?, ?)",
+            [(path, content, self._name(path)) for path, content in files],
+        )
         conn.commit()
         return len(files)
 
@@ -1065,6 +1082,24 @@ class MemoryStore:
                         conn = self._start_again(damage)
             except (sqlite3.Error, OSError) as exc:
                 self._degrade(exc)
+        self._recovered()
+        return conn
+
+    def _upgrade(self) -> sqlite3.Connection:
+        """Rebuild an index an earlier schema made, and return it open. It is derived from the
+        memory files, so the rebuild loses nothing, and it drops the index's own table alone
+        (:meth:`_rebuild_in_place`). One at a time, as a repair is: a store that finds the index
+        already rebuilt by another uses it as it is."""
+        with _REPAIR_LOCK:
+            conn = connect(str(self._index_db))
+            try:
+                if _current_schema(conn):
+                    return conn
+            except BaseException:
+                conn.close()
+                raise
+            conn.close()
+            conn = self._rebuild_in_place()
         self._recovered()
         return conn
 
@@ -1155,7 +1190,8 @@ class MemoryStore:
             path_str = str(path)
             conn.execute(f"DELETE FROM {_FTS_TABLE} WHERE path = ?", (path_str,))
             conn.execute(
-                f"INSERT INTO {_FTS_TABLE} (path, content) VALUES (?, ?)", (path_str, content)
+                f"INSERT INTO {_FTS_TABLE} (path, content, name) VALUES (?, ?, ?)",
+                (path_str, content, self._name(path_str)),
             )
             conn.commit()
 
@@ -1177,6 +1213,14 @@ class MemoryStore:
             self._with_index(_drop)
         except Exception:
             logger.debug("FTS index delete failed", exc_info=True)
+
+    def _name(self, path: str) -> str:
+        """A memory file's name inside the memory folder, which a search reads: never the folders
+        above it, the home's path among them."""
+        try:
+            return Path(path).relative_to(self._memory_dir).as_posix()
+        except ValueError:
+            return Path(path).name
 
     def _indexable_files(self) -> list[tuple[str, str]]:
         """``(path, content)`` for every file that BELONGS in the FTS index. One listing
