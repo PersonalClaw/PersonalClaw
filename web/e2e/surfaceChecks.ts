@@ -334,6 +334,10 @@ export function normalizeTree(raw: string): string {
         .replace(/\b(darwin|linux|win32)\b/gi, '<platform>')
         // Every number, but not the `2` of the `<e2e home>` a host fold above already wrote.
         .replace(/(?<!<e)\d+/g, '#')
+        // A live percentage drops its decimal when it lands on a whole number: Settings › models'
+        // memory reading read `#.#%` on one CI attempt and `#%` on its retry (#3905). The reading's
+        // precision is the machine's, not the surface's.
+        .replace(/#\.#%/g, '#%')
         // A clock time's half of the day flips with the hour the run starts (Settings › devices'
         // session expiry). Only one that follows a time is folded; `\s` takes the narrow no-break
         // space Chromium's `toLocaleString` puts before it.

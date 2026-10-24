@@ -62,7 +62,7 @@
   - heading "On this machine" [level=#]
   - paragraph: Models currently held in memory, and how much of this machine they are using.
   - progressbar "<theme> memory in use"
-  - text: #.# GiB of #.# GiB in use · #.#% No models are loaded right now. One loads on its first use.
+  - text: #.# GiB of #.# GiB in use · #% No models are loaded right now. One loads on its first use.
   - heading "Local runtime" [level=#]
   - paragraph: Memory headroom for local inference, what the browse list shows, and the timeouts around a model sidecar.
   - text: Hide models this device cannot run Keep models that do not fit this machine's memory out of the browse list. On by default; turn it off to see the whole catalog.
