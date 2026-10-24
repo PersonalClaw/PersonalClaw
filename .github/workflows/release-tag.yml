@@ -7,10 +7,12 @@
 # workflows, actions and tools/ci are main's (so the tag's release.yml is main's), no tag of that
 # name exists, the commit's own push run on main is green (#3911): read in merge.yml, else
 # ci.yml, and, for a release tag, the commit's breadth is green (#3911): the newest breadth.yml
-# run of the commit, a rehearsal tag's push, completed with a digest-verified green record of
-# every attempt, and no earlier red run of it unless the owner's record names it
-# (.github/release-breadth-exceptions.json). All of it is read with the job's token
-# (`actions: read`), and none of it is waited for. Only then is the release controller's App token
+# run of the commit, a rehearsal tag's push, with a digest-verified record of every attempt in
+# which every gating leg is green and each advisory red (canary, coverage) has an open issue
+# that owns it, and no earlier red run of it unless the owner's record names it
+# (.github/release-breadth-exceptions.json). A dispatch on the rehearsal tag may decide only as
+# a re-measure of such a named red. All of it is read with the job's token (`actions: read`,
+# `issues: read`), and none of it is waited for. Only then is the release controller's App token
 # made, and the tag created with it: the `release-tag-creation` ruleset lets that App alone create
 # a `v*` tag, and `release-tags` lets nobody move or delete one.
 # `rehearsal: true` creates `rehearsal-<tag>-<sha7>` instead, with the same checks but breadth's
@@ -56,8 +58,10 @@ jobs:
     environment: ci-controller
     permissions:
       contents: read
-      # The commit's push run on main, read by the release gate.
+      # The commit's push run on main and its breadth runs' records, read by the release gate.
       actions: read
+      # The open issue that owns each advisory breadth red, read by the release gate.
+      issues: read
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.

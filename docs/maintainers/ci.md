@@ -96,15 +96,27 @@ are never moved or deleted; the gate matches the full commit, never the name.
 (`push: tags: [rehearsal-v*]`), off `main`, where nothing is reused, so nothing dispatches it and
 no workflow holds `actions: write` for it. A release tag's gate (`release_tag.breadth_green`)
 then reads breadth's runs of the commit off `main`. The newest must be a rehearsal tag's push,
-completed with success, every `breadth-evidence-<sha256>` record of it downloaded and verified
-under its digest, naming that run and the commit's tree, and together satisfying a release
-(`breadth_evidence.satisfies_release`: a record of every attempt, every leg run there, none
-carried, all green). The run's commit is the tagged one, whose definitions the gate already holds
+finished, every `breadth-evidence-<sha256>` record of it downloaded and verified under its
+digest, naming that run and the commit's tree. Together the records must hold every attempt and,
+in the newest, every shard, none carried. Every gating leg (each OS, Python and architecture,
+random-order, security, the installer smoke, the audit and the union checks) must be green on
+every attempt. The advisory legs (`release_tag.ADVISORY_LEGS`: the next-Ubuntu canary and the two
+legs that read its suite, and coverage) measure rather than gate: each must have run, and each
+red one must be owned by an open issue titled as breadth's report titles it (`breadth: <leg> is
+red`), filed by that report or a maintainer, never by anyone else, since on a public repository
+anyone may open an issue. The gate names each advisory red with its issue, so they stay visible
+and owned without holding a release on a measurement. A red leg's job fails its run, so a run
+whose only reds are advisory concludes `failure`: the records, not the conclusion, say which legs
+were red, and a run that was cancelled, timed out or never started is refused. The run's commit is the tagged one, whose definitions the gate already holds
 to `main`'s, so the `breadth.yml` that ran is `main`'s, and a rehearsal tag someone else pushed
 cannot stand in for another tree. An earlier red run of the commit refuses unless the owner's
 record, `.github/release-breadth-exceptions.json` on `main`, names that run with that commit and
 why (#4712). Only the owner writes it, by hand, and that is a rule, not a check: agents act on
-GitHub as the owner's account. The gate never waits: until the run exists and has finished, it
+GitHub as the owner's account. Once the record names a red run, the owner may measure the commit
+again by dispatching breadth on its rehearsal tag (`gh workflow run breadth.yml --ref
+rehearsal-<tag>-<sha7>`), and that dispatch may then be the newest run; with no named red before
+it, a dispatch decides nothing. The job reads the issues with `issues: read`. The gate never
+waits: until the run exists and has finished, it
 refuses, naming the run or saying none exists yet. The record's zip is read through the API's
 redirect, and the token is never sent to the storage address it names.
 `tests/rails/test_ci_release_tag_tree.py` holds the workflow's shape, both steps passing the
