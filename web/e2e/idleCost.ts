@@ -14,6 +14,10 @@ import type { RouteEntry } from './routes'
 //     nobody slowed down.
 //   · requests: every `fetch`, XHR, beacon, socket send and event stream opened, by method and path
 //     (the query left out, so a poll that stamps its query is one source). Budget: once a second each.
+//   · what moved: every element whose `style` or `class` changed, by a short path. No budget: it is
+//     what a frame finding was spent on, named beside it, since a frame loop's own line is the
+//     animation library's and says nothing of what it animates (#3905: an idle Chat on CI framed
+//     from motion's loop alone).
 //
 // Idle means nothing reached the page either. A push over the socket or an event stream is the
 // gateway telling the page something changed, and what the page does about it is not idle cost; so
@@ -32,6 +36,8 @@ export const IDLE_FRAME_BUDGET = 0
 export const IDLE_TRIES = 4
 /** How long the probe waits after a window it threw away, so a burst of pushes can end first. */
 const SETTLE_AFTER_VOID_MS = 1_000
+/** How many of the elements that moved a frame finding names, most changed first. */
+const MOVED_NAMED = 5
 
 /** A route the probe holds, and the read a window on it must hold an answer of: what a page costs
  *  at rest is mostly what each answer of its polls makes it do, so a window that caught none would
@@ -57,6 +63,8 @@ export interface IdleSample {
   requests: Record<string, number>
   /** What reached the page: socket frames and event-stream events. Any one voids the window. */
   pushes: Record<string, number>
+  /** The elements whose `style` or `class` changed, by a short path: what the frames moved. */
+  moved?: Record<string, number>
 }
 
 /** The probe the init script leaves on the page. */
@@ -91,6 +99,8 @@ export function idleCostFindings(sample: IdleSample): string[] {
     for (const [at, n] of worst(sample.frames)) {
       out.push(`requestAnimationFrame asked for ${plural(n, 'frame')} in ${window} idle, budget ${IDLE_FRAME_BUDGET}: ${at}`)
     }
+    const moved = worst(sample.moved ?? {}).slice(0, MOVED_NAMED)
+    if (moved.length) out.push(`while it framed, these changed: ${moved.map(([el, n]) => `${el} (${plural(n, 'time')})`).join(', ')}`)
   }
   for (const [source, n] of worst(sample.timers)) {
     if (n > allowed) out.push(source.replace(' at ', ` fired ${n} times in ${window} idle, more than once a second: `))
@@ -163,6 +173,7 @@ export function installIdleProbe(win: Window = window): void {
   let delays: Record<string, [number, number]> = {}
   let requests: Record<string, number> = {}
   let pushes: Record<string, number> = {}
+  let moved: Record<string, number> = {}
   const bump = (counts: Record<string, number>, key: string) => { counts[key] = (counts[key] ?? 0) + 1 }
   // The line that called the wrapped function: frame 0 is this one, frame 1 the wrapper.
   const caller = () => {
@@ -281,6 +292,30 @@ export function installIdleProbe(win: Window = window): void {
     w.EventSource = Counted as typeof w.EventSource
   }
 
+  // What moved: an observer of every `style` and `class` change, counted while armed by a short path
+  // (three levels, each its tag and its label, id or first two classes). Bounded to 40 elements: an
+  // idle page that moves more than that has said enough.
+  const label = (el: Element) => {
+    const name = el.getAttribute('aria-label') || el.id
+    const cls = String(el.getAttribute('class') || '').split(/\s+/).filter(Boolean).slice(0, 2).join('.')
+    return el.tagName.toLowerCase() + (name ? `[${name.slice(0, 30)}]` : cls ? `.${cls}` : '')
+  }
+  const pathTo = (el: Element) => {
+    const bits: string[] = []
+    for (let e: Element | null = el; e && e.tagName && bits.length < 3; e = e.parentElement) bits.unshift(label(e))
+    return bits.join('>')
+  }
+  const record = (list: MutationRecord[]) => {
+    if (!armed) return
+    for (const m of list) {
+      const key = pathTo(m.target as Element)
+      if (key in moved || Object.keys(moved).length < 40) bump(moved, key)
+    }
+  }
+  const Observer = w.MutationObserver
+  const observer = Observer && w.document ? new Observer(record) : null
+  observer?.observe(w.document, { subtree: true, attributes: true, attributeFilter: ['style', 'class'] })
+
   w.__pcIdleCost = {
     arm() {
       frames = {}
@@ -288,10 +323,13 @@ export function installIdleProbe(win: Window = window): void {
       delays = {}
       requests = {}
       pushes = {}
+      moved = {}
       openedAt = w.performance.now()
       armed = true
     },
     disarm() {
+      // The records not yet delivered are the window's too.
+      if (observer) record(observer.takeRecords())
       armed = false
       // Each timer named with its delay, or the range of its delays: `setTimeout(100-139 ms) at …`.
       const named: Record<string, number> = {}
@@ -299,7 +337,8 @@ export function installIdleProbe(win: Window = window): void {
         const [lo, hi] = delays[source]
         named[source.replace(' at ', `(${lo === hi ? lo : `${lo}-${hi}`} ms) at `)] = n
       }
-      return { windowMs: Math.round(w.performance.now() - openedAt), frames, timers: named, requests, pushes }
+      // `moved` only where a page can say what moved: a page with no document has nothing to name.
+      return { windowMs: Math.round(w.performance.now() - openedAt), frames, timers: named, requests, pushes, ...(observer ? { moved } : {}) }
     },
   }
 }
