@@ -93,6 +93,10 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
   'design/e2eHarnessHome.test.ts':
     'Lays out a stand-in user home, a symlink into it and a stand-in CLI script, to prove a spec ' +
     'refuses an unset or default gateway home before the CLI starts.',
+  'design/pinnedRun.test.ts':
+    'Lays out a scratch web/ (the pin, the lock, and the manifest an update writes) for ' +
+    '`e2e/run-pinned.mjs` to read and write, to prove each refusal and that an update writes the ' +
+    'manifest from the probe while a compare holds the probe to it.',
   'design/uiMatrixSteps.test.ts':
     'Writes planted Playwright JSON reports for `e2e/assert-no-route-skips.mjs` to read, to prove ' +
     'the report checker fails a skipped scan, a missing scan and a scan short of one matrix step.',

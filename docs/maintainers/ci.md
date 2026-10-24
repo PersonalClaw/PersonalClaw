@@ -1081,6 +1081,40 @@ any file under `tools/`, `scripts/`, `src/` or `.github/` that names `ci.yml` in
 shrinks: against the gate's base a line the base lacks fails, `added` and a reason or not. The
 change that retires `ci.yml` lands with it empty.
 
+## The pinned browser image
+
+Every container-made baseline is made and compared in one environment (#3943): the official
+Playwright image for the locked Playwright, named in `web/e2e/visual-image.json` by the digest of
+its `linux/amd64` manifest, with the tag and the index digest it was read from beside it.
+`tests/rails/test_pinned_playwright_image_tree.py` holds the pin's Playwright to the one the lock
+resolves for `@playwright/test` (its `playwright`'s own `playwright-core`, not the older top-level
+one another package brings), so a Playwright bump moves the lock and the pin in one change, and
+fails any tracked file but the pin that names the image, by a tag or by a digest.
+
+`web/e2e/run-pinned.mjs` runs one Playwright invocation against that image's browser. Only the
+browser runs in the image, since the browser, the fonts and the renderer decide the pixels. The
+test runner, the harness and the gateway it boots stay on the runner as in every browser leg, so
+what the gateway sees (its network, tmux, docker) is the same as in every other run. On a
+`linux/amd64` host it mounts the checkout and its own Node read-only at their own paths, so
+nothing is installed. The image serves its browser with the locked playwright-core's `run-server`,
+bound to 127.0.0.1 on the host's network and refused if it says otherwise, and the run connects
+through Playwright's own `PW_TEST_CONNECT_WS_ENDPOINT`. None of the caller's variables enter the
+image. Before the invocation it probes the image in a container with no network
+(`web/e2e/visual-environment.mjs`: the image, its platform, the Playwright version, the browser
+build, the WebGL renderer, and the fonts as a count and one sha256), and:
+
+- a compare run fails when the probe differs from `web/e2e/visual-environment.json`, the manifest
+  committed with the baselines, or when there is none, before any baseline is read, and passes
+  `--update-snapshots=none`, so a missing baseline fails rather than being written;
+- an update run (`--update`) writes the manifest from the probe and rewrites the suite's baselines.
+
+Any other host is refused for now: automated contributors run it through CI alone.
+`.github/workflows/visual-baselines.yml` ("Refresh visual baselines") is the update path. On
+dispatch it sets the checkout up as a browser leg does, runs the UI matrix and the visual spec
+each with `--update` in an invocation of its own, and uploads the manifest and the `-linux` sets
+as the `visual-baselines` artifact. It commits nothing and holds no write token; a lane reads each
+diff and commits the intended ones in a pull request that names the change in light and dark.
+
 ## A push to main, and the nightly breadth
 
 ### The tested tree
