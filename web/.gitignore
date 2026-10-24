@@ -23,9 +23,11 @@ src/lib/impeccable/[0-9a-f]*/
 # Playwright visual/a11y harness — commit baselines (e2e/__screenshots__), ignore run artifacts
 /test-results/
 /playwright-report/
-# What the e2e job's Playwright run writes under CI: the JSON report its next step reads
-# (PLAYWRIGHT_JSON_OUTPUT_NAME) and the blob report `merge-reports` reads.
-/e2e-report.json
+# What the e2e legs' Playwright runs write under CI: each run's JSON report
+# (PLAYWRIGHT_JSON_OUTPUT_NAME: `e2e-report.json`, and the stateful leg's `e2e-report-matrix.json`
+# and `e2e-report-idle.json`) and the blob reports `merge-reports` reads. run-job records a job
+# only on a checkout as clean after it as before: tests/test_ci_entry_outputs_are_ignored.py.
+/e2e-report*.json
 /blob-report/
 /playwright/.cache/
 /e2e/.auth/
