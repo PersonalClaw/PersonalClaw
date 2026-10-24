@@ -82,10 +82,18 @@ superseded or unproven is refused, naming the run. No `release.yml` run may be u
 either (`release_tag.no_release_running`: queued, in progress, waiting or any other state before
 it completes), named when one is: every release shares one concurrency group, where GitHub keeps
 one waiting run and a newer one replaces it, so a tag made behind a running release could be left
-with no release. The job reads both with its own token, given `actions: read` for that alone. Only then is the App's token made, asked for `contents: write`
-alone and handed only to the step that creates the annotated tag and its ref. The job runs only
-on `main`, in the `ci-controller` environment, which deploys only from `main` and holds the
-App's key. The trusted `merge-verdict` (#3910) joins the gate once `main-protect` requires it.
+with no release. The merge controller must have judged the commit's tree green, too
+(`release_tag.controller_green`): a squash lands a pull request's head tree as a new commit, and
+the controller judged that head, so the gate finds the one pull request merged into `main` as the
+commit, reads the verdict on its head with `merge_verdict.verify` ([the merge verdict's
+record](#the-merge-verdicts-record): the App `main`'s rule names, its newest run, completed
+green, with one receipt), and holds the receipt's tree to the commit's own, read from the
+checkout. No pull request, two, a red or pending newest verdict, another poster's, or a receipt
+of another tree is refused, naming it. The job reads all of it with its own token, given
+`actions: read`, `checks: read` and `pull-requests: read` for that alone. Only then is the App's
+token made, asked for `contents: write` alone and handed only to the step that creates the
+annotated tag and its ref. The job runs only on `main`, in the `ci-controller` environment, which
+deploys only from `main` and holds the App's key.
 `-f rehearsal=true` creates `rehearsal-<tag>-<sha7>` instead: the same checks but breadth's and
 the same App, under a name no `v*` rule and no release trigger sees, which is how the path is
 proved without a release (on a scratch copy of the creation ruleset over

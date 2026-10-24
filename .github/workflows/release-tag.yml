@@ -6,13 +6,16 @@
 # unless the tag is a release tag by the release's parser, the commit is on main, the commit's
 # workflows, actions and tools/ci are main's (so the tag's release.yml is main's), no tag of that
 # name exists, the commit's own push run on main is green (#3911): read in merge.yml, else
-# ci.yml, and, for a release tag, the commit's breadth is green (#3911): the newest breadth.yml
-# run of the commit, a rehearsal tag's push, with a digest-verified record of every attempt in
-# which every gating leg is green and each advisory red (canary, coverage) has an open issue
-# that owns it, and no earlier red run of it unless the owner's record names it
+# ci.yml, the merge controller's newest `merge-verdict` on the head of the pull request that
+# landed the commit is green, with a receipt naming the commit's own tree (#3911), and, for a
+# release tag, the commit's breadth is green (#3911): the newest breadth.yml run of the commit, a
+# rehearsal tag's push, with a digest-verified record of every attempt in which every gating leg
+# is green and each advisory red (canary, coverage) has an open issue that owns it, and no
+# earlier red run of it unless the owner's record names it
 # (.github/release-breadth-exceptions.json). A dispatch on the rehearsal tag may decide only as
-# a re-measure of such a named red. All of it is read with the job's token (`actions: read`,
-# `issues: read`), and none of it is waited for. Only then is the release controller's App token
+# a re-measure of such a named red. All of it is read with the job's token (`actions`, `issues`,
+# `checks` and `pull-requests`, read alone), and none of it is waited for. Only then is the
+# release controller's App token
 # made, and the tag created with it: the `release-tag-creation` ruleset lets that App alone create
 # a `v*` tag, and `release-tags` lets nobody move or delete one.
 # `rehearsal: true` creates `rehearsal-<tag>-<sha7>` instead, with the same checks but breadth's
@@ -62,6 +65,10 @@ jobs:
       actions: read
       # The open issue that owns each advisory breadth red, read by the release gate.
       issues: read
+      # The merge controller's verdict on the pull request that landed the commit, and that
+      # pull request, read by the release gate.
+      checks: read
+      pull-requests: read
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
