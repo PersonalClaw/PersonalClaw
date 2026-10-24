@@ -41,14 +41,14 @@ from rails_repo import REPO
 from scripts import check_publication_hygiene as hygiene
 from tools.ci import catalogue
 from tools.ci import plan as planner
-from tools.ci import shards
+from tools.ci import select, shards
 
 _CAT = catalogue.read(REPO)
 _INPUTS = _CAT.job("python-suite").inputs
 
 #: The suite module that runs the whole-tree reader, and its tests that run it on the real tree:
 #: each calls the named function of the reader with no root, so it reads the repository.
-_READER = "tests/test_publication_hygiene_baseline.py"
+(_READER,) = select.WHOLE_TREE_READERS
 _READER_TESTS = {
     "test_the_tracked_tree_carries_no_unfit_path": "violations",
     "test_the_home_path_rule_reads_the_tree_it_claims_to": "tracked_files",

@@ -116,12 +116,15 @@ selection-map:
 		&& exit $$status
 
 ## check: run the change tier's catalogue jobs here, as CI runs them (tools/ci/catalogue.toml), on
-## the working tree as it stands, before a commit: no record, and the exit is the steps' result
+## the working tree as it stands, before a commit: no record, and the exit is the steps' result.
+## Then the suite's test files the change can break, nearest first (tools/ci/select.py), through
+## the run's memory admission: none for a change no test reaches, the whole suite past 800 files
 ## gate: run the merge tier's catalogue jobs here on the committed tree, leaving a record of each.
 ## Exit 0 every planned job ran here and passed, 1 one ran and failed, 2 one could not run on this
 ## machine (named in the summary)
 check:
 	$(PYTHON) -m tools.ci run change --working-tree
+	$(PYTHON) -m tools.ci select --base origin/main --working-tree --run
 
 gate:
 	$(PYTHON) -m tools.ci run merge
