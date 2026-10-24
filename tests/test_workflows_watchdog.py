@@ -461,6 +461,28 @@ class TestPublisher:
         assert await controller.run_to_completion(timeout=20) == RunStatus.COMPLETE
         await wd.stop()
 
+    async def test_a_run_that_outlasts_the_waiting_window_on_a_bare_state_still_completes(
+        self, monkeypatch
+    ) -> None:
+        """The test above, on a machine slow enough for the run to outlast the waiting list's
+        window: its status rang the list (`waiting.changed`), and the window's ring then ran on the
+        loop against this state, which has no socket to send on. That raised into the loop and
+        failed the test on test-macos (1) (#5294's run 40066560415, #3905). A window of 0 s makes
+        every run outlast it."""
+        from personalclaw import waiting
+
+        monkeypatch.setattr(waiting, "WINDOW_SECS", 0.0)
+
+        class _State:
+            def workflow_sse(self):
+                raise RuntimeError("sse is down")
+
+        run = _run()
+        wd = WorkflowWatchdog(_State(), EngineServices())
+        controller = await wd.launch(run, SPEC)
+        assert await controller.run_to_completion(timeout=20) == RunStatus.COMPLETE
+        await wd.stop()
+
     async def test_a_run_update_tells_every_open_page_to_reread_the_runs(self, monkeypatch) -> None:
         """A run starting or ending reaches the dashboard socket as the run list's refresh hint.
 

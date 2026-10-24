@@ -16,6 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **Memory search finds what a memory says and its file's own name, not where its file is: a word in your home folder's path (a folder named for a person, a project or a tool) no longer matches every memory, and a memory is still found by its name (`preferences`, `projects`, a history file's day). An index made before this is rebuilt from the memory files the first time it is opened.**
+- **The waiting list's ring no longer puts an error in the gateway's log when it cannot be sent. When something waiting on you is asked or answered, open pages are told a moment later, from a timer. A failed send there went into the gateway's event loop, where the ring's other failures are dropped quietly. Now it is dropped the same way, and open pages still see the change on their next poll.**
 
 ## [0.2.7] — 2026-10-23
 

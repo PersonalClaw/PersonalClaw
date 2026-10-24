@@ -911,6 +911,31 @@ def test_a_ring_with_no_gateway_is_nothing():
 
 
 @pytest.mark.asyncio
+async def test_a_ring_that_cannot_be_sent_raises_nothing_into_the_loop():
+    """The window's timer rings on the loop, after :func:`waiting.changed` has returned, so its
+    "never raises" holds there too. A state with no socket to send on (a workflow watchdog's test
+    state, #3905) and one whose send fails both lose the ring; neither reaches the loop's exception
+    handler, where a test's runner reported it as the test failing once a run outlasted the window.
+    """
+    loop = asyncio.get_running_loop()
+    raised: list[dict] = []
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: raised.append(context))
+
+    def _send_fails(*_a: Any) -> None:
+        raise RuntimeError("the socket is gone")
+
+    try:
+        for state in (SimpleNamespace(), SimpleNamespace(broadcast_ws=_send_fails)):
+            waiting.changed(state)
+            assert state._waiting_bell.handle is not None, "the window opened"
+        await asyncio.sleep(waiting.WINDOW_SECS + 0.2)
+    finally:
+        loop.set_exception_handler(previous)
+    assert raised == []
+
+
+@pytest.mark.asyncio
 async def test_a_runs_status_rings_and_its_steps_do_not(tmp_path, windows):
     """A run's gates are listed while it needs input, so its status moving rings the list; what
     its steps do between does not."""
