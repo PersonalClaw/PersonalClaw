@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -52,21 +53,28 @@ def _preview_command() -> str:
 
 @pytest.fixture
 def planted(tmp_path: Path) -> Path:
-    """A repo-shaped tree with the real freshness script, whose `../.venv/bin/python` is this
-    interpreter, as the repository's is in CI."""
+    """A repo-shaped tree with the real freshness script, whose `../.venv/bin/python`, the one
+    the config's command runs, starts this interpreter by its own path: a virtual environment it
+    belongs to stays its own. A bare symlink to it would start the base interpreter, which has
+    none of this tree's packages, and the script's import would fail before it checked anything."""
     root = _fake_repo(tmp_path)
     (root / "scripts").mkdir()
     shutil.copy2(REPO / "scripts" / "spa_dist_freshness.py", root / "scripts")
-    (root / ".venv" / "bin").mkdir(parents=True)
-    (root / ".venv" / "bin" / "python").symlink_to(sys.executable)
+    python = root / ".venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text(f'#!/bin/sh\nexec {shlex.quote(sys.executable)} "$@"\n', encoding="utf-8")
+    python.chmod(0o755)
     return root
 
 
 def _start(root: Path) -> subprocess.CompletedProcess[str]:
+    # The script reads this tree's `personalclaw`: the planted tree's `src/personalclaw` is a
+    # folder for the built dashboard, not the package, and the script puts it first on its path.
+    path = [str(REPO / "src"), *filter(None, [os.environ.get("PYTHONPATH")])]
     return subprocess.run(
         ["sh", "-c", _preview_command()],
         cwd=root / "web",
-        env=dict(os.environ),
+        env={**os.environ, "PYTHONPATH": os.pathsep.join(path)},
         capture_output=True,
         text=True,
         timeout=60,
