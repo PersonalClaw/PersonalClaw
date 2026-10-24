@@ -16,13 +16,17 @@ The threshold, for each case below: while the upload lands, no single step of th
 (one callback it runs, during which it runs nothing else) takes :data:`_BOUND` (0.1 s), and every
 health check asked meanwhile answers within it. A step is timed as asyncio's debug mode times a
 slow callback: a blocking call on the loop is inside one, a wait on the disk included, while time
-the loop spends idle in its selector, given CPU or not, is between steps (:class:`_Probe`).
+the loop spends idle in its selector, given CPU or not, is between steps (:class:`_Probe`). Time
+the kernel counts as ready to run with no CPU to run on is left out of both: that is the runner's
+load, not anything the loop waited on (:class:`_NoCpu`).
 """
 
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import gc
+import json
 import os
 import subprocess
 import sys
@@ -38,6 +42,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from table_rows import row
 
+from personalclaw.dashboard import handlers_system
 from personalclaw.dashboard.handlers import knowledge as kn_handlers
 from personalclaw.dashboard.handlers_system import api_healthz
 from personalclaw.dashboard.routes import _register_upload_routes
@@ -48,6 +53,9 @@ from personalclaw.uploads.store import UploadStore
 _MB = 1024 * 1024
 #: The longest one step of the event loop may take, and a health check, while it lands.
 _BOUND = 0.1
+#: A step at least this long has the time it waited for a CPU left out; a shorter one is counted
+#: in wall time, which is already far under the bound (on macOS, it skips its second snapshot).
+_COUNTED = 0.01
 #: The resumable upload: 256 MB, assembled from 32 parts and hashed (on the loop: about 0.19 s).
 _LARGE = 256 * _MB
 #: The single-request upload: 384 MB, moved and hashed (on the loop: about 0.18 s).
@@ -101,6 +109,161 @@ def _mkdir(path):
     return path
 
 
+class _MachTimebase(ctypes.Structure):
+    _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+
+
+class _RusageInfoV4(ctypes.Structure):
+    """``struct rusage_info_v4`` from macOS's ``<sys/resource.h>``, whose last field is
+    ``ri_runnable_time``. Times are in Mach absolute time units."""
+
+    _fields_ = [("ri_uuid", ctypes.c_uint8 * 16)] + [
+        (f"ri_{name}", ctypes.c_uint64)
+        for name in (
+            "user_time system_time pkg_idle_wkups interrupt_wkups pageins wired_size "
+            "resident_size phys_footprint proc_start_abstime proc_exit_abstime child_user_time "
+            "child_system_time child_pkg_idle_wkups child_interrupt_wkups child_pageins "
+            "child_elapsed_abstime diskio_bytesread diskio_byteswritten cpu_time_qos_default "
+            "cpu_time_qos_maintenance cpu_time_qos_background cpu_time_qos_utility "
+            "cpu_time_qos_legacy cpu_time_qos_user_initiated cpu_time_qos_user_interactive "
+            "billed_system_time serviced_system_time logical_writes lifetime_max_phys_footprint "
+            "instructions cycles billed_energy serviced_energy interval_max_phys_footprint "
+            "runnable_time"
+        ).split()
+    ]
+
+
+class _ProcThreadInfo(ctypes.Structure):
+    """``struct proc_threadinfo`` from macOS's ``<sys/proc_info.h>``. Times are in ns."""
+
+    _fields_ = (
+        [("pth_user_time", ctypes.c_uint64), ("pth_system_time", ctypes.c_uint64)]
+        + [
+            (f"pth_{name}", ctypes.c_int32)
+            for name in (
+                "cpu_usage policy run_state flags sleep_time curpri priority maxpriority"
+            ).split()
+        ]
+        + [("pth_name", ctypes.c_char * 64)]
+    )
+
+
+#: macOS run states (``<mach/thread_info.h>``) in which a thread is neither running nor ready to
+#: run: stopped, waiting, waiting uninterruptibly, halted.
+_NOT_READY = frozenset({2, 3, 4, 5})
+
+
+class _NoCpu:
+    """The seconds some threads spent ready to run with no CPU to run on, as the kernel counts
+    them: what a loaded runner takes from the event loop without the loop waiting on anything. A
+    thread blocked on a read, a write, a sleep or a lock is not ready to run, so nothing it waits
+    on is ever in the count.
+
+    Linux counts them for each thread, as ``run_delay`` in its ``schedstat``, so the count for a
+    set of threads is exactly theirs: the loop thread's own for a step (:meth:`loop_waited`, read
+    from a file the loop thread holds open), and the loop thread's with the worker's that read
+    the disk for a health check, for its answer (:meth:`waited`).
+
+    macOS counts them only for the whole process: ``ri_runnable_time`` is the time its threads
+    were running or ready to run, so less the CPU time they used, the time they were ready. So
+    :meth:`waited` counts for the given threads only the ready time no other thread can account
+    for. Any other thread that ran, or was ready, between two :meth:`snapshot` calls could have
+    been ready for all of that time less its CPU, and that much is taken off the process's count,
+    which stops at 0. A thread neither running nor ready at either end that used no CPU between
+    accounts for nothing, since to be ready it would have had to run before it could wait again.
+    So a thread beside the loop that waits for a CPU is never counted as the loop's wait, and a
+    step or answer beside such a thread is counted in wall time.
+
+    Where the kernel offers neither count, everything reads 0 and the probe measures wall time."""
+
+    def __init__(self) -> None:
+        self.source = "none"
+        self._fd: int | None = None
+        if sys.platform == "darwin":
+            self._libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+            self._libsystem.proc_pidinfo.argtypes = [
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_uint64,
+                ctypes.c_void_p,
+                ctypes.c_int,
+            ]
+            timebase = _MachTimebase()
+            self._libsystem.mach_timebase_info(ctypes.byref(timebase))
+            self._seconds = timebase.numer / timebase.denom / 1e9
+            self._ids = (ctypes.c_uint64 * 1024)()
+            self.source = "macOS: the process's, less what its other threads could account for"
+        elif os.path.exists("/proc/thread-self/schedstat"):
+            self.source = "Linux: each thread's own"
+
+    def open(self) -> None:
+        """On the loop thread: ``/proc/thread-self`` names the thread that opens it."""
+        if self.source.startswith("Linux"):
+            self._fd = os.open("/proc/thread-self/schedstat", os.O_RDONLY)
+
+    def close(self) -> None:
+        if self._fd is not None:
+            os.close(self._fd)
+            self._fd = None
+
+    def loop_waited(self) -> float | None:
+        """Linux: the loop thread's own count, from the file it holds open. Elsewhere None."""
+        if self._fd is None:
+            return None
+        return int(os.pread(self._fd, 128, 0).split()[1]) / 1e9
+
+    def snapshot(self) -> SimpleNamespace:
+        """Every thread's count (Linux), or every thread's CPU time and run state with the
+        process's count (macOS), and the time it was taken: before the reads, for the first of
+        two snapshots, so that what lies between two of them is never shorter than it was."""
+        at = time.monotonic()
+        if self.source.startswith("Linux"):
+            counts = {}
+            for thread in os.listdir("/proc/self/task"):
+                try:
+                    with open(f"/proc/self/task/{thread}/schedstat", "rb") as schedstat:
+                        counts[int(thread)] = int(schedstat.read().split()[1]) / 1e9
+                except (FileNotFoundError, ProcessLookupError):
+                    pass  # a thread that ended meanwhile
+            return SimpleNamespace(at=at, ready=0.0, threads=counts, done=time.monotonic())
+        if self.source == "none":
+            return SimpleNamespace(at=at, ready=0.0, threads={}, done=at)
+        pid, info, threads = os.getpid(), _ProcThreadInfo(), {}
+        listed = self._libsystem.proc_pidinfo(pid, 28, 0, self._ids, ctypes.sizeof(self._ids))
+        for thread in self._ids[: max(0, listed) // 8]:  # PROC_PIDLISTTHREADIDS
+            size = ctypes.sizeof(info)  # PROC_PIDTHREADID64INFO
+            if self._libsystem.proc_pidinfo(pid, 15, thread, ctypes.byref(info), size) == size:
+                used = (info.pth_user_time + info.pth_system_time) / 1e9
+                threads[thread] = (used, info.pth_run_state)
+        usage = _RusageInfoV4()
+        if self._libsystem.proc_pid_rusage(pid, 4, ctypes.byref(usage)) != 0:
+            raise OSError(ctypes.get_errno(), "proc_pid_rusage")
+        ready = usage.ri_runnable_time - usage.ri_user_time - usage.ri_system_time
+        return SimpleNamespace(
+            at=at, ready=ready * self._seconds, threads=threads, done=time.monotonic()
+        )
+
+    def waited(self, first: SimpleNamespace, then: SimpleNamespace, threads: set[int]) -> float:
+        """What ``threads`` spent ready with no CPU between two snapshots, never more."""
+        if self.source.startswith("Linux"):
+            return sum(
+                max(0.0, then.threads[t] - first.threads.get(t, 0.0))
+                for t in threads
+                if t in then.threads
+            )
+        between = then.done - first.at
+        others = 0.0
+        for thread in first.threads.keys() | then.threads.keys():
+            if thread in threads:
+                continue
+            was, now = first.threads.get(thread), then.threads.get(thread)
+            if was and now and now[0] == was[0] and {was[1], now[1]} <= _NOT_READY:
+                continue  # neither running nor ready at either end, and it never ran between
+            used = now[0] - was[0] if was and now else 0.0
+            others += max(0.0, between - used)
+        return max(0.0, then.ready - first.ready - others)
+
+
 class _Probe:
     """Beside some work: a health check asked again 10 ms after the last one answered, and the
     time each step of the event loop takes.
@@ -113,16 +276,30 @@ class _Probe:
     waiting in its selector for something to do is between steps, so a process given no CPU while
     it waits there is not counted as blocked.
 
+    Inside a step of :data:`_COUNTED` or longer, the time the loop thread spent ready to run with
+    no CPU (:class:`_NoCpu`) is left out: a loaded runner stretches a step without the loop
+    waiting on anything, and a step's own waits are never in that count. A step is never counted
+    as less than the CPU time the loop thread used in it. Inside a health check's answer, the
+    time left out is that of the threads that served it: the loop thread and the worker that read
+    the disk for it (``_identity``). The wall times are reported beside (:attr:`worst_step_wall`,
+    :attr:`slowest_answer_wall`).
+
     A 10 ms tick is kept beside it, and its longest gap (:attr:`worst_gap`) is reported: that gap
     is wall time between two turns, the selector's wait included, which is why it is not the
     measure."""
 
-    def __init__(self, client: TestClient) -> None:
+    def __init__(self, client: TestClient, *, asking: bool = True) -> None:
         self.client = client
+        self.asking = asking
+        self.no_cpu = _NoCpu()
+        self.serving: set[int] = set()
         self.worst_step = 0.0
         self.worst_step_was = ""
+        self.worst_step_wall = 0.0
         self.worst_gap = 0.0
         self.slowest_answer = 0.0
+        self.slowest_answer_wall = 0.0
+        self.waited_for_a_cpu = 0.0
         self.answered_during = 0
 
     def _timed(self, loop_thread: int, real):
@@ -131,11 +308,25 @@ class _Probe:
         def run(handle):
             if threading.get_ident() != loop_thread:
                 return real(handle)
-            began = time.monotonic()
+            no_cpu = probe.no_cpu
+            own = no_cpu.loop_waited()
+            first = no_cpu.snapshot() if own is None else None
+            began, cpu = time.monotonic(), time.thread_time()
             try:
                 return real(handle)
             finally:
-                took = time.monotonic() - began
+                wall = time.monotonic() - began
+                cpu = time.thread_time() - cpu
+                waited, now = 0.0, no_cpu.loop_waited()
+                if own is not None:
+                    # The step that ends :meth:`during` closes the file before it ends: it is
+                    # counted in wall time.
+                    waited = max(0.0, now - own) if now is not None else 0.0
+                elif wall >= _COUNTED:
+                    waited = no_cpu.waited(first, no_cpu.snapshot(), {threading.get_native_id()})
+                took = max(wall - waited, cpu)
+                probe.worst_step_wall = max(probe.worst_step_wall, wall)
+                probe.waited_for_a_cpu += waited
                 if took > probe.worst_step:
                     probe.worst_step = took
                     probe.worst_step_was = repr(handle)[:200]
@@ -143,12 +334,25 @@ class _Probe:
         return run
 
     async def during(self, work):
-        with patch.object(
-            asyncio.events.Handle,
-            "_run",
-            self._timed(threading.get_ident(), asyncio.events.Handle._run),
-        ):
-            return await self._during(work)
+        identity = handlers_system._identity
+
+        def served(*args, **kwargs):
+            self.serving.add(threading.get_native_id())
+            return identity(*args, **kwargs)
+
+        self.no_cpu.open()
+        try:
+            with (
+                patch.object(handlers_system, "_identity", served),
+                patch.object(
+                    asyncio.events.Handle,
+                    "_run",
+                    self._timed(threading.get_ident(), asyncio.events.Handle._run),
+                ),
+            ):
+                return await self._during(work)
+        finally:
+            self.no_cpu.close()
 
     async def _during(self, work):
         stop = asyncio.Event()
@@ -164,12 +368,16 @@ class _Probe:
 
         async def ask() -> None:
             while not stop.is_set():
+                self.serving = {threading.get_native_id()}
+                first = self.no_cpu.snapshot()
                 asked = time.monotonic()
                 r = await self.client.get("/api/healthz")
                 await r.read()
                 assert r.status == 200
                 now = time.monotonic()
-                self.slowest_answer = max(self.slowest_answer, now - asked)
+                waited = self.no_cpu.waited(first, self.no_cpu.snapshot(), self.serving)
+                self.slowest_answer = max(self.slowest_answer, max(0.0, now - asked - waited))
+                self.slowest_answer_wall = max(self.slowest_answer_wall, now - asked)
                 if started and not finished:
                     self.answered_during += 1
                 await asyncio.sleep(0.01)
@@ -178,7 +386,9 @@ class _Probe:
         # test process's heap is not something the upload does.
         gc.collect()
         gc.disable()
-        tasks = [asyncio.create_task(tick()), asyncio.create_task(ask())]
+        tasks = [asyncio.create_task(tick())]
+        if self.asking:
+            tasks.append(asyncio.create_task(ask()))
         try:
             await asyncio.sleep(0.05)  # both run before the work starts
             started = time.monotonic()
@@ -194,9 +404,12 @@ class _Probe:
     def says(self) -> str:
         return (
             f"the work took {self.took:.2f}s; the event loop's longest step was "
-            f"{self.worst_step:.3f}s ({self.worst_step_was}); its longest gap between turns "
-            f"{self.worst_gap:.3f}s and the slowest health check {self.slowest_answer:.3f}s "
-            f"({self.answered_during} answered during it)"
+            f"{self.worst_step:.3f}s ({self.worst_step_was}) and the slowest health check "
+            f"{self.slowest_answer:.3f}s ({self.answered_during} answered during it), less the "
+            f"time ready to run with no CPU ({self.no_cpu.source}: {self.waited_for_a_cpu:.3f}s "
+            f"in steps); in wall time, the longest step {self.worst_step_wall:.3f}s, the slowest "
+            f"health check {self.slowest_answer_wall:.3f}s and the longest gap between turns "
+            f"{self.worst_gap:.3f}s"
         )
 
 
@@ -547,9 +760,28 @@ def _block_by_writing(tmp_path) -> None:
     drainer.join()
 
 
+def _block_by_reading(tmp_path) -> None:
+    """A read that waits, as a read from a busy disk does, using no CPU meanwhile: from a pipe
+    whose writer writes only after :data:`_PLANTED`."""
+    fifo = tmp_path / "slow-read"
+    os.mkfifo(fifo)
+
+    def feed() -> None:
+        with open(fifo, "wb") as writer:
+            time.sleep(_PLANTED)
+            writer.write(b"\0" * 4096)
+
+    feeder = threading.Thread(target=feed)
+    feeder.start()
+    with open(fifo, "rb") as reader:
+        assert len(reader.read(4096)) == 4096
+    feeder.join()
+
+
 _PLANTED_BLOCKS = {
     "a blocking sleep": _block_by_sleeping,
     "a blocking file write": _block_by_writing,
+    "a blocking file read": _block_by_reading,
 }
 
 
@@ -566,10 +798,12 @@ def _planted_app(block, tmp_path) -> web.Application:
 
 @pytest.mark.asyncio
 async def test_a_blocking_call_on_the_loop_fails_the_probe(subtests, tmp_path):
-    """The vacuity arm: a request that blocks the loop for 0.2 s, with a sleep or with a write
-    that waits as a busy disk makes it wait, is a step over the bound. The tick's gap, which the
-    probe measured before, catches it too, so the step catches everything that measure did."""
-    assert len(_PLANTED_BLOCKS) == 2
+    """The vacuity arm: a request that blocks the loop for 0.2 s, with a sleep, or with a write
+    or a read that waits as a busy disk makes it wait, is a step over the bound. The thread is
+    blocked, not ready to run, so none of it is the time with no CPU the step leaves out. The
+    tick's gap, which the probe measured before, catches it too, so the step catches everything
+    that measure did."""
+    assert len(_PLANTED_BLOCKS) == 3
     for name, block in _PLANTED_BLOCKS.items():
         with row(subtests, block=name):
             where = tmp_path / name.replace(" ", "-")
@@ -655,6 +889,245 @@ async def test_a_process_stopped_while_the_loop_is_idle_does_not_fail_the_probe(
     assert stop.stopped, "premise: the process was stopped"
     assert probe.worst_gap >= _STOPPED, f"premise: the tick counted the stop; {probe.says()}"
     assert probe.worst_step < _BOUND, f"the stop was counted as a step; {probe.says()}"
+
+
+#: The starved request below runs this many steps, each until it has run this long in wall time or
+#: used this much CPU, whichever comes first: no step is over the bound by its own work, and a
+#: runner that gives the process no CPU stretches one past it in wall time.
+_STARVED_STEPS = 5
+_STARVED_WALL = 0.15
+_STARVED_CPU = 0.05
+
+
+def _starved_app() -> web.Application:
+    async def starved(_request: web.Request) -> web.Response:
+        for _ in range(_STARVED_STEPS):
+            began, cpu = time.monotonic(), time.thread_time()
+            while time.monotonic() - began < _STARVED_WALL:
+                if time.thread_time() - cpu >= _STARVED_CPU:
+                    break
+            await asyncio.sleep(0)  # the next one is a step of its own
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.router.add_get("/api/healthz", api_healthz)
+    app.router.add_get("/starved", starved)
+    return app
+
+
+#: A process that takes a CPU and holds it, for at most 20 s, once it has said so.
+_BUSY = textwrap.dedent("""
+    import sys, time
+    sys.stdout.write("b")
+    sys.stdout.flush()
+    end = time.monotonic() + 20
+    while time.monotonic() < end:
+        pass
+    """)
+
+#: The start of each child below: once it has its gateway up and says so, it waits for the
+#: parent to say every CPU is taken, then takes the lowest priority. macOS barely weighs a nice
+#: value against busy processes (a nice 19 spin measured 0.12-0.20 s of CPU in 0.3 s), so there
+#: the child takes the background band, which it schedules beside them in bursts (0.001-0.013 s
+#: in 0.3 s, at times half a CPU for 40 ms).
+_LOWEST = """
+    def lowest():
+        sys.stdout.write("ready\\n")
+        sys.stdout.flush()
+        assert sys.stdin.readline() == "go\\n"
+        if sys.platform == "darwin":
+            os.setpriority(os.PRIO_DARWIN_PROCESS, 0, os.PRIO_DARWIN_BG)
+        else:
+            os.nice(19)
+"""
+
+#: The probe, asking no health check, over the starved request.
+_STARVED_CHILD = (
+    textwrap.dedent("""
+    import asyncio, json, os, sys
+    sys.path.insert(0, sys.argv[1])
+    import test_a_large_upload_leaves_the_gateway_answering as upload
+    from aiohttp.test_utils import TestClient, TestServer
+    """)
+    + textwrap.dedent(_LOWEST)
+    + textwrap.dedent("""
+    async def main():
+        async with TestClient(TestServer(upload._starved_app())) as client:
+            probe = upload._Probe(client, asking=False)
+            lowest()
+
+            async def ask():
+                return (await client.get("/starved")).status
+
+            status = await probe.during(ask())
+            print(json.dumps({
+                "status": status, "says": probe.says(), **vars(upload._seen(probe)),
+            }), flush=True)
+
+    asyncio.run(main())
+    """)
+)
+
+
+def _seen(probe: _Probe) -> SimpleNamespace:
+    return SimpleNamespace(
+        worst_step=probe.worst_step,
+        worst_step_wall=probe.worst_step_wall,
+        slowest_answer=probe.slowest_answer,
+        slowest_answer_wall=probe.slowest_answer_wall,
+    )
+
+
+def _crowded(child: str, *args: str) -> dict:
+    """Runs ``child`` once it is up, with every CPU taken by a process of its own, and returns the
+    one line of JSON it prints."""
+    child_process = subprocess.Popen(
+        [sys.executable, "-c", child, os.path.dirname(__file__), *args],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    busy: list[subprocess.Popen] = []
+    out = ""
+    try:
+        assert child_process.stdout.readline() == "ready\n", "the child never set up its gateway"
+        for _ in range(os.cpu_count() or 2):
+            busy.append(subprocess.Popen([sys.executable, "-c", _BUSY], stdout=subprocess.PIPE))
+        for one in busy:
+            assert one.stdout.read(1) == b"b", "a busy process never started"
+        child_process.stdin.write("go\n")
+        child_process.stdin.flush()
+        out = child_process.stdout.readline()
+    finally:
+        for one in busy:
+            one.kill()
+            one.wait()
+        child_process.stdin.close()
+        if child_process.wait(10) != 0:
+            pytest.fail(f"the child failed: {out!r}")
+    return json.loads(out)
+
+
+def test_a_step_the_runner_gives_no_cpu_does_not_fail_the_probe():
+    """🔴 Red before (a step's wall time was the measure): a request whose steps wait on nothing
+    and each use at most 0.05 s of CPU, run at the lowest priority while every CPU is taken, had a
+    step the runner stretched past 0.1 s in wall time, and the probe counted a loop blocked that
+    long. The loaded runner took that time, not anything the step waited on, so the probe leaves
+    it out and counts the step for the CPU time it used. No health check is asked, so no other
+    thread runs beside it: on macOS a thread that does could have spent that time ready, and the
+    step would be counted in wall time (the test below)."""
+    assert _NoCpu().source != "none", "premise: this kernel counts the time ready with no CPU"
+    seen = _crowded(_STARVED_CHILD)
+    assert seen["status"] == 200, f"premise: the starved request answered; {seen['says']}"
+    assert seen["worst_step_wall"] >= _BOUND, f"premise: the runner held a step; {seen['says']}"
+    assert seen["worst_step"] < _BOUND, f"a step the runner took was counted; {seen['says']}"
+
+
+#: How long the health check below stays under way in its worker once the loop is told of it.
+_HELD = 0.05
+
+
+class _HeldHealthCheck:
+    """``_identity`` for the first health check asked once :meth:`arm` is called: it tells the
+    loop it is under way and stays so for :data:`_HELD`, so a block the loop starts on hearing it
+    lands inside that health check's answer."""
+
+    def __init__(self) -> None:
+        self.under_way = asyncio.Event()
+        self._armed = threading.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def arm(self) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._armed.set()
+
+    def identity(self, real):
+        def call(*args, **kwargs):
+            if self._armed.is_set():
+                self._armed.clear()
+                self._loop.call_soon_threadsafe(self.under_way.set)
+                time.sleep(_HELD)
+            return real(*args, **kwargs)
+
+        return call
+
+
+def _blocked_while_answering_app(held: _HeldHealthCheck, where) -> web.Application:
+    async def planted(_request: web.Request) -> web.Response:
+        held.arm()
+        await held.under_way.wait()
+        _block_by_reading(where)  # on the loop, while that health check waits on it
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.router.add_get("/api/healthz", api_healthz)
+    app.router.add_get("/planted", planted)
+    return app
+
+
+#: The probe over a blocking read on the loop, made while a health check is under way, beside a
+#: thread that hashes as an upload's worker does and so is ready to run whenever it is not.
+_BESIDE_A_READY_THREAD_CHILD = (
+    textwrap.dedent("""
+    import asyncio, hashlib, json, os, sys, threading, time
+    from pathlib import Path
+    from unittest.mock import patch
+    sys.path.insert(0, sys.argv[1])
+    import test_a_large_upload_leaves_the_gateway_answering as upload
+    from aiohttp.test_utils import TestClient, TestServer
+    from personalclaw.dashboard import handlers_system
+    """)
+    + textwrap.dedent(_LOWEST)
+    + textwrap.dedent("""
+    async def main():
+        held = upload._HeldHealthCheck()
+        app = upload._blocked_while_answering_app(held, Path(sys.argv[2]))
+        identity = held.identity(handlers_system._identity)
+        stop, spent = threading.Event(), {}
+
+        def hash_beside():
+            chunk = os.urandom(1 << 20)
+            began, cpu = time.monotonic(), time.thread_time()
+            while not stop.is_set():
+                hashlib.sha256(chunk).digest()
+            spent["share"] = (time.thread_time() - cpu) / (time.monotonic() - began)
+
+        with patch.object(handlers_system, "_identity", identity):
+            async with TestClient(TestServer(app)) as client:
+                probe = upload._Probe(client)
+                lowest()
+                beside = threading.Thread(target=hash_beside)
+                beside.start()
+
+                async def ask():
+                    return (await client.get("/planted")).status
+
+                try:
+                    status = await probe.during(ask())
+                finally:
+                    stop.set()
+                    beside.join()
+                print(json.dumps({
+                    "status": status, "says": probe.says(), "share": spent["share"],
+                    **vars(upload._seen(probe)),
+                }), flush=True)
+
+    asyncio.run(main())
+    """)
+)
+
+
+def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_path):
+    """The vacuity arm for the time left out: the time a thread beside the loop spends waiting
+    for a CPU is not the loop's. A blocking read on the loop for 0.2 s, made while a health check
+    is under way, at the lowest priority while every CPU is taken, beside a thread that hashes
+    and so waits for a CPU most of that time, is a step over the bound and an answer over it."""
+    seen = _crowded(_BESIDE_A_READY_THREAD_CHILD, str(tmp_path))
+    says = f"the thread beside used {seen['share']:.0%} of a CPU; {seen['says']}"
+    assert seen["status"] == 200, f"premise: the planted request answered; {says}"
+    assert seen["share"] < 0.5, f"premise: the thread beside waited for a CPU; {says}"
+    assert seen["worst_step"] >= _BOUND, f"the step missed the block; {says}"
+    assert seen["slowest_answer"] >= _BOUND, f"the answer missed the block; {says}"
 
 
 # ── what the upload's requests read and write on disk, they do off the loop ─────────────────
