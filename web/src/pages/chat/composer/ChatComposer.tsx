@@ -296,7 +296,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
             renders nothing unless chat really is resolving to a floor provider — which is
             false on every home that has bound anything. */}
         <BundledFloorNotice />
-        <ComposerStage ref={composerRef} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
+        <ComposerStage ref={composerRef} settled={!started} value={input} onChange={(v) => { setInput(v); if (preOptimize !== null) setPreOptimize(null); if (followups.length && v.trim().length >= 3) setFollowups([]) }} onSend={() => send()}
           streaming={streaming} phase={turnPhase} onStop={stop} controls={CHAT_CONTROLS} data={data}
           selection={selection} onSelect={applySelection} onAttach={attach} onFocusChange={setComposerFocused}
           replyStyle={{ ...replyStyle.pill, onSelect: (s) => void replyStyle.pill.onSelect(s) }}
