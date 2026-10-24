@@ -1901,8 +1901,31 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
 
 `tools/ci/main_replay.py` holds what a push to `main` may replay from its pull request's run
 (#3919), one job at a time, where `tools/ci/tree_tested.py` answers for the whole run. Nothing
-calls it yet: `merge.yml`'s plan job will, once that workflow writes a verdict file per job
-(#3915) and the controller App posts the merge verdict (#4584).
+calls it yet: `merge.yml`'s push stage will, once #3915's flip gives that workflow its push
+trigger and #3910's controller App posts the merge verdict. `decide` replays nothing unless the
+head's merge verdict counts, so calling it before then would run the whole merge tier on every
+tested push.
+
+`python -m tools.ci replay --plan <ids.json> --controller-revision <sha> --receipt <file>
+[--image LABEL=IMAGE ...] [--toolchain NAME=VERSION ...]` is the push stage's call. It reads the
+run's own environment (`GITHUB_EVENT_NAME`, `GITHUB_REF`, `GITHUB_REPOSITORY`, `GITHUB_SHA`, and
+`BEFORE`, the commit the push replaced), with `GH_TOKEN` for the API. It takes the planned job ids
+from `main`'s catalogue, and the image each runner label runs now as the push read it. It reads
+the source run's record artifacts (`main_replay.source_records`):
+- every page of the run's artifacts, against one count;
+- of the `ci-record-` ones, each must name that run as its uploader;
+- one named for a later attempt, and an expired one, is passed over, so its job runs;
+- one named for attempt 1 must have been made while attempt 1 ran, within the archive bound, and
+  hold the one record its own name names, of that run and attempt 1, read as the telemetry
+  collector reads one (`telemetry.record_bytes`);
+- anything else runs every job.
+It asks `merge_verdict.verify` about the head. It prints one line per planned key, and writes
+`replayed=` (the keys, as JSON) and `replays=` to `GITHUB_OUTPUT`, the lines to the step summary,
+and the receipt to `--receipt`. It exits 0 with any answer, "every job runs" included, and 2 for
+inputs it cannot take, before anything is read. The CI contract table's row "a pull request's
+run never replays" holds every step that runs it, a local action's included: its own `if:` or
+its job's must keep it off a `pull_request` and a `pull_request_target` run, whatever the
+workflow's triggers are. A guard the row cannot evaluate fails it, never reads as false.
 
 - **Nothing replays,** and every job runs, unless the run is a push to `main` naming the commit
   it replaced (a `pull_request` event replays nothing and reads nothing, so a pull request's own

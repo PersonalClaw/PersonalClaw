@@ -557,14 +557,14 @@ RECORD_PREFIX = verdict.RECORD_ARTIFACT_PREFIX
 MAX_RECORD_ARCHIVE_BYTES = 2 * 1024 * 1024
 
 
-def record_line(name: str, archive: bytes, run_id: int, attempt: int) -> dict[str, Any]:
-    """The history's line for the job record artifact ``name`` of this run's ``attempt``: the
-    job's key and result, each failed test with the diagnostic rerun's word for it (None when it
-    was not classified), and each quarantined failure.
-
-    The archive holds one ``.json`` file, read in memory within ``verdict.RECORD_BYTES`` and with
-    ``verdict.from_job_records``, the record of this run and this attempt, in the artifact its own
-    key names. Anything else raises :class:`CollectError`."""
+def record_bytes(
+    name: str, archive: bytes, run_id: int, attempt: int
+) -> tuple[bytes, verdict.JobResult]:
+    """The one record the job record artifact ``name`` of this run's ``attempt`` holds, as its
+    bytes and as read. The archive holds one ``.json`` file, read in memory within
+    ``verdict.RECORD_BYTES`` and with ``verdict.from_job_records``, the record of this run and
+    this attempt, in the artifact its own key names. Anything else raises :class:`CollectError`.
+    A push's replay reads a run's records with it too (``tools/ci/main_replay.py``)."""
     try:
         with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
             members = zipped.infolist()
@@ -600,6 +600,14 @@ def record_line(name: str, archive: bytes, run_id: int, attempt: int) -> dict[st
         raise CollectError(f"{name}: written by attempt {result.attempt}, not attempt {attempt}")
     if result.run_id != run_id:
         raise CollectError(f"{name}: the record names run {result.run_id}, not run {run_id}")
+    return data, result
+
+
+def record_line(name: str, archive: bytes, run_id: int, attempt: int) -> dict[str, Any]:
+    """The history's line for the job record artifact ``name`` of this run's ``attempt``
+    (:func:`record_bytes`): the job's key and result, each failed test with the diagnostic
+    rerun's word for it (None when it was not classified), and each quarantined failure."""
+    _, result = record_bytes(name, archive, run_id, attempt)
     failed = [t for t in result.tests if t.standing != verdict.QUARANTINED]
     return {
         "kind": "record",
