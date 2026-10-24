@@ -644,10 +644,14 @@ command = [
   { argv = ["{runner_temp}/audit-venv/bin/python", "-m", "tools.ci", "audit", "run", "--pip-audit", "{runner_temp}/audit-venv/bin/python", "--work", "{runner_temp}/audit"] },
 ]
 
+# The Python client, built and tested in a venv of its own. It is no member of core's uv
+# workspace and reads nothing outside its folder, but uv reads the root's settings
+# (pyproject.toml's [tool.uv], .python-version) for every command run there
+# (tests/rails/test_ci_job_inputs_tree.py).
 [[job]]
 id = "client"
 tiers = ["change", "merge"]
-inputs = [":(glob)**"]
+inputs = ["packages/personalclaw-client-py/", "pyproject.toml", ".python-version"]
 external_inputs = ["package-index"]
 toolchain = ["uv"]
 cache = ["uv"]
@@ -668,10 +672,46 @@ command = [
 # The web job's tests, its build, and the wheel built with that build: three entries, one job.
 # ci.yml sets VITEST_MAX_WORKERS to the runner's core count, through GITHUB_ENV, before the
 # vitest steps: workers = "auto", and workers_env names the variable the runner sets to it.
+#
+# Each of web-unit and web-build reads the workspaces its steps run in, what their code names
+# outside them (the backend's sources its parity tests read, the design docs and brand files its
+# tests hold the app to, the scripts it runs), and what its step scripts and toolchain read
+# (tests/rails/test_ci_job_inputs_tree.py).
 [[job]]
 id = "web-unit"
 tiers = ["change", "merge"]
-inputs = [":(glob)**"]
+inputs = [
+  ".nvmrc",
+  "CHANGELOG.md",
+  "desktop/",
+  "docs/agents/acp-parity.md",
+  "docs/architecture/widgets.md",
+  "docs/brand/marks.json",
+  "docs/brand/personalclaw-mark.png",
+  "docs/brand/render_marks.mjs",
+  "docs/design/buddy/copy.md",
+  "docs/design/buddy/decisions/rig-measure.mjs",
+  "docs/design/buddy/interruption-matrix.json",
+  "docs/design/buddy/poses/",
+  "docs/design/buddy/render_stills.mjs",
+  "docs/design/buddy/stills.json",
+  "docs/design/motion.md",
+  "docs/feature-map.md",
+  "docs/guides/companion-apps.md",
+  "docs/guides/desktop.md",
+  "docs/guides/getting-started.md",
+  "docs/research/learning-benchmark-protocol.md",
+  "harness/fanout_measure.py",
+  "mobile/",
+  "package-lock.json",
+  "package.json",
+  "scripts/lib/app_validate_form.mjs",
+  "scripts/lib/named_home.mjs",
+  "scripts/spa_dist_freshness.py",
+  "src/",
+  "tools/ci/",
+  "web/",
+]
 external_inputs = []
 toolchain = ["node", "npm-ci", "electron"]
 cache = ["npm"]
@@ -694,7 +734,44 @@ command = [
 [[job]]
 id = "web-build"
 tiers = ["merge"]
-inputs = [":(glob)**"]
+inputs = [
+  ".nvmrc",
+  "ASSET_LICENSES.json",
+  "CHANGELOG.md",
+  "LICENSE",
+  "desktop/",
+  "docs/agents/acp-parity.md",
+  "docs/architecture/widgets.md",
+  "docs/brand/marks.json",
+  "docs/brand/personalclaw-mark.png",
+  "docs/brand/render_marks.mjs",
+  "docs/design/buddy/copy.md",
+  "docs/design/buddy/decisions/rig-measure.mjs",
+  "docs/design/buddy/interruption-matrix.json",
+  "docs/design/buddy/poses/",
+  "docs/design/buddy/render_stills.mjs",
+  "docs/design/buddy/stills.json",
+  "docs/design/motion.md",
+  "docs/feature-map.md",
+  "docs/guides/companion-apps.md",
+  "docs/guides/desktop.md",
+  "docs/guides/getting-started.md",
+  "docs/research/learning-benchmark-protocol.md",
+  "harness/fanout_measure.py",
+  "mobile/assets/",
+  "mobile/store/",
+  "mobile/www/",
+  "package-lock.json",
+  "package.json",
+  "scripts/check_asset_licenses.py",
+  "scripts/lib/app_validate_form.mjs",
+  "scripts/lib/named_home.mjs",
+  "scripts/spa_dist_freshness.py",
+  "src/",
+  "tests/fixtures/",
+  "tools/ci/",
+  "web/",
+]
 external_inputs = []
 toolchain = ["node", "npm-ci", "electron"]
 cache = ["npm"]
@@ -709,10 +786,41 @@ command = [
   { argv = ["npm", "run", "test:desktop:built"], env = { PCLAW_REQUIRE_ELECTRON = "1" } },
 ]
 
+# The wheel. setuptools reads its config (pyproject.toml, setup.py, setup.cfg, MANIFEST.in), the
+# package under src/, the README and the licence, and grafts in web/dist, which npm builds from
+# the web workspace and the root's manifests. verify_wheel.py loads backend_bundle_manifest.py
+# beside it, and its --build path runs spa_dist_freshness.py and check_asset_licenses.py, with
+# the assets the licence check names. uv.lock pins the build backend the wheel's contract test
+# drives (tests/rails/test_ci_job_inputs_tree.py).
 [[job]]
 id = "package"
 tiers = ["merge"]
-inputs = [":(glob)**"]
+inputs = [
+  "src/",
+  "web/",
+  "package.json",
+  "package-lock.json",
+  "README.md",
+  ":(glob)LICENSE*",
+  "pyproject.toml",
+  "setup.py",
+  "setup.cfg",
+  "MANIFEST.in",
+  "uv.lock",
+  ".python-version",
+  "scripts/verify_wheel.py",
+  "scripts/backend_bundle_manifest.py",
+  "scripts/spa_dist_freshness.py",
+  "scripts/check_asset_licenses.py",
+  "ASSET_LICENSES.json",
+  "desktop/connectDialog.html",
+  "desktop/icon.png",
+  "desktop/loading.html",
+  "mobile/assets/",
+  "mobile/store/",
+  "mobile/www/",
+  "tests/fixtures/",
+]
 external_inputs = []
 toolchain = ["uv"]
 cache = ["uv"]
@@ -983,10 +1091,22 @@ command = [
 ]
 
 # The dependency audit reads the advisories published at the time of the run: live, never reused.
+# Its inputs are what it audits: uv.lock and the pyproject.toml uv holds it to, every npm manifest
+# and lock, and its own code and waivers, with the Python and Node versions its toolchain reads
+# (tests/rails/test_ci_job_inputs_tree.py).
 [[job]]
 id = "audit"
 tiers = ["merge"]
-inputs = [":(glob)**"]
+inputs = [
+  "uv.lock",
+  "pyproject.toml",
+  ".python-version",
+  ".nvmrc",
+  ":(glob)**/package.json",
+  ":(glob)**/package-lock.json",
+  "tools/ci/audit.py",
+  "tools/ci/audit-baseline.toml",
+]
 external_inputs = ["advisory-feed", "package-index"]
 toolchain = ["uv", "node"]
 cache = ["uv"]
