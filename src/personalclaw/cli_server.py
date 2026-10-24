@@ -1,6 +1,7 @@
 """CLI server lifecycle commands — update, stop, token, logout, status, gateway."""
 
 import argparse
+import contextlib
 import json
 import logging
 import os
@@ -8,9 +9,11 @@ import shlex
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 
 from personalclaw import (
@@ -821,6 +824,50 @@ def _move_line(target: str) -> str:
     return f"  {arrow} v{__version__} → v{self_update.normalize_version(target)}"
 
 
+@contextlib.contextmanager
+def _ctrl_c_as_a_flag() -> Iterator[threading.Event | None]:
+    """While the block runs, a Ctrl-C (SIGINT) sets the event this yields instead of raising, and
+    the handler that was there comes back on every way out. Off the main thread no handler can be
+    set: it yields None, and a Ctrl-C is Python's own."""
+    if threading.current_thread() is not threading.main_thread():
+        yield None
+        return
+    pressed = threading.Event()
+    previous = signal.signal(signal.SIGINT, lambda signum, frame: pressed.set())
+    try:
+        yield pressed
+    finally:
+        signal.signal(signal.SIGINT, previous if previous is not None else signal.SIG_DFL)
+
+
+def _wait_or_stop(
+    process: subprocess.Popen[str], pressed: threading.Event
+) -> subprocess.CompletedProcess[str]:
+    """Wait for *process* to end, its output captured; once *pressed* is set, kill and reap it,
+    then raise ``KeyboardInterrupt``.
+
+    ``subprocess.run`` stops its child only when the interrupt finds it waiting in
+    ``communicate``. One that lands while ``Popen`` is still handing the started child back
+    leaves it running with nothing holding it: the update said it stopped while the installer
+    went on. With :func:`_ctrl_c_as_a_flag` around the start, the Ctrl-C lands nowhere wrong,
+    and this wait acts on it.
+    """
+    with process:
+        while True:
+            try:
+                out, err = process.communicate(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                if pressed.is_set():
+                    process.kill()
+                    process.communicate()
+                    raise KeyboardInterrupt from None
+    if pressed.is_set():
+        # It ended on its own as the Ctrl-C came (a terminal's reaches the installer too).
+        raise KeyboardInterrupt
+    return subprocess.CompletedProcess(process.args, process.returncode, out, err)
+
+
 def _install(args: list[str]) -> None:
     """Install *args* (a wheel's ``-U personalclaw==<tag>``) into PersonalClaw's own environment
     with the tool that made it, or exit 1 with a readable reason."""
@@ -841,11 +888,21 @@ def _install(args: list[str]) -> None:
     print(f"  🔨 {shlex.join(argv)}")
     environment = installed_distributions()
     try:
-        result = subprocess.run(argv, capture_output=True, text=True, env=installer_env())
+        with _ctrl_c_as_a_flag() as pressed:
+            if pressed is None:
+                result = subprocess.run(argv, capture_output=True, text=True, env=installer_env())
+            else:
+                started = subprocess.Popen(
+                    argv,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=installer_env(),
+                )
+                result = _wait_or_stop(started, pressed)
     except KeyboardInterrupt:
-        # Ctrl-C reached the installer too, and `subprocess.run` has stopped it. A wheel has
-        # nothing to put back: what is left is what the environment holds, said as the
-        # dashboard's Cancel says it.
+        # The installer is stopped (:func:`_wait_or_stop`). A wheel has nothing to put back:
+        # what is left is what the environment holds, said as the dashboard's Cancel says it.
         said, _as_it_was = self_update.stopped_upgrade_sentence(
             self_update.UPDATE_STOPPED, changed_distributions(environment), __version__
         )

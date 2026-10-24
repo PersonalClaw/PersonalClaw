@@ -422,6 +422,62 @@ def test_ctrl_c_during_a_wheel_upgrade_says_what_it_left(
     assert "Traceback" not in err
 
 
+def test_a_ctrl_c_that_lands_while_the_installer_starts_still_stops_it(
+    installer, release, capsys, monkeypatch, tmp_path  # noqa: F811 - the imported fixtures
+) -> None:
+    """The Ctrl-C can land once the installer has started but before ``Popen`` has handed it
+    back, and the update must stop it all the same. ``subprocess.run`` stops a child only when
+    the interrupt finds it waiting in ``communicate``: one that lands inside ``Popen`` left the
+    installer running with nothing holding it (breadth's arm leg, 2026-10-24). Here the press is
+    made at that very point, so the race is not left to a runner's load."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "pip")
+    ran = installer("hangs")
+    started: list[int] = []
+    real = subprocess.Popen
+
+    class _PressedAsItStarts(real):  # type: ignore[misc, valid-type]
+        def __init__(self, args, *rest, **kwargs) -> None:
+            super().__init__(args, *rest, **kwargs)
+            if list(args)[:3] == ["uv", "pip", "install"]:
+                started.append(self.pid)
+                os.kill(os.getpid(), signal.SIGINT)  # handled before this returns
+
+    monkeypatch.setattr(subprocess, "Popen", _PressedAsItStarts)
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    began = time.monotonic()
+    try:
+        try:
+            cli_server._update()
+            code: object = 0
+        except SystemExit as exc:
+            code = exc.code
+        except KeyboardInterrupt:
+            code = "KeyboardInterrupt"
+    finally:
+        took = time.monotonic() - began
+        signal.signal(signal.SIGINT, previous)
+        stopped = bool(started) and _gone(started[0])
+        for pid in started:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        _stop_stand_in(ran.pid_file)
+    err = " ".join(capsys.readouterr().err.split())
+
+    assert started, "the installer never started"
+    assert code == 130, f"exited {code!r}: {err}"
+    assert stopped, "the upgrade was left running"
+    # The stand-in sleeps 30 s: an update that waited for it to end stopped nothing.
+    assert took < 15, f"the update waited {took:.1f}s for the installer instead of stopping it"
+    assert (
+        "The update was stopped before it finished. Nothing was changed: PersonalClaw is still on "
+        "v0.0.1." in err
+    ), err
+    assert "Traceback" not in err
+
+
 @pytest.mark.asyncio
 async def test_cancelling_a_staged_update_leaves_the_gateway_that_started_it_running(
     checkout, installer, release  # noqa: F811 - the imported fixtures

@@ -362,7 +362,10 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "cli_run.py::start_transient_gateway::subprocess.Popen": (
         "operator: launch the gateway itself (headless `run` bootstrap)"
     ),
-    "cli_server.py::_install::subprocess.run": "operator: self-update package install",
+    "cli_server.py::_install::subprocess.Popen": "operator: self-update package install",
+    "cli_server.py::_install::subprocess.run": (
+        "operator: self-update package install, off the main thread"
+    ),
     "cli_server.py::_refresh_agent_config::subprocess.run": (
         "operator: post-update `setup --agent-only` re-run"
     ),

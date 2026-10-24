@@ -16,6 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **Stopping `personalclaw update` with an interrupt (Ctrl-C, or a signal from a service manager) no longer leaves its installer running.**
 - **On a new chat, the message composer takes its place at once. It used to spring into the middle of the page whenever the page around it moved: Chat opened from the Loops page, a suggestion strip landed, or the column settled while the page loaded. It still flies down into its place under the conversation when the chat starts.**
 - **The message composer appears at rest when a page opens. It used to grow its rounded corners and its shadow in over about half a second each time it was drawn, which also kept the page asking for animation frames after it looked still.**
 - **Memory search finds what a memory says and its file's own name, not where its file is: a word in your home folder's path (a folder named for a person, a project or a tool) no longer matches every memory, and a memory is still found by its name (`preferences`, `projects`, a history file's day). An index made before this is rebuilt from the memory files the first time it is opened.**
