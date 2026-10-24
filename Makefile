@@ -146,13 +146,11 @@ gate:
 ## One-time per machine: `npm ci` (from the REPO ROOT — never inside web/, see web-build) and
 ## `npx playwright install chromium`. No spec list here on purpose: a new spec joins the gate the
 ## moment it lands.
-## Screenshot assertions are IGNORED here, deliberately, and `test-visual` below owns them.
-## Measured on an untouched `main` checkout in this Darwin dev environment: e2e/visual.spec.ts is
-## 28 failed / 11 passed. The baselines are platform-qualified (see snapshotPathTemplate) and have
-## drifted from what this machine renders, which is a real thing to fix but has nothing to do with
-## whether the app is accessible, installable or functional. Folding an always-red suite into the
-## default browser gate would make the gate mean nothing — the failure mode every rail in this repo
-## is written to avoid.
+## Screenshot assertions are IGNORED here, deliberately, and `test-visual` below owns them. The
+## baselines are made in the pinned image's browser alone (#3943), and this runs the host's, so its
+## pixels say nothing about whether the app is accessible, installable or functional. Folding a
+## suite this host cannot pass into the default browser gate would make the gate mean nothing, the
+## failure mode every rail in this repo is written to avoid.
 ##
 ## MEASURED OFFLINE AND CREDENTIAL-FREE (the property above), Darwin dev machine, 2026-08-26:
 ## 484 passed / 8 skipped / 0 failed, 7.8m of Playwright time, 469s wall clock including `npm run
@@ -166,12 +164,13 @@ gate:
 test-e2e:
 	cd $(WEB_DIR) && npx playwright test --ignore-snapshots
 
-## test-visual: the visual-regression suite with screenshot assertions ENFORCED. Split out of
-## test-e2e because its baselines are environment-sensitive (28/39 red on a clean main checkout on
-## this dev machine) — run it when you intend to inspect or refresh them (`-u` updates), not as a
-## precondition for every other browser check.
+## test-visual: the visual-regression suite with screenshot assertions ENFORCED, against the pinned
+## image's browser (web/e2e/run-pinned.mjs, #3943), the one environment its baselines are made in.
+## Split out of test-e2e because nothing else renders them: a host that is not linux/amd64 is
+## refused, with where the runs happen. The baselines are refreshed by the Refresh visual baselines
+## workflow, never here.
 test-visual:
-	cd $(WEB_DIR) && npx playwright test e2e/visual.spec.ts --project=chromium
+	cd $(WEB_DIR) && node e2e/run-pinned.mjs -- e2e/visual.spec.ts --project=chromium
 
 ## harness-validate: shape-validate + reference-resolve the self-dev harness specs; a warning
 ## fails it too, as in CI's static job

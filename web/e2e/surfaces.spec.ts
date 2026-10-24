@@ -22,20 +22,20 @@ import { STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedR
 // `assert-no-route-skips.mjs` counts: one scan per declared route and theme, none skipped, each
 // carrying every step. `surfaceMatrix.control.spec.ts` proves each step can fail.
 //
-// Two committed baselines per platform, as `__screenshots__` has (`-darwin`, `-linux`):
+// Two committed baselines per surface, named per platform as `__screenshots__`'s are, and only ever
+// `-linux` (#3943):
 //   · `__aria__/<id>-<platform>.aria.yml`: the surface's normalized accessibility tree, ONE for both
 //     themes;
 //   · `__ui-baselines__/<id>-<platform>.json`: per theme and compact width, the controls already
 //     under 44 px, and the findings main already had per baselined step. Shrink-only and
 //     self-clearing: a new small control reds, and so does a baselined one that grew, until its
 //     entry is deleted.
-// They were one set for both platforms, and a set a Mac wrote was a red on CI's Linux for what the
-// machine decides: the platform's own copy, what it has installed, and how its fonts render (#3905).
-// `npx playwright test e2e/surfaces.spec.ts --update-snapshots` rewrites this platform's from what it
-// measures, which a reviewer then reads as a diff; feature PRs write the `-darwin` set so. Outside CI
-// a missing baseline is written on first run. Under CI each surface ATTACHES what it measured
-// (`platform-baseline-*`), and `e2e/platform-baselines.mjs` writes the `-linux` set from a CI run's
-// report, so that set is only ever CI's own measurement.
+// What they record is partly the machine's: its platform copy, what it has installed, and how its
+// fonts render at 200% and in contrast (#3905). So the set is made in one place, the Refresh visual
+// baselines workflow (`.github/workflows/visual-baselines.yml`), which runs this spec with
+// `--update-snapshots` on the runner against the pinned image's browser (`e2e/run-pinned.mjs`), and
+// a reviewer reads its artifact as a diff. Outside CI a missing baseline is written on first run,
+// under this machine's own suffix, which `web/.gitignore` keeps out of the tree.
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ARIA_DIR = join(HERE, '__aria__')
@@ -510,14 +510,6 @@ async function checkSurface(page: Page, info: TestInfo, ctx: SurfaceContext, id:
   })
   writeBaselines(id, ctx.theme, measured, info)
   await info.attach(`ui-quality-${id}-${ctx.theme}.txt`, { body: report.join('\n'), contentType: 'text/plain' })
-  // What CI measured, in the files' own form, for `e2e/platform-baselines.mjs` to write this
-  // platform's set from: a CI run's report is the only source of the `-linux` baselines.
-  if (process.env.CI) {
-    await info.attach(`platform-baseline-${id}-${ctx.theme}.json`, { body: JSON.stringify(themeEntry(measured)), contentType: 'application/json' })
-    if (ctx.theme === 'light') {
-      await info.attach(`platform-baseline-${id}.aria.yml`, { body: measured.tree.trimEnd() + '\n', contentType: 'text/yaml' })
-    }
-  }
 }
 
 for (const theme of THEMES) {

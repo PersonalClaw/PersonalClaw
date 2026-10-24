@@ -31,3 +31,11 @@ src/lib/impeccable/[0-9a-f]*/
 /blob-report/
 /playwright/.cache/
 /e2e/.auth/
+# The baselines are the pinned image's alone, `-linux` (#3943: e2e/run-pinned.mjs, made by the Refresh
+# visual baselines workflow). A run anywhere else writes its own set beside them, never committed.
+/e2e/__screenshots__/**/*.png
+!/e2e/__screenshots__/**/*-linux.png
+/e2e/__aria__/*.aria.yml
+!/e2e/__aria__/*-linux.aria.yml
+/e2e/__ui-baselines__/*.json
+!/e2e/__ui-baselines__/*-linux.json

@@ -12,15 +12,13 @@ This rail closes the gap in the only way that is honest about the constraint:
 * **`pwa.spec.ts` now runs.** It has zero snapshot assertions and serves its own
   build on a private port, so it is platform-neutral. Verified before wiring — 3 passed in
   48s locally — rather than added on the assumption that a spec in the tree works.
-* **`visual.spec.ts` cannot run yet, and the reason is mechanical, not editorial.**
-  `playwright.config.ts` sets `snapshotPathTemplate` with `{platform}`, and all 40 committed
-  baselines are `-darwin`. A Linux CI job would find zero baselines and fail on every route
-  on its first run. Producing `-linux` baselines requires a Linux run, which is the thing
-  that does not exist yet.
+* **`visual.spec.ts` cannot run yet, and the reason is mechanical, not editorial.** Its
+  baselines are made in the pinned Playwright image's browser alone (#3943), and no CI leg
+  serves that browser until merge.yml's `e2e-pinned` leg lands with the merge-queue flip.
 
 So the exemption is declared with its reason AND with the condition that retires it: the
-moment a `-linux` baseline is committed, `test_the_visual_exemption_retires_itself` fails and
-tells whoever committed it to wire the job. An exemption that cannot expire is how a
+moment a workflow runs the spec, `test_no_exemption_is_also_wired` (in the tree checks) fails
+and tells whoever wired it to drop the exemption. An exemption that cannot expire is how a
 temporary decision becomes permanent silently.
 
 Not asserted, because it was checked and is not true: `make gates` is invoked by no workflow,
@@ -31,9 +29,7 @@ step in place). The target is a convenience wrapper, not an unrun gate.
 
 from __future__ import annotations
 
-import re
-
-from e2e_specs_are_executed_shared import _E2E, LOCAL_ONLY, _specs
+from e2e_specs_are_executed_shared import LOCAL_ONLY, _specs
 
 
 def test_the_declared_exemptions_still_exist():
@@ -47,20 +43,3 @@ def test_every_exemption_carries_a_real_reason():
     """ "Later" is not a reason. The text has to say what makes running it impossible today."""
     thin = sorted(s for s, why in LOCAL_ONLY.items() if len(why) < 80)
     assert not thin, f"these exemptions have no mechanical reason: {thin}"
-
-
-def test_the_visual_exemption_retires_itself():
-    """The exemption's expiry condition, as a test rather than a promise.
-
-    `visual.spec.ts` is exempt ONLY because every baseline is `-darwin`. The day a `-linux`
-    baseline is committed that reason is gone, and this fails so the person who committed it
-    is the one told to wire the job — instead of the exemption quietly outliving its cause.
-    """
-    shots = sorted((_E2E / "__screenshots__" / "visual.spec.ts").glob("*.png"))
-    assert shots, "no visual baselines found — the exemption's premise cannot be checked"
-    platforms = sorted({re.sub(r".*-([a-z0-9]+)\.png$", r"\1", p.name) for p in shots})
-    assert platforms == ["darwin"], (
-        "the visual baselines are no longer darwin-only "
-        f"({platforms}) — the reason `visual.spec.ts` is exempt from CI no longer holds. "
-        "Wire a job that runs it on that platform and remove it from LOCAL_ONLY."
-    )
