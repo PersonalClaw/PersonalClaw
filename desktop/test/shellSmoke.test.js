@@ -9,7 +9,7 @@ const asar = require("@electron/asar");
 
 const { stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
 const { DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
-const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, plantedCopy, shellSources } = require("./smoke/packedApp");
+const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, packArchive, plantedCopy, shellSources } = require("./smoke/packedApp");
 
 // ── The packed shell's smoke, its parts (#3942) ───────────────────────────────────────────────
 //
@@ -177,8 +177,46 @@ describe("the app opens no debugging port or pipe of its own", () => {
     const dir = tmp();
     fs.mkdirSync(path.join(dir, "tree"));
     fs.writeFileSync(path.join(dir, "tree", "main.js"), 'process.argv.push("--remote-debugging-port=0")');
-    await asar.createPackage(path.join(dir, "tree"), path.join(dir, "app.asar"));
+    await packArchive(path.join(dir, "tree"), path.join(dir, "app.asar"));
     assert.deepEqual(debugSwitchProblems(asarSources(path.join(dir, "app.asar"))), ["app.asar/main.js carries a remote-debugging switch"]);
+  });
+});
+
+describe("an archive is read only once it is whole", () => {
+  // asar.createPackage resolves once the archive's end is asked for, not once its bytes are on
+  // disk, so a copy taken then can be short of the last file: CI's run 40056079320 planted a link
+  // control in a deepLinks.js cut short and failed on "the plant's anchor is not once".
+  const source = "x".repeat(64 * 1024) + "\nfunction registerDeepLinks() {}\n";
+
+  /** createPackage as it behaves under load: it resolves with the header and part of the data
+   * written, and the rest lands *lateMs* later, or never. */
+  const resolvingEarly = (lateMs) => async (src, dest) => {
+    const whole = `${dest}.whole`;
+    await asar.createPackage(src, whole);
+    const bytes = fs.readFileSync(whole);
+    const cut = 8 + asar.getRawHeader(whole).headerSize + 1024;
+    fs.writeFileSync(dest, bytes.subarray(0, cut));
+    if (lateMs !== null) setTimeout(() => fs.appendFileSync(dest, bytes.subarray(cut)), lateMs);
+  };
+
+  function tree() {
+    const dir = tmp();
+    fs.mkdirSync(path.join(dir, "tree"));
+    fs.writeFileSync(path.join(dir, "tree", "deepLinks.js"), source);
+    return dir;
+  }
+
+  it("waits for the bytes the archive's own header promises before it hands the archive on", async () => {
+    const dir = tree();
+    const dest = path.join(dir, "app.asar");
+    await packArchive(path.join(dir, "tree"), dest, { create: resolvingEarly(200) });
+    assert.equal(asar.extractFile(dest, "deepLinks.js").toString("utf8"), source);
+  });
+
+  it("names the archive and how short it is when its bytes never land", async () => {
+    const dir = tree();
+    const dest = path.join(dir, "app.asar");
+    await assert.rejects(packArchive(path.join(dir, "tree"), dest, { create: resolvingEarly(null), timeoutMs: 300 }), /app\.asar is \d+ of the \d+ bytes its header promises/);
   });
 });
 
@@ -193,7 +231,7 @@ describe("the packed app", () => {
     }
     const app = path.join(dir, "app");
     fs.mkdirSync(path.join(app, "resources"), { recursive: true });
-    await asar.createPackage(tree, path.join(app, "resources", "app.asar"));
+    await packArchive(tree, path.join(app, "resources", "app.asar"));
     fs.writeFileSync(path.join(app, "chrome-sandbox"), "helper");
     return app;
   }
