@@ -8,7 +8,7 @@ const { PassThrough } = require("node:stream");
 const asar = require("@electron/asar");
 
 const { CODE_LOOP, SEED_CODE_LOOP, stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
-const { COCKPIT_LINK, DEVTOOLS_SWITCH, LOOPBACK_PAGE, literal, MAIN_ERROR, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
+const { COCKPIT_LINK, DEVTOOLS_SWITCH, MODE_LINK, LOOPBACK_PAGE, literal, MAIN_ERROR, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
 const { parseDeepLink } = require("../deepLinks");
 const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, packArchive, plantedCopy, shellSources } = require("./smoke/packedApp");
 
@@ -129,6 +129,12 @@ describe("a link the smoke hands the app (#3827)", () => {
     const parsed = parseDeepLink(COCKPIT_LINK);
     assert.equal(parsed.ok, true, parsed.reason);
     assert.equal(parsed.hash, `#/code/${CODE_LOOP.id}?pane=changes&diff=${encodeURIComponent(CODE_LOOP.diff)}&task=${CODE_LOOP.task}`);
+  });
+
+  it("opens a new thread by a link that names its task mode, and only shows it", () => {
+    const parsed = parseDeepLink(MODE_LINK);
+    assert.equal(parsed.ok, true, parsed.reason);
+    assert.equal(parsed.hash, "#/chat/new?mode=plan");
   });
 
   it("hands a link over as a second launch does: the app's own arguments and the link, and no DevTools pipe", () => {
@@ -272,6 +278,14 @@ describe("the packed app", () => {
     assert.deepEqual(missingEntries(appAsar, ["main.js", "preload.js", "buddy", "icons"]), ["preload.js", "icons"]);
   });
 
+  it("plants the replaying control after the preload's own code, which it leaves as it was", async () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "preload.js"), "utf8");
+    const app = await unpacked({ "preload.js": source });
+    const copy = await plantedCopy(app, CONTROLS[5].plant);
+    const planted = asar.extractFile(path.join(copy, "resources", "app.asar"), "preload.js").toString("utf8");
+    assert.ok(planted.startsWith(source) && planted.length > source.length, "the preload's own code, then the plant");
+  });
+
   it("plants in a copy, never the original, and the copy's sandbox helper is the original's", async () => {
     const app = await unpacked({ "main.js": "require('./doorbell')", [PLANTED_MISSING]: "", "preload.js": "" });
     const copy = await plantedCopy(app, CONTROLS[0].plant);
@@ -283,7 +297,7 @@ describe("the packed app", () => {
   it("plants the three link controls in deepLinks.js: one drops every link, one sends the draft it fills, one resumes the cockpit it opens", async () => {
     const source = fs.readFileSync(path.join(__dirname, "..", "deepLinks.js"), "utf8");
     const app = await unpacked({ "deepLinks.js": source });
-    for (const control of CONTROLS.slice(2)) {
+    for (const control of CONTROLS.slice(2, 5)) {
       const copy = await plantedCopy(app, control.plant);
       const planted = asar.extractFile(path.join(copy, "resources", "app.asar"), "deepLinks.js").toString("utf8");
       assert.notEqual(planted, source, `${control.name}: the plant changed nothing`);
@@ -291,8 +305,11 @@ describe("the packed app", () => {
   });
 
   it("a control is caught only for its own reason", () => {
-    const [missing, preload, dropped, sends, resumes] = CONTROLS;
-    assert.equal(CONTROLS.length, 5);
+    const [missing, preload, dropped, sends, resumes, replays] = CONTROLS;
+    assert.equal(CONTROLS.length, 6);
+    assert.equal(replays.reads({ ok: false, reason: "#/chat/new?mode=plan reopened in a new one replayed a write: POST http://localhost:1/api/chat/sessions", mainOutput: "" }), true);
+    assert.equal(replays.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://localhost:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), false);
+    assert.equal(resumes.reads({ ok: false, reason: "#/chat/new?mode=plan reopened in a new one replayed a write: POST http://localhost:1/api/chat/sessions", mainOutput: "" }), false);
     assert.equal(resumes.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://localhost:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), true);
     assert.equal(resumes.reads({ ok: false, reason: "the draft left the page: a WebSocket frame carried it", mainOutput: "" }), false);
     assert.equal(sends.reads({ ok: false, reason: "the cockpit link acted on the loop: a WebSocket frame carried it", mainOutput: "" }), false);
