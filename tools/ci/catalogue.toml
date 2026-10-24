@@ -37,6 +37,7 @@ jobs = [
   "web-build",
   "desktop-smoke",
   "package",
+  "image",
   "e2e",
   "e2e-shard",
   "e2e-stateful",
@@ -722,6 +723,43 @@ after = ["web-build"]
 command = [
   { argv = ["uv", "build", "--wheel", "--out-dir", "dist"] },
   { argv = ["uv", "run", "--no-project", "python", "scripts/verify_wheel.py", "--wheel", "dist/*.whl"] },
+]
+
+# The gateway image a release ships, built and booted once per candidate (#3917): the README's
+# `docker run` one-liner reaches a usable dashboard, and the API answers signed in
+# (tools/docker_single_container_smoke.py). The workflow's build step makes the image with
+# buildx and main's layer cache, which it reads and never writes (image-cache.yml, on main, is
+# the cache's one writer), and run-job smokes it by the build's content ID, `{image}`. Its inputs
+# are every path the Dockerfile copies and the smoke reads, src/personalclaw/ and uv.lock among
+# them, so a backend-only change boots the image it ships. The Dockerfile's apt-get installs are
+# pinned by no lock, so it reads the package index and is never reused by tree.
+[[job]]
+id = "image"
+tiers = ["merge"]
+inputs = [
+  "deploy/docker/",
+  ".dockerignore",
+  "setup.py",
+  "MANIFEST.in",
+  "README.md",
+  "web/",
+  "package.json",
+  "package-lock.json",
+  "pyproject.toml",
+  "uv.lock",
+  "src/personalclaw/",
+  "scripts/install_git_hooks.sh",
+  "scripts/installed_bundled_model_probe.py",
+  "tools/docker_single_container_smoke.py",
+  ".github/workflows/docker-single-container.yml",
+]
+external_inputs = ["package-index"]
+toolchain = []
+cache = []
+security = "ordinary"
+timeout_min = 60
+command = [
+  { argv = ["python3", "tools/docker_single_container_smoke.py", "--image", "{image}"] },
 ]
 
 # The browser run boots the gateway and drives a real Chromium. Its inputs are the whole tree

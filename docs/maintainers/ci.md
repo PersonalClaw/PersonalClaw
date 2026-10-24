@@ -376,10 +376,11 @@ candidate could delete one. Running them from main's copy is #3915's.
 `tools/ci/catalogue.toml` lists CI's validation jobs, one `[[job]]` entry each, and
 `tools/ci/catalogue.py` reads it into typed jobs. `python -m tools.ci run-job` and `run` run its
 jobs on a maintainer's machine (see "Local runs"), and `pr.yml` and `merge.yml` run each planned
-job through `run-job` when they are dispatched (see "The tier workflows"); `ci.yml` and
-`breadth.yml` still run their own `run:` lines. The contract table's row "every catalogue command
-is the workflow's" holds each entry to the `ci.yml` and `breadth.yml` jobs it maps to, in both
-directions:
+job through `run-job` when they are dispatched (see "The tier workflows"); `ci.yml`,
+`breadth.yml` and `docker-single-container.yml` still run their own `run:` lines. The contract
+table's row "every catalogue command is the workflow's" holds each entry to the jobs of those
+workflows it maps to (`image`'s is the single-container workflow's, until the flip retires it), in
+both directions:
 
 - Each step is one of those jobs' `run:` lines, token for token, from the same working directory
   and with the same step `env`. An entry's steps come in `ci.yml`'s order, and none comes twice.
@@ -996,8 +997,8 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   partners by key and the verdict holds every record to them, read from that output; one
   concurrency group per workflow and commit, never cancelling, and no job's group of its own; no
   job is `merge-verdict`, by its id, its name or any key the tier's plan can give a stage job; and
-  no expensive job (the suite's shards, the browser run, the package) is in both tiers' plans, so
-  the expensive tier runs once per candidate.
+  no expensive job (the suite's shards, the browser run, the package, the gateway image) is in
+  both tiers' plans, so the expensive tier runs once per candidate.
 - "every-push-runs-the-security-corpus-and-apps-contract-whatever-the-tree-check-says": merge.yml
   has its tree check, `changes` needs it and reads its answer only as the plan step's
   `PUSH_PLAN` (tested on a tested push, full on any other push, nothing on any other run), no
@@ -1068,7 +1069,8 @@ judged by the copy it replaces, and the merge that adds the check runs the whole
 ### The gateway image's layer cache
 
 The gateway image is built for a smoke by `docker-single-container.yml` and by the stage job of
-an entry that names `{image}` (#3917), each with the release's pinned buildx, and each reads its
+the catalogue's `image` entry, the one that names `{image}` (#3917), each with the release's
+pinned buildx, and each reads its
 layers from the Actions cache, scope `gateway-runtime`. GitHub keys each cache entry to the ref
 of the run that saved it: a run reads its own ref's entries and the default branch's, and saves
 only to its own. `image-cache.yml` alone saves, and only on `main`: after a push the image's
@@ -1085,7 +1087,9 @@ Each build is given no secret, no build argument, no SSH and no step env, and an
 `github-token`, so it holds no token; the cache's own credential is the runner's, which only the
 action holds. A smoke runs the build's own image by its content ID (`imageid`), never a tag.
 `tests/rails/test_ci_image_cache_tree.py` holds all of it, and holds the two workflows' path
-filters to one list that reaches every path the Dockerfile copies.
+filters and the `image` entry's inputs to one list that reaches every path the Dockerfile copies,
+`src/personalclaw/`, `uv.lock` and `deploy/docker/` among them, so a backend-only change boots
+the image it ships.
 
 The pool is shared and holds 10 GB, most of it CodeQL's databases, so an entry can be evicted. A
 build that misses is slower, never wrong.

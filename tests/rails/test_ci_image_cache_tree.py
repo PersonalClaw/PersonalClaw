@@ -18,6 +18,9 @@ planted edit below:
 4. A smoke runs the build's own content ID, never a tag.
 5. The two workflows' path filters are one list, each with its own file, and it holds every path
    the Dockerfile copies, so a change to what ships builds and boots it.
+6. The catalogue's one entry that names ``{image}`` is ``image``, its inputs are that list as
+   pathspecs, and they hold ``src/personalclaw/``, ``uv.lock`` and ``deploy/docker/``: a
+   backend-only change boots the image it ships.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ import pytest
 import yaml
 from rails_repo import REPO
 
-from tools.ci import jobs
+from tools.ci import catalogue, jobs
 
 _WORKFLOWS = ".github/workflows/"
 _WRITER = _WORKFLOWS + "image-cache.yml"
@@ -58,13 +61,42 @@ _FIXED = {
 _SMOKE_BUILD = {**_FIXED, "load": True}
 _WRITER_BUILD = {**_FIXED, "outputs": "type=cacheonly", "cache-to": _CACHE_TO}
 _SMOKE_RUN = 'python3 tools/docker_single_container_smoke.py --image "$IMAGE"'
+_CATALOGUE = catalogue.CATALOGUE
+#: The inputs #3917 names: the backend, the lock it installs from, and the image's own folder.
+_REQUIRED_INPUTS = ("src/personalclaw/", "uv.lock", "deploy/docker/")
 
 
 def _texts() -> dict[str, str]:
-    return {
+    """Every workflow by its path, and the catalogue."""
+    texts = {
         f"{_WORKFLOWS}{p.name}": p.read_text(encoding="utf-8")
         for p in sorted((REPO / _WORKFLOWS).glob("*.yml"))
     }
+    texts[_CATALOGUE] = (REPO / _CATALOGUE).read_text(encoding="utf-8")
+    return texts
+
+
+def _as_filter(spec: str) -> str:
+    """A catalogue input as a workflow path filter spells it: a folder's every path."""
+    return f"{spec}**" if spec.endswith("/") else spec
+
+
+def _entry_problems(texts: dict[str, str]) -> list[str]:
+    cat = catalogue.load(texts[_CATALOGUE], _CATALOGUE)
+    found = [j for j in cat.jobs if "image" in j.placeholders()]
+    if [j.id for j in found] != ["image"]:
+        return [f"the catalogue's entries that name {{image}} are {[j.id for j in found]}"]
+    (job,) = found
+    bad = [
+        f"the image entry's inputs leave out {spec}"
+        for spec in _REQUIRED_INPUTS
+        if spec not in job.inputs
+    ]
+    single = yaml.safe_load(texts.get(_SINGLE, "")) or {}
+    paths = list(((_on(single) or {}).get("pull_request") or {}).get("paths") or [])
+    if sorted(_as_filter(s) for s in job.inputs) != sorted(paths):
+        bad.append("the image entry's inputs are not the single-container workflow's paths")
+    return bad
 
 
 def _tracked() -> list[str]:
@@ -184,6 +216,8 @@ def _cache_problems(texts: dict[str, str]) -> list[str]:
     bad: list[str] = []
     writers: list[str] = []
     for rel, text in texts.items():
+        if not rel.startswith(_WORKFLOWS):
+            continue
         data = yaml.safe_load(text) or {}
         for job_id, _job, step in _steps(data):
             where = f"{rel.removeprefix(_WORKFLOWS)}:{job_id}"
@@ -237,6 +271,7 @@ def _problems(texts: dict[str, str], dockerfile: str, tracked: list[str]) -> lis
         *_cache_problems(texts),
         *_smoke_problems(texts),
         *_filter_problems(texts, dockerfile, tracked),
+        *_entry_problems(texts),
     ]
 
 
@@ -331,6 +366,21 @@ _TIER_FROM = "          cache-from: type=gha,scope=gateway-runtime\n      - name
             "      - src/personalclaw/**\n",
             "      - src/personalclaw/dashboard/**\n",
             "no path filter reaches it",
+        ),
+        (_CATALOGUE, '  "src/personalclaw/",\n', "", "leave out src/personalclaw/"),
+        (_CATALOGUE, '  "uv.lock",\n', "", "leave out uv.lock"),
+        (_CATALOGUE, '  "deploy/docker/",\n', "", "leave out deploy/docker/"),
+        (
+            _CATALOGUE,
+            '  "scripts/install_git_hooks.sh",\n',
+            "",
+            "inputs are not the single-container workflow's paths",
+        ),
+        (
+            _CATALOGUE,
+            '"tools/docker_single_container_smoke.py", "--image", "{image}"] }',
+            '"tools/docker_single_container_smoke.py"] }',
+            "entries that name {image} are []",
         ),
     ],
 )
