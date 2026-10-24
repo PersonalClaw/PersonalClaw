@@ -29,6 +29,43 @@ def _with(**fields) -> str:
     return json.dumps(data)
 
 
+def _without(*names: str, **fields) -> str:
+    data = json.loads(_record(**fields))
+    for name in names:
+        del data[name]
+    return json.dumps(data)
+
+
+_RUNNER = {"label": "ubuntu-24.04", "image": "ubuntu24/20270110.1", "os": "linux", "arch": "x64"}
+
+
+def test_a_record_names_what_the_job_ran_on_and_its_toolchain() -> None:
+    tools = {"python": "3.12.15", "uv-sync": "/opt/uv@sha256:" + "c" * 64}
+    data = json.loads(_record(runner=_RUNNER, toolchain=tools))
+    assert data["schema"] == "personalclaw.ci.job-record/3"
+    assert (data["runner"], data["toolchain"]) == (_RUNNER, tools)
+    [result] = verdict.from_job_records([_record(runner=_RUNNER, toolchain=tools)])
+    assert (result.runner, result.toolchain) == (_RUNNER, tools)
+    # A bare host names no image; a record written without either names null for it.
+    [bare] = verdict.from_job_records([_record(runner={**_RUNNER, "image": ""})])
+    assert bare.runner is not None and bare.runner["image"] == ""
+    data = json.loads(_record())
+    assert (data["runner"], data["toolchain"]) == (None, None)
+    [none] = verdict.from_job_records([_record()])
+    assert (none.runner, none.toolchain) == (None, None)
+
+
+def test_a_version_2_record_is_still_read_and_names_neither() -> None:
+    """Records an older run-job wrote stay readable (a run's verdict, the telemetry collector);
+    only a push's replay needs what they lack, and runs the job without it."""
+    text = _without("runner", "toolchain")
+    old = json.loads(text)
+    old["schema"] = "personalclaw.ci.job-record/2"
+    [result] = verdict.from_job_records([json.dumps(old)])
+    assert (result.key, result.result) == ("rails", verdict.SUCCESS)
+    assert (result.runner, result.toolchain) == (None, None)
+
+
 def test_a_record_reads_back_as_the_result_it_names() -> None:
     [result] = verdict.from_job_records([_record(attempt=2)])
     # A record names the partners its own job read, so it is judged against those alone.
@@ -44,7 +81,7 @@ def test_a_record_reads_back_as_the_result_it_names() -> None:
 def test_a_record_names_the_run_that_wrote_it_or_none() -> None:
     # On GitHub run-job writes $GITHUB_RUN_ID; a local record names no run.
     data = json.loads(_record(run_id=987654321))
-    assert data["schema"] == "personalclaw.ci.job-record/2"
+    assert data["schema"] == "personalclaw.ci.job-record/3"
     assert data["run_id"] == 987654321
     [result] = verdict.from_job_records([_record(run_id=987654321)])
     assert result.run_id == 987654321
@@ -133,6 +170,20 @@ def test_a_record_with_seconds_that_are_no_number_is_never_written(seconds: floa
         (_with().replace('"seconds": 1.5', '"seconds": NaN'), "NaN, which is not JSON"),
         (_with().replace('"seconds": 1.5', '"seconds": Infinity'), "Infinity, which is not JSON"),
         (_with().replace('"attempt": 1', '"attempt": -Infinity'), "-Infinity, which is not JSON"),
+        # What the job ran on (#3919): null, or exactly the four names, as text, the label, OS
+        # and architecture not empty; and a toolchain of text by toolchain word.
+        (_with(runner=[]), "runner must be null or name exactly"),
+        (_with(runner={**_RUNNER, "host": "x"}), "runner must be null or name exactly"),
+        (_with(runner={k: v for k, v in _RUNNER.items() if k != "image"}), "runner must be null"),
+        (_with(runner={**_RUNNER, "image": 1}), "runner must be null or name exactly"),
+        (_with(runner={**_RUNNER, "label": ""}), "runner must be null or name exactly"),
+        (_with(runner={**_RUNNER, "arch": ""}), "runner must be null or name exactly"),
+        (_with(toolchain=[]), "toolchain must be null or an object of strings"),
+        (_with(toolchain={"": "x"}), "toolchain must be null or an object of strings"),
+        (_with(toolchain={"python": 3}), "toolchain must be null or an object of strings"),
+        # A version-3 record without them, and a version-2 record with them.
+        (_without("runner"), "must hold exactly"),
+        (_with(schema="personalclaw.ci.job-record/2"), "must hold exactly"),
     ],
 )
 def test_a_record_it_cannot_read_is_refused(text: str, why: str) -> None:

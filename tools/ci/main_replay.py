@@ -43,6 +43,13 @@ replayed only when all of these hold, and runs otherwise:
 - exactly one verdict file names it, of attempt 1, a ``success``, on the head, reading no
   partner repository (the push cannot hold a partner's head to the pull request's), with an
   empty quarantined-failure list and no rerun;
+- that file is the source run's own (its ``run_id``), and names what the job ran on and its
+  toolchain (``job-record/3``): the runner label ``main``'s catalogue gives the job, the image
+  that label runs now (the caller's ``images``, as the push read them; a container job's image
+  is its catalogue's), never an empty one, the Python ``main``'s catalogue names, and an
+  identity for every word of the job's toolchain, none of them absent. So a moved runner image,
+  another toolchain, or a record that names neither runs the job: the tree alone is not every
+  input a pass stood on;
 - a ``ttl`` job's attempt 1 started less than its TTL before ``now``, and not after it;
 - every other shard of a sharded job replays too.
 
@@ -70,6 +77,7 @@ from datetime import datetime
 from typing import Any
 
 from . import verdict
+from .capabilities import ABSENT
 from .catalogue import NEVER, Job, Reuse
 from .tree_tested import (
     _BASE_CHANGED,
@@ -117,6 +125,8 @@ class Decision:
     run_url: str = ""
     ttl_age_seconds: float | None = None
     record_digest: str | None = None
+    #: The image the replayed pass ran on, which is the one its label runs now.
+    image: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -127,6 +137,7 @@ class Decision:
             "reason": self.reason,
             "run_url": self.run_url or None,
             "ttl_age_seconds": self.ttl_age_seconds,
+            "image": self.image or None,
         }
 
 
@@ -363,21 +374,51 @@ def _files(texts: object, run_id: int) -> dict[str, list[_File]]:
 # ── one key ──────────────────────────────────────────────────────────────────────────────────
 
 
+def _ran_on(job: Job, result: verdict.JobResult, images: Mapping[str, str]) -> str | None:
+    """Why *result* did not run on what *job* runs on now, or None when it did: the label
+    ``main``'s catalogue gives it, the image that label runs now, the Python the catalogue names
+    and an identity for every word of its toolchain."""
+    runner, toolchain = result.runner, result.toolchain
+    if runner is None or toolchain is None:
+        return "its verdict file names no runner or toolchain, so what it ran on is not known"
+    if runner["label"] != job.platform:
+        return f"it ran on {runner['label']}, and main's catalogue runs it on {job.platform}"
+    now_runs = job.container if job.container is not None else images.get(job.platform)
+    if now_runs is None:
+        return f"the push does not know the image {job.platform} runs now"
+    if not runner["image"]:
+        return "its verdict file names no image"
+    if runner["image"] != now_runs:
+        return f"it ran on {runner['image']}, and {job.platform} runs {now_runs} now"
+    if toolchain.get("python") != (job.python or ""):
+        ran = toolchain.get("python")
+        return (
+            f"it ran Python {ran or 'unnamed'}, and main's catalogue names {job.python or 'none'}"
+        )
+    for word in job.toolchain:
+        identity = toolchain.get(word)
+        if not identity or identity == ABSENT:
+            return f"its verdict file names no identity for its toolchain's {word}"
+    return None
+
+
 def _judge(
+    job: Job,
     reuse: Reuse,
     key: str,
     source: _Source,
     files: Mapping[str, list[_File]],
     now: float,
+    images: Mapping[str, str],
 ) -> tuple[bool, str, _File | None]:
-    """Whether *key* may be replayed from *source*, why, and the file it stands on."""
-    job = source.listed.get(key)
-    if job is None:
+    """Whether *key* of *job* may be replayed from *source*, why, and the file it stands on."""
+    listed = source.listed.get(key)
+    if listed is None:
         return False, f"attempt 1 of run {source.run} has no job named {key}", None
-    if job.get("status") != "completed":
-        return False, f"its job in attempt 1 is {job.get('status') or 'of no status'}", None
-    if job.get("conclusion") != "success":
-        concluded = job.get("conclusion") or "nothing"
+    if listed.get("status") != "completed":
+        return False, f"its job in attempt 1 is {listed.get('status') or 'of no status'}", None
+    if listed.get("conclusion") != "success":
+        concluded = listed.get("conclusion") or "nothing"
         return False, f"it concluded {concluded} in attempt 1; a later attempt never counts", None
     mine = files.get(key, [])
     if not mine:
@@ -396,6 +437,12 @@ def _judge(
         return False, f"its verdict file names {named}, not #{source.pull_request}'s head", None
     if identity.external_revisions:
         return False, "its pass read a partner repository, whose head the push cannot hold", None
+    if result.run_id != source.run:
+        named = f"run {result.run_id}" if result.run_id is not None else "no run"
+        return False, f"its verdict file names {named}, not run {source.run}", None
+    elsewhere = _ran_on(job, result, images)
+    if elsewhere is not None:
+        return False, elsewhere, None
     if file.quarantined:
         return False, f"its pass waived {len(file.quarantined)} quarantined failure(s)", None
     if file.rerun is not None:
@@ -420,6 +467,7 @@ def _receipt(
     workflow: str,
     controller_revision: str,
     toolchain: Mapping[str, str],
+    images: Mapping[str, str],
 ) -> dict[str, Any]:
     digests = {
         "plan": _digest(_canonical([[d.key, d.reuse] for d in decisions])),
@@ -443,6 +491,7 @@ def _receipt(
             "pull_request": source.pull_request,
             "head": source.head,
         },
+        "images": dict(sorted(images.items())),
         "jobs": [d.to_json() for d in decisions],
     }
 
@@ -456,6 +505,7 @@ def _check_inputs(
     controller_revision: object,
     toolchain: object,
     now: object,
+    images: object,
 ) -> tuple[Job, ...]:
     """The plan, once every input the caller gave is what it must be."""
     for name, value in texts.items():
@@ -474,6 +524,10 @@ def _check_inputs(
         )
     ):
         raise Refused("the toolchain must map names to non-empty strings, and name one")
+    if not isinstance(images, Mapping) or not all(
+        isinstance(k, str) and k and isinstance(v, str) and v for k, v in images.items()
+    ):
+        raise Refused("the images must map runner labels to non-empty image names")
     if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
         raise Refused(f"now {now!r} is not a finite time")
     workflow = str(texts["workflow"])
@@ -499,12 +553,15 @@ def decide(
     now: float,
     controller_revision: str,
     toolchain: Mapping[str, str],
+    images: Mapping[str, str],
     workflow: str = WORKFLOW,
 ) -> Replay:
     """Each planned job's decision for one push: replayed from the pull request's first run's
-    attempt 1, or run. :class:`Refused` for the caller's own inputs; never raises after that."""
+    attempt 1, or run. *images* is the image each runner label runs now, as the push read it
+    (``<ImageOS>/<ImageVersion>``); a job on a label it does not name runs. :class:`Refused` for
+    the caller's own inputs; never raises after that."""
     texts = dict(event=event, ref=ref, repo=repo, sha=sha, before=before, workflow=workflow)
-    planned = _check_inputs(tuple(plan), texts, controller_revision, toolchain, now)
+    planned = _check_inputs(tuple(plan), texts, controller_revision, toolchain, now, images)
     if event != "push" or ref != MAIN:
         why = f"a {event or 'unnamed'} run on {ref or 'no ref'} is not a push to main"
         return _everything(planned, f"{why}, so nothing is replayed", workflow)
@@ -538,7 +595,7 @@ def decide(
             if reuse == NEVER:
                 ok, reason, file = False, _never(job), None
             else:
-                ok, reason, file = _judge(reuse, key, source, files, now)
+                ok, reason, file = _judge(job, reuse, key, source, files, now, images)
             mine.append(
                 Decision(
                     key,
@@ -549,6 +606,7 @@ def decide(
                     source.run_url if ok else "",
                     ttl_age,
                     _digest(file.raw) if ok and file else None,
+                    (file.result.runner or {}).get("image", "") if ok and file else "",
                 )
             )
         failed = [d for d in mine if not d.replayed]
@@ -571,6 +629,7 @@ def decide(
         workflow=workflow,
         controller_revision=controller_revision,
         toolchain=toolchain,
+        images=images,
     )
     reason = (
         f"#{source.pull_request}'s head has this tree and contains the previous main; its first"

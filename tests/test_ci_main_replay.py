@@ -46,6 +46,10 @@ PULLS = f"/repos/{REPO}/commits/{SHA}/pulls"
 STARTED = 1_800_000_000.0  # 2027-01-15T08:00:00Z
 NOW = STARTED + 3600.0
 TOOLCHAIN = {"python": "3.12.15", "uv": "0.13.1"}
+#: The image the push reads its own label running now, and what a record of attempt 1 ran on.
+IMAGE = "ubuntu24/20270110.1"
+IMAGES = {"ubuntu-24.04": IMAGE}
+RUNNER = {"label": "ubuntu-24.04", "image": IMAGE, "os": "linux", "arch": "x86_64"}
 
 
 def _job(job_id: str, reuse: str | None = "tree", **kw: Any) -> catalogue.Job:
@@ -83,7 +87,10 @@ def _record(key: str, *, head: str = HEAD, **kw: Any) -> bytes:
         identity=verdict.Identity(head, {}),
         steps=[(["uv", "run", "pytest"], 0, 12.5)],
         attempt=1,
+        run_id=RUN,
         quarantined=[],
+        runner=RUNNER,
+        toolchain={"python": ""},
     )
     fields.update(kw)
     return verdict.job_record(**fields).encode()
@@ -180,6 +187,7 @@ def _kwargs(**changes: Any) -> dict[str, Any]:
         now=NOW,
         controller_revision=CONTROLLER,
         toolchain=TOOLCHAIN,
+        images=IMAGES,
     )
     kwargs.update(changes)
     return kwargs
@@ -534,7 +542,7 @@ def test_an_unreadable_verdict_file_runs_every_job(subtests: Any) -> None:
         "a record with no quarantined list": _record("rails").replace(
             b'"quarantined": [],\n ', b""
         ),
-        "a record of another schema": _record("rails").replace(b"job-record/2", b"job-record/1"),
+        "a record of another schema": _record("rails").replace(b"job-record/3", b"job-record/1"),
     }
     assert len(planted) == 4
     for name, bad in planted.items():
@@ -635,6 +643,139 @@ def test_a_job_attempt_1_did_not_pass_runs_and_the_rest_replay(subtests: Any) ->
             assert _replayed(replay) == set(REPLAYABLE) - {"rails"}, name
             [rails] = [d for d in replay.jobs if d.key == "rails"]
             assert rails.reason, name
+
+
+# ── What the pass ran on: the tree alone is not every input (#3919) ────────────────────────────
+
+
+def _schema_2(key: str) -> bytes:
+    """A record as job-record/2 wrote it, before records named a runner or a toolchain."""
+    data = json.loads(_record(key))
+    del data["runner"], data["toolchain"]
+    data["schema"] = "personalclaw.ci.job-record/2"
+    return (json.dumps(data, sort_keys=True, indent=1) + "\n").encode()
+
+
+def _moved(**runner: str) -> dict[str, str]:
+    return {**RUNNER, **runner}
+
+
+#: Each shape: rails's plan entry, its record, and what the reason says.
+RAN_ELSEWHERE: dict[str, tuple[catalogue.Job, bytes, str]] = {
+    "a moved runner image": (
+        _job("rails"),
+        _record("rails", runner=_moved(image="ubuntu24/20270117.1")),
+        f"ran on ubuntu24/20270117.1, and ubuntu-24.04 runs {IMAGE} now",
+    ),
+    "a record that names no image": (
+        _job("rails"),
+        _record("rails", runner=_moved(image="")),
+        "names no image",
+    ),
+    "a label the push names no image for": (
+        _job("rails", platform="macos-15"),
+        _record("rails", runner=_moved(label="macos-15")),
+        "does not know the image macos-15 runs now",
+    ),
+    "another runner label": (
+        _job("rails"),
+        _record("rails", runner=_moved(label="ubuntu-22.04")),
+        "ran on ubuntu-22.04, and main's catalogue runs it on ubuntu-24.04",
+    ),
+    "a container job on another image": (
+        _job("rails", container="ghcr.io/example/runner@sha256:" + "1" * 64),
+        _record("rails", runner=_moved(image="ghcr.io/example/runner@sha256:" + "2" * 64)),
+        "runs ghcr.io/example/runner@sha256:" + "1" * 64 + " now",
+    ),
+    "another Python": (
+        _job("rails", python="3.12.15"),
+        _record("rails", toolchain={"python": "3.12.14"}),
+        "ran Python 3.12.14, and main's catalogue names 3.12.15",
+    ),
+    "a toolchain word with no identity": (
+        _job("rails", toolchain=("uv-sync",)),
+        _record("rails", toolchain={"python": ""}),
+        "no identity for its toolchain's uv-sync",
+    ),
+    "a toolchain word found absent": (
+        _job("rails", toolchain=("uv-sync",)),
+        _record("rails", toolchain={"python": "", "uv-sync": "absent"}),
+        "no identity for its toolchain's uv-sync",
+    ),
+    "a record that names no runner": (
+        _job("rails"),
+        _record("rails", runner=None),
+        "names no runner or toolchain",
+    ),
+    "a record that names no toolchain": (
+        _job("rails"),
+        _record("rails", toolchain=None),
+        "names no runner or toolchain",
+    ),
+    "a job-record/2 record": (_job("rails"), _schema_2("rails"), "names no runner or toolchain"),
+    # Forged into the source run's files: a record another run, or a local run, wrote.
+    "a record of another run": (
+        _job("rails"),
+        _record("rails", run_id=RUN + 1),
+        f"names run {RUN + 1}, not run {RUN}",
+    ),
+    "a record of no run (a local one)": (
+        _job("rails"),
+        _record("rails", run_id=None),
+        f"names no run, not run {RUN}",
+    ),
+}
+
+
+def test_a_pass_on_another_runner_or_toolchain_runs_and_the_rest_replay(subtests: Any) -> None:
+    assert len(RAN_ELSEWHERE) == 13
+    for name, (rails, record, says) in RAN_ELSEWHERE.items():
+        with row(subtests, shape=name):
+            files = _files()
+            files["rails"] = record
+            replay = _decide(files=files, plan=(rails, *PLAN[1:]))
+            assert _replayed(replay) == set(REPLAYABLE) - {"rails"}, name
+            [decision] = [d for d in replay.jobs if d.key == "rails"]
+            assert says in decision.reason, (name, decision.reason)
+
+
+def test_a_pass_on_the_runner_and_toolchain_the_push_runs_now_replays() -> None:
+    """The controls: a declared Python and toolchain words with identities, and a container
+    job's own image, which the push needs no image of its label for."""
+    python = _job("rails", python="3.12.15", toolchain=("uv-sync", "node"))
+    tools = {"python": "3.12.15", "uv-sync": "/opt/uv@sha256:" + "3" * 64, "node": "/opt/node@x"}
+    container = "ghcr.io/example/runner@sha256:" + "1" * 64
+    for rails, record in (
+        (python, _record("rails", toolchain=tools)),
+        (
+            _job("rails", platform="macos-15", container=container),
+            _record("rails", runner=_moved(label="macos-15", image=container)),
+        ),
+    ):
+        files = _files()
+        files["rails"] = record
+        replay = _decide(files=files, plan=(rails, *PLAN[1:]))
+        assert _replayed(replay) == set(REPLAYABLE), replay.lines()
+
+
+def test_the_receipt_names_the_images_compared_and_each_replayed_jobs_image() -> None:
+    replay = _decide()
+    assert replay.receipt is not None
+    assert replay.receipt["images"] == IMAGES
+    images = {j["key"]: j["image"] for j in replay.receipt["jobs"]}
+    assert images == {**{key: IMAGE for key in REPLAYABLE}, "python-suite": None}
+
+
+def test_a_record_names_what_run_job_ran_it_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The writer's half: run-job on GitHub names the label, the image and the toolchain, and a
+    record with them replays (the quarantine test runs the same job with a waiver)."""
+    _, record = _run_job_record(tmp_path, monkeypatch, None)
+    data = json.loads(record)
+    assert data["runner"]["label"] == "ubuntu-24.04" and data["runner"]["image"] == IMAGE
+    assert data["runner"]["os"] == sys.platform and data["runner"]["arch"]
+    assert data["toolchain"]["python"] == "" and data["run_id"] == RUN
 
 
 def test_a_job_green_only_on_a_later_attempt_runs_and_the_later_attempt_is_never_read() -> None:
@@ -752,8 +893,17 @@ def _git(repo: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def _run_job_record(tmp_path: Path, junit: str | None) -> tuple[str, bytes]:
-    """Run a planted job through run-job's step path; return the head and the record it wrote."""
+def _run_job_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, junit: str | None
+) -> tuple[str, bytes]:
+    """Run a planted job through run-job's step path, as attempt 1 of the source run on the
+    image the push runs now; return the head and the record it wrote."""
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", str(RUN))
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    image_os, image_version = IMAGE.split("/")
+    monkeypatch.setenv("ImageOS", image_os)
+    monkeypatch.setenv("ImageVersion", image_version)
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".gitignore").write_text("reports/\n/.local/\n")
@@ -766,7 +916,9 @@ def _run_job_record(tmp_path: Path, junit: str | None) -> tuple[str, bytes]:
     )
     job = _job("rails", command=(catalogue.Step((sys.executable, "-c", program)),))
     job = dataclasses.replace(job, junit=("reports/junit.xml",))
-    host = jobs.Host(root=repo, family="ubuntu-", path=os.environ.get("PATH", os.defpath))
+    host = jobs.Host(
+        root=repo, family="ubuntu-", path=os.environ.get("PATH", os.defpath), on_github=True
+    )
     outcome = jobs.run_one(
         catalogue.Catalogue((job,)), job, None, host, jobs.Options(), tmp_path / "work"
     )
@@ -782,9 +934,9 @@ def _run_job_record(tmp_path: Path, junit: str | None) -> tuple[str, bytes]:
     ],
 )
 def test_a_pass_with_a_quarantined_failure_is_never_replayed(
-    tmp_path: Path, junit: str | None, replayed: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, junit: str | None, replayed: bool
 ) -> None:
-    head, record = _run_job_record(tmp_path, junit)
+    head, record = _run_job_record(tmp_path, monkeypatch, junit)
     answers = _answers(head)
     answers[JOBS] = {
         "total_count": 1,
@@ -810,6 +962,10 @@ def test_bad_caller_inputs_are_refused_before_anything_is_read(subtests: Any) ->
         "no toolchain": {"toolchain": {}},
         "an empty toolchain version": {"toolchain": {"python": ""}},
         "a toolchain version that is not text": {"toolchain": {"python": 3}},
+        "images that are not a mapping": {"images": [("ubuntu-24.04", IMAGE)]},
+        "an image of no label": {"images": {"": IMAGE}},
+        "a label of no image": {"images": {"ubuntu-24.04": ""}},
+        "an image that is not text": {"images": {"ubuntu-24.04": 1}},
         "now not a number": {"now": math.nan},
         "now infinite": {"now": math.inf},
         "now a bool": {"now": True},
