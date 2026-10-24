@@ -85,10 +85,28 @@ one waiting run and a newer one replaces it, so a tag made behind a running rele
 with no release. The job reads both with its own token, given `actions: read` for that alone. Only then is the App's token made, asked for `contents: write`
 alone and handed only to the step that creates the annotated tag and its ref. The job runs only
 on `main`, in the `ci-controller` environment, which deploys only from `main` and holds the
-App's key. The trusted `merge-verdict` (#3910) and the breadth evidence (#3913) join the gate
-once they exist. `-f rehearsal=true` creates `rehearsal-<tag>` instead: the same checks and the
-same App, under a name no `v*` rule and no release trigger sees, which is how the path is proved
-without a release (on a scratch copy of the creation ruleset over `refs/tags/rehearsal-v*`).
+App's key. The trusted `merge-verdict` (#3910) joins the gate once `main-protect` requires it.
+`-f rehearsal=true` creates `rehearsal-<tag>-<sha7>` instead: the same checks but breadth's and
+the same App, under a name no `v*` rule and no release trigger sees, which is how the path is
+proved without a release (on a scratch copy of the creation ruleset over
+`refs/tags/rehearsal-v*`). The short commit lets a later commit rehearse the same tag, since tags
+are never moved or deleted; the gate matches the full commit, never the name.
+
+**Breadth in the gate.** The rehearsal tag's push starts `breadth.yml` on the commit
+(`push: tags: [rehearsal-v*]`), off `main`, where nothing is reused, so nothing dispatches it and
+no workflow holds `actions: write` for it. A release tag's gate (`release_tag.breadth_green`)
+then reads breadth's runs of the commit off `main`. The newest must be a rehearsal tag's push,
+completed with success, every `breadth-evidence-<sha256>` record of it downloaded and verified
+under its digest, naming that run and the commit's tree, and together satisfying a release
+(`breadth_evidence.satisfies_release`: a record of every attempt, every leg run there, none
+carried, all green). The run's commit is the tagged one, whose definitions the gate already holds
+to `main`'s, so the `breadth.yml` that ran is `main`'s, and a rehearsal tag someone else pushed
+cannot stand in for another tree. An earlier red run of the commit refuses unless the owner's
+record, `.github/release-breadth-exceptions.json` on `main`, names that run with that commit and
+why (#4712). Only the owner writes it, by hand, and that is a rule, not a check: agents act on
+GitHub as the owner's account. The gate never waits: until the run exists and has finished, it
+refuses, naming the run or saying none exists yet. The record's zip is read through the API's
+redirect, and the token is never sent to the storage address it names.
 `tests/rails/test_ci_release_tag_tree.py` holds the workflow's shape, both steps passing the
 rehearsal on alike. A hand-pushed `v*` tag is refused, the maintainer's included (the
 [release runbook](release-runbook.md#tagging) says how to tag).
@@ -1336,7 +1354,8 @@ earlier plan is read. `ci.yml` plans afresh on every run: nothing there is carri
 
 ### `breadth.yml`
 
-The rest of the platform breadth runs nightly (09:37 UTC) and on dispatch:
+The rest of the platform breadth runs nightly (09:37 UTC), on dispatch, and on a rehearsal
+tag's push, which is how a release measures its commit ([the release tags](#the-release-tags)):
 
 - **`freshness`** runs first. On `main` it reads the newest `breadth-evidence-<sha256>` record
   of an earlier `main` run, refuses it unless its bytes hash to that digest, and follows a
@@ -2101,16 +2120,16 @@ Two rules hold for every seam:
 | Before opening or updating a pull request | `make gate`: the merge tier, on the committed tree, one record per job | advice |
 | The pull request | `ci.yml`'s run on the pull request | the gate |
 | A push to `main` | `ci.yml`'s main-push run: `tree-check`, then every job it does not skip | the check of what landed |
-| A release | a tag on a `main` commit whose own main-push run is green ([release runbook](release-runbook.md#tagging)) | the release |
+| A release | a tag on a `main` commit whose own main-push run is green and whose breadth, started by its rehearsal tag, is green ([release runbook](release-runbook.md#tagging)) | the release |
 
 There is no batch step: each change gets its own pull request and its own verdict. Every change
 is meant to reach `main` as the squash merge of an up-to-date pull request. `main` refuses a
 direct push for everyone ([the ruleset on `main`](#the-ruleset-on-main)); a push that reaches it
 some other way finds no pull request merged as that commit, so `tree-check` answers no and every
 job runs. Until #3910's required verdict lands, a pull request can still merge with red checks:
-the `merge-verdict` check is not posted yet, and its controller App comes with #3910. The
-release gate that refuses any other commit and reads the nightly breadth is #3911's and is not
-built: until then the runbook's rule is the check.
+the `merge-verdict` check is not posted yet, and its controller App comes with #3910. #3911's
+release gate (`release-tag.yml`) refuses any other commit, and reads the breadth its rehearsal
+tag started on it ([the release tags](#the-release-tags)).
 
 ### The seams
 

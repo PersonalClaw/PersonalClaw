@@ -284,6 +284,37 @@ makes this safe.
   delete the package by hand (Packages → `release-rehearsal-web` → Package settings → Delete).
   Log the run, the push and the deletion in the CI settings log.
 
+### 7. Start breadth on the commit you will tag, hours ahead
+
+A release tag needs its commit's breadth green: every breadth leg run on that commit, off
+`main`, where nothing is reused (#3911). A rehearsal of the tag starts it. Dispatch the tagging
+workflow on the commit with `-f rehearsal=true` (the command is under [Tagging](#tagging)): it
+makes `rehearsal-v0.1.3-<sha7>`, and that tag's push runs `breadth.yml` on the commit. The run
+takes hours, and the tagging workflow never waits for it: until it has finished green, a real
+tag of the commit is refused, naming the run, or saying no run exists yet. So the order is
+rehearse, then breadth, then tag.
+
+- **Green:** tag the same commit (below).
+- **Red:** fix it, land the fix, and rehearse the new commit. It gets its own
+  `rehearsal-v0.1.3-<sha7>`, so no tag is moved or deleted. Rehearsal tags stay.
+- **An earlier red of the same commit** refuses its tag, even behind a green run, unless the
+  owner's record names it. The newest run is never passed over. The record is
+  `.github/release-breadth-exceptions.json` on `main`:
+
+  ```json
+  {
+    "about": "The owner's record of red breadth runs a release may pass over. Only the owner edits this file, by hand.",
+    "exceptions": [
+      {"run_id": 123, "commit": "<the full commit id>", "why": "what was wrong with that run"}
+    ]
+  }
+  ```
+
+  Only the owner creates or edits it, by hand, through a pull request the owner merges. Agents
+  never do. That is a rule, not something a check can enforce: agents act on GitHub as the
+  owner's account, so nothing can tell who wrote an entry. `tests/rails/test_ci_release_tag_tree.py`
+  holds its shape when it exists. Until it does, nothing is excused.
+
 ## Tagging
 
 **Nothing in `release.yml` can be fixed for a tag once you push it.** The tag's run, a
@@ -315,10 +346,12 @@ gh workflow run release-tag.yml --ref main -f tag=v0.1.3 -f commit="$(git rev-pa
 It refuses, naming why, a tag the release's parser refuses, a commit that is not on `main`, a
 commit whose workflows, actions or `tools/ci` differ from `main`'s, a tag that exists, and a
 commit whose own push run on `main` is not green: still running, failed, cancelled or
-superseded, with the run's link. Then
+superseded, with the run's link. For a release tag it also refuses a commit whose breadth is
+not green ([step 7](#7-start-breadth-on-the-commit-you-will-tag-hours-ahead)). Then
 it creates the annotated tag (`PersonalClaw v0.1.3`) through the App, and the tag's push starts
-`release.yml` as before. To try the path without a release, add `-f rehearsal=true`: it makes
-`rehearsal-v0.1.3`, which nothing releases; delete it after.
+`release.yml` as before. To start breadth, or to try the path without a release, add
+`-f rehearsal=true`: it makes `rehearsal-v0.1.3-<sha7>`, which nothing releases, and its push
+starts breadth on the commit. Leave it in place.
 
 **Break glass, the owner only.** If the App cannot tag (its key revoked or lost, the App
 suspended, a GitHub outage that stops the workflow), the owner, and no agent, disables the

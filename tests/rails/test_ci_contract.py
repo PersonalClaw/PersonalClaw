@@ -2298,12 +2298,24 @@ def _runner_labels(job: dict[str, Any]) -> list[str]:
     return labels + _matrix_values(job, "os")
 
 
+def _starts_on_a_change(workflow: dict[str, Any]) -> bool:
+    """Whether a pull request or a branch push starts the workflow. A push filtered to tags alone
+    (breadth's ``rehearsal-v*``, a release's ``v*``) starts on no branch's push."""
+    triggers = _triggers(workflow)
+    if "pull_request" in triggers:
+        return True
+    if "push" not in triggers:
+        return False
+    push = triggers["push"]
+    return not (isinstance(push, dict) and push and set(push) <= {"tags", "tags-ignore"})
+
+
 def push_breadth_violations(tree: Tree) -> list[str]:
     """No ``macos-14`` leg anywhere (any size, any case, in the forms :func:`_runner_labels`
-    reads), and coverage only in a workflow no push or PR starts."""
+    reads), and coverage only in a workflow no pull request or branch push starts."""
     bad: list[str] = []
     for name, workflow in _workflows(tree):
-        on_change = {"push", "pull_request"} & set(_triggers(workflow))
+        on_change = _starts_on_a_change(workflow)
         for job_id, job in (workflow.get("jobs") or {}).items():
             if any(
                 re.fullmatch(r"macos-14(?:-.+)?", label, flags=re.IGNORECASE)
@@ -4576,6 +4588,12 @@ ROWS: tuple[Row, ...] = (
                 _CI,
                 _MACOS_RUN,
                 "uv run pytest --cov=personalclaw -n 2 -q",
+            ),
+            _plant(
+                "breadth's coverage on a branch push",
+                _BREADTH,
+                '    tags: ["rehearsal-v*"]\n',
+                '    tags: ["rehearsal-v*"]\n    branches: ["**"]\n',
             ),
             _plant(
                 "--cov on a gate shard",
