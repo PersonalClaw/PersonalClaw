@@ -70,7 +70,7 @@ def recorded(tmp_path_factory) -> rails_select.Record:
         env=env,
         capture_output=True,
         text=True,
-        timeout=100,  # inside the 120 s mark of the test that builds this fixture
+        timeout=90,  # inside the 100 s mark of the test that builds this fixture
         check=False,
     )
     assert done.returncode == 0, done.stdout[-4000:] + done.stderr[-2000:]
@@ -78,7 +78,7 @@ def recorded(tmp_path_factory) -> rails_select.Record:
     return rails_select.load(data, "the plant's record")
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(100)
 def test_each_break_selects_the_rail_it_broke_and_an_unread_path_neither(recorded) -> None:
     # The plants name real files the rails read: the doctor is a reporter the stderr rail
     # names, and the app-code test is a module the patches rail parses.

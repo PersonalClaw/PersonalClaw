@@ -764,5 +764,5 @@ reason = "the schedule history appended, rotated and trimmed at its real sizes; 
 
 [[mark]]
 site = "tests/rails/test_rails_select_names_the_rails_a_change_reads_tree.py::test_each_break_selects_the_rail_it_broke_and_an_unread_path_neither"
-cap = 120
-reason = "a child pytest of two rails with every read it makes recorded on the real tree, built by this test as its module fixture; 27 s locally and past 30 s on CI (rails (1), 2026-10-24), and the child is held to 100 s"
+cap = 100
+reason = "a child pytest of two rails with every read it makes recorded on the real tree, built by this test as its module fixture; 50 s on CI at worst (rails (1), 2026-10-24), and the child is held to 90 s"
