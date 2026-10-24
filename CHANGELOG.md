@@ -25,6 +25,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The desktop app runs Electron 44.9.1, which stops trusting the compromised eMudhra intermediate certificates (GHSA-jr5w-w6x2-84p9, high).**
 - **The gateway image's agent CLIs install body-parser 2.4.0, which fixes a denial of service through trailing bytes after a compressed request body (GHSA-27r3-jxmh-p828, high).**
+- **The gateway image installs filelock 4.2.1 and setuptools 84.1.0, which fix filelock's ReadWriteLock reopening its lock database through a planted symlink (GHSA-v4x8-3wr5-3wq8, high) and two Windows-only lock flaws (GHSA-9vhv-jxww-xfm5, GHSA-567q-5qvw-pf92), and setuptools' Windows path escape through `namespace_packages.txt` (GHSA-xmj3-9gf7-h52w). The wheel builds on setuptools 84.1.0 too.**
 
 ## [0.2.6] — 2026-10-22
 
