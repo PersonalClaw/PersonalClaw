@@ -212,7 +212,7 @@ _INPUT_ROWS = {
     "browse-live": ("src/personalclaw/browse/x.py", None),
     "security": ("tests/security/test_x.py", None),
     "apps-contract": ("src/personalclaw/sdk/channel.py", "docs/vision.md"),
-    "audit": ("uv.lock", None),
+    "audit": ("uv.lock", "docs/vision.md"),
 }
 
 
@@ -405,19 +405,15 @@ def test_what_the_planner_cannot_read_plans_the_whole_merge_tier(paths) -> None:
 
 def test_no_plan_leaves_out_the_rails_or_a_security_or_live_job() -> None:
     """The rails and their own check (which holds every rail to one half) are in every plan,
-    with the security and live jobs."""
+    with the security jobs and the live ones breadth does not run every night."""
     always = (catalogue.MERGE_NEEDS_JOB, catalogue.RAILS_CHECKS_JOB)
     floor = {
-        j.id for j in _CAT.tier("merge") if j.id in always or j.security == "security" or j.live
+        j.id
+        for j in _CAT.tier("merge")
+        if j.id in always or j.security == "security" or (j.live and j.nightly is None)
     }
-    assert {
-        "rails",
-        "rails-checks",
-        "python-suite",
-        "python-suite-macos",
-        "browse-live",
-        "audit",
-    } <= floor
+    assert {"rails", "rails-checks", "python-suite", "python-suite-macos", "browse-live"} <= floor
+    assert "audit" not in floor, "audit's nightly mark lets the plan select it by its inputs"
     for path in [*MAY_SKIP_E2E, *MUST_RUN_E2E, *_OVERRIDE_ROWS]:
         assert floor <= set(_plan(path).jobs), path
 

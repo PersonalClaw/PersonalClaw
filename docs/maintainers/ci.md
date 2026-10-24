@@ -2882,11 +2882,17 @@ resolution would be clean:
 It fails on a tool that did not run (no report, or one that cannot be read), on a high or
 critical finding no live waiver covers, and on a waiver that is expired, more than 30 days
 out, missing a field, or matching no finding. pip-audit reports no severity, so a Python
-finding gates as a high one would. Every other finding is listed in the job summary. It runs
-as `ci.yml`'s `audit` job, gated on `tree-check` like every job a tested tree skips, and as
-breadth's nightly `audit` leg, whose red opens the leg's issue. A new advisory on a dependency
-no pull request touched therefore stops merging until it is fixed or waived. The release half,
-refusing an unwaived critical, is #3911's.
+finding gates as a high one would. Every other finding is listed in the job summary.
+
+It runs as breadth's nightly `audit` leg every night, whatever changed, and in the merge tier
+when a change reaches what it audits: the catalogue's `audit` entry is marked
+`nightly = "audit-nightly"`, so the plan selects it by its inputs (the locks and manifests, its
+code and waivers) rather than holding it in every plan as a live job. A new advisory on a
+dependency no pull request touched therefore surfaces on breadth's nightly red, whose issue the
+leg opens, and the release gate's breadth check holds a release on that red until it is fixed or
+waived. Until the tier workflows run by the plan (#3915), `ci.yml`'s `audit` job, gated on
+`tree-check` like every job a tested tree skips, still runs it on every pull request. The release
+half, refusing an unwaived critical, is #3911's.
 
 Waivers are `[[waiver]]` entries in `tools/ci/audit-baseline.toml`, in the form of the
 exceptions below. Not audited here: the apps' and the website's locks, which their own

@@ -543,7 +543,10 @@ def test_a_docs_only_change_plans_none_of_them() -> None:
     for tier in ("change", "merge"):
         p = planner.plan(_CAT, tier, ["docs/maintainers/ci.md"], overrides=areas, root=REPO)
         assert not p.full, p.full_reasons
-        assert not {"client", "package", "web-unit", "web-build"} & set(p.jobs), (tier, p.jobs)
+        assert not {"client", "package", "audit", "web-unit", "web-build"} & set(p.jobs), (
+            tier,
+            p.jobs,
+        )
 
 
 # ── the planted controls ─────────────────────────────────────────────────────────────────────
