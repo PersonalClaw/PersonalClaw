@@ -16,6 +16,11 @@
  * writes the script and the seeded home under `<smoke-dir>`, and prints the script's path. The
  * script leaves the gateway's pid in `<smoke-dir>/gateway.pid`: the shell starts the gateway in a
  * process group of its own, so the smoke stops it by that pid when it is done.
+ *
+ * Before the gateway starts, the script seeds one paused code loop (`CODE_LOOP`) through the
+ * checkout's own loop store, so the gateway names a cockpit the smoke's `personalclaw://code/<id>`
+ * link can open (#3827): no model, no worker, and nothing runs it. The seed refuses the default
+ * home, `~/.personalclaw`, before it writes anything.
  */
 
 const fs = require("node:fs");
@@ -27,14 +32,36 @@ const SCRIPT = path.join(BACKEND_DIR, "personalclaw-backend");
 const SEED = path.join(REPO, "web", "e2e", "fixtures", "home");
 const SCRIPTED = path.join(REPO, "web", "e2e", "fixtures", "scripted-chat.json");
 
+/** The paused code loop the gateway names: its cockpit, the file its changes pane opens, and a task. */
+const CODE_LOOP = Object.freeze({ id: "c0ffee11", name: "Smoke cockpit", diff: "src/app.py", task: "ta-5m0ke0aa" });
+
+/** The seed, run by the checkout's Python in the gateway's home: the loop once, the default home never. */
+const SEED_CODE_LOOP = [
+  "import os, sys",
+  "from personalclaw.config.loader import uses_default_home",
+  "if not os.environ.get('PERSONALCLAW_HOME') or uses_default_home():",
+  "    sys.exit('the smoke seeds its own home only, never the default one')",
+  "from personalclaw.loop import store",
+  "from personalclaw.loop.loop import Loop",
+  `if store.get(${JSON.stringify(CODE_LOOP.id)}) is None:`,
+  `    store.create(Loop(id=${JSON.stringify(CODE_LOOP.id)}, name=${JSON.stringify(CODE_LOOP.name)}, kind='code', task='Opened by a link, and run by nothing', status='paused', workspace_dir=os.environ['PERSONALCLAW_WORKSPACE']))`,
+].join("\n");
+
+/** The Python beside the checkout's `personalclaw`, else the one on PATH. */
+function pythonFor(command) {
+  const beside = path.isAbsolute(command) ? path.join(path.dirname(command), "python") : null;
+  return beside && fs.existsSync(beside) ? beside : "python3";
+}
+
 /** The checkout's `personalclaw`: the repository's own virtualenv, else the one on PATH. */
 function gatewayCommand(repo = REPO) {
   const venv = path.join(repo, ".venv", "bin", "personalclaw");
   return fs.existsSync(venv) ? venv : "personalclaw";
 }
 
-/** The script's text, for a gateway home at *home*. Every value is quoted for the shell. */
-function stubScript({ home, workspace, scripted, command, src, pidFile }) {
+/** The script's text, for a gateway home at *home*, seeded by *python* when one is given. Every
+ * value is quoted for the shell. */
+function stubScript({ home, workspace, scripted, command, src, pidFile, python = null }) {
   const q = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
   return [
     "#!/bin/sh",
@@ -45,6 +72,7 @@ function stubScript({ home, workspace, scripted, command, src, pidFile }) {
     `export PERSONALCLAW_SCRIPTED_MODEL_SCRIPT=${q(scripted)}`,
     `export PYTHONPATH=${q(src)}\${PYTHONPATH:+:$PYTHONPATH}`,
     `echo $$ > ${q(pidFile)}`,
+    ...(python ? [`${q(python)} -c ${q(SEED_CODE_LOOP)}`] : []),
     `exec ${q(command)} "$@"`,
     "",
   ].join("\n");
@@ -60,12 +88,13 @@ function writeStubBackend(smokeDir, { repo = REPO, backendDir = BACKEND_DIR } = 
   fs.mkdirSync(backendDir, { recursive: true });
   const script = path.join(backendDir, "personalclaw-backend");
   const pidFile = path.join(smokeDir, "gateway.pid");
-  fs.writeFileSync(script, stubScript({ home, workspace, scripted: SCRIPTED, command: gatewayCommand(repo), src: path.join(repo, "src"), pidFile }), { mode: 0o755 });
+  const command = gatewayCommand(repo);
+  fs.writeFileSync(script, stubScript({ home, workspace, scripted: SCRIPTED, command, src: path.join(repo, "src"), pidFile, python: pythonFor(command) }), { mode: 0o755 });
   fs.chmodSync(script, 0o755);
   return script;
 }
 
-module.exports = { BACKEND_DIR, SCRIPT, gatewayCommand, stubScript, writeStubBackend };
+module.exports = { BACKEND_DIR, CODE_LOOP, SCRIPT, SEED_CODE_LOOP, gatewayCommand, pythonFor, stubScript, writeStubBackend };
 
 if (require.main === module) {
   const dir = process.argv[2];

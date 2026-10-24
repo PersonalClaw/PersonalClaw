@@ -11,7 +11,7 @@
  * `check` lists the asar against `build.files` and exits 1 naming any entry it lacks, or any file
  * in it that carries a remote-debugging switch: the smoke's DevTools pipe is the harness's alone,
  * and the app never opens a debugging port or pipe of its own. `controls`
- * runs the smoke on four planted copies, which must each fail for their own reason:
+ * runs the smoke on five planted copies, which must each fail for their own reason:
  *
  *   - the asar without a module `main.js` requires, which must fail at launch naming it: what only
  *     the packed app shows (`packaging.test.js` reads the source, not the asar);
@@ -19,7 +19,9 @@
  *     of the shell's;
  *   - a shell that drops every `personalclaw://` link, so none opens its route (#3827);
  *   - a shell whose link delivery also presses Enter in the composer once the page shows a draft:
- *     a link that acts, which the smoke must see leave the page.
+ *     a link that acts, which the smoke must see leave the page;
+ *   - a shell whose link delivery resumes the loop a cockpit's link opens: a cockpit link that
+ *     acts.
  */
 
 const fs = require("node:fs");
@@ -100,6 +102,13 @@ const PLANTED_SEND = [
   "}, 200); })();",
 ].join(" ");
 
+/** What the resuming control appends to every hash a link assigns: on a cockpit's, resume its loop. */
+const PLANTED_RESUME = [
+  "(() => { const h = window.location.hash; if (!h.startsWith(\"#/code/\")) return;",
+  "  fetch(\"/api/loops/\" + h.slice(7).split(\"?\")[0] + \"/resume\", { method: \"POST\" }).catch(() => {});",
+  "})();",
+].join(" ");
+
 /** The executable and the asar of the app unpacked at *dir* (electron-builder's `linux-unpacked`). */
 function packed(dir) {
   const name = PKG.build.linux?.executableName || PKG.name;
@@ -162,7 +171,7 @@ async function plantedCopy(dir, plant) {
   return copy;
 }
 
-/** The two planted controls: each must fail, and for its own reason. */
+/** The planted controls: each must fail, and for its own reason. */
 const CONTROLS = [
   {
     name: `the asar without ${PLANTED_MISSING}, which main.js requires`,
@@ -184,6 +193,11 @@ const CONTROLS = [
     plant: (tree) => rewrite(tree, "deepLinks.js", "return `window.location.hash = ${JSON.stringify(hash)};`;", `return \`window.location.hash = \${JSON.stringify(hash)}; ${PLANTED_SEND}\`;`),
     reads: (r) => /the draft left the page/.test(r.reason || ""),
   },
+  {
+    name: "a shell whose link delivery resumes the cockpit it opens",
+    plant: (tree) => rewrite(tree, "deepLinks.js", "return `window.location.hash = ${JSON.stringify(hash)};`;", `return \`window.location.hash = \${JSON.stringify(hash)}; ${PLANTED_RESUME}\`;`),
+    reads: (r) => /the cockpit link acted on the loop/.test(r.reason || ""),
+  },
 ];
 
 async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = {}) {
@@ -202,7 +216,7 @@ async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = 
   return results;
 }
 
-module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_SEND, asarSources, debugSwitchProblems, missingEntries, packArchive, packed, plantedCopy, runControls, shellSources };
+module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_RESUME, PLANTED_SEND, asarSources, debugSwitchProblems, missingEntries, packArchive, packed, plantedCopy, runControls, shellSources };
 
 if (require.main === module) {
   const [cmd, dir, ...rest] = process.argv.slice(2);
