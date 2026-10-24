@@ -12,7 +12,8 @@ import { join } from 'node:path'
 // to that grid, so a rebaseline that loses it again (a stub that stopped matching the read, say)
 // fails here instead of passing as a smaller page.
 
-const TREE = readFileSync(join(process.cwd(), 'e2e/__aria__/triggers-week-darwin.aria.yml'), 'utf8')
+/** The committed tree: the pinned image's, the only set there is (`-linux`, #3943). */
+const TREE = readFileSync(join(process.cwd(), 'e2e/__aria__/triggers-week-linux.aria.yml'), 'utf8')
 /** The grid's cells that open a trigger, each named by `cellLabel`: `Mon, Nov # #:# — <its fires>`.
  *  The tree quotes a line whose name holds a `:` (`- 'button "…"': "#"`). */
 const CELLS = TREE.split('\n').filter((l) => /^\s*- '?button "(Sun|Mon|Tue|Wed|Thu|Fri|Sat), \w+ # #:# — /.test(l))
