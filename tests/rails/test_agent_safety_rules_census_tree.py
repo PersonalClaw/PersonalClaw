@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 
+import pytest
 import source_index
 from agent_safety_rules_census_shared import (
     _ASSEMBLERS,
@@ -154,6 +155,7 @@ def test_the_assembly_reads_the_agents_own_instructions():
     assert _uses("context.py", "ContextBuilder.build_message", {"agent_instructions"})
 
 
+@pytest.mark.timeout(50)
 def test_every_site_that_names_its_agent_hands_it_its_own_instructions():
     sites = (
         set(_census())

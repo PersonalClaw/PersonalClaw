@@ -313,6 +313,7 @@ def _the_runs_trust_ended(session_key: str) -> list[dict]:
 # ── Its timeout ──────────────────────────────────────────────────────────────────────────────
 
 
+@pytest.mark.timeout(70)
 def test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway(tmp_path, capsys, signed_in):
     """The timeout passes while the draft runs. The run stops the turn in the gateway and ends the
     Trust it gave its chat before it exits: the send the model asks for next never runs, and the
@@ -347,6 +348,7 @@ def test_a_run_whose_timeout_passes_stops_its_turn_in_the_gateway(tmp_path, caps
     assert _the_runs_trust_ended(chat.key), "the end of the run's Trust left no audit row"
 
 
+@pytest.mark.timeout(70)
 def test_a_read_only_run_whose_timeout_passes_stops_its_turn_and_names_no_grant(
     tmp_path, capsys, signed_in
 ):

@@ -12,6 +12,7 @@ import re
 import tokenize
 from pathlib import Path
 
+import pytest
 import source_index
 from rails_repo import REPO
 from resilience_degraded_lint_shared import _CALL_SITE_SURFACES
@@ -58,6 +59,7 @@ def _files_calling_one_shot() -> set[str]:
     return hits
 
 
+@pytest.mark.timeout(40)
 def test_every_one_shot_call_site_is_mapped():
     """Every file calling one_shot_completion must appear in the map — so a new
     model-dependent surface can't ship without declaring its degraded floor."""

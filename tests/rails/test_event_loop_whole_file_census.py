@@ -41,6 +41,7 @@ import functools
 import textwrap
 from pathlib import Path
 
+import pytest
 import source_index
 from rails_repo import REPO
 
@@ -365,6 +366,7 @@ def _package_census() -> _Census:
     )
 
 
+@pytest.mark.timeout(50)
 def test_nothing_new_on_the_event_loop_copies_moves_or_hashes_a_whole_file():
     """🔴 Red before: the upload paths' assembly, moves and hashes, the Files move, the retrieval
     card's database hashes, the self-check evidence seal, a spoken reply's copy, and every route
@@ -383,6 +385,7 @@ def test_nothing_new_on_the_event_loop_copies_moves_or_hashes_a_whole_file():
     assert not gone, f"no longer on the loop, so take these out of STILL_ON_THE_LOOP: {gone}"
 
 
+@pytest.mark.timeout(50)
 def test_the_census_sees_the_large_file_paths_hand_their_work_off():
     """The positive control: the census reads the upload paths, and sees each of them hand its
     whole-file work to a worker thread. A census that stopped matching would see nothing on the

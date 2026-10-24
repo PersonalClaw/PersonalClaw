@@ -11,6 +11,7 @@ import ast
 import functools
 from pathlib import Path
 
+import pytest
 import source_index
 
 import personalclaw
@@ -136,6 +137,7 @@ def _builds_a_defs_path(node: ast.AST, rel: str) -> bool:
     return any("workflows/defs" in text for text in texts) and id(node) not in _docstrings(rel)
 
 
+@pytest.mark.timeout(40)
 def test_the_census_reads_every_kind_of_door():
     """The vacuity floor: a scanner that finds nothing would hold every list trivially."""
     assert _sites(_saves_def), "no save_def call found at all: the matcher is broken"

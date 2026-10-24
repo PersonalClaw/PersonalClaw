@@ -41,7 +41,7 @@ def _inventory() -> dict:
     return build_inventory()
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(140)
 def test_every_inert_surface_is_listed_with_its_reason():
     """Every surface the census finds is a line of :data:`inert.SITES`, and every line is a
     surface it finds. A new one fails by name: add the missing writer or reader. A wired one
@@ -86,7 +86,7 @@ def _planted(root: Path) -> list[str]:
     return [site for site in inert.sites(build_inventory(root)) if site.startswith(planted)]
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(120)
 def test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line(tmp_path):
     """The positive control, on the real list: the tree's surfaces with a planted module's fail,
     naming its unread enum member and its unimported export, and its read member is no site; the
@@ -113,7 +113,7 @@ def test_a_planted_surface_fails_by_name_and_a_wired_one_by_its_line(tmp_path):
     assert (REPO / inert.SITES).read_text(encoding="utf-8") == listed
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(120)
 def test_the_real_config_reader_census_fires_and_clears_an_accessor():
     """Vacuity + real-tree calibration in both directions."""
     inv = _inventory()
@@ -140,7 +140,7 @@ def test_the_real_config_reader_census_fires_and_clears_an_accessor():
         assert f"{KIND_CONFIG_READER}:{wired}" not in flagged
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(100)
 def test_the_enum_census_still_finds_a_nontrivial_population():
     """Vacuity guard. Clearing a whole class per iteration site is a broad clear, so a bug
     that over-cleared (or a detector that silently matched everything) would leave the enum

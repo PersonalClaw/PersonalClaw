@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 
+import pytest
 import source_index
 from rails_repo import REPO
 
@@ -239,6 +240,7 @@ def _archive_writer_functions(modules: list[tuple[str, ast.AST]]) -> set[tuple[s
     return found
 
 
+@pytest.mark.timeout(40)
 def test_no_archive_is_written_around_the_private_writer():
     modules = _modules()
     assert len(modules) > 500, f"the scan read {len(modules)} modules — it did not see the package"

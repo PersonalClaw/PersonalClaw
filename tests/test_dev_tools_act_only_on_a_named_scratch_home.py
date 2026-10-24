@@ -479,7 +479,7 @@ def scratch_gateway(tmp_path_factory: pytest.TempPathFactory) -> Iterator[_Scrat
             proc.wait(timeout=10)
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(50)
 def test_seed_tasks_seeds_the_named_scratch_home(scratch_gateway) -> None:
     done = scratch_gateway.tool("scripts/seed_tasks.py")
     assert done.returncode == 0, done.stdout + done.stderr
@@ -489,14 +489,14 @@ def test_seed_tasks_seeds_the_named_scratch_home(scratch_gateway) -> None:
     assert f"Seeded: {tasks['total']} tasks" in done.stdout
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(50)
 @pytest.mark.parametrize("tool", ["scripts/memory_validate.py", "scripts/session_validate.py"])
 def test_a_validator_is_clean_on_the_named_scratch_home(scratch_gateway, tool) -> None:
     done = scratch_gateway.tool(tool)
     assert done.returncode == 0 and done.stdout.startswith("CLEAN"), done.stdout + done.stderr
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(50)
 def test_the_tool_universe_validator_runs_its_checks_on_the_named_scratch_home(
     scratch_gateway,
 ) -> None:
@@ -506,7 +506,7 @@ def test_the_tool_universe_validator_runs_its_checks_on_the_named_scratch_home(
     assert done.stdout.startswith(("CLEAN", "FAIL:")), done.stdout + done.stderr
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(50)
 def test_the_classify_smoke_reads_the_named_scratch_homes_models(scratch_gateway) -> None:
     """The scratch home binds no model, so the smoke says so about THAT home and stops."""
     done = scratch_gateway.tool("scripts/smoke_unified_loop_classify.py")

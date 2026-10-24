@@ -211,6 +211,7 @@ def _diff(found: set[tuple[str, str]], known: frozenset[tuple[str, str]], what: 
     return lines
 
 
+@pytest.mark.timeout(80)
 def test_no_whole_tree_check_gains_a_copy_in_the_suite() -> None:
     problems = _diff(copies(REPO), KNOWN_COPIES, "real-tree run in the suite")
     assert not problems, (
@@ -311,6 +312,7 @@ def test_the_maintainer_docs_name_each_job_the_shards_leave_a_file_to() -> None:
     assert not missing, f"ci.md's paragraph on shards.JOB_OWNED names no file in {missing}"
 
 
+@pytest.mark.timeout(70)
 def test_no_suite_module_starts_reading_docs() -> None:
     problems = [
         f"a new reader of docs/ in the suite: {m}"

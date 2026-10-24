@@ -525,6 +525,7 @@ def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
 # ── the 24h storm ──
 
 
+@pytest.mark.timeout(50)
 def test_a_24H_STORM_drops_NOTHING(store, tmp_path):
     """🔴 The bar is "zero silent drops under a 24h storm", and that test did not exist.
 

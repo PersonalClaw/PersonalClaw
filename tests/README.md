@@ -134,14 +134,27 @@ through `run-job`. The rails census counts a test that reads them as reading the
 
 ## A test that needs another timeout
 
-Every test runs under the suite's default cap, `--timeout` in `pyproject.toml`'s addopts. A
-test that needs another one says so with `@pytest.mark.timeout(N)` (or a module's `pytestmark`,
-or a conftest hook's `add_marker`), and lists that mark in `tests/timeout-marks.toml` with the
-cap and a one-line reason: what the test does that takes the time, and what it was measured at
-when that is known. The "every-timeout-mark-is-listed-with-its-reason" row of
-`tests/rails/test_ci_contract.py` fails on a mark the list lacks, an entry whose mark is gone, a
-cap that differs from its entry, and an entry with no reason. The cap is GitHub CI's: a busy
-laptop is not a reason to raise one. `tests/timeout_marks.py` says how a mark's site is named.
+Every test runs under the suite's default cap of 30 s, the one `--timeout` in `pyproject.toml`'s
+addopts. Nothing else the suite is run from passes another: no catalogue step, package config,
+Makefile target, script, `timeout` or `timeout_func_only` ini key, or `PYTEST_TIMEOUT` (the
+"the-suite-default-cap-is-set-once-in-pyproject" row of `tests/rails/test_ci_contract.py`). A
+test that turns slow fails on its own, by name, the day it does.
+
+A test that really needs longer says so itself, with `@pytest.mark.timeout(N)`, and lists the
+mark in `tests/timeout-marks.toml` with the cap and a one-line reason: what the test does that
+takes the time, why that work is real, and what it was measured at on CI. A table test's slow
+rows carry their caps in a module-level table keyed by the row's name (`ROW_TIMEOUTS` in the
+contract tables, passed to each row by `table_params`). The cap is about twice the worst wall
+time on any CI leg, breadth's coverage leg included. When a census or a fixture is built once
+for a module, whichever of its tests runs first builds it inside its own cap, so every test that
+reads it carries the same mark. A mark that caps a whole module or family at once (a module's
+`pytestmark`, any mark in a `conftest.py`) is refused: it would hide the one test that turned
+slow.
+
+The "every-timeout-mark-is-listed-with-its-reason" row fails on a mark the list lacks, an entry
+whose mark is gone, a cap that differs from its entry, an entry with no reason, and a blanket
+mark. The cap is GitHub CI's: a busy laptop is not a reason to raise one. `tests/timeout_marks.py`
+says how a mark's site is named.
 
 ## Rails: `tests/rails`
 

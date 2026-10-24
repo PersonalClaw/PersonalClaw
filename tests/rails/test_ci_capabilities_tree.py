@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 
+import pytest
 from rails_repo import REPO
 
 from tools.ci import capabilities as cap
@@ -86,6 +87,7 @@ def test_the_covered_modules_are_where_the_fingerprint_reads_them() -> None:
         assert constant in _constants(rel[0]), f"{rel[0]} holds no {constant}"
 
 
+@pytest.mark.timeout(70)
 def test_the_prefilter_and_a_full_parse_find_the_same_probes() -> None:
     """The fingerprint parses only the files that name a word of ``capabilities.PREFILTER``; a
     full parse of every file under ``tests/`` must find exactly the same probes and the same

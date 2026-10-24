@@ -575,6 +575,7 @@ def _fail_open_maskers(tree: ast.AST) -> tuple[list[int], list[str]]:
     return hits, seen
 
 
+@pytest.mark.timeout(90)
 def test_no_masker_in_the_tree_falls_back_to_the_text_it_could_not_mask() -> None:
     found: dict[str, list[int]] = {}
     seen: set[str] = set()

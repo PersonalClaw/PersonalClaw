@@ -234,6 +234,7 @@ def test_the_import_list_names_each_server_and_carries_no_credential(world) -> N
     assert listed["cc-args"]["transport"] == "stdio"
 
 
+@pytest.mark.timeout(40)
 def test_claude_code_is_read_and_written_where_claude_config_dir_puts_it(world) -> None:
     home_file = world["user"] / ".claude.json"
     dir_file = world["cc_dir"] / ".claude.json"

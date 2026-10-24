@@ -37,6 +37,7 @@ import collections
 import functools
 import textwrap
 
+import pytest
 import source_index
 from rails_repo import REPO
 
@@ -174,6 +175,7 @@ def _package_census() -> _Census:
     )
 
 
+@pytest.mark.timeout(40)
 def test_every_route_that_reads_an_uploaded_body_is_named():
     """A route added later that reads an uploaded body reds here until it says whether it scans
     what it stores, so the scan's coverage cannot fall behind the routes again."""
@@ -192,6 +194,7 @@ def test_every_route_that_reads_an_uploaded_body_is_named():
     assert not SCANNED.keys() & NOT_SCANNED.keys()
 
 
+@pytest.mark.timeout(40)
 def test_every_route_that_stores_an_upload_hands_it_to_the_scan():
     """🔴 Red before: of the routes that store an uploaded file, only the resumable complete
     scanned it."""
@@ -205,6 +208,7 @@ def test_every_route_that_stores_an_upload_hands_it_to_the_scan():
     assert not unscanned, "these never call scan_upload:\n  " + "\n  ".join(unscanned)
 
 
+@pytest.mark.timeout(40)
 def test_the_census_sees_the_upload_routes():
     """The positive control: the census reads every shape of body it names somewhere in the
     package, so a census that stopped matching cannot pass by finding nothing."""

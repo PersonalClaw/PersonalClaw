@@ -575,7 +575,7 @@ pythonpath = ["src", "."]
 addopts = [
     "--verbose",
     "--ignore=build",
-    "--timeout=120",
+    "--timeout=30",
     "--color=yes",
 ]
 testpaths = ["tests"]

@@ -140,6 +140,7 @@ def uncovered(
     return out
 
 
+@pytest.mark.timeout(40)
 def test_the_census_is_not_vacuous() -> None:
     """The whole-tree half lists what the reader reads: every tracked path, the flake and the
     binaries included, not only the text files a licence filter would keep."""
@@ -209,6 +210,7 @@ def test_suite_modules_read_docs_and_web_by_name(dropped: str) -> None:
     assert _names(uncovered(_without(dropped), tracked=()), dropped)
 
 
+@pytest.mark.timeout(40)
 def test_a_tracked_top_level_entry_the_list_does_not_name_fails() -> None:
     """The planted control for a new top-level entry: the whole-tree reader opens it, however
     else a suite test reads it, so the rail fails until the list names it."""
@@ -216,6 +218,7 @@ def test_a_tracked_top_level_entry_the_list_does_not_name_fails() -> None:
     assert missing == ["brand-new/x.py (tracked: the whole-tree reader opens it)"], missing
 
 
+@pytest.mark.timeout(40)
 def test_the_flake_is_left_out_on_purpose_and_plans_the_whole_tier() -> None:
     """The only tracked entries outside the list are LEFT_OUT, and each is there by choice: the
     suite reads it, and a change to it alone is named by no job's input, so it plans the whole

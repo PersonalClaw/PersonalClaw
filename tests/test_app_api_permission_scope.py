@@ -241,6 +241,7 @@ def _registered_api_paths() -> set[str]:
     return {r["path"] for r in _routes_from_ast() if r["path"].startswith("/api")}
 
 
+@pytest.mark.timeout(40)
 def test_no_registered_route_under_an_owner_only_root_is_app_reachable():
     """The PROPERTY, asserted over every route the source registers — including the route
     someone adds tomorrow.
@@ -273,6 +274,7 @@ def _serves(route: str, root: str) -> bool:
     )
 
 
+@pytest.mark.timeout(40)
 def test_no_registry_root_is_a_fiction():
     """Every registry root matches at least one route that actually registers.
 

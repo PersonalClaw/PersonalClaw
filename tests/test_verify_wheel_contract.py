@@ -438,7 +438,6 @@ def _rewrite_wheel(source: Path, target: Path, *, drop: str = "", corrupt: str =
             out.writestr(info, body)
 
 
-@pytest.mark.timeout(240)
 def test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one(
     verify_wheel, tmp_path, capsys
 ) -> None:
@@ -489,7 +488,6 @@ def test_the_inspection_passes_a_real_distribution_and_fails_a_broken_one(
 # ── A relative --wheel reaches every process that opens it ────────────────────
 
 
-@pytest.mark.timeout(240)
 def test_a_relative_wheel_from_the_checkout_root_reaches_the_installed_probe(
     verify_wheel, tmp_path, monkeypatch, capsys
 ) -> None:
