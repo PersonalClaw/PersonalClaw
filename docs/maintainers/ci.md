@@ -2235,7 +2235,9 @@ release's approval and its publish phase will read it.
   manifests a BuildKit build adds beside each platform's are covered by the index digest, and are
   not platforms.
 - **What built each artifact, as it ran** (#4585's step 7). One build per job that built an
-  artifact: the runner image its set-up log reported (`Image` and `Version`); every action the job
+  artifact: the runner image its set-up log reported (`Image` and `Version`) and the one the image
+  itself names (`ImageOS` and `ImageVersion`), both kept since the two versions can differ on one
+  runner (rehearsal run 40028736768's desktop-linux job); every action the job
   downloaded, nested ones included, with the SHA each resolved to, read from that same log rather
   than from the workflow text; the base images that ran, by digest (an image's from the SLSA
   provenance BuildKit attached to each platform, with the workflow containers the job pulled); the
@@ -2243,7 +2245,7 @@ release's approval and its publish phase will read it.
   toolchain); and the artifacts it built. Each job writes its part as its last step
   (`tools/ci/build_identity.py record`); the manifest job finds that job in its own run by the
   runner's name and reads its set-up log through the API with `actions: read`
-  (`build_identity.py collect`). The write refuses a build with no runner image version, an
+  (`build_identity.py collect`). The write refuses a build missing either runner image version, an
   action with no SHA, an image's build with no base digest, a file's build missing a tool, and an
   artifact no job or two jobs claim.
 - **What it refuses to stage.** A symlink, a special file, a file or folder it cannot read, an

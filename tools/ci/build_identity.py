@@ -14,9 +14,14 @@ it the identity of the job that built it: not what the workflow text names, but 
   runner's name, and reads that job's set-up log from the API: the runner image GitHub reports
   there, and every action the job downloaded, nested ones included, each with the SHA it
   resolved to (:func:`parse_setup`). It writes the list the manifest's ``builds`` holds
-  (:func:`collect`), and refuses a record whose job it cannot find, whose runner image version is
-  not the one the log reports, and a log that names no runner image, no action, or an action
-  without its SHA.
+  (:func:`collect`), and refuses a record whose job it cannot find, a record with no image of
+  its own, and a log that names no runner image, no action, or an action without its SHA.
+
+The runner's image is recorded twice, since GitHub reports it twice: the set-up log's ``Image``
+and ``Version``, and the image's own ``ImageOS`` and ``ImageVersion`` as the job read them. The
+two versions can differ on one runner (rehearsal run 40028736768's desktop-linux job read
+20261023.334.3 where its set-up log said 20261012.334.1), so both are kept and neither is refused
+for disagreeing with the other.
 
 Both exit 2 on anything they cannot rely on, naming it. Standard library only, with no relative
 imports: a job runs it as ``python3 -I tools/ci/build_identity.py``.
@@ -162,18 +167,19 @@ def collect(
             many = f"{len(ran)} jobs of this run ran" if ran else "no job of this run ran"
             raise Refused(f"{many} on {runner}, so its build record cannot be read against a log")
         job = ran[0]
+        image_os, image_version = _string(record, "image_os"), _string(record, "image_version")
         setup = parse_setup(log(int(job["id"])))
-        if _string(record, "image_version") != setup.version:
-            raise Refused(
-                f"{job.get('name')}: its record says runner image {record['image_version']}, its "
-                f"set-up log says {setup.version}"
-            )
         images = [str(i) for i in record.get("images") or []]
         tools = record.get("toolchain") or {}
         builds.append(
             {
                 "job": str(job.get("name")),
-                "runner": {"image": setup.image, "version": setup.version},
+                "runner": {
+                    "image": setup.image,
+                    "version": setup.version,
+                    "image_os": image_os,
+                    "image_version": image_version,
+                },
                 "actions": [
                     {"action": a.action, "ref": a.ref, "sha": a.sha} for a in setup.actions
                 ],

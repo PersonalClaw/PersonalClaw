@@ -58,7 +58,12 @@ def _job(name: str, artifacts: list[str], *, tools: bool = True, bases: int = 0)
     """One build, as tools/ci/build_identity.py collects it from a record and a set-up log."""
     return {
         "job": name,
-        "runner": {"image": "ubuntu-24.04", "version": "20261012.334.1"},
+        "runner": {
+            "image": "ubuntu-24.04",
+            "version": "20261012.334.1",
+            "image_os": "ubuntu24",
+            "image_version": "20261012.334.1",
+        },
         "actions": [
             {"action": "actions/checkout", "ref": "a" * 40, "sha": "a" * 40},
             {"action": "someone/nested", "ref": "v1", "sha": "b" * 40},
@@ -485,9 +490,21 @@ def _refusing_manifests(manifest: dict, data: bytes) -> list[tuple[str, bytes, s
         ("a build with an unknown key", build(0, signed=True), None, "unknown.*signed"),
         (
             "a build with no runner image version",
-            build(0, runner={"image": "ubuntu-24.04", "version": ""}),
+            build(0, runner={**first["runner"], "version": ""}),
             None,
             "artifacts / build: its runner image version is missing",
+        ),
+        (
+            "a build with no image version of the runner's own",
+            build(0, runner={**first["runner"], "image_version": " "}),
+            None,
+            "artifacts / build: its runner's own image version is missing",
+        ),
+        (
+            "a runner named by its set-up log alone",
+            build(0, runner={"image": "ubuntu-24.04", "version": "20261012.334.1"}),
+            None,
+            r"missing key\(s\) \['image_os', 'image_version'\]",
         ),
         (
             "a nested action with no SHA",
@@ -540,7 +557,7 @@ def test_a_manifest_that_is_not_the_approved_one_is_refused(
 ) -> None:
     manifest, data = _manifest(tmp_path)
     rows = _refusing_manifests(manifest, data)
-    assert len(rows) == 54, "a refusal row was dropped"
+    assert len(rows) == 56, "a refusal row was dropped"
     for name, bytes_, expected, reason in rows:
         with row(subtests, case=name):
             with pytest.raises(rm.Refused, match=reason):
