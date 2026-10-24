@@ -48,6 +48,7 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
     why: 'adds its own chat sessions and reads only the session it opened',
   },
   'chatHalo.spec.ts': { mode: 'shared', why: 'adds its own chat sessions and reads only its own' },
+  'composerStageSettles.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
   'chatHeaderGeometry.spec.ts': { mode: 'shared', why: 'answers its chat reads with route stubs' },
   'composerFooterGeometry.spec.ts': { mode: 'shared', why: 'answers its chat read with a route stub, and sends nothing' },
   'chatSplit.spec.ts': { mode: 'shared', why: 'answers its chat reads with route stubs' },

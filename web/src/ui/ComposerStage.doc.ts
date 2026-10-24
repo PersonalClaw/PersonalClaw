@@ -2,7 +2,7 @@ import type { UiDoc } from './uiDoc'
 
 // Doc object for ComposerStage — the shared-layout wrapper that flies the Composer
 // between the new-chat hero and the bottom dock. Its prop set is ComposerProps
-// (forwarded straight through), so it mirrors Composer's props; type/required are
+// (forwarded straight through) plus its own `settled`, so it mirrors Composer's props; type/required are
 // DERIVED from the source at build time — never restate them here.
 const doc: UiDoc = {
   name: 'ComposerStage',
@@ -10,6 +10,7 @@ const doc: UiDoc = {
   description:
     'The Composer wrapped as a single persistent, shared-layout element (`layoutId="composer-stage"`). It forwards a ref to its outer box so a full-bleed DotGlow can measure it live each frame and cast a synced glow from its edges, and passes every Composer prop straight through. Its signature motion: the composer FLIES from the screen-centered new-chat hero down into the bottom dock when a chat starts, settling with an expressiveness-scaled spring. Use it wherever the composer must animate between two page positions rather than sit in one place.',
   props: [
+    { name: 'settled', description: 'While true the stage moves at once, with no spring (`type: false`): the chat passes it on its new-chat hero until the chat starts, so the page settling around the hero (the column re-centring, a strip landing above it, Chat opened from Loops) does not spring the composer. The flight into the dock still springs, since the dock\'s stage is not settled. Default false.' },
     { name: 'value', description: 'The current draft text (controlled) — forwarded to Composer.' },
     { name: 'onChange', description: 'Fires with the new draft on every edit — forwarded to Composer.' },
     { name: 'onSend', description: 'Called to send the draft — also invoked mid-stream, as "steer" when canSteer and "queue" otherwise, when canQueue.' },
