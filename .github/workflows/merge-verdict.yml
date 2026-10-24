@@ -8,9 +8,11 @@
 # candidate can add, a push run and a schedule post nothing.
 #
 # The verdict is green only when the head changes no CI definition (tools/ci/trust.py), is up to
-# date with main, and merge.yml's `results` job, which judges the run with main's verdict.py,
-# passed on every attempt. Anything else, an answer the API would not give included, posts
-# failure, never neutral.
+# date with main, merge.yml's `results` job, which judges the run with main's verdict.py, passed
+# on every attempt, and the head's dependency review (dependency-review.yml, main's copy) passed
+# (#4585 step 6). Anything else, an answer the API would not give included, posts failure, never
+# neutral. A completed Dependency review run judges its head again from the head's own completed
+# Merge run, so the two may finish in either order.
 #
 # A head that changes a CI definition is not judged by its own run, which used its own
 # definitions: that run posts nothing, and the `trusted` job makes main's definitions on the
@@ -34,7 +36,7 @@ name: Merge verdict
 
 on:
   workflow_run:
-    workflows: ["Merge"]
+    workflows: ["Merge", "Dependency review"]
     types: [completed]
 
 # One post per Merge run and attempt, never cancelled: each run's verdict is its own check run,

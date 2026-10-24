@@ -35,7 +35,13 @@ also sweeps away any trusted-run branch older than a day.
 4. The ``results`` job, which judges the run with ``main``'s ``verdict.py``, concluded
    ``success`` on every attempt, by the API's job list. Missing, cancelled, skipped or red on any
    attempt is red: a rerun never turns a red into a green.
-5. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
+5. The head's dependency review passed (#4585 step 6): the newest ``pull_request_target`` run
+   of ``dependency-review.yml`` on the head, main's copy, concluded ``success``. One that has
+   not run, is still running or did not pass is red. When a Dependency review run completes, the
+   poster judges its head again from the head's own completed Merge run (or its trusted run), so
+   the two may finish in either order. It is the one input besides the run: CodeQL's PR check
+   is not read until it reports reliably.
+6. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
    this controller's commit on ``main``, the head and its tree, the runner and the definitions
    commit, and the digests of the run's ``ci-record-*`` artifacts as the API reports them. A run
    with no record artifact has no evidence, so no green.
@@ -75,6 +81,8 @@ MERGE_WORKFLOW = f".github/workflows/{workflows.MERGE}"
 #: The events whose merge.yml run judges a pull request's head: the pull request itself, and a
 #: dispatch of the head's branch (how a merge run is started until #3915's flip).
 JUDGED_EVENTS = frozenset({"pull_request", "workflow_dispatch"})
+#: The dependency review: a pull_request_target workflow, so the run is main's copy.
+DEPENDENCY_REVIEW = ".github/workflows/dependency-review.yml"
 #: The branch a trusted run of a head is made on: this prefix, then the head's full id.
 TRUSTED_PREFIX = "trusted-run/"
 #: A trusted-run branch older than this is swept away, whatever became of its run.
@@ -385,6 +393,84 @@ def trusted_tree_problem(
     return "", False
 
 
+def dependency_review_reasons(get: Get, repo: str, head: str) -> list[str]:
+    """Why the head's dependency review is not green (rule 5), or nothing."""
+    name = DEPENDENCY_REVIEW.rsplit("/", 1)[-1]
+    query = urllib.parse.urlencode(
+        {"head_sha": head, "event": "pull_request_target", "per_page": _PER_PAGE}
+    )
+    answer = _read(get, f"/repos/{repo}/actions/workflows/{name}/runs?{query}")
+    runs = answer.get("workflow_runs") if isinstance(answer, Mapping) else None
+    if not isinstance(runs, list):
+        raise Unread(f"{head}'s dependency reviews are not a list")
+    ours = [
+        r
+        for r in runs
+        if isinstance(r, Mapping)
+        and r.get("path") == DEPENDENCY_REVIEW
+        and r.get("head_sha") == head
+        and _int(r.get("id")) is not None
+    ]
+    if not ours:
+        return ["the head has no dependency review (dependency-review.yml) yet"]
+    newest = max(ours, key=lambda r: int(r["id"]))
+    if newest.get("status") != "completed":
+        return [f"the head's dependency review is {newest.get('status')!r}, not finished"]
+    if newest.get("conclusion") != "success":
+        return [f"the head's dependency review is {newest.get('conclusion')!r}"]
+    return []
+
+
+def _latest_merge_run(get: Get, repo: str, **query: str) -> int | None:
+    params = urllib.parse.urlencode({**query, "status": "completed", "per_page": _PER_PAGE})
+    answer = _read(get, f"/repos/{repo}/actions/workflows/{workflows.MERGE}/runs?{params}")
+    runs = answer.get("workflow_runs") if isinstance(answer, Mapping) else None
+    if not isinstance(runs, list):
+        raise Unread("the Merge runs are not a list")
+    ids = [
+        int(r["id"])
+        for r in runs
+        if isinstance(r, Mapping) and r.get("path") == MERGE_WORKFLOW and _int(r.get("id"))
+    ]
+    return max(ids) if ids else None
+
+
+def decide_review(get: Get, repo: str, run: Mapping[str, Any], controller_revision: str) -> Outcome:
+    """A completed Dependency review run: judge its head again from the head's own completed
+    pull_request Merge run, or, for a head that changes a definition, from its trusted run.
+    Nothing is dispatched from here; the head's own Merge run does that."""
+    head = run.get("head_sha")
+    if run.get("event") != "pull_request_target" or not isinstance(head, str):
+        return Outcome(why=f"run {run.get('id')} is not a pull request's dependency review")
+    if not _SHA.fullmatch(head):
+        raise Unread(f"dependency review run {run.get('id')} names no head")
+    own = _latest_merge_run(get, repo, head_sha=head, event="pull_request")
+    if own is None:
+        return Outcome(why=f"{head} has no completed Merge run of its own to judge yet")
+    outcome = decide(get, repo, own, controller_revision)
+    if outcome.dispatch is None:
+        return outcome
+    trusted = _latest_merge_run(get, repo, branch=TRUSTED_PREFIX + head, event="workflow_dispatch")
+    if trusted is None:
+        return Outcome(why=f"{head} changes a CI definition and its trusted run has not completed")
+    return decide(get, repo, trusted, controller_revision)
+
+
+def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome:
+    """What a completed run of a workflow the poster follows does: a Merge run is judged; a
+    Dependency review run judges its head again."""
+    run = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
+    if not isinstance(run, Mapping):
+        raise Unread(f"run {run_id} is not an object")
+    repository = run.get("repository")
+    owner = repository.get("full_name") if isinstance(repository, Mapping) else None
+    if owner == repo and run.get("path") == DEPENDENCY_REVIEW:
+        if run.get("status") != "completed":
+            return Outcome(why=f"run {run_id} is {run.get('status')!r}, not completed")
+        return decide_review(get, repo, run, controller_revision)
+    return decide(get, repo, run_id, controller_revision)
+
+
 def own_run_completed(get: Get, repo: str, head: str) -> bool:
     """Whether the head has a completed ``pull_request`` run of merge.yml of its own: the run
     that passed the fork approval gate, which a trusted run of it waits for."""
@@ -484,6 +570,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
                 return Outcome(posting=red, cleanup=cleanup)
             judged = f"a run of main's definitions on its tree (`{run.head_sha}`)"
         reasons, labels = results_reasons(get, repo, run)
+        reasons += dependency_review_reasons(get, repo, head)
         behind = behind_by(get, repo, base, head)
         if behind:
             reasons.append(f"the head is {behind} commits behind main: update the branch")
@@ -507,6 +594,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             f"Judged by {judged}: every attempt of Merge run {run.url or run.id} was green.",
             f"- the definitions that ran are main's at `{base}`",
             "- the head is up to date with main",
+            "- its dependency review passed",
             f"- {len(records)} job records, their digests in the receipt below",
             "",
             ADVISORY,
@@ -700,7 +788,7 @@ def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | No
     writer = api or github_api(token)
     if args.command == "decide":
         try:
-            outcome = decide(reader, args.repo, args.run_id, args.controller_revision)
+            outcome = judge(reader, args.repo, args.run_id, args.controller_revision)
         except Unread as exc:
             print(f"::error title=merge verdict unread::{exc}")
             return 2

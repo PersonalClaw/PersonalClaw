@@ -1,6 +1,7 @@
 """``.github/workflows/merge-verdict.yml``: the merge verdict's poster keeps its trust shape.
 
-It runs only as a ``workflow_run`` listener of Merge, so GitHub runs main's copy. It names nothing
+It runs only as a ``workflow_run`` listener of Merge and Dependency review, so GitHub runs main's
+copy. It names nothing
 of the candidate (no ``workflow_run.head*`` anywhere), checks out only the default branch and
 keeps no credential. ``post`` reads with its own token (``contents`` and ``actions``, read) and
 mints the controller App's token, with ``checks: write`` alone, only when there is a verdict to
@@ -80,7 +81,10 @@ def _problems(text: str) -> list[str]:
     data = yaml.safe_load(text)
     on = data.get("on", data.get(True))
     want = {
-        "workflow_run": {"workflows": [workflows.NAMES[workflows.MERGE]], "types": ["completed"]}
+        "workflow_run": {
+            "workflows": [workflows.NAMES[workflows.MERGE], "Dependency review"],
+            "types": ["completed"],
+        }
     }
     if on != want:
         found.append(f"runs on {on!r}, not only a completed Merge run")
@@ -146,7 +150,8 @@ _DISPATCH_TOKEN = (
     "old, new, says",
     [
         ("    types: [completed]\n", "    types: [completed]\n  pull_request:\n", "runs on"),
-        ('workflows: ["Merge"]', 'workflows: ["Merge", "PR"]', "runs on"),
+        ('workflows: ["Merge", "Dependency review"]', 'workflows: ["Merge", "PR"]', "runs on"),
+        ('workflows: ["Merge", "Dependency review"]', 'workflows: ["Merge"]', "runs on"),
         (
             "          RUN_ID: ${{ github.event.workflow_run.id }}\n",
             "          RUN_ID: ${{ github.event.workflow_run.id }}\n"
