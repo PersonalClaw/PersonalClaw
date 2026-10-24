@@ -932,8 +932,9 @@ command = [
 # tracked path the classifier ran the job on.
 # The packed desktop shell, launched as a user starts it (#3942): electron-builder's Linux dir build
 # with a stub backend that runs this checkout's gateway, its app.asar held to build.files, the app
-# started under xvfb reaching that gateway and drawing the chat, and two planted copies that must
-# each fail. A fast unpackaged smoke, never a packaged-release test: the release rehearsal is that.
+# started under xvfb reaching that gateway, drawing the chat and following its personalclaw://
+# links, and each planted copy that desktop/test/smoke/packedApp.js's CONTROLS name failing for its
+# own reason. A fast unpackaged smoke, never a packaged-release test: the release rehearsal is that.
 [[job]]
 id = "desktop-smoke"
 tiers = ["merge"]
