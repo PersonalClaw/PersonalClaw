@@ -9,14 +9,18 @@ the real dispatch; nothing here runs git, pip, or a frontend build.
 The fake layer is deliberately narrow and at the real seams:
 `self_update._run_git` (every sync git spawn funnels through it), `cli_server.subprocess.run`
 (a wheel's installer and the post-update `setup --agent-only`) and the checkout update's
-install spawn (`checkout_update._install`). A test that actually ran `git checkout` / a
-fast-forward or `pip -U` would be a wrecking ball.
+install spawn (`checkout_update._install`). On the main thread a wheel's installer is started
+with `subprocess.Popen` instead, so a Ctrl-C can stop it as it starts (#5393): there the fake
+installer answers what the test's `subprocess.run` answers (:class:`_StartedInstaller`). A test
+that actually ran `git checkout` / a fast-forward or `pip -U` would be a wrecking ball, and no
+test here starts a process for the fake installer (:func:`_the_fake_installer_never_runs`).
 """
 
 from __future__ import annotations
 
 import subprocess
 import types
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -46,17 +50,73 @@ class _Git:
         return any(c[: len(prefix)] == list(prefix) for c in self.calls)
 
 
+#: The installer every test here stands in for, and ``subprocess.run`` as it ships: an install the
+#: update starts with ``Popen`` is answered by the test's own ``subprocess.run``, never by this.
+_FAKE_INSTALLER = "FAKE-INSTALLER"
+_REAL_RUN = subprocess.run
+_REAL_POPEN = subprocess.Popen
+
+
+class _StartedInstaller:
+    """The fake installer as ``_install`` starts it on the main thread, with ``Popen``, and waits
+    for it (``cli_server._wait_or_stop``). It runs nothing: it ends at once with what the test's
+    ``subprocess.run`` answers for the same argv, so each test fakes an install's result one way,
+    whichever of the two spawns the update takes, and ``spawns`` sees it either way."""
+
+    def __init__(self, argv: list[str], **kwargs: Any) -> None:
+        if subprocess.run is _REAL_RUN:
+            raise AssertionError(f"{_FAKE_INSTALLER} was started with no fake subprocess.run")
+        done = subprocess.run(argv, capture_output=True, text=True, env=kwargs.get("env"))
+        self.args, self.returncode = argv, done.returncode
+        self._output = (done.stdout, done.stderr)
+
+    def __enter__(self) -> "_StartedInstaller":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def communicate(self, input: str | None = None, timeout: float | None = None):
+        return self._output
+
+    def kill(self) -> None:
+        return None
+
+
+def _popen(argv, *args, **kwargs):  # type: ignore[no-untyped-def]
+    if list(argv)[:1] == [_FAKE_INSTALLER]:
+        return _StartedInstaller(list(argv), **kwargs)
+    return _REAL_POPEN(argv, *args, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _the_fake_installer_never_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fails a test the moment a real process is started for the fake installer, however it is
+    started: ``Popen._execute_child`` is where ``subprocess`` starts every child."""
+    real = subprocess.Popen._execute_child
+
+    def guarded(self, args, executable, *rest, **kwargs):  # type: ignore[no-untyped-def]
+        argv = [args] if isinstance(args, (str, bytes)) else list(args)
+        if _FAKE_INSTALLER in (str(executable or ""), str(argv[0]) if argv else ""):
+            raise AssertionError(f"a real process was started for the fake installer: {argv}")
+        return real(self, args, executable, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess.Popen, "_execute_child", guarded)
+
+
 def _fake_installer(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stand in for the tool that made the environment, keeping the real ``install`` verb
-    position: a wheel's upgrade, and a checkout's install once it has moved."""
+    position: a wheel's upgrade, and a checkout's install once it has moved. Started with
+    ``Popen``, it is :class:`_StartedInstaller`."""
     monkeypatch.setattr("personalclaw._installer.require_own_installer", lambda: "fake")
+    monkeypatch.setattr(cli_server.subprocess, "Popen", _popen)
     monkeypatch.setattr(
         "personalclaw._installer.install_argv",
-        lambda args: ["FAKE-INSTALLER", "install", *args],
+        lambda args: [_FAKE_INSTALLER, "install", *args],
     )
     monkeypatch.setattr(
         "personalclaw._installer.checkout_install_argv",
-        lambda package_root: ["FAKE-INSTALLER", "install", "-e", "."],
+        lambda package_root: [_FAKE_INSTALLER, "install", "-e", "."],
     )
 
 

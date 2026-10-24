@@ -47,6 +47,8 @@ RUN = 500
 ATTEMPT = 1
 
 _REPLACED = "Canceling since a higher priority waiting request for '{}' exists"
+#: The same annotation with the group bare, as GitHub wrote it on main's run 40113017916.
+_REPLACED_BARE = "Canceling since a higher priority waiting request for {} exists"
 
 
 def _job(job_id: int, shard: int, conclusion: str, steps: list[dict[str, Any]] | None = None):
@@ -126,6 +128,18 @@ def test_a_shard_replaced_by_the_next_commits_waiting_shard_is_superseded() -> N
     assert sp.output_line(got) == f"superseded={NEWER}"
 
 
+def test_a_replacement_annotation_naming_its_group_bare_is_superseded_too() -> None:
+    """The real annotation of main's run 40113017916, whose three shards read unproven while
+    only the quoted wording was read."""
+    answers = _answers()
+    answers[f"/repos/{REPO}/check-runs/12/annotations"] = [
+        {"annotation_level": "failure", "message": _REPLACED_BARE.format(PREFIX + "2")}
+    ]
+    got = _decide(answers)
+    assert got.superseded == {f"{JOB} (2)": NEWER}, got
+    assert sp.output_line(got) == f"superseded={NEWER}"
+
+
 def _set(path: str, value: Any):
     def edit(answers: dict[str, Any]) -> None:
         answers[path] = value
@@ -178,6 +192,16 @@ UNPROVEN_ROWS: list[tuple[str, Any, str]] = [
         "the replacement annotation names another group",
         _set(_NOTES, [{"message": _REPLACED.format(PREFIX + "3")}]),
         "names the group",
+    ),
+    (
+        "the bare replacement annotation names another group",
+        _set(_NOTES, [{"message": _REPLACED_BARE.format(PREFIX + "3")}]),
+        "names the group",
+    ),
+    (
+        "the bare replacement annotation's group runs on past a space",
+        _set(_NOTES, [{"message": _REPLACED_BARE.format(PREFIX + "2 and more")}]),
+        "no replacement annotation",
     ),
     (
         "the replacement annotation names a pull request's group",
@@ -292,7 +316,7 @@ UNPROVEN_ROWS: list[tuple[str, Any, str]] = [
 
 
 def test_every_other_cancellation_is_unproven(subtests: object) -> None:
-    assert len(UNPROVEN_ROWS) == 23, "a row was dropped from the table"
+    assert len(UNPROVEN_ROWS) == 25, "a row was dropped from the table"
     for name, change, why in UNPROVEN_ROWS:
         with row(subtests, case=name):
             answers = _answers()
