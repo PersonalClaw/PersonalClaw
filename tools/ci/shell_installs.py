@@ -20,6 +20,7 @@ the reader leans to failing: a command it cannot place is a problem, not a pass.
 
 from __future__ import annotations
 
+import functools
 import json
 import re
 import shlex
@@ -189,7 +190,21 @@ def shell_call(words: list[str]) -> ShellCall | None:
 
 
 def read_script(text: str, offset: int = 0) -> Script:
-    """*text* as shell lines. Line numbers are *text*'s, plus *offset*."""
+    """*text* as shell lines. Line numbers are *text*'s, plus *offset*.
+
+    Each distinct script is read once (:func:`_read_script`), as :func:`pipelines` reads each
+    line once: a check reads a script for every step that runs it, and the contract table's
+    controls read trees that differ by one planted file. Every caller gets a Script of its own."""
+    lines, data = _read_script(text, offset)
+    return Script(lines=list(lines), data=[(full, list(body)) for full, body in data])
+
+
+@functools.lru_cache(maxsize=4096)
+def _read_script(
+    text: str, offset: int
+) -> tuple[tuple[tuple[int, str], ...], tuple[tuple[str, tuple[str, ...]], ...]]:
+    """:func:`read_script`'s reading of *text*, as tuples, so no caller can change what the next
+    one is given."""
     script = Script()
     raw = text.splitlines()
     pending, start, index = "", 0, 0
@@ -224,7 +239,7 @@ def read_script(text: str, offset: int = 0) -> Script:
                 script.data.append((full, body))
     if pending:
         script.lines.append((start, pending))
-    return script
+    return tuple(script.lines), tuple((full, tuple(body)) for full, body in script.data)
 
 
 # ── commands ──────────────────────────────────────────────────────────────────────────────────
@@ -338,7 +353,19 @@ def _separators(line: str) -> str:
 def pipelines(line: str) -> list[list[list[str]]]:
     """Every pipeline of *line*, as its commands' words, each command unwrapped. A subshell,
     a group, a substitution and a ``sh -c`` script are read as pipelines of their own. An
-    ``xargs`` command gets the word ``<stdin>``, since what it runs takes words it cannot see."""
+    ``xargs`` command gets the word ``<stdin>``, since what it runs takes words it cannot see.
+
+    Each distinct line is read once (:func:`_read_pipelines`), and every caller gets lists of its
+    own. One check reads the same line many times: a script once for each step that runs it, about
+    ten reads a line on this tree. And the contract table's controls read trees that differ from
+    each other by one planted file."""
+    return [[list(words) for words in commands] for commands in _read_pipelines(line)]
+
+
+@functools.lru_cache(maxsize=16384)
+def _read_pipelines(line: str) -> tuple[tuple[tuple[str, ...], ...], ...]:
+    """:func:`pipelines`' reading of *line*, as tuples, so no caller can change what the next
+    one is given."""
     out: list[list[list[str]]] = []
     for chain in _separators(line).split("\0"):
         commands: list[list[str]] = []
@@ -360,7 +387,7 @@ def pipelines(line: str) -> list[list[list[str]]]:
                 out += pipelines(call.command)
             elif call is not None and "-c" in words[1:-1]:
                 out += pipelines(words[words.index("-c") + 1])  # leaning to reading it
-    return out
+    return tuple(tuple(tuple(words) for words in commands) for commands in out)
 
 
 # ── judging ───────────────────────────────────────────────────────────────────────────────────
