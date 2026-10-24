@@ -89,7 +89,7 @@ updates:
       # it only once faster-whisper stops passing the keyword.
       - dependency-name: av
         versions: [">=19"]
-      # `setuptools==84.0.0` (`[build-system] requires`): exact on purpose, and held equal to the
+      # `setuptools==84.1.0` (`[build-system] requires`): exact on purpose, and held equal to the
       # setuptools `uv.lock` resolves (`tests/test_verify_wheel_contract.py`), because `make build`
       # is byte-reproducible only on one backend. Dependabot moves the pin without the lock, so a
       # bump here can never pass that test. Bump both in one commit by hand: edit the pin, then
