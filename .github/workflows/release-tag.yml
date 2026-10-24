@@ -5,12 +5,18 @@
 # `python -m tools.ci release-tag` (tools/ci/release_tag.py), from main's own checkout, refuses
 # unless the tag is a release tag by the release's parser, the commit is on main, the commit's
 # workflows, actions and tools/ci are main's (so the tag's release.yml is main's), no tag of that
-# name exists, and the commit's own push run on main is green (#3911): read in merge.yml, else
-# ci.yml, with the job's token (`actions: read`). Only then is the release controller's App token
+# name exists, the commit's own push run on main is green (#3911): read in merge.yml, else
+# ci.yml, and, for a release tag, the commit's breadth is green (#3911): the newest breadth.yml
+# run of the commit, a rehearsal tag's push, completed with a digest-verified green record of
+# every attempt, and no earlier red run of it unless the owner's record names it
+# (.github/release-breadth-exceptions.json). All of it is read with the job's token
+# (`actions: read`), and none of it is waited for. Only then is the release controller's App token
 # made, and the tag created with it: the `release-tag-creation` ruleset lets that App alone create
 # a `v*` tag, and `release-tags` lets nobody move or delete one.
-# `rehearsal: true` creates `rehearsal-<tag>` instead, with the same checks and the same App, a
-# name no `v*` rule and no release trigger sees: how the path is proved without a release.
+# `rehearsal: true` creates `rehearsal-<tag>-<sha7>` instead, with the same checks but breadth's
+# and the same App, a name no `v*` rule and no release trigger sees: how the path is proved
+# without a release. Its push starts breadth.yml on the commit, the run the release tag's gate
+# reads once it is green, hours later.
 #
 # The App's key is a secret of the `ci-controller` environment, which only main may deploy to,
 # so no branch's copy of this file can reach it; the job also runs only on main. The inputs reach
@@ -29,7 +35,7 @@ on:
         required: true
         type: string
       rehearsal:
-        description: "Create rehearsal-<tag> instead, to prove the path without a release"
+        description: "Create rehearsal-<tag>-<sha7> instead, which starts breadth on the commit"
         required: false
         type: boolean
         default: false

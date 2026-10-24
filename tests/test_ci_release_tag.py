@@ -8,13 +8,16 @@ stands in for the release's parser, so the check is shown to read the checkout's
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
 
-from tools.ci import release_tag, trust
+from tools.ci import breadth_evidence, release_tag, trust
 
 #: Shaped as the real parser is: postponed annotations and a frozen dataclass, which only load
 #: when the module is registered while it runs.
@@ -188,11 +191,21 @@ def test_a_refused_ref_is_reported() -> None:
         release_tag.create("owner/project", "v1.2.3", COMMIT, post)
 
 
+def _green_breadth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The commit's breadth is green (its own tests are below)."""
+    monkeypatch.setattr(
+        release_tag,
+        "breadth_green",
+        lambda repository, commit, get, download, *, repo: "https://breadth/run/1",
+    )
+
+
 def _green_runs(monkeypatch: pytest.MonkeyPatch, commit: str) -> None:
     """The commit's push run on main is green, read with the job's token."""
     green = FakeGet(ci_yml=[_run("ci.yml", sha=commit)])
     monkeypatch.setattr(release_tag, "github_get", lambda token: green)
     monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
+    _green_breadth(monkeypatch)
 
 
 def test_main_refuses_to_create_without_the_controllers_token(
@@ -228,30 +241,42 @@ def test_a_rehearsal_is_checked_like_the_release_and_named_apart(
         release_tag.check(repo, "1.2.3", readme, rehearsal=True)
     with pytest.raises(trust.Refused, match="is not on origin/main"):
         release_tag.check(repo, "v1.2.3", str(planted["side"]), rehearsal=True)
-    # Its own name is the one that must not exist; the release tag's does not stop it.
+    # Its own name is the one that must not exist; the release tag's does not stop it, and
+    # neither does another commit's rehearsal of the same tag.
     _git(repo, "tag", "v1.2.3", str(planted["first"]))
     release_tag.check(repo, "v1.2.3", readme, rehearsal=True)
-    _git(repo, "tag", "rehearsal-v1.2.4", str(planted["first"]))
-    with pytest.raises(trust.Refused, match="rehearsal-v1.2.4 exists already"):
+    _git(repo, "tag", f"rehearsal-v1.2.4-{str(planted['first'])[:7]}", str(planted["first"]))
+    release_tag.check(repo, "v1.2.4", readme, rehearsal=True)
+    _git(repo, "tag", f"rehearsal-v1.2.4-{readme[:7]}", readme)
+    with pytest.raises(trust.Refused, match=f"rehearsal-v1.2.4-{readme[:7]} exists already"):
         release_tag.check(repo, "v1.2.4", readme, rehearsal=True)
 
 
 def test_a_rehearsal_creates_the_rehearsal_name_and_never_the_release_tag(
     planted: dict[str, object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/rehearsal-v1.2.3"}))
+    readme = str(planted["readme"])
+    name = f"rehearsal-v1.2.3-{readme[:7]}"
+    post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": f"refs/tags/{name}"}))
     monkeypatch.setattr(release_tag, "github_post", lambda token: post)
     monkeypatch.setenv("GH_TOKEN", "an-app-token")
-    _green_runs(monkeypatch, str(planted["readme"]))
-    argv = ["--tag", "v1.2.3", "--commit", str(planted["readme"]), "--repo", str(planted["repo"])]
+    _green_runs(monkeypatch, readme)
+    # A rehearsal is what starts breadth on its commit, so it reads none.
+    monkeypatch.setattr(release_tag, "breadth_green", _never)
+    argv = ["--tag", "v1.2.3", "--commit", readme, "--repo", str(planted["repo"])]
     assert (
         release_tag.main([*argv, "--repository", "owner/project", "--create", "--rehearsal"]) == 0
     )
     assert [body.get("tag") or body.get("ref") for _, body in post.calls] == [
-        "rehearsal-v1.2.3",
-        "refs/tags/rehearsal-v1.2.3",
+        name,
+        f"refs/tags/{name}",
     ]
-    assert release_tag.tag_name("v1.2.3") == "v1.2.3"
+    assert release_tag.tag_name("v1.2.3", commit=readme) == "v1.2.3"
+    assert release_tag.tag_name("v1.2.3", rehearsal=True, commit=readme) == name
+
+
+def _never(*args: object, **kwargs: object) -> str:
+    raise AssertionError("a rehearsal reads no breadth")
 
 
 # ── the commit's own push run on main must be green (#3911) ───────────────────────────────────
@@ -390,6 +415,7 @@ def test_main_reads_the_gate_before_it_creates_and_a_red_run_creates_nothing(
     commit = str(planted["readme"])
     post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/v1.2.3"}))
     monkeypatch.setattr(release_tag, "github_post", lambda token: post)
+    _green_breadth(monkeypatch)
     red = FakeGet(ci_yml=[_run("ci.yml", sha=commit, conclusion="failure")])
     tokens: list[str] = []
     monkeypatch.setattr(release_tag, "github_get", lambda token: tokens.append(token) or red)
@@ -475,6 +501,7 @@ def test_main_creates_no_tag_while_a_release_runs(
     monkeypatch.setattr(release_tag, "github_post", lambda token: post)
     running = FakeGet(ci_yml=[_run("ci.yml", sha=commit)], release_yml=[_release("in_progress")])
     monkeypatch.setattr(release_tag, "github_get", lambda token: running)
+    _green_breadth(monkeypatch)
     monkeypatch.setenv("GH_TOKEN", "an-app-token")
     monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
     argv = ["--tag", "v1.2.3", "--commit", commit, "--repo", str(planted["repo"])]
@@ -484,3 +511,362 @@ def test_main_creates_no_tag_while_a_release_runs(
     assert post.calls == [], "no tag is made while a release runs"
     assert release_tag.main([*argv, "--repository", REPOSITORY, "--create", "--rehearsal"]) == 1
     assert post.calls == [], "a rehearsal is held to it as the release is"
+
+
+# ── the commit's breadth must be green (#3911, #4712) ────────────────────────────────────────
+#
+# A rehearsal's tag push starts breadth.yml on the commit, off main, where nothing is reused. The
+# real tag's gate reads breadth's runs of the commit: the newest must be a rehearsal tag's push,
+# completed green, with a digest-verified record of every attempt, every leg run and green; an
+# earlier red run of the commit refuses unless the owner's record names it. It never waits.
+
+BREADTH_TAG = "rehearsal-v1.2.3-aaaaaaa"
+
+
+def _record(run_id: int, tree: str, *, attempt: int = 1, **legs: dict[str, object]) -> dict:
+    entries: dict[str, object] = {
+        key: breadth_evidence.executed({"tree": tree}, breadth_evidence.GREEN, "now", attempt)
+        for key in sorted(breadth_evidence.expected_keys())
+    }
+    entries.update(legs)
+    return {"version": 1, "run_id": run_id, "attempt": attempt, "tree": tree, "legs": entries}
+
+
+class BreadthApi:
+    """breadth.yml's runs of the commit, each run's artifacts, and each artifact's zip."""
+
+    def __init__(self, planted: dict[str, object]) -> None:
+        repo = planted["repo"]
+        assert isinstance(repo, Path)
+        self.commit = str(planted["readme"])
+        self.tree = _git(repo, "rev-parse", f"{self.commit}^{{tree}}")
+        self.runs: list[dict[str, object]] = []
+        self.artifacts: dict[int, list[dict[str, object]]] = {}
+        self.zips: dict[int, bytes] = {}
+        self.fail = ""
+        self.paths: list[str] = []
+
+    def run(
+        self,
+        run_id: int,
+        *records: dict,
+        status: str = "completed",
+        conclusion: str | None = "success",
+        event: str = "push",
+        branch: str = BREADTH_TAG,
+        attempt: int = 1,
+        bytes_of: bytes | None = None,
+        **overrides: object,
+    ) -> "BreadthApi":
+        self.runs.append(
+            {
+                "id": run_id,
+                "run_number": run_id,
+                "run_attempt": attempt,
+                "path": release_tag.WORKFLOW_DIR + "breadth.yml",
+                "head_sha": self.commit,
+                "event": event,
+                "head_branch": branch,
+                "head_repository": {"full_name": REPOSITORY},
+                "status": status,
+                "conclusion": conclusion,
+                "html_url": f"https://github.com/{REPOSITORY}/actions/runs/{run_id}",
+                **overrides,
+            }
+        )
+        listed = self.artifacts.setdefault(run_id, [])
+        for record in records:
+            data = breadth_evidence.canonical(record)
+            artifact = run_id * 100 + len(listed)
+            listed.append(
+                {
+                    "id": artifact,
+                    "name": breadth_evidence.artifact_name(breadth_evidence.digest(data)),
+                    "expired": False,
+                }
+            )
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w") as archive:
+                archive.writestr("record.json", bytes_of if bytes_of is not None else data)
+            self.zips[artifact] = buffer.getvalue()
+        listed.append(
+            {"id": run_id * 100 + 99, "name": "breadth-entry-coverage__1", "expired": False}
+        )
+        return self
+
+    def __call__(self, path: str) -> object:
+        self.paths.append(path)
+        if self.fail and self.fail in path:
+            raise OSError("HTTP Error 502: Bad Gateway")
+        if path == (
+            f"/repos/{REPOSITORY}/actions/workflows/breadth.yml/runs"
+            f"?head_sha={self.commit}&per_page=100"
+        ):
+            return {"total_count": len(self.runs), "workflow_runs": self.runs}
+        for run_id, listed in self.artifacts.items():
+            if path == f"/repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100&page=1":
+                return {"total_count": len(listed), "artifacts": listed}
+        raise OSError(f"HTTP Error 404: Not Found ({path})")
+
+    def download(self, path: str) -> bytes:
+        self.paths.append(path)
+        if self.fail and self.fail in path:
+            raise OSError("HTTP Error 502: Bad Gateway")
+        for artifact, data in self.zips.items():
+            if path == f"/repos/{REPOSITORY}/actions/artifacts/{artifact}/zip":
+                return data
+        raise OSError(f"HTTP Error 404: Not Found ({path})")
+
+
+def _breadth(planted: dict[str, object], api: BreadthApi) -> str:
+    repo = planted["repo"]
+    assert isinstance(repo, Path)
+    return release_tag.breadth_green(REPOSITORY, api.commit, api, api.download, repo=repo)
+
+
+def _breadth_refusal(planted: dict[str, object], api: BreadthApi) -> str:
+    with pytest.raises(trust.Refused) as refused:
+        _breadth(planted, api)
+    return str(refused.value)
+
+
+def _excuse(planted: dict[str, object], *entries: dict[str, object]) -> None:
+    """The owner's record, planted in the checkout the gate reads (main's)."""
+    repo = planted["repo"]
+    assert isinstance(repo, Path)
+    path = repo / release_tag.BREADTH_EXCEPTIONS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"about": "planted", "exceptions": list(entries)}), encoding="utf-8")
+
+
+def test_a_commit_whose_rehearsal_breadth_is_green_may_be_tagged(
+    planted: dict[str, object],
+) -> None:
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree))
+    assert _breadth(planted, api).endswith("/actions/runs/70")
+    assert any(p.endswith("/zip") for p in api.paths), "the record is read, never a summary"
+
+
+def test_a_commit_with_no_breadth_run_off_main_is_refused_saying_how_to_start_one(
+    planted: dict[str, object],
+) -> None:
+    api = BreadthApi(planted)
+    said = _breadth_refusal(planted, api)
+    assert "no breadth run" in said and "rehearsal" in said, said
+    for overrides in (
+        {"head_branch": "main"},  # main's nightly reuses: a release never rests on it
+        {"head_sha": "c" * 40},
+        {"head_repository": {"full_name": "someone/fork"}},
+        {"path": release_tag.WORKFLOW_DIR + "ci.yml"},
+    ):
+        other = BreadthApi(planted)
+        other.run(70, _record(70, other.tree), **overrides)
+        assert "no breadth run" in _breadth_refusal(planted, other), overrides
+
+
+@pytest.mark.parametrize("status", ["in_progress", "queued", "waiting"])
+def test_the_gate_never_waits_on_a_run_that_has_not_finished(
+    planted: dict[str, object], status: str
+) -> None:
+    api = BreadthApi(planted)
+    api.run(70, status=status, conclusion=None)
+    said = _breadth_refusal(planted, api)
+    assert status in said and "/actions/runs/70" in said, said
+    earlier = BreadthApi(planted)
+    earlier.run(69, status=status, conclusion=None).run(70, _record(70, earlier.tree))
+    assert "/actions/runs/69" in _breadth_refusal(planted, earlier)
+
+
+def test_the_newest_run_must_be_a_rehearsal_tags_push(planted: dict[str, object]) -> None:
+    for event, branch in (
+        ("workflow_dispatch", BREADTH_TAG),
+        ("push", "release/v1.2"),
+        ("workflow_dispatch", "side"),
+    ):
+        api = BreadthApi(planted)
+        api.run(70, _record(70, api.tree), event=event, branch=branch)
+        said = _breadth_refusal(planted, api)
+        assert "not a rehearsal tag's push" in said, said
+
+
+@pytest.mark.parametrize(
+    "conclusion", ["failure", "cancelled", "timed_out", "skipped", "action_required"]
+)
+def test_a_newest_run_that_did_not_succeed_is_refused(
+    planted: dict[str, object], conclusion: str
+) -> None:
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree), conclusion=conclusion)
+    assert conclusion in _breadth_refusal(planted, api)
+
+
+def test_a_record_with_a_red_or_carried_leg_does_not_satisfy_a_release(
+    planted: dict[str, object],
+) -> None:
+    api = BreadthApi(planted)
+    key = sorted(breadth_evidence.expected_keys())[0]
+    red = {"inputs": {}, "result": breadth_evidence.RED, "attempt": 1}
+    api.run(70, _record(70, api.tree, **{key: red}))
+    assert "does not satisfy a release" in _breadth_refusal(planted, api)
+    carried = BreadthApi(planted)
+    reused = {"inputs": {}, "result": "success", "reused_from": {"run_id": 1, "digest": "d"}}
+    carried.run(70, _record(70, carried.tree, **{key: reused}))
+    assert "does not satisfy a release" in _breadth_refusal(planted, carried)
+
+
+def test_a_rerun_missing_an_earlier_attempts_record_is_refused(
+    planted: dict[str, object],
+) -> None:
+    """Attempt 1 measured something nobody can read: a green attempt 2 does not stand in."""
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree, attempt=2), attempt=2)
+    assert "does not satisfy a release" in _breadth_refusal(planted, api)
+    both = BreadthApi(planted)
+    both.run(70, _record(70, both.tree), _record(70, both.tree, attempt=2), attempt=2)
+    assert _breadth(planted, both).endswith("/runs/70")
+
+
+def test_a_record_that_does_not_hash_to_its_name_or_names_another_tree_is_refused(
+    planted: dict[str, object],
+) -> None:
+    api = BreadthApi(planted)
+    record = _record(70, api.tree)
+    api.run(70, record, bytes_of=breadth_evidence.canonical({**record, "attempt": 1, "x": 1}))
+    assert "does not hash" in _breadth_refusal(planted, api)
+    other = BreadthApi(planted)
+    other.run(70, _record(70, "d" * 40))
+    said = _breadth_refusal(planted, other)
+    assert "d" * 40 in said and other.tree in said, said
+    elsewhere = BreadthApi(planted)
+    elsewhere.run(70, _record(71, elsewhere.tree))
+    assert "run 71" in _breadth_refusal(planted, elsewhere)
+    none = BreadthApi(planted)
+    none.run(70)
+    assert "holds no breadth record" in _breadth_refusal(planted, none)
+
+
+def test_an_earlier_red_run_of_the_commit_refuses_unless_the_owner_recorded_why(
+    planted: dict[str, object],
+) -> None:
+    def api() -> BreadthApi:
+        made = BreadthApi(planted)
+        made.run(69, _record(69, made.tree), conclusion="failure", event="workflow_dispatch")
+        return made.run(70, _record(70, made.tree))
+
+    said = _breadth_refusal(planted, api())
+    assert "/actions/runs/69" in said and release_tag.BREADTH_EXCEPTIONS in said, said
+    commit = str(planted["readme"])
+    # The owner's record must name that run and that commit.
+    _excuse(planted, {"run_id": 68, "commit": commit, "why": "another run"})
+    assert "/actions/runs/69" in _breadth_refusal(planted, api())
+    _excuse(planted, {"run_id": 69, "commit": "c" * 40, "why": "another commit"})
+    assert "/actions/runs/69" in _breadth_refusal(planted, api())
+    _excuse(planted, {"run_id": 69, "commit": commit, "why": "the runner image broke the leg"})
+    assert _breadth(planted, api()).endswith("/actions/runs/70")
+
+
+def test_an_owners_record_cannot_excuse_the_newest_run(planted: dict[str, object]) -> None:
+    commit = str(planted["readme"])
+    _excuse(planted, {"run_id": 70, "commit": commit, "why": "no"})
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree), conclusion="failure")
+    assert "failure" in _breadth_refusal(planted, api)
+
+
+@pytest.mark.parametrize(
+    "data, says",
+    [
+        ([], "not an object"),
+        ({"exceptions": []}, "about"),
+        ({"about": "x", "exceptions": [], "extra": 1}, "extra"),
+        ({"about": "x", "exceptions": {}}, "not a list"),
+        ({"about": "x", "exceptions": [{"run_id": 1, "commit": "a" * 40}]}, "why"),
+        (
+            {"about": "x", "exceptions": [{"run_id": True, "commit": "a" * 40, "why": "x"}]},
+            "run_id",
+        ),
+        ({"about": "x", "exceptions": [{"run_id": 0, "commit": "a" * 40, "why": "x"}]}, "run_id"),
+        ({"about": "x", "exceptions": [{"run_id": 1, "commit": "a" * 39, "why": "x"}]}, "commit"),
+        ({"about": "x", "exceptions": [{"run_id": 1, "commit": "a" * 40, "why": " "}]}, "why"),
+        (
+            {
+                "about": "x",
+                "exceptions": [
+                    {"run_id": 1, "commit": "a" * 40, "why": "x"},
+                    {"run_id": 1, "commit": "a" * 40, "why": "y"},
+                ],
+            },
+            "twice",
+        ),
+    ],
+)
+def test_the_owners_record_holds_its_shape(data: object, says: str) -> None:
+    problems = release_tag.exception_problems(data)
+    assert any(says in p for p in problems), problems
+    assert (
+        release_tag.exception_problems(
+            {"about": "x", "exceptions": [{"run_id": 1, "commit": "a" * 40, "why": "x"}]}
+        )
+        == []
+    )
+
+
+def test_a_malformed_owners_record_refuses_rather_than_excuses(
+    planted: dict[str, object],
+) -> None:
+    repo = planted["repo"]
+    assert isinstance(repo, Path)
+    path = repo / release_tag.BREADTH_EXCEPTIONS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+    api = BreadthApi(planted)
+    api.run(69, _record(69, api.tree), conclusion="failure").run(70, _record(70, api.tree))
+    assert release_tag.BREADTH_EXCEPTIONS in _breadth_refusal(planted, api)
+
+
+@pytest.mark.parametrize("part", ["/workflows/breadth.yml/runs", "/artifacts?", "/zip"])
+def test_an_answer_the_breadth_gate_cannot_read_is_refused_not_passed(
+    planted: dict[str, object], part: str
+) -> None:
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree))
+    api.fail = part
+    assert "cannot read" in _breadth_refusal(planted, api)
+
+
+def test_main_reads_breadth_before_it_creates_a_release_tag_and_a_rehearsal_reads_none(
+    planted: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The plant: a commit whose push run is green and which no breadth run has measured."""
+    commit = str(planted["readme"])
+    post = FakePost(
+        (201, {"sha": TAG_OBJECT}),
+        (201, {"ref": "refs/tags/x"}),
+        (201, {"sha": TAG_OBJECT}),
+        (201, {"ref": "refs/tags/v1.2.3"}),
+    )
+    monkeypatch.setattr(release_tag, "github_post", lambda token: post)
+    runs = FakeGet(ci_yml=[_run("ci.yml", sha=commit)])
+    breadth = BreadthApi(planted)
+
+    def answers(path: str) -> object:
+        return breadth(path) if "breadth.yml" in path or "/artifacts" in path else runs(path)
+
+    monkeypatch.setattr(release_tag, "github_get", lambda token: answers)
+    monkeypatch.setattr(release_tag, "github_download", lambda token: breadth.download)
+    monkeypatch.setenv("GH_TOKEN", "an-app-token")
+    monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
+    argv = ["--tag", "v1.2.3", "--commit", commit, "--repo", str(planted["repo"])]
+    assert release_tag.main([*argv, "--repository", REPOSITORY, "--create"]) == 1
+    assert "no breadth run" in capsys.readouterr().out
+    assert post.calls == []
+    assert release_tag.main([*argv, "--repository", REPOSITORY, "--create", "--rehearsal"]) == 0
+    assert post.calls[0][1]["tag"] == f"rehearsal-v1.2.3-{commit[:7]}"
+    breadth.run(70, _record(70, breadth.tree), branch=f"rehearsal-v1.2.3-{commit[:7]}")
+    assert release_tag.main([*argv, "--repository", REPOSITORY, "--create"]) == 0
+    out = capsys.readouterr().out
+    assert "its breadth is green: https://github.com/owner/project/actions/runs/70" in out, out
+    assert post.calls[2][1]["tag"] == "v1.2.3"

@@ -33,8 +33,12 @@ name: Breadth
 on:
   schedule:
     - cron: "37 9 * * *"  # nightly, off the hour and clear of the other workflows' slots
-  # On any ref: the release gate (#3911) dispatches it on a tag's commit.
   workflow_dispatch: {}
+  # A release's rehearsal: release-tag.yml's App creates rehearsal-<tag>-<sha7> on the commit to
+  # be tagged, and that push runs every leg on it, off main, where nothing is reused. The release
+  # tag's gate reads this run's records (#3911), so nothing needs to dispatch it.
+  push:
+    tags: ["rehearsal-v*"]
 
 # One run per ref at a time, and a run in flight is never cancelled: a later dispatch waits.
 concurrency:

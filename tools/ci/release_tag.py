@@ -12,50 +12,64 @@ it with a tag and a commit. It refuses, naming why, unless:
 - the commit's own push run on ``main`` is green (#3911, :func:`main_push_green`): read in each
   workflow a push to ``main`` runs in, the newer shape first (``workflows.MAIN_PUSH``,
   ``merge.yml`` once #3915's flip lands, ``ci.yml`` until then), so the gate outlives the flip.
+- the commit's breadth is green (#3911, :func:`breadth_green`), for a release tag: the newest
+  ``breadth.yml`` run of the commit off ``main`` is a rehearsal tag's push, completed green, with
+  a digest-verified record of every attempt, every leg run there and green; and an earlier red
+  run of the commit is named in the owner's record (:data:`BREADTH_EXCEPTIONS`). It never waits:
+  until that run exists and has finished, it refuses;
 - no ``release.yml`` run is still going (#3911, :func:`no_release_running`): every release
   shares one concurrency group, where GitHub keeps one waiting run, so a tag made behind a
   running release could have its run replaced by the next and never be released.
 
-With ``--rehearsal`` the tag it checks for, and creates, is ``rehearsal-<tag>``: every check and
-the App are the same, and no ``v*`` rule or release trigger sees it, so the whole path can be
-proved without a release.
+With ``--rehearsal`` the tag it checks for, and creates, is ``rehearsal-<tag>-<sha7>``: every
+check but breadth's and the App are the same, and no ``v*`` rule or release trigger sees it, so
+the whole path can be proved without a release. Its push starts ``breadth.yml`` on the commit,
+which is the run the release tag's gate then reads. The short commit in the name lets a later
+commit rehearse the same tag, since a tag is never moved or deleted; the gate matches the full
+commit, never the name.
 
-It reads the runs with ``RUNS_TOKEN``, the job's own token with ``actions: read``. With
+It reads the runs and breadth's records with ``RUNS_TOKEN``, the job's own token with
+``actions: read``. With
 ``--create`` it then creates the annotated tag and its ref through the API with
 ``GH_TOKEN``, the release controller's App token: the one actor the ``release-tag-creation``
 ruleset lets create a ``v*`` tag. The tag's push starts ``release.yml``. Nothing else is written,
 and a tag is never moved or deleted (``release-tags`` refuses both for everyone).
 
-#3911's gate grows with the trusted ``merge-verdict`` (#3910) and the breadth evidence (#3913)
-once they exist. See docs/maintainers/ci.md, "The release tags".
+#3911's gate grows with the trusted ``merge-verdict`` (#3910) once it is required. See
+docs/maintainers/ci.md, "The release tags".
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import trust, workflows
+from . import breadth_evidence, trust, workflows
 
 API = "https://api.github.com"
 MAIN = "origin/main"
-#: A rehearsal creates ``rehearsal-<tag>`` instead: the same checks and the same App, under a name
-#: no ``v*`` rule or ``release.yml`` trigger matches, so the path is proved without a release.
+#: A rehearsal creates ``rehearsal-<tag>-<sha7>`` instead: the same checks and the same App,
+#: under a name no ``v*`` rule or ``release.yml`` trigger matches, so the path is proved without a
+#: release. Its push starts ``breadth.yml`` (``push: tags: [rehearsal-v*]``).
 REHEARSAL_PREFIX = "rehearsal-"
 
 
-def tag_name(tag: str, *, rehearsal: bool = False) -> str:
-    """The ref name the tag is created as: *tag* itself, or its rehearsal name."""
-    return f"{REHEARSAL_PREFIX}{tag}" if rehearsal else tag
+def tag_name(tag: str, *, rehearsal: bool = False, commit: str = "") -> str:
+    """The ref name the tag is created as: *tag* itself, or its rehearsal name, which carries
+    the commit's first seven characters so each commit rehearses the tag under its own name."""
+    return f"{REHEARSAL_PREFIX}{tag}-{commit[:7]}" if rehearsal else tag
 
 
 #: ``post(path, body)`` returns the HTTP status and the decoded JSON answer.
@@ -119,7 +133,7 @@ def check(repo: Path, tag: str, commit: str, *, main: str = MAIN, rehearsal: boo
             f"{commit}'s definitions differ from {main}'s: {names}. Tag a commit whose "
             "workflows, actions and tools/ci are main's, or land the change first"
         )
-    name = tag_name(tag, rehearsal=rehearsal)
+    name = tag_name(tag, rehearsal=rehearsal, commit=commit)
     if _tag_exists(repo, name):
         raise trust.Refused(f"{name} exists already; a release tag is never moved")
 
@@ -182,6 +196,268 @@ def main_push_green(repository: str, commit: str, get: Get) -> str:
         f"{commit} has no push run on main in {' or '.join(workflows.MAIN_PUSH)}, so nothing "
         "proved it: tag a commit main's push ran on"
     )
+
+
+BREADTH_WORKFLOW = "breadth.yml"
+#: The owner's record of each red breadth run a release may pass over, read from main's checkout.
+#: Only the owner writes it, by hand. That is a rule, not a check: agents act on GitHub as the
+#: owner's account, so nothing here can tell who wrote an entry.
+BREADTH_EXCEPTIONS = ".github/release-breadth-exceptions.json"
+#: ``download(path)`` returns the bytes an API path's artifact zip holds.
+Download = Callable[[str], bytes]
+#: A record's zip, or its one file, larger than this is not a record this reads.
+_MAX_RECORD_BYTES = 16 * 1024 * 1024
+_SHA = re.compile(r"[0-9a-f]{40}")
+_EXCEPTION_KEYS = {"run_id", "commit", "why"}
+
+
+def exception_problems(data: object) -> list[str]:
+    """What is wrong with the owner's record's shape: ``{"about": str, "exceptions": [{"run_id":
+    int, "commit": <full commit id>, "why": str}, ...]}``, each run named once."""
+    if not isinstance(data, dict):
+        return ["the record is not an object"]
+    found: list[str] = []
+    if set(data) != {"about", "exceptions"}:
+        found.append(f"the record's keys are {sorted(data)}, not about and exceptions")
+    if not isinstance(data.get("about"), str) or not str(data.get("about")).strip():
+        found.append("the record's about says nothing")
+    entries = data.get("exceptions")
+    if not isinstance(entries, list):
+        return [*found, "its exceptions are not a list"]
+    seen: set[int] = set()
+    for n, entry in enumerate(entries):
+        if not isinstance(entry, dict) or set(entry) != _EXCEPTION_KEYS:
+            keys = sorted(entry) if isinstance(entry, dict) else entry
+            found.append(f"exception {n} holds {keys!r}, not run_id, commit and why")
+            continue
+        run_id, commit, why = entry["run_id"], entry["commit"], entry["why"]
+        if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id < 1:
+            found.append(f"exception {n}'s run_id {run_id!r} is not a run id")
+        elif run_id in seen:
+            found.append(f"exception {n} names run {run_id} twice")
+        else:
+            seen.add(run_id)
+        if not isinstance(commit, str) or not _SHA.fullmatch(commit):
+            found.append(f"exception {n}'s commit {commit!r} is not a full commit id")
+        if not isinstance(why, str) or not why.strip():
+            found.append(f"exception {n} says no why")
+    return found
+
+
+def breadth_exceptions(repo: Path) -> dict[int, str]:
+    """The owner's record in *repo*, run id to commit; none when there is no record."""
+    path = repo / BREADTH_EXCEPTIONS
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise trust.Refused(f"cannot read {BREADTH_EXCEPTIONS}: {error}") from None
+    problems = exception_problems(data)
+    if problems:
+        raise trust.Refused(
+            f"{BREADTH_EXCEPTIONS} is not the owner's record: {'; '.join(problems)}"
+        )
+    return {int(e["run_id"]): str(e["commit"]) for e in data["exceptions"]}
+
+
+def _ask(get: Get, path: str, what: str) -> Any:
+    try:
+        return get(path)
+    except (OSError, ValueError) as error:
+        raise trust.Refused(f"cannot read {what}: {error}") from None
+
+
+def _breadth_runs(repository: str, commit: str, get: Get) -> list[dict[str, Any]]:
+    """*commit*'s ``breadth.yml`` runs of *repository* off ``main``, any event."""
+    what = f"{BREADTH_WORKFLOW}'s runs of {commit}"
+    answer = _ask(
+        get,
+        f"/repos/{repository}/actions/workflows/{BREADTH_WORKFLOW}/runs"
+        f"?head_sha={commit}&per_page=100",
+        what,
+    )
+    listed = answer.get("workflow_runs") if isinstance(answer, dict) else None
+    if not isinstance(listed, list):
+        raise trust.Refused(f"cannot read {what}: {answer!r}")
+    if len(listed) >= 100:
+        raise trust.Refused(f"cannot read {what}: they fill a page, so one may be unseen")
+    # Main's runs reuse earlier results, so a release never rests on one, and its reds are
+    # kept in breadth's leg issues.
+    return [
+        run
+        for run in listed
+        if isinstance(run, dict)
+        and run.get("head_sha") == commit
+        and run.get("head_branch") != "main"
+        and (run.get("head_repository") or {}).get("full_name") == repository
+        and str(run.get("path", "")).split("@", 1)[0] == WORKFLOW_DIR + BREADTH_WORKFLOW
+    ]
+
+
+def _breadth_records(
+    repository: str, run_id: int, get: Get, download: Download
+) -> list[dict[str, Any]]:
+    """Every record run *run_id* holds, oldest first, each verified under the digest its
+    artifact's name gives (``breadth_evidence.Refused`` when one does not verify)."""
+    what = f"run {run_id}'s artifacts"
+    artifacts: list[dict[str, Any]] = []
+    for page in range(1, 11):
+        answer = _ask(
+            get,
+            f"/repos/{repository}/actions/runs/{run_id}/artifacts?per_page=100&page={page}",
+            what,
+        )
+        listed = answer.get("artifacts") if isinstance(answer, dict) else None
+        total = answer.get("total_count") if isinstance(answer, dict) else None
+        if not isinstance(listed, list) or not isinstance(total, int):
+            raise trust.Refused(f"cannot read {what}: {answer!r}")
+        artifacts += [a for a in listed if isinstance(a, dict)]
+        if len(artifacts) >= total or not listed:
+            break
+    else:
+        raise trust.Refused(f"cannot read {what}: more than ten pages")
+    records: list[dict[str, Any]] = []
+    for artifact in sorted(artifacts, key=lambda a: int(a.get("id") or 0)):
+        name = str(artifact.get("name") or "")
+        if not name.startswith(breadth_evidence.PREFIX):
+            continue
+        if artifact.get("expired"):
+            raise breadth_evidence.Refused(f"its record {name} has expired")
+        data = _ask(
+            download, f"/repos/{repository}/actions/artifacts/{artifact.get('id')}/zip", name
+        )
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                if archive.getinfo("record.json").file_size > _MAX_RECORD_BYTES:
+                    raise breadth_evidence.Refused(f"{name}'s record is too large to be one")
+                body = archive.read("record.json")
+        except (zipfile.BadZipFile, KeyError) as error:
+            raise breadth_evidence.Refused(f"{name} holds no record.json: {error}") from None
+        records.append(breadth_evidence.verify(body, name[len(breadth_evidence.PREFIX) :]))
+    return records
+
+
+def _breadth_red(
+    repository: str, run: dict[str, Any], tree: str, get: Get, download: Download
+) -> str | None:
+    """Why a finished run is not a green a release may rest on; None when it is one."""
+    if run.get("conclusion") != "success":
+        return f"concluded {run.get('conclusion')}"
+    run_id = int(run.get("id") or 0)
+    try:
+        records = _breadth_records(repository, run_id, get, download)
+    except breadth_evidence.Refused as refused:
+        return f"has a record that does not verify: {refused}"
+    if not records:
+        return "holds no breadth record"
+    for record in records:
+        if record.get("run_id") != run_id:
+            return f"holds a record of run {record.get('run_id')}"
+        if record.get("tree") != tree:
+            return f"holds a record of tree {record.get('tree')}, not the commit's {tree}"
+    attempt = run.get("run_attempt")
+    if not isinstance(attempt, int) or not breadth_evidence.satisfies_release(
+        records, run_attempt=attempt
+    ):
+        return (
+            "does not satisfy a release: a release needs a record of every attempt, and every "
+            "leg run there, none carried, all green"
+        )
+    return None
+
+
+def breadth_green(repository: str, commit: str, get: Get, download: Download, *, repo: Path) -> str:
+    """The URL of the breadth run a release of *commit* rests on; else ``trust.Refused``,
+    naming why. It never waits: a run still going refuses.
+
+    The newest ``breadth.yml`` run of the commit off ``main`` must be a rehearsal tag's push,
+    completed green, every record of it verified under its digest, naming that run and the
+    commit's tree, and together satisfying a release (``breadth_evidence.satisfies_release``).
+    The run's commit is the tagged commit, whose definitions :func:`check` holds to ``main``'s,
+    so the breadth.yml that ran is ``main``'s. An earlier red run of the commit refuses unless
+    the owner's record (:data:`BREADTH_EXCEPTIONS`, from *repo*, ``main``'s checkout) names it
+    with this commit: a re-dispatch is a new measurement, and passing over an earlier red is the
+    owner's call (#4712). The newest run is never passed over."""
+    done = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{commit}^{{tree}}"],
+        capture_output=True,
+        text=True,
+    )
+    tree = done.stdout.strip()
+    if done.returncode != 0 or not tree:
+        raise trust.Refused(f"cannot read {commit}'s tree: {done.stderr.strip()}")
+    runs = _breadth_runs(repository, commit, get)
+    if not runs:
+        raise trust.Refused(
+            f"no breadth run of {commit} off main yet: rehearse the tag (release-tag.yml with "
+            f"rehearsal: true), whose rehearsal-<tag>-{commit[:7]} push starts {BREADTH_WORKFLOW} "
+            "on the commit, and tag once that run is green"
+        )
+    for run in runs:
+        if run.get("status") != "completed":
+            raise trust.Refused(
+                f"{BREADTH_WORKFLOW}'s run of {commit} ({run.get('html_url')}) is "
+                f"{run.get('status')}: tag once it has finished"
+            )
+    newest = max(runs, key=lambda r: int(r.get("id") or 0))
+    url = str(newest.get("html_url") or f"run {newest.get('id')}")
+    branch = str(newest.get("head_branch") or "")
+    if newest.get("event") != "push" or not branch.startswith(REHEARSAL_PREFIX + "v"):
+        raise trust.Refused(
+            f"the newest breadth run of {commit} ({url}) is a {newest.get('event')} on {branch}, "
+            "not a rehearsal tag's push: rehearse the tag, and tag once that run is green"
+        )
+    why = _breadth_red(repository, newest, tree, get, download)
+    if why:
+        raise trust.Refused(
+            f"the newest breadth run of {commit} ({url}) {why}: a release rests only on a green "
+            "record of every leg"
+        )
+    excused = breadth_exceptions(repo)
+    for run in sorted(runs, key=lambda r: int(r.get("id") or 0)):
+        if run is newest:
+            continue
+        why = _breadth_red(repository, run, tree, get, download)
+        if why and excused.get(int(run.get("id") or 0)) != commit:
+            raise trust.Refused(
+                f"an earlier breadth run of {commit} ({run.get('html_url')}) {why}, and the "
+                f"owner's record ({BREADTH_EXCEPTIONS} on main) names no reason to pass over it"
+            )
+    return url
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+def github_download(token: str) -> Download:
+    """An artifact's zip: the API answers with a redirect to a signed storage address, which is
+    read without the token, so the token never leaves the API."""
+
+    def download(path: str) -> bytes:
+        request = urllib.request.Request(API + path)
+        request.add_header("Accept", "application/vnd.github+json")
+        request.add_header("X-GitHub-Api-Version", "2022-11-28")
+        request.add_header("Authorization", f"Bearer {token}")
+        opener = urllib.request.build_opener(_NoRedirect)
+        try:
+            with opener.open(request, timeout=60) as response:
+                data: bytes = response.read(_MAX_RECORD_BYTES + 1)
+        except urllib.error.HTTPError as error:
+            if error.code not in (301, 302, 303, 307, 308):
+                raise
+            location = str(error.headers.get("Location") or "")
+            if not location.startswith("https://"):
+                raise OSError(f"{path} redirects to {location!r}, not an https address") from None
+            with urllib.request.urlopen(location, timeout=60) as response:  # noqa: S310
+                data = response.read(_MAX_RECORD_BYTES + 1)
+        if len(data) > _MAX_RECORD_BYTES:
+            raise OSError(f"{path} is larger than a record")
+        return data
+
+    return download
 
 
 def github_get(token: str) -> Get:
@@ -292,7 +568,7 @@ def main(argv: list[str] | None = None) -> int:
         "--rehearsal", action="store_true", help=f"create {REHEARSAL_PREFIX}<tag> instead"
     )
     args = parser.parse_args(argv)
-    name = tag_name(args.tag, rehearsal=args.rehearsal)
+    name = tag_name(args.tag, rehearsal=args.rehearsal, commit=args.commit)
     try:
         check(args.repo, args.tag, args.commit, rehearsal=args.rehearsal)
         runs_token = os.environ.get("RUNS_TOKEN")
@@ -300,10 +576,16 @@ def main(argv: list[str] | None = None) -> int:
             raise trust.Refused("no RUNS_TOKEN: the job's token reads the commit's push run")
         get = github_get(runs_token)
         run = main_push_green(args.repository, args.commit, get)
+        if args.rehearsal:
+            breadth = f"not read, since {name}'s push is what starts it"
+        else:
+            breadth = "green: " + breadth_green(
+                args.repository, args.commit, get, github_download(runs_token), repo=args.repo
+            )
         no_release_running(args.repository, get)
         print(
             f"may tag: {args.commit} on main as {name}; its push run on main is green: {run}; "
-            "no release is running"
+            f"its breadth is {breadth}; no release is running"
         )
         if args.create:
             token = os.environ.get("GH_TOKEN")

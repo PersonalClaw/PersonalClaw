@@ -197,3 +197,83 @@ def test_the_check_loads_the_real_release_parser() -> None:
         release_tag._parse_tag(REPO, "0.2.6")
     with pytest.raises(trust.Refused, match="build metadata"):
         release_tag._parse_tag(REPO, "v0.2.6+local")
+
+
+# ── breadth on a rehearsal, and the owner's record (#3911, #4712) ─────────────────────────────
+#
+# A rehearsal tag's push starts breadth.yml on the commit, so nothing dispatches it and no
+# workflow needs `actions: write` for it. Breadth starts on that push and on no other: a branch
+# push would run it on every candidate. The owner's record of a red run to pass over, when it
+# exists, holds its shape.
+
+_BREADTH = REPO / ".github" / "workflows" / "breadth.yml"
+_WORKFLOWS = REPO / ".github" / "workflows"
+_REHEARSAL_TAGS = ["rehearsal-v*"]
+#: How a workflow could dispatch breadth itself: the API, the CLI, or the script action's client.
+_DISPATCHES = ("breadth.yml/dispatches", "workflow run breadth", "createWorkflowDispatch")
+
+
+def _breadth_problems(text: str) -> list[str]:
+    on = yaml.safe_load(text).get("on", yaml.safe_load(text).get(True))
+    if not isinstance(on, dict) or set(on) != {"schedule", "workflow_dispatch", "push"}:
+        return [f"breadth runs on {sorted(on) if isinstance(on, dict) else on!r}"]
+    push = on["push"]
+    if not isinstance(push, dict) or push != {"tags": _REHEARSAL_TAGS}:
+        return [f"breadth's push is {push!r}, not a rehearsal tag's alone"]
+    return []
+
+
+def _dispatch_problems(name: str, text: str) -> list[str]:
+    return [f"{name} dispatches breadth ({d})" for d in _DISPATCHES if d in text]
+
+
+def test_breadth_starts_on_a_rehearsal_tags_push_and_nothing_dispatches_it() -> None:
+    assert _breadth_problems(_BREADTH.read_text(encoding="utf-8")) == []
+    found = [
+        problem
+        for path in sorted(_WORKFLOWS.glob("*.y*ml"))
+        for problem in _dispatch_problems(path.name, path.read_text(encoding="utf-8"))
+    ]
+    assert found == []
+
+
+@pytest.mark.parametrize(
+    "old, new, says",
+    [
+        (
+            '    tags: ["rehearsal-v*"]\n',
+            '    tags: ["rehearsal-v*"]\n    branches: [main]\n',
+            "push",
+        ),
+        ('    tags: ["rehearsal-v*"]\n', '    tags: ["*"]\n', "push"),
+        ('  push:\n    tags: ["rehearsal-v*"]\n', "", "runs on"),
+        ('  push:\n    tags: ["rehearsal-v*"]\n', "  push:\n", "push"),
+    ],
+)
+def test_a_planted_breadth_trigger_fails(old: str, new: str, says: str) -> None:
+    text = _BREADTH.read_text(encoding="utf-8")
+    assert text.count(old) == 1, f"the plant's anchor is not once: {old!r}"
+    assert any(says in p for p in _breadth_problems(text.replace(old, new)))
+
+
+def test_a_planted_dispatch_of_breadth_fails() -> None:
+    """The plant: the tagging workflow dispatching breadth itself, which would need a write."""
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    planted = text + (
+        "      - name: start breadth\n"
+        "        env:\n          GH_TOKEN: ${{ github.token }}\n"
+        '        run: gh api -X POST "repos/$GITHUB_REPOSITORY/actions/workflows/'
+        'breadth.yml/dispatches" -f ref=main\n'
+    )
+    assert _dispatch_problems("release-tag.yml", planted)
+    assert _dispatch_problems("x.yml", "run: gh workflow run breadth.yml --ref v1")
+
+
+def test_the_owners_record_when_it_exists_holds_its_shape() -> None:
+    """Only the owner creates or edits it, by hand; while it does not exist nothing is excused."""
+    from tools.ci import release_tag
+
+    path = REPO / release_tag.BREADTH_EXCEPTIONS
+    if path.exists():
+        assert release_tag.exception_problems(json.loads(path.read_text(encoding="utf-8"))) == []
+    assert release_tag.exception_problems({"about": "x", "exceptions": [{"run_id": 1}]})
