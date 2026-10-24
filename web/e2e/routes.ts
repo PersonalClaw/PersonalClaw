@@ -326,3 +326,37 @@ const REDUCED_MOTION_SURFACES: { id: string; route: string; open?: ReducedMotion
 export const REDUCED_MOTION_SHOTS: ReducedMotionShot[] = THEMES.flatMap((theme) =>
   REDUCED_MOTION_SURFACES.map((s) => ({ ...s, theme, key: `${s.id}-${theme}-reduced-motion` })),
 )
+
+// ── The axes — every route again, once per way a user can ask the page to look different ─────────
+// `visual.spec.ts` photographs every route of ROUTES and VIEW_ROUTES in both themes once more at each
+// axis, as `<id|route>-<theme>-<axis>` (#3943):
+//   - `390px`: the UI matrix's own compact width (`surfaceChecks.ts`'s COMPACT_WIDTHS), the phone
+//     layout;
+//   - `text-200`: 200% text zoom, the root font doubled as the UI matrix doubles it;
+//   - `high-contrast`: forced colours on, with `prefers-contrast: more`.
+// Reduced motion was made as a fourth axis and dropped: on every route in both themes its shot
+// matched the default within the config's 0.01 (48 shots, the largest 0.0014 by Playwright's own
+// comparison, 22 of them identical), so a shot of it would hold nothing the default does not.
+// REDUCED_MOTION_SHOTS above keep the surfaces the motion audit stripped. The baselines are made in
+// the pinned image alone (`run-pinned.mjs`), and `visualBaselineCoverage.test.ts` holds each
+// shot's `key` to a committed golden.
+export const VISUAL_AXES = ['390px', 'text-200', 'high-contrast'] as const
+export type VisualAxis = (typeof VISUAL_AXES)[number]
+
+export interface AxisShot {
+  /** The golden's name: `<id|route>-<theme>-<axis>`. */
+  key: string
+  axis: VisualAxis
+  theme: Theme
+  route: string
+  label: string
+}
+
+/** Every axis shot, in the order `visual.spec.ts` declares them. */
+export function axisShots(axes: readonly VisualAxis[] = VISUAL_AXES): AxisShot[] {
+  return axes.flatMap((axis) =>
+    THEMES.flatMap((theme) =>
+      [...ROUTES, ...VIEW_ROUTES].map(({ route, id, label }) => ({ key: `${id ?? route}-${theme}-${axis}`, axis, theme, route, label })),
+    ),
+  )
+}

@@ -25,11 +25,11 @@ _E2E = _ROOT / "web" / "e2e"
 #: sentence someone typed, not a file nobody noticed.
 LOCAL_ONLY: dict[str, str] = {
     "visual.spec.ts": (
-        "All 40 baselines are platform-qualified `-darwin` (playwright.config.ts's "
-        "`snapshotPathTemplate` includes `{platform}`), so a Linux runner has no baseline to "
-        "compare against and would fail every route on its first run. Wiring this job "
-        "requires committing `-linux` baselines, which requires a Linux run — see "
-        "`test_the_visual_exemption_retires_itself`, which fails the moment one appears."
+        "Its baselines are made in the pinned Playwright image's browser alone "
+        "(`web/e2e/visual-image.json`, #3943), and no CI leg serves that browser yet: merge.yml's "
+        "`e2e-pinned` leg, which compares them through `web/e2e/run-pinned.mjs`, lands with the "
+        "merge-queue flip. `test_no_exemption_is_also_wired` fails the moment a workflow runs "
+        "this spec while it is still listed here."
     ),
 }
 

@@ -14,6 +14,13 @@ rules, each failed by a planted edit below:
    change.
 3. No tracked file but the pin names the image: no tag reference anywhere, and no other digest.
    The runner (``web/e2e/run-pinned.mjs``) and the refresh workflow read the pin, never a copy.
+   The one other file that names it is the baselines' manifest
+   (``web/e2e/visual-environment.json``), which records the environment they were made in, and
+   its image is the pinned one.
+4. Every committed baseline is ``-linux``: the screenshots, the accessibility trees and the
+   findings are made by the Refresh visual baselines workflow against the pinned image's browser,
+   so a file with another suffix was made somewhere else. ``web/.gitignore`` keeps a local run's
+   own set out of ``git add``; this fails one committed anyway.
 """
 
 from __future__ import annotations
@@ -27,6 +34,7 @@ import pytest
 from rails_repo import REPO
 
 _PIN = "web/e2e/visual-image.json"
+_MANIFEST = "web/e2e/visual-environment.json"
 _LOCK = "package-lock.json"
 _IMAGE = re.compile(r"mcr\.microsoft\.com/playwright@sha256:[0-9a-f]{64}")
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -99,17 +107,42 @@ def _texts() -> dict[str, str]:
     return out
 
 
-def _reference_problems(texts: dict[str, str]) -> list[str]:
+def _reference_problems(texts: dict[str, str], pin: Any) -> list[str]:
+    image = pin.get("image") if isinstance(pin, dict) else None
     return [
         f"{rel} names the image as {found}"
         for rel, text in sorted(texts.items())
         if rel != _PIN
         for found in _NAMED.findall(text)
+        if not (rel == _MANIFEST and found == image)
     ]
 
 
-def _problems(pin: Any, lock: dict[str, Any], texts: dict[str, str]) -> list[str]:
-    return [*_pin_problems(pin, lock), *_reference_problems(texts)]
+#: The baseline folders and the one name each file in them may have.
+_BASELINES = {
+    "web/e2e/__screenshots__/": re.compile(r"-linux\.png$"),
+    "web/e2e/__aria__/": re.compile(r"-linux\.aria\.yml$"),
+    "web/e2e/__ui-baselines__/": re.compile(r"-linux\.json$"),
+}
+
+
+def _baseline_problems(tracked: list[str]) -> list[str]:
+    return [
+        f"{rel} is a baseline made outside the pinned image: only -linux ones are committed"
+        for rel in tracked
+        for folder, name in _BASELINES.items()
+        if rel.startswith(folder) and not name.search(rel)
+    ]
+
+
+def _problems(
+    pin: Any, lock: dict[str, Any], texts: dict[str, str], tracked: list[str] | None = None
+) -> list[str]:
+    return [
+        *_pin_problems(pin, lock),
+        *_reference_problems(texts, pin),
+        *_baseline_problems(tracked or []),
+    ]
 
 
 def _pin() -> Any:
@@ -121,7 +154,27 @@ def _lock() -> dict[str, Any]:
 
 
 def test_the_image_is_named_by_its_amd64_digest_with_the_locked_playwright() -> None:
-    assert _problems(_pin(), _lock(), _texts()) == []
+    assert _problems(_pin(), _lock(), _texts(), _tracked()) == []
+
+
+def test_there_are_baselines_to_hold() -> None:
+    """Vacuity: each folder holds -linux baselines, so rule 4 reads a real set."""
+    tracked = _tracked()
+    for folder in _BASELINES:
+        assert any(rel.startswith(folder) for rel in tracked), f"no baseline under {folder}"
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "web/e2e/__screenshots__/visual.spec.ts/chat-light-darwin.png",
+        "web/e2e/__aria__/chat-darwin.aria.yml",
+        "web/e2e/__ui-baselines__/chat-win32.json",
+    ],
+)
+def test_a_baseline_made_elsewhere_fails(rel: str) -> None:
+    found = _problems(_pin(), _lock(), {}, [*_tracked(), rel])
+    assert any(rel in p and "outside the pinned image" in p for p in found), found
 
 
 @pytest.mark.parametrize(
@@ -161,6 +214,11 @@ def test_a_lock_that_moves_without_the_pin_fails() -> None:
             "web/e2e/run-pinned.mjs",
             "const IMAGE = 'mcr.microsoft.com/playwright@sha256:" + "0" * 64 + "'\n",
             "web/e2e/run-pinned.mjs names the image",
+        ),
+        (
+            _MANIFEST,
+            '{"image": "mcr.microsoft.com/playwright@sha256:' + "0" * 64 + '"}\n',
+            f"{_MANIFEST} names the image",
         ),
     ],
 )

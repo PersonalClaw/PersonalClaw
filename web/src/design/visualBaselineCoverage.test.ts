@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS } from '../../e2e/routes'
+import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, axisShots } from '../../e2e/routes'
 
 // ── Every surface the visual gate snapshots must HAVE a committed baseline ───────────────────
 //
@@ -36,16 +36,17 @@ const BASELINES = join(process.cwd(), 'e2e', '__screenshots__', 'visual.spec.ts'
 
 /** The `{platform}` suffixes this repo commits goldens for, as a CLOSED set.
  *
- *  Darwin only, and that is load-bearing rather than incidental: it is the reason
- *  `visual.spec.ts` is exempt from CI (a Linux runner would find zero baselines and fail every
- *  route), declared in `tests/test_e2e_specs_are_executed.py`'s `LOCAL_ONLY` and retired
- *  automatically by its `test_the_visual_exemption_retires_itself` the moment a `-linux` golden
- *  appears. Keep the two in step: adding a platform here without capturing its full set, or
- *  capturing one without declaring it, reds one of the two assertions below. */
-const CAPTURED_PLATFORMS = ['darwin'] as const
+ *  Linux only, and only as the pinned image's browser renders it (#3943): every golden is made by
+ *  the Refresh visual baselines workflow against `e2e/visual-image.json`'s image, which is
+ *  linux/amd64, so a golden with another suffix was made somewhere else. `web/.gitignore` keeps a
+ *  local run's own set out of `git add`, and `tests/rails/test_pinned_playwright_image_tree.py`
+ *  fails one committed anyway, for the trees and the findings too. Adding a platform here is
+ *  adding a second environment, which #3943 retired. */
+const CAPTURED_PLATFORMS = ['linux'] as const
 
-/** `<id|route>-<theme>` for every route, and each of the agent orb's state shots and each
- *  reduced-motion shot by its key — the `arg` half of playwright's `snapshotPathTemplate`. */
+/** `<id|route>-<theme>` for every route, and each of the agent orb's state shots, each
+ *  reduced-motion shot and each axis shot by its key — the `arg` half of playwright's
+ *  `snapshotPathTemplate`. */
 function expectedKeys(): string[] {
   const keys: string[] = []
   for (const theme of THEMES) {
@@ -55,6 +56,7 @@ function expectedKeys(): string[] {
   }
   for (const { key } of ORB_STATE_SHOTS) keys.push(key)
   for (const { key } of REDUCED_MOTION_SHOTS) keys.push(key)
+  for (const { key } of axisShots()) keys.push(key)
   return keys
 }
 
@@ -116,10 +118,8 @@ describe('the visual gate has a committed baseline for every surface it snapshot
     // green. Only naming the platforms makes the claim falsifiable.
     //
     // So `CAPTURED_PLATFORMS` is a CLOSED set, asserted in both directions — every declared platform
-    // complete, and no undeclared platform carrying goldens. Adding `-linux` then becomes a
-    // deliberate two-part edit (declare it AND capture a full set), which is also the condition
-    // `tests/test_e2e_specs_are_executed.py::test_the_visual_exemption_retires_itself` watches for
-    // when it decides `visual.spec.ts` can finally run in CI.
+    // complete, and no undeclared platform carrying goldens. Adding a platform then becomes a
+    // deliberate two-part edit (declare it AND capture a full set).
     const want = expectedKeys()
     const platforms = byPlatform()
 
@@ -162,8 +162,8 @@ describe('the visual gate has a committed baseline for every surface it snapshot
       problems,
       `a surface in routes.ts has no committed golden for a platform that has others. ` +
         `e2e/visual.spec.ts does not skip it — playwright writes the actual image and FAILS, so a ` +
-        `missing file is indistinguishable from a real regression in that report. Capture with ` +
-        `\`npm run e2e:update\` and commit the goldens in the same change as the route:\n  ` +
+        `missing file is indistinguishable from a real regression in that report. Make them with ` +
+        `the Refresh visual baselines workflow and commit them in the same change as the route:\n  ` +
         problems.join('\n  '),
     ).toEqual([])
   })
