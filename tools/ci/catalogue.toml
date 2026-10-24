@@ -1101,10 +1101,13 @@ command = [
 # The dependency audit reads the advisories published at the time of the run: live, never reused.
 # Its inputs are what it audits: uv.lock and the pyproject.toml uv holds it to, every npm manifest
 # and lock, and its own code and waivers, with the Python and Node versions its toolchain reads
-# (tests/rails/test_ci_job_inputs_tree.py).
+# (tests/rails/test_ci_job_inputs_tree.py). Its nightly mark lets the plan select it by them:
+# breadth's audit-nightly runs its steps every night whatever changed, and a red one opens the
+# leg's issue and holds a release (the release gate's breadth check).
 [[job]]
 id = "audit"
 tiers = ["merge"]
+nightly = "audit-nightly"
 inputs = [
   "uv.lock",
   "pyproject.toml",
