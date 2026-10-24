@@ -185,9 +185,9 @@ def _logout(port: int | None) -> None:
 
 
 #: How long `stop` waits for the gateway to exit once asked. The gateway bounds its own graceful
-#: shutdown at 10 s (`GatewayOrchestrator._finish`) and then exits, so this is that bound with a
-#: margin for its last cleanup. Returning only once it is gone is what lets `restart` start the
-#: next gateway, and `restore` run, without the old one still writing the home.
+#: shutdown at 7 s, and 1 s more to unwind (`GatewayOrchestrator._finish`), and then exits, so this
+#: is that bound with a margin for its last cleanup. Returning only once it is gone is what lets
+#: `restart` start the next gateway, and `restore` run, without the old one still writing the home.
 _STOP_WAIT_SECS = 15.0
 _STOP_POLL_SECS = 0.1
 

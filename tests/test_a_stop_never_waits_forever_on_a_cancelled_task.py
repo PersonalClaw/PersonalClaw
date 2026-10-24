@@ -20,20 +20,30 @@ What this file holds:
   after a cancel, which is how Python 3.12 leaves one. At ``origin/main`` both hang;
 * a tree-wide rail: no function in ``src/personalclaw`` waits without a bound on a task it
   cancelled, except the few named below, each with the reason its task cannot be starting a
-  process.
+  process;
+* the budget: the whole stop, with its unwind and a margin, ends inside the shortest stop window
+  PersonalClaw ships under, read from what ships, and no bound inside the stop is one the stop's
+  own limit always cuts first.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import plistlib
+import re
+from pathlib import Path
 
 import pytest
+import yaml
 from test_gateway import _make_orchestrator
 
-from personalclaw import cancellation
+from personalclaw import cancellation, gateway
 from personalclaw.cancellation import cancel_and_wait
+from personalclaw.durability import export_follow
+from personalclaw.durability import service as durability
 from personalclaw.providers.availability import AvailabilityBoard
+from personalclaw.service import linux, macos
 
 #: Long enough that a stop meeting its bound is plainly not the stop that never returns.
 _WITHIN = 5.0
@@ -202,3 +212,147 @@ async def test_the_gateway_stop_is_not_held_by_a_task_that_never_leaves(short_gr
 
 
 # ── the rail: no unbounded wait on a task the same function cancelled ─────────────────────────
+
+
+# ── the budget: the whole stop ends inside the shortest window it is stopped under ────────────
+#
+# A supervisor gives a stop a window after SIGTERM, then sends SIGKILL, and a stop still running
+# then is killed in the middle of a step: the time its bounds promised was never there. Docker's
+# window is the shortest PersonalClaw ships under: `docker stop` on the image, and the compose
+# files, which set no `stop_grace_period`. launchd's plist sets no `ExitTimeOut` (20 s) and the
+# systemd unit sets `TimeoutStopSec=20`. Each window is read from what ships, so a compose file or
+# unit that shortens one is measured here.
+#
+# The stop is held whole by its own limit (`gateway._SHUTDOWN_SECS`): its steps' bounds, summed,
+# run past it today, and only the limit ends the stop in time. So a bound inside the stop that is
+# as long as the limit hides its wait: the limit always cuts it first. Those named below are the
+# stop's own and the durability close's.
+
+#: Docker's stop window when nothing sets one (`docker stop --time`, compose's
+#: `stop_grace_period`).
+_DOCKER_DEFAULT_STOP_SECS = 10.0
+#: launchd's `ExitTimeOut` for a job whose plist sets none.
+_LAUNCHD_DEFAULT_STOP_SECS = 20.0
+#: systemd's `DefaultTimeoutStopSec`, for a unit that sets no `TimeoutStopSec`.
+_SYSTEMD_DEFAULT_STOP_SECS = 90.0
+#: What the window keeps past the stop's limit and its unwind: the orphan reap, the exit, and the
+#: supervisor's own lag.
+_STOP_MARGIN_SECS = 2.0
+
+_REPO = Path(__file__).resolve().parents[1]
+
+#: The bounded steps inside the stop, each by the constant that bounds it.
+_STEPS = {
+    "the running chat turns (gateway._END_TURNS_SECS)": gateway._END_TURNS_SECS,
+    "a cancelled task (cancellation.CANCEL_GRACE_SECS)": cancellation.CANCEL_GRACE_SECS,
+    "the durability step (durability.CLOSE_TIMEOUT_SECS)": durability.CLOSE_TIMEOUT_SECS,
+    "a re-export the follower is running (export_follow.STOP_WAIT_SECS)": (
+        export_follow.STOP_WAIT_SECS
+    ),
+}
+
+
+def _duration(text: object) -> float:
+    """A compose or systemd duration in seconds: ``20s``, ``1m30s``, ``500ms`` or a number."""
+    if isinstance(text, (int, float)):
+        return float(text)
+    units = {"ms": 0.001, "s": 1.0, "m": 60.0, "min": 60.0, "h": 3600.0}
+    parts = re.findall(r"(\d+(?:\.\d+)?)(ms|min|s|m|h)?", str(text).strip())
+    assert parts, f"not a duration: {text!r}"
+    return sum(float(number) * units[unit or "s"] for number, unit in parts)
+
+
+def _shipped_windows(repo: Path) -> dict[str, float]:
+    """Each stop window the gateway ships under, by what sets it."""
+    windows = {"`docker stop` on the image": _DOCKER_DEFAULT_STOP_SECS}
+    for path in sorted((repo / "deploy" / "compose").glob("*.yaml")):
+        services = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("services") or {}
+        for name, spec in services.items():
+            if "gateway" in name:
+                given = (spec or {}).get("stop_grace_period")
+                windows[f"{path.name}'s {name}"] = (
+                    _DOCKER_DEFAULT_STOP_SECS if given is None else _duration(given)
+                )
+    unit = re.search(r"^TimeoutStopSec=(\S+)$", linux.render_unit(), re.MULTILINE)
+    windows["the systemd unit"] = _duration(unit.group(1)) if unit else _SYSTEMD_DEFAULT_STOP_SECS
+    plist = plistlib.loads(macos.render_plist().encode())
+    windows["the launchd plist"] = float(plist.get("ExitTimeOut", _LAUNCHD_DEFAULT_STOP_SECS))
+    return windows
+
+
+def _over_budget(
+    windows: dict[str, float], *, limit: float, unwind: float, steps: dict[str, float]
+) -> list[str]:
+    """What does not fit, each said in a sentence, or nothing."""
+    problems = []
+    where, shortest = min(windows.items(), key=lambda item: item[1])
+    need = limit + unwind + _STOP_MARGIN_SECS
+    if need > shortest:
+        problems.append(
+            f"the stop takes up to {limit:g} s, {unwind:g} s to unwind and a "
+            f"{_STOP_MARGIN_SECS:g} s margin, {need:g} s in all, past the {shortest:g} s of {where}"
+        )
+    for what, bound in steps.items():
+        if bound >= limit:
+            problems.append(
+                f"{what} waits up to {bound:g} s, and the stop's own {limit:g} s limit always cuts "
+                "it first"
+            )
+    return problems
+
+
+def test_the_whole_stop_ends_inside_the_shortest_window_it_ships_under() -> None:
+    windows = _shipped_windows(_REPO)
+    assert min(windows.values()) == _DOCKER_DEFAULT_STOP_SECS, windows
+    assert (
+        _over_budget(
+            windows, limit=gateway._SHUTDOWN_SECS, unwind=gateway._UNWIND_SECS, steps=_STEPS
+        )
+        == []
+    )
+
+
+def test_a_compose_file_that_shortens_the_window_is_measured(tmp_path) -> None:
+    (tmp_path / "deploy" / "compose").mkdir(parents=True)
+    (tmp_path / "deploy" / "compose" / "compose.yaml").write_text(
+        "services:\n  personalclaw-gateway:\n    stop_grace_period: 5s\n", encoding="utf-8"
+    )
+    windows = _shipped_windows(tmp_path)
+    assert windows["compose.yaml's personalclaw-gateway"] == 5.0
+    assert _over_budget(
+        windows, limit=gateway._SHUTDOWN_SECS, unwind=gateway._UNWIND_SECS, steps=_STEPS
+    ) == [
+        "the stop takes up to 7 s, 1 s to unwind and a 2 s margin, 10 s in all, past the 5 s of "
+        "compose.yaml's personalclaw-gateway"
+    ]
+
+
+def test_the_old_ten_second_limit_runs_past_docker_s_window() -> None:
+    """🔴 The limit before: a stop that used all of it was killed before it exited."""
+    assert _over_budget(
+        _shipped_windows(_REPO), limit=10.0, unwind=gateway._UNWIND_SECS, steps=_STEPS
+    ) == [
+        "the stop takes up to 10 s, 1 s to unwind and a 2 s margin, 13 s in all, past the 10 s of "
+        "`docker stop` on the image"
+    ]
+
+
+def test_a_step_bound_as_long_as_the_stop_s_limit_is_named() -> None:
+    """The durability close at 30 s, as it was first written: the stop's limit would cut it."""
+    steps = {**_STEPS, "the durability step (durability.CLOSE_TIMEOUT_SECS)": 30.0}
+    assert _over_budget(
+        _shipped_windows(_REPO),
+        limit=gateway._SHUTDOWN_SECS,
+        unwind=gateway._UNWIND_SECS,
+        steps=steps,
+    ) == [
+        "the durability step (durability.CLOSE_TIMEOUT_SECS) waits up to 30 s, and the stop's own "
+        "7 s limit always cuts it first"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("text", "seconds"), [("20s", 20.0), ("1m30s", 90.0), ("500ms", 0.5), ("20", 20.0), (15, 15.0)]
+)
+def test_a_duration_reads_as_compose_and_systemd_write_it(text, seconds) -> None:
+    assert _duration(text) == seconds
