@@ -1300,6 +1300,22 @@ def _add_to_job(workflow: str, text: str) -> Callable[[Path], None]:
 
 
 _LINT_PERMISSIONS = "    permissions:\n      contents: read\n      pull-requests: read\n"
+_DISPATCHED = "on:\n  workflow_dispatch: {}\n"
+
+
+def _flipped(rel: str) -> Callable[[Path], None]:
+    """The tree's pr.yml or merge.yml as #3915's flip runs it: on every pull request too."""
+
+    def plant(root: Path) -> None:
+        text = (REPO / rel).read_text(encoding="utf-8")
+        assert text.count(_DISPATCHED) == 1, f"{rel} no longer opens on a dispatch alone"
+        _write(
+            root, rel, text.replace(_DISPATCHED, "on:\n  pull_request:\n  workflow_dispatch: {}\n")
+        )
+
+    return plant
+
+
 _CALLS_REUSABLE = "  called:\n    uses: ./.github/workflows/reusable.yml\n"
 
 NO_TRUSTED_CHECKOUT_OF_CANDIDATE_CODE = Row(
@@ -1433,6 +1449,40 @@ NO_CANDIDATE_JOB_HOLDS_A_WRITE_OR_A_SECRET = Row(
             ),
         ),
         Control("a secret in a workflow that runs only on main passes", _nothing, fails=False),
+        Control(
+            "pr.yml on every pull request, as the flip runs it, passes",
+            _flipped(_PR_YML),
+            fails=False,
+        ),
+        Control(
+            "merge.yml on every pull request, as the flip runs it, passes",
+            _flipped(_MERGE_YML),
+            fails=False,
+        ),
+        Control(
+            "pr.yml on every pull request with a secret in a step fails",
+            _both(
+                _flipped(_PR_YML),
+                _replace(
+                    "pr.yml",
+                    "GH_TOKEN: ${{ github.token }}",
+                    "GH_TOKEN: ${{ secrets.CONTROLLER_APP_KEY }}",
+                ),
+            ),
+            expect="pr.yml",
+        ),
+        Control(
+            "merge.yml on every pull request with a write token fails",
+            _both(
+                _flipped(_MERGE_YML),
+                _replace(
+                    "merge.yml",
+                    "      pull-requests: read   # `commits/{sha}/pulls`",
+                    "      pull-requests: write   # `commits/{sha}/pulls`",
+                ),
+            ),
+            expect="merge.yml",
+        ),
         Control(
             "permissions: {} passes",
             _replace("ci.yml", _LINT_PERMISSIONS, "    permissions: {}\n"),
