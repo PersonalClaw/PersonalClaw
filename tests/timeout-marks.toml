@@ -103,9 +103,9 @@ cap = 300
 reason = "builds the inert-surface census of the whole tree"
 
 [[mark]]
-site = "tests/test_inert_surface_baseline.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
+site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_lineage_false_red_is_gone_and_its_iteration_site_is_seen"
 cap = 300
-reason = "a census of the tree: 85-95 s of the default under coverage on CI (2026-10-14/15)"
+reason = "a census of the tree: 85-95 s of the default under coverage on CI (2026-10-14/15), 57 s on a suite leg (2026-10-24); a rail since, once per run"
 
 [[mark]]
 site = "tests/rails/test_inert_surface_baseline_tree.py::test_the_enum_census_still_finds_a_nontrivial_population"
