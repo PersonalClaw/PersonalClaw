@@ -163,6 +163,20 @@ describe('planted idle work fails the probe, each kind by name', () => {
     }
   })
 
+  it('a frame loop started before the window names the stack that started it', () => {
+    // CI's idle Chat asked for six frames from motion's own loop, which a load had started before
+    // the window opened (#3905): its frames name only the loop's line, so the start is named too.
+    const { sample } = probe((page) => {
+      let left = 400
+      const tail = () => { if (left-- > 0) page.requestAnimationFrame(tail) }
+      const startTheTail = () => page.requestAnimationFrame(tail)
+      page.setTimeout(startTheTail, 900)
+    })
+    expect(sample.wakes?.[0].ms).toBeLessThan(0)
+    expect(sample.wakes?.[0].stack).toMatch(/startTheTail/)
+    expect(idleCostFindings(sample)[0]).toMatch(/; started \d+ ms before the window by startTheTail /)
+  })
+
   it('a single animation frame fails it: the budget is none', () => {
     const { sample } = probe(noop, { before: (page) => { page.setTimeout(() => page.requestAnimationFrame(noop), 2_000) } })
     expect(IDLE_FRAME_BUDGET).toBe(0)
