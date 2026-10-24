@@ -19,7 +19,7 @@ import os
 import re
 import shlex
 import subprocess
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -186,6 +186,28 @@ def _read(repo: Path, entry: Entry) -> str:
     return _git_out(repo, "cat-file", "blob", entry.oid)
 
 
+@dataclass(frozen=True)
+class Tree:
+    """One revision's tree: every path's entry, and a reader of a regular file's text.
+
+    :func:`git_tree` reads a local clone. A caller that holds no clone of the head, as the merge
+    controller does (it reads both trees from the API, so nothing of the candidate is on its
+    disk), builds its own; :func:`compare_trees` reads a non-regular entry as no text either way.
+    """
+
+    blobs: Mapping[str, Entry]
+    read: Callable[[Entry], str]
+
+
+def git_tree(repo: Path, rev: str) -> Tree:
+    """The revision's tree, read from the clone at ``repo``."""
+    return Tree(blobs=_blobs(repo, rev), read=lambda entry: _read(repo, entry))
+
+
+def _text(tree: Tree, entry: Entry) -> str:
+    return tree.read(entry) if entry.mode in _REGULAR_MODES else ""
+
+
 # ── Definitions ───────────────────────────────────────────────────────────────────────────────
 
 
@@ -349,17 +371,15 @@ def entry_points(
     reads), uses a local action, or names a file under ``scripts/``, ``tools/``, ``harness/`` or
     ``.github/``. Tests are code under test and never count, except the contract table.
     """
-    tracked = _blobs(repo, rev)
-    return _entry_points(repo, tracked, helpers)
+    return _entry_points(git_tree(repo, rev), helpers)
 
 
-def _entry_points(
-    repo: Path, tracked: Mapping[str, Entry], helpers: Mapping[str, tuple[str, ...]]
-) -> frozenset[str]:
+def _entry_points(tree: Tree, helpers: Mapping[str, tuple[str, ...]]) -> frozenset[str]:
+    tracked = tree.blobs
     found: set[str] = set()
     for path, entry in tracked.items():
         if path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml")):
-            found |= _workflow_entries(_read(repo, entry), tracked)
+            found |= _workflow_entries(_text(tree, entry), tracked)
     for point in list(found):
         for helper in helpers.get(point, ()):
             if helper.endswith("/"):
@@ -369,19 +389,18 @@ def _entry_points(
     return frozenset(found)
 
 
-def _definitions(
-    repo: Path, tracked: Mapping[str, Entry], helpers: Mapping[str, tuple[str, ...]]
-) -> set[str]:
+def _definitions(tree: Tree, helpers: Mapping[str, tuple[str, ...]]) -> set[str]:
+    tracked = tree.blobs
     roots = {p for p in tracked if p.startswith(DEFINITION_ROOTS)}
     table = {p for p in CONTRACT_TABLE if p in tracked}
-    return roots | table | set(_entry_points(repo, tracked, helpers))
+    return roots | table | set(_entry_points(tree, helpers))
 
 
 def definition_paths(
     repo: Path, rev: str, *, helpers: Mapping[str, tuple[str, ...]] = REVIEWED_HELPERS
 ) -> frozenset[str]:
     """Every definition file in the revision's tree."""
-    return frozenset(_definitions(repo, _blobs(repo, rev), helpers))
+    return frozenset(_definitions(git_tree(repo, rev), helpers))
 
 
 def compare(
@@ -399,8 +418,23 @@ def compare(
     that becomes a symlink or a gitlink, is a change. A rename is a path that moved with both
     unchanged.
     """
-    base_blobs, head_blobs = _blobs(repo, base), _blobs(repo, head)
-    paths = _definitions(repo, base_blobs, helpers) | _definitions(repo, head_blobs, helpers)
+    return compare_trees(
+        git_tree(repo, base), git_tree(repo, head), base=base, head=head, helpers=helpers
+    )
+
+
+def compare_trees(
+    base_tree: Tree,
+    head_tree: Tree,
+    *,
+    base: str,
+    head: str,
+    helpers: Mapping[str, tuple[str, ...]] = REVIEWED_HELPERS,
+) -> Comparison:
+    """:func:`compare` over two trees however they were read: ``base`` and ``head`` name the
+    commits they are, for the comparison's record."""
+    base_blobs, head_blobs = base_tree.blobs, head_tree.blobs
+    paths = _definitions(base_tree, helpers) | _definitions(head_tree, helpers)
     added = {p for p in paths if p in head_blobs and p not in base_blobs}
     deleted = {p for p in paths if p in base_blobs and p not in head_blobs}
     changes: list[Change] = [

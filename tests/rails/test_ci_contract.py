@@ -826,13 +826,18 @@ _RELEASE_WORKFLOW = "release.yml"
 #: only from main (the settings report reads that policy back every week), and its workflow runs
 #: only on a schedule or a dispatch, so no candidate's run can name it. `settings-report` holds
 #: the report's read-only credential; `ci-controller` the release controller's App key, which
-#: release-tag.yml uses to create a `v*` tag. Neither job may hold a publishing permission, as
-#: no job outside release.yml may.
+#: release-tag.yml uses to create a `v*` tag and merge-verdict.yml to post the merge verdict.
+#: None of these jobs may hold a publishing permission, as no job outside release.yml may.
 _MAIN_ONLY_ENVIRONMENTS = {
     ("settings-report.yml", "report"): "settings-report",
     ("release-tag.yml", "tag"): "ci-controller",
+    ("merge-verdict.yml", "post"): "ci-controller",
 }
 _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
+#: The one main-only job that runs on another trigger: the merge verdict's poster, a
+#: `workflow_run` listener and nothing else. GitHub runs a listener from the default branch, so
+#: no candidate's run can name the environment through it either.
+_LISTENER_ONLY = {("merge-verdict.yml", "post"): {"workflow_run"}}
 #: The one publishing permission a workflow other than release.yml may hold, by workflow and job:
 #: release-push-proof.yml runs release.yml's own image push to a scratch package no release names,
 #: and deletes it (#3911; tests/rails/test_release_push_proof_tree.py holds that). It may hold
@@ -1002,10 +1007,11 @@ def _only_the_release_controller_publishes(root: Path) -> list[str]:
                 found.append(
                     f"{name}:{job_name} deploys to {environment!r} outside {_RELEASE_WORKFLOW}"
                 )
-            elif not set(_triggers(wf)) <= _SCHEDULED_ONLY:
+            elif not set(_triggers(wf)) <= _LISTENER_ONLY.get((name, job_name), _SCHEDULED_ONLY):
+                runs_on = _LISTENER_ONLY.get((name, job_name), _SCHEDULED_ONLY)
                 found.append(
                     f"{name}:{job_name} names the main-only environment {named!r} in a workflow "
-                    f"that runs on {sorted(set(_triggers(wf)) - _SCHEDULED_ONLY)}"
+                    f"that runs on {sorted(set(_triggers(wf)) - runs_on)}"
                 )
     return found
 
@@ -1146,6 +1152,39 @@ def _release_tag(old: str = "", new: str = "") -> Callable[[Path], None]:
         text = _RELEASE_TAG.replace(old, new, 1) if old else _RELEASE_TAG
         assert not old or old in _RELEASE_TAG, f"the plant's anchor is not there: {old!r}"
         _write(root, f"{_WORKFLOWS}/release-tag.yml", text)
+
+    return plant
+
+
+_MERGE_VERDICT = """\
+name: Merge verdict
+on:
+  workflow_run:
+    workflows: ["Merge"]
+    types: [completed]
+permissions:
+  contents: read
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    environment: ci-controller
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/create-github-app-token@v3
+        with:
+          private-key: ${{ secrets.CONTROLLER_APP_KEY }}
+"""
+
+
+def _merge_verdict(old: str = "", new: str = "") -> Callable[[Path], None]:
+    """Add the merge verdict's poster, with *old* replaced by *new* in it."""
+
+    def plant(root: Path) -> None:
+        text = _MERGE_VERDICT.replace(old, new, 1) if old else _MERGE_VERDICT
+        assert not old or old in _MERGE_VERDICT, f"the plant's anchor is not there: {old!r}"
+        _write(root, f"{_WORKFLOWS}/merge-verdict.yml", text)
 
     return plant
 
@@ -1466,6 +1505,29 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
         Control(
             "the controller's environment on a tagging workflow that runs on a push fails",
             _release_tag("  workflow_dispatch:\n", "  workflow_dispatch:\n  push:\n"),
+        ),
+        Control(
+            "the controller's environment on the merge verdict's workflow_run job passes",
+            _merge_verdict(),
+            fails=False,
+        ),
+        Control(
+            "the controller's environment on a poster that also runs on pull_request fails",
+            _merge_verdict("    types: [completed]\n", "    types: [completed]\n  pull_request:\n"),
+        ),
+        Control(
+            "the controller's environment on a poster that also runs on a dispatch fails",
+            _merge_verdict(
+                "    types: [completed]\n", "    types: [completed]\n  workflow_dispatch:\n"
+            ),
+        ),
+        Control(
+            "the controller's environment on another job of the poster fails",
+            _merge_verdict("  post:\n", "  other:\n"),
+        ),
+        Control(
+            "the tagging job on a workflow_run trigger fails",
+            _release_tag("  workflow_dispatch:\n", "  workflow_run:\n    workflows: [Merge]\n"),
         ),
         Control(
             "the controller's environment on the settings report's job fails",

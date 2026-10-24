@@ -35,6 +35,13 @@ def _release_tag(argv: list[str]) -> int:
     return release_tag.main(argv)
 
 
+def _merge_controller(argv: list[str]) -> int:
+    # Imported when called, as the verifier is: the poster reads tools/ci/trust.py.
+    from . import merge_controller
+
+    return merge_controller.main(argv)
+
+
 def _verify_check_run(argv: list[str]) -> int:
     # Imported when called: the other commands, which every CI run starts, load neither the
     # verifier nor tools/ci/trust.py.
@@ -50,6 +57,7 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "fetch": fetch.main,
     "image-pins": image_pins.main,
     "list": catalogue.list_main,
+    "merge-controller": _merge_controller,
     "parity": parity.main,
     "plan": plan.main,
     "quarantine-rerun": quarantine_rerun.main,

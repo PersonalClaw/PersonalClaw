@@ -1,0 +1,83 @@
+# Merge verdict: the controller posts `merge-verdict` on a pull request's head (#3910, #4584).
+#
+# It runs when a Merge run (merge.yml) completes. GitHub runs a `workflow_run` listener from the
+# default branch, so this file and the tools/ci it runs are main's, whatever the candidate
+# brings. It never checks out or fetches the candidate: `python -m tools.ci merge-controller
+# decide` (tools/ci/merge_controller.py) reads everything through the API by the run's id, both
+# trees included, and judges it by main's rules. A run of another workflow named Merge, which a
+# candidate can add, a push run and a schedule post nothing.
+#
+# The verdict is green only when the head changes no CI definition (tools/ci/trust.py), is up to
+# date with main, and merge.yml's `results` job, which judges the run with main's verdict.py,
+# passed on every attempt. Anything else, an answer the API would not give included, posts
+# failure, never neutral. A head that changes a definition is not judged until a run of main's
+# definitions on its tree exists (#4584 step 4).
+#
+# The check run is posted with the controller App's token (personalclaw-ci-controller, the one
+# App main-protect will name), minted only when there is one to post and handed only to the
+# step that posts. Its key is a secret of the `ci-controller` environment, which only main may
+# deploy to. The reads use this job's own token, which holds `contents: read` and
+# `actions: read`.
+#
+# ADVISORY. `merge-verdict` is not a required check yet: main-protect names it only once #3915's
+# flip is live and posted verdicts have matched their pull requests' real results (#3910's plan,
+# piece 5). See docs/maintainers/ci.md, "The merge controller's poster".
+name: Merge verdict
+
+on:
+  workflow_run:
+    workflows: ["Merge"]
+    types: [completed]
+
+# One post per Merge run and attempt, never cancelled: each run's verdict is its own check run,
+# and verify-check-run reads the newest.
+concurrency:
+  group: merge-verdict-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  post:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ci-controller
+    permissions:
+      contents: read   # main's tip, both trees and the comparison
+      actions: read    # the run, every attempt's jobs and the run's artifact digests
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's tools/ci, run on the image's python3: standard-library Python, nothing installed.
+      # No `ref:`: under `workflow_run` GitHub checks out the default branch.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: decide the verdict from the API
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.ci merge-controller decide --repo "$GITHUB_REPOSITORY" \
+            --run-id "$RUN_ID" --controller-revision "$GITHUB_SHA" \
+            --out "$RUNNER_TEMP/merge-verdict.json"
+      - name: the controller's token
+        id: controller
+        if: steps.decide.outputs.post == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CONTROLLER_APP_ID }}
+          private-key: ${{ secrets.CONTROLLER_APP_KEY }}
+          permission-checks: write
+      - name: post merge-verdict
+        if: steps.decide.outputs.post == 'true'
+        env:
+          GH_TOKEN: ${{ steps.controller.outputs.token }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.ci merge-controller post --repo "$GITHUB_REPOSITORY" \
+            --body "$RUNNER_TEMP/merge-verdict.json"
