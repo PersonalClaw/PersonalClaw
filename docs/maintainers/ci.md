@@ -249,7 +249,8 @@ no workflow calls it yet.
 ### The merge controller's poster
 
 `.github/workflows/merge-verdict.yml` posts `merge-verdict` on a head each time a Merge run
-(`merge.yml`) completes. It is a `workflow_run` listener, so GitHub runs main's copy of it and of
+(`merge.yml`) or a Dependency review run completes. It is a `workflow_run` listener, so GitHub
+runs main's copy of it and of
 the `tools/ci` it runs, whatever the candidate brings. `python -m tools.ci merge-controller
 decide` (`tools/ci/merge_controller.py`) reads everything through the API by the run's id:
 the run, every attempt's jobs, both trees (`trust.compare_trees` over blobs the API returns, so
@@ -275,6 +276,14 @@ artifact digests. The rules, in order:
 - **The run's verdict:** merge.yml's `results` job, which judges the run with main's
   `verdict.py`, concluded `success` on every attempt. Missing, cancelled, skipped or red on any
   attempt is red, and a rerun never turns a red into a green.
+- **The dependency review (#4585 step 6):** the newest `pull_request_target` run of
+  `dependency-review.yml` on the head, `main`'s copy, concluded `success`. One that has not run,
+  is still running or did not pass is red. The poster also follows Dependency review: when one
+  completes, it judges that head again from the head's own completed Merge run, or from its
+  trusted run for a head that changes a definition, and starts nothing. So the two finish in
+  either order. CodeQL is not an input yet: its pull-request check reads `neutral` on most pull
+  requests, because GitHub computes it when the first language's analysis uploads, before the
+  other two exist.
 - **The receipt:** a green names the controller's commit on `main`, the head and its tree, the
   runner and the definitions commit, and the digests of the run's `ci-record-*` artifacts as the
   API reports them. With no record artifact there is no evidence, so no green. The partner head

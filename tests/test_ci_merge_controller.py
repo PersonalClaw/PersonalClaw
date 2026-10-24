@@ -50,6 +50,25 @@ class FakeApi:
         self.answers[f"/repos/{REPO}/git/ref/heads/main"] = {"object": {"sha": MAIN}}
         self.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 0}
         self.artifacts({"ci-record-unit": DIGEST, "web-dist": "sha256:" + "e" * 64})
+        self.review(HEAD, ("completed", "success"))
+
+    def review(self, head: str, *runs: tuple[str, str | None], path: str = "") -> None:
+        """The head's dependency-review runs, oldest first."""
+        listed = [
+            {
+                "id": 900 + n,
+                "path": path or mc.DEPENDENCY_REVIEW,
+                "head_sha": head,
+                "status": s,
+                "conclusion": c,
+            }
+            for n, (s, c) in enumerate(runs)
+        ]
+        query = f"head_sha={head}&event=pull_request_target&per_page=100"
+        self.answers[f"/repos/{REPO}/actions/workflows/dependency-review.yml/runs?{query}"] = {
+            "total_count": len(listed),
+            "workflow_runs": listed,
+        }
 
     def run(self, **fields: Any) -> None:
         run = {
@@ -585,3 +604,121 @@ def test_a_judged_trusted_branch_is_deleted_and_one_already_gone_is_fine() -> No
         mc.delete_branch(broken, REPO, BRANCH)
     with pytest.raises(ValueError, match="full commit id"):
         mc.delete_branch(gone, REPO, "release")
+
+
+# ── The dependency review (#4585 step 6) ───────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "runs, says",
+    [
+        ((), "has no dependency review"),
+        ((("in_progress", None),), "is 'in_progress', not finished"),
+        ((("completed", "failure"),), "dependency review is 'failure'"),
+        ((("completed", "success"), ("completed", "failure")), "dependency review is 'failure'"),
+    ],
+)
+def test_a_dependency_review_that_did_not_pass_is_red(runs: Any, says: str) -> None:
+    api = FakeApi()
+    api.review(HEAD, *runs)
+    assert says in _red(api).output["summary"]
+
+
+def test_the_newest_dependency_review_decides() -> None:
+    api = FakeApi()
+    api.review(HEAD, ("completed", "failure"), ("completed", "success"))
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success"
+    assert "its dependency review passed" in found.output["summary"]
+
+
+def test_a_review_from_another_workflow_counts_for_nothing() -> None:
+    api = FakeApi()
+    api.review(HEAD, ("completed", "success"), path=f"{WF}fake-review.yml")
+    assert "has no dependency review" in _red(api).output["summary"]
+
+
+REVIEW_RUN = 55
+
+
+def _review_run(api: FakeApi, **fields: Any) -> None:
+    run = {
+        "id": REVIEW_RUN,
+        "repository": {"full_name": REPO},
+        "path": mc.DEPENDENCY_REVIEW,
+        "event": "pull_request_target",
+        "status": "completed",
+        "head_sha": HEAD,
+    }
+    api.answers[f"/repos/{REPO}/actions/runs/{REVIEW_RUN}"] = {**run, **fields}
+
+
+def _merge_runs(api: FakeApi, query: str, ids: list[int]) -> None:
+    runs = [{"id": i, "path": MERGE_PATH} for i in ids]
+    api.answers[f"/repos/{REPO}/actions/workflows/merge.yml/runs?{query}"] = {
+        "total_count": len(runs),
+        "workflow_runs": runs,
+    }
+
+
+OWN_MERGE = f"head_sha={HEAD}&event=pull_request&status=completed&per_page=100"
+TRUSTED_MERGE = f"branch=trusted-run%2F{HEAD}&event=workflow_dispatch&status=completed&per_page=100"
+
+
+def test_a_completed_review_judges_its_head_from_its_own_merge_run() -> None:
+    api = FakeApi()
+    _review_run(api)
+    _merge_runs(api, OWN_MERGE, [RUN - 1, RUN])
+    outcome = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    assert outcome.posting is not None and outcome.posting.conclusion == "success"
+    assert outcome.posting.external_id == f"{RUN}/1", "the newest own Merge run is judged"
+
+
+def test_a_review_with_no_completed_merge_run_posts_nothing() -> None:
+    api = FakeApi()
+    _review_run(api)
+    _merge_runs(api, OWN_MERGE, [])
+    outcome = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    assert outcome.posting is None and outcome.dispatch is None
+    assert "no completed Merge run of its own" in outcome.why
+
+
+def test_a_review_of_a_head_that_changes_ci_reads_its_trusted_run_and_never_dispatches() -> None:
+    api = _trusted_api()
+    _review_run(api)
+    own_run = 70
+    api.answers[f"/repos/{REPO}/actions/runs/{own_run}"] = {
+        **api.answers[f"/repos/{REPO}/actions/runs/{RUN}"],
+        "event": "pull_request",
+        "head_sha": HEAD,
+        "head_branch": "the-pr",
+    }
+    _merge_runs(api, OWN_MERGE, [own_run])
+    _merge_runs(api, TRUSTED_MERGE, [])
+    waiting = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    assert waiting.posting is None and waiting.dispatch is None
+    assert "its trusted run has not completed" in waiting.why
+    _merge_runs(api, TRUSTED_MERGE, [RUN])
+    judged = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    assert judged.posting is not None and judged.posting.head_sha == HEAD
+    assert judged.posting.conclusion == "success" and judged.dispatch is None
+
+
+def test_a_review_run_that_is_not_a_pull_requests_posts_nothing() -> None:
+    api = FakeApi()
+    _review_run(api, event="pull_request")
+    assert (
+        "not a pull request's dependency review" in mc.judge(api, REPO, REVIEW_RUN, CONTROLLER).why
+    )
+
+
+def test_a_head_main_has_moved_past_is_told_to_update_and_starts_no_trusted_run() -> None:
+    api = FakeApi()
+    api.tree(MAIN, {MERGE_PATH: MERGE_YML + "# main moved on\n", "README.md": "hi\n"})
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 4}
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert outcome.dispatch is None, "a head behind main starts no trusted run"
+    assert outcome.posting is not None and outcome.posting.conclusion == "failure"
+    assert outcome.posting.output["title"] == (
+        "Red: the head is 4 commits behind main: update the branch"
+    )
