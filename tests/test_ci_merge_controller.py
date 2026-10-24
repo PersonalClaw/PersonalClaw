@@ -965,6 +965,138 @@ def test_the_sweep_judges_again_only_a_waiting_red_of_the_controllers(why: str) 
     assert mc.judge_waiting(api, REPO, APP, CONTROLLER) == []
 
 
+def _graph(*pulls: tuple[str, list[tuple[int, str, str]]], total: int | None = None) -> Any:
+    """The one read's answer: each open pull request's head and its verdicts, as GraphQL spells
+    them (``databaseId``, an upper-case ``conclusion``, ``text``)."""
+    nodes = [
+        {
+            "commits": {
+                "nodes": [
+                    {
+                        "commit": {
+                            "oid": oid,
+                            "checkSuites": {
+                                "nodes": [
+                                    {
+                                        "checkRuns": {
+                                            "nodes": [
+                                                {"databaseId": i, "conclusion": c, "text": x}
+                                                for i, c, x in runs
+                                            ]
+                                        }
+                                    }
+                                ]
+                            },
+                        }
+                    }
+                ]
+            }
+        }
+        for oid, runs in pulls
+    ]
+    count = len(nodes) if total is None else total
+    return {"data": {"repository": {"pullRequests": {"totalCount": count, "nodes": nodes}}}}
+
+
+_WAITS = f"```{mc.WAITING_FENCE}\ncodeql\n```\n"
+
+
+def _asked(answer: Any) -> tuple[mc.Query, list[Mapping[str, object]]]:
+    """A query that answers *answer* (or raises it) and notes each read's variables."""
+    seen: list[Mapping[str, object]] = []
+
+    def query(text: str, variables: Mapping[str, object]) -> Any:
+        assert text == mc.WAITING_QUERY
+        seen.append(variables)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    return query, seen
+
+
+def test_one_read_naming_no_waiting_head_ends_the_sweep_with_no_other_read() -> None:
+    api = FakeApi()
+    api.calls.clear()
+    query, seen = _asked(_graph((HEAD, [(1, "SUCCESS", "")]), ("b" * 40, [])))
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query) == []
+    assert seen == [{"owner": "owner", "name": "project", "app": APP}]
+    assert api.calls == [], "the sweep read a head the one read said waits on nothing"
+
+
+def test_one_read_naming_a_waiting_head_judges_it_again_through_the_rest_reads() -> None:
+    api = FakeApi()
+    api.codeql(HEAD, status="in_progress")
+    _merge_runs(api, OWN_MERGE, [RUN])
+    first = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert first is not None
+    _posted(api, _verdict(first, 1))
+    api.codeql(HEAD)
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", _WAITS)])))
+    [later] = mc.judge_waiting(api, REPO, APP, CONTROLLER, query)
+    assert later.posting is not None and later.posting.conclusion == "success"
+    assert VERDICTS in api.calls, "the REST read of the head's verdicts is the gate"
+
+
+def test_the_rest_reads_stay_the_gate_when_the_one_read_says_a_head_waits() -> None:
+    """The one read only narrows: a head it calls waiting whose newest verdict the REST read
+    finds green is not judged again."""
+    api = FakeApi()
+    _merge_runs(api, OWN_MERGE, [RUN])
+    green = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert green is not None and green.conclusion == "success"
+    _posted(api, _verdict(green, 2))
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", _WAITS)])))
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query) == []
+
+
+def test_the_newest_verdict_decides_in_the_one_read() -> None:
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", _WAITS), (2, "SUCCESS", "")])))
+    assert mc.waiting_heads(query, REPO, APP) == []
+    query, _ = _asked(_graph((HEAD, [(2, "FAILURE", _WAITS), (1, "SUCCESS", "")])))
+    assert mc.waiting_heads(query, REPO, APP) == [HEAD]
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        OSError("GraphQL answered 502"),
+        {"data": None, "errors": [{"message": "Resource not accessible by integration"}]},
+        {"data": {"repository": None}},
+        "not json",
+        _graph((HEAD, [(1, "FAILURE", _WAITS)]), total=101),
+        _graph(("not a sha", [])),
+    ],
+    ids=["no answer", "errors", "no repository", "a string", "too many", "no head"],
+)
+def test_a_one_read_it_cannot_read_leaves_the_sweep_reading_every_head(answer: Any) -> None:
+    api = FakeApi()
+    api.codeql(HEAD, status="in_progress")
+    _merge_runs(api, OWN_MERGE, [RUN])
+    first = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert first is not None
+    _posted(api, _verdict(first, 1))
+    api.codeql(HEAD)
+    query, _ = _asked(answer)
+    assert mc.waiting_heads(query, REPO, APP) is None
+    [later] = mc.judge_waiting(api, REPO, APP, CONTROLLER, query)
+    assert later.posting is not None and later.posting.conclusion == "success"
+
+
+def test_decide_waiting_asks_the_one_read_it_is_given(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
+    api = FakeApi()
+    api.calls.clear()
+    query, seen = _asked(_graph((HEAD, [])))
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--waiting", "--controller-revision", CONTROLLER]
+    argv += ["--controller-app-id", str(APP), "--out", str(out)]
+    assert mc.main(argv, get=api, query=query) == 0
+    assert len(seen) == 1 and not out.exists()
+    assert "post=false" in (tmp_path / "outputs").read_text()
+    assert not [c for c in api.calls if "/pulls" in c or "/check-runs" in c]
+
+
 def test_the_codeql_workflow_finishing_judges_its_head_again() -> None:
     api = FakeApi()
     _merge_runs(api, OWN_MERGE, [RUN])

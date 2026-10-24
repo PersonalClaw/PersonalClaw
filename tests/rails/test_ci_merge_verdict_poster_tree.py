@@ -1,17 +1,22 @@
 """``.github/workflows/merge-verdict.yml``: the merge verdict's poster keeps its trust shape.
 
 It runs only as a ``workflow_run`` listener of Merge and Dependency review and a listener of
-completed check runs, so GitHub runs main's copy. It names nothing
-of the candidate (no ``workflow_run.head*`` anywhere), checks out only the default branch and
-keeps no credential. ``post`` reads with its own token (``contents`` and ``actions``, read) and
-mints the controller App's token, with ``checks: write`` alone, only when there is a verdict to
-post, and only the step that posts holds it. ``trusted`` runs after it only when it names a head
-to judge or a branch to delete, mints the App's token with ``contents: write`` alone for the step
-that makes the trusted run's commit, and dispatches with its own token, which holds
-``actions: write`` and nothing else that writes. Each rule fails on a planted edit.
+completed check runs, so GitHub runs main's copy. It names nothing of the candidate but in its
+jobs' one condition, which reads the triggering run's event and branch only to spare the queue
+the runs that can judge no pull request's head (each case below a planted event), checks out
+only the default branch and keeps no credential. ``post`` reads with its own token
+(``contents`` and ``actions``, read) and mints the controller App's token, with ``checks: write``
+alone, only when there is a verdict to post, and only the step that posts holds it. ``trusted``
+runs after it only when it names a head to judge or a branch to delete, mints the App's token
+with ``contents: write`` alone for the step that makes the trusted run's commit, and dispatches
+with its own token, which holds ``actions: write`` and nothing else that writes. Each rule fails
+on a planted edit.
 """
 
 from __future__ import annotations
+
+import re
+from typing import Any
 
 import pytest
 import yaml
@@ -28,14 +33,29 @@ _APP_KEYS = {
 }
 _TOKEN_ASKS = {**_APP_KEYS, "permission-checks": "write"}
 _TRUSTED_ASKS = {**_APP_KEYS, "permission-contents": "write"}
-_CODEQL_CHECK_ONLY = (
-    "github.event_name != 'check_run' || (github.event.check_run.app.id == 57789"
-    " && github.event.check_run.name == 'CodeQL')"
+#: The runs that can judge a pull request's head, and so take a runner: the sweep; a completed
+#: dispatch off main (a trusted run, a dispatch proof), whatever MERGE_VERDICT_LIVE says; and, once
+#: the flip sets it 'true', code scanning's CodeQL check and a completed run of a pull request
+#: (its own, its dependency review, or CodeQL's on refs/pull/*). decide checks each again.
+_WAKES = (
+    "github.event_name == 'schedule'"
+    " || (github.event_name == 'workflow_run'"
+    " && github.event.workflow_run.event == 'workflow_dispatch'"
+    " && github.event.workflow_run.head_branch != 'main')"
+    " || (vars.MERGE_VERDICT_LIVE == 'true'"
+    " && ((github.event_name == 'check_run'"
+    " && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')"
+    " || (github.event_name == 'workflow_run'"
+    " && (github.event.workflow_run.event == 'pull_request'"
+    " || github.event.workflow_run.event == 'pull_request_target'"
+    " || (github.event.workflow_run.event == 'dynamic'"
+    " && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))))"
 )
 _TRUSTED_IF = (
-    f"({_CODEQL_CHECK_ONLY})"
-    " && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')"
+    f"({_WAKES}) && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')"
 )
+#: Each job's condition as the file spells it: a folded block, read out before the candidate check.
+_IF_BLOCK = re.compile(r"^    if: >-\n(?:      .*\n)+", re.M)
 _APP_TOKEN = "${{ steps.controller.outputs.token }}"
 
 
@@ -83,7 +103,7 @@ def _trusted_problems(job: dict) -> list[str]:
 
 def _problems(text: str) -> list[str]:
     found: list[str] = []
-    if "workflow_run.head" in text:
+    if "workflow_run.head" in _IF_BLOCK.sub("", text):
         found.append("it names the candidate's head, branch or repository")
     data = yaml.safe_load(text)
     on = data.get("on", data.get(True))
@@ -102,11 +122,12 @@ def _problems(text: str) -> list[str]:
         return [*found, f"has jobs {sorted(jobs)}"]
     found += _trusted_problems(jobs["trusted"])
     job = jobs["post"]
-    if job.get("if") != _CODEQL_CHECK_ONLY:
+    if job.get("if") != _WAKES:
         found.append(
-            "the post job's condition is not exactly: every run, and code scanning's CodeQL"
-            f" check alone of the check runs ({job.get('if')!r})"
+            "the post job's condition is not exactly: the runs that can judge a pull request's"
+            f" head ({job.get('if')!r})"
         )
+    found += _wake_problems("the post job", str(job.get("if")))
     if job.get("environment") != "ci-controller":
         found.append(f"the job deploys to {job.get('environment')!r}")
     if job.get("permissions") != {
@@ -265,23 +286,231 @@ def test_a_planted_edit_of_the_poster_fails(old: str, new: str, says: str) -> No
     )
 
 
+#: Each event the poster can be started by, and when its jobs take a runner: ``head``, a pull
+#: request's wake, only with MERGE_VERDICT_LIVE 'true'; ``always``; ``never``.
+_EVENTS: tuple[tuple[str, str, dict[str, Any], str], ...] = (
+    ("a pull request's Merge run", "workflow_run", {"event": "pull_request"}, "head"),
+    ("a Dependency review run", "workflow_run", {"event": "pull_request_target"}, "head"),
+    (
+        "CodeQL on a pull request",
+        "workflow_run",
+        {"event": "dynamic", "head_branch": "refs/pull/7/head"},
+        "head",
+    ),  # noqa: E501
+    (
+        "code scanning's CodeQL check",
+        "check_run",
+        {"app": {"id": 57789}, "name": "CodeQL"},
+        "head",
+    ),  # noqa: E501
+    (
+        "a trusted run",
+        "workflow_run",
+        {"event": "workflow_dispatch", "head_branch": "trusted-run/ab"},
+        "always",
+    ),  # noqa: E501
+    ("the sweep", "schedule", {}, "always"),
+    ("CodeQL on main", "workflow_run", {"event": "dynamic", "head_branch": "main"}, "never"),
+    (
+        "a dispatch on main",
+        "workflow_run",
+        {"event": "workflow_dispatch", "head_branch": "main"},
+        "never",
+    ),  # noqa: E501
+    ("the push stage on main", "workflow_run", {"event": "push", "head_branch": "main"}, "never"),
+    (
+        "a schedule of the run's",
+        "workflow_run",
+        {"event": "schedule", "head_branch": "main"},
+        "never",
+    ),  # noqa: E501
+    ("another App's check", "check_run", {"app": {"id": 15368}, "name": "CodeQL"}, "never"),
+    (
+        "code scanning's other check",
+        "check_run",
+        {"app": {"id": 57789}, "name": "Analyze"},
+        "never",
+    ),  # noqa: E501
+)
+#: MERGE_VERDICT_LIVE as the repository may hold it: before the flip, after it, and unset.
+_LIVE = ("false", "true", None)
+
+
+def _wanted(kind: str, live: str | None) -> bool:
+    return kind == "always" or (kind == "head" and live == "true")
+
+
+def _tokens(expr: str) -> list[str]:
+    found = re.findall(r"\s*('[^']*'|&&|\|\||==|!=|[()!,]|[A-Za-z_][\w.-]*|\d+)", expr)
+    assert "".join(found).replace(" ", "") == expr.replace(" ", ""), f"unread: {expr!r}"
+    return found
+
+
+def _evaluate(
+    expr: str, event_name: str, payload: dict[str, Any], live: str | None = "true"
+) -> Any:
+    """GitHub's expression syntax as far as a job condition here uses it: ``==``/``!=`` (strings
+    compared without case), ``&&``, ``||``, ``!``, parentheses, ``startsWith``, and
+    ``github.event_name``, ``github.event.*`` and ``vars.*`` paths, a missing one being null."""
+    key = "check_run" if event_name == "check_run" else "workflow_run"
+    context: dict[str, Any] = {"event_name": event_name, "event": {key: payload}}
+    variables = {} if live is None else {"MERGE_VERDICT_LIVE": live}
+    tokens = _tokens(expr)
+
+    def value(name: str) -> Any:
+        if name in ("true", "false", "null"):
+            return {"true": True, "false": False, "null": None}[name]
+        here: Any = {"github": context, "vars": variables}
+        for part in name.split("."):
+            here = here.get(part) if isinstance(here, dict) else None
+        return here
+
+    def same(a: Any, b: Any) -> bool:
+        if isinstance(a, str) and isinstance(b, str):
+            return a.casefold() == b.casefold()
+        return a == b
+
+    def primary(i: int) -> tuple[Any, int]:
+        tok = tokens[i]
+        if tok == "(":
+            got, i = either(i + 1)
+            assert tokens[i] == ")"
+            return got, i + 1
+        if tok == "!":
+            got, i = primary(i + 1)
+            return not got, i
+        if tok.startswith("'"):
+            return tok[1:-1], i + 1
+        if tok.isdigit():
+            return int(tok), i + 1
+        if tok == "startsWith":
+            assert tokens[i + 1] == "("
+            a, i = either(i + 2)
+            assert tokens[i] == ","
+            b, i = either(i + 1)
+            assert tokens[i] == ")"
+            return str(a or "").casefold().startswith(str(b or "").casefold()), i + 1
+        return value(tok), i + 1
+
+    def compare(i: int) -> tuple[Any, int]:
+        left, i = primary(i)
+        while i < len(tokens) and tokens[i] in ("==", "!="):
+            op = tokens[i]
+            right, i = primary(i + 1)
+            left = same(left, right) if op == "==" else not same(left, right)
+        return left, i
+
+    def both(i: int) -> tuple[Any, int]:
+        left, i = compare(i)
+        while i < len(tokens) and tokens[i] == "&&":
+            right, i = compare(i + 1)
+            left = bool(left) and bool(right)
+        return left, i
+
+    def either(i: int) -> tuple[Any, int]:
+        left, i = both(i)
+        while i < len(tokens) and tokens[i] == "||":
+            right, i = both(i + 1)
+            left = bool(left) or bool(right)
+        return left, i
+
+    got, end = either(0)
+    assert end == len(tokens), f"unread past {tokens[end:]}"
+    return bool(got)
+
+
+def _wake_problems(where: str, expr: str) -> list[str]:
+    """Each event as the condition answers it, with MERGE_VERDICT_LIVE each way, against whether
+    it can judge a head then."""
+    return [
+        f"{where} {'takes no runner for' if _wanted(kind, live) else 'takes a runner for'} {name}"
+        f" with MERGE_VERDICT_LIVE {live!r}"
+        for name, event_name, payload, kind in _EVENTS
+        for live in _LIVE
+        if _evaluate(expr, event_name, payload, live) is not _wanted(kind, live)
+    ]
+
+
+@pytest.mark.parametrize("live", _LIVE, ids=lambda v: f"live={v}")
+@pytest.mark.parametrize("name, event_name, payload, kind", _EVENTS, ids=[e[0] for e in _EVENTS])
+def test_the_wake_condition_takes_a_runner_only_for_what_can_judge_a_head(
+    name: str, event_name: str, payload: dict[str, Any], kind: str, live: str | None
+) -> None:
+    assert _evaluate(_WAKES, event_name, payload, live) is _wanted(kind, live), name
+
+
+def test_the_evaluator_reads_the_condition_it_judges() -> None:
+    """A control for the evaluator itself: GitHub compares strings without case, and a missing
+    property is null, which no string equals."""
+    assert _evaluate("github.event_name == 'SCHEDULE'", "schedule", {})
+    assert _evaluate("github.event.workflow_run.head_branch != 'main'", "workflow_run", {})
+    assert not _evaluate("startsWith(github.event.workflow_run.head_branch, 'refs/')", "x", {})
+
+
 @pytest.mark.parametrize(
-    "old, new",
+    "old, new, says",
     [
-        ("github.event.check_run.app.id == 57789 && ", ""),
-        (" && github.event.check_run.name == 'CodeQL'", ""),
         (
-            "github.event_name != 'check_run' || ",
-            "github.event.workflow_run.conclusion == 'success' || ",
+            "      || (github.event.workflow_run.event == 'dynamic'\n"
+            "      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))))\n",
+            "      || github.event.workflow_run.event == 'dynamic'))))\n",
+            "takes a runner for CodeQL on main with MERGE_VERDICT_LIVE 'true'",
+        ),
+        (
+            "      || github.event.workflow_run.event == 'pull_request_target'\n",
+            "      || github.event.workflow_run.event == 'pull_request_target'\n"
+            "      || github.event.workflow_run.event == 'push'\n",
+            "takes a runner for the push stage on main",
+        ),
+        (
+            "      && github.event.workflow_run.head_branch != 'main')\n",
+            "      && github.event.workflow_run.head_branch != '')\n",
+            "takes a runner for a dispatch on main",
+        ),
+        (
+            "      && (github.event.workflow_run.event == 'pull_request'\n",
+            "      && (github.event.workflow_run.event == 'pull_requests'\n",
+            "takes no runner for a pull request's Merge run with MERGE_VERDICT_LIVE 'true'",
+        ),
+        (
+            "      && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')\n",  # noqa: E501
+            "      && github.event.check_run.name == 'CodeQL')\n",
+            "takes a runner for another App's check",
+        ),
+        # A pull request's wake that runs before the flip: the gate left out.
+        (
+            "      || (vars.MERGE_VERDICT_LIVE == 'true'\n"
+            "      && ((github.event_name == 'check_run'\n",
+            "      || (((github.event_name == 'check_run'\n",
+            "takes a runner for a pull request's Merge run with MERGE_VERDICT_LIVE 'false'",
+        ),
+        # The dispatch path made to wait on the variable: a dispatch proof stops working.
+        (
+            "      || (github.event_name == 'workflow_run'\n"
+            "      && github.event.workflow_run.event == 'workflow_dispatch'\n",
+            "      || (vars.MERGE_VERDICT_LIVE == 'true' && github.event_name == 'workflow_run'\n"
+            "      && github.event.workflow_run.event == 'workflow_dispatch'\n",
+            "takes no runner for a trusted run with MERGE_VERDICT_LIVE 'false'",
         ),
     ],
 )
-def test_a_post_condition_other_than_the_codeql_filter_fails(old: str, new: str) -> None:
+def test_a_planted_wake_condition_fails(old: str, new: str, says: str) -> None:
     text = _WORKFLOW.read_text(encoding="utf-8")
-    line = next(x for x in text.splitlines() if x.startswith("    if: github.event_name !="))
-    planted = text.replace(line, line.replace(old, new, 1), 1)
-    assert planted != text
-    assert any("condition is not exactly" in p for p in _problems(planted))
+    assert text.count(old) >= 1, f"the plant's anchor is gone: {old!r}"
+    planted = text.replace(old, new, 1)
+    found = _problems(planted)
+    assert any(says in p for p in found), found
+    assert any("condition is not exactly" in p for p in found), found
+
+
+def test_a_step_that_names_the_triggering_runs_branch_fails() -> None:
+    text = _WORKFLOW.read_text(encoding="utf-8").replace(
+        "          RUN_ID: ${{ github.event.workflow_run.id }}\n",
+        "          RUN_ID: ${{ github.event.workflow_run.id }}\n"
+        "          BRANCH: ${{ github.event.workflow_run.head_branch }}\n",
+        1,
+    )
+    assert any("names the candidate's head" in p for p in _problems(text))
 
 
 def test_a_schedule_more_often_than_ten_minutes_fails() -> None:
