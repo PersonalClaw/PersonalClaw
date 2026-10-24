@@ -57,6 +57,8 @@ jobs:
     environment: release
     permissions:
       contents: read  # main's tools/ci, which reads PyPI and the manifest
+      actions: read  # this attempt's jobs and the run's approvals
+      deployments: read  # this job's own deployment: when it waited and was approved
       id-token: write  # OIDC for Trusted Publishing
     steps:
       - name: Runner identity
@@ -68,6 +70,7 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
+            tools/ci/release_approval.py
             tools/ci/release_targets.py
             tools/ci/release_manifest.py
           sparse-checkout-cone-mode: false
@@ -85,6 +88,16 @@ jobs:
         run: |
           find dist -maxdepth 1 -type f ! -name 'personalclaw-*' -delete
           ls -la dist
+      # After the gate, before anything is read or written (#3911): the owner approved this very
+      # job after this attempt's manifest was written. An approval GitHub carried into a re-run, or
+      # one given before `artifacts` was built again, saw another build, and refuses here.
+      - name: The owner approved this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 -I tools/ci/release_approval.py --repository "$GITHUB_REPOSITORY"
+          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --job pypi
+          --environment release --ref "$GITHUB_REF_NAME"
       # Before anything is uploaded (#3911): what PyPI holds for this version, held against the
       # approved manifest, read under the digest `artifacts` wrote it with. A file PyPI holds with
       # another digest fails here, so nothing is uploaded beside it; one it holds identical is
@@ -125,6 +138,8 @@ jobs:
     environment: release-client
     permissions:
       contents: read  # main's tools/ci, which reads PyPI and the manifest
+      actions: read  # this attempt's jobs and the run's approvals
+      deployments: read  # this job's own deployment: when it waited and was approved
       id-token: write
     steps:
       - name: Runner identity
@@ -135,6 +150,7 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: |
+            tools/ci/release_approval.py
             tools/ci/release_targets.py
             tools/ci/release_manifest.py
           sparse-checkout-cone-mode: false
@@ -146,6 +162,16 @@ jobs:
         with:
           name: release-manifest
           path: ${{ runner.temp }}/manifest
+      # After the gate, before anything is read or written (#3911): the owner approved this very
+      # job after this attempt's manifest was written. An approval GitHub carried into a re-run, or
+      # one given before `artifacts` was built again, saw another build, and refuses here.
+      - name: The owner approved this build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 -I tools/ci/release_approval.py --repository "$GITHUB_REPOSITORY"
+          --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --job pypi-client
+          --environment release-client --ref "$GITHUB_REF_NAME"
       # As `pypi`'s (#3911): what PyPI holds of personalclaw-client at this version, held
       # against the approved manifest before anything is uploaded.
       - name: What PyPI holds of the client, against the manifest
@@ -174,8 +200,9 @@ jobs:
     # and both arches' smokes first, so NOTHING is pushed until the image built from this commit
     # is proven to serve a dashboard — `personalclaw-web` included, because
     # `deploy/compose/compose.yaml` pulls both and half a published pair is worse than none.
-    # Auth = GITHUB_TOKEN (no extra secret).
-    needs: [artifacts]
+    # Auth = GITHUB_TOKEN (no extra secret). It waits on `pypi`, and so on the owner's approval of
+    # this build: nothing becomes public before it (#3911).
+    needs: [artifacts, pypi]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -415,10 +442,12 @@ jobs:
 
   attest:
     # Build-provenance attestations on the wheel and the sdist (zero key management — GitHub
-    # OIDC). It needs only `artifacts`, whose `dist` it attests. It used to need `notes` as well,
-    # so when v0.2.0's desktop-linux failed and `notes` was skipped, this was skipped with it,
-    # and the wheel PyPI had already published got no build provenance on GitHub.
-    needs: [artifacts]
+    # OIDC). It needs `artifacts`, whose `dist` it attests, and `pypi`: an attestation is public,
+    # so it waits on the owner's approval of this build like everything that publishes (#3911),
+    # and it attests the wheel PyPI was handed. It used to need `notes` as well, so when v0.2.0's
+    # desktop-linux failed and `notes` was skipped, this was skipped with it, and the wheel PyPI
+    # had already published got no build provenance on GitHub: it does not wait on `notes`.
+    needs: [artifacts, pypi]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

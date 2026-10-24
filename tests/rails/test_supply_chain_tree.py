@@ -332,14 +332,16 @@ def test_the_release_attaches_the_wheels_sbom_and_pypi_never_sees_it() -> None:
     assert "wheel-sbom/*" in create.split("gh release create", 1)[1].split("--title", 1)[0]
 
 
-def test_the_wheels_provenance_needs_only_the_build_it_attests() -> None:
-    """`attest` attests the `dist` that `artifacts` built, so nothing else may stand between them.
+def test_the_wheels_provenance_needs_only_the_build_it_attests_and_its_approval() -> None:
+    """`attest` attests the `dist` that `artifacts` built, once the owner approved that build
+    (`pypi`, behind the `release` gate: an attestation is public, #3911), and nothing else may
+    stand between them.
 
     It used to need `notes` too. v0.2.0's desktop-linux failed, `notes` was skipped, `attest`
     with it, and the wheel and sdist PyPI had published have no build provenance on GitHub."""
     attest = _jobs()["attest"]
     needs = attest.get("needs")
-    assert (needs if isinstance(needs, list) else [needs]) == ["artifacts"], needs
+    assert sorted(needs if isinstance(needs, list) else [needs]) == ["artifacts", "pypi"], needs
     downloads = [
         step["with"] for step in attest["steps"] if _action(step) == "actions/download-artifact"
     ]

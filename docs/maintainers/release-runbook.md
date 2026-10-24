@@ -21,12 +21,12 @@ weekly rehearsal runs, and writes their manifest. Every job that publishes waits
 | `artifacts / desktop-mac` | `PersonalClaw-X.Y.Z-arm64.dmg` (on `macos-26`) and `PersonalClaw-X.Y.Z-x64.dmg` (on `macos-26-intel`), ad-hoc signed, not notarized | per arch: `lipo -archs` lists only that arch for the shell and the backend; boots the bundled backend and then starts the app from inside the mounted dmg |
 | `artifacts / desktop-linux` | unsigned `PersonalClaw-X.Y.Z.AppImage` + `personalclaw-desktop_X.Y.Z_amd64.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
 | `artifacts / manifest` | the digest-bound manifest of every file and image above | writes and verifies it; a planted changed wheel must fail the verify |
-| `pypi` | core package on PyPI | needs `artifacts`; environment `release` — **needs your approval** |
-| `pypi-client` | `personalclaw-client` on PyPI | needs `artifacts`; environment `release-client` — **needs your approval** |
-| `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch — tags per [the scheme below](#what-a-tag-publishes) | needs `artifacts`; pushes each tag from the layout that was smoked, with every digest kept, and requires each tag to name the index the manifest records |
+| `pypi` | core package on PyPI | needs `artifacts`; environment `release` — **needs your approval**, of this build: it refuses an approval given before this attempt's manifest was written |
+| `pypi-client` | `personalclaw-client` on PyPI | needs `artifacts`; environment `release-client` — **needs your approval**, of this build, as `pypi` |
+| `images` | `ghcr.io/personalclaw/personalclaw-{gateway,web}`, multi-arch — tags per [the scheme below](#what-a-tag-publishes) | needs `artifacts` and `pypi`, so nothing is pushed before your approval; pushes each tag from the layout that was smoked, with every digest kept, and requires each tag to name the index the manifest records |
 | `notes` | the GitHub Release, notes lifted from `CHANGELOG.md`; attaches the wheel, the sdist, the wheel's SBOM, four image SBOMs and the three desktop files | needs `artifacts`, `pypi` and `images` |
 | `website-follow` | nudges personalclaw.dev to re-check its pins | best-effort, `continue-on-error`; runs in the `website-follow` environment, which holds its token |
-| `attest` | build-provenance attestation on the wheel and the sdist (OIDC, no keys) | needs only `artifacts`, so it runs whether or not the Release is created |
+| `attest` | build-provenance attestation on the wheel and the sdist (OIDC, no keys) | needs `artifacts` and `pypi`: after your approval, and whether or not the Release is created |
 
 `artifacts` keeps its files 30 days, as long as the `release` approval may wait.
 
@@ -56,6 +56,14 @@ Two consequences worth knowing before you start:
   lacks. For an image only the release's own tag, `:X.Y.Z`, is compared: `:X.Y`, `:latest` and
   `:beta` move from release to release by design, so they name an earlier release's index until
   this one moves them.
+- **Nothing is public before your approval, of this build.** `pypi` and `pypi-client` wait on
+  their environments; `images`, `attest` and `notes` wait on `pypi`, so nothing is pushed, attested
+  or released before you approve. Once through the gate, each approved job checks
+  (`tools/ci/release_approval.py`) that it waited and was approved after this attempt's manifest
+  was written, by a required reviewer, reading its own deployment's statuses: GitHub's approval
+  record has no time. An approval given before `artifacts` was built again, or carried into a
+  re-run, saw another build: the job refuses, naming both times. The manifest's digest is in the
+  run's summary before the gates: approve the run whose digest you mean to publish.
 - **One release at a time.** Every release run shares the concurrency group `release`, which never
   cancels. A second tag's run waits, unstarted, until the first has finished, its approvals
   included. GitHub keeps one waiting run per group, so a third tag's run would replace the waiting
@@ -562,7 +570,7 @@ is their first run.
 ## Notes
 
 - Releases have no separate signing step today: provenance comes from GitHub's
-  OIDC attestation (`attest`, which needs only `build`, so a failure later in the run
+  OIDC attestation (`attest`, which needs only `artifacts` and `pypi`, so a failure later in the run
   no longer costs the wheel its provenance, as it did v0.2.0's), and PyPI uses
   trusted publishing, so there are no long-lived tokens to rotate or lose. Artifact
   **signing** (minisign/Sigstore) is not built yet.
