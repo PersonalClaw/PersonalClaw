@@ -192,6 +192,60 @@ def _waits_on(jobs: dict, job_id: str, target: str, seen: frozenset = frozenset(
 #: The one release group: a group per tag would let two tags publish at once.
 RELEASE_CONCURRENCY = {"group": "release", "cancel-in-progress": False}
 
+#: Each job that writes to a publish target, and its writing steps. Before the first of them it
+#: reads what the target holds and holds that against the approved manifest (#3911), so a run
+#: again or resumed writes nothing over an object it did not build. `pypi-client` builds the
+#: client itself, so it joins once the client is in the manifest.
+PUBLISHES = {
+    "pypi": lambda step: str(step.get("uses", "")).startswith("pypa/gh-action-pypi-publish@"),
+    "images": lambda step: "skopeo copy" in str(step.get("run") or ""),
+    "notes": lambda step: re.search(r"\bgh release (create|upload)\b", str(step.get("run") or ""))
+    is not None,
+}
+#: The manifest's digest, as `artifacts` wrote it in this run: the one a compare loads it under.
+MANIFEST_DIGEST = "${{ needs.artifacts.outputs.manifest-digest }}"
+
+
+#: The files a publish job's compare runs, both standard library alone: all a job holding the
+#: OIDC token may check out, sparsely and without keeping the token in the checkout.
+COMPARE_FILES = ["tools/ci/release_targets.py", "tools/ci/release_manifest.py"]
+#: Jobs holding the OIDC token that still check out more, and why. `pypi-client` builds the
+#: client itself until the client is built with the rest of the release.
+CHECKS_OUT_MORE = {"pypi-client": "builds the client at publish time"}
+
+
+def _sparse_problems(job_id: str, job: dict[str, Any]) -> list[str]:
+    """A job holding `id-token: write` checks out only the compare's files, or nothing."""
+    if (job.get("permissions") or {}).get("id-token") != "write" or job_id in CHECKS_OUT_MORE:
+        return []
+    out: list[str] = []
+    for step in _steps(job):
+        if not str(step.get("uses", "")).startswith("actions/checkout@"):
+            continue
+        given = step.get("with") or {}
+        paths = str(given.get("sparse-checkout") or "").split()
+        if (
+            paths != COMPARE_FILES
+            or given.get("sparse-checkout-cone-mode") is not False
+            or given.get("persist-credentials") is not False
+        ):
+            out.append(
+                f"{job_id} holds the OIDC token and checks out more than the compare's files "
+                f"({paths or 'the whole tree'})"
+            )
+    return out
+
+
+def _compares(step: dict[str, Any]) -> bool:
+    """Whether *step* reads its target and holds it against the manifest under that digest."""
+    run = str(step.get("run") or "")
+    return (
+        "tools/ci/release_targets.py" in run
+        and "tools/ci/release_manifest.py compare" in run
+        and '--digest "$DIGEST"' in run
+        and (step.get("env") or {}).get("DIGEST") == MANIFEST_DIGEST
+    )
+
 
 def release_problems(release_text: str) -> list[str]:
     """release.yml builds through release-artifacts.yml, and publishes only after all of it, one
@@ -224,6 +278,19 @@ def release_problems(release_text: str) -> list[str]:
     for job_id in jobs:
         if job_id != "artifacts" and not _waits_on(jobs, job_id, "artifacts"):
             out.append(f"{job_id} does not wait on every artifact being built and smoked")
+    for job_id, job in jobs.items():
+        out.extend(_sparse_problems(job_id, job))
+    for job_id, writes in PUBLISHES.items():
+        steps = _steps(jobs.get(job_id) or {})
+        write = next((i for i, step in enumerate(steps) if writes(step)), None)
+        compare = next((i for i, step in enumerate(steps) if _compares(step)), None)
+        if write is None:
+            out.append(f"{job_id} has no step that publishes, where one was")
+        elif compare is None or compare > write:
+            out.append(
+                f"{job_id} writes before it holds what its target has against the approved "
+                "manifest"
+            )
     images = _steps(jobs.get("images") or {})
     if any(str(s.get("uses", "")).startswith("docker/build-push-action@") for s in images):
         out.append("images builds again, so what it pushes is not what was smoked")
@@ -660,6 +727,65 @@ def test_a_release_that_builds_or_publishes_on_its_own_is_caught() -> None:
         (
             release.replace("concurrency:\n  group: release\n  cancel-in-progress: false\n", "", 1),
             "two releases could publish at once",
+        ),
+        (
+            release.replace(
+                'release_manifest.py compare --manifest "$MANIFEST" --digest "$DIGEST" \\\n'
+                "            --select 'personalclaw-[0-9]*.whl'",
+                'release_manifest.py verify --manifest "$MANIFEST" --digest "$DIGEST" \\\n'
+                "            --select 'personalclaw-[0-9]*.whl'",
+                1,
+            ),
+            "pypi writes before it holds what its target has",
+        ),
+        (
+            release.replace(
+                "      - name: What the registry holds under this release's tag",
+                "      - run: skopeo copy --all oci-archive:x.tar docker://ghcr.io/x/y:1\n"
+                "      - name: What the registry holds under this release's tag",
+                1,
+            ),
+            "images writes before it holds what its target has",
+        ),
+        (
+            release.replace("python3 -I tools/ci/release_targets.py github-release", "true", 1),
+            "notes writes before it holds what its target has",
+        ),
+        (
+            release.replace(
+                "          sparse-checkout: |\n            tools/ci/release_targets.py\n"
+                "            tools/ci/release_manifest.py\n"
+                "          sparse-checkout-cone-mode: false\n",
+                "",
+                1,
+            ),
+            "pypi holds the OIDC token and checks out more than the compare's files",
+        ),
+        (
+            release.replace(
+                "            tools/ci/release_manifest.py\n"
+                "          sparse-checkout-cone-mode: false\n",
+                "            tools/ci/release_manifest.py\n            scripts/\n"
+                "          sparse-checkout-cone-mode: false\n",
+                1,
+            ),
+            "pypi holds the OIDC token and checks out more than the compare's files",
+        ),
+        (
+            release.replace("          sparse-checkout-cone-mode: false\n", "", 1),
+            "pypi holds the OIDC token and checks out more than the compare's files",
+        ),
+        (
+            release.replace(
+                "      - name: What the Release holds, against the manifest\n        id: held\n"
+                "        env:\n          GH_TOKEN: ${{ github.token }}\n"
+                "          DIGEST: ${{ needs.artifacts.outputs.manifest-digest }}",
+                "      - name: What the Release holds, against the manifest\n        id: held\n"
+                "        env:\n          GH_TOKEN: ${{ github.token }}\n"
+                "          DIGEST: sha256:" + "0" * 64,
+                1,
+            ),
+            "notes writes before it holds what its target has",
         ),
         (
             release.replace("  cancel-in-progress: false\n", "  cancel-in-progress: true\n", 1),

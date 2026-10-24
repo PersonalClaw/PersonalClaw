@@ -313,12 +313,15 @@ def test_the_release_attaches_the_wheels_sbom_and_pypi_never_sees_it() -> None:
     assert uploads["wheel-sbom"].get("if-no-files-found") == "error"
     assert uploads["dist"]["path"] == "dist/", "the SBOM must stay out of the `dist` artifact"
 
-    pypi_downloads = [
-        step["with"]["name"]
+    pypi_downloads = {
+        step["with"]["name"]: str(step["with"].get("path", ""))
         for step in jobs["pypi"]["steps"]
         if _action(step) == "actions/download-artifact"
-    ]
-    assert pypi_downloads == ["dist"], "PyPI is handed the distributions and nothing else"
+    }
+    into_dist = [name for name, path in pypi_downloads.items() if path.startswith("dist")]
+    assert into_dist == ["dist"], "PyPI is handed the distributions and nothing else"
+    # Beside them only the manifest its compare reads (#3911), kept out of `dist/`.
+    assert set(pypi_downloads) == {"dist", "release-manifest"}, pypi_downloads
 
     notes = jobs["notes"]
     downloads = [

@@ -56,21 +56,51 @@ jobs:
     timeout-minutes: 5
     environment: release
     permissions:
+      contents: read  # main's tools/ci, which reads PyPI and the manifest
       id-token: write  # OIDC for Trusted Publishing
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
         run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Only the two files the compare runs, both standard library alone: the less code sits in a
+      # job holding the OIDC token, the better.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            tools/ci/release_targets.py
+            tools/ci/release_manifest.py
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: dist
           path: dist/
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-manifest
+          path: ${{ runner.temp }}/manifest
       # The client package ships from its own source tree/job — keep only the
       # personalclaw distributions here.
       - name: Keep only personalclaw distributions
         run: |
           find dist -maxdepth 1 -type f ! -name 'personalclaw-*' -delete
           ls -la dist
+      # Before anything is uploaded (#3911): what PyPI holds for this version, held against the
+      # approved manifest, read under the digest `artifacts` wrote it with. A file PyPI holds with
+      # another digest fails here, so nothing is uploaded beside it; one it holds identical is
+      # resumed (skip-existing, below); and PyPI unreadable refuses, never reads as empty.
+      - name: What PyPI holds, against the manifest
+        env:
+          DIGEST: ${{ needs.artifacts.outputs.manifest-digest }}
+          MANIFEST: ${{ runner.temp }}/manifest/manifest.json
+          HELD: ${{ runner.temp }}/held.json
+        run: |
+          set -euo pipefail
+          wheel=$(cd dist && ls personalclaw-[0-9]*.whl)
+          version=$(printf '%s' "$wheel" | cut -d- -f2)
+          python3 -I tools/ci/release_targets.py pypi --project personalclaw --version "$version" --out "$HELD"
+          python3 -I tools/ci/release_manifest.py compare --manifest "$MANIFEST" --digest "$DIGEST" \
+            --select 'personalclaw-[0-9]*.whl' --select 'personalclaw-[0-9]*.tar.gz' --published "$HELD"
       # skip-existing: a re-run of an already-published tag no-ops instead of
       # failing on PyPI's no-re-upload rule (idempotent releases).
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
@@ -152,6 +182,10 @@ jobs:
         with:
           name: image-index-${{ matrix.name }}
           path: ${{ runner.temp }}/index
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-manifest
+          path: ${{ runner.temp }}/manifest
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -174,6 +208,22 @@ jobs:
           python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE"
           python3 scripts/release_tags.py --ref "$GITHUB_REF_NAME" --image "$IMAGE" \
             --github-output >> "$GITHUB_OUTPUT"
+      # Before anything is pushed (#3911): the index the registry holds under this release's own
+      # tag, held against the approved manifest. Another index there fails here, the same one is
+      # resumed, and a registry it cannot read refuses. The moving tags (`:X.Y`, `:latest`,
+      # `:beta`) name an earlier release's index by design, so only this release's tag is read.
+      - name: What the registry holds under this release's tag, against the manifest
+        env:
+          IMAGE: ghcr.io/personalclaw/personalclaw-${{ matrix.name }}
+          TAG: ${{ steps.imagetags.outputs.version }}
+          DIGEST: ${{ needs.artifacts.outputs.manifest-digest }}
+          MANIFEST: ${{ runner.temp }}/manifest/manifest.json
+          HELD: ${{ runner.temp }}/held.json
+        run: |
+          set -euo pipefail
+          python3 -I tools/ci/release_targets.py image --image "$IMAGE" --tag "$TAG" --out "$HELD"
+          python3 -I tools/ci/release_manifest.py compare --manifest "$MANIFEST" --digest "$DIGEST" \
+            --select "$IMAGE" --published "$HELD"
       - name: Push the layout, every digest kept
         env:
           LAYOUT: ${{ runner.temp }}/layout/personalclaw-${{ matrix.name }}.oci.tar
@@ -238,7 +288,35 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-notes
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-manifest
+          path: ${{ runner.temp }}/manifest
+      # Before anything is written (#3911): the assets the tag's Release already holds, held
+      # against the approved manifest. An asset there with another digest, or one the manifest does
+      # not name, fails here; the ones it holds identical are resumed, and only what it lacks is
+      # uploaded below. A Release it cannot read refuses, never reads as none.
+      - name: What the Release holds, against the manifest
+        id: held
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ needs.artifacts.outputs.manifest-digest }}
+          MANIFEST: ${{ runner.temp }}/manifest/manifest.json
+          HELD: ${{ runner.temp }}/held.json
+        run: |
+          set -euo pipefail
+          python3 -I tools/ci/release_targets.py github-release --repository "$GITHUB_REPOSITORY" \
+            --tag "$GITHUB_REF_NAME" --out "$HELD"
+          # The Release's own assets: core's wheel and sdist, the desktop installers and the
+          # SBOMs, by name. The manifest holds more than the Release attaches (the client, which
+          # goes to PyPI alone), so it is never `*`.
+          python3 -I tools/ci/release_manifest.py compare --manifest "$MANIFEST" --digest "$DIGEST" \
+            --select 'personalclaw-[0-9]*.whl' --select 'personalclaw-[0-9]*.tar.gz' \
+            --select 'PersonalClaw-*' --select 'personalclaw-desktop_*' --select '*.spdx.json' \
+            --published "$HELD"
+          if [ "$(cat "$HELD")" = "{}" ]; then echo "release=none" >> "$GITHUB_OUTPUT"; else echo "release=held" >> "$GITHUB_OUTPUT"; fi
       - name: Create GitHub Release
+        if: steps.held.outputs.release == 'none'
         # The stability flags come from `scripts/release_tags.py` via the build job,
         # not from a shell suffix test. The expression that used to sit here
         # — `[ "$REF" != "${REF%rc*}" ] && echo --prerelease` — only ever recognized
@@ -257,6 +335,25 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes-file release-notes.md \
             $GH_RELEASE_FLAGS
+      # A Release a run before this one started: only the assets it lacks are uploaded, by name,
+      # never one it holds (`--clobber` is never given), so nothing published is replaced.
+      - name: Upload what the Release lacks
+        if: steps.held.outputs.release == 'held'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CREATE: ${{ steps.held.outputs.create }}
+        run: |
+          set -euo pipefail
+          files=()
+          for name in $(python3 -I -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])))' "$CREATE"); do
+            held_here=""
+            for path in dist/"$name" wheel-sbom/"$name" image-sboms/"$name" desktop-dist/"$name"; do
+              if [ -f "$path" ]; then files+=("$path"); held_here=1; fi
+            done
+            if [ -z "$held_here" ]; then echo "::error::the manifest names $name, and this job downloaded no file of that name"; exit 1; fi
+          done
+          if [ "${#files[@]}" -eq 0 ]; then echo "the Release holds every asset already"; exit 0; fi
+          gh release upload "$GITHUB_REF_NAME" "${files[@]}"
 
   website-follow:
     # A published core release is an OBLIGATION on personalclaw.dev: the website
