@@ -624,15 +624,24 @@ def test_each_fence_mechanism_is_named_in_the_harness_and_none_is_redundant():
     the three, neutering covers reflection past eviction — and it is asserted here because a
     future Python that pre-imported ``socket`` would silently move ``import socket`` from the
     finder's jurisdiction into the eviction loop's, and the module docstring would be wrong.
+
+    It is measured as the fence spawns a pack: ``python -I`` in the environment
+    ``build_child_env`` gives the spawn. A tracer the suite runs under is not in that environment:
+    breadth's coverage leg starts coverage in every child it can (``COVERAGE_PROCESS_CONFIG``),
+    and coverage's start-up imports ``socket``, ``importlib`` and ``multiprocessing``, which no
+    pack's spawn does.
     """
     import subprocess
     import sys
+
+    from personalclaw.sandbox import build_child_env
 
     out = subprocess.run(
         [sys.executable, "-I", "-c", "import sys, json; print(json.dumps(sorted(sys.modules)))"],
         capture_output=True,
         text=True,
         check=True,
+        env=build_child_env(site="connector-pack-parse"),
     ).stdout
     preloaded = {
         name
