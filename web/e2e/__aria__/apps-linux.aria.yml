@@ -1,0 +1,51 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills"
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts"
+    - radio "Apps" [checked]
+    - radio "Store"
+  - heading "Apps" [level=#]
+  - radiogroup "Native or Library":
+    - radio "Native"
+    - radio "Library" [checked]
+  - button "Install from URL"
+  - searchbox "Search apps"
+  - button "Filter & sort": Sorted by name
+  - status
+  - text: e#e-fixture #
+  - button "E#E UI fixture — details"
+  - text: E#E UI fixture v#.#.#
+  - button "Actions for E#E UI fixture"
+  - paragraph: "Contributes one UI page so the a#y harness can sweep app-AUTHORED DOM, which no other route reaches. Test fixture: seeded into the e#e home by web/playwright.config.ts and never published."
+  - button "Open"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

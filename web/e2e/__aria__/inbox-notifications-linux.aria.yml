@@ -1,0 +1,54 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - heading "Inbox # unread · # notifications" [level=#]
+  - button "Mark all read"
+  - button "Clear all"
+  - button "Filter & sort": Show #
+  - status
+  - text: Today
+  - button "Weekly backup finished"
+  - text: Weekly backup finished <when>
+  - paragraph: Weekly backup finished.
+  - 'button "Investigate in chat: Weekly backup finished"'
+  - 'button "Mark read: Weekly backup finished"'
+  - 'button "Delete: Weekly backup finished"'
+  - button "Morning briefing is ready"
+  - text: Morning briefing is ready <when>
+  - paragraph: Morning briefing is ready.
+  - 'button "Investigate in chat: Morning briefing is ready"'
+  - 'button "Mark unread: Morning briefing is ready"'
+  - 'button "Delete: Morning briefing is ready"'
+  - text: Yesterday
+  - button "Inbox digest sent"
+  - text: Inbox digest sent <when>
+  - paragraph: Inbox digest sent.
+  - 'button "Investigate in chat: Inbox digest sent"'
+  - 'button "Mark unread: Inbox digest sent"'
+  - 'button "Delete: Inbox digest sent"'
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

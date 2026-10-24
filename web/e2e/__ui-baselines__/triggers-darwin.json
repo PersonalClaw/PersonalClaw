@@ -2,156 +2,140 @@
   "dark": {
     "targets": {
       "320": [
-        "a \"Open Chat\"",
-        "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New trigger\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
-        "button[role=radio] \"Definitions\"",
-        "button[role=radio] \"Runs\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\"",
         "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "input \"Search triggers\""
       ],
       "390": [
-        "a \"Open Chat\"",
-        "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New trigger\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
-        "button[role=radio] \"Definitions\"",
-        "button[role=radio] \"Runs\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\"",
         "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "input \"Search triggers\""
       ],
       "412": [
-        "a \"Open Chat\"",
-        "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New trigger\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
-        "button[role=radio] \"Definitions\"",
-        "button[role=radio] \"Runs\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\"",
         "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "input \"Search triggers\""
       ],
       "768": [
-        "a \"Open Chat\"",
-        "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New trigger\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
-        "button[role=radio] \"Definitions\"",
-        "button[role=radio] \"Runs\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\"",
         "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "input \"Search triggers\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Workflows\" clips at #%: #x# in #x#"
+        "<h#> \"Automations\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "a \"Open Chat\"",
-        "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New trigger\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
-        "button[role=radio] \"Definitions\"",
-        "button[role=radio] \"Runs\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\"",
         "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "input \"Search triggers\""
       ],
       "390": [
-        "a \"Open Chat\"",
-        "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New trigger\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
-        "button[role=radio] \"Definitions\"",
-        "button[role=radio] \"Runs\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\"",
         "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "input \"Search triggers\""
       ],
       "412": [
-        "a \"Open Chat\"",
-        "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New trigger\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
-        "button[role=radio] \"Definitions\"",
-        "button[role=radio] \"Runs\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\"",
         "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "input \"Search triggers\""
       ],
       "768": [
-        "a \"Open Chat\"",
-        "button \"Browse all definitions\"",
         "button \"Choose a model\"",
-        "button \"Dismiss this tip\"",
         "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"New trigger\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"Start from template\"",
         "button \"System status — Gateway connected\"",
         "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
-        "button[role=radio] \"Definitions\"",
-        "button[role=radio] \"Runs\"",
+        "button[role=radio] \"List\"",
+        "button[role=radio] \"Week\"",
         "button[role=radio] \"Workflows\"",
-        "input \"Search workflows\""
+        "input \"Search triggers\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Workflows\" clips at #%: #x# in #x#"
+        "<h#> \"Automations\" clips at #%: #x# in #x#"
       ]
     }
   }

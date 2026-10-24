@@ -1,0 +1,58 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Autonomous loops
+  - heading "Autonomous loops" [level=#]
+  - paragraph: "Long-horizon goal loops: which model certifies a cycle is done, how many stuck cycles count as stalled, and how much of your repo a parallel task checks out."
+  - heading "Judging" [level=#]
+  - paragraph: The reviewer that certifies a cycle, and the patience the supervisor has for a loop that is not moving.
+  - text: Judge model axis Which model use case the loop JUDGE rides — deliberately not the Loops axis the worker rides. Reasoning by default, so the reviewer gets its own (typically stronger) binding and a reviewer mistake is not correlated with the mistake it is reviewing. Set it to Loops to put judge and worker back on one binding.
+  - combobox "Judge model axis":
+    - option "Reasoning" [selected]
+    - option "Chat"
+    - option "Code & tools"
+    - option "Background"
+    - option "Orchestration"
+    - option "Loops"
+  - status
+  - text: Stagnation window (cycles) How many consecutive cycles of no progress stall a loop. Lower is more trigger-happy; higher spends more cycles before asking you for direction. Minimum # — a window of # can only compare a cycle with itself.
+  - spinbutton "Stagnation window (cycles)": "#"
+  - status
+  - heading "Verification" [level=#]
+  - paragraph: An extra pass that checks what a stage CLAIMED, not just that its gate command exited zero.
+  - text: "Check work after stage gates After an SDLC stage's gate passes, re-derive a few executable checks from what the stage claimed and run them. Catches the case where the gate command passed but the claim was broader than the command — a deliverable file the stage said it wrote but didn't. Off by default: it adds a filesystem pass per stage advance."
+  - status
+  - switch "Check work after stage gates"
+  - heading "Parallel task worktrees" [level=#]
+  - paragraph: How much of the repository a parallel task hydrates before it starts.
+  - text: Sparse task worktrees When a parallel task's plan names the files it will touch, hydrate only those directories instead of the whole repo — on a large codebase that is most of a worktree's setup cost. A task that writes outside its stated scope widens its own worktree automatically, and the merged result is identical either way. Off always hydrates the full repo.
+  - status
+  - switch "Sparse task worktrees" [checked]
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

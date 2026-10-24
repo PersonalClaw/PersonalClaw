@@ -22,7 +22,18 @@ import { IDLE_PROBE_SCRIPT, IDLE_ROUTES, IDLE_TRIES, IDLE_WINDOW_MS, idleCostFin
 /** Idle work planted before the page boots: one of each kind the probe budgets. The poll's path is
  *  answered in the page (below), so the plant never reaches the gateway the other specs share. */
 const PLANT = `(() => {
-  const loop = () => requestAnimationFrame(loop)
+  // The frame loop moves one labelled element, so the finding must name what it moved too.
+  let x = 0
+  let moving = null
+  const loop = () => {
+    if (!moving && document.body) {
+      moving = document.createElement('div')
+      moving.setAttribute('aria-label', 'Planted mover')
+      document.body.appendChild(moving)
+    }
+    if (moving) moving.style.transform = 'translateX(' + (x++ % 100) + 'px)'
+    requestAnimationFrame(loop)
+  }
   requestAnimationFrame(loop)
   setInterval(() => {}, 100)
   setInterval(() => { fetch('/api/idle-probe-plant').catch(() => {}) }, 200)
@@ -69,6 +80,7 @@ test.describe('UI quality: idle cost', { tag: '@ui-quality' }, () => {
     const findings = await idleCost(page, info, 'dashboard', PLANT)
     expect(findings).toEqual(expect.arrayContaining([
       expect.stringMatching(/^requestAnimationFrame asked for \d+ frames in /),
+      expect.stringMatching(/^while it framed, these changed: .*div\[Planted mover\] \(\d+ times\)/),
       expect.stringMatching(/^setInterval\(100 ms\) fired \d+ times in /),
       expect.stringMatching(/^setInterval\(200 ms\) fired \d+ times in /),
       expect.stringMatching(/^GET \/api\/idle-probe-plant was requested \d+ times in /),

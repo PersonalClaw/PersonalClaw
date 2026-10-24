@@ -14,6 +14,14 @@ import type { RouteEntry } from './routes'
 //     nobody slowed down.
 //   · requests: every `fetch`, XHR, beacon, socket send and event stream opened, by method and path
 //     (the query left out, so a poll that stamps its query is one source). Budget: once a second each.
+//   · what moved: every element whose `style` or `class` changed, by a short path. No budget: it is
+//     what a frame finding was spent on, named beside it, since a frame loop's own line is the
+//     animation library's and says nothing of what it animates (#3905: an idle Chat on CI framed
+//     from motion's loop alone).
+//   · what woke the loop: the stack of each animation-frame request made outside a frame, the
+//     window's and the last one before it opened, since a loop that a load started can run on into
+//     the window, and its frames then name only the loop's own line. CI's idle Chat asked for six
+//     such frames and moved nothing (#3905).
 //
 // Idle means nothing reached the page either. A push over the socket or an event stream is the
 // gateway telling the page something changed, and what the page does about it is not idle cost; so
@@ -32,6 +40,8 @@ export const IDLE_FRAME_BUDGET = 0
 export const IDLE_TRIES = 4
 /** How long the probe waits after a window it threw away, so a burst of pushes can end first. */
 const SETTLE_AFTER_VOID_MS = 1_000
+/** How many of the elements that moved a frame finding names, most changed first. */
+const MOVED_NAMED = 5
 
 /** A route the probe holds, and the read a window on it must hold an answer of: what a page costs
  *  at rest is mostly what each answer of its polls makes it do, so a window that caught none would
@@ -57,6 +67,12 @@ export interface IdleSample {
   requests: Record<string, number>
   /** What reached the page: socket frames and event-stream events. Any one voids the window. */
   pushes: Record<string, number>
+  /** The elements whose `style` or `class` changed, by a short path: what the frames moved. */
+  moved?: Record<string, number>
+  /** The start of each frame loop the window's frames belong to (a request made outside any
+   *  frame), most frames first: when, in ms from the window's opening (negative: before it), and
+   *  the stack that made it. */
+  wakes?: { ms: number; stack: string }[]
 }
 
 /** The probe the init script leaves on the page. */
@@ -88,9 +104,16 @@ export function idleCostFindings(sample: IdleSample): string[] {
   const worst = (counts: Record<string, number>) => Object.entries(counts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
   const out: string[] = []
   if (total(sample.frames) > IDLE_FRAME_BUDGET) {
-    for (const [at, n] of worst(sample.frames)) {
-      out.push(`requestAnimationFrame asked for ${plural(n, 'frame')} in ${window} idle, budget ${IDLE_FRAME_BUDGET}: ${at}`)
+    // The first frame finding also says what started the loop, which its own line cannot.
+    const woke = sample.wakes?.[0]
+    const started = woke
+      ? `; started ${woke.ms < 0 ? `${-woke.ms} ms before the window` : `${woke.ms} ms into it`} by ${woke.stack.split('\n').slice(0, 4).join(' < ')}`
+      : ''
+    for (const [i, [at, n]] of worst(sample.frames).entries()) {
+      out.push(`requestAnimationFrame asked for ${plural(n, 'frame')} in ${window} idle, budget ${IDLE_FRAME_BUDGET}: ${at}${i === 0 ? started : ''}`)
     }
+    const moved = worst(sample.moved ?? {}).slice(0, MOVED_NAMED)
+    if (moved.length) out.push(`while it framed, these changed: ${moved.map(([el, n]) => `${el} (${plural(n, 'time')})`).join(', ')}`)
   }
   for (const [source, n] of worst(sample.timers)) {
     if (n > allowed) out.push(source.replace(' at ', ` fired ${n} times in ${window} idle, more than once a second: `))
@@ -163,6 +186,7 @@ export function installIdleProbe(win: Window = window): void {
   let delays: Record<string, [number, number]> = {}
   let requests: Record<string, number> = {}
   let pushes: Record<string, number> = {}
+  let moved: Record<string, number> = {}
   const bump = (counts: Record<string, number>, key: string) => { counts[key] = (counts[key] ?? 0) + 1 }
   // The line that called the wrapped function: frame 0 is this one, frame 1 the wrapper.
   const caller = () => {
@@ -173,10 +197,33 @@ export function installIdleProbe(win: Window = window): void {
     try { return new URL(String(url), w.location.href).pathname } catch { return String(url) }
   }
 
+  // What woke a frame loop: a request made outside any frame starts one (a burst), and a request
+  // made inside a frame's callback carries that frame's burst on. Each burst keeps its start's stack
+  // (eight lines, past this wrapper), so a window's frames name the start of the loop they belong
+  // to, however long before the window it was. The last 64 bursts are kept.
+  let current = 0
+  let seq = 0
+  let starts: Record<number, { at: number; stack: string }> = {}
+  let byBurst: Record<number, number> = {}
+  const stackOf = () => String(new Error().stack ?? '').split('\n').map((l) => l.trim()).filter((l) => l.startsWith('at '))
+    .slice(2, 10).map((l) => l.slice(3).replace(/(?:https?|wss?|file):\/\/[^/\s)]*/g, '')).join('\n')
   const raf = w.requestAnimationFrame
   w.requestAnimationFrame = function (this: unknown, cb: FrameRequestCallback) {
-    if (armed) bump(frames, caller())
-    return raf.call(w, cb)
+    let id = current
+    if (!id) {
+      id = ++seq
+      starts[id] = { at: w.performance.now(), stack: stackOf() }
+      delete starts[id - 64]
+    }
+    if (armed) {
+      bump(frames, caller())
+      byBurst[id] = (byBurst[id] ?? 0) + 1
+    }
+    return raf.call(w, function (this: unknown, t: number) {
+      const outer = current
+      current = id
+      try { return cb(t) } finally { current = outer }
+    })
   } as typeof w.requestAnimationFrame
 
   const timer = (kind: 'setTimeout' | 'setInterval') => {
@@ -281,6 +328,30 @@ export function installIdleProbe(win: Window = window): void {
     w.EventSource = Counted as typeof w.EventSource
   }
 
+  // What moved: an observer of every `style` and `class` change, counted while armed by a short path
+  // (three levels, each its tag and its label, id or first two classes). Bounded to 40 elements: an
+  // idle page that moves more than that has said enough.
+  const label = (el: Element) => {
+    const name = el.getAttribute('aria-label') || el.id
+    const cls = String(el.getAttribute('class') || '').split(/\s+/).filter(Boolean).slice(0, 2).join('.')
+    return el.tagName.toLowerCase() + (name ? `[${name.slice(0, 30)}]` : cls ? `.${cls}` : '')
+  }
+  const pathTo = (el: Element) => {
+    const bits: string[] = []
+    for (let e: Element | null = el; e && e.tagName && bits.length < 3; e = e.parentElement) bits.unshift(label(e))
+    return bits.join('>')
+  }
+  const record = (list: MutationRecord[]) => {
+    if (!armed) return
+    for (const m of list) {
+      const key = pathTo(m.target as Element)
+      if (key in moved || Object.keys(moved).length < 40) bump(moved, key)
+    }
+  }
+  const Observer = w.MutationObserver
+  const observer = Observer && w.document ? new Observer(record) : null
+  observer?.observe(w.document, { subtree: true, attributes: true, attributeFilter: ['style', 'class'] })
+
   w.__pcIdleCost = {
     arm() {
       frames = {}
@@ -288,10 +359,14 @@ export function installIdleProbe(win: Window = window): void {
       delays = {}
       requests = {}
       pushes = {}
+      moved = {}
+      byBurst = {}
       openedAt = w.performance.now()
       armed = true
     },
     disarm() {
+      // The records not yet delivered are the window's too.
+      if (observer) record(observer.takeRecords())
       armed = false
       // Each timer named with its delay, or the range of its delays: `setTimeout(100-139 ms) at …`.
       const named: Record<string, number> = {}
@@ -299,7 +374,15 @@ export function installIdleProbe(win: Window = window): void {
         const [lo, hi] = delays[source]
         named[source.replace(' at ', `(${lo === hi ? lo : `${lo}-${hi}`} ms) at `)] = n
       }
-      return { windowMs: Math.round(w.performance.now() - openedAt), frames, timers: named, requests, pushes }
+      // The starts of the bursts the window's frames belong to, most frames first.
+      const woke = Object.entries(byBurst).sort((a, b) => b[1] - a[1])
+        .map(([id]) => starts[Number(id)]).filter(Boolean)
+        .map((x) => ({ ms: Math.round(x.at - openedAt), stack: x.stack }))
+      // `moved` only where a page can say what moved: a page with no document has nothing to name.
+      return {
+        windowMs: Math.round(w.performance.now() - openedAt), frames, timers: named, requests, pushes,
+        ...(observer ? { moved } : {}), ...(woke.length ? { wakes: woke } : {}),
+      }
     },
   }
 }

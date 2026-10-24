@@ -1,0 +1,174 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Scan mode: Block\"",
+        "button \"Scan mode: Redact\"",
+        "button \"Scan mode: Warn\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Incident mode\"",
+        "input \"Abort after tool failures\"",
+        "input \"Failure threshold\"",
+        "input \"Max dollars / day\"",
+        "input \"Max tokens / day\"",
+        "input \"Max tokens / run\"",
+        "input \"Recovery seconds\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Scan mode: Block\"",
+        "button \"Scan mode: Redact\"",
+        "button \"Scan mode: Warn\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Incident mode\"",
+        "input \"Abort after tool failures\"",
+        "input \"Failure threshold\"",
+        "input \"Max dollars / day\"",
+        "input \"Max tokens / day\"",
+        "input \"Max tokens / run\"",
+        "input \"Recovery seconds\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Scan mode: Block\"",
+        "button \"Scan mode: Redact\"",
+        "button \"Scan mode: Warn\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Incident mode\"",
+        "input \"Abort after tool failures\"",
+        "input \"Failure threshold\"",
+        "input \"Max dollars / day\"",
+        "input \"Max tokens / day\"",
+        "input \"Max tokens / run\"",
+        "input \"Recovery seconds\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Scan mode: Block\"",
+        "button \"Scan mode: Redact\"",
+        "button \"Scan mode: Warn\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Incident mode\"",
+        "input \"Abort after tool failures\"",
+        "input \"Failure threshold\"",
+        "input \"Max dollars / day\"",
+        "input \"Max tokens / day\"",
+        "input \"Max tokens / run\"",
+        "input \"Recovery seconds\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Scan mode: Block\"",
+        "button \"Scan mode: Redact\"",
+        "button \"Scan mode: Warn\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Incident mode\"",
+        "input \"Abort after tool failures\"",
+        "input \"Failure threshold\"",
+        "input \"Max dollars / day\"",
+        "input \"Max tokens / day\"",
+        "input \"Max tokens / run\"",
+        "input \"Recovery seconds\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Scan mode: Block\"",
+        "button \"Scan mode: Redact\"",
+        "button \"Scan mode: Warn\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Incident mode\"",
+        "input \"Abort after tool failures\"",
+        "input \"Failure threshold\"",
+        "input \"Max dollars / day\"",
+        "input \"Max tokens / day\"",
+        "input \"Max tokens / run\"",
+        "input \"Recovery seconds\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Scan mode: Block\"",
+        "button \"Scan mode: Redact\"",
+        "button \"Scan mode: Warn\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Incident mode\"",
+        "input \"Abort after tool failures\"",
+        "input \"Failure threshold\"",
+        "input \"Max dollars / day\"",
+        "input \"Max tokens / day\"",
+        "input \"Max tokens / run\"",
+        "input \"Recovery seconds\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Scan mode: Block\"",
+        "button \"Scan mode: Redact\"",
+        "button \"Scan mode: Warn\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Incident mode\"",
+        "input \"Abort after tool failures\"",
+        "input \"Failure threshold\"",
+        "input \"Max dollars / day\"",
+        "input \"Max tokens / day\"",
+        "input \"Max tokens / run\"",
+        "input \"Recovery seconds\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

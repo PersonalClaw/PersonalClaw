@@ -1,0 +1,34 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - heading "E#E UI fixture" [level=#]
+  - region "App-authored surface":
+    - heading "App-authored surface" [level=#]
+    - paragraph: Rendered by e#e-ui-fixture's own bundle, in the host document. The a#y sweep covers this DOM.
+    - button "Acknowledge"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

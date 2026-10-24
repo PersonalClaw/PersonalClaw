@@ -1,0 +1,81 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "# waiting on you — open Home"
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - heading "Good <time of day>, Keyur" [level=#]
+  - button "New thread"
+  - radiogroup "View":
+    - radio "Attention" [checked]
+    - radio "Overview"
+  - region "Home":
+    - textbox "Start something":
+      - /placeholder: "Start something: type it and press Enter for a new thread"
+    - radiogroup "Show":
+      - radio "All" [checked]
+      - radio "Needs You"
+      - radio "Running Now"
+      - radio "Recent and completed"
+    - region "Needs You":
+      - heading "Needs You" [level=#]
+      - text: "#"
+      - list:
+        - listitem:
+          - button "Show the details of bash"
+          - group "Permission needed to run bash":
+            - alert: Permission needed
+            - text: Destructive bash(rm -rf build)
+            - paragraph: Clear the build folder
+            - paragraph: From automation “Nightly”
+            - button "Allow bash — automation “Nightly” — Clear the build folder": Allow
+            - button "Deny bash — automation “Nightly” — Clear the build folder": Deny
+        - listitem:
+          - button "Show the details of Ship v#.#?"
+          - paragraph: Workflow · release
+          - paragraph: Ship v#.#?
+          - button "Approve Ship v#.#? — Workflow · release": Approve
+          - button "Deny Ship v#.#? — Workflow · release": Deny
+        - listitem:
+          - button "Show the details of Sign in to the bank’s site"
+          - paragraph: Trigger · Bank statements
+          - paragraph: Sign in to the bank’s site
+          - button "Approve Sign in to the bank’s site — Trigger · Bank statements": Approve
+          - button "Deny Sign in to the bank’s site — Trigger · Bank statements": Deny
+        - listitem:
+          - button "Show the details of May I archive last year’s mail?"
+          - paragraph: Loop · Sort the inbox
+          - paragraph: May I archive last year’s mail?
+          - 'link "Answer it where it asks: May I archive last year’s mail? — Loop · Sort the inbox"':
+            - /url: "#/loops/l-e#e"
+            - text: Answer it where it asks
+    - region "Running Now":
+      - heading "Running Now" [level=#]
+      - paragraph: Nothing is running right now.
+    - region "Recent and completed":
+      - heading "Recent and completed" [level=#]
+      - paragraph: Nothing has finished lately, and you have no threads yet.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

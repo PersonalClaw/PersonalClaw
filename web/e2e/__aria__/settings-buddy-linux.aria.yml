@@ -1,0 +1,70 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Buddy
+  - heading "Buddy" [level=#]
+  - paragraph: The companion that shows what your agents are doing and asks you when one needs you.
+  - heading "Buddy status" [level=#]
+  - text: "Buddy status Show the buddy: its window, its tray and dock faces and its alerts’ notifications. Off takes every buddy surface away at once, in every window."
+  - status
+  - switch "Buddy status"
+  - heading "Where it shows" [level=#]
+  - paragraph: These apply once Buddy status is on.
+  - text: Buddy window Its own window, docked at the top of the screen or floating where you left it.
+  - status
+  - switch "Buddy window" [checked]
+  - text: Tray face Its state on the menu bar or tray icon.
+  - status
+  - switch "Tray face" [checked]
+  - text: Dock face Its state on the app’s dock icon.
+  - status
+  - switch "Dock face" [checked]
+  - text: Alert notifications Let its alerts raise <theme> notifications, under your notification rules, mute and quiet hours.
+  - status
+  - switch "Alert notifications" [checked]
+  - heading "When you’re away" [level=#]
+  - text: Steps back after Docked it hides, floating it dozes. Alerts still appear.
+  - 'button "When you’re away: # min"': # min
+  - 'button "When you’re away: # min" [pressed]': # min
+  - 'button "When you’re away: # min"': # min
+  - 'button "When you’re away: # min"': # min
+  - 'button "When you’re away: # min"': # min
+  - heading "What it follows" [level=#]
+  - group "Notifications":
+    - paragraph: Alerts may interrupt you now.
+    - paragraph:
+      - text: Mute, quiet hours and which alerts reach you are your notification settings. Change them in
+      - link "Settings → Notifications":
+        - /url: "#/settings/notifications"
+      - text: .
+  - group "Reduced motion":
+    - paragraph: Your <theme> does not ask for reduced motion.
+    - paragraph: "The buddy follows your <theme>’s setting. Change it in its Accessibility settings: on a Mac, <theme> Settings → Accessibility → Display → Reduce motion; on Windows, Settings → Accessibility → Visual effects → Animation effects."
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

@@ -1,0 +1,164 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Capabilities\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"More actions\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "input \"Search Store\""
+      ],
+      "390": [
+        "button \"Capabilities\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"More actions\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "input \"Search Store\""
+      ],
+      "412": [
+        "button \"Capabilities\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"More actions\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "input \"Search Store\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"More actions\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=radio] \"Agents\"",
+        "button[role=radio] \"Apps\"",
+        "button[role=radio] \"Learning\"",
+        "button[role=radio] \"Prompts\"",
+        "button[role=radio] \"Skills\"",
+        "button[role=radio] \"Store\"",
+        "button[role=radio] \"Tools\"",
+        "input \"Search Store\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Store\" clips at #%: #x# in #x#",
+        "<p> \"Anthropic Claude chat models (Messages A\" clips at #%: #x# in #x#",
+        "<p> \"Any Anthropic-compatible (Messages API) \" clips at #%: #x# in #x#",
+        "<p> \"DeepSeek chat + reasoner models (OpenAI-\" clips at #%: #x# in #x#",
+        "<p> \"Groq LPU inference (OpenAI-compatible), \" clips at #%: #x# in #x#",
+        "<p> \"Mistral AI models via its OpenAI-compati\" clips at #%: #x# in #x#",
+        "<p> \"OpenAI chat + embedding models (Chat Com\" clips at #%: #x# in #x#",
+        "<p> \"Slack workspace integration. Monitor cha\" clips at #%: #x# in #x#",
+        "<p> \"Text-to-speech using Piper neural voice \" clips at #%: #x# in #x#",
+        "<p> \"Together AI serverless inference (OpenAI\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Capabilities\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"More actions\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "input \"Search Store\""
+      ],
+      "390": [
+        "button \"Capabilities\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"More actions\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "input \"Search Store\""
+      ],
+      "412": [
+        "button \"Capabilities\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"More actions\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "input \"Search Store\""
+      ],
+      "768": [
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Filter & sort\"",
+        "button \"Install from URL\"",
+        "button \"Install\"",
+        "button \"More actions\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=radio] \"Agents\"",
+        "button[role=radio] \"Apps\"",
+        "button[role=radio] \"Learning\"",
+        "button[role=radio] \"Prompts\"",
+        "button[role=radio] \"Skills\"",
+        "button[role=radio] \"Store\"",
+        "button[role=radio] \"Tools\"",
+        "input \"Search Store\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<h#> \"Store\" clips at #%: #x# in #x#",
+        "<p> \"Anthropic Claude chat models (Messages A\" clips at #%: #x# in #x#",
+        "<p> \"Any Anthropic-compatible (Messages API) \" clips at #%: #x# in #x#",
+        "<p> \"DeepSeek chat + reasoner models (OpenAI-\" clips at #%: #x# in #x#",
+        "<p> \"Groq LPU inference (OpenAI-compatible), \" clips at #%: #x# in #x#",
+        "<p> \"Mistral AI models via its OpenAI-compati\" clips at #%: #x# in #x#",
+        "<p> \"OpenAI chat + embedding models (Chat Com\" clips at #%: #x# in #x#",
+        "<p> \"Slack workspace integration. Monitor cha\" clips at #%: #x# in #x#",
+        "<p> \"Text-to-speech using Piper neural voice \" clips at #%: #x# in #x#",
+        "<p> \"Together AI serverless inference (OpenAI\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

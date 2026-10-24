@@ -1,0 +1,105 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Chat history"
+  - button "More actions"
+  - img "Nothing running"
+  - heading "Good <time of day>, Keyur" [level=#]
+  - textbox "Message input"
+  - button "Add to message"
+  - 'button "Agent and model: Agent · Auto"': Agent · Auto
+  - 'button "Reply style: Agent default"': Agent default
+  - 'button "Task mode: Agent"': Agent
+  - 'button "Execution boundary: Normal"': Normal
+  - button "Optimize prompt (⌘↵)" [disabled]
+  - button "Voice input"
+  - button "Hands-free voice"
+  - button "Send message" [disabled]
+  - 'button "Project: No project"': No project
+  - button "Show health-check status"
+  - button "Break a goal into tasks"
+  - button "Save a note to my knowledge base"
+  - button "Run a command and explain the output"
+  - button "What can you help me with?"
+  - button "Set up a daily briefing"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"
+- searchbox "Search pages, actions and content"
+- text: esc
+- listbox "Commands and results":
+  - option "Home Go to" [selected]
+  - option "Chat Go to"
+  - option "Projects Go to"
+  - option "Library Go to"
+  - option "Inbox Go to"
+  - option "Automations Go to"
+  - option "Capabilities Go to"
+  - option "Settings Go to"
+  - option "Mission Control Go to"
+  - option "Notifications Go to"
+  - option "All tasks Go to"
+  - option "Terminal Go to"
+  - option "Discover Go to"
+  - option "Agents Go to"
+  - option "Skills Go to"
+  - option "Learning Go to"
+  - option "Tools Go to"
+  - option "Prompts Go to"
+  - option "Apps Go to"
+  - option "Store Go to"
+  - option "Add a tool server Action"
+  - option "Knowledge Go to"
+  - option "Memory Go to"
+  - option "Files Go to"
+  - option "Artifacts Go to"
+  - option "Workflows Go to"
+  - option "Start a loop Action"
+  - option "Open Settings Action"
+  - option "Command palette Not available here Action · ⌘K or ⌘⇧P" [disabled]
+  - option "Show or hide the sidebar Action · ⌘B"
+  - 'option "Show or hide the terminal drawer Action · ⌘J or ⌘`"'
+  - 'option "Focus mode: hide the sidebar and the side pane Action · ⌘\\"'
+  - 'option "Reading mode: fold the composer Open a chat to fold its composer Action · ⌘⇧." [disabled]'
+  - option "Show or hide the chat's working folder Open a chat to see its working folder Action · ⌘⇧E" [disabled]
+  - option "Go to the next chat that needs you Action · ⌘⌥A"
+  - option "Mark every chat as read Action · ⇧Esc"
+  - option "Go to your previous message in this chat Open a chat with four or more of your messages Action · ⌥↑" [disabled]
+  - option "Go to your next message in this chat Open a chat with four or more of your messages Action · ⌥↓" [disabled]
+  - option "New thread Action · ⌘N"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Open thread # in the sidebar Action · ⌘#"
+  - option "Approve the focused request Move focus to an approval, then press the key there Action · ⌘Enter" [disabled]
+  - option "Restore the last prompt Press it in an empty composer Action · ↑" [disabled]
+  - option "Stop the running turn Press it in a chat while a turn runs Action · Esc" [disabled]
+- text: navigate select ⌘K or ⌘⇧P toggle

@@ -1,0 +1,36 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Refresh what is waiting on you\""
+      ],
+      "390": [
+        "button \"Refresh what is waiting on you\""
+      ],
+      "412": [
+        "button \"Refresh what is waiting on you\""
+      ],
+      "768": [
+        "button \"Refresh what is waiting on you\""
+      ]
+    },
+    "known": {}
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Refresh what is waiting on you\""
+      ],
+      "390": [
+        "button \"Refresh what is waiting on you\""
+      ],
+      "412": [
+        "button \"Refresh what is waiting on you\""
+      ],
+      "768": [
+        "button \"Refresh what is waiting on you\""
+      ]
+    },
+    "known": {}
+  }
+}

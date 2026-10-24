@@ -1,0 +1,273 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Notifications
+  - heading "Notifications" [level=#]
+  - paragraph: Control how and when PersonalClaw notifies you.
+  - status
+  - heading "Delivery" [level=#]
+  - text: Mute all notifications Pause every notification regardless of severity.
+  - switch "Mute all notifications"
+  - text: Minimum severity Only notify at or above this level.
+  - 'button "Minimum severity: All" [pressed]': All
+  - 'button "Minimum severity: Warnings+"': Warnings+
+  - 'button "Minimum severity: Errors only"': Errors only
+  - heading "Quiet hours" [level=#]
+  - paragraph: Only errors ping you during these hours. A notice your rules send to the digest or as a badge still arrives that way, and one that needs your answer waits silently in the bell.
+  - text: Enable quiet hours
+  - switch "Enable quiet hours"
+  - heading "Approvals on chat channels" [level=#]
+  - paragraph: "A chat that started on a chat channel is always asked in that chat. This setting decides where the rest ask you: when Approval needed below delivers to Channel DM, and when a subagent asks to start. Approve and Deny on the channel answer it, and so does PersonalClaw."
+  - text: Send approvals to A chat that started on a chat channel is asked in that chat. When Approval needed below delivers to Channel DM, everything else (a chat here, an unattended run, a trigger) waits here in PersonalClaw, because no chat channel knows you yet. Pair yourself as a channel's owner on its Configure page to be asked there.
+  - combobox "Send approvals to":
+    - option "The first connected channel that knows you" [selected]
+  - heading "Per-kind delivery" [level=#]
+  - paragraph: What happens to each kind of notification once it passes the settings above. Never = dropped; Badge = kept in the list without interrupting; Notify = a toast; Digest = batched into the daily summary. By default only approvals, questions and errors notify; everything else is a badge.
+  - text: agent Agent message
+  - 'button "Delivery mode for Agent message: Never"': Never
+  - 'button "Delivery mode for Agent message: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Agent message: Notify"': Notify
+  - 'button "Delivery mode for Agent message: Digest"': Digest
+  - button "Show delivery detail for Agent message": detail
+  - text: Room paused
+  - 'button "Delivery mode for Room paused: Never"': Never
+  - 'button "Delivery mode for Room paused: Badge"': Badge
+  - 'button "Delivery mode for Room paused: Notify" [pressed]': Notify
+  - 'button "Delivery mode for Room paused: Digest"': Digest
+  - button "Show delivery detail for Room paused": detail
+  - text: Subagent update
+  - 'button "Delivery mode for Subagent update: Never"': Never
+  - 'button "Delivery mode for Subagent update: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Subagent update: Notify"': Notify
+  - 'button "Delivery mode for Subagent update: Digest"': Digest
+  - button "Show delivery detail for Subagent update": detail
+  - text: approval Approval needed
+  - 'button "Delivery mode for Approval needed: Never"': Never
+  - 'button "Delivery mode for Approval needed: Badge"': Badge
+  - 'button "Delivery mode for Approval needed: Notify" [pressed]': Notify
+  - 'button "Delivery mode for Approval needed: Digest"': Digest
+  - button "Show delivery detail for Approval needed": detail
+  - text: apps App update available
+  - 'button "Delivery mode for App update available: Never"': Never
+  - 'button "Delivery mode for App update available: Badge" [pressed]': Badge
+  - 'button "Delivery mode for App update available: Notify"': Notify
+  - 'button "Delivery mode for App update available: Digest"': Digest
+  - button "Show delivery detail for App update available": detail
+  - text: cron Scheduled job failed
+  - 'button "Delivery mode for Scheduled job failed: Never"': Never
+  - 'button "Delivery mode for Scheduled job failed: Badge"': Badge
+  - 'button "Delivery mode for Scheduled job failed: Notify" [pressed]': Notify
+  - 'button "Delivery mode for Scheduled job failed: Digest"': Digest
+  - button "Show delivery detail for Scheduled job failed": detail
+  - text: Scheduled job result
+  - 'button "Delivery mode for Scheduled job result: Never"': Never
+  - 'button "Delivery mode for Scheduled job result: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Scheduled job result: Notify"': Notify
+  - 'button "Delivery mode for Scheduled job result: Digest"': Digest
+  - button "Show delivery detail for Scheduled job result": detail
+  - text: Missed or interrupted runs to review
+  - 'button "Delivery mode for Missed or interrupted runs to review: Never"': Never
+  - 'button "Delivery mode for Missed or interrupted runs to review: Badge"': Badge
+  - 'button "Delivery mode for Missed or interrupted runs to review: Notify" [pressed]': Notify
+  - 'button "Delivery mode for Missed or interrupted runs to review: Digest"': Digest
+  - button "Show delivery detail for Missed or interrupted runs to review": detail
+  - text: Triggers brought over for review
+  - 'button "Delivery mode for Triggers brought over for review: Never"': Never
+  - 'button "Delivery mode for Triggers brought over for review: Badge"': Badge
+  - 'button "Delivery mode for Triggers brought over for review: Notify" [pressed]': Notify
+  - 'button "Delivery mode for Triggers brought over for review: Digest"': Digest
+  - button "Show delivery detail for Triggers brought over for review": detail
+  - text: guardrails Earned autonomy revoked
+  - 'button "Delivery mode for Earned autonomy revoked: Never"': Never
+  - 'button "Delivery mode for Earned autonomy revoked: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Earned autonomy revoked: Notify"': Notify
+  - 'button "Delivery mode for Earned autonomy revoked: Digest"': Digest
+  - button "Show delivery detail for Earned autonomy revoked": detail
+  - text: heartbeat Heartbeat
+  - 'button "Delivery mode for Heartbeat: Never"': Never
+  - 'button "Delivery mode for Heartbeat: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Heartbeat: Notify"': Notify
+  - 'button "Delivery mode for Heartbeat: Digest"': Digest
+  - button "Show delivery detail for Heartbeat": detail
+  - text: hook Trigger fired
+  - 'button "Delivery mode for Trigger fired: Never"': Never
+  - 'button "Delivery mode for Trigger fired: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Trigger fired: Notify"': Notify
+  - 'button "Delivery mode for Trigger fired: Digest"': Digest
+  - button "Show delivery detail for Trigger fired": detail
+  - text: inbox Inbox alert
+  - 'button "Delivery mode for Inbox alert: Never"': Never
+  - 'button "Delivery mode for Inbox alert: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Inbox alert: Notify"': Notify
+  - 'button "Delivery mode for Inbox alert: Digest"': Digest
+  - button "Show delivery detail for Inbox alert": detail
+  - text: knowledge Research report finding
+  - 'button "Delivery mode for Research report finding: Never"': Never
+  - 'button "Delivery mode for Research report finding: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Research report finding: Notify"': Notify
+  - 'button "Delivery mode for Research report finding: Digest"': Digest
+  - button "Show delivery detail for Research report finding": detail
+  - text: learning Learning proposal
+  - 'button "Delivery mode for Learning proposal: Never"': Never
+  - 'button "Delivery mode for Learning proposal: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Learning proposal: Notify"': Notify
+  - 'button "Delivery mode for Learning proposal: Digest"': Digest
+  - button "Show delivery detail for Learning proposal": detail
+  - text: Identity report
+  - 'button "Delivery mode for Identity report: Never"': Never
+  - 'button "Delivery mode for Identity report: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Identity report: Notify"': Notify
+  - 'button "Delivery mode for Identity report: Digest"': Digest
+  - button "Show delivery detail for Identity report": detail
+  - text: Retired a learned signal
+  - 'button "Delivery mode for Retired a learned signal: Never"': Never
+  - 'button "Delivery mode for Retired a learned signal: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Retired a learned signal: Notify"': Notify
+  - 'button "Delivery mode for Retired a learned signal: Digest"': Digest
+  - button "Show delivery detail for Retired a learned signal": detail
+  - text: loop Loop complete
+  - 'button "Delivery mode for Loop complete: Never"': Never
+  - 'button "Delivery mode for Loop complete: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Loop complete: Notify"': Notify
+  - 'button "Delivery mode for Loop complete: Digest"': Digest
+  - button "Show delivery detail for Loop complete": detail
+  - text: Loop failed
+  - 'button "Delivery mode for Loop failed: Never"': Never
+  - 'button "Delivery mode for Loop failed: Badge"': Badge
+  - 'button "Delivery mode for Loop failed: Notify" [pressed]': Notify
+  - 'button "Delivery mode for Loop failed: Digest"': Digest
+  - button "Show delivery detail for Loop failed": detail
+  - text: Loop needs your input
+  - 'button "Delivery mode for Loop needs your input: Never"': Never
+  - 'button "Delivery mode for Loop needs your input: Badge"': Badge
+  - 'button "Delivery mode for Loop needs your input: Notify" [pressed]': Notify
+  - 'button "Delivery mode for Loop needs your input: Digest"': Digest
+  - button "Show delivery detail for Loop needs your input": detail
+  - text: Loop progress
+  - 'button "Delivery mode for Loop progress: Never"': Never
+  - 'button "Delivery mode for Loop progress: Badge"': Badge
+  - 'button "Delivery mode for Loop progress: Notify"': Notify
+  - 'button "Delivery mode for Loop progress: Digest" [pressed]': Digest
+  - button "Show delivery detail for Loop progress": detail
+  - text: mcp MCP tool description changed
+  - 'button "Delivery mode for MCP tool description changed: Never"': Never
+  - 'button "Delivery mode for MCP tool description changed: Badge" [pressed]': Badge
+  - 'button "Delivery mode for MCP tool description changed: Notify"': Notify
+  - 'button "Delivery mode for MCP tool description changed: Digest"': Digest
+  - button "Show delivery detail for MCP tool description changed": detail
+  - text: planning Planning proposal
+  - 'button "Delivery mode for Planning proposal: Never"': Never
+  - 'button "Delivery mode for Planning proposal: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Planning proposal: Notify"': Notify
+  - 'button "Delivery mode for Planning proposal: Digest"': Digest
+  - button "Show delivery detail for Planning proposal": detail
+  - text: skills Skill proposal
+  - 'button "Delivery mode for Skill proposal: Never"': Never
+  - 'button "Delivery mode for Skill proposal: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Skill proposal: Notify"': Notify
+  - 'button "Delivery mode for Skill proposal: Digest"': Digest
+  - button "Show delivery detail for Skill proposal": detail
+  - text: <theme> Agent request
+  - 'button "Delivery mode for Agent request: Never"': Never
+  - 'button "Delivery mode for Agent request: Badge"': Badge
+  - 'button "Delivery mode for Agent request: Notify" [pressed]': Notify
+  - 'button "Delivery mode for Agent request: Digest"': Digest
+  - button "Show delivery detail for Agent request": detail
+  - text: Denied without an answer
+  - 'button "Delivery mode for Denied without an answer: Never"': Never
+  - 'button "Delivery mode for Denied without an answer: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Denied without an answer: Notify"': Notify
+  - 'button "Delivery mode for Denied without an answer: Digest"': Digest
+  - button "Show delivery detail for Denied without an answer": detail
+  - text: Daily digest
+  - 'button "Delivery mode for Daily digest: Never"': Never
+  - 'button "Delivery mode for Daily digest: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Daily digest: Notify"': Notify
+  - 'button "Delivery mode for Daily digest: Digest"': Digest
+  - button "Show delivery detail for Daily digest": detail
+  - text: <theme> error
+  - 'button "Delivery mode for <theme> error: Never"': Never
+  - 'button "Delivery mode for <theme> error: Badge"': Badge
+  - 'button "Delivery mode for <theme> error: Notify" [pressed]': Notify
+  - 'button "Delivery mode for <theme> error: Digest"': Digest
+  - button "Show delivery detail for <theme> error": detail
+  - text: Uncategorized
+  - 'button "Delivery mode for Uncategorized: Never"': Never
+  - 'button "Delivery mode for Uncategorized: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Uncategorized: Notify"': Notify
+  - 'button "Delivery mode for Uncategorized: Digest"': Digest
+  - button "Show delivery detail for Uncategorized": detail
+  - text: Notice
+  - 'button "Delivery mode for Notice: Never"': Never
+  - 'button "Delivery mode for Notice: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Notice: Notify"': Notify
+  - 'button "Delivery mode for Notice: Digest"': Digest
+  - button "Show delivery detail for Notice": detail
+  - text: App route drift
+  - 'button "Delivery mode for App route drift: Never"': Never
+  - 'button "Delivery mode for App route drift: Badge" [pressed]': Badge
+  - 'button "Delivery mode for App route drift: Notify"': Notify
+  - 'button "Delivery mode for App route drift: Digest"': Digest
+  - button "Show delivery detail for App route drift": detail
+  - text: Success
+  - 'button "Delivery mode for Success: Never"': Never
+  - 'button "Delivery mode for Success: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Success: Notify"': Notify
+  - 'button "Delivery mode for Success: Digest"': Digest
+  - button "Show delivery detail for Success": detail
+  - text: Monthly usage recap
+  - 'button "Delivery mode for Monthly usage recap: Never"': Never
+  - 'button "Delivery mode for Monthly usage recap: Badge"': Badge
+  - 'button "Delivery mode for Monthly usage recap: Notify"': Notify
+  - 'button "Delivery mode for Monthly usage recap: Digest" [pressed]': Digest
+  - button "Show delivery detail for Monthly usage recap": detail
+  - text: <theme> warning
+  - 'button "Delivery mode for <theme> warning: Never"': Never
+  - 'button "Delivery mode for <theme> warning: Badge" [pressed]': Badge
+  - 'button "Delivery mode for <theme> warning: Notify"': Notify
+  - 'button "Delivery mode for <theme> warning: Digest"': Digest
+  - button "Show delivery detail for <theme> warning": detail
+  - text: tasks Task due
+  - 'button "Delivery mode for Task due: Never"': Never
+  - 'button "Delivery mode for Task due: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Task due: Notify"': Notify
+  - 'button "Delivery mode for Task due: Digest"': Digest
+  - button "Show delivery detail for Task due": detail
+  - text: user Note you captured
+  - 'button "Delivery mode for Note you captured: Never"': Never
+  - 'button "Delivery mode for Note you captured: Badge" [pressed]': Badge
+  - 'button "Delivery mode for Note you captured: Notify"': Notify
+  - 'button "Delivery mode for Note you captured: Digest"': Digest
+  - button "Show delivery detail for Note you captured": detail
+  - heading "Daily digest" [level=#]
+  - paragraph: When batched notifications are collected into one summary.
+  - text: Schedule A #-field cron expression in server-local time. Default # # * * * (#:# daily).
+  - textbox "Digest schedule": # # * * *
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

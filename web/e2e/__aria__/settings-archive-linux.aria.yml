@@ -1,0 +1,35 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Archive
+  - heading "Archive" [level=#]
+  - paragraph: Earlier versions of PersonalClaw trimmed older messages out of long or idle chats. Those lines are kept here so you can still read them — read-only, one batch of lines per entry rather than a whole chat. Chats are no longer trimmed, and deleting a chat deletes its entries here too.
+  - paragraph: Nothing here. Chats are no longer trimmed; this only lists lines an earlier version trimmed.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

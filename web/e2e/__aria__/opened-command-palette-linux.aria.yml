@@ -79,23 +79,27 @@
   - option "Workflows Go to"
   - option "Start a loop Action"
   - option "Open Settings Action"
-  - option "Command palette Not available here Action · ⌘K or ⌘⇧P" [disabled]
-  - option "Show or hide the sidebar Action · ⌘B"
-  - 'option "Show or hide the terminal drawer Action · ⌘J or ⌘`"'
-  - 'option "Focus mode: hide the sidebar and the side pane Action · ⌘\\"'
-  - 'option "Reading mode: fold the composer Open a chat to fold its composer Action · ⌘⇧." [disabled]'
-  - option "Show or hide the chat's working folder Open a chat to see its working folder Action · ⌘⇧E" [disabled]
-  - option "Go to the next chat that needs you Action · ⌘⌥A"
-  - option "New thread Action · ⌘N"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Open thread # in the sidebar Action · ⌘#"
-  - option "Approve the focused request Move focus to an approval, then press the key there Action · ⌘Enter" [disabled]
+  - option "Command palette Not available here Action · Ctrl+K or Ctrl+Shift+P" [disabled]
+  - option "Show or hide the sidebar Action · Ctrl+B"
+  - 'option "Show or hide the terminal drawer Action · Ctrl+J or Ctrl+`"'
+  - 'option "Focus mode: hide the sidebar and the side pane Action · Ctrl+\\"'
+  - 'option "Reading mode: fold the composer Open a chat to fold its composer Action · Ctrl+Shift+." [disabled]'
+  - option "Show or hide the chat's working folder Open a chat to see its working folder Action · Ctrl+Shift+E" [disabled]
+  - option "Go to the next chat that needs you Action · Ctrl+Alt+A"
+  - option "Mark every chat as read Action · Shift+Esc"
+  - option "Go to your previous message in this chat Open a chat with four or more of your messages Action · Alt+↑" [disabled]
+  - option "Go to your next message in this chat Open a chat with four or more of your messages Action · Alt+↓" [disabled]
+  - option "New thread Action · Ctrl+N"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "Approve the focused request Move focus to an approval, then press the key there Action · Ctrl+Enter" [disabled]
   - option "Restore the last prompt Press it in an empty composer Action · ↑" [disabled]
-- text: navigate select ⌘K or ⌘⇧P toggle
+  - option "Stop the running turn Press it in a chat while a turn runs Action · Esc" [disabled]
+- text: navigate select Ctrl+K or Ctrl+Shift+P toggle

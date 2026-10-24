@@ -1,0 +1,122 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills"
+    - radio "Learning" [checked]
+    - radio "Tools"
+    - radio "Prompts"
+    - radio "Apps"
+    - radio "Store"
+  - heading "Learning" [level=#]
+  - button "Refresh"
+  - group "Capture and proposals":
+    - text: Capture, last # days no capture pass has run yet <day> — not started <day> — not started <day> — not started <day> — not started <day> — not started <day> — not started <day> — not started
+    - paragraph: # proposals filed
+    - region "How I've adapted to you":
+      - text: How I've adapted to you last # days
+      - button "Write it up" [disabled]
+      - text: Write one automatically
+      - radiogroup "Write one automatically":
+        - radio "Monthly"
+        - radio "Weekly"
+        - radio "Off" [checked]
+      - text: Nothing is scheduled — use “Write it up” whenever you want one. # Preferences I hold
+      - paragraph: Nothing recorded yet.
+      - text: # Lessons I follow
+      - paragraph: Nothing recorded yet.
+      - text: # Skills I built
+      - paragraph: Nothing recorded yet.
+      - text: # Waiting on you
+      - paragraph: Nothing recorded yet.
+    - region "Flywheel health, last # days":
+      - text: Flywheel health, last # days — not measured yet — nothing has run
+      - list:
+        - listitem: Surfacing precision · weight #% unmeasured — nothing surfaced yet —
+        - listitem: Capture reliability · weight #% unmeasured — no capture pass has run —
+        - listitem: Budget utilization · weight #% unmeasured — no ambient render recorded —
+        - listitem: Judge trustworthiness · weight #% unmeasured — no judge verdicts with human labels —
+      - paragraph: "Context budget: no ambient render recorded yet · ideal band #%–#%"
+      - text: Judge calibration
+      - paragraph: No judge verdicts in the last # runs — nothing to calibrate yet.
+      - text: Accepted-change outcomes
+      - paragraph: No accepted change has been graded yet. A verdict lands once enough runs have gone past the change to measure it.
+      - text: LLM cost by operation
+      - paragraph: No metered operation in this window.
+      - text: Surfacing heuristics
+      - paragraph: No ablation sweep has run yet. One runs daily alongside an ambient render.
+    - region "Attention":
+      - text: Attention
+      - paragraph: No workflow runs recorded yet. Once workflows run, each template's attention cost — gate answers, mid-flight edits, judge overrides — is tallied here, per run, with a trend the graduation proposal cites.
+    - region "Lab vs field":
+      - text: Lab vs field
+      - paragraph:
+        - text: The eval substrate is off, so no lab-vs-field table can run — turn on
+        - link "Evals enabled in Settings → Evaluations":
+          - /url: "#/settings/evals"
+        - text: .
+    - region "Judge tiers":
+      - text: Judge tiers
+      - paragraph:
+        - text: The eval substrate is off, so no judge benchmark can run — turn on
+        - link "Evals enabled in Settings → Evaluations":
+          - /url: "#/settings/evals"
+        - text: .
+    - region "Template studies":
+      - heading "Template studies" [level=#]
+      - paragraph:
+        - text: The eval substrate is off, so no study can run — turn on
+        - link "Evals enabled in Settings → Evaluations":
+          - /url: "#/settings/evals"
+        - text: .
+    - region "Retrieval arms":
+      - heading "Retrieval arms" [level=#]
+      - paragraph:
+        - text: The eval substrate is off, so no retrieval benchmark can run — turn on
+        - link "Evals enabled in Settings → Evaluations":
+          - /url: "#/settings/evals"
+        - text: .
+    - region "Component ablation":
+      - text: Component ablation
+      - paragraph:
+        - text: The eval substrate is off, so no ablation can run — turn on
+        - link "Evals enabled in Settings → Evaluations":
+          - /url: "#/settings/evals"
+        - text: .
+    - region "Skill impact benchmark":
+      - text: Skill impact benchmark
+      - paragraph:
+        - text: The eval substrate is off, so no benchmark can run — turn on
+        - link "Evals enabled in Settings → Evaluations":
+          - /url: "#/settings/evals"
+        - text: .
+    - text: Proposals
+    - heading "Nothing to review" [level=#]
+    - paragraph: Proposals appear here when the <theme> notices a pattern worth offering. Nothing is ever installed without your accept.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

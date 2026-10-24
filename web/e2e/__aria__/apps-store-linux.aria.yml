@@ -1,0 +1,433 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills"
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts"
+    - radio "Apps"
+    - radio "Store" [checked]
+  - heading "Store" [level=#]
+  - button "Install from URL"
+  - searchbox "Search Store"
+  - button "Filter & sort": Sorted by name
+  - button "More actions"
+  - status
+  - navigation "Categories and sources":
+    - heading "Categories" [level=#]
+    - button "All apps #" [pressed]
+    - button "Bundled #"
+    - button "Model #"
+    - button "LLM #"
+    - button "Tool #"
+    - button "Search #"
+    - button "Image gen #"
+    - button "Embedding #"
+    - button "ACP #"
+    - button "Agent #"
+    - button "Channel #"
+    - button "Github #"
+    - button "Knowledge #"
+    - button "Sync #"
+    - button "Video gen #"
+    - button "Automation #"
+    - button "Companion #"
+    - heading "Sources" [level=#]
+    - button "All sources #" [pressed]
+    - button "https://github.com/PersonalClaw/PersonalClawApps.git #"
+    - button "Add source"
+  - text: https://github.com/PersonalClaw/PersonalClawApps.git #
+  - button "A#A Agent Call — details"
+  - text: A#A Agent Call v#.#.# Action provider git
+  - paragraph: Hand one task to an external A#A agent when a trigger fires. Reaches only hosts the operator has allow-listed under Settings › Security › Network egress. · by PersonalClaw
+  - text: action
+  - button "Install"
+  - button "Alibaba Model Studio — details"
+  - text: Alibaba Model Studio v#.#.# Model provider git
+  - paragraph: Alibaba Cloud Model Studio (DashScope) — Qwen chat and embedding models. Image generation too (Qwen-Image, Wan), and more. Select your regional endpoint. · by PersonalClaw
+  - text: model llm embedding … # more tags
+  - button "Install"
+  - button "Amazon Bedrock — details"
+  - text: Amazon Bedrock v#.#.# Model provider git
+  - paragraph: Amazon Bedrock models, authenticated with your own AWS credential chain. No key is stored by PersonalClaw. Chat (Converse API), embedding (Titan/Cohere/Nova), image generation (Nova Canvas, Stability AI) and video generation (Nova Reel) where your region serves them, and speech-to-text. One instance per AWS profile/region. · by PersonalClaw
+  - text: model llm embedding … # more tags
+  - button "Install"
+  - button "Anthropic — details"
+  - text: Anthropic v#.#.# Model provider git
+  - paragraph: Anthropic Claude chat models (Messages API). Bring your own Anthropic API key. · by PersonalClaw
+  - text: model llm bundled
+  - button "Install"
+  - button "Anthropic-Compatible — details"
+  - text: Anthropic-Compatible v#.#.# Model provider git
+  - paragraph: Any Anthropic-compatible (Messages API) endpoint. Supply the base URL + API key. · by PersonalClaw
+  - text: model llm bundled
+  - button "Install"
+  - button "Brave Search — details"
+  - text: Brave Search v#.#.# Search provider git
+  - paragraph: "Cheap, broad web search: ranked links with descriptions and a recency filter. Extra snippets come with each result. Links-only (no answer or page content — web_fetch a result to read it). API key from search.brave.com. · by PersonalClaw"
+  - text: search bundled
+  - button "Install"
+  - button "Browser Connector — details"
+  - text: Browser Connector v#.#.# git
+  - paragraph: "Attach your own everyday browser to a PersonalClaw you already run. A browse task with target 'user_browser' can then act inside a session you are already logged into, and only in a tab it opens for itself: when you allow a task, the extension opens a new background tab in a tab group named after the task (or a window of its own, in a browser without tab groups), and the run never touches a tab you already have open. Close the group to stop the run; bring its tab to the front to take over, which pauses it. If the extension cannot open a tab of the run's own, the task is refused. The extension pairs with the gateway the way your phone does and talks to it over loopback only: its host permissions are loopback-only, and it opens no listening surface of its own. In your browser it asks for tabs (to open the run's tab and act on it), tab groups (to name the run's group and notice when you close it) and storage (its settings, and which tab belongs to which run). It speaks a narrow, closed contract: navigate, read-outline, click, type, close. It never reads, stores, or types into a password field. · by PersonalClaw"
+  - text: Tested No UI companion browse automation … # more tags
+  - button "Install"
+  - button "Claude (Subscription) — details"
+  - text: Claude (Subscription) v#.#.# Model provider git
+  - paragraph: Claude models over your existing Claude Code sign-in — no API key. Reads the CLI's own credential store read-only. · by PersonalClaw
+  - text: model llm subscription
+  - button "Install"
+  - button "Claude Code — details"
+  - text: Claude Code v#.#.# Agent provider git
+  - paragraph: "Run Anthropic's Claude Code as an agent (acp:claude-code) via the Zed ACP adapter. It runs with a Claude config of its own that starts empty, and loads nothing from the folder it works in (no .claude settings, .mcp.json servers, CLAUDE.md or skills), so no auto-approve rule of yours or of a repository's comes along: apart from the file reads and read-only commands Claude Code allows itself, every tool asks through PersonalClaw's approval gate. Sign in to Claude once for it (Settings → Providers → Claude Code → Sign in); PersonalClaw stores no key. Turn off Isolated Claude settings to use your own ~/.claude, rules included, and the Claude settings of the folder it works in. Enabling it installs its ACP adapter (@agentclientprotocol/claude-agent-acp) from npm into your PersonalClaw home when no copy is installed; a failed install says why on its card, with Retry. · by PersonalClaw"
+  - text: agent acp claude-code
+  - button "Install"
+  - button "Code Review — details"
+  - text: Code Review v#.#.# Tool provider git
+  - paragraph: Deep-review a GitHub pull request one file at a time, riskiest changes first. It works through the GitHub CLI you are already signed in to. Findings stay in a local log on your machine — nothing is ever posted back to the PR. · by PersonalClaw
+  - text: tool code review … # more tags
+  - button "Install"
+  - button "Companion — details"
+  - text: Companion v#.#.# Tool provider git
+  - paragraph: "An opt-in day companion: three surfaces, all off out of the box. Reminders that actually go off, a watchlist that speaks up when a folder really changes, and a day plan you can ask for. Every automation it contributes only ever raises a notification, and turning a surface off, disabling the app or uninstalling it removes every trigger it contributed. · by PersonalClaw"
+  - text: tool companion reminders … # more tags
+  - button "Install"
+  - button "DeepSeek — details"
+  - text: DeepSeek v#.#.# Model provider git
+  - paragraph: DeepSeek chat + reasoner models (OpenAI-compatible). Bring your own DeepSeek API key. · by PersonalClaw
+  - text: model llm
+  - button "Install"
+  - button "Design Critique — details"
+  - text: Design Critique v#.#.# Tool provider git
+  - paragraph: The review a colleague would give you, before you spend their attention. Point it at a URL or a screenshot and it returns evidence-backed accessibility and craft findings — each with its WCAG clause where one applies and the change that clears it — plus an explicit rubric for the judgment no measurement can make. · by PersonalClaw
+  - text: tool design accessibility … # more tags
+  - button "Install"
+  - button "Diarization (ONNX) — details"
+  - text: Diarization (ONNX) v#.#.# Model provider git
+  - paragraph: Non-gated speaker diarization ("who spoke when") — no HuggingFace token. Runs a sherpa-onnx segmentation + speaker-embedding pipeline, install-and-go. Provides a model for the diarization use-case; bind it in Settings → Models. · by PersonalClaw
+  - text: model diarization onnx
+  - button "Install"
+  - button "Diarization (pyannote) — details"
+  - text: Diarization (pyannote) v#.#.# Model provider git
+  - paragraph: Higher-accuracy speaker diarization via the pyannote.audio pretrained pipeline. Requires a HuggingFace token + license acceptance. Provides a model for the diarization use-case; bind it in Settings → Models. Large install (pulls torch). · by PersonalClaw
+  - text: model diarization pyannote
+  - button "Install"
+  - button "Discord Channel — details"
+  - text: Discord Channel v#.#.# Channel provider git
+  - paragraph: Discord bot integration over the raw Gateway WebSocket + REST API. Pair a DM, converse in servers, and receive results with approval buttons. · by PersonalClaw
+  - text: channel bundled
+  - button "Install"
+  - button "Docs & Slides — details"
+  - text: Docs & Slides v#.#.# Tool provider git
+  - paragraph: Turn a brief into a real PowerPoint deck (.pptx) or a compiled document (.docx/.pdf). You can open and send the result. Write the brief as ordinary markdown — '## ' per slide for a deck, headings and lists for a document — and the document writers PersonalClaw already ships render the file. Nothing leaves your machine and nothing is written outside this app's own data directory. · by PersonalClaw
+  - text: tool documents slides … # more tags
+  - button "Install"
+  - button "DuckDuckGo — details"
+  - text: DuckDuckGo v#.#.# Search provider git
+  - paragraph: Keyless, zero-config web search — no API key and no self-hosted instance. The out-of-box default so web_search works for everyone; bind a higher-quality provider (Tavily/Exa/…) per use-case in Search to upgrade. Links + snippets only. · by PersonalClaw
+  - text: search no-key
+  - button "Install"
+  - button "Email Channel — details"
+  - text: Email Channel v#.#.# Channel provider git
+  - paragraph: Two-way email channel over stdlib IMAP/SMTP. Converse with your agent by email, replies thread back, and results arrive in the same conversation. No streaming; approvals answer by reply token. · by PersonalClaw
+  - text: channel email bundled
+  - button "Install"
+  - button "Exa — details"
+  - text: Exa v#.#.# Search provider git
+  - paragraph: "Neural/semantic web search: embeddings-ranked results with relevant highlights. Also returns extracted content, plus single-URL content retrieval. Good for discovering non-obvious sources. API key from exa.ai. · by PersonalClaw"
+  - text: search bundled
+  - button "Install"
+  - button "FAL — details"
+  - text: FAL v#.#.# Model provider git
+  - paragraph: Image and video generation via FAL's hosted models (FLUX, Kling, Veo and others). Generate images and videos from a prompt; bind a FAL model to the Image Generation or Video Generation use case in Models. Needs a FAL API key (fal.ai). · by PersonalClaw
+  - text: model image_gen video_gen … # more tags
+  - button "Install"
+  - button "Faster Whisper — details"
+  - text: Faster Whisper v#.#.# Model provider git
+  - paragraph: Speech-to-text using CTranslate#-optimized Whisper models. Download and manage STT models for voice input. · by PersonalClaw
+  - text: model stt
+  - button "Install"
+  - button "Folder Notification Drop — details"
+  - text: Folder Notification Drop v#.#.# Notification provider git
+  - paragraph: "Deliver a teammate-addressed notification into a shared folder, one JSON file per note. Pairs with Folder Sync or S# Sync: that folder is how the note actually reaches the other person's machine. Only usernames on the roster you declare are accepted; anything else is declined so another backend can take it. · by PersonalClaw"
+  - text: notification bundled
+  - button "Install"
+  - button "Folder Sync — details"
+  - text: Folder Sync v#.#.# Sync provider git
+  - paragraph: "Sync PersonalClaw state between your machines through a shared or synced folder. That can be a cloud-sync mount, an NFS share, or a mounted USB drive. No credentials, no server: point two machines at the same folder and durability converges. The folder holds shard objects only; secrets are excluded upstream and never touch it. · by PersonalClaw"
+  - text: sync bundled
+  - button "Install"
+  - button "Gemini CLI — details"
+  - text: Gemini CLI v#.#.# Agent provider git
+  - paragraph:
+    - text: Run Google's Gemini CLI as an agent (acp:gemini-cli) over ACP. Gemini enters ACP mode via its own
+    - code: "--experimental-acp"
+    - text: flag — no adapter package — and self-authenticates with your
+    - code: gemini
+    - text: login (Google OAuth) or a GEMINI_API_KEY you pass through to it by name (Settings → Security → Child environment passthrough); PersonalClaw stores no key. The provider activates only when the
+    - code: gemini
+    - text: binary is present, and is unavailable otherwise. · by PersonalClaw
+  - text: agent acp gemini-cli … # more tags
+  - button "Install"
+  - button "Git Repository — details"
+  - text: Git Repository v#.#.# Knowledge provider git
+  - paragraph: Index the CONTENT of a git repository you own into your knowledge library. Source code AND docs, from a local clone or a github.com URL; each file becomes a searchable knowledge item, and a re-poll after a new commit ingests only the changed files (commit-cursor), never the whole tree. Remote fetches route through the core network chokepoint; it owns no socket. · by PersonalClaw
+  - text: Tested knowledge git source … # more tags
+  - button "Install"
+  - button "Git Sync — details"
+  - text: Git Sync v#.#.# Sync provider git
+  - paragraph:
+    - text: Sync PersonalClaw state between your machines through a git remote you own. The transport keeps a local working clone and moves durability shard objects as files it commits and pushes, so
+    - code: git log -p
+    - text: over the shards is a human-diffable audit history of what the assistant knows — the whole point of this transport. It stays plaintext (never encrypted) so that history stays readable; secrets are excluded upstream and never touch it. · by PersonalClaw
+  - text: sync bundled
+  - button "Install"
+  - button "GitHub Notifications Inbox — details"
+  - text: GitHub Notifications Inbox v#.#.# Inbox provider git
+  - paragraph: Your GitHub notifications, as inbox items you can triage here. Review requests, mentions, CI failures and issue activity arrive read-only, and GitHub filters by time, so history never floods in. · by PersonalClaw
+  - text: inbox github
+  - button "Install"
+  - button "GitHub Repo Watcher — details"
+  - text: GitHub Repo Watcher v#.#.# Trigger source provider git
+  - paragraph: Fires your automations when a GitHub repo you watch ships a release or opens an issue. A newly watched repository starts from what exists now, so its history never floods in, and every request goes through your network egress settings. · by PersonalClaw
+  - text: trigger_source github
+  - button "Install"
+  - button "Google Gemini — details"
+  - text: Google Gemini v#.#.# Model provider git
+  - paragraph: Google Gemini models — bring your own Gemini API key. Chat, embedding, image generation (Imagen / gemini-image), video generation (Veo), and text-to-speech. One instance serves every use case. · by PersonalClaw
+  - text: model llm embedding … # more tags
+  - button "Install"
+  - button "Groq — details"
+  - text: Groq v#.#.# Model provider git
+  - paragraph: Groq LPU inference (OpenAI-compatible), very low latency. Bring your own Groq API key. · by PersonalClaw
+  - text: model llm
+  - button "Install"
+  - button "Growth Tracker — details"
+  - text: Growth Tracker v#.#.# git
+  - paragraph: Turn your real work into evidenced growth artifacts. It draws on your chat sessions, the projects you ran, the tasks you closed, and your notes. Track growth areas, score against a customizable rubric, and generate a shareable accomplishment doc that cites its evidence. · by PersonalClaw
+  - text: Tested Design <theme> Not audited career worklog brag-doc … # more tags
+  - button "Install"
+  - button "HTTP Webhook Hooks — details"
+  - text: HTTP Webhook Hooks v#.#.# Action provider git
+  - paragraph: POST agent lifecycle events to an HTTP endpoint. Supports method/headers overrides and a templated body. · by PersonalClaw
+  - text: action
+  - button "Install"
+  - button "Issue Radar — details"
+  - text: Issue Radar v#.#.# Tool provider git
+  - paragraph: Triages a repository's open issues through your local gh or glab. It suggests labels from the repository's own label set and ranks the queue by which issues need a maintainer first. Investigation notes stay on your machine, and nothing is ever labeled, commented on or closed on the tracker. · by PersonalClaw
+  - text: tool issues triage … # more tags
+  - button "Install"
+  - button "Kiro CLI — details"
+  - text: Kiro CLI v#.#.# Agent provider git
+  - paragraph:
+    - text: Run the kiro-cli agent (acp:kiro-cli) over ACP. This provider activates only when the
+    - code: kiro-cli
+    - text: binary is present on the machine, and is unavailable otherwise. · by PersonalClaw
+  - text: agent acp kiro-cli … # more tags
+  - button "Install"
+  - button "Lima Sandbox — details"
+  - text: Lima Sandbox v#.#.# Sandbox provider git
+  - paragraph:
+    - text: The isolated (virtual-machine) execution-isolation tier, backed by Lima. Lima runs <platform> virtual machines on macOS and <platform>. It runs an agent-influenced command inside a Lima instance through
+    - code: limactl shell
+    - text: instead of on the host, so the virtual machine — not a host path filter — is the boundary. Registers as a
+    - code: sandbox
+    - text: "provider through the SandboxProvider seam: a cached availability probe greys the tier out with a reason when the instance is stopped, and host paths are translated to their in-guest mount location so a run opened \"inside the sandbox\" resolves the same working directory. · by PersonalClaw"
+  - text: sandbox isolation vm … # more tags
+  - button "Install"
+  - button "Local Image Generation — details"
+  - text: Local Image Generation v#.#.# Model provider git
+  - paragraph: "Generate images with a ComfyUI server you run on your own machine. PersonalClaw does not install or start ComfyUI: start it yourself on this machine, then set its address on this app's Configure page (default http://#.#.#.#:#). Bind a checkpoint you pulled into ComfyUI to the Image Generation use case in Models. No cloud and no API key: no prompt or pixel leaves the host, and this app downloads no weights. Recommended permissive default: FLUX.#-schnell (Apache-#.#). · by PersonalClaw"
+  - text: Needs ComfyUI model image_gen local … # more tags
+  - button "Install"
+  - button "Mail Inbox — details"
+  - text: Mail Inbox v#.#.# Inbox provider git
+  - paragraph: IMAP mail as an inbox source. Polls a mailbox, surfaces messages from a fail-closed sender allowlist as inbox items, reads multipart and HTML mail, and hands each attachment to the Inbox as a file to list and download. Purpose-specific addresses can each carry a stored prompt, so mail to them runs it against the fenced mail body. Replies are composed as threaded drafts and are NOT sent until you turn sending on. Passwords are kept in the credential store, never in the settings file. · by PersonalClaw
+  - text: inbox email
+  - button "Install"
+  - button "Menu Bar Companion — details"
+  - text: Menu Bar Companion v#.#.# git
+  - paragraph: "A macOS menu-bar companion for a PersonalClaw you already run. It lives in the status bar on YOUR Mac (not on the server). It lists everything waiting on you, every kind, each linking to where it is answered: a tool approval opens with what it would run, where it came from and what it can touch before you Approve or Deny it, and a loop's question, a workflow's gate or anything else opens in the PersonalClaw dashboard. It also lists everything running, each saying what it is doing. A badge counts everything waiting on you. It holds ONE /api/ws connection and treats every frame as nothing but a doorbell — it re-reads the two lists over HTTP, once per burst of frames, and never renders anything out of a socket payload. Native notifications can be muted from its Settings menu. Your gateway URL and token are stored locally in a # file on your own machine, or supplied by environment variable and never persisted, and the token travels only in a request header, never in a link it opens. · by PersonalClaw"
+  - text: Tested No UI companion macos approvals … # more tags
+  - button "Install"
+  - button "Meta Muse Spark — details"
+  - text: Meta Muse Spark v#.#.# Model provider git
+  - paragraph: Meta Muse Spark chat models via the Meta AI API (OpenAI-compatible). Bring your own Meta AI API key. · by PersonalClaw
+  - text: model llm
+  - button "Install"
+  - button "Minutes — details"
+  - text: Minutes v#.#.# git
+  - paragraph: Tie recordings, videos, notes and docs into one meeting. Watch it cohesively on a synced timeline with speaker-attributed transcripts. Tag participants, generate multiple minutes/summaries from templates, and consolidate dates, action items, follow-ups and decisions — then turn action items into a task list under a project. · by PersonalClaw
+  - text: Tested Design <theme> Not audited meetings minutes notes … # more tags
+  - button "Install"
+  - button "Mistral AI — details"
+  - text: Mistral AI v#.#.# Model provider git
+  - paragraph: Mistral AI models via its OpenAI-compatible endpoint. Bring your own Mistral API key. · by PersonalClaw
+  - text: model llm
+  - button "Install"
+  - button "Notes — details"
+  - text: Notes v#.#.# Tool provider git
+  - paragraph:
+    - text: A git-backed markdown notebook. Notes are plain
+    - code: .md
+    - text: files in a git repository on your machine, so every version is recoverable, the whole notebook is portable, and it stays readable in any editor without PersonalClaw. Drafting and history live here; indexed recall stays with Knowledge — this app builds no index of its own. · by PersonalClaw
+  - text: tool notes markdown … # more tags
+  - button "Install"
+  - button "OpenAI — details"
+  - text: OpenAI v#.#.# Model provider git
+  - paragraph: OpenAI chat + embedding models (Chat Completions API). Bring your own OpenAI API key. · by PersonalClaw
+  - text: model llm bundled
+  - button "Install"
+  - button "OpenAI Codex — details"
+  - text: OpenAI Codex v#.#.# Agent provider git
+  - paragraph: Run the OpenAI Codex CLI as an agent (acp:codex) via the Zed ACP adapter. Codex manages its own configuration and authentication; every tool call it asks about routes through PersonalClaw's host approval gate. Enabling it installs its ACP adapter (@agentclientprotocol/codex-acp) from npm into your PersonalClaw home when no copy is installed; a failed install says why on its card, with Retry. · by PersonalClaw
+  - text: agent acp codex
+  - button "Install"
+  - button "OpenAI Tool Servers — details"
+  - text: OpenAI Tool Servers v#.#.# Tool provider git
+  - paragraph: Connect OpenAI-compatible tool servers that expose tools via REST API. · by PersonalClaw
+  - text: tool
+  - button "Install"
+  - button "OpenAI-Compatible — details"
+  - text: OpenAI-Compatible v#.#.# Model provider git
+  - paragraph: Any OpenAI-compatible Chat Completions endpoint. Self-hosted, a proxy, or an unlisted cloud. Supply the base URL + API key. · by PersonalClaw
+  - text: model llm bundled
+  - button "Install"
+  - button "OpenRouter — details"
+  - text: OpenRouter v#.#.# Model provider git
+  - paragraph: OpenRouter — one key for hundreds of models across providers. Chat (with image input), embedding, image generation, and video generation from a single instance. Bring your own OpenRouter API key. · by PersonalClaw
+  - text: model llm embedding … # more tags
+  - button "Install"
+  - button "Ops — details"
+  - text: Ops v#.#.# Tool provider git
+  - paragraph: An on-call first responder that walks the shift with you. It files each alarm your monitor writes as an incident, ranks the queue by what needs a human first, and works each one with you — claim, investigate against your own runbook, record findings, propose a fix. Proposing changes nothing, and running a fix is off by default, needs an explicit confirm, and can only ever be a command your own runbook already declared. · by PersonalClaw
+  - text: tool ops on-call … # more tags
+  - button "Install"
+  - button "Perplexity Sonar — details"
+  - text: Perplexity Sonar v#.#.# Search provider git
+  - paragraph: "Answer-first web search: Sonar answers your query and cites its sources. Answers come directly from live web results. Best when you want a synthesized answer with citations, not just links. API key from perplexity.ai. · by PersonalClaw"
+  - text: search bundled
+  - button "Install"
+  - button "Piper TTS — details"
+  - text: Piper TTS v#.#.# Model provider git
+  - paragraph: Text-to-speech using Piper neural voice models. Download and manage TTS voices for audio output. · by PersonalClaw
+  - text: model tts
+  - button "Install"
+  - button "Qdrant Vector Store — details"
+  - text: Qdrant Vector Store v#.#.# Vector store provider git
+  - paragraph: Point knowledge vector search at your own Qdrant instead of the built-in sqlite-vec index. Chunk vectors are written to Qdrant as documents are ingested, and Qdrant answers the vector half of hybrid retrieval — FTS# keyword search, the graph arm and RRF fusion are unchanged. Your documents stay in PersonalClaw's own database; Qdrant holds vectors and chunk ids only. Enable it to bind it; disable it and retrieval returns to the built-in index. · by PersonalClaw
+  - text: Tested No UI knowledge vector-store retrieval … # more tags
+  - button "Install"
+  - button "RapidOCR (Offline) — details"
+  - text: RapidOCR (Offline) v#.#.# OCR provider git
+  - paragraph: Read text out of scans and screenshots with no model bound. Runs the RapidOCR ONNX engine entirely on this machine — the weights ship in the wheel, so nothing is downloaded and nothing leaves the device — and returns the same text for the same image every time. Install it and a scanned PDF or a photographed page becomes searchable knowledge. · by PersonalClaw
+  - text: Tested ocr offline local … # more tags
+  - button "Install"
+  - button "Research Lab — details"
+  - text: Research Lab v#.#.# Tool provider git
+  - paragraph: Unattended research campaigns as an agent tool. One question becomes a tree of sub-questions that hourly cycles work down through subagents, recording findings with their sources. When the tree is answered — or the cycle budget runs out — it synthesizes everything into one markdown report on your machine. · by PersonalClaw
+  - text: tool research unattended
+  - button "Install"
+  - button "Rsync Sync — details"
+  - text: Rsync Sync v#.#.# Sync provider git
+  - paragraph: Sync PersonalClaw state between your machines with rsync over ssh. Any host you can already log into works — a home server, a NAS, a VPS. No object store, no credentials beyond your existing ssh key. Shards are encrypted end-to-end by default, and secrets are excluded upstream so they never reach the host. · by PersonalClaw
+  - text: sync bundled
+  - button "Install"
+  - button "S# Sync — details"
+  - text: S# Sync v#.#.# Sync provider git
+  - paragraph: Sync PersonalClaw state between your machines through an S#-compatible store. Use AWS S#, a self-hosted MinIO, a NAS gateway, or any object store that speaks the S# API — one you own. Requests are signed with AWS Signature V# and travel through PersonalClaw's guarded egress chokepoint, pinned to the one endpoint you configure. Shards are encrypted end-to-end by default (the store never sees plaintext), and secrets are excluded upstream so they never reach it. · by PersonalClaw
+  - text: sync bundled
+  - button "Install"
+  - button "SearXNG — details"
+  - text: SearXNG v#.#.# Search provider git
+  - paragraph: Self-hosted, no-key web search via a SearXNG meta-search instance. Point it at your own SearXNG URL for private, free web search and links. · by PersonalClaw
+  - text: search self-hosted
+  - button "Install"
+  - button "Sentence Transformers (local embeddings) — details"
+  - text: Sentence Transformers (local embeddings) v#.#.# Model provider git
+  - paragraph: Local, in-process text embedding models that run on your machine's CPU, with no API key. Built on sentence-transformers. Provides the embedding capability; bind a model in Settings → Models. Needs the sentence-transformers/torch package (server or container build). · by PersonalClaw
+  - text: model embedding local
+  - button "Install"
+  - button "Shared Automations — details"
+  - text: Shared Automations v#.#.# Trigger provider git
+  - paragraph: "Serve trigger rows from a shared automations file. That can be a synced folder, an NFS share, or a checked-out team repo. Everyone pointed at the file sees the same automations on their Automations page, and each machine arms and fires ONLY the rows attributed to its own owner: everybody else's render read-only and structurally cannot arm. No server and no credentials; the file holds trigger definitions only, and your harness does all the firing under all of its own gates. · by PersonalClaw"
+  - text: automation triggers team … # more tags
+  - button "Install"
+  - button "Skills.sh Marketplace — details"
+  - text: Skills.sh Marketplace v#.#.# Skills provider git
+  - paragraph: Browse and install community skills from skills.sh. Search, preview, and manage external skill packages. · by PersonalClaw
+  - text: skills bundled
+  - button "Install"
+  - button "Slack Channel — details"
+  - text: Slack Channel v#.#.# Channel provider git
+  - paragraph: Slack workspace integration. Monitor channels, respond to mentions, and interact via Slack. · by PersonalClaw
+  - text: channel bundled
+  - button "Install"
+  - button "Spec Builder — details"
+  - text: Spec Builder v#.#.# Tool provider git
+  - paragraph: Write a spec, then compile it into a workflow definition PersonalClaw's engine runs. The spec spells out the problem, done-when clauses, steps, and how done-ness is decided. It is the artifact you review and argue with; the compiled definition is what executes, and this app never runs one. · by PersonalClaw
+  - text: tool spec planning … # more tags
+  - button "Install"
+  - button "Tavily — details"
+  - text: Tavily v#.#.# Search provider git
+  - paragraph: "Agent-optimized web search: a synthesized answer plus scored results. Optional extracted page content and single-URL extraction too. Best out-of-box quality; free-tier API key. · by PersonalClaw"
+  - text: search bundled
+  - button "Install"
+  - button "Telegram Channel — details"
+  - text: Telegram Channel v#.#.# Channel provider git
+  - paragraph: Telegram bot integration over the raw Bot API. Pair a chat, converse in DMs, track groups, and receive results with inline approvals. · by PersonalClaw
+  - text: channel bundled
+  - button "Install"
+  - button "Together AI — details"
+  - text: Together AI v#.#.# Model provider git
+  - paragraph: Together AI serverless inference (OpenAI-compatible). Bring your own Together API key. · by PersonalClaw
+  - text: model llm
+  - button "Install"
+  - button "vLLM — details"
+  - text: vLLM v#.#.# Model provider git
+  - paragraph: A local vLLM server (OpenAI-compatible). Point it at your vLLM endpoint; capabilities are model-dependent. · by PersonalClaw
+  - text: model llm
+  - button "Install"
+  - button "Voice Clone TTS — details"
+  - text: Voice Clone TTS v#.#.# Model provider git
+  - paragraph: Clone a voice from a short clip and speak with it, on your own machine. It needs the OmniVoice engine (torch, several GB), which Install engine on its card in Settings → Providers puts in this app's own Python environment; then download OmniVoice in Settings → Models. The engine runs in a process of its own, so a crash in it leaves the gateway up. A clone-kind voice profile routes here instead of being refused. · by PersonalClaw
+  - text: model tts
+  - button "Install"
+  - button "Web Tools — details"
+  - text: Web Tools v#.#.# Tool provider git
+  - paragraph: "General web primitives the agent can call: web_search, web_fetch, and web_extract. web_search runs over the search provider you bind in Settings → Search, web_fetch is an SSRF-guarded page fetch + extraction, and web_extract does structured extraction. No key of its own — it uses the bound search provider's. · by PersonalClaw"
+  - text: tool web
+  - button "Install"
+  - button "Wikipedia Search — details"
+  - text: Wikipedia Search v#.#.# Search provider git
+  - paragraph: "Keyless encyclopedic search over Wikipedia: ranked articles with intro-extract snippets. No API key — uses the public MediaWiki API. Links-only (web_fetch an article to read its full body). Best for factual/reference lookups. · by PersonalClaw"
+  - text: search bundled
+  - button "Install"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

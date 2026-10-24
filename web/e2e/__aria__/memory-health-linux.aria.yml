@@ -1,0 +1,67 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Library":
+    - radio "Knowledge"
+    - radio "Memory" [checked]
+    - radio "Files"
+    - radio "Artifacts"
+  - heading "Memory" [level=#]
+  - paragraph: Explore and manage what the <theme> remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.
+  - text: # Semantic # Episodic # Events # Embedded · no model bound
+  - tablist "Memory view":
+    - tab "Studio"
+    - tab "Health" [selected]
+    - tab "Recall"
+    - tab "Inspect"
+    - tab "Audit"
+    - tab "Settings"
+  - heading "Dreaming" [level=#]
+  - paragraph: Like sleep consolidates memories, PersonalClaw reviews its episodic memories (raw conversation fragments) and promotes the recurring, cross-context ones into durable semantic facts — scored on frequency, diversity, recency, and richness. It runs automatically in the background; trigger a pass now to consolidate a recent burst of activity.
+  - button "Dream now"
+  - text: Consolidate episodic memories → semantic facts
+  - heading "Health check" [level=#]
+  - paragraph: Duplicate, stale, and contradictory facts. Superseded facts auto-purge on each sweep.
+  - button "Re-scan"
+  - paragraph: No issues flagged — memory is clean.
+  - heading "Search index" [level=#]
+  - paragraph: "Whether search reaches every memory: semantic search through the embedded vectors, and keyword search through the memory files."
+  - group: Memory store + faiss consistency memory.db healthy
+  - group: Memory keyword search Keyword search over memory is working.
+  - heading "Entity graph" [level=#]
+  - paragraph: Memories linked to the people, projects and tools they name — so “what do I know about X?” follows links instead of hoping search finds everything. Matching is exact-name and costs nothing to run.
+  - button "Rebuild links"
+  - button "Export as HTML"
+  - paragraph: "Keyword-ranked only: no embedding model is bound, so recall falls back to search alone."
+  - paragraph: # entities · # links · # linked records. Browse and edit them in Studio — filter to Entities.
+  - heading "Observability" [level=#]
+  - paragraph: What the memory <theme> is doing under the hood.
+  - text: "# semantic active # semantic deleted # episodic active # episodic deleted # events count # faiss index size # episodes embedded # embedded count # embedded stale # unembedded # read by keyword # user curated Injected-context budget before any message:"
+  - strong: # chars
+  - text: (semantic # · lessons #). Each message adds the episodic memories it recalls.
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

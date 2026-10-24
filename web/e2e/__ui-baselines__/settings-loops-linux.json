@@ -1,0 +1,126 @@
+{
+  "dark": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Check work after stage gates\"",
+        "button[role=switch] \"Sparse task worktrees\"",
+        "input \"Stagnation window (cycles)\"",
+        "select \"ReasoningChatCode & toolsBackgroundOrchestrationLoops\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Check work after stage gates\"",
+        "button[role=switch] \"Sparse task worktrees\"",
+        "input \"Stagnation window (cycles)\"",
+        "select \"ReasoningChatCode & toolsBackgroundOrchestrationLoops\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Check work after stage gates\"",
+        "button[role=switch] \"Sparse task worktrees\"",
+        "input \"Stagnation window (cycles)\"",
+        "select \"ReasoningChatCode & toolsBackgroundOrchestrationLoops\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: dark — switch to light\"",
+        "button[role=switch] \"Check work after stage gates\"",
+        "button[role=switch] \"Sparse task worktrees\"",
+        "input \"Stagnation window (cycles)\"",
+        "select \"ReasoningChatCode & toolsBackgroundOrchestrationLoops\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  },
+  "light": {
+    "targets": {
+      "320": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Check work after stage gates\"",
+        "button[role=switch] \"Sparse task worktrees\"",
+        "input \"Stagnation window (cycles)\"",
+        "select \"ReasoningChatCode & toolsBackgroundOrchestrationLoops\""
+      ],
+      "390": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Check work after stage gates\"",
+        "button[role=switch] \"Sparse task worktrees\"",
+        "input \"Stagnation window (cycles)\"",
+        "select \"ReasoningChatCode & toolsBackgroundOrchestrationLoops\""
+      ],
+      "412": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Check work after stage gates\"",
+        "button[role=switch] \"Sparse task worktrees\"",
+        "input \"Stagnation window (cycles)\"",
+        "select \"ReasoningChatCode & toolsBackgroundOrchestrationLoops\""
+      ],
+      "768": [
+        "button \"Back to Settings\"",
+        "button \"Choose a model\"",
+        "button \"Expand sidebar\"",
+        "button \"Notifications, # unread\"",
+        "button \"Open terminal\"",
+        "button \"Settings\"",
+        "button \"System status — Gateway connected\"",
+        "button \"Theme: light — switch to system\"",
+        "button[role=switch] \"Check work after stage gates\"",
+        "button[role=switch] \"Sparse task worktrees\"",
+        "input \"Stagnation window (cycles)\"",
+        "select \"ReasoningChatCode & toolsBackgroundOrchestrationLoops\""
+      ]
+    },
+    "known": {
+      "200% text zoom": [
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+      ]
+    }
+  }
+}

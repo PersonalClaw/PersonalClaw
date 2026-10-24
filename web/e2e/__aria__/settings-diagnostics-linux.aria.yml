@@ -1,0 +1,55 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Diagnostics
+  - heading "Diagnostics" [level=#]
+  - paragraph: A live tail of the gateway's own log, plus the backend log level. Nothing here changes your data — the level is the only setting it writes, and it persists across restarts.
+  - heading "Backend log level" [level=#]
+  - paragraph: Change how verbose the gateway logs are, live. Persists across restarts.
+  - 'button "Backend log level: DEBUG"': DEBUG
+  - 'button "Backend log level: INFO"': INFO
+  - 'button "Backend log level: WARNING" [pressed]': WARNING
+  - 'button "Backend log level: ERROR"': ERROR
+  - text: "Current:"
+  - strong: WARNING
+  - heading "Live logs" [level=#]
+  - paragraph: Streaming · # shown
+  - text: Show
+  - button "Show DEBUG and above" [pressed]: DEBUG
+  - button "Show INFO and above": INFO
+  - button "Show WARNING and above": WARNING
+  - button "Show ERROR and above": ERROR
+  - button "Autoscroll on" [pressed]
+  - button "Pause"
+  - button "Clear"
+  - searchbox "Filter log lines"
+  - status
+  - group "Log output": Waiting for log entries…
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

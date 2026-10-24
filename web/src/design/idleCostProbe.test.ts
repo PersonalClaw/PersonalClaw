@@ -77,8 +77,11 @@ function fakePage() {
 type FakePage = ReturnType<typeof fakePage> & { __pcIdleCost?: IdleProbe }
 
 /** Install the probe, let the page settle, then measure one window and return what it saw. */
-function probe(plant: (page: FakePage) => void = noop, opts: { before?: (page: FakePage) => void } = {}) {
-  const page = fakePage() as FakePage
+function probe(
+  plant: (page: FakePage) => void = noop,
+  opts: { before?: (page: FakePage) => void; page?: { document: Document; MutationObserver: typeof MutationObserver } } = {},
+) {
+  const page = { ...fakePage(), ...opts.page } as FakePage
   installIdleProbe(page as unknown as Window)
   plant(page)
   vi.advanceTimersByTime(1_000)
@@ -133,6 +136,45 @@ describe('planted idle work fails the probe, each kind by name', () => {
     expect(findings).toHaveLength(1)
     expect(findings[0]).toMatch(/^requestAnimationFrame asked for \d{3} frames in 5 s idle, budget 0: /)
     expect(findings[0]).toContain('idleCostProbe.test.ts')
+  })
+
+  it('a frame loop that moves an element names the element beside the frames', () => {
+    // A frame loop's own line is the animation library's (motion's `h` on CI's idle Chat, #3905),
+    // so the finding also names what changed while it ran: here, the one element it moves.
+    const box = document.createElement('div')
+    box.className = 'orb glow extra'
+    box.setAttribute('aria-label', 'Planted orb')
+    document.body.append(box)
+    const quiet = document.createElement('span')
+    document.body.append(quiet)
+    try {
+      const { sample } = probe((page) => {
+        let x = 0
+        const loop = () => { box.style.transform = `translateX(${x++}px)`; page.requestAnimationFrame(loop) }
+        page.requestAnimationFrame(loop)
+      }, { page: { document, MutationObserver } })
+      const findings = idleCostFindings(sample)
+      expect(findings[0]).toMatch(/^requestAnimationFrame asked for \d{3} frames in 5 s idle, budget 0: /)
+      expect(findings[1]).toMatch(/^while it framed, these changed: html>body>div\[Planted orb\] \(\d{3} times\)$/)
+      expect(Object.keys(sample.moved ?? {})).toEqual(['html>body>div[Planted orb]'])
+    } finally {
+      box.remove()
+      quiet.remove()
+    }
+  })
+
+  it('a frame loop started before the window names the stack that started it', () => {
+    // CI's idle Chat asked for six frames from motion's own loop, which a load had started before
+    // the window opened (#3905): its frames name only the loop's line, so the start is named too.
+    const { sample } = probe((page) => {
+      let left = 400
+      const tail = () => { if (left-- > 0) page.requestAnimationFrame(tail) }
+      const startTheTail = () => page.requestAnimationFrame(tail)
+      page.setTimeout(startTheTail, 900)
+    })
+    expect(sample.wakes?.[0].ms).toBeLessThan(0)
+    expect(sample.wakes?.[0].stack).toMatch(/startTheTail/)
+    expect(idleCostFindings(sample)[0]).toMatch(/; started \d+ ms before the window by startTheTail /)
   })
 
   it('a single animation frame fails it: the budget is none', () => {

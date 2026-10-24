@@ -1,0 +1,43 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Devices
+  - heading "Devices" [level=#]
+  - paragraph: "Everything signed in to this gateway: your browsers, paired phones and the desktop app, and the tokens the CLI and scripts use. Sign out anything you don't recognise — it is told why the next time it is used."
+  - heading "Pair a device" [level=#]
+  - paragraph: Open the link on the other device — on the same network — and it joins with the code below. The code is single-use and short-lived.
+  - paragraph: Generates a one-time code and a link for the device to open.
+  - button "Pair a device"
+  - status
+  - heading "Signed in (#)" [level=#]
+  - paragraph: Browsers, paired devices and the desktop app. Each kind has a limit of #; past it, the one used least recently is signed out and told why, so a script minting tokens never signs one of these out.
+  - text: Headless Chrome on <platform> This device Browser · Last seen <when> · from #.#.#.# · Signed in with the harness token (--json-ready) Signed in <when> · session expires Nov #, #:# <am/pm>
+  - button "Sign out of this device": Sign out
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

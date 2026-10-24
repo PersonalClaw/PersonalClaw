@@ -1,0 +1,50 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Personal, no threads": Personal #
+    - button "Repeatable, no threads": Repeatable #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - radiogroup "Capabilities":
+    - radio "Agents"
+    - radio "Skills"
+    - radio "Learning"
+    - radio "Tools"
+    - radio "Prompts" [checked]
+    - radio "Apps"
+    - radio "Store"
+  - heading "Prompts" [level=#]
+  - radiogroup "Prompts view":
+    - radio "User"
+    - radio "<theme>" [checked]
+    - radio "Bundled"
+    - radio "Snippets"
+  - button "New prompt"
+  - searchbox "Search"
+  - button "Filter & sort": Sorted by name
+  - status
+  - heading "No <theme> prompts" [level=#]
+  - paragraph: <theme> prompts are bound to a use-case (chat / background / code / goal loop) and injected as the agent <theme> prompt. The prompts PersonalClaw ships for its own work are on the Bundled tab.
+  - button "New prompt"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

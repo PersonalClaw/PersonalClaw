@@ -1,0 +1,55 @@
+- navigation:
+  - img "PersonalClaw"
+  - text: PersonalClaw
+  - button "Home"
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Threads":
+    - text: Threads
+    - button "New thread"
+    - searchbox "Search threads"
+    - status
+    - button "Garden, no threads": Garden #
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - 'button "Content width: Full"'
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - heading "Garden" [level=#]
+  - button "Rename"
+  - radiogroup "Project view":
+    - radio "Overview"
+    - radio "Tasks" [checked]
+  - radiogroup "View":
+    - radio "List view" [checked]
+    - radio "Cards view"
+    - radio "Kanban board"
+    - radio "Dependency graph"
+  - button "New task"
+  - button "All projects"
+  - searchbox "Search tasks"
+  - button "Filter & sort": Filter
+  - status
+  - button "Order the soil — Not started"
+  - 'button "Select: Order the soil"'
+  - text: Order the soil High
+  - button "Garden"
+  - button "Plant the beans — In progress"
+  - 'button "Select: Plant the beans"'
+  - text: Plant the beans
+  - button "Garden"
+  - button "Fix the gate latch — Completed"
+  - 'button "Select: Fix the gate latch"'
+  - text: Fix the gate latch Low
+  - button "Garden"
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

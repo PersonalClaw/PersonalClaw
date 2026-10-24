@@ -36,17 +36,19 @@
   - button "Open Audit log settings"
   - text: Audit log Chain intact all # events verified
   - button "Open <theme> settings"
-  - text: <theme> CPU <cpu> Memory #.#/#GB
+  - text: <theme> CPU <cpu> Memory #.#/#.#GB
   - button "Open Diagnostics settings"
   - text: "Diagnostics Live log stream Level: WARNING"
   - button "Open Doctor settings"
   - text: Doctor All systems healthy
   - button "Open Devices settings"
-  - text: Devices # paired device Headless Chrome on Mac
+  - text: Devices # paired device Headless Chrome on <platform>
   - button "Open Sender trust settings"
   - text: Sender trust No trusted senders Strangers must pair before they can talk
   - button "Open Companion apps settings"
   - text: Companion apps Not advertising LAN discovery is off — companion apps need the URL typed in.
+  - button "Open Buddy settings"
+  - text: Buddy Off
   - button "Open Guardrails settings"
   - text: Guardrails Normal operation Kill switch · budgets · outbound scan
   - button "Open External access settings"
