@@ -16,6 +16,7 @@ import in_flight
 import native_omp_guard
 import pycache_guard
 import pytest
+import rails_reads
 import random_order
 import real_home_guard
 import run_facts
@@ -298,6 +299,9 @@ def pytest_configure(config):
     # The tests started and not finished, beside the JUnit report, so a hung shard names its test
     # (tests/in_flight.py). The controller's alone; a worker arms nothing.
     in_flight.configure(config)
+    # What each rail read, beside a rails leg's JUnit report, for `rails select`
+    # (tests/rails_reads.py). Armed by `junit-rails-<leg>.xml` alone.
+    rails_reads.configure(config, source_index)
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
     config.pluginmanager.register(
         state_leak_guard.Plugin(config, listening=lambda: frozenset(port_guard.GUARD.own_ports())),

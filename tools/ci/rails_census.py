@@ -618,11 +618,17 @@ def leg_violations(root: Path) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    given = list(sys.argv[1:] if argv is None else argv)
+    if given[:1] == ["select"]:
+        # The rails a change can break, from what each rail read (tools/ci/rails_select.py).
+        from . import rails_select
+
+        return rails_select.main(given[1:])
     parser = argparse.ArgumentParser(prog="python -m tools.ci rails")
-    parser.add_argument("command", choices=["census", "check"])
+    parser.add_argument("command", choices=["census", "check", "select"])
     parser.add_argument("--root", default=".")
     parser.add_argument("--json", action="store_true", help="the census as JSON")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(given)
     modules = census(Path(args.root))
     if args.command == "census":
         if args.json:
