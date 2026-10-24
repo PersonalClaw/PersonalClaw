@@ -24,6 +24,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Security
 
 - **The desktop app runs Electron 44.9.1, which stops trusting the compromised eMudhra intermediate certificates (GHSA-jr5w-w6x2-84p9, high).**
+- **The gateway image's agent CLIs install body-parser 2.4.0, which fixes a denial of service through trailing bytes after a compressed request body (GHSA-27r3-jxmh-p828, high).**
 
 ## [0.2.6] — 2026-10-22
 
