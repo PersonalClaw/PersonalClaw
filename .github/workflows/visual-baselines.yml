@@ -17,6 +17,8 @@ name: Refresh visual baselines
 
 on:
   workflow_dispatch:
+  # Scratch (#3943): run once on this draft's own push, never merged.
+  pull_request:
 
 permissions:
   contents: read
