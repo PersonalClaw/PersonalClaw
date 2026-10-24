@@ -35,17 +35,18 @@ _RELEASE_GATE_IMAGE = "personalclaw-gateway:release-dashboard"
 
 def test_workflow_runs_the_smoke_tool_against_the_image_it_built() -> None:
     """It must not quietly test `:latest` — that answers about a past release, not this diff.
-    The smoke runs the build step's own image, by its content ID, so no tag can stand in."""
+    The smoke runs the build's own image, by the content ID the build wrote, so no tag can stand
+    in."""
     workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
-    steps = workflow["jobs"]["single-container"]["steps"]
-    build = next(s for s in steps if s.get("id") == "image")
-    assert str(build["uses"]).startswith("docker/build-push-action@")
-    assert build["with"]["file"] == "deploy/docker/Dockerfile.backend"
-    assert build["with"]["target"] == "runtime"
-    assert build["with"]["load"] is True
-    smoke = next(s for s in steps if "docker_single_container_smoke.py" in str(s.get("run")))
-    assert smoke["run"] == 'python3 tools/docker_single_container_smoke.py --image "$IMAGE"'
-    assert smoke["env"] == {"IMAGE": "${{ steps.image.outputs.imageid }}"}
+    runs = [str(s.get("run", "")) for s in workflow["jobs"]["single-container"]["steps"]]
+    assert (
+        "docker build --file deploy/docker/Dockerfile.backend --target runtime"
+        ' --iidfile "$RUNNER_TEMP/gateway-image.id" .'
+    ) in runs
+    assert (
+        "python3 tools/docker_single_container_smoke.py"
+        ' --image-id-file "$RUNNER_TEMP/gateway-image.id"'
+    ) in runs
 
 
 def _release_jobs(path: Path = _ARTIFACTS_WORKFLOW) -> dict[str, object]:

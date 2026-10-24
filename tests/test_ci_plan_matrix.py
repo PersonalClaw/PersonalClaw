@@ -138,7 +138,6 @@ def test_an_entry_carries_what_its_job_needs_to_run() -> None:
         "stage": 1,
         "slug": "python-suite-2-3",
         "history": False,
-        "image": False,
         "programs": [],
         "external": [],
     }
@@ -322,18 +321,6 @@ def test_an_entry_takes_the_whole_history_when_its_job_reads_a_base() -> None:
     )
     by_key = {e["key"]: e for e in _matrix(None, text)["include"]}
     assert by_key["rails"]["history"] is True and by_key["security"]["history"] is False
-
-
-def test_an_entry_that_smokes_the_gateway_image_has_its_stage_job_build_it() -> None:
-    """``image``: a step names ``{image}``, which the stage job's build fills, and no other
-    entry's stage job builds one."""
-    text = _TEXT.replace(
-        'command = [{ argv = ["uv", "run", "pytest", "tests/rails"] }]',
-        'command = [{ argv = ["python3", "smoke.py", "--image", "{image}"] }]',
-    )
-    by_key = {e["key"]: e for e in _matrix(None, text)["include"]}
-    assert by_key["rails"]["image"] is True
-    assert [k for k, e in by_key.items() if e["image"]] == ["rails"]
 
 
 def test_an_entry_names_its_external_inputs() -> None:

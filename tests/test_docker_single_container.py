@@ -179,6 +179,26 @@ def test_retarget_reads_an_unknown_value_flags_value_as_the_image() -> None:
     )
 
 
+def test_the_image_id_file_names_the_build_by_its_content_id(tmp_path: Path) -> None:
+    """``--image-id-file`` reads what ``docker build --iidfile`` wrote: the build's own image."""
+    built = "sha256:" + "ab" * 32
+    (tmp_path / "gateway-image.id").write_text(built, encoding="utf-8")
+    assert smoke.image_id(tmp_path / "gateway-image.id") == built
+
+
+@pytest.mark.parametrize("held", ["", "personalclaw-gateway:latest", "sha256:abc", "ab" * 32])
+def test_an_image_id_file_with_no_content_id_is_unmeasurable(tmp_path: Path, held: str) -> None:
+    """A build that wrote no ID, or a tag in its place, is a run that could not measure."""
+    (tmp_path / "gateway-image.id").write_text(held, encoding="utf-8")
+    with pytest.raises(smoke.Unmeasurable, match="holds no image content ID"):
+        smoke.image_id(tmp_path / "gateway-image.id")
+
+
+def test_a_missing_image_id_file_is_unmeasurable(tmp_path: Path) -> None:
+    with pytest.raises(smoke.Unmeasurable, match="no image ID file"):
+        smoke.image_id(tmp_path / "gateway-image.id")
+
+
 def test_readme_extraction_is_unmeasurable_when_the_command_is_gone(tmp_path: Path) -> None:
     """Zero commands is the change's starting state, and it must read as unmeasurable, not pass."""
     readme = tmp_path / "README.md"
