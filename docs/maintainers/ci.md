@@ -1710,7 +1710,14 @@ shadow mode, and the recall study.
   (`jobs.install_chromium`): Playwright's build without apt within 5 minutes, a check that
   Chromium starts within 2, and only when that check fails its system libraries from apt within
   5 more, named as the apt mirror when they do not finish, then the check again. A hung mirror
-  holds the job for that bound, never its whole limit.
+  holds the job for that bound, never its whole limit. Electron's setuid sandbox helper
+  (`tools/ci/sandbox_helper.sh`) is made root's 4755 only on a GitHub-hosted Linux runner, which
+  a workflow step reads from `GITHUB_ACTIONS` and `RUNNER_ENVIRONMENT` and a step under run-job
+  never gets. So run-job reads the runner from its own process environment (`RUNNER_ENVIRONMENT`
+  of `github-hosted` and an `ImageOS`, on Linux: `jobs.github_hosted_linux`), and gives the
+  commands that run the helper, the `electron` install and a step that runs it, the marker
+  `PCLAW_SANDBOX_HELPER_HOST=github-hosted`, and no other command. No catalogue entry may set
+  it, and one forged in a local caller's shell never reaches a step.
 - **Caches, managed Pythons and the project venv** go under `.local/run-job/cache`, never the
   caller's own: uv's cache and Pythons, the venv `uv sync` installs, npm's cache and the
   Playwright browsers. `npm ci` reinstalls the checkout's own `node_modules`, as it does on CI,
