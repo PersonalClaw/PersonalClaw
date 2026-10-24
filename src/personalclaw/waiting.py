@@ -827,8 +827,16 @@ def _call_later(loop: asyncio.AbstractEventLoop, delay: float, callback: Any, *a
 
 
 def _ring(state: Any) -> None:
+    """The window closed: the list rings. It runs on the loop as the window's timer callback, so it
+    keeps :func:`changed`'s promise too: a ring that cannot be sent (a state with no socket to send
+    on, a send that fails) is lost, the readers' slow poll still sees the change, and nothing is
+    raised into the loop. Raised there, it reached whatever ran the loop: a test's runner reported
+    it as the test failing, on a machine slow enough for a run to outlast the window (#3905)."""
     state._waiting_bell.handle = None
-    state.broadcast_ws(CHANGED, {})
+    try:
+        state.broadcast_ws(CHANGED, {})
+    except Exception:  # noqa: BLE001 — a lost ring leaves the readers' slow poll, never a failure
+        logger.debug("waiting list: could not ring", exc_info=True)
 
 
 def changed_elsewhere() -> None:
