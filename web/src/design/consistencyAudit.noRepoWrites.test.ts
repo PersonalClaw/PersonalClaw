@@ -73,6 +73,9 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
   'design/e2eMergedRun.test.ts':
     'Writes planted merged reports for the run check, and leg folders of stand-in blobs for the ' +
     'leg merge, to prove each reds on the run it exists to refuse.',
+  'design/platformBaselines.test.ts':
+    'Writes planted CI reports, and the -linux set `e2e/platform-baselines.mjs` writes from them, under ' +
+    'a temporary folder, to prove it writes each surface\'s two files and refuses a report missing a theme or a tree.',
   'design/uiQualityReport.test.ts':
     'Writes planted merged reports, and a step summary file, under a temporary folder for the UI ' +
     'quality check\'s report, to prove it names every failed step and reds on a report that measured nothing.',
