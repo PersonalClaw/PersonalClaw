@@ -1,16 +1,19 @@
 import { expect, test, type Page } from '@playwright/test'
-import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, type ReducedMotionOpen } from './routes'
+import {
+  ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, axisShots, type ReducedMotionOpen, type VisualAxis,
+} from './routes'
 import {
   seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations,
 } from './helpers'
 
 // ── Visual-regression baselines — every nav route × both themes ─────────────
-// This is the safety rail. Capture baselines BEFORE touching a surface:
-//   npm run e2e:update        (regenerates all baselines)
-//   npm run e2e               (verifies against baselines — must be ZERO diff)
-// A consistency fix that forces a REAL visual change: implement it, run
-// e2e:update for that surface, and say in the change's description which baselines
-// moved and why (e2e/README.md). Never silently keep/revert a visual change.
+// This is the safety rail. Its baselines are made and compared against the pinned image's browser
+// alone (`e2e/run-pinned.mjs`, #3943), and every one is `-linux`:
+//   the Refresh visual baselines workflow   (regenerates them, as an artifact to review)
+//   npm run e2e:visual                     (verifies against them — must be ZERO diff)
+// A consistency fix that forces a REAL visual change: implement it, dispatch the workflow on the
+// branch, and say in the change's description which baselines moved and why (e2e/README.md).
+// Never silently keep/revert a visual change.
 //
 // ── This spec needs a PRISTINE gateway, and that is a command-level contract ─
 // Both commands above run this file as their OWN invocation, and the `@visual`
@@ -163,6 +166,50 @@ for (const { key, theme, route, open } of REDUCED_MOTION_SHOTS) {
         if (!(await settleDom(page, undefined, BUDGET.settleMs))) exhausted.push(`settleDom (the ${open})`)
         if (!(await settleEntranceAnimations(page, BUDGET.fadeMs))) exhausted.push(`settleEntranceAnimations (the ${open})`)
       }
+      const settle = { settled: exhausted.length === 0, exhausted }
+      await expectRouteScreenshot(page, key, settle)
+    })
+  })
+}
+
+// ── The axes: every route in both themes again, at each way a user asks it to differ ────────────
+// `routes.ts`'s VISUAL_AXES. Each shot proves its axis was in force on the page it photographs before
+// the capture, since a picture of the default page is otherwise indistinguishable from a clean
+// result: the width, the doubled root font, or the media queries forced colours answer. Text zoom is
+// applied once the route is at rest, as the UI matrix applies it, and the page is settled again after
+// it. The titles carry no `(#/`: these are not route scans, so `assert-no-route-skips.mjs` does not
+// count them.
+const AXIS_USE: Record<VisualAxis, Parameters<typeof test.use>[0]> = {
+  '390px': { viewport: { width: 390, height: 844 } },
+  'text-200': {},
+  'high-contrast': { forcedColors: 'active', contrast: 'more' },
+}
+
+const AXIS_IN_FORCE: Record<VisualAxis, (page: Page) => Promise<boolean>> = {
+  '390px': (page) => page.evaluate(() => window.innerWidth === 390),
+  'text-200': (page) => page.evaluate(() => document.documentElement.dataset.pcTextZoom === '200'),
+  'high-contrast': (page) =>
+    page.evaluate(() => matchMedia('(forced-colors: active)').matches && matchMedia('(prefers-contrast: more)').matches),
+}
+
+for (const { key, axis, theme, route, label } of axisShots()) {
+  test.describe(`visual: ${key}`, { tag: '@visual' }, () => {
+    test.describe.configure({ timeout: 300_000 })
+    test.use(AXIS_USE[axis])
+    test(`${label} at ${axis}`, async ({ page }) => {
+      await assertPristineFlywheel(page)
+      await seedTheme(page, theme)
+      const loaded = await gotoRoute(page, route, BUDGET)
+      const exhausted = [...loaded.exhausted]
+      if (axis === 'text-200') {
+        await page.evaluate(() => {
+          const root = document.documentElement
+          root.style.fontSize = `${(parseFloat(getComputedStyle(root).fontSize) || 16) * 2}px`
+          root.dataset.pcTextZoom = '200'
+        })
+        if (!(await settleDom(page, undefined, BUDGET.settleMs))) exhausted.push('settleDom (200% text)')
+      }
+      expect(await AXIS_IN_FORCE[axis](page), `${key}: ${axis} is not in force, so this would photograph the default page`).toBe(true)
       const settle = { settled: exhausted.length === 0, exhausted }
       await expectRouteScreenshot(page, key, settle)
     })

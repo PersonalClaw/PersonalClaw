@@ -77,9 +77,6 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
     'Lays out a scratch repository of the repository\'s shape (the freshness script, web/ sources, a ' +
     'stamped dist and a preview that serves it) and a stand-in spec, to prove the real config\'s preview ' +
     'server refuses a stale or unstamped dist before any test runs, naming the freshness check.',
-  'design/platformBaselines.test.ts':
-    'Writes planted CI reports, and the -linux set `e2e/platform-baselines.mjs` writes from them, under ' +
-    'a temporary folder, to prove it writes each surface\'s two files and refuses a report missing a theme or a tree.',
   'design/uiQualityReport.test.ts':
     'Writes planted merged reports, and a step summary file, under a temporary folder for the UI ' +
     'quality check\'s report, to prove it names every failed step and reds on a report that measured nothing.',
