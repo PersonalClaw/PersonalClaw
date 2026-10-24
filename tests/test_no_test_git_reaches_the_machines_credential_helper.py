@@ -179,6 +179,18 @@ def _without(*names: str) -> dict[str, str]:
     return {k: v for k, v in _NEUTRAL.items() if k not in names}
 
 
+def _at_the_real_home(value: str) -> str:
+    """*value* with a leading ``~`` as the guard reads the machine's home: from the user database,
+    never from ``$HOME``. A run with a scratch ``$HOME`` (``tools/ci`` run-job's every step) still
+    names the real home's ``.gitconfig`` here, the one the guard must refuse."""
+    real = _suite().REAL_HOME
+    if value == "~":
+        return real
+    if value.startswith("~/"):
+        return os.path.join(real, value[2:])
+    return value
+
+
 @pytest.mark.parametrize(
     ("argv", "env", "says"),
     [
@@ -226,11 +238,24 @@ def _without(*names: str) -> dict[str, str]:
 )
 def test_each_way_a_git_could_reach_the_machines_helper_is_refused(argv, env, says):
     env = {
-        k: os.path.expanduser(v) if k in ("HOME", "GIT_CONFIG_GLOBAL") else v
-        for k, v in env.items()
+        k: _at_the_real_home(v) if k in ("HOME", "GIT_CONFIG_GLOBAL") else v for k, v in env.items()
     }
     why = _guard().refusal(argv, env)
     assert says in why, why
+
+
+def test_the_real_home_cases_name_the_real_home_under_a_scratch_home(monkeypatch):
+    """Under run-job a step's ``$HOME`` is its scratch home, and the guard still names the real
+    one; so do these cases (merge.yml run 40053059413 read ``~`` as the scratch home, and the
+    guard rightly let the job's own ``.gitconfig`` through)."""
+    monkeypatch.setenv("HOME", str(Path(_suite().REAL_HOME) / "a-scratch-home"))
+    assert _at_the_real_home("~") == _suite().REAL_HOME
+    assert _at_the_real_home("~/.gitconfig") == os.path.join(_suite().REAL_HOME, ".gitconfig")
+    assert _at_the_real_home("/elsewhere/.gitconfig") == "/elsewhere/.gitconfig"
+    why = _guard().refusal(
+        ["git", "push"], {**_NEUTRAL, "GIT_CONFIG_GLOBAL": _at_the_real_home("~/.gitconfig")}
+    )
+    assert "global git" in why, why
 
 
 def _config(path: Path, text: str) -> Path:
