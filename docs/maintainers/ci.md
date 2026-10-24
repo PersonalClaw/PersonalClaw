@@ -1719,6 +1719,11 @@ shadow mode, and the recall study.
 - **The job's time** is its `timeout_min` less a minute, shared by every step, so the loader
   refuses a `timeout_min` under 2. A pytest step still running when it runs out prints
   `possible xdist hang` and lists its group's live processes before the group is stopped.
+  Which test it hung on is in `reports/in-flight-<leg>.txt` beside the job's JUnit report
+  (`tests/in_flight.py`): the xdist controller rewrites the tests started and not finished, oldest
+  first, every 10 s, so after a hang the oldest is the test. It arms nothing in a worker, and a
+  run that ends leaves it empty. merge.yml keeps it with the entry's `reports/`; ci.yml's suite
+  legs upload it as `in-flight-<shard>`, on a cancel too.
 - **Its reports.** Each JUnit report the job declares must exist and be newer than the job's
   start, or the job is red: a pytest that died before writing one is red, not green.
 - **One record per job, or per shard.** `verdict.job_record` writes its key, result, head,

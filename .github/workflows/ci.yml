@@ -791,6 +791,17 @@ jobs:
           path: reports/real-home-guard.txt
           if-no-files-found: ignore
           retention-days: 7
+      # The tests started and not finished (tests/in_flight.py), rewritten every 10 s by the
+      # xdist controller: a shard stopped on a hung test, whose log is dots alone, names it here,
+      # oldest first. Kept on a cancel too.
+      - name: Upload the tests in flight (shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: in-flight-shard-${{ matrix.shard }}
+          path: reports/in-flight-test-shard-${{ matrix.shard }}.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
   test:
     # ── Aggregation gate for the sharded suite above ──────────────────────────────────────────
@@ -976,6 +987,14 @@ jobs:
         with:
           name: real-home-guard-macos-${{ matrix.shard }}
           path: reports/real-home-guard.txt
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload the tests in flight (macOS shard ${{ matrix.shard }})
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: in-flight-macos-${{ matrix.shard }}
+          path: reports/in-flight-test-macos-${{ matrix.shard }}.txt
           if-no-files-found: ignore
           retention-days: 7
 

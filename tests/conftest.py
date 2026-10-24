@@ -12,6 +12,7 @@ import sys
 import types
 from pathlib import Path
 
+import in_flight
 import native_omp_guard
 import pycache_guard
 import pytest
@@ -294,6 +295,9 @@ def pytest_configure(config):
     if config.getoption("--fixture-costs"):
         config.pluginmanager.register(fixture_costs.Plugin(config.rootpath), "fixture-costs")
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
+    # The tests started and not finished, beside the JUnit report, so a hung shard names its test
+    # (tests/in_flight.py). The controller's alone; a worker arms nothing.
+    in_flight.configure(config)
     config.pluginmanager.register(container_runtime.Plugin(), "container-runtime-guard")
     config.pluginmanager.register(
         state_leak_guard.Plugin(config, listening=lambda: frozenset(port_guard.GUARD.own_ports())),
