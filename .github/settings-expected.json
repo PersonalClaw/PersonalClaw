@@ -3,8 +3,8 @@
   "repositories": {
     "PersonalClaw/PersonalClaw": {
       "merge methods": {
-        "allow_merge_commit": true,
-        "allow_rebase_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
         "allow_squash_merge": true
       },
       "classic protection": null,
@@ -95,8 +95,8 @@
     },
     "PersonalClaw/PersonalClawApps": {
       "merge methods": {
-        "allow_merge_commit": true,
-        "allow_rebase_merge": true,
+        "allow_merge_commit": false,
+        "allow_rebase_merge": false,
         "allow_squash_merge": true
       },
       "classic protection": null,

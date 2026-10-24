@@ -9,7 +9,10 @@ Its rules:
 
 - `pull_request`: a change reaches `main` only as the merge of a pull request, with 0
   approvals, stale reviews dismissed on a push, and every conversation resolved, as classic
-  protection held it. Squash and rebase merges are allowed; #3910 makes squash the only one.
+  protection held it. Squash is the only merge method (#3910), in the ruleset and in the
+  repository settings, so every commit on `main` is a tree a pull request's checks tested. A
+  squash keeps the author and every commit's `Signed-off-by`, which #3908's check reads on the
+  push to `main`.
   GitHub's `require_extra_approval_for_unattributed_changes` is off, as nothing in classic
   protection asked for it.
 - `required_linear_history`, `non_fast_forward` (no force push) and `deletion`.
