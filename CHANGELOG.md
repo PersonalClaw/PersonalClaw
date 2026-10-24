@@ -14,6 +14,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **`personalclaw doctor --crypto` checks the cryptography library an install carries: a Fernet round trip and an X.509 certificate made and parsed back, with its version and its OpenSSL's.**
 - **The `personalclaw-client` package on PyPI is now built, smoked and recorded with the rest of each release: its wheel is installed and imported on its own, checked to be the release's version, and its digest is in the release manifest beside every other artifact's. It used to be built from source at the moment it was published, and nothing checked it first.**
 
+### Changed
+
+- **The Nix flake installs 0.2.7. It had stayed on 0.2.2, so a Nix install missed the five releases since, among them Pillow 13, which fixes the JPEG decoder's heap overflow and eight other image advisories, and the certifi bundle that drops the root certificates whose intermediate keys were compromised. Both are built from the files 0.2.7's lock pins, as `uv sync --locked` installs them.**
+
 ### Fixed
 
 - **Stopping `personalclaw update` with an interrupt (Ctrl-C, or a signal from a service manager) no longer leaves its installer running.**

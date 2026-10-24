@@ -50,12 +50,12 @@ let
 
   app = python.pkgs.buildPythonPackage {
     pname = "personalclaw";
-    version = "0.2.2";
+    version = "0.2.7";
     format = "wheel";
 
     src = fetchurl {
-      url = "https://files.pythonhosted.org/packages/d7/12/1ce240573b530e129d03d1d461929fc94a51356a3c1a9552f671dc686e70/personalclaw-0.2.2-py3-none-any.whl";
-      hash = "sha256-69gXSQYE8eKk+UfEoDrRirdSoNasmyIiusHManlK8QM=";
+      url = "https://files.pythonhosted.org/packages/ef/d0/717853f7163877aaa9226b00426eab1da29cafa7e4cc964e601540ba101f/personalclaw-0.2.7-py3-none-any.whl";
+      hash = "sha256-WQ+gVPhBsKvNxDjDi6v0uD6Db1ujET/JUGleO9HVDiE=";
     };
 
     # `pysqlite3-binary` is not in nixpkgs, and it is an OPTIONAL ACCELERATOR, not a
@@ -77,6 +77,7 @@ let
         websockets
         cron-descriptor
         croniter
+        python-dateutil
         numpy
         snowballstemmer
         packaging
@@ -94,6 +95,7 @@ let
         tree-sitter
         tree-sitter-language-pack
         httpx
+        certifi
         pyyaml
         python-dotenv
         tzdata
