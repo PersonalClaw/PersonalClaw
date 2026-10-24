@@ -21,6 +21,11 @@ Two ways a tip leaves the feed, both hide-only:
 **Propose-don't-write (the soul guardrail, unchanged):** every tip only *points*
 (a deep link into an existing page) and *hides* (dismiss / auto-hide). Nothing here ever
 enables or configures a feature on the user's behalf — the human acts.
+
+**In-turn tips (#5098):** a long turn also shows one tip in its working area. The
+cadence counters (one per turn, three per day, none in the first five turns of a fresh
+install's first chat) live beside the dismissals in the same settings file, so every
+window agrees. See :func:`select_turn_tip` and :func:`record_turn_tip`.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -35,6 +41,11 @@ logger = logging.getLogger(__name__)
 # entity_settings key + field for dismissals (the notifications.json pattern).
 _ENTITY = "legibility"
 _DISMISSED_FIELD = "dismissed_discover_tips"
+
+# In-turn tip cadence, kept beside the dismissals so every window agrees (#5098).
+_TURN_TIPS_FIELD = "turn_tips"
+_TURN_TIPS_PER_DAY = 3
+_TURN_TIPS_ONBOARDING_TURNS = 5
 
 
 @dataclass(frozen=True)
@@ -455,6 +466,86 @@ def clear_dismissed() -> int:
     _save_entity_settings(_ENTITY, current)
     logger.info("discover: cleared %d dismissal(s) at the user's request", removed)
     return removed
+
+
+# ── in-turn tip cadence (#5098) ──────────────────────────────────────────────
+
+
+def _load_turn_tips() -> dict[str, Any]:
+    """The stored in-turn tip counters (empty on any read error).
+
+    Shape: ``{"day": "YYYY-MM-DD", "shown_today": int, "turns_seen": int}``. Kept in
+    the same settings file as the dismissals so every window agrees on the counts.
+    """
+    from personalclaw.providers.entity_routes import _load_entity_settings
+
+    raw = _load_entity_settings(_ENTITY) or {}
+    state = raw.get(_TURN_TIPS_FIELD, {})
+    return state if isinstance(state, dict) else {}
+
+
+def _save_turn_tips(state: dict[str, Any]) -> None:
+    from personalclaw.providers.entity_routes import (
+        _load_entity_settings,
+        _save_entity_settings,
+    )
+
+    current = _load_entity_settings(_ENTITY) or {}
+    current[_TURN_TIPS_FIELD] = state
+    _save_entity_settings(_ENTITY, current)
+
+
+def _shown_today(state: dict[str, Any], today: str) -> int:
+    if state.get("day") != today:
+        return 0
+    try:
+        return int(state.get("shown_today", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def select_turn_tip(
+    *,
+    state: Any = None,
+    today: str | None = None,
+    turn_index: int | None = None,
+) -> DiscoverTip | None:
+    """The one tip a long turn may show, or ``None`` when cadence forbids it.
+
+    Honors the same hiding rules as the feed (dismissed, area already used) and the
+    cadence: at most one per turn (the caller shows it once), three per day, and none
+    in the first five turns of a fresh install's first chat. The caller is responsible
+    for the yield rules (approval/question/error showing, composer text, incognito,
+    phone) — those are UI state this module cannot see.
+    """
+    from personalclaw.config.loader import AppConfig
+
+    if not AppConfig.load().legibility.discover_tips:
+        return None
+
+    day = today or date.today().isoformat()
+    counters = _load_turn_tips()
+    if _shown_today(counters, day) >= _TURN_TIPS_PER_DAY:
+        return None
+    if turn_index is not None and turn_index < _TURN_TIPS_ONBOARDING_TURNS:
+        return None
+
+    dismissed = load_dismissed()
+    engaged = compute_engaged(state)
+    visible = select_visible(dismissed=dismissed, engaged=engaged)
+    return visible[0] if visible else None
+
+
+def record_turn_tip(*, today: str | None = None) -> None:
+    """Count one in-turn tip as shown for *today* (resets the day on rollover)."""
+    day = today or date.today().isoformat()
+    counters = _load_turn_tips()
+    shown = _shown_today(counters, day) + 1
+    try:
+        turns_seen = int(counters.get("turns_seen", 0))
+    except (TypeError, ValueError):
+        turns_seen = 0
+    _save_turn_tips({"day": day, "shown_today": shown, "turns_seen": turns_seen})
 
 
 # ── the payload ──────────────────────────────────────────────────────────────
