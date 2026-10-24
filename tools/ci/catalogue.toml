@@ -50,7 +50,9 @@ jobs = [
 every_push = ["browse-live", "security", "apps-contract"]
 
 # A failed static step's output is a pull request's lint remediation (lint_feedback): run-job
-# leaves it, the stage job uploads it as lint-feedback, and pr-feedback.yml posts it.
+# leaves it, the stage job uploads it as lint-feedback, and pr-feedback.yml posts it. The asset
+# licences are checked here, from the tracked tree alone, so the pre-push hook checks them with no
+# npm install.
 [[job]]
 id = "static"
 tiers = ["change", "merge"]
@@ -69,6 +71,7 @@ command = [
   { argv = ["uv", "run", "flake8", "src/personalclaw", "tests", "harness", "scripts", "tools/ci"] },
   { argv = ["uv", "run", "mypy", "src/personalclaw", "harness", "tools/ci"] },
   { argv = ["uv", "run", "python", "scripts/lint_bundled_apps.py"] },
+  { argv = ["uv", "run", "python", "scripts/check_asset_licenses.py"] },
   { argv = ["sh", "-n", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
   { argv = ["dash", "-n", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
   { argv = ["shellcheck", "-s", "sh", "deploy/website/install.sh"], env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },
@@ -95,13 +98,14 @@ shards = 3
 needs_node = true
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-rails-{shard}.xml"]
+prepush = false  # all of tests/rails: CI is its gate, not the pre-push hook
 command = [
   { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails", "--shard-list", "tools/ci/rails-leg-{shard}.txt", "--junitxml=reports/junit-rails-{shard}.xml"], env = { BASE_SHA = "{base}" } },
 ]
 
 # The checks that ran beside the rails before they were split into legs: the census's own
-# verdict (which also holds every rail to exactly one leg), the asset licences, the gate
-# aggregate and the npm advisory floors over the installed tree. Every plan holds it, as it holds
+# verdict (which also holds every rail to exactly one leg), the gate aggregate and the npm
+# advisory floors over the installed tree. The asset licences moved to static. Every plan holds it, as it holds
 # the rails, whatever its inputs (catalogue.RAILS_CHECKS_JOB), and a merge tier whose rails run in
 # legs without it is refused.
 [[job]]
@@ -118,9 +122,9 @@ timeout_min = 10
 needs_node = true
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-npm-floors.xml"]
+prepush = false  # an npm install: CI is its gate, not the pre-push hook
 command = [
   { argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] },
-  { argv = ["uv", "run", "python", "scripts/check_asset_licenses.py"] },
   { argv = ["uv", "run", "python", "scripts/gate_report.py"] },
   { argv = ["uv", "run", "pytest", "tests/test_npm_advisory_floors.py", "--junitxml=reports/junit-npm-floors.xml"], env = { PERSONALCLAW_REQUIRE_NPM_TREE = "1" } },
 ]
@@ -239,6 +243,7 @@ python = "3.12.15"
 timeout_min = 25
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
 junit = ["reports/junit-security-corpus.xml"]
+prepush = false  # the security corpus: CI is its gate, not the pre-push hook
 command = [
   { argv = ["uv", "run", "pytest", "--junitxml=reports/junit-security-corpus.xml", "tests/security", "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"] },
 ]
@@ -658,6 +663,7 @@ junit = ["reports/junit-client.xml"]
 install_exemptions = [
   { install = "uv pip install --python .venv-client packages/personalclaw-client-py[dev]", reason = "the client is not part of core's uv workspace and has no lock of its own" },
 ]
+prepush = false  # a client build and its suite: CI is its gate, not the pre-push hook
 command = [
   { argv = ["uv", "build", "packages/personalclaw-client-py", "--out-dir", "dist-client"] },
   { argv = ["uv", "venv", ".venv-client"] },
@@ -683,6 +689,7 @@ workers_env = "VITEST_MAX_WORKERS"
 needs_node = true
 # Vitest writes it under CI (web/vitest.config.ts), and run-job reruns its failed tests from it.
 junit = ["reports/junit-web-unit.xml"]
+prepush = false  # the web suite: CI is its gate, not the pre-push hook
 command = [
   { argv = ["npm", "run", "typecheck:web"] },
   { argv = ["npm", "run", "test:web"] },

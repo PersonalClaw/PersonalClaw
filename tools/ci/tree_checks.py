@@ -121,7 +121,7 @@ CHECKS: Mapping[str, Check] = {
         sources=(_STRUCTURAL_TREE,),
     ),
     "asset-licences": Check(
-        owner="rails-checks: python scripts/check_asset_licenses.py",
+        owner="static: python scripts/check_asset_licenses.py",
         entries={
             (_ASSETS, "violations"): NO_ARGS,
             (_ASSETS, "asset_paths"): NO_ARGS,

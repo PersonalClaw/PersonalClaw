@@ -44,9 +44,9 @@ from tools.ci.tree_checks import CHECKS, module_copies
 
 #: The calls that still run a check on the real tree in the suite. None is left: the gate
 #: aggregate's tests run every gate on stubs, the render tests render a small tree of their
-#: own, and each real-tree check is its owning job's (``scripts/gate_report.py`` and
-#: ``scripts/check_asset_licenses.py`` in rails-checks, ``harness validate`` and the whole-tree
-#: ``harness scan`` in harness) or a rail's, for what that job does not check.
+#: own, and each real-tree check is its owning job's (``scripts/gate_report.py`` in
+#: rails-checks, ``scripts/check_asset_licenses.py`` in static, ``harness validate`` and the
+#: whole-tree ``harness scan`` in harness) or a rail's, for what that job does not check.
 #: ``(check, "path::test")``; a new copy fails.
 KNOWN_COPIES: frozenset[tuple[str, str]] = frozenset()
 

@@ -8722,14 +8722,14 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             _CI,
             "uv run pytest tests/test_website_installer.py --junitxml",
             "uv run pytest --junitxml",
-            expect="static: command step 9",
+            expect="static: command step 10",
         ),
         _plant(
             "ci.yml's rails-checks job no longer running the npm floors' tests",
             _CI,
             "run: uv run pytest tests/test_npm_advisory_floors.py --junitxml",
             "run: uv run pytest --junitxml",
-            expect="rails-checks: command step 4",
+            expect="rails-checks: command step 3",
         ),
         _plant(
             "the first random-order seed drawn from another number than the run's",
@@ -8933,7 +8933,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n',
             '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n' * 2,
-            expect="rails-checks: command step 4 repeats command step 3",
+            expect="rails-checks: command step 3 repeats command step 2",
         ),
         _plant(
             "one line held by two entries",
@@ -14298,6 +14298,328 @@ EVERY_PYTEST_STEP_WRITES_JUNIT_AND_EVERY_UNLOCKED_INSTALL_IS_NAMED = Row(
 )
 
 ROWS = (*ROWS, EVERY_PYTEST_STEP_WRITES_JUNIT_AND_EVERY_UNLOCKED_INSTALL_IS_NAMED)
+
+
+# ── The pre-push hook runs the change tier, and runs nothing of its own (#3920) ──────────────
+
+_PREPUSH = "scripts/run_prepush.sh"
+
+#: The programs a check command starts: a hook line naming one runs a check of its own.
+_CHECK_PROGRAMS = frozenset(
+    {
+        "black",
+        "isort",
+        "flake8",
+        "mypy",
+        "ruff",
+        "pylint",
+        "pytest",
+        "vitest",
+        "jest",
+        "playwright",
+        "npm",
+        "npx",
+        "pnpm",
+        "yarn",
+        "node",
+        "tsc",
+        "eslint",
+        "prettier",
+        "shellcheck",
+        "dash",
+        "uv",
+        "uvx",
+        "make",
+    }
+)
+
+#: How the hook runs the change tier, which is all it may run.
+_HOOK_RUNS_THE_TIER = re.compile(r'"\$python" -m tools\.ci run change --pre-push\b')
+
+
+def _hook_command_lines(text: str) -> list[str]:
+    """The hook's lines that may start a program: no comment, no ``echo`` or ``printf`` (their
+    words are prose), and no comment trailing a command."""
+    lines = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or re.match(r"(echo|printf)\b", line):
+            continue
+        lines.append(re.sub(r"\s+#\s.*$", "", line))
+    return lines
+
+
+def _hook_check(root: Path) -> list[str]:
+    text = (root / _PREPUSH).read_text(encoding="utf-8")
+    bad: list[str] = []
+    if not _HOOK_RUNS_THE_TIER.search(text):
+        bad.append(f"{_PREPUSH} does not run `python -m tools.ci run change --pre-push`")
+    for line in _hook_command_lines(text):
+        words = set(re.findall(r"[\w./-]+", line))
+        named = {w.rsplit("/", 1)[-1] for w in words} & _CHECK_PROGRAMS
+        named |= {w for w in words if w.endswith(".py") or w.startswith("scripts/")}
+        if named:
+            bad.append(
+                f"{_PREPUSH} runs a check command of its own: `{line}` ({', '.join(sorted(named))})"
+            )
+    return bad
+
+
+def _hook_scaffold(root: Path) -> None:
+    _write(root, _PREPUSH, (REPO / _PREPUSH).read_text(encoding="utf-8"))
+
+
+_HOOK_EXIT = 'echo "pre-push: the run took $(($(date +%s) - started))s."\n'
+
+THE_PRE_PUSH_HOOK_RUNS_NO_CHECK_COMMAND = Row(
+    name="the-pre-push-hook-runs-the-change-tier-and-no-check-command-of-its-own",
+    check=_hook_check,
+    scaffold=_hook_scaffold,
+    controls=(
+        *(
+            _plant(
+                f"a `{line}` line in the hook",
+                _PREPUSH,
+                _HOOK_EXIT,
+                _HOOK_EXIT + line + "\n",
+                expect="runs a check command of its own",
+            )
+            for line in (
+                ".venv/bin/black --check src/personalclaw tests",
+                "npm ci",
+                '"$python" scripts/check_asset_licenses.py',
+                "uv run pytest tests/test_x.py || status=1",
+            )
+        ),
+        _plant(
+            "a hook that no longer runs the tier",
+            _PREPUSH,
+            '"$python" -m tools.ci run change --pre-push',
+            '"$python" -m tools.ci run-job static',
+            expect="does not run `python -m tools.ci run change --pre-push`",
+        ),
+        _plant(
+            "a check named only in the hook's prose",
+            _PREPUSH,
+            _HOOK_EXIT,
+            _HOOK_EXIT + 'echo "run black and mypy before you push"  # prose\n',
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, THE_PRE_PUSH_HOOK_RUNS_NO_CHECK_COMMAND)
+
+#: The pytest options that take the next word as their value, so that word is no path.
+_PYTEST_VALUE_OPTIONS = frozenset(
+    {
+        "-n",
+        "--numprocesses",
+        "--dist",
+        "-k",
+        "-m",
+        "-p",
+        "-c",
+        "-o",
+        "-W",
+        "--shard-list",
+        "--maxfail",
+        "--tb",
+        "--rootdir",
+        "--basetemp",
+        "--junitxml",
+        "--junit-xml",
+        "--durations",
+        "--timeout",
+        "--deselect",
+        "--ignore",
+        "--confcutdir",
+    }
+)
+
+
+def _runs_a_test_suite(argv: Sequence[str]) -> str:
+    """Why a step runs a test suite, too slow for a push; empty for a step that does not. pytest
+    over named files does not; over a folder, or over no path at all, it does."""
+    args = catalogue.pytest_args(argv)
+    if args is not None:
+        if catalogue.collect_only(argv):
+            return ""
+        paths: list[str] = []
+        skip = False
+        for word in args:
+            if skip:
+                skip = False
+            elif word.startswith("-"):
+                skip = word in _PYTEST_VALUE_OPTIONS
+            else:
+                paths.append(word)
+        if not paths:
+            return "pytest over no path, so the whole suite"
+        folders = [w for w in paths if not w.split("::", 1)[0].endswith(".py")]
+        return f"pytest over {', '.join(folders)}" if folders else ""
+    words = list(argv)
+    names = [w.rsplit("/", 1)[-1] for w in words]
+    if "vitest" in names:
+        return "vitest"
+    if "playwright" in names and "test" in words[names.index("playwright") + 1 :]:
+        return "playwright test"
+    if names and names[0] in ("npm", "pnpm", "yarn"):
+        rest = words[1:]
+        script = rest[1] if rest[:1] == ["run"] and len(rest) > 1 else rest[0] if rest else ""
+        if script.startswith("test"):
+            return f"`{shlex.join(words)}`"
+    if names and names[0] == "make" and any(w.startswith("test") for w in words[1:]):
+        return f"`{shlex.join(words)}`"
+    return ""
+
+
+def _prepush_check(root: Path) -> list[str]:
+    try:
+        cat = catalogue.read(root)
+    except catalogue.CatalogueError as exc:
+        return [f"the catalogue cannot be read: {exc}"]
+    bad = []
+    for job in cat.tier("change"):
+        if not job.prepush:
+            continue
+        for step in job.command:
+            why = _runs_a_test_suite(step.argv)
+            if why:
+                bad.append(
+                    f"{job.id}: `{shlex.join(step.argv)}` runs {why} in the change tier, which "
+                    "the pre-push hook runs; its entry must say prepush = false and leave it to CI"
+                )
+    return bad
+
+
+_STATIC_LAST_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },\n]\n'
+
+
+def _static_step(argv: str) -> tuple[str, str]:
+    """static's command with one more step, *argv* given as TOML list items."""
+    return _STATIC_LAST_STEP, _STATIC_LAST_STEP[:-2] + f"  {{ argv = [{argv}] }},\n]\n"
+
+
+A_CHANGE_TIER_TEST_SUITE_IS_LEFT_TO_CI = Row(
+    name="a-change-tier-job-that-runs-a-test-suite-is-left-to-ci-not-the-pre-push-hook",
+    check=_prepush_check,
+    scaffold=_catalogue_only_scaffold,
+    controls=(
+        *(
+            _plant(
+                f"`{argv}` in a job the hook runs",
+                catalogue.CATALOGUE,
+                *_static_step(argv),
+                expect="its entry must say prepush = false",
+            )
+            for argv in (
+                '"uv", "run", "pytest", "-q", "tests", "--junitxml=reports/x.xml"',
+                '"uv", "run", "pytest", "--junitxml=reports/x.xml"',
+                '"uv", "run", "pytest", "-k", "tests", "--junitxml=r.xml"',
+                '"npm", "run", "test:web"',
+                '"npm", "test"',
+                '"make", "test"',
+                '"make", "test-visual"',
+                '"npx", "vitest", "run"',
+                '"npx", "playwright", "test", "--project=smoke"',
+            )
+        ),
+        _plant(
+            "the rails job's prepush = false taken away",
+            catalogue.CATALOGUE,
+            "prepush = false  # all of tests/rails",
+            "# all of tests/rails",
+            expect="rails: ",
+        ),
+        _plant(
+            "pytest over named files is no suite",
+            catalogue.CATALOGUE,
+            *_static_step('"uv", "run", "pytest", "tests/test_x.py::test_it", "--junitxml=r.xml"'),
+            fails=False,
+        ),
+        _plant(
+            "pytest that only collects is no suite",
+            catalogue.CATALOGUE,
+            *_static_step('"uv", "run", "pytest", "--collect-only", "-q", "tests"'),
+            fails=False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, A_CHANGE_TIER_TEST_SUITE_IS_LEFT_TO_CI)
+
+#: The workflows a release runs; one that runs the render smoke is a copy of it.
+_RELEASE_WORKFLOWS = ("release.yml", "release-artifacts.yml", "release-tag.yml")
+_SMOKE_PROJECT = re.compile(r"\bplaywright\s+test\b[^\n]*--project[= ]smoke\b")
+
+
+def _render_smoke_check(root: Path) -> list[str]:
+    try:
+        cat = catalogue.read(root)
+    except catalogue.CatalogueError as exc:
+        return [f"the catalogue cannot be read: {exc}"]
+    merge = [
+        j.id
+        for j in cat.tier("merge")
+        if any(_SMOKE_PROJECT.search(" ".join(s.argv)) for s in j.command)
+    ]
+    release = [
+        name
+        for name in _RELEASE_WORKFLOWS
+        if _SMOKE_PROJECT.search(
+            (root / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        )
+    ]
+    if merge or release:
+        return []
+    return [
+        "no merge-tier job and no release workflow runs the render smoke (Playwright's `smoke` "
+        "project), and the pre-push hook no longer runs it, so no copy is left"
+    ]
+
+
+def _render_smoke_scaffold(root: Path) -> None:
+    _catalogue_only_scaffold(root)
+    for name in _RELEASE_WORKFLOWS:
+        rel = f".github/workflows/{name}"
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+
+
+_E2E_SMOKE = '"npx", "playwright", "test", "--project=smoke", "--project=chromium"'
+_E2E_NO_SMOKE = '"npx", "playwright", "test", "--project=chromium"'
+
+
+def _release_runs_the_smoke(root: Path) -> None:
+    rel = ".github/workflows/release-artifacts.yml"
+    text = (root / rel).read_text(encoding="utf-8")
+    _write(root, rel, text + "        run: npx playwright test --project=smoke\n")
+
+
+THE_RENDER_SMOKE_HAS_A_COPY_IN_CI = Row(
+    name="the-render-smoke-runs-in-the-merge-tier-or-the-release",
+    check=_render_smoke_check,
+    scaffold=_render_smoke_scaffold,
+    controls=(
+        _plant(
+            "the merge tier's smoke project taken away, with none in the release",
+            catalogue.CATALOGUE,
+            _E2E_SMOKE,
+            _E2E_NO_SMOKE,
+            expect="no copy is left",
+        ),
+        Control(
+            "the merge tier's taken away, with a release workflow's kept",
+            lambda root: (
+                _plant("", catalogue.CATALOGUE, _E2E_SMOKE, _E2E_NO_SMOKE).plant(root),
+                _release_runs_the_smoke(root),
+            ),
+            False,
+        ),
+    ),
+)
+
+ROWS = (*ROWS, THE_RENDER_SMOKE_HAS_A_COPY_IN_CI)
 
 
 #: The rows that need more than the suite's default cap, each with its own, keyed by the row's
