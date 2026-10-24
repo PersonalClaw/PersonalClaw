@@ -339,6 +339,11 @@ is green instead. The tagging workflow refuses any other. A run re-run to green 
 since its conclusion is its latest attempt's: tagging a commit whose run went green only on a
 re-run of a flaky job is a choice, so make it on purpose, after reading the attempt that failed.
 
+Its pull request's `merge-verdict` must be green as well: the merge controller's newest verdict
+on the head of the pull request that landed the commit, with a receipt naming the commit's own
+tree. A squash lands that head's tree, so a pull request merged with a tree the controller never
+judged is refused, and so is one whose newest verdict is red or still pending.
+
 A `v*` tag can never be moved or deleted once pushed, and only the release controller's App can
 create one ([the release tags](ci.md#the-release-tags)): a hand-pushed `v*` tag is refused, yours
 included. Tag the **merge commit on `main`** by dispatching the tagging workflow on `main` with
@@ -352,8 +357,9 @@ gh workflow run release-tag.yml --ref main -f tag=v0.1.3 -f commit="$(git rev-pa
 It refuses, naming why, a tag the release's parser refuses, a commit that is not on `main`, a
 commit whose workflows, actions or `tools/ci` differ from `main`'s, a tag that exists, and a
 commit whose own `merge.yml` push run on `main` is not green: still running, failed,
-cancelled or superseded, with the run's link. For a release tag it also refuses a commit whose breadth is
-not green ([step 7](#7-start-breadth-on-the-commit-you-will-tag-hours-ahead)). Then
+cancelled or superseded, with the run's link, and a commit whose pull request's `merge-verdict`
+is not the controller's green on that tree, naming the pull request. For a release tag it also
+refuses a commit whose breadth is not green ([step 7](#7-start-breadth-on-the-commit-you-will-tag-hours-ahead)). Then
 it creates the annotated tag (`PersonalClaw v0.1.3`) through the App, and the tag's push starts
 `release.yml` as before. To start breadth, or to try the path without a release, add
 `-f rehearsal=true`: it makes `rehearsal-v0.1.3-<sha7>`, which nothing releases, and its push

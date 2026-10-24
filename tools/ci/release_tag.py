@@ -11,6 +11,9 @@ it with a tag and a commit. It refuses, naming why, unless:
 - no tag of that name exists, here or on the remote;
 - the commit's own push run on ``main`` is green (#3911, :func:`main_push_green`): read in
   ``merge.yml`` (``workflows.MAIN_PUSH``).
+- the merge controller judged the commit's tree green (#3911, :func:`controller_green`): the
+  one pull request that landed the commit on ``main`` has, on its head, a ``merge-verdict`` that
+  ``merge_verdict.verify`` accepts, whose receipt names the commit's own tree;
 - the commit's breadth is green (#3911, :func:`breadth_green`), for a release tag: the newest
   ``breadth.yml`` run of the commit off ``main`` is a rehearsal tag's push, with a
   digest-verified record of every attempt in which every gating leg ran and is green and every
@@ -29,15 +32,14 @@ which is the run the release tag's gate then reads. The short commit in the name
 commit rehearse the same tag, since a tag is never moved or deleted; the gate matches the full
 commit, never the name.
 
-It reads the runs and breadth's records with ``RUNS_TOKEN``, the job's own token with
-``actions: read``. With
+It reads the runs, breadth's records, the pull request and the verdict with ``RUNS_TOKEN``, the
+job's own token with ``actions: read``, ``checks: read`` and ``pull-requests: read``. With
 ``--create`` it then creates the annotated tag and its ref through the API with
 ``GH_TOKEN``, the release controller's App token: the one actor the ``release-tag-creation``
 ruleset lets create a ``v*`` tag. The tag's push starts ``release.yml``. Nothing else is written,
 and a tag is never moved or deleted (``release-tags`` refuses both for everyone).
 
-#3911's gate grows with the trusted ``merge-verdict`` (#3910) once it is required. See
-docs/maintainers/ci.md, "The release tags".
+See docs/maintainers/ci.md, "The release tags".
 """
 
 from __future__ import annotations
@@ -58,7 +60,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import breadth_evidence, trust, workflows
+from . import breadth_evidence, merge_verdict, trust, workflows
 
 API = "https://api.github.com"
 MAIN = "origin/main"
@@ -569,6 +571,72 @@ def github_download(token: str) -> Download:
     return download
 
 
+def _landed_by(repository: str, commit: str, get: Get) -> dict[str, Any]:
+    """The one pull request merged into *repository*'s ``main`` as *commit*."""
+    path = f"/repos/{repository}/commits/{commit}/pulls?per_page=100"
+    try:
+        answer = get(path)
+    except (OSError, ValueError) as error:
+        raise trust.Refused(f"cannot read the pull requests of {commit}: {error}") from None
+    if not isinstance(answer, list):
+        raise trust.Refused(f"cannot read the pull requests of {commit}: {answer!r}")
+    landed = [
+        pull
+        for pull in answer
+        if isinstance(pull, dict)
+        and pull.get("merged_at")
+        and pull.get("merge_commit_sha") == commit
+        and (pull.get("base") or {}).get("ref") == "main"
+        and ((pull.get("base") or {}).get("repo") or {}).get("full_name") == repository
+    ]
+    if not landed:
+        raise trust.Refused(
+            f"no pull request landed {commit} on main, so the merge controller judged nothing "
+            "of it: tag a commit a pull request landed"
+        )
+    if len(landed) > 1:
+        numbers = ", ".join(f"#{pull.get('number')}" for pull in landed)
+        raise trust.Refused(f"more than one pull request claims {commit}: {numbers}")
+    return landed[0]
+
+
+def controller_green(repository: str, commit: str, get: Get, *, repo: Path) -> str:
+    """Which pull request's green ``merge-verdict`` holds *commit*'s tree; else
+    ``trust.Refused``, naming why.
+
+    A squash lands a pull request's head tree on ``main`` as a new commit, and the controller
+    judged that head, not the commit. So the one pull request merged as *commit* is found, the
+    verdict on its head is read by ``merge_verdict.verify`` (main's rule names the App believed,
+    and its newest run decides), and the receipt's tree must be the commit's own, read from the
+    checkout: a pull request that landed another tree than the one judged proves nothing. An
+    answer it cannot read refuses, never passes."""
+    pull = _landed_by(repository, commit, get)
+    number = pull.get("number")
+    head = str((pull.get("head") or {}).get("sha") or "")
+    result = merge_verdict.verify(get, repo=repository, sha=head, git_dir=repo, main=MAIN)
+    if isinstance(result, merge_verdict.Unreadable):
+        raise trust.Refused(f"cannot read the verdict on #{number}'s head {head}: {result.reason}")
+    if isinstance(result, merge_verdict.Refused):
+        raise trust.Refused(
+            f"the merge controller's verdict on #{number}'s head {head} does not count: "
+            f"{result.reason}"
+        )
+    done = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{commit}^{{tree}}"],
+        capture_output=True,
+        text=True,
+    )
+    tree = done.stdout.strip()
+    if done.returncode != 0 or not tree:
+        raise trust.Refused(f"cannot read {commit}'s tree: {done.stderr.strip()}")
+    if result.receipt.tree_oid != tree:
+        raise trust.Refused(
+            f"#{number}'s verdict judged tree {result.receipt.tree_oid}, but {commit} holds tree "
+            f"{tree}: what landed is not what the controller judged"
+        )
+    return f"#{number}'s head {head}, check run {result.check_run_id}"
+
+
 def github_get(token: str) -> Get:
     def get(path: str) -> Any:
         request = urllib.request.Request(API + path)
@@ -682,9 +750,12 @@ def main(argv: list[str] | None = None) -> int:
         check(args.repo, args.tag, args.commit, rehearsal=args.rehearsal)
         runs_token = os.environ.get("RUNS_TOKEN")
         if not runs_token:
-            raise trust.Refused("no RUNS_TOKEN: the job's token reads the commit's push run")
+            raise trust.Refused(
+                "no RUNS_TOKEN: the job's token reads the commit's push run and its verdict"
+            )
         get = github_get(runs_token)
         run = main_push_green(args.repository, args.commit, get)
+        verdict = controller_green(args.repository, args.commit, get, repo=args.repo)
         if args.rehearsal:
             breadth = f"not read, since {name}'s push is what starts it"
         else:
@@ -694,7 +765,8 @@ def main(argv: list[str] | None = None) -> int:
         no_release_running(args.repository, get)
         print(
             f"may tag: {args.commit} on main as {name}; its push run on main is green: {run}; "
-            f"its breadth is {breadth}; no release is running"
+            f"the controller's verdict on its tree is green: {verdict}; its breadth is {breadth}; "
+            "no release is running"
         )
         if args.create:
             token = os.environ.get("GH_TOKEN")

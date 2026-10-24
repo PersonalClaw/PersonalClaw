@@ -1,12 +1,11 @@
 """``.github/workflows/release-tag.yml``'s trust shape: the one way a ``v*`` tag is made (#4584).
 
 It runs only on a dispatch, its one job only on main, in the ``ci-controller`` environment, with
-``contents: read``, ``actions: read`` and ``issues: read``, and with ``checks: read`` and
-``pull-requests: read`` beside them once the tag also reads the merge controller's verdict on its
-commit (#5383): one set or the other, nothing between. The dispatch inputs reach the steps
-only as environment variables, never as text in a command. ``python -m tools.ci release-tag``
-checks the commit and the tag, and reads the commit's push run on main, its breadth and the
-issues that own breadth's advisory reds with the job's own token (#3911), before the release
+``contents: read``, ``actions: read``, ``issues: read``, ``checks: read`` and
+``pull-requests: read``. The dispatch inputs reach the steps only as environment variables, never
+as text in a command. ``python -m tools.ci release-tag`` checks the commit and the tag, and reads
+the commit's push run on main, the merge controller's verdict on it, its breadth and the issues
+that own breadth's advisory reds with the job's own token (#3911), before the release
 controller's App token is made; that token is asked for ``contents: write`` alone and reaches
 only the step that creates the tag. Each rule fails on a planted edit of the real file.
 """
@@ -27,22 +26,19 @@ _CHECK, _TOKEN, _CREATE = (
 )
 _APP_ACTION = "actions/create-github-app-token@"
 _REHEARSE = 'if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi'
-#: The job's own token, which reads the commit's push run on main and nothing else.
+#: The job's own token, which reads the commit's push run on main and its verdict, nothing else.
 _RUNS_TOKEN = "${{ github.token }}"
 _GATE = '--repository "$GITHUB_REPOSITORY"'
-#: What the tag job may hold: the job's own token reads the commit's push run on main, its breadth
-#: and the issues that own breadth's advisory reds, and, once the tag reads the merge controller's
-#: verdict on the commit (#5383), that verdict's check run and its pull request too.
-_PERMISSIONS = (
-    {"contents": "read", "actions": "read", "issues": "read"},
-    {
-        "contents": "read",
-        "actions": "read",
-        "issues": "read",
-        "checks": "read",
-        "pull-requests": "read",
-    },
-)
+#: What the tag job holds: the job's own token reads the commit's push run on main, the merge
+#: controller's verdict on it (its check run and its pull request), its breadth and the issues that
+#: own breadth's advisory reds.
+_PERMISSIONS = {
+    "contents": "read",
+    "actions": "read",
+    "issues": "read",
+    "checks": "read",
+    "pull-requests": "read",
+}
 
 
 def _problems(text: str) -> list[str]:
@@ -63,7 +59,7 @@ def _problems(text: str) -> list[str]:
         found.append(f"the job runs on {job.get('if')!r}, not main alone")
     if job.get("environment") != "ci-controller":
         found.append(f"the job deploys to {job.get('environment')!r}")
-    if job.get("permissions") not in _PERMISSIONS:
+    if job.get("permissions") != _PERMISSIONS:
         found.append(f"the job holds {job.get('permissions')!r}")
     steps = job.get("steps") or []
     names = [s.get("name") for s in steps]
@@ -168,6 +164,8 @@ def test_the_tagging_workflow_checks_first_and_hands_the_token_to_one_step() -> 
             "the job holds",
         ),
         ("      issues: read\n", "      issues: write\n", "the job holds"),
+        ("      checks: read\n", "      checks: write\n", "the job holds"),
+        ("      pull-requests: read\n", "", "the job holds"),
         (
             '--commit "$COMMIT" --repository "$GITHUB_REPOSITORY" "${more[@]}"',
             '--commit "$COMMIT" "${more[@]}"',
@@ -199,14 +197,14 @@ def _holding(permissions: dict[str, str]) -> list[str]:
     return _problems(yaml.safe_dump(data))
 
 
-@pytest.mark.parametrize("permissions", _PERMISSIONS, ids=["three", "with-the-verdict"])
-def test_either_set_passes(permissions: dict[str, str]) -> None:
-    assert _holding(permissions) == []
+def test_the_five_pass() -> None:
+    assert _holding(_PERMISSIONS) == []
 
 
 @pytest.mark.parametrize(
     "permissions",
     [
+        {"contents": "read", "actions": "read", "issues": "read"},
         {"contents": "read", "actions": "read", "issues": "read", "checks": "read"},
         {"contents": "read", "actions": "read", "issues": "read", "pull-requests": "read"},
         {
@@ -217,9 +215,9 @@ def test_either_set_passes(permissions: dict[str, str]) -> None:
             "pull-requests": "read",
         },
     ],
-    ids=["checks-alone", "pull-requests-alone", "checks-write"],
+    ids=["the-three-before-the-verdict", "checks-alone", "pull-requests-alone", "checks-write"],
 )
-def test_a_set_between_or_beyond_the_two_fails(permissions: dict[str, str]) -> None:
+def test_any_other_set_fails(permissions: dict[str, str]) -> None:
     assert any("the job holds" in p for p in _holding(permissions))
 
 
