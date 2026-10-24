@@ -1241,10 +1241,12 @@ jobs:
     # entry. The app is then started under xvfb as a user starts it: it spawns that backend, takes
     # its ready line and signs its window in. The smoke (desktop/test/smoke/shellSmoke.js) watches
     # over the DevTools protocol on a pipe (fds 3 and 4), so nothing listens on a port: the window
-    # loads the gateway's origin, the desktop bridge is on the page, the chat shell mounts, and
-    # nothing throws. The app's own code and builder config carry no remote-debugging switch. Two planted copies must each fail: the
-    # asar without a module main.js requires, and a preload that throws. A fast unpackaged smoke,
-    # never a packaged-release test: the release rehearsal builds and boots the real artifacts.
+    # loads the gateway's origin, the desktop bridge is on the page, the chat shell mounts, its
+    # personalclaw:// links open their pages and act on nothing, and nothing throws. The app's own
+    # code and builder config carry no remote-debugging switch. Each planted copy of the app
+    # (desktop/test/smoke/packedApp.js's CONTROLS, which name them) must fail, for its own reason.
+    # A fast unpackaged smoke, never a packaged-release test: the release rehearsal builds and
+    # boots the real artifacts.
     # Gated on the plan (#3945): its inputs are desktop/ and web/.
     needs: [changes, tree-check, web]
     if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && (needs.changes.outputs.full != 'false' || contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'desktop-smoke')) }}
