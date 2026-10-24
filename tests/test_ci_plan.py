@@ -1168,6 +1168,51 @@ def test_a_job_main_marks_retiring_may_leave_the_plan(tmp_path) -> None:
     assert "audit" not in json.loads(done.stdout)["jobs"]
 
 
+#: The planted catalogue with breadth's nightly audit, running the merge tier's audit's steps, and
+#: the same with the merge tier's audit marked with it.
+_WITH_TWIN = _TEXT + (
+    '\n[[job]]\nid = "audit-nightly"\ntiers = ["breadth"]\ninputs = [":(glob)**"]\n'
+    'external_inputs = ["advisory-feed"]\ntoolchain = []\ncache = []\nsecurity = "ordinary"\n'
+    'live = true\ntimeout_min = 5\ncommand = [{ argv = ["python3", "-m", "tools.ci", "audit",'
+    ' "run"] }]\n'
+)
+_NIGHTLY = _WITH_TWIN.replace('id = "audit"\n', 'id = "audit"\nnightly = "audit-nightly"\n', 1)
+
+
+def test_a_live_job_breadth_runs_every_night_is_planned_by_its_inputs() -> None:
+    assert _NIGHTLY != _WITH_TWIN
+    held = _plan(["docs/a.md"], text=_WITH_TWIN)
+    assert held.reasons["audit"] == ["live: never selected out"], held.reasons
+    left = _plan(["docs/a.md"], text=_NIGHTLY)
+    assert not left.full and "audit" not in left.jobs, left.jobs
+    reached = _plan(["pyproject.toml"], text=_NIGHTLY)
+    assert reached.reasons["audit"] == ["pyproject.toml: a declared input"], reached.reasons
+
+
+@pytest.mark.parametrize("main_text, planned", [(_WITH_TWIN, True), (_NIGHTLY, False)])
+def test_a_nightly_mark_lets_the_job_out_only_once_main_carries_it(
+    tmp_path, main_text: str, planned: bool
+) -> None:
+    """The pull request that adds the mark still plans the job: read against main's catalogue,
+    a mark main's copy lacks counts for nothing. Once main carries it, a docs change leaves the
+    audit out."""
+    main = tmp_path / "main"
+    main.mkdir()
+    (main / "catalogue.toml").write_text(main_text)
+    (main / "areas.toml").write_text(_AREAS)
+    (tmp_path / "catalogue.toml").write_text(_NIGHTLY)
+    (tmp_path / "areas.toml").write_text(_AREAS)
+    done = _command(
+        "merge",
+        "--catalogue",
+        str(tmp_path / "catalogue.toml"),
+        "--trusted-areas",
+        str(main / "areas.toml"),
+    )
+    assert done.returncode == 0, done.stderr
+    assert ("audit" in json.loads(done.stdout)["jobs"]) is planned, done.stdout
+
+
 @pytest.mark.parametrize("what", ["no areas file", "no catalogue beside it", "a bad areas file"])
 def test_a_trusted_copy_it_cannot_read_plans_nothing(tmp_path, what) -> None:
     """Exit 2 and nothing on stdout: the changes step then publishes the whole tier. The error

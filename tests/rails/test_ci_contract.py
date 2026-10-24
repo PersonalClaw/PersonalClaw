@@ -3727,12 +3727,10 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "a planned stage job whose tier names a minor",
                 catalogue.CATALOGUE,
-                'id = "client"\ntiers = ["change", "merge"]\ninputs = [":(glob)**"]\n'
-                'external_inputs = ["package-index"]\ntoolchain = ["uv"]\ncache = ["uv"]\n'
-                'security = "ordinary"\npython = "3.12.15"\n',
-                'id = "client"\ntiers = ["change", "merge"]\ninputs = [":(glob)**"]\n'
-                'external_inputs = ["package-index"]\ntoolchain = ["uv"]\ncache = ["uv"]\n'
-                'security = "ordinary"\npython = "3.12"\n',
+                '".python-version"]\nexternal_inputs = ["package-index"]\ntoolchain = ["uv"]\n'
+                'cache = ["uv"]\nsecurity = "ordinary"\npython = "3.12.15"\n',
+                '".python-version"]\nexternal_inputs = ["package-index"]\ntoolchain = ["uv"]\n'
+                'cache = ["uv"]\nsecurity = "ordinary"\npython = "3.12"\n',
                 expect="pr.yml:test (matrix): Python '3.12' is not an exact X.Y.Z",
             ),
             _plant(
@@ -8885,10 +8883,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a toolchain install no ci.yml job of the entry runs",
             catalogue.CATALOGUE,
-            'id = "package"\ntiers = ["merge"]\ninputs = [":(glob)**"]\nexternal_inputs = []\n'
-            'toolchain = ["uv"]',
-            'id = "package"\ntiers = ["merge"]\ninputs = [":(glob)**"]\nexternal_inputs = []\n'
-            'toolchain = ["uv", "uv-sync"]',
+            '  "tests/fixtures/",\n]\nexternal_inputs = []\ntoolchain = ["uv"]',
+            '  "tests/fixtures/",\n]\nexternal_inputs = []\ntoolchain = ["uv", "uv-sync"]',
             expect="package: toolchain names uv-sync, and none of its ci.yml jobs installs it",
         ),
         _plant(

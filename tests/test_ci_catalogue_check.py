@@ -366,6 +366,107 @@ def test_an_entry_without_a_mark_reads_as_not_retiring() -> None:
     assert _load(_MAIN).job("suite-arm").retiring is None
 
 
+# ── the nightly field ───────────────────────────────────────────────────────────────────────
+
+#: _MAIN with a live merge-tier audit beside breadth's nightly one, running its steps, and
+#: inputs that leave it out of a plan they do not reach.
+_WITH_AUDIT = _MAIN.replace('"security"]\n', '"security", "audit"]\n', 1) + (
+    '\n[[job]]\nid = "audit"\ntiers = ["merge"]\ninputs = ["uv.lock"]\n'
+    'external_inputs = ["advisory-feed"]\ntoolchain = ["uv"]\ncache = ["uv"]\n'
+    'security = "ordinary"\nlive = true\ntimeout_min = 15\n'
+    'command = [{ argv = ["uv", "run", "python", "-m", "tools.ci", "audit"] }]\n'
+)
+_MARKED = _WITH_AUDIT.replace('id = "audit"\n', 'id = "audit"\nnightly = "nightly-audit"\n', 1)
+
+
+def _nightly_refused(text: str) -> list[str]:
+    with pytest.raises(catalogue.CatalogueError) as caught:
+        _load(text)
+    return [p for p in caught.value.problems if "nightly" in p]
+
+
+def test_a_live_job_marked_with_the_breadth_job_that_runs_its_steps_loads() -> None:
+    assert _WITH_AUDIT != _MAIN and _MARKED != _WITH_AUDIT
+    assert _load(_WITH_AUDIT).job("audit").nightly is None
+    assert _load(_MARKED).job("audit").nightly == "nightly-audit"
+
+
+@pytest.mark.parametrize(
+    "old, new, refusal",
+    [
+        (
+            "live = true\n",
+            "",
+            "audit: nightly is set, and the job is not live: a job that is not live is planned"
+            " by its inputs already",
+        ),
+        (
+            'security = "ordinary"\nlive',
+            'security = "security"\nlive',
+            "audit: nightly is set, and the job is security posture, which every plan holds",
+        ),
+        (
+            'nightly = "nightly-audit"',
+            'nightly = "no-such-job"',
+            "audit: nightly names 'no-such-job', which is not another job",
+        ),
+        (
+            'nightly = "nightly-audit"',
+            'nightly = "audit"',
+            "audit: nightly names 'audit', which is not another job",
+        ),
+        (
+            'nightly = "nightly-audit"',
+            'nightly = "rails"',
+            "audit: nightly names rails, which the breadth tier does not run",
+        ),
+        (
+            'nightly = "nightly-audit"',
+            'nightly = "rails-macos"',
+            "audit: nightly names rails-macos, which is not live, so a reused result could stand"
+            " for its nightly run",
+        ),
+        (
+            '"tools.ci", "audit"] }]\n',
+            '"tools.ci", "audit", "--quick"] }]\n',
+            "audit: nightly names nightly-audit, whose steps are not this job's",
+        ),
+    ],
+)
+def test_a_nightly_mark_that_could_skip_the_job_unseen_is_refused(
+    old: str, new: str, refusal: str
+) -> None:
+    head, entries = _entries(_MARKED)
+    audit = next(e for e in entries if e.startswith('id = "audit"\n'))
+    assert old in audit, old
+    text = _MARKED.replace(audit, audit.replace(old, new, 1), 1)
+    assert refusal in _nightly_refused(text)
+
+
+def test_a_nightly_mark_main_lacks_counts_for_nothing() -> None:
+    """Read against main's catalogue, the pull request that adds the mark still plans the job:
+    like ``retiring``, a mark counts once main carries it."""
+    assert _against(_MARKED, _WITH_AUDIT) == []
+    added = catalogue.load(_MARKED, "candidate", _load(_WITH_AUDIT))
+    assert added.job("audit").nightly is None
+    kept = catalogue.load(_MARKED, "candidate", _load(_MARKED))
+    assert kept.job("audit").nightly == "nightly-audit"
+    assert catalogue.load(_MARKED, "candidate").job("audit").nightly == "nightly-audit"
+
+
+def test_a_nightly_mark_main_gives_another_job_counts_for_nothing() -> None:
+    second = (
+        '\n[[job]]\nid = "nightly-audit-2"\ntiers = ["breadth"]\ninputs = [":(glob)**"]\n'
+        'external_inputs = ["advisory-feed"]\ntoolchain = ["uv"]\ncache = ["uv"]\n'
+        'security = "ordinary"\nlive = true\ntimeout_min = 20\n'
+        'command = [{ argv = ["uv", "run", "python", "-m", "tools.ci", "audit"] }]\n'
+    )
+    mains = _MARKED + second
+    moved = mains.replace('nightly = "nightly-audit"', 'nightly = "nightly-audit-2"', 1)
+    assert _load(moved).job("audit").nightly == "nightly-audit-2"
+    assert catalogue.load(moved, "candidate", _load(mains)).job("audit").nightly is None
+
+
 # ── python -m tools.ci catalogue-check ──────────────────────────────────────────────────────
 
 

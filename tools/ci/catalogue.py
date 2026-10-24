@@ -25,6 +25,8 @@ modules on each platform and ``security``, the one run of the security corpus.
 A pull request's catalogue is read with main's as its reference (:func:`against`): a security or
 live job main has stays, with its posture and its tiers, until main's own copy marks it
 ``retiring = "#<issue>"``, so a removal takes two merges and the second only drops the entry.
+A ``nightly`` mark, which lets a live job out of a plan its inputs do not reach, likewise counts
+only once main's copy carries it (:func:`trusted_marks`).
 
 This module is imported by ``python -m tools.ci``, which ci.yml's shard planner runs on the
 runner image's own ``python3`` before anything is installed, so it imports the standard library
@@ -39,7 +41,7 @@ import shlex
 import sys
 import tomllib
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -193,6 +195,7 @@ _KEYS = frozenset(
         "after",
         "install_exemptions",
         "retiring",
+        "nightly",
         "lint_feedback",
     }
 )
@@ -361,6 +364,11 @@ class Job:
     #: The issue that retires the job (``#<number>``). The job is still the catalogue's and
     #: still runs; once main's catalogue marks it, a pull request may drop it (:func:`against`).
     retiring: str | None = None
+    #: A live job the plan selects by its inputs, like any other: the breadth job this names runs
+    #: the same steps every night, whatever changed. A live job without it is in every plan. Read
+    #: against main's catalogue, a mark main's copy of the job lacks counts for nothing
+    #: (:func:`trusted_marks`), so the merge that adds one still plans the job.
+    nightly: str | None = None
     #: A failed step's output is the pull request's lint remediation: run-job leaves it for the
     #: stage job to upload as ``lint-feedback``, which ``pr-feedback.yml`` posts. One job, of the
     #: change tier, which ``pr.yml`` runs on every pull request.
@@ -751,6 +759,7 @@ def _job(raw: object, n: int, problems: list[str]) -> Job | None:
         after=fields.strings("after"),
         install_exemptions=tuple(exemptions),
         retiring=retiring,
+        nightly=fields.string("nightly"),
     )
     return job if len(problems) == before and job_id else None
 
@@ -784,7 +793,7 @@ def load(text: str, source: str = CATALOGUE, reference: Catalogue | None = None)
         problems += against(cat, reference)
     if problems:
         raise CatalogueError(list(dict.fromkeys(problems)))
-    return cat
+    return cat if reference is None else trusted_marks(cat, reference)
 
 
 def load_areas(text: str, cat: Catalogue, source: str = AREAS) -> tuple[Override, ...]:
@@ -1034,6 +1043,8 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
         for other in job.after:
             if other == job.id or other not in ids:
                 problems.append(f"{job.id}: after names {other!r}, which is not another job")
+        if job.nightly is not None:
+            problems += _nightly_faults(catalogue, job)
     if complete:
         merge = {j.id: j for j in catalogue.tier("merge")}
         if not catalogue.merge_jobs:
@@ -1135,6 +1146,51 @@ def read(root: Path = REPO) -> Catalogue:
 
 def _kind(job: Job) -> str:
     return "security" if job.security == "security" else "live"
+
+
+def _nightly_faults(catalogue: Catalogue, job: Job) -> list[str]:
+    """What is wrong with ``job``'s ``nightly`` mark: it lets a live job out of a plan its
+    inputs do not reach, so it holds only while the job it names runs the same steps every night,
+    and only where nothing else holds the job in every plan."""
+    if not job.live:
+        return [
+            f"{job.id}: nightly is set, and the job is not live: a job that is not live is"
+            " planned by its inputs already"
+        ]
+    if job.security == "security":
+        return [
+            f"{job.id}: nightly is set, and the job is security posture, which every plan holds"
+        ]
+    other = next((j for j in catalogue.jobs if j.id == job.nightly and j is not job), None)
+    if other is None:
+        return [f"{job.id}: nightly names {job.nightly!r}, which is not another job"]
+    problems: list[str] = []
+    if "breadth" not in other.tiers:
+        problems.append(f"{job.id}: nightly names {other.id}, which the breadth tier does not run")
+    if not other.live:
+        problems.append(
+            f"{job.id}: nightly names {other.id}, which is not live, so a reused result could"
+            " stand for its nightly run"
+        )
+    if other.command != job.command:
+        problems.append(f"{job.id}: nightly names {other.id}, whose steps are not this job's")
+    return problems
+
+
+def trusted_marks(candidate: Catalogue, trusted: Catalogue) -> Catalogue:
+    """``candidate`` with each ``nightly`` mark main's catalogue (``trusted``) does not give the
+    same job read as absent. A mark lets a live job out of a plan, so like ``retiring`` it counts
+    only once main carries it: the pull request that adds one still plans the job."""
+    theirs = {job.id: job.nightly for job in trusted.jobs}
+    jobs = tuple(
+        (
+            replace(job, nightly=None)
+            if job.nightly is not None and theirs.get(job.id) != job.nightly
+            else job
+        )
+        for job in candidate.jobs
+    )
+    return replace(candidate, jobs=jobs)
 
 
 def against(candidate: Catalogue, trusted: Catalogue) -> list[str]:

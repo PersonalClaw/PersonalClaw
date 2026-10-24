@@ -557,7 +557,8 @@ Every entry declares:
 An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `workers_env`,
 `mem_gb`, `junit`, `shards`, `needs_node`, `needs_browser`, `after` (the jobs whose output it
 uses), `install_exemptions`, each exemption with its reason, `retiring`, the issue that
-retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catalogue"), and
+retires the job, as `"#<number>"` (see "Main's copy reads a pull request's catalogue"),
+`nightly`, the breadth job that runs a live job's steps every night (see "Planning a run"), and
 `lint_feedback`: a failed step's output is the pull request's lint remediation, which
 `pr-feedback.yml` posts. One job sets it, of the change tier. A key the
 reader does not know is refused, so a misspelt field fails rather than being ignored.
@@ -733,8 +734,14 @@ overrides (`--areas`, beside the catalogue by default):
   smoke's own inputs (all whole-tier), the installer (`static`) and the SDK snapshot script
   (`apps-contract`).
 - **Always planned:** the `rails` job (all three legs) and `rails-checks`, whose `rails check`
-  holds every rail to exactly one leg, every `security` job, every `live` job, and each job an
-  `after` of a planned one names. `rails-checks` also runs the asset licences, the gate
+  holds every rail to exactly one leg, every `security` job, every `live` job but one marked
+  `nightly`, and each job an `after` of a planned one names. A live job's `nightly` names the
+  breadth job that runs its steps every night, whatever changed, so the plan selects the job by
+  its inputs like any other. The loader refuses the mark on a job that is not live or is
+  security posture, and one naming a job that is not live, not of the breadth tier, or runs other
+  steps. Read against `main`'s catalogue, a mark `main`'s copy of the job does not carry counts
+  for nothing (`catalogue.trusted_marks`), so the pull request that adds one still plans the job,
+  as a `retiring` mark allows nothing until `main` carries it. `rails-checks` also runs the asset licences, the gate
   aggregate and the npm advisory floors. The loader refuses a merge tier whose rails run in
   legs without `rails-checks`, as it refuses one without `rails`.
 - **Fail-safe: the whole tier.** An empty diff, a path no input but the whole tree names, a
@@ -802,8 +809,18 @@ overrides (`--areas`, beside the catalogue by default):
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
 
-The browser run's three jobs, `desktop-smoke`, `apps-contract` and `python-suite` name their
-inputs; every other job declares the whole tree today. `desktop-smoke`'s are `desktop/` and
+`desktop-smoke`, `apps-contract`, `python-suite`, `image`, `client`, `package`, `audit`,
+`web-unit` and `web-build` name their inputs; every other job declares the whole tree today, the
+browser run's less what cannot reach it. `client`'s are its folder and uv's settings at the root
+(`pyproject.toml`, `.python-version`). `package`'s are what setuptools reads (its config, `src/`,
+the README, the licence) with the web workspace and the root's npm manifests `web/dist` is built
+from, and what `verify_wheel.py` names, followed into each script it names. `audit`'s are what it
+audits: `uv.lock` and `pyproject.toml`, every npm manifest and lock, and its own code and waivers.
+`web-unit`'s and `web-build`'s are the workspaces their `npm run` steps run in and what that code
+names outside them: `src/`, which the parity tests read, the design docs, brand files and guides
+the tests hold the app to, and the scripts it runs. `tests/rails/test_ci_job_inputs_tree.py` holds
+each of the five to a census of its reads, with a planted read per form the census follows and a
+dropped entry per list. A docs page none of them reads plans none of them. `desktop-smoke`'s are `desktop/` and
 `web/`, the shell and the dashboard it loads (#3942): it packs the shell with electron-builder's
 Linux dir build on a stub backend that runs the checkout's gateway, holds the packed `app.asar`
 to `build.files`, starts the app under Xvfb and watches it, over a DevTools pipe rather than a

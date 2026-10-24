@@ -14,8 +14,10 @@ makes a path known, so an override only ever adds and never takes a job out of a
 
 Some jobs are planned whatever the diff: the rails (``catalogue.MERGE_NEEDS_JOB``) and their
 own check (``catalogue.RAILS_CHECKS_JOB``, which holds every rail to one leg), every
-``security`` job and every ``live`` one. Each job ``after`` names comes with the job that
-names it.
+``security`` job and every ``live`` one but a job whose ``nightly`` names the breadth job that
+runs its steps every night: that one is planned by its inputs, and a mark main's catalogue does
+not carry counts for nothing (``catalogue.trusted_marks``). Each job ``after`` names comes with
+the job that names it.
 
 What the planner cannot read plans the whole tier: an empty diff (it proves nothing about what
 to leave out), a path no input but the whole tree names, a path that is not a plain path inside
@@ -442,7 +444,7 @@ def _plan(
             add(job.id, "the rails' own check always runs")
         if job.security == "security":
             add(job.id, "security posture: never selected out")
-        if job.live:
+        if job.live and job.nightly is None:
             add(job.id, "live: never selected out")
     grew = True
     while grew:
