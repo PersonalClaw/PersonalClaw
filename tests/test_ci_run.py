@@ -1062,3 +1062,24 @@ def test_a_run_interrupted_while_its_job_runs_after_making_the_real_homes_person
             f"the job made the real home's {made}, which was absent as it started",
         ]
         assert _gone(group)
+
+
+# (f) a job's peak memory, which a local tier run admits the job by next time (#3920)
+
+_ALLOCATES = (
+    "import subprocess, sys; "
+    "subprocess.run([sys.executable, '-c', \"x = b'x' * (200 * 1024 * 1024)\"], check=True)"
+)
+
+
+def test_a_job_reports_the_peak_memory_of_the_largest_process_under_it(tmp_path):
+    """The job's own process is small; the process it starts holds 200 MB."""
+    result = _run(tmp_path, [sys.executable, "-c", _ALLOCATES])
+    assert result.code == run.OK, result.violations
+    assert result.peak_mb is not None and 200 <= result.peak_mb < 2048, result.peak_mb
+
+
+def test_a_job_stopped_past_its_time_reports_no_peak(tmp_path):
+    result = _run(tmp_path, [sys.executable, "-c", "import time; time.sleep(60)"], timeout=0.5)
+    assert result.code == run.RED
+    assert result.peak_mb is None
