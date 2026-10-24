@@ -24,6 +24,7 @@ load, not anything the loop waited on (:class:`_NoCpu`).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ctypes
 import gc
 import json
@@ -899,14 +900,31 @@ _STARVED_WALL = 0.15
 _STARVED_CPU = 0.05
 
 
+@contextlib.contextmanager
+def _in_the_background_band():
+    """macOS: the whole process in the background band, the lowest it can take, while the block
+    runs, and back after, so a child pays the band's crawl only for the requests it measures (one
+    starved child took 22.6 s on a CI runner with the band from start to end). Elsewhere it does
+    nothing: on Linux the child took nice 19 when it started, which a process cannot undo."""
+    if sys.platform != "darwin":
+        yield
+        return
+    os.setpriority(os.PRIO_DARWIN_PROCESS, 0, os.PRIO_DARWIN_BG)
+    try:
+        yield
+    finally:
+        os.setpriority(os.PRIO_DARWIN_PROCESS, 0, 0)
+
+
 def _starved_app() -> web.Application:
     async def starved(_request: web.Request) -> web.Response:
-        for _ in range(_STARVED_STEPS):
-            began, cpu = time.monotonic(), time.thread_time()
-            while time.monotonic() - began < _STARVED_WALL:
-                if time.thread_time() - cpu >= _STARVED_CPU:
-                    break
-            await asyncio.sleep(0)  # the next one is a step of its own
+        with _in_the_background_band():
+            for _ in range(_STARVED_STEPS):
+                began, cpu = time.monotonic(), time.thread_time()
+                while time.monotonic() - began < _STARVED_WALL:
+                    if time.thread_time() - cpu >= _STARVED_CPU:
+                        break
+                await asyncio.sleep(0)  # the next one is a step of its own
         return web.json_response({"ok": True})
 
     app = web.Application()
@@ -926,18 +944,17 @@ _BUSY = textwrap.dedent("""
     """)
 
 #: The start of each child below: once it has its gateway up and says so, it waits for the
-#: parent to say every CPU is taken, then takes the lowest priority. macOS barely weighs a nice
-#: value against busy processes (a nice 19 spin measured 0.12-0.20 s of CPU in 0.3 s), so there
-#: the child takes the background band, which it schedules beside them in bursts (0.001-0.013 s
-#: in 0.3 s, at times half a CPU for 40 ms).
+#: parent to say every CPU is taken, then takes the lowest priority. On Linux that is nice 19.
+#: macOS barely weighs a nice value against busy processes (a nice 19 spin measured 0.12-0.20 s of
+#: CPU in 0.3 s), so there the request it measures runs in the background band, which macOS
+#: schedules beside them in bursts (0.001-0.013 s in 0.3 s, at times half a CPU for 40 ms):
+#: :func:`_in_the_background_band`.
 _LOWEST = """
     def lowest():
         sys.stdout.write("ready\\n")
         sys.stdout.flush()
         assert sys.stdin.readline() == "go\\n"
-        if sys.platform == "darwin":
-            os.setpriority(os.PRIO_DARWIN_PROCESS, 0, os.PRIO_DARWIN_BG)
-        else:
+        if sys.platform != "darwin":
             os.nice(19)
 """
 
@@ -1035,6 +1052,7 @@ class _HeldHealthCheck:
 
     def __init__(self) -> None:
         self.under_way = asyncio.Event()
+        self.blocked = (0.0, 0.0)
         self._armed = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -1055,9 +1073,12 @@ class _HeldHealthCheck:
 
 def _blocked_while_answering_app(held: _HeldHealthCheck, where) -> web.Application:
     async def planted(_request: web.Request) -> web.Response:
-        held.arm()
-        await held.under_way.wait()
-        _block_by_reading(where)  # on the loop, while that health check waits on it
+        with _in_the_background_band():
+            held.arm()
+            await held.under_way.wait()
+            began = time.monotonic()
+            _block_by_reading(where)  # on the loop, while that health check waits on it
+            held.blocked = (began, time.monotonic())
         return web.json_response({"ok": True})
 
     app = web.Application()
@@ -1084,14 +1105,16 @@ _BESIDE_A_READY_THREAD_CHILD = (
         held = upload._HeldHealthCheck()
         app = upload._blocked_while_answering_app(held, Path(sys.argv[2]))
         identity = held.identity(handlers_system._identity)
-        stop, spent = threading.Event(), {}
+        stop, hashed = threading.Event(), [(time.monotonic(), 0.0)]
 
         def hash_beside():
             chunk = os.urandom(1 << 20)
-            began, cpu = time.monotonic(), time.thread_time()
             while not stop.is_set():
                 hashlib.sha256(chunk).digest()
-            spent["share"] = (time.thread_time() - cpu) / (time.monotonic() - began)
+                hashed.append((time.monotonic(), time.thread_time()))
+
+        def used_by(moment):
+            return max(cpu for at, cpu in hashed if at <= moment)
 
         with patch.object(handlers_system, "_identity", identity):
             async with TestClient(TestServer(app)) as client:
@@ -1108,8 +1131,10 @@ _BESIDE_A_READY_THREAD_CHILD = (
                 finally:
                     stop.set()
                     beside.join()
+                began, ended = held.blocked
+                share = (used_by(ended) - used_by(began)) / (ended - began)
                 print(json.dumps({
-                    "status": status, "says": probe.says(), "share": spent["share"],
+                    "status": status, "says": probe.says(), "share": share,
                     **vars(upload._seen(probe)),
                 }), flush=True)
 
@@ -1124,7 +1149,7 @@ def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_
     is under way, at the lowest priority while every CPU is taken, beside a thread that hashes
     and so waits for a CPU most of that time, is a step over the bound and an answer over it."""
     seen = _crowded(_BESIDE_A_READY_THREAD_CHILD, tmp_path / "home", str(tmp_path))
-    says = f"the thread beside used {seen['share']:.0%} of a CPU; {seen['says']}"
+    says = f"the thread beside used {seen['share']:.0%} of a CPU during the block; {seen['says']}"
     assert seen["status"] == 200, f"premise: the planted request answered; {says}"
     assert seen["share"] < 0.5, f"premise: the thread beside waited for a CPU; {says}"
     assert seen["worst_step"] >= _BOUND, f"the step missed the block; {says}"
