@@ -978,14 +978,15 @@ def _seen(probe: _Probe) -> SimpleNamespace:
     )
 
 
-def _crowded(child: str, *args: str) -> dict:
-    """Runs ``child`` once it is up, with every CPU taken by a process of its own, and returns the
-    one line of JSON it prints."""
+def _crowded(child: str, home, *args: str) -> dict:
+    """Runs ``child`` on the scratch ``home`` once it is up, with every CPU taken by a process of
+    its own, and returns the one line of JSON it prints."""
     child_process = subprocess.Popen(
         [sys.executable, "-c", child, os.path.dirname(__file__), *args],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
+        env={**os.environ, "PERSONALCLAW_HOME": str(home)},
     )
     busy: list[subprocess.Popen] = []
     out = ""
@@ -1008,7 +1009,7 @@ def _crowded(child: str, *args: str) -> dict:
     return json.loads(out)
 
 
-def test_a_step_the_runner_gives_no_cpu_does_not_fail_the_probe():
+def test_a_step_the_runner_gives_no_cpu_does_not_fail_the_probe(tmp_path):
     """🔴 Red before (a step's wall time was the measure): a request whose steps wait on nothing
     and each use at most 0.05 s of CPU, run at the lowest priority while every CPU is taken, had a
     step the runner stretched past 0.1 s in wall time, and the probe counted a loop blocked that
@@ -1017,7 +1018,7 @@ def test_a_step_the_runner_gives_no_cpu_does_not_fail_the_probe():
     thread runs beside it: on macOS a thread that does could have spent that time ready, and the
     step would be counted in wall time (the test below)."""
     assert _NoCpu().source != "none", "premise: this kernel counts the time ready with no CPU"
-    seen = _crowded(_STARVED_CHILD)
+    seen = _crowded(_STARVED_CHILD, tmp_path / "home")
     assert seen["status"] == 200, f"premise: the starved request answered; {seen['says']}"
     assert seen["worst_step_wall"] >= _BOUND, f"premise: the runner held a step; {seen['says']}"
     assert seen["worst_step"] < _BOUND, f"a step the runner took was counted; {seen['says']}"
@@ -1122,7 +1123,7 @@ def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_
     for a CPU is not the loop's. A blocking read on the loop for 0.2 s, made while a health check
     is under way, at the lowest priority while every CPU is taken, beside a thread that hashes
     and so waits for a CPU most of that time, is a step over the bound and an answer over it."""
-    seen = _crowded(_BESIDE_A_READY_THREAD_CHILD, str(tmp_path))
+    seen = _crowded(_BESIDE_A_READY_THREAD_CHILD, tmp_path / "home", str(tmp_path))
     says = f"the thread beside used {seen['share']:.0%} of a CPU; {seen['says']}"
     assert seen["status"] == 200, f"premise: the planted request answered; {says}"
     assert seen["share"] < 0.5, f"premise: the thread beside waited for a CPU; {says}"
