@@ -493,10 +493,8 @@ def matrix(cat: Catalogue, planned: Plan) -> dict[str, Any]:
     What the workflow's test stage needs besides: ``slug``, the key as the record artifact's
     name spells it (``verdict.record_slug``); ``history``, whether the checkout needs the whole
     history (a step names ``{base}``, which ``run-job`` reads as the merge-base with
-    ``origin/main``); ``image``, whether the stage job builds the gateway image first (the job
-    names ``{image}``, which the build's content ID fills); ``programs``, the toolchain's
-    :data:`SETUP_PROGRAMS`; and ``external``, the job's external inputs (the shard plan, a partner
-    checkout)."""
+    ``origin/main``); ``programs``, the toolchain's :data:`SETUP_PROGRAMS`; and
+    ``external``, the job's external inputs (the shard plan, a partner checkout)."""
     by_id = {j.id: j for j in cat.jobs}
     gone = [j for j in planned.jobs if j not in by_id]
     if gone:
@@ -530,7 +528,6 @@ def matrix(cat: Catalogue, planned: Plan) -> dict[str, Any]:
                     "stage": stage(job_id),
                     "slug": verdict.record_slug(matrix_key(job, shard)),
                     "history": any("base" in step.placeholders() for step in job.command),
-                    "image": "image" in job.placeholders(),
                     "programs": [t for t in job.toolchain if t in SETUP_PROGRAMS],
                     "external": list(job.external_inputs),
                 }

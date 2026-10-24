@@ -8,9 +8,7 @@ step (:data:`RUNNER_ENV`, ``CI=true``), the workflow's env, then the job's, then
 the caller's beyond its ``PATH``. A value only the runner knows is filled in: ``{runner_temp}`` is
 the job's own temporary folder (``Scratch.tmp``; on GitHub, ``$RUNNER_TEMP``), ``{shard}`` the
 shard asked for, ``{base}`` the ref a diff is taken against, ``{run_number}`` the run's number on
-GitHub and :data:`LOCAL_RUN_NUMBER` here, and ``{image}`` the gateway image's content ID: on GitHub
-the one ``--image`` names, which the workflow's build step made, and here the one a plain
-``docker build`` of :data:`GATEWAY_DOCKERFILE` makes first.
+GitHub and :data:`LOCAL_RUN_NUMBER` here.
 
 The job has its catalogue cap less a minute, across every step; a step still running when that
 runs out is stopped with its whole group, and a pytest step says first which of its processes
@@ -201,9 +199,6 @@ class Options:
     #: Read the verdict store and skip a job it holds a clean pass of (``--no-reuse`` turns it
     #: off: every job runs, and each clean pass is still recorded).
     reuse: bool = True
-    #: ``{image}``: the gateway image's content ID, which the workflow's build step made
-    #: (``--image``). Unset, a local run builds it first, and a run on GitHub cannot run.
-    image: str | None = None
 
 
 @dataclass
@@ -258,8 +253,6 @@ def cannot_run_here(job: Job, host: Host, *, working_tree: bool = False) -> list
         where = PARTNERS.get(name)
         if where and not (host.root / where / ".git").exists():
             why.append(f"it reads {name}, and there is no checkout at {where}")
-    if "image" in job.placeholders() and shutil.which("docker", path=host.path) is None:
-        why.append("it smokes the gateway image, and docker is not on PATH")
     return why
 
 
@@ -327,43 +320,6 @@ def _base(host: Host, options: Options) -> str:
     if options.base:
         return options.base
     return _git(host, "merge-base", "HEAD", "origin/main").strip()
-
-
-#: The gateway image ``{image}`` names: the Dockerfile and the stage the image ships from, which
-#: every workflow's build step of it names too (tests/rails/test_ci_image_cache_tree.py).
-GATEWAY_DOCKERFILE, GATEWAY_TARGET = "deploy/docker/Dockerfile.backend", "runtime"
-#: A content ID, as ``--image`` and ``docker build --iidfile`` spell one.
-_IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
-
-
-def _image(host: Host, options: Options, runner_temp: Path, timeout: float) -> str:
-    """``{image}``: the content ID ``--image`` names, else, here, the one a plain ``docker build``
-    of the gateway image makes now, with no cache but the local daemon's. On GitHub the
-    workflow's build step makes it and passes it, so a run there without one cannot run."""
-    if options.image:
-        return options.image
-    if host.on_github:
-        raise Unreadable("on GitHub the workflow's build step makes the image: pass --image")
-    iid = runner_temp / "gateway-image.id"
-    argv = ["docker", "build", "--file", GATEWAY_DOCKERFILE, "--target", GATEWAY_TARGET]
-    print(f"building the gateway image: {shlex.join([*argv, '.'])}", file=sys.stderr, flush=True)
-    keep = ("DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG")
-    env = {"PATH": host.path, "HOME": os.environ.get("HOME", "")}
-    env.update({k: os.environ[k] for k in keep if k in os.environ})
-    try:
-        done = subprocess.run(
-            [*argv, "--iidfile", str(iid), "."],
-            cwd=host.root,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        raise Unreadable(f"the gateway image did not build in {timeout:g}s") from None
-    found = iid.read_text(encoding="utf-8").strip() if iid.is_file() else ""
-    if done.returncode != 0 or not _IMAGE_ID.fullmatch(found):
-        raise Unreadable(f"the gateway image did not build (docker build exit {done.returncode})")
-    return found
 
 
 # ── one job ──────────────────────────────────────────────────────────────────────────────────
@@ -1397,8 +1353,6 @@ def run_one(
     # In a step or in the job's own env, which each step runs with: where the loader accepts it.
     if "run_number" in job.placeholders():
         values["run_number"] = _run_number(host)
-    if "image" in job.placeholders():
-        values["image"] = _image(host, options, runner_temp, job.timeout_min * 60 - MARGIN_S)
     plan: str | None = None
     if job.shards > 1:
         if host.on_github:
@@ -2173,12 +2127,6 @@ def _parser(prog: str, description: str) -> argparse.ArgumentParser:
         help="run on the checkout as it stands, uncommitted changes included: no record, and"
         " the exit is the steps' result",
     )
-    parser.add_argument(
-        "--image",
-        action=once,
-        help="the gateway image's content ID (sha256:...) a job naming {image} smokes, built"
-        " already; without it a local run builds it first",
-    )
     return parser
 
 
@@ -2205,14 +2153,11 @@ def _setup(args: argparse.Namespace) -> tuple[Catalogue, Host, Options, Path]:
         raise Unreadable(
             "--working-tree is a local mode: on GitHub the checkout is the commit under test"
         )
-    if args.image is not None and not _IMAGE_ID.fullmatch(args.image):
-        raise Unreadable(f"--image is a content ID, sha256: and 64 hex digits, not {args.image!r}")
     options = Options(
         base=args.base,
         workers=args.workers,
         working_tree=args.working_tree,
         reuse=not getattr(args, "no_reuse", False),
-        image=args.image,
     )
     return cat, host, options, work
 

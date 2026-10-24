@@ -7667,8 +7667,8 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "browse-live": _Mapped(("browse-live",), ("merge",), security="security", live=True),
     "apps-contract": _Mapped(("apps-contract",), ("merge",)),
     "audit": _Mapped(("audit",), ("merge",), live=True),
-    # The gateway image's build and smoke (#3917): the single-container workflow's job until the
-    # flip retires it. Its Dockerfile's apt installs are pinned by no lock, so it is never reused.
+    # The gateway image's build and smoke (#3917): the single-container workflow's job. Its
+    # Dockerfile's apt installs are pinned by no lock, so it is never reused.
     "image": _Mapped((_IN_DOCKER + "single-container",), ("merge",)),
 }
 
@@ -8420,8 +8420,8 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "the single-container smoke given an argument its catalogue entry does not take",
             _DOCKER,
-            'smoke.py --image "$IMAGE"',
-            'smoke.py --image "$IMAGE" --readme README.md',
+            'smoke.py --image-id-file "$RUNNER_TEMP/gateway-image.id"',
+            'smoke.py --image-id-file "$RUNNER_TEMP/gateway-image.id" --readme README.md',
             expect="docker-single-container.yml job single-container runs",
         ),
         _plant_files(
@@ -12411,8 +12411,7 @@ _RUNNER_IDENTITY_LINE = (
 )
 #: The one line a stage job runs besides its runner's identity.
 _RUN_JOB_LINE = (
-    'python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} ${IMAGE:+--image "$IMAGE"}'
-    ' --out "$RUNNER_TEMP/run-job"'
+    'python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"'
 )
 
 #: Each orchestration job's run: lines, by job and by what they do, as both workflows' jobs of
@@ -12643,16 +12642,13 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
-#: the artifacts the entry reads and writes, and the gateway image's build for an entry that
-#: smokes it (tests/rails/test_ci_image_cache_tree.py holds that build).
+#: and the artifacts the entry reads and writes.
 _STAGE_ACTIONS = frozenset(
     {
         "actions/checkout",
         "./.github/actions/setup",
         "actions/download-artifact",
         "actions/upload-artifact",
-        "docker/setup-buildx-action",
-        "docker/build-push-action",
     }
 )
 

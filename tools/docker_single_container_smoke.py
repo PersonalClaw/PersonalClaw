@@ -67,7 +67,12 @@ Exit 0 = the claim holds. Exit 1 = it does not. Exit 2 = the run could not measu
 finding, so it says so separately.
 
 Usage:
-    python3 tools/docker_single_container_smoke.py [--image REF] [--readme README.md]
+    python3 tools/docker_single_container_smoke.py [--image REF | --image-id-file PATH]
+        [--readme README.md]
+
+``--image-id-file`` names the file ``docker build --iidfile`` wrote: the image is then the one
+that build made, by its content ID, so no tag can stand in for it. A file that holds no content
+ID is a run that could not measure.
 """
 
 from __future__ import annotations
@@ -661,18 +666,46 @@ def _dump_container_logs(name: str) -> None:
     print("::endgroup::", flush=True)
 
 
+#: A content ID, as `docker build --iidfile` writes one.
+_IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def image_id(path: Path) -> str:
+    """The content ID in *path*, the file `docker build --iidfile` wrote, or Unmeasurable."""
+    try:
+        found = path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise Unmeasurable(f"no image ID file at {path}: {exc.strerror}") from None
+    if not _IMAGE_ID.fullmatch(found):
+        raise Unmeasurable(f"{path} holds no image content ID (sha256:...): {found[:80]!r}")
+    return found
+
+
 # ---------------------------------------------------------------------------
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--readme", default="README.md", type=Path)
-    parser.add_argument(
+    chosen = parser.add_mutually_exclusive_group()
+    chosen.add_argument(
         "--image",
         default=None,
         help="image ref to substitute for the README's (e.g. a tag built from this commit)",
     )
+    chosen.add_argument(
+        "--image-id-file",
+        default=None,
+        type=Path,
+        help="the file `docker build --iidfile` wrote: smoke that build's image, by its ID",
+    )
     args = parser.parse_args()
+    if args.image_id_file is not None:
+        try:
+            args.image = image_id(args.image_id_file)
+        except Unmeasurable as exc:
+            print(f"UNMEASURABLE: {exc}", file=sys.stderr)
+            return 2
 
     suffix = f"single-container-{os.getpid()}"
     name = f"personalclaw-smoke-{suffix}"

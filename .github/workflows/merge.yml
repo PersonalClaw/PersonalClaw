@@ -343,37 +343,11 @@ jobs:
           pattern: e2e-blob-*
           merge-multiple: true
           path: web/blob-report
-      # The gateway image an entry smokes ({image}), built with the release's pinned buildx and
-      # main's layer cache, which this step reads and never writes: image-cache.yml, on main, is
-      # its one writer. run-job gets the build's content ID, so the smoke runs what was built.
-      - name: the buildx the gateway image is built with (image)
-        if: ${{ matrix.image }}
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.38.0
-          # moby/buildkit:v0.34.0, the linux/amd64 manifest (this runner's platform) of index
-          # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
-          driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
-      - name: the gateway image the entry smokes (image)
-        id: image
-        if: ${{ matrix.image }}
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: deploy/docker/Dockerfile.backend
-          target: runtime
-          load: true
-          push: false
-          provenance: false
-          sbom: false
-          github-token: ""
-          cache-from: type=gha,scope=gateway-runtime
       - name: the entry's catalogue job, through run-job
         env:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
-          IMAGE: ${{ steps.image.outputs.imageid }}
-        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} ${IMAGE:+--image "$IMAGE"} --out "$RUNNER_TEMP/run-job"
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
       - name: Upload the entry's record
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -481,37 +455,11 @@ jobs:
           pattern: e2e-blob-*
           merge-multiple: true
           path: web/blob-report
-      # The gateway image an entry smokes ({image}), built with the release's pinned buildx and
-      # main's layer cache, which this step reads and never writes: image-cache.yml, on main, is
-      # its one writer. run-job gets the build's content ID, so the smoke runs what was built.
-      - name: the buildx the gateway image is built with (image)
-        if: ${{ matrix.image }}
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.38.0
-          # moby/buildkit:v0.34.0, the linux/amd64 manifest (this runner's platform) of index
-          # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
-          driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
-      - name: the gateway image the entry smokes (image)
-        id: image
-        if: ${{ matrix.image }}
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: deploy/docker/Dockerfile.backend
-          target: runtime
-          load: true
-          push: false
-          provenance: false
-          sbom: false
-          github-token: ""
-          cache-from: type=gha,scope=gateway-runtime
       - name: the entry's catalogue job, through run-job
         env:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
-          IMAGE: ${{ steps.image.outputs.imageid }}
-        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} ${IMAGE:+--image "$IMAGE"} --out "$RUNNER_TEMP/run-job"
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
       - name: Upload the entry's record
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -619,37 +567,11 @@ jobs:
           pattern: e2e-blob-*
           merge-multiple: true
           path: web/blob-report
-      # The gateway image an entry smokes ({image}), built with the release's pinned buildx and
-      # main's layer cache, which this step reads and never writes: image-cache.yml, on main, is
-      # its one writer. run-job gets the build's content ID, so the smoke runs what was built.
-      - name: the buildx the gateway image is built with (image)
-        if: ${{ matrix.image }}
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.38.0
-          # moby/buildkit:v0.34.0, the linux/amd64 manifest (this runner's platform) of index
-          # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
-          driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
-      - name: the gateway image the entry smokes (image)
-        id: image
-        if: ${{ matrix.image }}
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: deploy/docker/Dockerfile.backend
-          target: runtime
-          load: true
-          push: false
-          provenance: false
-          sbom: false
-          github-token: ""
-          cache-from: type=gha,scope=gateway-runtime
       - name: the entry's catalogue job, through run-job
         env:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
-          IMAGE: ${{ steps.image.outputs.imageid }}
-        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} ${IMAGE:+--image "$IMAGE"} --out "$RUNNER_TEMP/run-job"
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
       - name: Upload the entry's record
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -757,37 +679,11 @@ jobs:
           pattern: e2e-blob-*
           merge-multiple: true
           path: web/blob-report
-      # The gateway image an entry smokes ({image}), built with the release's pinned buildx and
-      # main's layer cache, which this step reads and never writes: image-cache.yml, on main, is
-      # its one writer. run-job gets the build's content ID, so the smoke runs what was built.
-      - name: the buildx the gateway image is built with (image)
-        if: ${{ matrix.image }}
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          version: v0.38.0
-          # moby/buildkit:v0.34.0, the linux/amd64 manifest (this runner's platform) of index
-          # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
-          driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
-      - name: the gateway image the entry smokes (image)
-        id: image
-        if: ${{ matrix.image }}
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: deploy/docker/Dockerfile.backend
-          target: runtime
-          load: true
-          push: false
-          provenance: false
-          sbom: false
-          github-token: ""
-          cache-from: type=gha,scope=gateway-runtime
       - name: the entry's catalogue job, through run-job
         env:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
-          IMAGE: ${{ steps.image.outputs.imageid }}
-        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} ${IMAGE:+--image "$IMAGE"} --out "$RUNNER_TEMP/run-job"
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
       - name: Upload the entry's record
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
