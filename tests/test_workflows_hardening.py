@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 
 import pytest
 
@@ -488,9 +489,13 @@ class TestJournalReplay:
         ]
         assert len(body) == 3, [e["instance_path"] for e in body]
 
-    async def test_a_1000_entry_journal_reads_in_under_a_second(self) -> None:
-        """The performance bar. The journal is read on every resume, so a slow read
-        makes crash recovery quadratic in run length."""
+    async def test_a_1000_entry_journal_is_read_once_and_each_entry_parsed_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The performance bar, held as the work a read does rather than the seconds it takes on
+        whatever runner it lands on. The journal is read on every resume, so a read that went back
+        over earlier entries would make crash recovery quadratic in run length: one ledger read of
+        1000 entries reads the event log once and parses each of its lines once."""
         run = _run_for(
             {"name": "big", "root": {"kind": "transform", "id": "t", "config": {"expr": 1}}}
         )
@@ -499,12 +504,28 @@ class TestJournalReplay:
         journal = Journal(run.id)
         for i in range(1000):
             journal.write(STEP_COMPLETED, instance_path=f"root.n{i}", node_id=f"n{i}", epoch=0)
+        events = store.ledger_file(run.id, "events.jsonl")
+        lines = [line for line in events.read_text(encoding="utf-8").splitlines() if line.strip()]
 
-        started = time.perf_counter()
-        records = ledger(run.id)
-        elapsed = time.perf_counter() - started
+        reads: list[str] = []
+        parses: list[str] = []
+        read_text, loads = Path.read_text, store.json.loads
+
+        def counted_read(path: Path, *args, **kwargs) -> str:
+            reads.append(path.name)
+            return read_text(path, *args, **kwargs)
+
+        def counted_loads(text, *args, **kwargs):
+            parses.append(text)
+            return loads(text, *args, **kwargs)
+
+        with monkeypatch.context() as counting:
+            counting.setattr(Path, "read_text", counted_read)
+            counting.setattr(store.json, "loads", counted_loads)
+            records = ledger(run.id)
         assert len(records) >= 1000
-        assert elapsed < 1.0, f"reading 1000 entries took {elapsed:.2f}s"
+        assert reads.count("events.jsonl") == 1, reads
+        assert len(parses) == len(lines), f"{len(parses)} parses of {len(lines)} lines"
 
     async def test_the_ledger_survives_a_CORRUPT_line(self) -> None:
         """A journal is append-only and read after a crash, so a torn final write is a real state.
