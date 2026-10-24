@@ -23,7 +23,6 @@ from harness.diff import (
     has_fix_shaped_commit,
     touches_specs,
 )
-from harness.selection import forced_profiles
 
 
 def _repo_root() -> Path:
@@ -149,22 +148,34 @@ def test_app_sdk_boundary_allows_sdk_import(tmp_path: Path) -> None:
 
 
 # ── Diff-aware selection ─────────────────────────────────────────────────────────
+#
+# `harness run --diff` asks CI's planner what the diff reaches (#3945): the change tier's jobs,
+# chosen from the catalogue's declared inputs and its tested overrides, never by a rule of the
+# harness's own.
 
 
-def test_chat_touch_forces_replay_and_web() -> None:
-    forced = {f.profile for f in forced_profiles(["web/src/pages/chat/coalesceReducers.ts"])}
-    assert "replay" in forced
-    assert "web" in forced
+def _diff_run(monkeypatch, capsys, files: list[str]) -> list[str]:
+    """The commands ``harness run --diff --dry-run`` prints for a diff of *files*."""
+    import types
+
+    monkeypatch.setattr(
+        cli, "compute_diff", lambda: types.SimpleNamespace(base="b" * 40, files=files)
+    )
+    monkeypatch.setattr(cli, "commit_subjects_since", lambda root, base: [])
+    assert cli.main(["run", "--diff", "--dry-run"]) == 0
+    return [line for line in capsys.readouterr().out.splitlines() if "tools.ci" in line]
 
 
-def test_config_loader_touch_forces_scan() -> None:
-    forced = {f.profile for f in forced_profiles(["src/personalclaw/config/loader.py"])}
-    assert "scan" in forced
+def test_a_diff_runs_the_change_tier_the_planner_picks(monkeypatch, capsys) -> None:
+    said = _diff_run(monkeypatch, capsys, ["web/src/pages/chat/coalesceReducers.ts"])
+    assert any("-m tools.ci run change --changed --working-tree" in line for line in said), said
 
 
-def test_unrelated_touch_forces_nothing_sensitive() -> None:
-    forced = {f.profile for f in forced_profiles(["README.md"])}
-    assert "replay" not in forced and "scan" not in forced and "web" not in forced
+def test_the_harness_keeps_no_path_rules_of_its_own() -> None:
+    import importlib.util
+
+    assert importlib.util.find_spec("harness.selection") is None
+    assert "forced_profiles" not in (Path(cli.__file__)).read_text(encoding="utf-8")
 
 
 # ── Same-PR rule helpers ─────────────────────────────────────────────────────────

@@ -256,6 +256,10 @@ _OVERRIDE_ROWS = {
     "tools/docker_single_container_smoke.py": "whole",
     "scripts/installed_bundled_model_probe.py": "whole",
     "scripts/sdk_signature_snapshot.py": {"apps-contract"},
+    # What the harness's own rule once forced replay on (#3945): the gates that hold replay.
+    "web/src/pages/chat/coalesceReducers.ts": {"web-unit", "python-suite"},
+    "web/src/pages/loops/LoopRun.tsx": {"web-unit", "python-suite"},
+    "src/personalclaw/dashboard/sse.py": {"web-unit", "python-suite"},
 }
 
 
@@ -521,15 +525,19 @@ def test_a_docs_only_plan_leaves_out_the_browser_run_and_reports_the_floor() -> 
     assert p.rails_floor == planner.NOT_MEASURED
 
 
-def test_the_harness_replay_reason_is_kept_beside_the_overrides() -> None:
-    source = _flat((REPO / catalogue.AREAS).read_text(encoding="utf-8").replace("#", " "))
+def test_the_harness_replay_reason_is_an_override_the_planner_reads() -> None:
+    """The rule the harness once kept beside the planner (``harness/selection.py``) is one of
+    its overrides now, word for word in its reason, so ``harness run --diff`` and CI plan replay's
+    paths alike."""
+    replay = [o for o in _AREAS if "stream-coalescer" in o.reason and "run-fold" in o.reason]
+    assert len(replay) == 1, [o.reason for o in _AREAS]
     for path in (
         "web/src/pages/chat/",
         "web/src/pages/loops/",
         "src/personalclaw/dashboard/sse.py",
     ):
-        assert path in source, path
-    assert "stream-coalescer" in source and "run-fold" in source
+        assert path in replay[0].paths, path
+    assert {"web-unit", "python-suite"} <= set(replay[0].jobs)
 
 
 def test_the_planner_imports_only_the_standard_library() -> None:
