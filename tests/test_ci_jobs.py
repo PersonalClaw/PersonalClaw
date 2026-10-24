@@ -6,6 +6,7 @@ programs, so nothing here installs or runs the real catalogue's commands.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import pwd
@@ -439,6 +440,80 @@ def test_a_chromium_bound_longer_than_the_job_has_left_is_the_jobs(repo, tmp_pat
     argv, timeout, budget = given[0]
     total = 2 * 60 - jobs.MARGIN_S
     assert argv == _INSTALL and total - 5 < timeout <= total and budget == total
+
+
+def _seen_env(repo, tmp_path, host, name="tools"):
+    """What a step of a job with every caching toolchain word sees, run on *host*."""
+    stubs = _stubs(tmp_path, "uv", "npm", "npx", "node")
+    out = tmp_path / f"{name}.json"
+    toolchain = ("uv-sync", "node", "npm-ci", "chromium")
+    job = _job(name, _dump_env(out), toolchain=toolchain, python="3.12.15")
+    host = dataclasses.replace(host, path=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    outcome = _run(repo, job, tmp_path, host=host)
+    assert outcome.code == run.OK, outcome.reasons
+    return json.loads(out.read_text())
+
+
+def test_a_callers_own_cache_folders_are_never_a_local_steps(repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "callers-uv"))
+    monkeypatch.setenv("UV_PYTHON_INSTALL_DIR", str(tmp_path / "callers-pythons"))
+    seen = _seen_env(repo, tmp_path, _host(repo))
+    cache = repo / jobs.WORK / "cache"
+    for name in ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "npm_config_cache"):
+        assert Path(seen[name]).is_relative_to(cache), (name, seen[name])
+    # And the project venv too, never the checkout's own .venv a caller may be using.
+    assert Path(seen["UV_PROJECT_ENVIRONMENT"]).is_relative_to(cache)
+
+
+def test_on_github_the_caches_are_the_setup_actions_own_folders(repo, tmp_path, monkeypatch):
+    """setup-uv sets its cache and Python folders, and setup-node caches the runner's own
+    ~/.npm: a step that writes elsewhere leaves setup-uv's cache empty, and its post step red."""
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "setup-uv-cache"))
+    monkeypatch.setenv("UV_PYTHON_INSTALL_DIR", str(tmp_path / "uv-python-dir"))
+    monkeypatch.setenv("HOME", str(tmp_path / "runner-home"))
+    monkeypatch.setenv("UV_PYTHON", "3.12.15")
+    seen = _seen_env(repo, tmp_path, _host(repo, on_github=True))
+    assert seen["UV_CACHE_DIR"] == str(tmp_path / "setup-uv-cache")
+    assert seen["UV_PYTHON_INSTALL_DIR"] == str(tmp_path / "uv-python-dir")
+    assert seen["npm_config_cache"] == str(tmp_path / "runner-home" / ".npm")
+    # The project venv is uv's own, the checkout's .venv, as ci.yml's jobs have it; Playwright's
+    # browsers stay the work folder's; and the step's own home is still its scratch home.
+    assert "UV_PROJECT_ENVIRONMENT" not in seen and "UV_VENV_CLEAR" not in seen
+    cache = repo / jobs.WORK / "cache"
+    assert Path(seen["PLAYWRIGHT_BROWSERS_PATH"]).is_relative_to(cache)
+    assert seen["HOME"] != str(tmp_path / "runner-home")
+    assert seen["UV_PYTHON"] == "3.12.15"
+
+
+def test_on_github_a_runner_python_that_is_not_the_jobs_own_is_refused(repo, tmp_path, monkeypatch):
+    """The job's declared Python is the contract: setup-uv's UV_PYTHON may only agree with it."""
+    monkeypatch.setenv("UV_PYTHON", "3.13.16")
+    job = _job("pinned", toolchain=("uv-sync",), python="3.12.15")
+    with pytest.raises(jobs.Unreadable) as refused:
+        jobs._cache_env(job, _host(repo, on_github=True))
+    assert "3.12.15" in str(refused.value) and "3.13.16" in str(refused.value)
+    # The same Python is followed, and locally the runner's is never read at all.
+    monkeypatch.setenv("UV_PYTHON", "3.12.15")
+    assert jobs._cache_env(job, _host(repo, on_github=True))["UV_PYTHON"] == "3.12.15"
+    monkeypatch.setenv("UV_PYTHON", "3.13.16")
+    assert jobs._cache_env(job, _host(repo))["UV_PYTHON"] == "3.12.15"
+
+
+def test_on_github_a_folder_the_runner_names_none_for_is_the_work_folders(
+    repo, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    monkeypatch.setenv("GITHUB_RUN_ID", "1234")
+    monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    for name in ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "HOME"):
+        monkeypatch.delenv(name, raising=False)
+    seen = _seen_env(repo, tmp_path, _host(repo, on_github=True))
+    cache = repo / jobs.WORK / "cache"
+    for name in ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "npm_config_cache"):
+        assert Path(seen[name]).is_relative_to(cache), (name, seen[name])
 
 
 @pytest.mark.skipif(shutil.which("uv") is None, reason="runs uv venv, which needs uv on PATH")

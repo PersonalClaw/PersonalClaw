@@ -1781,7 +1781,14 @@ shadow mode, and the recall study.
   caller's own: uv's cache and Pythons, the venv `uv sync` installs, npm's cache and the
   Playwright browsers. `npm ci` reinstalls the checkout's own `node_modules`, as it does on CI,
   and `uv venv` replaces a venv an earlier run left in the checkout (`UV_VENV_CLEAR`), where
-  CI's checkout is new each run.
+  CI's checkout is new each run. On GitHub the caches are the setup action's own folders
+  (`jobs._cache_env`), so the cache it restored is what the job reads and the cache it saves
+  holds what the job wrote: setup-uv's `UV_CACHE_DIR`, `UV_PYTHON_INSTALL_DIR` and `UV_PYTHON`,
+  and the npm cache setup-node restores in the runner's own home; and the project venv is uv's
+  own, the checkout's `.venv`, as `ci.yml`'s jobs have it, where the exemplar smokes'
+  `resolve_py.sh` finds it. setup-uv fails its post step
+  on a cache folder nothing wrote to, which every uv job of `merge.yml` run 40053059413 did
+  while run-job wrote to the work folder's.
 - **The job's time** is its `timeout_min` less a minute, shared by every step, so the loader
   refuses a `timeout_min` under 2. A pytest step still running when it runs out prints
   `possible xdist hang` and lists its group's live processes before the group is stopped.

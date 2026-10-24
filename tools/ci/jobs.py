@@ -432,23 +432,49 @@ def _step_argv(step: Step, job: Job, values: Mapping[str, str], options: Options
     return argv
 
 
-def _local_env(job: Job, host: Host) -> dict[str, str]:
-    """What a step run here gets that CI's new runner makes needless: the job's caches, managed
-    Pythons and project venv under the work folder, kept between runs as CI restores its caches,
-    never the caller's own; and ``uv venv`` replacing a venv an earlier local run left in the
-    checkout, as a new checkout on CI has none. ``npm ci`` still reinstalls the checkout's own
-    ``node_modules``, as it does on CI."""
+def _cache_env(job: Job, host: Host) -> dict[str, str]:
+    """Where a step's caches, managed Pythons and project venv go.
+
+    Here, under the work folder, kept between runs as CI restores its caches, never the caller's
+    own; and ``uv venv`` replaces a venv an earlier local run left in the checkout, as a new
+    checkout on CI has none. ``npm ci`` still reinstalls the checkout's own ``node_modules``, as
+    it does on CI.
+
+    On GitHub, in the setup action's own folders, so the cache it restored is what the job reads
+    and the cache it saves holds what the job wrote: setup-uv's cache and Python folders
+    (``UV_CACHE_DIR`` and ``UV_PYTHON_INSTALL_DIR``, which it sets; a ``UV_PYTHON`` it set up
+    that is not the job's own Python is refused), and the npm cache setup-node
+    restores, ``.npm`` in the runner's own home (a step's ``HOME`` is its scratch home); and the
+    project venv where uv puts it, the checkout's ``.venv``, as ci.yml's jobs have it: a new
+    checkout has none, and ``harness/exemplars/resolve_py.sh`` finds the dev dependencies' Python
+    there (run 40053059413's exemplar smokes found none in the work folder's). setup-uv
+    fails its post step on a cache folder nothing wrote to, which every uv job of a run made with
+    the work folder's did (merge.yml run 40053059413). A folder the runner names none for is the
+    work folder's, as here, and so are Playwright's browsers, which no setup action caches."""
     cache = host.root / WORK / "cache"
+    runner = os.environ if host.on_github else {}
     env: dict[str, str] = {}
     if "uv" in job.toolchain or "uv-sync" in job.toolchain:
-        env["UV_CACHE_DIR"] = str(cache / "uv")
-        env["UV_PYTHON_INSTALL_DIR"] = str(cache / "uv-python")
-        env["UV_PROJECT_ENVIRONMENT"] = str(cache / f"venv-{job.python or 'default'}")
-        env["UV_VENV_CLEAR"] = "1"
+        env["UV_CACHE_DIR"] = runner.get("UV_CACHE_DIR") or str(cache / "uv")
+        env["UV_PYTHON_INSTALL_DIR"] = runner.get("UV_PYTHON_INSTALL_DIR") or str(
+            cache / "uv-python"
+        )
+        if not host.on_github:
+            env["UV_PROJECT_ENVIRONMENT"] = str(cache / f"venv-{job.python or 'default'}")
+            env["UV_VENV_CLEAR"] = "1"
         if job.python and job.python != "image":
+            # The job's own Python is the contract: a runner that set up another is refused,
+            # never followed, so a record cannot name one Python and have run another.
+            given = runner.get("UV_PYTHON")
+            if given and given != job.python:
+                raise Unreadable(
+                    f"{job.id} names Python {job.python}, and the runner's setup-uv set up"
+                    f" {given} (UV_PYTHON): the step would not run the job's own Python"
+                )
             env["UV_PYTHON"] = job.python
     if "npm-ci" in job.toolchain:
-        env["npm_config_cache"] = str(cache / "npm")
+        home = runner.get("HOME")
+        env["npm_config_cache"] = str(Path(home) / ".npm") if home else str(cache / "npm")
     if "chromium" in job.toolchain:
         env["PLAYWRIGHT_BROWSERS_PATH"] = str(cache / "ms-playwright")
     return env
@@ -456,9 +482,9 @@ def _local_env(job: Job, host: Host) -> dict[str, str]:
 
 def _base_env(job: Job, host: Host, options: Options) -> dict[str, str]:
     """What every step of *job* gets below its job's own env and its own: the runner's, the
-    workflow's, the local caches (:func:`_local_env`), and the worker count when the job names a
+    workflow's, the caches (:func:`_cache_env`), and the worker count when the job names a
     variable for it (``workers_env``)."""
-    env = {**RUNNER_ENV, **WORKFLOW_ENV, **_local_env(job, host)}
+    env = {**RUNNER_ENV, **WORKFLOW_ENV, **_cache_env(job, host)}
     count = _worker_count(job, options)
     if job.workers_env and count is not None:
         env[job.workers_env] = count
