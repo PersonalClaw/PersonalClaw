@@ -26,6 +26,10 @@ beforeEach(() => {
       // The Runners section reads its own list. Unmocked, that read went to the network and failed
       // at a moment of its own, adding a second Retry beside the default agent's one now and then.
       agentRunners: async () => [],
+      // The reply styles' two sections read their list too. Unmocked, that read failed the same way
+      // and added two more Retry buttons whenever it landed before the count below, as it did late
+      // in a long-lived worker of the VM pool (vitest.config.ts).
+      replyStyles: async () => ({ styles: [], precedence: [] }),
       savedAgents: async () => [],
       agentProviders: async () => [],
       setDefaultAgent: async () => ({ ok: true }),

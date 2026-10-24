@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef } from 'react'
 import { LogOut } from 'lucide-react'
 import { Button } from '../ui/Button'
 import type { SignedOut } from '../lib/signedOut'
+import { tab } from '../lib/tab'
 
 /** The gateway's sentence, with its `backticked` commands shown as code — the same rendering the
  *  gateway's own sign-in pages give the same sentence (`token_auth.notice_html`). The sign-in
@@ -49,7 +50,7 @@ export function SignedOutScreen({ notice }: { notice: SignedOut }) {
             <GatewaySentence text={notice.message} />
           </p>
         </div>
-        <Button size="sm" onClick={() => window.location.reload()}>Sign in again</Button>
+        <Button size="sm" onClick={() => tab.reload()}>Sign in again</Button>
       </div>
     </main>
   )

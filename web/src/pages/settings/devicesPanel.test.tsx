@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { api, type DeviceRec, type DevicePairStart, type IntegrationRec } from '../../lib/api'
 import { encodeQr, qrPath } from '../../lib/qr'
+import { tab } from '../../lib/tab'
 
 // ── Settings → Devices ────────────────────────────────────────────────────────────────────────
 //
@@ -527,8 +528,7 @@ describe('the list names every sign-in, and signs any of them out', () => {
   it('signing THIS device out uses the sign-out route, never a revoke of its own row', async () => {
     const logout = vi.spyOn(api, 'authLogout').mockResolvedValue({ ok: true, revoked: true })
     const revoke = vi.spyOn(api, 'deviceRevoke')
-    const reload = vi.fn()
-    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location)
+    const reload = vi.spyOn(tab, 'reload').mockImplementation(() => {})
     vi.spyOn(api, 'devices').mockResolvedValue(rows())
     mount()
     await waitFor(() => expect(screen.getByText('Chrome on Mac')).toBeTruthy())

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { api, ApiError } from '../lib/api'
 import { useChatSocket } from '../lib/useChatSocket'
+import { tab } from '../lib/tab'
 import { App } from './App'
 
 // ── A tab whose session ended is TOLD why, once, and stops asking ─────────────────────────────
@@ -63,8 +64,7 @@ describe('a signed-out tab shows why, in place of the app', () => {
     expect(document.activeElement, 'focus lands on what replaced the page').toBe(heading)
     expect(screen.queryByRole('navigation'), 'none of the shell is left behind the notice').toBeNull()
 
-    const reload = vi.fn()
-    vi.spyOn(window, 'location', 'get').mockReturnValue({ ...window.location, reload } as Location)
+    const reload = vi.spyOn(tab, 'reload').mockImplementation(() => {})
     fireEvent.click(screen.getByRole('button', { name: 'Sign in again' }))
     expect(reload, 'reloading lands on the gateway’s own sign-in door').toHaveBeenCalledTimes(1)
   })

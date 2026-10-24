@@ -16,6 +16,7 @@ import { StatusPill, type StatusPillTone } from '../../ui/StatusPill'
 import { EmptyState, FormSkeleton, LoadError } from '../../ui/ListScaffold'
 import { relPast, absTime } from '../schedule/scheduleMeta'
 import { copyText } from '../../app/clipboard'
+import { tab } from '../../lib/tab'
 
 /** The house form for a CAUGHT error (`lib/errText` takes a `Response`, not an exception).
  *  The api client has already turned the failed response into this message. */
@@ -213,7 +214,7 @@ export function DevicesPanel() {
       setRevoking(device.id)
       try {
         await api.authLogout()
-        window.location.reload()
+        tab.reload()
       } catch (e) {
         notify(`Couldn't sign out: ${msg(e)}`, 'error')
         setRevoking(null)

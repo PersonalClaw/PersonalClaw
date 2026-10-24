@@ -122,8 +122,14 @@ describe('the tile beside the conversation', () => {
   })
 
   it('carries the loop\'s strip: Stop asks first, and only the second press sends it', async () => {
-    vi.spyOn(api, 'uLoop').mockResolvedValue(loop())
-    const action = vi.spyOn(api, 'uLoopAction').mockResolvedValue(loop({ status: 'stopped' } as Partial<Loop>))
+    const read = vi.spyOn(api, 'uLoop').mockResolvedValue(loop())
+    const action = vi.spyOn(api, 'uLoopAction').mockImplementation(async () => {
+      // The press restarts the tile's read, which this mock would answer "running" and so replace
+      // the press's own answer whenever it landed first. That read waits, so what shows is the
+      // press's answer.
+      read.mockReturnValue(new Promise(() => {}))
+      return loop({ status: 'stopped' } as Partial<Loop>)
+    })
     render(<>{pane()!.body}</>)
     const strip = await screen.findByRole('toolbar', { name: 'This loop' })
     expect(within(strip).getByRole('button', { name: 'Pause' })).toBeTruthy()
