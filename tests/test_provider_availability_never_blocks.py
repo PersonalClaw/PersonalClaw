@@ -200,6 +200,7 @@ async def test_the_answer_comes_from_the_child_and_carries_the_apps_reason(plant
     await _stop(board)
 
 
+@pytest.mark.timeout(40)
 @pytest.mark.asyncio
 async def test_a_hook_that_never_returns_is_unknown_at_the_deadline_and_its_child_is_killed(
     planted, monkeypatch

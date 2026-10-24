@@ -267,6 +267,7 @@ def test_the_shapes_repeat_their_parts(home):
     assert repeats > len(lines) // 2, (repeats, len(lines))
 
 
+@pytest.mark.timeout(50)
 @pytest.mark.parametrize("budget", ["real", "lifted"], ids=["real-budget", "budget-lifted"])
 @pytest.mark.parametrize("cwd", ["home", None], ids=["from-the-home", "from-the-workspace"])
 def test_the_reading_names_the_same_paths_in_the_same_order(home, monkeypatch, cwd, budget):
@@ -309,6 +310,7 @@ def test_past_the_listing_budget_the_reading_is_the_old_one(home, holds):
     assert ("~/.ss*", home / ".ss*") in _named_paths_before(SPEND + "ls ~/.ss*", cwd=str(home))
 
 
+@pytest.mark.timeout(110)
 @pytest.mark.parametrize("holds", sorted(SSH_HOLDS))
 def test_with_the_real_budget_every_screen_gives_the_answer_it_gave(home, monkeypatch, holds):
     """With the real listing budget, over the corpus and lines that spend it on repeats first, from
@@ -350,6 +352,7 @@ def _answers(line: str, cwd: str | None) -> tuple:
 SCREENS = ["credential", "store", "owner-only", "memory"]
 
 
+@pytest.mark.timeout(120)
 def test_every_screen_gives_the_same_answer(home, monkeypatch):
     """The credential screen, the store screen, the owner-only screen and the memory screen's first
     path, old reading against new, over the corpus from the home and from the workspace. Each screen

@@ -507,6 +507,7 @@ def test_the_store_derivation_still_discriminates():
     assert "to_dict" not in instances["functions"]
 
 
+@pytest.mark.timeout(40)
 def test_the_scan_is_not_vacuous():
     """Every assertion below is only as good as the walk that produced it."""
     census = scan()
@@ -654,6 +655,7 @@ def test_reverting_the_mask_in_instance_routes_is_counted():
     assert census.violations[0].handler == "handle_list_instances", census.violations[0]
 
 
+@pytest.mark.timeout(40)
 def test_no_route_hands_a_provider_config_to_the_wire_unmasked():
     """The rail. Derived population, zero tolerance.
 
@@ -676,6 +678,7 @@ def test_no_route_hands_a_provider_config_to_the_wire_unmasked():
     )
 
 
+@pytest.mark.timeout(40)
 def test_values_the_census_cannot_classify_do_not_grow():
     """The scanner's own blind spot, held to a ceiling instead of a shrug.
 
@@ -698,9 +701,7 @@ def test_values_the_census_cannot_classify_do_not_grow():
     )
 
 
-# A census of the tree: under coverage on CI it took 80-97 s of the suite's 120 s (2026-10-14/15).
-# It gets the 300 s the inert-surface census's tests have (tests/test_inert_surface_baseline.py).
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(50)
 def test_every_config_bearing_surface_also_preserves_secrets_if_it_writes():
     """Masking a read without guarding the matching write is a worse bug than the leak.
 
@@ -744,6 +745,7 @@ def test_every_config_bearing_surface_also_preserves_secrets_if_it_writes():
     )
 
 
+@pytest.mark.timeout(40)
 def test_no_config_carrying_wire_shape_escapes_the_census():
     """The independent completeness net for ``CONFIG_SOURCE_MODULES``.
 

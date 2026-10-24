@@ -923,6 +923,7 @@ def _per_run(read, windows: dict[int, Path]) -> tuple[list[int], list[float]]:
     return peaks, [(b - a) / (m - n) for a, b, n, m in steps]
 
 
+@pytest.mark.timeout(170)
 def test_what_each_added_run_costs_the_reader_falls_off_and_90_days_stay_under_512_mb(
     tmp_path: Path,
 ) -> None:

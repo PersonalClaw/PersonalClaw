@@ -198,6 +198,7 @@ def test_a_restart_mid_cycle_does_not_lose_unprocessed_items():
 # ── health and lint over a 100+-item store ──
 
 
+@pytest.mark.timeout(50)
 def test_health_over_a_hundred_item_store(home, ctx):
     persist = _persist()
     for index in range(110):

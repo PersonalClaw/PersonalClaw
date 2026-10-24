@@ -1317,6 +1317,7 @@ def _blanked_alone(case: dict) -> None:
     assert case["top"].startswith(f"http://{ALLOWED_HOST}:"), case["top"]
 
 
+@pytest.mark.timeout(130)
 def test_a_denied_cross_site_frame_is_blanked_and_the_page_keeps_working(frames: dict) -> None:
     """🔴 Red before, on a site-isolated browser: the frame was never seen, stayed in the
     screenshot and took the click. On the other browser the whole page was torn down."""
@@ -1340,6 +1341,7 @@ def _one_denial(case: dict, host: str, caught: set[tuple[str, str]]) -> None:
     assert len(rows) == 1 and rows[0] in caught, case["sel"]
 
 
+@pytest.mark.timeout(130)
 def test_a_denied_same_site_frame_is_blanked_as_it_starts_or_when_it_commits(frames: dict) -> None:
     """Blanked as its navigation starts, and again when it commits if that blank did not land
     first: one denial either way, recorded under the first."""
@@ -1353,6 +1355,7 @@ def test_a_denied_same_site_frame_is_blanked_as_it_starts_or_when_it_commits(fra
     _one_denial(case, SAME_SITE_DENIED, caught)
 
 
+@pytest.mark.timeout(130)
 def test_a_denied_frame_nested_in_an_allowed_frame_is_blanked(frames: dict) -> None:
     case = frames["l3"]
     _blanked_alone(case)
@@ -1362,6 +1365,7 @@ def test_a_denied_frame_nested_in_an_allowed_frame_is_blanked(frames: dict) -> N
         assert "/frame-secret-ran" not in case["hits"], "the denied frame's script ran"
 
 
+@pytest.mark.timeout(130)
 def test_an_allowed_frame_nested_in_an_allowed_frame_runs(frames: dict) -> None:
     """Vacuity partner: watching nested frames must not cost an allowed one."""
     case = frames["l4"]
@@ -1369,6 +1373,7 @@ def test_an_allowed_frame_nested_in_an_allowed_frame_runs(frames: dict) -> None:
     assert "/frame-allowed-ran" in case["hits"] and case["px"]["teal"] > 0, case
 
 
+@pytest.mark.timeout(130)
 def test_a_frame_that_moves_itself_to_a_denied_host_is_blanked(frames: dict) -> None:
     case = frames["l5"]
     _blanked_alone(case)
@@ -1381,6 +1386,7 @@ def test_a_frame_that_moves_itself_to_a_denied_host_is_blanked(frames: dict) -> 
     assert case["px"]["magenta"] == 0, case["px"]
 
 
+@pytest.mark.timeout(130)
 def test_a_dedicated_worker_runs_exactly_where_the_page_guard_does_not_reach(frames: dict) -> None:
     case = frames["l6"]
     present = [h for h in case["raw_hits"] if h.startswith("/worker-guard")]
@@ -1392,24 +1398,28 @@ def test_a_dedicated_worker_runs_exactly_where_the_page_guard_does_not_reach(fra
     assert case["blocks"] == [], case["blocks"]
 
 
+@pytest.mark.timeout(130)
 def test_a_denied_frame_in_an_allowed_frames_process_is_blanked(frames: dict) -> None:
     case = frames["l7"]
     _blanked_alone(case)
     assert case["px"]["blue"] > 0 and case["px"]["nested_magenta"] == 0, case["px"]
 
 
+@pytest.mark.timeout(130)
 def test_an_allowed_frame_inside_a_sandboxed_frame_runs(frames: dict) -> None:
     case = frames["l9"]
     assert case["blocks"] == [] and case["frame_blanks"] == [], case
     assert "/frame-allowed-ran" in case["hits"], case["hits"]
 
 
+@pytest.mark.timeout(130)
 def test_a_denied_frame_removed_or_re_pointed_never_costs_the_page(frames: dict) -> None:
     case = frames["l10"]
     assert case["tops"] == ["/l10-removed"] * 3 + ["/l10-dest"] * 3, case
     assert case["quarantine"] == "", case
 
 
+@pytest.mark.timeout(130)
 def test_going_back_after_a_frame_was_blanked_leaves_the_page(frames: dict) -> None:
     case = frames["l11"]
     _blanked_alone(case)
@@ -1417,6 +1427,7 @@ def test_going_back_after_a_frame_was_blanked_leaves_the_page(frames: dict) -> N
     assert case["forward_magenta"] == 0, "going forward showed the denied frame"
 
 
+@pytest.mark.timeout(130)
 def test_going_back_after_a_cross_site_frame_was_blanked_leaves_the_page(frames: dict) -> None:
     """The same with a frame from another site, which the site-isolated browser runs in a process
     of its own and blanks before it loads: its blank is a history entry of the frame's own too."""
@@ -1427,6 +1438,7 @@ def test_going_back_after_a_cross_site_frame_was_blanked_leaves_the_page(frames:
     assert case["forward_magenta"] == 0, "going forward showed the denied frame"
 
 
+@pytest.mark.timeout(130)
 def test_a_page_back_from_the_cache_with_a_denied_frame_live_has_it_blanked(frames: dict) -> None:
     """A page that went into the back-forward cache with a denied frame from another site still
     running comes back with that frame blanked by its id, and the page kept. Restored from the
@@ -1447,6 +1459,7 @@ def test_a_page_back_from_the_cache_with_a_denied_frame_live_has_it_blanked(fram
         assert ("iframe", True) in case["attached"], case["attached"]
 
 
+@pytest.mark.timeout(130)
 def test_going_back_past_the_page_a_teardown_left_never_asks_its_host_again(frames: dict) -> None:
     """🔴 Red before: GO_BACK loaded the denied entry the teardown left behind, so its host was
     asked for the document again, the session tore it down again, and the run was back on the
@@ -1462,6 +1475,7 @@ def test_going_back_past_the_page_a_teardown_left_never_asks_its_host_again(fram
     assert case["quarantine"] == "", case["quarantine"]
 
 
+@pytest.mark.timeout(130)
 def test_a_busy_frame_holds_neither_a_new_frame_nor_a_read(frames: dict) -> None:
     if frames["variant"] != "site-per-process":
         assert "l12" not in frames
@@ -1472,6 +1486,7 @@ def test_a_busy_frame_holds_neither_a_new_frame_nor_a_read(frames: dict) -> None
     assert case["q"] == "", case
 
 
+@pytest.mark.timeout(130)
 def test_the_run_tab_never_holds_a_service_worker_and_lets_worklets_run(frames: dict) -> None:
     case = frames["l13"]
     assert "/sw-controls" in case["hits"], "the service worker never controlled its page"
@@ -1479,6 +1494,7 @@ def test_the_run_tab_never_holds_a_service_worker_and_lets_worklets_run(frames: 
     assert "/paint-ok" in case["hits"], case["hits"]
 
 
+@pytest.mark.timeout(130)
 def test_a_pdf_and_an_embedded_pdf_are_shown(frames: dict) -> None:
     case, embed = frames["l14"], frames["l14-embed"]
     if case["pdf_viewer"]:

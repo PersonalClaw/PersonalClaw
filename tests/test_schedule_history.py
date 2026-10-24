@@ -376,6 +376,7 @@ async def test_rotation_PRESERVES_file_ORDER(tmp_path: Path):
 # ── 🔴 one noisy job owned the whole cross-job index ──
 
 
+@pytest.mark.timeout(40)
 @pytest.mark.asyncio
 async def test_a_NOISY_job_does_not_evict_every_OTHER_automation(tmp_path: Path):
     """🔴 THE DEFECT, and the cross-job half. The index is SHARED — it backs the dashboard's
@@ -410,6 +411,7 @@ async def test_a_NOISY_job_does_not_evict_every_OTHER_automation(tmp_path: Path)
         assert name in jobs, f"{name} was evicted by the noisy job"
 
 
+@pytest.mark.timeout(40)
 @pytest.mark.asyncio
 async def test_no_job_exceeds_its_SHARE_after_a_trim(tmp_path: Path):
     """The invariant is per-TRIM, not per-append.
@@ -455,6 +457,7 @@ async def test_a_store_UNDER_the_cap_is_untouched(tmp_path: Path):
     assert total == 50
 
 
+@pytest.mark.timeout(50)
 @pytest.mark.asyncio
 async def test_the_index_stays_NEWEST_FIRST(tmp_path: Path):
     """Order is load-bearing: `list_all` reverses the file, so a file regrouped by job would

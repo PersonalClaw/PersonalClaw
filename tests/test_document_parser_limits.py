@@ -252,7 +252,7 @@ class TestArchiveCaps:
 
 
 class TestBlockCap:
-    @pytest.mark.timeout(600)
+    @pytest.mark.timeout(50)
     def test_the_issue_repro_is_bounded_at_the_real_cap(self):
         """#2747's document shape against the SHIPPED cap, not a patched one.
 
@@ -482,6 +482,7 @@ class TestKnownCleanCorpus:
         assert not loss.of_kind("size_limit")
         assert model is not None
 
+    @pytest.mark.timeout(40)
     def test_an_ordinary_large_spreadsheet_is_not_refused(self):
         """THE calibration regression test.
 

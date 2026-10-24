@@ -389,6 +389,7 @@ MODES = [pytest.param(False, id="unattended"), pytest.param(True, id="attended")
 # ── a stage that edits two files passes on what its gate observed ─────────────
 
 
+@pytest.mark.timeout(50)
 @pytest.mark.parametrize("attended", MODES)
 @pytest.mark.parametrize("commands", COMMANDS)
 def test_a_stage_that_changed_two_files_passes_on_what_its_gate_observed(

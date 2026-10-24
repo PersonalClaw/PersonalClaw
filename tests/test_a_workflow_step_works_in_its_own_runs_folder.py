@@ -362,6 +362,7 @@ def test_a_projects_run_admits_only_its_own_projects_context_folder(codebase):
     assert _refused(projects.context_dir(theirs.id), own) and _refused(codebase, own)
 
 
+@pytest.mark.timeout(40)
 def test_an_in_place_run_admits_only_its_own_projects_tree(codebase, tmp_path):
     """The tree comes from the project's record: a path forged on the run's record changes
     nothing, a run of the same project that does not work in place is kept to the context

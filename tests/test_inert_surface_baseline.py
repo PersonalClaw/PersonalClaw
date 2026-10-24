@@ -674,7 +674,6 @@ def _reported_sdk_exports() -> set[str]:
     }
 
 
-@pytest.mark.timeout(300)
 @pytest.mark.parametrize(
     "tranche,pinned",
     [
@@ -711,7 +710,6 @@ def test_an_export_named_by_another_exports_signature_is_not_inert(tranche, pinn
     )
 
 
-@pytest.mark.timeout(300)
 def test_an_export_reachable_from_no_published_signature_is_still_inert():
     """Direction two — the teeth. A type exported for no reason is genuinely inert.
 
@@ -803,7 +801,6 @@ def test_an_export_reachable_from_no_published_signature_is_still_inert():
     )
 
 
-@pytest.mark.timeout(300)
 def test_a_type_that_names_only_itself_does_not_clear_itself():
     """Ruling one, UNCHANGED by #3511: a self-edge is not a reader.
 
@@ -852,7 +849,6 @@ def test_a_type_that_names_only_itself_does_not_clear_itself():
         )
 
 
-@pytest.mark.timeout(300)
 def test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_justified():
     """The one exclusion from #3511's 22, and the three things that keep it from rotting.
 
@@ -916,7 +912,6 @@ def test_the_dashboard_closure_exemption_is_declared_load_bearing_and_still_just
     )
 
 
-@pytest.mark.timeout(300)
 def test_an_exported_functions_signature_clears_an_export_in_both_directions():
     """Ruling two, INVERTED by #3511: an exported FUNCTION is an owner, in ONE walk.
 

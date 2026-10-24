@@ -384,19 +384,6 @@ _HAS_GIT = shutil.which("git") is not None
 
 requires_git = pytest.mark.skipif(not _HAS_GIT, reason="git not available")
 
-_WORKFLOWS_TEST_TIMEOUT_SECONDS = 46
-
-
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Give workflow tests a measured ceiling without replacing an explicit one."""
-    for item in items:
-        if (
-            item.path.name.startswith("test_workflows_")
-            and item.get_closest_marker("timeout") is None
-        ):
-            item.add_marker(pytest.mark.timeout(_WORKFLOWS_TEST_TIMEOUT_SECONDS))
-
-
 # ── The source index warms outside every test's timeout ─────────────────
 # A tree rail reads the source tree through tests/source_index.py, which walks the four roots and
 # parses the package once per worker. That costs seconds, so it must not land inside the first

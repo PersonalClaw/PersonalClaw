@@ -34,6 +34,7 @@ from test_ci_contract import (
     _plants,
     _write,
     run_row,
+    table_params,
 )
 
 from tools.ci import supply_chain
@@ -2146,7 +2147,15 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
 )
 
 
-@pytest.mark.parametrize("row", SUPPLY_CHAIN_ROWS, ids=lambda row: row.name)
+#: The rows that need more than the suite's default cap, keyed by the row's name (see
+#: test_ci_contract's ROW_TIMEOUTS). tests/timeout-marks.toml lists each one with why.
+ROW_TIMEOUTS = {
+    "run-install": pytest.mark.timeout(90),
+    "run-install-scripts": pytest.mark.timeout(40),
+}
+
+
+@pytest.mark.parametrize("row", table_params(SUPPLY_CHAIN_ROWS, ROW_TIMEOUTS))
 def test_the_supply_chain_holds_and_each_check_can_fail(
     row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:

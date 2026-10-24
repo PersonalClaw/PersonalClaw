@@ -600,6 +600,7 @@ def test_a_replace_sets_the_workspace_aside_as_it_is(home, tmp_path):
 # ── a declared store, captured once and whole ───────────────────────────────────────────────────
 
 
+@pytest.mark.timeout(40)
 def test_a_declared_store_held_open_is_in_the_snapshot_whole(home, tmp_path):
     """🔴 Red on integration: the pass that copies every other store copied these files again, as
     bytes, over their consistent copies; with a reader holding the log, the archive's copy had not

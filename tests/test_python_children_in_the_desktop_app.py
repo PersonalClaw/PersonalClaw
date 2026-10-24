@@ -50,6 +50,7 @@ def test_every_declared_module_is_a_module_of_the_package():
     assert not missing, missing
 
 
+@pytest.mark.timeout(40)
 def test_the_bundle_carries_every_declared_module():
     """Nothing imports them, so the bundle has them only because the spec asks for every module
     the package names (``backend_bundle_manifest.by_name_modules``), these among them."""
