@@ -47,19 +47,18 @@ manifest/lockfile changed · new behavior has tests · docs moved with the chang
 vitest (jsdom), and `vite build` can ALL pass while the built bundle crashes at
 first render (this shipped as the v0.1.0 blank dashboard — a dual-React
 dependency skew). Only loading the artifact in a real browser proves it
-renders. One-time setup per clone: `npm run hooks:install` (repository-owned
-pre-push hook) + `npx playwright install chromium`. The hook runs the full
-clean-install chain automatically when outgoing commits touch `web/`,
-`package.json`, or `package-lock.json`; CI repeats it on every PR. Never bypass
-a red gate with `--no-verify` — that is reserved for owner-declared emergencies.
+renders. When outgoing commits touch `web/`, `package.json` or `package-lock.json`, run it:
+`make web-build`, then `cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke
+--no-deps` (one-time: `npx playwright install chromium`). CI runs it on every PR
+(`e2e-shard`). The pre-push hook (`npm run hooks:install`, one-time) runs the change tier's
+pre-push jobs from the catalogue, not the smoke. Never bypass a red gate with `--no-verify` —
+that is reserved for owner-declared emergencies.
 
 **Push from the worktree that owns the branch.** The outgoing commits decide
-*which* halves of the hook run; what those halves then check is the **working
-tree**. So the hook refuses outright when the ref you are pushing is not this
-worktree's `HEAD` — pushing `some-branch` from a checkout sitting on `main` used
-to gate `main`'s tree and go green, and batching refs into one `git push origin
-br1 br2 br3` to pay the ~20-minute chain once did it three times over. One push
-per worktree.
+*which* of the hook's jobs run; what they then check is the **working tree**. So
+the hook refuses outright when the ref you are pushing is not this worktree's
+`HEAD` — pushing `some-branch` from a checkout sitting on `main` used to gate
+`main`'s tree and go green. One push per worktree.
 
 ## Mechanical gotchas (things that look fine and silently misbehave)
 

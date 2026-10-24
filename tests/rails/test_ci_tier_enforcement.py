@@ -105,28 +105,27 @@ def test_the_hook_runs_the_asset_licence_check_ci_runs():
     """The licence record is checked before a push, not first in CI or the release build.
 
     The hook skipped it once, and unrecorded fixtures and screenshots reached ``main`` and
-    failed a release build. So the hook runs the same check, as a gate of its table, when the
-    outgoing commits add or rename a file outside ``src/``.
+    failed a release build. The hook runs the change tier's pre-push jobs (``run change
+    --pre-push``), so the check is a step of one of them: ``static``, which needs no npm install,
+    since the check reads the tracked tree alone.
     """
     commands = _ci_run_commands()
     assert any(ASSET_CHECK in c for c in commands), "CI no longer runs the licence check"
+    hooked = [
+        job.id
+        for job in read().jobs
+        if "change" in job.tiers
+        and job.prepush
+        and any(
+            ASSET_CHECK in " ".join(step.argv) and "--built-web" not in step.argv
+            for step in job.command
+        )
+    ]
+    assert hooked, (
+        "no change-tier job the pre-push hook runs checks the asset licences: move the check "
+        "back into one (it reads the tracked tree alone), or the hook no longer runs it"
+    )
     script = PREPUSH.read_text(encoding="utf-8")
     assert (
-        f'run_check "asset-licenses" "$asset_python" {ASSET_CHECK}' in script
-    ), "scripts/run_prepush.sh no longer runs the asset licence check as a gate"
-    # The interpreter is the repo's venv first, then python3, and only one that starts: a
-    # version-manager shim with no version set must skip the gate, not fail the push.
-    assert (
-        "for candidate in .venv/bin/python python3; do" in script
-    ), "the hook no longer prefers .venv/bin/python, then python3, for the licence check"
-    assert (
-        "\"$candidate\" -c 'import sys'" in script
-    ), "the hook no longer probes that its Python actually runs before the licence check"
-    assert (
-        "--diff-filter=AR" in script and ":(exclude)src/" in script
-    ), "the hook no longer scopes the licence check to files added or renamed outside src/"
-    # Every path through the hook reports the gate: run, or skipped with a reason.
-    assert script.count('skip_check "asset-licenses"') >= 2
-    assert '"no working Python (.venv/bin/python or python3) runs here; CI still checks"' in (
-        script
-    )
+        "-m tools.ci run change --pre-push" in script
+    ), "scripts/run_prepush.sh no longer runs the change tier's pre-push jobs"

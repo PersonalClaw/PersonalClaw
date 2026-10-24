@@ -1,85 +1,39 @@
-"""``scripts/run_prepush.sh``: it must gate the tree it is pushing, and scope by what
-that branch actually adds.
-
-Two concerns, one file, because they are the same two lines of the script reading the
-same stdin: the guard decides *whether* this worktree may be gated at all, and the range
-right after it decides *which* halves run. Both are cheap to get subtly wrong and
-expensive to notice — one goes green while proving nothing, the other burns ten minutes
-proving something nobody asked about.
+"""``scripts/run_prepush.sh``: it gates the tree it is pushing, scopes by what that branch adds,
+and runs the change tier's pre-push jobs and nothing of its own (#3920).
 
 ── 1. The tree/ref guard ──────────────────────────────────────────────────────
 
-**Measured gap.** ``scripts/run_prepush.sh`` read the ref ranges
-githooks(5) puts on stdin and used ``local_sha`` for exactly one purpose: computing
-``range="$remote_sha..$local_sha"`` to decide *whether* the frontend half
-(``needs_gate``) and the Python half (``needs_lint``) should run at all. It then ran
-black/isort/flake8 and ``npm ci`` → build → ``scripts/render_smoke.mjs`` against
-``git rev-parse --show-toplevel`` — the **working tree**.
-``git grep -c "rev-parse HEAD" scripts/run_prepush.sh`` returned **0**: nothing
-asserted the tree was the thing being pushed.
-
-That is a live hazard, not a theoretical one, because this repo is worked with many
-``git worktree``s at once. ``git push origin some-branch`` from a checkout sitting on
-``main`` scoped the gate by ``some-branch``'s diff and then validated ``main``'s tree
-— green, and proof of nothing about what shipped. Batching (``git push origin br1 br2
-br3``) to pay the ~20-minute ``npm ci`` + render-smoke cost once instead of three
-times is exactly the shape that produces it: one hook run, three unvalidated
-branches, ``main``'s tree gated three times.
-
-**These tests drive the real script**, with synthesized stdin ref lines. Re-deriving
-the ref-line parsing in Python would assert nothing about the shipped file — the file
-is the gate.
-
-**Why a sandbox repo.** The script resolves everything through
-``git rev-parse --show-toplevel``, so the only way to control both ``HEAD`` and the
-diff ranges is to point it at a repo built for the purpose:
-:func:`sandbox` makes one with two commits and a byte-identical copy of the shipped
-script, asserted identical. That is also what makes these legs portable — an earlier
-version read *this* repo's history and errored in CI, because ``actions/checkout``
-clones shallow (``fetch-depth: 1``) and ``HEAD~1`` does not exist there.
-
-**Cheap by construction, not by mocking.** The guard sits inside the ref loop, before
-the range is computed, so every refusing leg exits before either expensive half is
-reached. The non-refusing legs feed a ref line whose range is empty, so both halves
-are correctly skipped. The sandbox holds no ``web/`` or ``src/personalclaw`` path
-either, so nothing there can pull in ``npm ci``. Nothing is stubbed.
-
-**Vacuity.** :func:`test_the_refusal_is_attributable_to_the_guard` reruns the exact
-stdin of the negative leg against a copy of the script whose *own* condition is
-neutered to ``if false``, and asserts that copy exits 0. So the negative leg's red is
-attributable to the guard rather than to any other non-zero exit the script can
-produce, and the substitution is asserted to have applied — a rename of that line
-reds this test instead of silently making it vacuous.
+The hook's run checks the WORKING TREE (``run change --working-tree``), while the push names
+REFS. They are the same thing only when the ref pushed is what this worktree has checked out,
+and with many ``git worktree``s they routinely are not: ``git push origin some-branch`` from a
+checkout sitting on ``main`` would check ``main``'s tree, go green, and prove nothing about what
+shipped. So every outgoing ref must resolve to this worktree's ``HEAD`` or the push is refused,
+before anything runs.
 
 ── 2. Scope, after a rebase (issue 2269) ──────────────────────────────────────
 
-**Measured gap.** The range was ``remote_sha..local_sha``, which answers
-"what changed between these two commits" — the same question as "what does this branch
-add" only while the branch is a fast-forward of its remote. A rebase strands the old
-remote tip, and the range then spans every ``main`` commit in between. Measured on a
-real three-file backend-only branch: **94 frontend files in that range, versus 0 the
-branch touches.** The gate ran ``npm ci`` → typecheck → vitest → build →
-``playwright install`` → render-smoke for ten minutes and then failed on a web-suite
-timeout in a file the diff could not reach.
+The run's ``--base`` is the merge base with ``origin/main``: what the branch adds. The range from
+the remote's old tip is the same question only while the branch is a fast-forward of its remote;
+after a rebase it spans every ``main`` commit in between. The old tip is kept only for a clone
+with no ``origin/main``; with neither, every pre-push job runs.
 
-Rebasing before a push is routine, and branches here are rebased for you, so this was
-the common case. The fix scopes by ``merge-base(local_sha, origin/main)`` and keeps the
-old range only as the answer for a clone that has no ``origin/main``.
+── 3. The run ─────────────────────────────────────────────────────────────────
 
-**Where the falsification lives.** The behavioural leg is
-:func:`test_a_rebased_backend_only_branch_skips_the_frontend_chain`; its floor is
-:func:`test_a_branch_that_really_changes_the_frontend_still_gates`, because "scope it
-more narrowly" is one step from "scope it to nothing" and a gate that never fires is
-indistinguishable from a fast one. :func:`test_the_merge_base_is_preferred_over_the_remote_tip`
-pins the ORDER rather than the presence of either range — swapping the two rungs leaves
-both lines in the file and every sandbox leg green, since the sandboxes that exercise
-the fallback have no ``origin/main`` for the first rung to win with.
+The hook runs ``python -m tools.ci run change --pre-push`` with ``--working-tree --fail-fast
+--workers 2``, and its exit decides the push: red refuses it, partial lets it through. The
+contract row in ``tests/rails/test_ci_contract.py`` holds that it runs no check of its own.
+
+**These tests drive the real script** in a sandbox repository whose ``.venv/bin/python`` is a
+stub: it records the words it is given and exits as the test says, so no job runs.
 """
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -89,18 +43,18 @@ SCRIPT = REPO_ROOT / "scripts" / "run_prepush.sh"
 
 ZERO = "0" * 40
 
-#: The guard's own condition, verbatim. The vacuity leg neuters this exact line; if it
-#: is ever reworded, that leg reds rather than quietly measuring nothing.
+#: The guard's own condition, verbatim. The vacuity leg neuters this exact line; if it is ever
+#: reworded, that leg reds rather than quietly measuring nothing.
 GUARD_CONDITION = 'if [ "$pushed_commit" != "$head_commit" ]; then'
 
 REFUSAL = "refusing to gate a tree that is not what you are pushing"
-#: What the script prints when it reached the END of the ref loop with neither half
-#: owed — the only cheap exit-0 path, and therefore a non-refusing leg's proof that it
-#: got *past* the guard rather than never reaching it.
-REACHED_THE_END = "no frontend changes outgoing"
 
-#: Identity plus two neutralizers: the developer's own template hooks must not fire in
-#: the sandbox, and a configured signing key must not make these commits interactive.
+#: The words the hook gives tools/ci, after any --changed/--base.
+TIER = "-m tools.ci run change --pre-push"
+RUN_FLAGS = "--working-tree --fail-fast --workers 2 --admission-wait 60"
+
+#: Identity plus two neutralizers: the developer's own template hooks must not fire in the
+#: sandbox, and a configured signing key must not make these commits interactive.
 _IDENT = (
     "-c",
     "user.name=Gate Test",
@@ -112,6 +66,15 @@ _IDENT = (
     "commit.gpgsign=false",
 )
 
+#: The stub interpreter: it starts (the hook probes it with ``-c``), records every other call's
+#: words, and exits with the code in ``exit-code`` beside the sandbox.
+_STUB = """#!/bin/sh
+here=$(cd "$(dirname "$0")/../.." && pwd)
+[ "$1" = "-c" ] && exit 0
+printf '%s\\n' "$*" >> "$here/calls.txt"
+exit "$(cat "$here/exit-code" 2>/dev/null || echo 0)"
+"""
+
 
 def _git(*args: str, cwd: Path) -> str:
     return subprocess.run(
@@ -119,40 +82,56 @@ def _git(*args: str, cwd: Path) -> str:
     ).stdout.strip()
 
 
-class Sandbox:
-    """A throwaway repo carrying the shipped script, plus its two commit shas."""
+def _commit(root: Path, message: str) -> str:
+    _git("add", "-A", cwd=root)
+    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", message, cwd=root)
+    return _git("rev-parse", "HEAD", cwd=root)
 
-    def __init__(self, root: Path, head: str, parent: str) -> None:
+
+class Sandbox:
+    """A throwaway repository carrying the shipped script and the stub interpreter."""
+
+    def __init__(self, root: Path) -> None:
         self.root = root
         self.script = root / "scripts" / "run_prepush.sh"
-        self.head = head
-        #: A real commit that is not ``HEAD``, so the negative legs are not vacuous.
-        self.parent = parent
+        #: The fixture's two commits: ``head`` checked out, ``parent`` as ``origin/main``.
+        self.head = ""
+        self.parent = ""
+
+    def calls(self) -> list[str]:
+        """Each call the hook made of the interpreter, but the probe."""
+        path = self.root / "calls.txt"
+        return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+    def exits(self, code: int) -> None:
+        (self.root / "exit-code").write_text(str(code), encoding="utf-8")
+
+
+def _sandbox(tmp_path: Path, name: str = "sandbox") -> Sandbox:
+    root = tmp_path / name
+    (root / "scripts").mkdir(parents=True)
+    shutil.copy2(SCRIPT, root / "scripts" / "run_prepush.sh")
+    assert (root / "scripts" / "run_prepush.sh").read_bytes() == SCRIPT.read_bytes()
+    stub = root / ".venv" / "bin" / "python"
+    stub.parent.mkdir(parents=True)
+    stub.write_text(_STUB, encoding="utf-8")
+    stub.chmod(0o755)
+    (root / ".gitignore").write_text(".venv/\ncalls.txt\nexit-code\n", encoding="utf-8")
+    _git("init", "-q", "-b", "main", cwd=root)
+    (root / "notes.txt").write_text("one\n", encoding="utf-8")
+    _commit(root, "first")
+    return Sandbox(root)
 
 
 @pytest.fixture
 def sandbox(tmp_path: Path) -> Sandbox:
-    root = tmp_path / "sandbox"
-    (root / "scripts").mkdir(parents=True)
-    shutil.copy2(SCRIPT, root / "scripts" / "run_prepush.sh")
-    assert (
-        root / "scripts" / "run_prepush.sh"
-    ).read_bytes() == SCRIPT.read_bytes(), "the sandbox copy is not the shipped script"
-
-    _git("init", "-q", "-b", "main", cwd=root)
-    # The FIRST commit carries the script, so no later range can name it. It is one of
-    # the paths that owns the frontend half, and a range touching it would drag `npm ci`
-    # into a test. Every subsequent commit only touches `notes.txt`, which owns nothing.
-    (root / "notes.txt").write_text("one\n", encoding="utf-8")
-    _git("add", "-A", cwd=root)
-    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "first", cwd=root)
-    (root / "notes.txt").write_text("two\n", encoding="utf-8")
-    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-am", "second", cwd=root)
-
-    head = _git("rev-parse", "HEAD", cwd=root)
-    parent = _git("rev-parse", "HEAD~1", cwd=root)
-    assert head != parent, "the sandbox has no second commit"
-    return Sandbox(root, head, parent)
+    """Two commits on main, the second checked out; ``origin/main`` is the first."""
+    box = _sandbox(tmp_path)
+    box.parent = _git("rev-parse", "HEAD", cwd=box.root)
+    (box.root / "notes.txt").write_text("two\n", encoding="utf-8")
+    box.head = _commit(box.root, "second")
+    _git("update-ref", "refs/remotes/origin/main", box.parent, cwd=box.root)
+    return box
 
 
 def _run(stdin: str, *, cwd: Path, script: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -163,397 +142,242 @@ def _run(stdin: str, *, cwd: Path, script: Path | None = None) -> subprocess.Com
         input=stdin,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=60,
     )
 
 
-def _assert_refused(result: subprocess.CompletedProcess[str]) -> None:
-    """A refusal is a non-zero exit *taken by the guard*, before anything else ran.
+def _line(ref: str, local: str, remote: str) -> str:
+    return f"{ref} {local} {ref} {remote}\n"
 
-    The empty stdout is the load-bearing half. Found while falsifying: with the guard
-    softened to print-and-continue, a ref line whose ``remote_sha`` is all-zeroes fell
-    through to the merge-base branch, gated unconditionally, and then exited non-zero
-    because black had no ``src/personalclaw`` to check in the sandbox. Asserting only
-    ``returncode != 0`` and the message therefore read as green against a guard that had
-    been turned into a warning — exactly the false green this file exists to close. The
-    guard writes to stderr and exits before either half announces itself on stdout, so an
-    empty stdout is what separates "refused" from "warned, then failed for another
-    reason".
-    """
+
+def _assert_refused(result: subprocess.CompletedProcess[str], box: Sandbox) -> None:
+    """A refusal is a non-zero exit taken by the guard, before the tier ran."""
     assert result.returncode != 0, f"the guard did not fire: stdout={result.stdout!r}"
     assert REFUSAL in result.stderr
-    assert result.stdout == "", (
-        "the script kept going past the guard, so this non-zero exit is not the refusal: "
-        f"stdout={result.stdout!r}"
-    )
+    assert box.calls() == [], "the tier ran before the guard refused"
+
+
+# ── 1. The guard ─────────────────────────────────────────────────────────────────────────────
 
 
 def test_the_shipped_script_still_carries_the_guard():
-    """A floor for every leg below: the thing under test must be present."""
-    source = SCRIPT.read_text(encoding="utf-8")
-    assert GUARD_CONDITION in source, (
-        "the tree/ref guard's condition is gone from scripts/run_prepush.sh — the legs "
-        "below would be measuring some other exit path. Restore it, do not weaken them."
+    assert GUARD_CONDITION in SCRIPT.read_text(encoding="utf-8"), (
+        "the tree/ref guard's condition is gone from scripts/run_prepush.sh; the legs below "
+        "would be measuring some other exit path. Restore it, do not weaken them."
     )
 
 
-def test_pushing_this_worktrees_head_is_not_refused(sandbox: Sandbox):
-    """The positive leg: the tree IS the ref, so the guard stands aside.
-
-    ``remote_sha == local_sha == HEAD`` is an empty range, so both halves are owed
-    nothing and the script takes its cheap exit — which is also how this leg proves it
-    ran past the guard instead of never reaching it.
-    """
-    result = _run(
-        f"refs/heads/some-branch {sandbox.head} refs/heads/some-branch {sandbox.head}\n",
-        cwd=sandbox.root,
-    )
+def test_pushing_this_worktrees_head_runs_the_tier(sandbox: Sandbox):
+    result = _run(_line("refs/heads/feature", sandbox.head, ZERO), cwd=sandbox.root)
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
     assert REFUSAL not in result.stderr
-    assert (
-        REACHED_THE_END in result.stdout
-    ), f"the script did not reach the end of the ref loop: stdout={result.stdout!r}"
-
-
-def test_the_real_repo_does_not_refuse_its_own_head():
-    """The same positive leg, in place, against the checkout this file ships in.
-
-    The sandbox proves the logic; this proves the shipped file behaves that way where it
-    actually runs.
-
-    🪤 THE OLD PREMISE WAS FALSE, AND ONLY ON `main` DID IT LOOK TRUE. This test used to
-    claim "``HEAD..HEAD`` is an empty range, so this stays cheap" and assert a clean exit.
-    But the script does not use the stdin range: it PREFERS
-    ``git merge-base "$local_sha" origin/main`` (see its own "preference order" comment), so
-    the range it actually scopes by is this branch's whole diff versus ``origin/main``. On
-    ``main`` that is empty and the test costs 11 seconds; on any branch touching a frontend
-    path it sets ``needs_gate=1`` and the script correctly runs ``npm ci`` → build → render
-    smoke, which the script's own header prices at ~20 minutes. This test timed out
-    at 120s on a branch whose only frontend change was one documentation URL.
-
-    The two things this test wants are in TENSION and cannot both be cheap here. The guard
-    requires ``local_sha == HEAD`` — that is the property under test — and that is precisely
-    what makes the scoping expensive. So the assertion is narrowed to the guard alone, which
-    is all this leg was ever for: the guard refuses FAST and non-zero, before any gating
-    work. Reaching the gates at all therefore proves the guard passed, and a timeout waiting
-    for `npm ci` is a PASS for this property rather than a failure to be silenced.
-    """
-    head = _git("rev-parse", "HEAD", cwd=REPO_ROOT)
-    stdin = f"refs/heads/some-branch {head} refs/heads/some-branch {head}\n"
-    try:
-        result = subprocess.run(
-            ["sh", str(SCRIPT)],
-            cwd=REPO_ROOT,
-            input=stdin,
-            capture_output=True,
-            text=True,
-            timeout=45,
-        )
-    except subprocess.TimeoutExpired as exc:
-        # The guard passed and the (legitimately slow) gating began. Assert on what was
-        # emitted before the timeout so a refusal cannot hide inside one.
-        err = (exc.stderr or b"").decode(errors="replace") if exc.stderr else ""
-        assert REFUSAL not in err, f"refused before the gates began: {err!r}"
-        return
-    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
-    assert REFUSAL not in result.stderr
+    assert sandbox.calls() == [
+        f"{TIER} --changed --base {sandbox.parent} {RUN_FLAGS}"
+    ], sandbox.calls()
 
 
 def test_pushing_a_ref_this_worktree_does_not_have_checked_out_is_refused(sandbox: Sandbox):
-    """The negative leg: non-zero exit, and the message names BOTH shas.
-
-    Naming both is the whole remedy — "wrong tree" without the two commits leaves the
-    reader guessing which worktree to go to. ``HEAD`` is read off the checkout by the
-    script itself, never from stdin, which is why the ref line can carry the same sha on
-    both sides: that keeps the range empty, so the guard-free copy the vacuity leg runs
-    on this *identical* stdin also takes the cheap exit.
-    """
-    result = _run(
-        f"refs/heads/other-branch {sandbox.parent} refs/heads/other-branch {sandbox.parent}\n",
-        cwd=sandbox.root,
-    )
-    _assert_refused(result)
+    """Non-zero, before the tier runs, and the message names both commits and the fix."""
+    result = _run(_line("refs/heads/other", sandbox.parent, sandbox.parent), cwd=sandbox.root)
+    _assert_refused(result, sandbox)
     assert sandbox.parent in result.stderr, "the refusal does not name the pushed commit"
     assert sandbox.head in result.stderr, "the refusal does not name the checkout's HEAD"
     assert "git worktree list" in result.stderr, "the refusal does not name the fix"
 
 
 def test_a_new_remote_branch_is_guarded_too(sandbox: Sandbox):
-    """The most common first push — ``remote_sha`` all-zeroes — is not a hole.
-
-    The guard runs before the range is computed at all, so a brand-new branch pushed from
-    the wrong worktree is refused on the same terms. (``remote_sha`` used to select a
-    separate merge-base branch here; issue 2269 made the merge-base the only path, which
-    leaves this leg testing the same thing through one fewer case.)
-    """
-    result = _run(
-        f"refs/heads/brand-new {sandbox.parent} refs/heads/brand-new {ZERO}\n",
-        cwd=sandbox.root,
-    )
-    _assert_refused(result)
+    result = _run(_line("refs/heads/brand-new", sandbox.parent, ZERO), cwd=sandbox.root)
+    _assert_refused(result, sandbox)
 
 
-def test_a_branch_deletion_is_not_refused(sandbox: Sandbox):
-    """The deletion leg: an all-zeroes ``local_sha`` names no tree to check.
+def test_one_wrong_ref_among_several_refuses_the_push(sandbox: Sandbox):
+    stdin = _line("refs/heads/a", sandbox.head, ZERO) + _line("refs/heads/b", sandbox.parent, ZERO)
+    _assert_refused(_run(stdin, cwd=sandbox.root), sandbox)
 
-    ``git push origin --delete some-branch`` ships no commits, so there is nothing for
-    the guard to compare and a refusal here would be a false one.
-    """
+
+def test_an_annotated_tag_on_head_compares_as_its_commit(sandbox: Sandbox):
+    _git(*_IDENT, "tag", "-a", "-m", "a tag", "v9.9.9", cwd=sandbox.root)
+    tag = _git("rev-parse", "v9.9.9", cwd=sandbox.root)
+    assert tag != sandbox.head, "the tag is not an object of its own"
+    result = _run(_line("refs/tags/v9.9.9", tag, ZERO), cwd=sandbox.root)
+    assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
+    assert len(sandbox.calls()) == 1
+
+
+def test_a_branch_deletion_runs_nothing(sandbox: Sandbox):
     result = _run(f"(delete) {ZERO} refs/heads/some-branch {sandbox.head}\n", cwd=sandbox.root)
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
-    assert REFUSAL not in result.stderr
+    assert sandbox.calls() == []
+    assert "nothing outgoing" in result.stdout
 
 
 def test_the_refusal_is_attributable_to_the_guard(sandbox: Sandbox):
-    """Vacuity: the same stdin passes once the guard's own condition is neutered.
-
-    Without this, the negative leg could be reading any of the script's other non-zero
-    exits. A guard whose test cannot fail is not a guard.
-    """
+    """Vacuity: the same stdin runs the tier once the guard's own condition is neutered."""
     source = sandbox.script.read_text(encoding="utf-8")
     assert source.count(GUARD_CONDITION) == 1, "the guard condition is not a unique line"
     neutered = sandbox.root / "scripts" / "run_prepush_without_the_guard.sh"
     neutered.write_text(source.replace(GUARD_CONDITION, "if false; then"), encoding="utf-8")
-    assert "if false; then" in neutered.read_text(encoding="utf-8"), "the neuter did not apply"
-
-    stdin = f"refs/heads/other-branch {sandbox.parent} refs/heads/other-branch {sandbox.parent}\n"
-    _assert_refused(_run(stdin, cwd=sandbox.root))
-
+    stdin = _line("refs/heads/other", sandbox.parent, sandbox.parent)
+    _assert_refused(_run(stdin, cwd=sandbox.root), sandbox)
     result = _run(stdin, cwd=sandbox.root, script=neutered)
-    assert result.returncode == 0, (
-        "the guard-free copy still failed, so the negative leg above is not measuring "
-        f"the guard: stdout={result.stdout!r} stderr={result.stderr!r}"
-    )
-    assert REFUSAL not in result.stderr
-    assert REACHED_THE_END in result.stdout, (
-        "the guard-free copy exited 0 without reaching the end of the ref loop, so this "
-        f"leg is not comparing the same path: stdout={result.stdout!r}"
-    )
-
-
-# ── scope: what the branch adds, not what happened between two shas (issue 2269) ──
-
-#: The two ranges, in the order the script must prefer them. `remote_sha..local_sha` is
-#: not banned — it is the right answer for a clone with no `origin/main` — it just must
-#: never be reached FIRST, because on a rebased branch it spans every `main` commit in
-#: between. So the pin is on the order, not on the presence of either line.
-MERGE_BASE_SCOPE = 'git merge-base "$local_sha" origin/main'
-REMOTE_TIP_SCOPE = 'range="$remote_sha..$local_sha"'
-
-#: What the script prints when it decided the expensive half IS owed. Asserted rather
-#: than an exit code, because the announcement happens before `npm ci` — in a sandbox
-#: with no `package.json` the chain fails for its own reasons, and that failure would
-#: read as "gated" whether the scope decision was right or not.
-#:
-#: The trailing clause is load-bearing: `REACHED_THE_END` is "**no** frontend changes
-#: outgoing", so the bare phrase is a substring of the SKIP message and `GATING not in
-#: stdout` would fail on the very path it is meant to confirm. Caught by this test file
-#: on its first run.
-GATING = "frontend changes outgoing — running the render-smoke gate"
-
-#: The SCOPING decision on its own — the shared prefix of all three "the frontend half is owed"
-#: outcomes (chain running · toolchain absent · topic branch). The vacuity floor below measures
-#: this rather than :data:`GATING`, because TWO rungs sit between the scope and that
-#: announcement — ``command -v npm`` and the ``release_ref`` rule — and neither is scope.
-#:
-#: 🪤 The ``pre-push: `` prefix is LOAD-BEARING, not decoration. :data:`REACHED_THE_END` is
-#: ``"no frontend changes outgoing"``, which CONTAINS ``"frontend changes outgoing"`` — so the
-#: bare phrase is satisfied by the very cheap exit this floor exists to rule out. Asserted.
-FRONTEND_OWED = "pre-push: frontend changes outgoing"
-
-#: Does THIS machine have the chain's own tools? ``run_prepush.sh`` degrades gracefully when it
-#: does not (its own "mise-managed here and NOT on the default PATH" note), so whether
-#: :data:`GATING` is reachable at all is a property of the PATH, not of the gate.
-_HAVE_WEB_TOOLCHAIN = bool(shutil.which("npm")) and bool(shutil.which("node"))
-
-
-class Rebased:
-    """A sandbox where a branch was rebased and its remote tip left behind.
-
-    Three shas matter: `old_tip` (what the remote still points at), `new_main` (what the
-    branch is now based on, and what `main` gained a `web/` file in), and `head` (the
-    rebased tip, checked out). `old_tip..head` therefore spans `main`'s frontend commit;
-    `merge-base(head, origin/main)..head` does not.
-    """
-
-    def __init__(self, root: Path, head: str, old_tip: str, new_main: str) -> None:
-        self.root = root
-        self.head = head
-        self.old_tip = old_tip
-        self.new_main = new_main
-
-
-def _sandbox_repo(tmp_path: Path, name: str) -> Path:
-    """A repo carrying a byte-identical copy of the shipped script, on a first commit.
-
-    The script lives in the FIRST commit for the reason the other fixture states: it is
-    itself one of `FRONTEND_PATHS`, so any range that named it would drag `npm ci` into
-    a test. Nothing here touches `PYTHON_PATHS` either, so the lint half stays unowed.
-    """
-    root = tmp_path / name
-    (root / "scripts").mkdir(parents=True)
-    shutil.copy2(SCRIPT, root / "scripts" / "run_prepush.sh")
-    assert (root / "scripts" / "run_prepush.sh").read_bytes() == SCRIPT.read_bytes()
-    _git("init", "-q", "-b", "main", cwd=root)
-    (root / "notes.txt").write_text("one\n", encoding="utf-8")
-    _git("add", "-A", cwd=root)
-    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "first", cwd=root)
-    return root
-
-
-@pytest.fixture
-def rebased(tmp_path: Path) -> Rebased:
-    root = _sandbox_repo(tmp_path, "rebased")
-
-    # The branch, off the first commit, touching a path that owns neither half.
-    _git(*_IDENT, "checkout", "-q", "-b", "feature", cwd=root)
-    (root / "notes.txt").write_text("branch work\n", encoding="utf-8")
-    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-am", "backend-only work", cwd=root)
-    old_tip = _git("rev-parse", "HEAD", cwd=root)
-
-    # `main` moves on, and gains a frontend file — somebody else's work.
-    _git(*_IDENT, "checkout", "-q", "main", cwd=root)
-    (root / "web").mkdir()
-    (root / "web" / "Thing.tsx").write_text("export const Thing = () => null\n", encoding="utf-8")
-    _git("add", "-A", cwd=root)
-    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "somebody else's frontend work", cwd=root)
-    new_main = _git("rev-parse", "HEAD", cwd=root)
-    _git("update-ref", "refs/remotes/origin/main", new_main, cwd=root)
-
-    # Rebase the branch onto it. This is the step that strands `old_tip`.
-    _git(*_IDENT, "checkout", "-q", "feature", cwd=root)
-    _git(*_IDENT, "rebase", "-q", "main", cwd=root)
-    head = _git("rev-parse", "HEAD", cwd=root)
-    assert head != old_tip, "the rebase did not rewrite the branch"
-    assert (
-        _git("merge-base", head, "refs/remotes/origin/main", cwd=root) == new_main
-    ), "the branch is not based on the new main; the fixture is not modelling a rebase"
-    return Rebased(root, head, old_tip, new_main)
-
-
-def test_the_merge_base_is_preferred_over_the_remote_tip():
-    """A floor for the legs below: the fix must still be in the file, in the right order.
-
-    Reordering these two rungs is the whole regression — both lines would still be present
-    and every other test in this file would still pass, because the sandboxes that exercise
-    the fallback have no `origin/main` for the first rung to win with.
-    """
-    source = SCRIPT.read_text(encoding="utf-8")
-    assert MERGE_BASE_SCOPE in source, (
-        "the merge-base scoping is gone from scripts/run_prepush.sh; the legs below would "
-        "be measuring some other path (issue 2269)"
-    )
-    assert REMOTE_TIP_SCOPE in source, "the fork fallback is gone; see its own leg below"
-    assert source.index(MERGE_BASE_SCOPE) < source.index(REMOTE_TIP_SCOPE), (
-        "scripts/run_prepush.sh reaches `remote_sha..local_sha` before the merge-base. On "
-        "a rebased branch that range spans every main commit in between, so a backend-only "
-        "push runs the whole ten-minute frontend chain and can fail on web tests the diff "
-        "could not affect (issue 2269). The merge-base must be tried first."
-    )
-
-
-def test_a_rebased_backend_only_branch_skips_the_frontend_chain(rebased: Rebased):
-    """🔴 issue 2269, the whole point. The stranded remote tip must not decide the scope.
-
-    Measured before the fix on a real three-file backend branch: `old_tip..head` named 94
-    frontend files, all of them `main`'s, and the gate spent ten minutes on a chain the
-    diff could not affect — then failed on a web-suite timeout.
-    """
-    result = _run(
-        f"refs/heads/feature {rebased.head} refs/heads/feature {rebased.old_tip}\n",
-        cwd=rebased.root,
-    )
-    assert result.returncode == 0, (
-        "the gate did not take its cheap exit on a branch that changes no frontend file: "
-        f"stdout={result.stdout!r} stderr={result.stderr!r}"
-    )
-    assert REACHED_THE_END in result.stdout, f"stdout={result.stdout!r}"
-    assert GATING not in result.stdout
-
-
-def test_a_branch_that_really_changes_the_frontend_still_gates(rebased: Rebased):
-    """🪤 The vacuity floor, and it is the one that matters here.
-
-    "Scope it more narrowly" is one step from "scope it to nothing", and a gate that
-    never fires costs nothing and protects nothing. So: commit a `web/` change ON the
-    branch and assert the expensive half is owed. The assertion is on the announcement
-    rather than the exit code, because `npm ci` in a repo with no `package.json` fails
-    for its own reasons and that failure would look like a gate either way.
-
-    🪤 IT USED TO ASSERT `GATING`, AND THAT MADE IT MEASURE THE LOCAL PATH INSTEAD OF THE
-    SCOPE. `run_prepush.sh` grew an npm/node-absent rung — added because those tools "are
-    mise-managed here and are NOT on the default PATH" — and it sits BETWEEN the scoping
-    decision and the `GATING` announcement. So this floor started failing wherever `npm` is
-    not on the PATH pytest inherits, which is every autonomous worker, while passing in CI where
-    the runners preinstall node. MEASURED on origin/main 2026-09-18 in a clean worktree:
-    RED with a plain PATH (`stdout` was the toolchain-skip line), GREEN with the mise shims
-    prepended. The gate was never wrong; the marker was.
-
-    So the floor now asserts the SCOPING decision (:data:`FRONTEND_OWED`), which is what its
-    name and its whole purpose are about, and keeps the stronger :data:`GATING` assertion for
-    machines where that announcement is reachable at all. Strictly more than before on a
-    CI runner, and honest rather than red on a machine without the web toolchain.
-    """
-    # The floor's own floor. `REACHED_THE_END` contains the phrase `FRONTEND_OWED` is built
-    # from, so without the `pre-push: ` prefix the assertion below would be satisfied by the
-    # cheap exit it exists to rule out — vacuous in the one direction that matters.
-    assert FRONTEND_OWED not in f"pre-push: {REACHED_THE_END}", (
-        "FRONTEND_OWED is a substring of the skip line, so the assertion below can no longer "
-        "tell 'the frontend half is owed' from 'no frontend changes outgoing'"
-    )
-
-    (rebased.root / "web" / "Extra.tsx").write_text("export const Extra = () => null\n", "utf-8")
-    _git("add", "-A", cwd=rebased.root)
-    _git(*_IDENT, "commit", "-q", "--no-gpg-sign", "-m", "my own frontend change", cwd=rebased.root)
-    head = _git("rev-parse", "HEAD", cwd=rebased.root)
-
-    # Driven with a RELEASE ref on purpose. Since 2026-09-18 a topic branch
-    # never reaches the render-smoke chain at all, so a topic ref here would make this test
-    # pass for the wrong reason — the skip would be the ref rule rather than the scoping this
-    # test exists to measure. `main` is where the chain is still reachable.
-    result = _run(f"refs/heads/main {head} refs/heads/main {rebased.old_tip}\n", cwd=rebased.root)
-    assert FRONTEND_OWED in result.stdout, (
-        "the gate skipped the frontend chain for a branch that changes a `web/` file — "
-        f"the scoping is now too narrow: stdout={result.stdout!r} stderr={result.stderr!r}"
-    )
-    assert REACHED_THE_END not in result.stdout
-    if _HAVE_WEB_TOOLCHAIN:
-        assert GATING in result.stdout, (
-            "npm and node are both on PATH, so the render-smoke chain is reachable and a "
-            "release ref must run it — nothing upstream may skip it: "
-            f"stdout={result.stdout!r} stderr={result.stderr!r}"
-        )
-
-
-def test_no_shared_history_with_main_gates_unconditionally(tmp_path: Path):
-    """The fallback. With no `origin/main` there is nothing to measure against, so the
-    honest answer is to run both halves rather than to skip blind — the same call the
-    new-branch path made before this change, now the only call."""
-    root = _sandbox_repo(tmp_path, "orphan")
-    head = _git("rev-parse", "HEAD", cwd=root)
-    assert not (root / ".git" / "refs" / "remotes" / "origin").exists()
-
-    result = _run(f"refs/heads/feature {head} refs/heads/feature {ZERO}\n", cwd=root)
-    assert REACHED_THE_END not in result.stdout, (
-        "the gate skipped both halves with no origin/main to scope against: "
-        f"stdout={result.stdout!r}"
-    )
-
-
-def test_without_origin_main_the_old_range_is_still_used(sandbox: Sandbox):
-    """The middle rung of the preference order, and why it is kept.
-
-    A fork that tracks `upstream` has no `origin/main`, and for it `remote_sha..local_sha`
-    is still the best answer available: exact while the branch is a fast-forward, too wide
-    after a rewrite. Gating unconditionally instead would make every push on such a clone
-    pay the full chain forever — a real cost, to buy nothing, since the wide range already
-    errs toward gating. This sandbox has no `origin/main`, so an empty `remote..local`
-    range must still reach the cheap exit.
-    """
-    assert not (sandbox.root / ".git" / "refs" / "remotes" / "origin").exists()
-    result = _run(
-        f"refs/heads/some-branch {sandbox.head} refs/heads/some-branch {sandbox.head}\n",
-        cwd=sandbox.root,
-    )
     assert result.returncode == 0, f"stdout={result.stdout!r} stderr={result.stderr!r}"
-    assert REACHED_THE_END in result.stdout
+    assert len(sandbox.calls()) == 1, "the guard-free copy did not reach the run"
+
+
+def test_the_real_repo_refuses_a_ref_that_is_not_its_head():
+    """The shipped file, where it runs: a ref that is not this checkout's HEAD (here an object
+    id that names no commit at all) is refused at once. The positive leg would run the real
+    tier, a static job of about two minutes, so it is the sandbox's."""
+    result = subprocess.run(
+        ["sh", str(SCRIPT)],
+        cwd=REPO_ROOT,
+        input=_line("refs/heads/some-branch", "1" * 40, ZERO),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode != 0 and REFUSAL in result.stderr, result.stderr
+
+
+# ── 2. Scope ─────────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_rebased_branch_is_scoped_by_its_merge_base_not_its_old_remote_tip(tmp_path: Path):
+    """🔴 issue 2269: the stranded remote tip must not decide the scope."""
+    box = _sandbox(tmp_path, "rebased")
+    _git(*_IDENT, "checkout", "-q", "-b", "feature", cwd=box.root)
+    (box.root / "notes.txt").write_text("branch work\n", encoding="utf-8")
+    old_tip = _commit(box.root, "work")
+    _git(*_IDENT, "checkout", "-q", "main", cwd=box.root)
+    (box.root / "other.txt").write_text("somebody else's\n", encoding="utf-8")
+    new_main = _commit(box.root, "main moves on")
+    _git("update-ref", "refs/remotes/origin/main", new_main, cwd=box.root)
+    _git(*_IDENT, "checkout", "-q", "feature", cwd=box.root)
+    _git(*_IDENT, "rebase", "-q", "main", cwd=box.root)
+    head = _git("rev-parse", "HEAD", cwd=box.root)
+    assert head != old_tip
+
+    result = _run(_line("refs/heads/feature", head, old_tip), cwd=box.root)
+    assert result.returncode == 0, result.stderr
+    assert box.calls() == [f"{TIER} --changed --base {new_main} {RUN_FLAGS}"], box.calls()
+
+
+def test_a_commit_main_gained_after_the_branch_point_neither_widens_nor_narrows_the_run(
+    tmp_path: Path,
+):
+    """The base is where the branch left main, whatever main did since: a commit that landed on
+    main after it is not in the run's diff (`--base` is not an older commit, which would widen
+    it, nor main's tip, which would leave the branch's own work out and narrow it)."""
+    box = _sandbox(tmp_path, "branched")
+    branch_point = _git("rev-parse", "HEAD", cwd=box.root)
+    _git(*_IDENT, "checkout", "-q", "-b", "feature", cwd=box.root)
+    (box.root / "mine.txt").write_text("the branch's own work\n", encoding="utf-8")
+    head = _commit(box.root, "my work")
+    _git(*_IDENT, "checkout", "-q", "main", cwd=box.root)
+    (box.root / "theirs.txt").write_text("landed on main later\n", encoding="utf-8")
+    later = _commit(box.root, "main moves on")
+    _git("update-ref", "refs/remotes/origin/main", later, cwd=box.root)
+    _git(*_IDENT, "checkout", "-q", "feature", cwd=box.root)
+
+    for remote in (ZERO, branch_point, later):
+        (box.root / "calls.txt").unlink(missing_ok=True)
+        result = _run(_line("refs/heads/feature", head, remote), cwd=box.root)
+        assert result.returncode == 0, result.stderr
+        assert box.calls() == [f"{TIER} --changed --base {branch_point} {RUN_FLAGS}"], (
+            remote,
+            box.calls(),
+        )
+    diff = _git("diff", "--name-only", f"{branch_point}..{head}", cwd=box.root).split()
+    assert diff == ["mine.txt"], "the base's diff is not the branch's own work"
+
+
+def test_without_origin_main_the_old_remote_tip_is_the_base(tmp_path: Path):
+    """A fork that tracks `upstream` has no `origin/main`: the remote's tip is the best base
+    left, exact while the branch is a fast-forward and too wide after a rewrite."""
+    box = _sandbox(tmp_path, "fork")
+    remote = _git("rev-parse", "HEAD", cwd=box.root)
+    (box.root / "notes.txt").write_text("more\n", encoding="utf-8")
+    head = _commit(box.root, "more")
+    result = _run(_line("refs/heads/feature", head, remote), cwd=box.root)
+    assert result.returncode == 0, result.stderr
+    assert box.calls() == [f"{TIER} --changed --base {remote} {RUN_FLAGS}"]
+
+
+def test_no_shared_history_with_main_runs_every_pre_push_job(tmp_path: Path):
+    box = _sandbox(tmp_path, "orphan")
+    head = _git("rev-parse", "HEAD", cwd=box.root)
+    result = _run(_line("refs/heads/feature", head, ZERO), cwd=box.root)
+    assert result.returncode == 0, result.stderr
+    assert box.calls() == [f"{TIER} {RUN_FLAGS}"], "a push with nothing to scope by was scoped"
+
+
+def test_a_manual_run_from_a_terminal_runs_every_pre_push_job(sandbox: Sandbox):
+    """No ref lines on stdin: a check of this tree, which runs the whole tier's pre-push jobs.
+    `script -q` gives the hook a terminal for its stdin."""
+    if not shutil.which("script"):
+        pytest.skip("no `script` here to give the hook a terminal")
+    argv = (
+        ["script", "-q", "/dev/null", "sh", str(sandbox.script)]
+        if sys.platform == "darwin"
+        else ["script", "-q", "-e", "-c", f"sh {sandbox.script}", "/dev/null"]
+    )
+    done = subprocess.run(argv, cwd=sandbox.root, capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert sandbox.calls() == [f"{TIER} {RUN_FLAGS}"]
+
+
+# ── 3. The run's exit decides the push ───────────────────────────────────────────────────────
+
+
+def test_the_hook_waits_at_most_a_minute_for_a_job_s_memory():
+    """A run waits up to half an hour for a job's memory (tools/ci/admission.py). A push must not:
+    on a full machine it would hang past a lane's ten-minute tool limit. So the hook bounds the
+    wait, and a job that never gets its memory is not run, the run is partial, and the push goes
+    through (the partial leg below)."""
+    source = SCRIPT.read_text(encoding="utf-8")
+    found = re.search(r"^ADMISSION_WAIT=(\d+)$", source, re.M)
+    assert found, "the hook names no ADMISSION_WAIT"
+    assert 0 < int(found.group(1)) <= 120, f"the hook may wait {found.group(1)} s for memory"
+    assert '--admission-wait "$ADMISSION_WAIT"' in source, "the hook does not pass its bound"
+
+
+def test_a_red_run_refuses_the_push(sandbox: Sandbox):
+    sandbox.exits(1)
+    result = _run(_line("refs/heads/feature", sandbox.head, ZERO), cwd=sandbox.root)
+    assert result.returncode == 1
+    assert "the change tier is red" in result.stderr
+    assert len(sandbox.calls()) == 1
+
+
+def test_a_partial_run_lets_the_push_through_and_says_so(sandbox: Sandbox):
+    sandbox.exits(2)
+    result = _run(_line("refs/heads/feature", sandbox.head, ZERO), cwd=sandbox.root)
+    assert result.returncode == 0, result.stderr
+    assert "the run is partial" in result.stdout and "CI runs every job" in result.stdout
+
+
+def test_the_hook_says_how_long_the_run_took(sandbox: Sandbox):
+    result = _run(_line("refs/heads/feature", sandbox.head, ZERO), cwd=sandbox.root)
+    assert "pre-push: the run took " in result.stdout
+
+
+def test_with_no_python_to_run_tools_ci_the_push_goes_through(sandbox: Sandbox, tmp_path):
+    """No venv, and the first `python3` on PATH cannot start (a version-manager shim with no
+    version set): the hook says so, and CI runs every job."""
+    shutil.rmtree(sandbox.root / ".venv")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    shim = bin_dir / "python3"
+    shim.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    shim.chmod(0o755)
+    done = subprocess.run(
+        ["sh", str(sandbox.script)],
+        cwd=sandbox.root,
+        input=_line("refs/heads/feature", sandbox.head, ZERO),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"},
+    )
+    assert done.returncode == 0, done.stderr
+    assert "no Python 3.12 or newer" in done.stdout

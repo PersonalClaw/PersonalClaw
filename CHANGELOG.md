@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### For maintainers
 
 - **Nothing in a release is published before the owner approves it, and an approval holds only for the build it was given: a release whose artifacts are built again publishes nothing until it is approved again.**
+- **The pre-push hook runs the change tier's jobs from the CI catalogue, as CI runs them, on the working tree: today `static` (lint, types, the asset licences, the installer's checks), in about two minutes. A change-tier job that runs a test suite says `prepush = false` and is left to CI. The hook no longer runs the clean-install and render-smoke chain for pushes to `main`, release branches and tags; CI's `e2e-shard` runs the render smoke on every pull request.**
 
 ## [0.2.7] — 2026-10-23
 

@@ -481,6 +481,11 @@ jobs:
           # mypy run here — see scripts/lint_bundled_apps.py for why (two bundles ship a
           # module named `provider.py`, which aborts a single combined run).
           run_tool "mypy (bundled apps)" uv run python scripts/lint_bundled_apps.py
+          # Every tracked font, image, binary and fixture has a recorded source, licence and
+          # notice in ASSET_LICENSES.json, read from the tracked tree alone, so the pre-push
+          # hook's static job checks it with no npm install. tests/test_asset_licenses.py
+          # asserts the same inside the suite; this prints the checker's own list.
+          run_tool "asset licences" uv run python scripts/check_asset_licenses.py
           if [ "$status" -ne 0 ]; then
             {
               echo "violations<<LINTEOF"
@@ -1975,11 +1980,6 @@ jobs:
       # and -3.txt) or in two. The planner plans this job on every diff, as it plans the rails.
       - name: every rail lives in tests/rails
         run: uv run python -m tools.ci rails check
-      # Every tracked font, image, binary and fixture has a recorded source, licence and notice
-      # in ASSET_LICENSES.json. tests/test_asset_licenses.py asserts the same thing inside the
-      # suite; this step prints the checker's own list of what is missing.
-      - name: bundled asset licences
-        run: uv run python scripts/check_asset_licenses.py
       # ── The gate AGGREGATE, finally executed ────────────────────────────────────────────────
       # `make gates` (scripts/gate_report.py) is the one surface that reports all six ratchets
       # together — config-baseline, inert-surface, docs-lint, and the three structural gates. It

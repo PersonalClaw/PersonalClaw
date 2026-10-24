@@ -366,8 +366,9 @@ class Job:
     #: stage job to upload as ``lint-feedback``, which ``pr-feedback.yml`` posts. One job, of the
     #: change tier, which ``pr.yml`` runs on every pull request.
     lint_feedback: bool = False
-    #: ``run change --pre-push``, the pre-push hook's run, runs it as a job of the change tier.
-    #: ``false`` leaves it to CI, for a job too slow for a push (#3920).
+    #: The pre-push hook runs it, as a job of the change tier (``run change --pre-push``,
+    #: ``scripts/run_prepush.sh``). ``false`` leaves it to CI, for a job too slow for a push:
+    #: the contract holds each change-tier job that runs a test suite to ``false``.
     prepush: bool = True
 
     def placeholders(self) -> set[str]:

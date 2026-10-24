@@ -736,8 +736,9 @@ overrides (`--areas`, beside the catalogue by default):
   (`apps-contract`).
 - **Always planned:** the `rails` job (all three legs) and `rails-checks`, whose `rails check`
   holds every rail to exactly one leg, every `security` job, every `live` job, and each job an
-  `after` of a planned one names. `rails-checks` also runs the asset licences, the gate
-  aggregate and the npm advisory floors. The loader refuses a merge tier whose rails run in
+  `after` of a planned one names. `rails-checks` also runs the gate aggregate and the npm
+  advisory floors; the asset licences are `static`'s, whose inputs are the whole tree, so the
+  pre-push hook checks them too. The loader refuses a merge tier whose rails run in
   legs without `rails-checks`, as it refuses one without `rails`.
 - **Fail-safe: the whole tier.** An empty diff, a path no input but the whole tree names, a
   path that is not a plain path inside the repository (empty, absolute, `..`, not in its
@@ -2267,12 +2268,19 @@ with no batch step there is nothing to publish.
 before a push is the repository's own hook and `make gate`, and reuse is the public verdict
 store.
 
-- **The hook today** (`.githooks/pre-push`, which runs `scripts/run_prepush.sh`) checks Python
-  lint when the outgoing commits touch Python, and runs the clean-install, build and
-  render-smoke chain for frontend changes headed for `main`, a release branch or a tag; on a
-  topic branch CI is that chain's gate. It refuses an outgoing ref that is not this worktree's
-  `HEAD`. It checks the working tree, and does not refuse a dirty one. A hook that runs the
-  catalogue's change tier is #3920's and is not built.
+- **The hook** (`.githooks/pre-push`, which runs `scripts/run_prepush.sh`, #3920) runs the
+  change tier from the catalogue: `run change --pre-push --changed --working-tree --fail-fast
+  --workers 2`, with the merge base with `origin/main` as `--base`. `--pre-push` leaves out each
+  job whose entry says `prepush = false`, a test suite too slow for a push, whose gate is CI;
+  today the hook runs `static` (lint, types, the asset licences and the installer's checks). It
+  runs no check command of its own, so a job added to the change tier runs in it with no edit to
+  the script. A red run refuses the push; a partial one lets it through, and says so. It refuses
+  an outgoing ref that is not this worktree's `HEAD`, checks the working tree, and does not
+  refuse a dirty one. Three contract rows hold it: the hook runs no check command (a planted
+  `black` line fails); a change-tier job that runs a test suite (pytest over a folder or no path,
+  vitest, `playwright test`, `npm run test*`, `make test*`) says `prepush = false`; and the
+  render smoke, which the hook no longer runs, still runs in the merge tier (`e2e-shard`'s
+  `smoke` project) or a release workflow.
 - **Inputs of reuse:** the verdict store's key (see "Verdict reuse"): the job's entry, its exact
   steps, the selection, the commit's tree, each partner repository's commit (the apps partner
   among them), each lock file's digest, the toolchain, the OS and architecture, the container,
