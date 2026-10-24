@@ -15,8 +15,9 @@ A cancelled shard is **superseded** only when every one of these holds, read fro
 1. the run is a push to ``main`` (the full ref, so a tag named ``main`` is not it);
 2. the job is a shard of the job named (``<job> (<n>)``) and was cancelled before any step ran;
 3. its check run carries exactly GitHub's replacement annotation, ``Canceling since a higher
-   priority waiting request for '<group>' exists``, naming that shard's own group
-   (``<group prefix><n>``);
+   priority waiting request for <group> exists``, naming that shard's own group
+   (``<group prefix><n>``). GitHub has written the group both in single quotes and bare (bare on
+   main's run 40113017916), so either is read, and nothing else around it;
 4. a later push run of the same workflow on ``main``, for a commit that descends from this one,
    has a job of the same name that was not skipped. The earliest such run is the one named;
 5. every cancelled shard of the run was replaced by one and the same commit.
@@ -51,8 +52,12 @@ from typing import Any
 
 MAIN = "refs/heads/main"
 _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
-#: The annotation GitHub writes on a job its concurrency group replaced, matched whole.
-_REPLACED = re.compile(r"Canceling since a higher priority waiting request for '(.+)' exists")
+#: The annotation GitHub writes on a job its concurrency group replaced, matched whole: the group
+#: in single quotes, or bare.
+_REPLACED = re.compile(
+    r"Canceling since a higher priority waiting request for "
+    r"(?:'(?P<quoted>[^']+)'|(?P<bare>[^\s']+)) exists"
+)
 _PER_PAGE = 100
 
 Get = Callable[[str], Any]
@@ -157,7 +162,7 @@ def _judge(
     for note in notes:
         found = _REPLACED.fullmatch(str(_mapping(note, "an annotation").get("message", "")).strip())
         if found:
-            groups.append(found.group(1))
+            groups.append(found.group("quoted") or found.group("bare"))
     if not groups:
         return None, "no replacement annotation: it was cancelled some other way"
     own = group_prefix + shard.group(1)
