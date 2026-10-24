@@ -17,6 +17,7 @@ name: Refresh visual baselines
 
 on:
   workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: read
@@ -56,11 +57,11 @@ jobs:
         run: python3 scripts/spa_dist_freshness.py stamp
       - name: the UI matrix's baselines, made against the pinned browser
         working-directory: web
-        run: node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts
+        run: node e2e/run-pinned.mjs -- e2e/surfaces.spec.ts
       - name: the visual baselines, made against the pinned browser
         if: ${{ !cancelled() }}
         working-directory: web
-        run: node e2e/run-pinned.mjs --update -- e2e/visual.spec.ts
+        run: node e2e/run-pinned.mjs -- e2e/visual.spec.ts
       - name: Upload the baselines and their manifest
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
