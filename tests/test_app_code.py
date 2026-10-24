@@ -314,10 +314,10 @@ def test_a_release_reads_the_live_tasks_and_not_the_whole_heap(root, monkeypatch
         event = asyncio.Event()
         task = loop.create_task(_load(root).poll_forever(event))
         loop.run_until_complete(asyncio.sleep(0))
-        monkeypatch.setattr(gc, "get_objects", refused)
-        monkeypatch.setattr(gc, "collect", refused)
-        left = app_code.release(APP).left_running
-        monkeypatch.undo()
+        with monkeypatch.context() as patched:
+            patched.setattr(gc, "get_objects", refused)
+            patched.setattr(gc, "collect", refused)
+            left = app_code.release(APP).left_running
         task.cancel()
         loop.run_until_complete(asyncio.gather(task, return_exceptions=True))
     finally:
