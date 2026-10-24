@@ -46,10 +46,14 @@ also sweeps away any trusted-run branch older than a day.
 6. CodeQL analysed the head in every language ``main``'s CodeQL analyses name, and the pull
    request brings no alert of its own: the newest run of GitHub's dynamic CodeQL workflow on the
    head finished, with an ``Analyze (<language>)`` job that concluded ``success`` for each of
-   ``main``'s languages, and no alert is open on the pull request's ref that is not open on
-   ``main``. The ``CodeQL`` summary check is never read for its conclusion: GitHub computes it
-   when the first language's analysis uploads, so it reads ``neutral`` on most pull requests.
-   Its completion only wakes the poster, which judges the head again as for a review.
+   ``main``'s languages; each language's analysis of the head is processed on the pull request's
+   ref (a job's success means its results were uploaded, not yet read); and no alert is open on
+   that ref that is not open on ``main``. The ``CodeQL`` summary check is never read for its
+   conclusion: GitHub computes it when the first language's analysis uploads, so it reads
+   ``neutral`` on most pull requests. A red whose only reasons are CodeQL still running or still
+   processing is marked waiting, and the poster judges such heads again: every ten minutes, for
+   the open pull requests whose newest verdict is a waiting red, posting only what changed; and
+   when GitHub's CodeQL workflow or its summary check completes.
 7. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
    this controller's commit on ``main``, the head and its tree, the runner and the definitions
    commit, and the digests of the run's ``ci-record-*`` artifacts as the API reports them. A run
@@ -102,6 +106,10 @@ _CODEQL_CHECK = "CodeQL"
 _PULL_HEAD = re.compile(r"refs/pull/(?P<number>[1-9][0-9]*)/head")
 #: The branch a trusted run of a head is made on: this prefix, then the head's full id.
 TRUSTED_PREFIX = "trusted-run/"
+#: A reason that only waits on CodeQL to finish or to process, which a later look may clear.
+WAITING = "waiting: "
+#: The fenced block a red's output text carries when every reason only waits on CodeQL.
+WAITING_FENCE = "merge-verdict-waiting"
 #: A trusted-run branch older than this is swept away, whatever became of its run.
 SWEEP_AFTER = datetime.timedelta(days=1)
 #: merge.yml's job that judges the run with main's verdict.py.
@@ -359,13 +367,10 @@ def _red(run: Run, reasons: list[str], head: str) -> Posting:
         ["This head's merge verdict is red:", "", *[f"- {r}" for r in reasons], ""]
         + [f"From Merge run {run.url or run.id}, attempt {run.attempt}.", "", ADVISORY]
     )
-    return Posting(
-        head,
-        "failure",
-        {"title": f"Red: {reasons[0]}"[:255], "summary": summary},
-        run.url,
-        f"{run.id}/{run.attempt}",
-    )
+    output = {"title": f"Red: {reasons[0]}"[:255], "summary": summary}
+    if all(r.startswith(WAITING) for r in reasons):
+        output["text"] = f"```{WAITING_FENCE}\ncodeql\n```\n"
+    return Posting(head, "failure", output, run.url, f"{run.id}/{run.attempt}")
 
 
 def _names(paths: list[str]) -> str:
@@ -485,23 +490,42 @@ def codeql_reasons(get: Get, repo: str, head: str) -> list[str]:
         and _int(r.get("id")) is not None
     ]
     if not ours:
-        return ["CodeQL has not analysed the head yet"]
+        return [f"{WAITING}CodeQL has not analysed the head yet"]
     newest = max(ours, key=lambda r: int(r["id"]))
     if newest.get("status") != "completed":
-        return [f"CodeQL's analysis of the head is {newest.get('status')!r}, not finished"]
+        return [f"{WAITING}CodeQL's analysis of the head is {newest.get('status')!r}, not finished"]
     pull = _PULL_HEAD.fullmatch(str(newest.get("head_branch") or ""))
     if pull is None:
         return ["CodeQL's analysis of the head is not a pull request's"]
     jobs = _pages(get, f"/repos/{repo}/actions/runs/{newest['id']}/jobs", "jobs")
     done = {str(j.get("name")): j.get("conclusion") for j in jobs}
+    languages = sorted(codeql_languages(get, repo))
     reasons = [
         f"CodeQL's `Analyze ({lang})` is {done.get(f'Analyze ({lang})')!r}"
-        for lang in sorted(codeql_languages(get, repo))
+        for lang in languages
         if done.get(f"Analyze ({lang})") != "success"
     ]
     if reasons:
         return reasons
     ref = f"refs/pull/{pull['number']}/head"
+    processed = _read(get, f"/repos/{repo}/code-scanning/analyses?ref={ref}&per_page=100")
+    if not isinstance(processed, list):
+        raise Unread(f"the analyses of {ref} are not a list")
+    ready = {
+        str(a.get("category", "")).removeprefix("/language:")
+        for a in processed
+        if isinstance(a, Mapping)
+        and a.get("analysis_key") == CODEQL_ANALYSIS
+        and a.get("commit_sha") == head
+        and not a.get("error")
+    }
+    waiting = [
+        f"{WAITING}CodeQL's {lang} results are still processing"
+        for lang in languages
+        if lang not in ready
+    ]
+    if waiting:
+        return waiting
     alerts = "/repos/{repo}/code-scanning/alerts?state=open&ref={ref}"
     on_pull = {_int(a.get("number")) for a in _all_pages(get, alerts.format(repo=repo, ref=ref))}
     on_main = {
@@ -584,7 +608,72 @@ def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome
         if run.get("status") != "completed":
             return Outcome(why=f"run {run_id} is {run.get('status')!r}, not completed")
         return decide_review(get, repo, run, controller_revision)
+    if owner == repo and str(run.get("path", "")).startswith(CODEQL_WORKFLOW):
+        head = run.get("head_sha")
+        if run.get("status") != "completed" or not isinstance(head, str):
+            return Outcome(why=f"run {run_id} is not a completed CodeQL analysis")
+        if not _SHA.fullmatch(head):
+            raise Unread(f"CodeQL run {run_id} names no head")
+        return rejudge(get, repo, head, controller_revision)
     return decide(get, repo, run_id, controller_revision)
+
+
+def _newest_verdict(get: Get, repo: str, head: str, app: int) -> Mapping[str, Any] | None:
+    query = urllib.parse.urlencode(
+        {"check_name": merge_verdict.CHECK_NAME, "app_id": app, "filter": "latest", "per_page": 100}
+    )
+    answer = _read(get, f"/repos/{repo}/commits/{head}/check-runs?{query}")
+    runs = answer.get("check_runs") if isinstance(answer, Mapping) else None
+    if not isinstance(runs, list):
+        raise Unread(f"{head}'s merge verdicts are not a list")
+    ours = [
+        r
+        for r in runs
+        if isinstance(r, Mapping)
+        and _int(r.get("id")) is not None
+        and isinstance(r.get("app"), Mapping)
+        and _int(r["app"].get("id")) == app
+    ]
+    return max(ours, key=lambda r: int(r["id"])) if ours else None
+
+
+def _waiting(check: Mapping[str, Any]) -> bool:
+    output = check.get("output")
+    text = output.get("text") if isinstance(output, Mapping) else None
+    return (
+        check.get("conclusion") == "failure"
+        and isinstance(text, str)
+        and f"```{WAITING_FENCE}" in text
+    )
+
+
+#: More open pull requests than this are not looked at again in one sweep.
+SWEEP_LIMIT = 100
+
+
+def judge_waiting(get: Get, repo: str, app: int, controller_revision: str) -> list[Outcome]:
+    """Every open pull request into main whose newest merge verdict, the controller App's, is a
+    red that only waits on CodeQL: judge its head again, and keep only what changed."""
+    pulls = _all_pages(get, f"/repos/{repo}/pulls?state=open&base=main")[:SWEEP_LIMIT]
+    changed: list[Outcome] = []
+    for pull in pulls:
+        head = pull.get("head")
+        sha = head.get("sha") if isinstance(head, Mapping) else None
+        if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+            raise Unread(f"pull request {pull.get('number')} names no head")
+        newest = _newest_verdict(get, repo, sha, app)
+        if newest is None or not _waiting(newest):
+            continue
+        outcome = rejudge(get, repo, sha, controller_revision)
+        output = newest.get("output")
+        was: Mapping[str, Any] = output if isinstance(output, Mapping) else {}
+        same = outcome.posting is not None and (
+            outcome.posting.conclusion,
+            outcome.posting.output.get("title"),
+        ) == (newest.get("conclusion"), was.get("title"))
+        if outcome.posting is not None and not same:
+            changed.append(outcome)
+    return changed
 
 
 def own_run_completed(get: Get, repo: str, head: str) -> bool:
@@ -894,6 +983,10 @@ def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | No
     which = one.add_mutually_exclusive_group(required=True)
     which.add_argument("--run-id", type=int, help="a completed run of Merge or Dependency review")
     which.add_argument("--check-run-id", type=int, help="a completed CodeQL check run")
+    which.add_argument(
+        "--waiting", action="store_true", help="judge again every open head waiting on CodeQL"
+    )
+    one.add_argument("--controller-app-id", type=int, help="with --waiting: whose verdicts to read")
     one.add_argument("--out", required=True, type=Path)
     two = sub.add_parser("post", help="post the check run with the App's token (GH_TOKEN)")
     two.add_argument("--body", required=True, type=Path)
@@ -913,12 +1006,18 @@ def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | No
     reader = get or merge_verdict.github_get(API, token)
     writer = api or github_api(token)
     if args.command == "decide":
+        if args.waiting and not args.controller_app_id:
+            parser.error("--waiting needs --controller-app-id")
         try:
             if args.run_id is not None:
-                outcome = judge(reader, args.repo, args.run_id, args.controller_revision)
+                outcomes = [judge(reader, args.repo, args.run_id, args.controller_revision)]
+            elif args.check_run_id is not None:
+                outcomes = [
+                    judge_check(reader, args.repo, args.check_run_id, args.controller_revision)
+                ]
             else:
-                outcome = judge_check(
-                    reader, args.repo, args.check_run_id, args.controller_revision
+                outcomes = judge_waiting(
+                    reader, args.repo, args.controller_app_id, args.controller_revision
                 )
         except Unread as exc:
             print(f"::error title=merge verdict unread::{exc}")
@@ -928,19 +1027,27 @@ def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | No
         except Unread as exc:
             print(f"::warning title=no sweep::the trusted-run branches could not be read: {exc}")
             sweep = []
-        _output("dispatch", outcome.dispatch or "")
-        _output("base", outcome.base or "")
-        doomed = set(sweep) | ({outcome.cleanup} if outcome.cleanup else set())
-        if outcome.dispatch:
-            doomed.discard(TRUSTED_PREFIX + outcome.dispatch)
+        # Only a Merge run's own outcome starts a trusted run; a sweep never does.
+        single = outcomes[0] if len(outcomes) == 1 and not args.waiting else None
+        dispatch_head = single.dispatch if single else None
+        _output("dispatch", dispatch_head or "")
+        _output("base", (single.base if single else None) or "")
+        doomed = set(sweep) | {o.cleanup for o in outcomes if o.cleanup}
+        if dispatch_head:
+            doomed.discard(TRUSTED_PREFIX + dispatch_head)
         _output("cleanup", " ".join(sorted(doomed)))
-        if outcome.posting is None:
-            print(f"no verdict to post: {outcome.why}")
+        postings = [o.posting for o in outcomes if o.posting is not None]
+        for o in outcomes:
+            if o.posting is None:
+                print(f"no verdict to post: {o.why}")
+        if not postings:
             _output("post", "false")
             return 0
-        found = outcome.posting
-        args.out.write_text(json.dumps(found.body(), indent=2) + "\n", encoding="utf-8")
-        print(f"merge-verdict on {found.head_sha}: {found.conclusion}: {found.output['title']}")
+        bodies = [found.body() for found in postings]
+        args.out.write_text(json.dumps(bodies, indent=2) + "\n", encoding="utf-8")
+        for found in postings:
+            title = found.output["title"]
+            print(f"merge-verdict on {found.head_sha}: {found.conclusion}: {title}")
         _output("post", "true")
         return 0
     if not token and api is None:
@@ -948,10 +1055,13 @@ def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | No
         return 1
     try:
         if args.command == "post":
-            body = check_body(json.loads(args.body.read_text(encoding="utf-8")))
-            check_id = post(args.repo, body, lambda path, b: writer("POST", path, b))
-            said = f"{body['conclusion']} on {body['head_sha']} (check run {check_id})"
-            print(f"posted merge-verdict {said}")
+            bodies = json.loads(args.body.read_text(encoding="utf-8"))
+            if not isinstance(bodies, list) or not bodies:
+                raise ValueError("the body file is not a list of check runs")
+            for body in [check_body(b) for b in bodies]:
+                check_id = post(args.repo, body, lambda path, b: writer("POST", path, b))
+                said = f"{body['conclusion']} on {body['head_sha']} (check run {check_id})"
+                print(f"posted merge-verdict {said}")
         elif args.command == "trusted":
             if not _SHA.fullmatch(args.base):
                 raise ValueError(f"--base must be a full commit id: {args.base}")

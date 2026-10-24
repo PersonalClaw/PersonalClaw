@@ -284,13 +284,19 @@ artifact digests. The rules, in order:
   either order.
 - **CodeQL, read from what it ran:** the newest run of GitHub's dynamic CodeQL workflow
   (`dynamic/github-code-scanning/codeql`) on the head finished, with an `Analyze (<language>)`
-  job concluded `success` for each language `main`'s default-setup analyses name, and no alert
-  open on the pull request's ref (`refs/pull/<n>/head`) that is not open on `main`. A scratch pull
+  job concluded `success` for each language `main`'s default-setup analyses name; each of those
+  languages' analyses of the head processed on the pull request's ref (`refs/pull/<n>/head`, the
+  head's commit), since a job's success means its results were uploaded, not yet read; and no
+  alert open on that ref that is not open on `main`. A scratch pull
   request that planted one `js/code-injection` showed exactly that alert there and not on
   `main`, with all three analyses green. The `CodeQL` summary check is never read for its
   conclusion: GitHub computes it when the first language's analysis uploads, so it reads
-  `neutral` on most pull requests. Its completion only wakes the poster (`check_run`), which
-  judges that head again; every other check run posts nothing.
+  `neutral` on most pull requests. A red whose only reasons wait on CodeQL (not run, still
+  running, still processing) is marked waiting in its output, and such heads are judged again:
+  when GitHub's CodeQL workflow completes (followed by name, matched by its run's path), when the
+  summary check completes (`check_run`, which starts a runner only for code scanning's CodeQL
+  check), and every ten minutes, for open pull requests whose newest verdict is a waiting red,
+  posting only a verdict that changed.
 - **The receipt:** a green names the controller's commit on `main`, the head and its tree, the
   runner and the definitions commit, and the digests of the run's `ci-record-*` artifacts as the
   API reports them. With no record artifact there is no evidence, so no green. The partner head

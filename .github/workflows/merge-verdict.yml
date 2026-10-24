@@ -37,18 +37,24 @@
 name: Merge verdict
 
 on:
+  # A Merge run is judged. A Dependency review run, or GitHub's dynamic CodeQL workflow (matched
+  # by its run's path, never its name), judges its head again.
   workflow_run:
-    workflows: ["Merge", "Dependency review"]
+    workflows: ["Merge", "Dependency review", "CodeQL"]
     types: [completed]
   # Code scanning's CodeQL check, completed, wakes the poster to judge its head again; its
-  # conclusion is never read. Every other check run posts nothing.
+  # conclusion is never read. The job skips every other check run without a runner.
   check_run:
     types: [completed]
+  # Every ten minutes: judge again the open pull requests whose newest verdict is a red that only
+  # waits on CodeQL to finish or to process, posting only what changed.
+  schedule:
+    - cron: "*/10 * * * *"
 
 # One post per Merge run and attempt, never cancelled: each run's verdict is its own check run,
 # and verify-check-run reads the newest.
 concurrency:
-  group: merge-verdict-${{ github.event.workflow_run.id || github.event.check_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  group: merge-verdict-run-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}-check-${{ github.event.check_run.id }}
   cancel-in-progress: false
 
 permissions:
@@ -56,6 +62,9 @@ permissions:
 
 jobs:
   post:
+    # A check run that is not code scanning's CodeQL check starts no runner; decide checks the
+    # same again through the API, which is the gate.
+    if: github.event_name != 'check_run' || (github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: ci-controller
@@ -82,9 +91,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           CHECK_RUN_ID: ${{ github.event.check_run.id }}
+          APP_ID: ${{ vars.CONTROLLER_APP_ID }}
         run: |
           set -euo pipefail
-          if [ -n "$RUN_ID" ]; then which=(--run-id "$RUN_ID"); else which=(--check-run-id "$CHECK_RUN_ID"); fi
+          if [ -n "$RUN_ID" ]; then
+            which=(--run-id "$RUN_ID")
+          elif [ -n "$CHECK_RUN_ID" ]; then
+            which=(--check-run-id "$CHECK_RUN_ID")
+          else
+            which=(--waiting --controller-app-id "$APP_ID")
+          fi
           python3 -m tools.ci merge-controller decide --repo "$GITHUB_REPOSITORY" "${which[@]}" \
             --controller-revision "$GITHUB_SHA" --out "$RUNNER_TEMP/merge-verdict.json"
       - name: the controller's token
@@ -109,7 +125,7 @@ jobs:
     # merge.yml there. Once that run's verdict is posted, delete its branch, and any trusted-run
     # branch older than a day with it.
     needs: post
-    if: needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != ''
+    if: (github.event_name != 'check_run' || (github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')) && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: ci-controller

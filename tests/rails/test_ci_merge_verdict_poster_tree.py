@@ -28,7 +28,14 @@ _APP_KEYS = {
 }
 _TOKEN_ASKS = {**_APP_KEYS, "permission-checks": "write"}
 _TRUSTED_ASKS = {**_APP_KEYS, "permission-contents": "write"}
-_TRUSTED_IF = "needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != ''"
+_CODEQL_CHECK_ONLY = (
+    "github.event_name != 'check_run' || (github.event.check_run.app.id == 57789"
+    " && github.event.check_run.name == 'CodeQL')"
+)
+_TRUSTED_IF = (
+    f"({_CODEQL_CHECK_ONLY})"
+    " && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')"
+)
 _APP_TOKEN = "${{ steps.controller.outputs.token }}"
 
 
@@ -82,10 +89,11 @@ def _problems(text: str) -> list[str]:
     on = data.get("on", data.get(True))
     want = {
         "workflow_run": {
-            "workflows": [workflows.NAMES[workflows.MERGE], "Dependency review"],
+            "workflows": [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL"],
             "types": ["completed"],
         },
         "check_run": {"types": ["completed"]},
+        "schedule": [{"cron": "*/10 * * * *"}],
     }
     if on != want:
         found.append(f"runs on {on!r}, not only a completed Merge run")
@@ -94,8 +102,11 @@ def _problems(text: str) -> list[str]:
         return [*found, f"has jobs {sorted(jobs)}"]
     found += _trusted_problems(jobs["trusted"])
     job = jobs["post"]
-    if "if" in job:
-        found.append("the job can be skipped, so a run could post nothing")
+    if job.get("if") != _CODEQL_CHECK_ONLY:
+        found.append(
+            "the post job's condition is not exactly: every run, and code scanning's CodeQL"
+            f" check alone of the check runs ({job.get('if')!r})"
+        )
     if job.get("environment") != "ci-controller":
         found.append(f"the job deploys to {job.get('environment')!r}")
     if job.get("permissions") != {
@@ -155,8 +166,8 @@ _DISPATCH_TOKEN = (
     "old, new, says",
     [
         (
-            '    workflows: ["Merge", "Dependency review"]\n    types: [completed]\n',
-            '    workflows: ["Merge", "Dependency review"]\n    types: [completed]\n'
+            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n',
+            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n'
             "  pull_request:\n",
             "runs on",
         ),
@@ -165,8 +176,12 @@ _DISPATCH_TOKEN = (
             "  check_run:\n    types: [completed, created]\n",
             "runs on",
         ),
-        ('workflows: ["Merge", "Dependency review"]', 'workflows: ["Merge", "PR"]', "runs on"),
-        ('workflows: ["Merge", "Dependency review"]', 'workflows: ["Merge"]', "runs on"),
+        (
+            'workflows: ["Merge", "Dependency review", "CodeQL"]',
+            'workflows: ["Merge", "PR"]',
+            "runs on",
+        ),
+        ('workflows: ["Merge", "Dependency review", "CodeQL"]', 'workflows: ["Merge"]', "runs on"),
         (
             "          RUN_ID: ${{ github.event.workflow_run.id }}\n",
             "          RUN_ID: ${{ github.event.workflow_run.id }}\n"
@@ -250,8 +265,25 @@ def test_a_planted_edit_of_the_poster_fails(old: str, new: str, says: str) -> No
     )
 
 
-def test_a_job_condition_that_could_skip_the_post_fails() -> None:
-    text = _WORKFLOW.read_text(encoding="utf-8").replace(
-        "  post:\n", "  post:\n    if: github.event.workflow_run.conclusion == 'success'\n", 1
-    )
-    assert any("can be skipped" in p for p in _problems(text))
+@pytest.mark.parametrize(
+    "old, new",
+    [
+        ("github.event.check_run.app.id == 57789 && ", ""),
+        (" && github.event.check_run.name == 'CodeQL'", ""),
+        (
+            "github.event_name != 'check_run' || ",
+            "github.event.workflow_run.conclusion == 'success' || ",
+        ),
+    ],
+)
+def test_a_post_condition_other_than_the_codeql_filter_fails(old: str, new: str) -> None:
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    line = next(x for x in text.splitlines() if x.startswith("    if: github.event_name !="))
+    planted = text.replace(line, line.replace(old, new, 1), 1)
+    assert planted != text
+    assert any("condition is not exactly" in p for p in _problems(planted))
+
+
+def test_a_schedule_more_often_than_ten_minutes_fails() -> None:
+    text = _WORKFLOW.read_text(encoding="utf-8").replace('"*/10 * * * *"', '"* * * * *"', 1)
+    assert any("runs on" in p for p in _problems(text))

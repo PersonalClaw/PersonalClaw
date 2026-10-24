@@ -67,6 +67,7 @@ class FakeApi:
         main_alerts: tuple[int, ...] = (1, 2, 3),
         languages: tuple[str, ...] = ("actions", "javascript-typescript", "python"),
         path: str = mc.CODEQL_WORKFLOW,
+        processed: tuple[str, ...] | None = None,
     ) -> None:
         """GitHub's dynamic CodeQL run on the head, main's analyses and both refs' open alerts."""
         run = {"id": 800, "path": path, "head_sha": head, "status": status, "head_branch": branch}
@@ -87,6 +88,18 @@ class FakeApi:
         alerts = "/repos/{REPO}/code-scanning/alerts?state=open&ref={ref}&per_page=100&page=1"
         number = _PULL_NUMBER.search(branch)
         if number:
+            ready = languages if processed is None else processed
+            self.answers[
+                f"/repos/{REPO}/code-scanning/analyses?ref=refs/pull/{number[1]}/head&per_page=100"
+            ] = [
+                {
+                    "analysis_key": mc.CODEQL_ANALYSIS,
+                    "category": f"/language:{lang}",
+                    "commit_sha": head,
+                    "error": "",
+                }
+                for lang in ready
+            ]
             self.answers[alerts.format(REPO=REPO, ref=f"refs/pull/{number[1]}/head")] = [
                 {"number": n} for n in pull_alerts
             ]
@@ -185,7 +198,7 @@ def _red(api: FakeApi) -> mc.Posting:
     found = _decide(api)
     assert isinstance(found, mc.Posting) and found.conclusion == "failure", found
     assert found.output["title"].startswith("Red: ")
-    assert "text" not in found.output, "a red carries no receipt"
+    assert merge_verdict.RECEIPT_FENCE not in found.output.get("text", ""), "a red has no receipt"
     return found
 
 
@@ -365,7 +378,7 @@ def test_decide_writes_the_body_and_says_whether_to_post(tmp_path: Path, monkeyp
     monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
     argv = ["decide", "--repo", REPO, "--run-id", str(RUN), "--controller-revision", CONTROLLER]
     assert mc.main([*argv, "--out", str(out)], get=FakeApi()) == 0
-    assert json.loads(out.read_text())["conclusion"] == "success"
+    assert [b["conclusion"] for b in json.loads(out.read_text())] == ["success"]
     api = FakeApi()
     api.run(event="push")
     assert mc.main([*argv, "--out", str(tmp_path / "none.json")], get=api) == 0
@@ -863,3 +876,124 @@ def test_decide_takes_a_check_run_id(tmp_path: Path, monkeypatch: Any) -> None:
     argv += ["--controller-revision", CONTROLLER, "--out", str(tmp_path / "v.json")]
     assert mc.main(argv, get=api) == 0
     assert "post=false" in (tmp_path / "outputs").read_text()
+
+
+def test_analyses_still_processing_are_a_waiting_red_never_a_green() -> None:
+    api = FakeApi()
+    api.codeql(HEAD, pull_alerts=(), processed=("actions",))
+    found = _red(api)
+    assert "CodeQL's javascript-typescript results are still processing" in found.output["summary"]
+    assert "CodeQL's python results are still processing" in found.output["summary"]
+    assert f"```{mc.WAITING_FENCE}" in found.output["text"]
+
+
+def test_an_analysis_of_another_commit_is_still_processing() -> None:
+    api = FakeApi()
+    api.codeql(HEAD)
+    ref = f"/repos/{REPO}/code-scanning/analyses?ref=refs/pull/12/head&per_page=100"
+    for analysis in api.answers[ref]:
+        analysis["commit_sha"] = "9" * 40
+    assert "results are still processing" in _red(api).output["summary"]
+
+
+def test_a_red_with_any_reason_but_waiting_is_not_marked_waiting() -> None:
+    api = FakeApi()
+    api.codeql(HEAD, status="in_progress")
+    api.jobs(1, ("results", "completed", "failure"))
+    found = _red(api)
+    assert "is 'in_progress', not finished" in found.output["summary"]
+    assert mc.WAITING_FENCE not in found.output.get("text", "")
+
+
+APP = 5444147
+PULLS = f"/repos/{REPO}/pulls?state=open&base=main&per_page=100&page=1"
+VERDICTS = (
+    f"/repos/{REPO}/commits/{HEAD}/check-runs?check_name=merge-verdict&app_id={APP}"
+    "&filter=latest&per_page=100"
+)
+
+
+def _posted(api: FakeApi, *checks: Mapping[str, Any]) -> None:
+    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}}]
+    api.answers[VERDICTS] = {"total_count": len(checks), "check_runs": list(checks)}
+
+
+def _verdict(posting: mc.Posting, check_id: int, app: int = APP) -> dict[str, Any]:
+    return {"id": check_id, "app": {"id": app}, **posting.body()}
+
+
+def test_merge_before_codeql_then_codeql_finishes_then_green() -> None:
+    api = FakeApi()
+    api.codeql(HEAD, status="in_progress")
+    _merge_runs(api, OWN_MERGE, [RUN])
+    first = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert first is not None and first.conclusion == "failure"
+    assert "waiting: CodeQL's analysis of the head is 'in_progress'" in first.output["title"]
+    _posted(api, _verdict(first, 1))
+    api.codeql(HEAD)
+    [later] = mc.judge_waiting(api, REPO, APP, CONTROLLER)
+    assert later.posting is not None and later.posting.conclusion == "success"
+    assert later.posting.head_sha == HEAD
+
+
+def test_the_sweep_posts_nothing_when_nothing_changed() -> None:
+    api = FakeApi()
+    api.codeql(HEAD, status="in_progress")
+    _merge_runs(api, OWN_MERGE, [RUN])
+    first = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert first is not None
+    _posted(api, _verdict(first, 1))
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER) == []
+
+
+@pytest.mark.parametrize("why", ["a red for another reason", "another App's", "a green"])
+def test_the_sweep_judges_again_only_a_waiting_red_of_the_controllers(why: str) -> None:
+    api = FakeApi()
+    _merge_runs(api, OWN_MERGE, [RUN])
+    if why == "a green":
+        newest = mc.decide(api, REPO, RUN, CONTROLLER).posting
+        check = _verdict(newest, 1) if newest else {}
+    else:
+        api.codeql(HEAD, status="in_progress")
+        newest = mc.decide(api, REPO, RUN, CONTROLLER).posting
+        assert newest is not None
+        check = _verdict(newest, 1, app=APP if why != "another App's" else 1)
+        if why == "a red for another reason":
+            check["output"] = {"title": "Red: attempt 1's `results` is 'failure'", "summary": "x"}
+        api.codeql(HEAD)
+    _posted(api, check)
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER) == []
+
+
+def test_the_codeql_workflow_finishing_judges_its_head_again() -> None:
+    api = FakeApi()
+    _merge_runs(api, OWN_MERGE, [RUN])
+    codeql_run = 801
+    api.answers[f"/repos/{REPO}/actions/runs/{codeql_run}"] = {
+        "id": codeql_run,
+        "repository": {"full_name": REPO},
+        "path": f"{mc.CODEQL_WORKFLOW}/codeql",
+        "status": "completed",
+        "head_sha": HEAD,
+    }
+    outcome = mc.judge(api, REPO, codeql_run, CONTROLLER)
+    assert outcome.posting is not None and outcome.posting.conclusion == "success"
+
+
+def test_decide_waiting_writes_every_changed_verdict(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
+    api = FakeApi()
+    api.codeql(HEAD, status="in_progress")
+    _merge_runs(api, OWN_MERGE, [RUN])
+    first = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert first is not None
+    _posted(api, _verdict(first, 1))
+    api.codeql(HEAD)
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--waiting", "--controller-revision", CONTROLLER]
+    with pytest.raises(SystemExit):
+        mc.main([*argv, "--out", str(out)], get=api)
+    assert mc.main([*argv, "--controller-app-id", str(APP), "--out", str(out)], get=api) == 0
+    assert [b["conclusion"] for b in json.loads(out.read_text())] == ["success"]
+    lines = (tmp_path / "outputs").read_text()
+    assert "post=true" in lines and "dispatch=\n" in lines
