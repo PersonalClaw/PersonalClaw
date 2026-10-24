@@ -139,6 +139,8 @@ Get = merge_verdict.Get
 Post = Callable[[str, Mapping[str, object]], tuple[int, object]]
 #: ``api(method, path, body)``: the same, for any method; ``body`` None sends none.
 Api = Callable[[str, str, "Mapping[str, object] | None"], tuple[int, object]]
+#: ``query(text, variables)``: one GraphQL read's decoded answer; raises OSError for no answer.
+Query = Callable[[str, Mapping[str, object]], Any]
 
 
 class Unread(Exception):
@@ -652,10 +654,79 @@ def _waiting(check: Mapping[str, Any]) -> bool:
 #: More open pull requests than this are not looked at again in one sweep.
 SWEEP_LIMIT = 100
 
+#: The sweep's first question in one read: each open pull request into main, its head, and the
+#: controller's merge verdicts on it. ``checkType`` is GitHub's default, the newest of each suite.
+WAITING_QUERY = """
+query($owner: String!, $name: String!, $app: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, baseRefName: "main", first: 100) {
+      totalCount
+      nodes {
+        commits(last: 1) {
+          nodes {
+            commit {
+              oid
+              checkSuites(first: 10, filterBy: {appId: $app}) {
+                nodes {
+                  checkRuns(first: 100, filterBy: {checkName: "merge-verdict"}) {
+                    nodes { databaseId conclusion text }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
 
-def judge_waiting(get: Get, repo: str, app: int, controller_revision: str) -> list[Outcome]:
+
+def waiting_heads(query: Query, repo: str, app: int) -> list[str] | None:
+    """The heads of the open pull requests into main whose newest merge verdict of the App's is a
+    red that waits on CodeQL, from one GraphQL read. None when that read gives no answer this
+    reads, or more pull requests than a sweep looks at: the sweep then reads each head itself."""
+    owner, name = repo.split("/", 1)
+    try:
+        answer = query(WAITING_QUERY, {"owner": owner, "name": name, "app": app})
+        pulls = answer["data"]["repository"]["pullRequests"]
+        if int(pulls["totalCount"]) > SWEEP_LIMIT:
+            return None
+        heads: list[str] = []
+        for pull in pulls["nodes"]:
+            (node,) = pull["commits"]["nodes"]
+            commit = node["commit"]
+            if not _SHA.fullmatch(str(commit["oid"])):
+                return None
+            runs = [r for s in commit["checkSuites"]["nodes"] for r in s["checkRuns"]["nodes"]]
+            newest = max(runs, key=lambda r: int(r["databaseId"]), default=None)
+            if (
+                newest is not None
+                and newest["conclusion"] == "FAILURE"
+                and f"```{WAITING_FENCE}" in (newest["text"] or "")
+            ):
+                heads.append(str(commit["oid"]))
+        return heads
+    except (OSError, KeyError, TypeError, ValueError):
+        return None
+
+
+def judge_waiting(
+    get: Get, repo: str, app: int, controller_revision: str, query: Query | None = None
+) -> list[Outcome]:
     """Every open pull request into main whose newest merge verdict, the controller App's, is a
-    red that only waits on CodeQL: judge its head again, and keep only what changed."""
+    red that only waits on CodeQL: judge its head again, and keep only what changed.
+
+    With ``query``, one GraphQL read first names the heads that wait (:func:`waiting_heads`): none,
+    and the sweep ends there; some, and only those are read again, through the REST reads below,
+    which stay the gate. A read that gives no answer leaves the sweep reading every head."""
+    waiting = waiting_heads(query, repo, app) if query is not None else None
+    if waiting is not None and not waiting:
+        print("no open pull request's merge verdict waits on CodeQL: nothing to judge again")
+        return []
+    if query is not None and waiting is None:
+        print("the one read of the open heads gave no answer: reading each head")
     pulls = _all_pages(get, f"/repos/{repo}/pulls?state=open&base=main")[:SWEEP_LIMIT]
     changed: list[Outcome] = []
     for pull in pulls:
@@ -663,6 +734,8 @@ def judge_waiting(get: Get, repo: str, app: int, controller_revision: str) -> li
         sha = head.get("sha") if isinstance(head, Mapping) else None
         if not isinstance(sha, str) or not _SHA.fullmatch(sha):
             raise Unread(f"pull request {pull.get('number')} names no head")
+        if waiting is not None and sha not in waiting:
+            continue
         newest = _newest_verdict(get, repo, sha, app)
         if newest is None or not _waiting(newest):
             continue
@@ -956,6 +1029,18 @@ def github_post(token: str) -> Post:
     return lambda path, body: api("POST", path, body)
 
 
+def github_graphql(token: str) -> Query:
+    api = github_api(token)
+
+    def query(text: str, variables: Mapping[str, object]) -> Any:
+        status, answer = api("POST", "/graphql", {"query": text, "variables": dict(variables)})
+        if status != 200:
+            raise OSError(f"GraphQL answered {status}")
+        return answer
+
+    return query
+
+
 def post(repo: str, body: Mapping[str, Any], send: Post) -> int:
     """Post the check run; its id."""
     status, answer = send(f"/repos/{repo}/check-runs", body)
@@ -975,7 +1060,13 @@ def _output(name: str, value: str) -> None:
             out.write(f"{name}={value}\n")
 
 
-def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    get: Get | None = None,
+    api: Api | None = None,
+    query: Query | None = None,
+) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tools.ci merge-controller", description=(__doc__ or "").split("\n")[0]
     )
@@ -1018,8 +1109,10 @@ def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | No
                     judge_check(reader, args.repo, args.check_run_id, args.controller_revision)
                 ]
             else:
+                # The one read is the live API's; a test's reader, given alone, answers every read.
+                graph = query if query is not None else None if get else github_graphql(token)
                 outcomes = judge_waiting(
-                    reader, args.repo, args.controller_app_id, args.controller_revision
+                    reader, args.repo, args.controller_app_id, args.controller_revision, graph
                 )
         except Unread as exc:
             print(f"::error title=merge verdict unread::{exc}")

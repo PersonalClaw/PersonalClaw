@@ -304,6 +304,24 @@ artifact digests. The rules, in order:
   for one gap: that wake fires when the run completes, right after its last language uploads,
   and a head judged before that upload is processed waits with nothing left to wake it, since
   the summary check fired at the first upload. The schedule closes that gap and nothing else.
+  Its first read is one GraphQL query of every open pull request's head and the App's verdicts
+  on it: when none waits, the sweep ends there; otherwise only the heads that wait are read
+  again, through the REST reads that stay the gate, and a query that gives no answer leaves the
+  sweep reading every head.
+- **What takes a runner:** both jobs' one condition starts one only for what can judge a pull
+  request's head. The schedule and a completed dispatch off `main` (a trusted run, a dispatch
+  proof) always do. A pull request's wakes, code scanning's CodeQL check and a completed run of
+  a pull request (its own Merge run, its dependency review, CodeQL's on `refs/pull/*`), do only
+  while the repository variable `MERGE_VERDICT_LIVE` is `true`. It is `false` until #3915's flip
+  runs merge.yml on pull requests, because until then a head has no Merge run to judge, and the
+  flip sets it: forgotten, nothing posts on a pull request and `merge-verdict` cannot be
+  required, so it fails closed. A push run, a dispatch on `main`, CodeQL on `main` and any other
+  check run never take one. decide checks each again through the API, which is the gate: the
+  condition only spares the queue. Measured on 2026-10-24, 08:34 to 14:34Z: 144 poster runs, of
+  which 2 posted, whose runners waited a median 686 to 993 s.
+- **The schedule lags under load.** GitHub drops or delays a cron when its runners are busy: the
+  same six hours started the sweep once, not 36 times. It is the backstop for the one gap above,
+  so a late sweep only makes a waiting red wait longer; it never posts a wrong verdict.
 - **The receipt:** a green names the controller's commit on `main`, the head and its tree, the
   runner and the definitions commit, and the digests of the run's `ci-record-*` artifacts as the
   API reports them. With no record artifact there is no evidence, so no green. The partner head

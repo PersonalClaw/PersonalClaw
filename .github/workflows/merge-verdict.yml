@@ -5,7 +5,9 @@
 # brings. It never checks out or fetches the candidate: `python -m tools.ci merge-controller
 # decide` (tools/ci/merge_controller.py) reads everything through the API by the run's id, both
 # trees included, and judges it by main's rules. A run of another workflow named Merge, which a
-# candidate can add, a push run and a schedule post nothing.
+# candidate can add, a push run and a schedule post nothing. Both jobs' condition reads the
+# triggering run's event and branch only to start no runner for a run that can judge no pull
+# request's head; it names nothing of the candidate anywhere else.
 #
 # The verdict is green only when the head changes no CI definition (tools/ci/trust.py), is up to
 # date with main, merge.yml's `results` job, which judges the run with main's verdict.py, passed
@@ -62,9 +64,26 @@ permissions:
 
 jobs:
   post:
-    # A check run that is not code scanning's CodeQL check starts no runner; decide checks the
-    # same again through the API, which is the gate.
-    if: github.event_name != 'check_run' || (github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')
+    # Only what can judge a pull request's head takes a runner: the sweep; a completed dispatch
+    # off main (a trusted run, a dispatch proof); and, once merge.yml runs on pull requests
+    # (MERGE_VERDICT_LIVE, which #3915's flip sets to 'true'), code scanning's CodeQL check and a
+    # completed run of a pull request (its own, its dependency review, or CodeQL's on
+    # refs/pull/*). A push, a dispatch on main, CodeQL on main and any other check run start no
+    # runner. decide checks each again through the API, which is the gate: this only spares the
+    # queue (#3910).
+    if: >-
+      github.event_name == 'schedule'
+      || (github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'workflow_dispatch'
+      && github.event.workflow_run.head_branch != 'main')
+      || (vars.MERGE_VERDICT_LIVE == 'true'
+      && ((github.event_name == 'check_run'
+      && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')
+      || (github.event_name == 'workflow_run'
+      && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'pull_request_target'
+      || (github.event.workflow_run.event == 'dynamic'
+      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: ci-controller
@@ -125,7 +144,20 @@ jobs:
     # merge.yml there. Once that run's verdict is posted, delete its branch, and any trusted-run
     # branch older than a day with it.
     needs: post
-    if: (github.event_name != 'check_run' || (github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')) && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')
+    if: >-
+      (github.event_name == 'schedule'
+      || (github.event_name == 'workflow_run'
+      && github.event.workflow_run.event == 'workflow_dispatch'
+      && github.event.workflow_run.head_branch != 'main')
+      || (vars.MERGE_VERDICT_LIVE == 'true'
+      && ((github.event_name == 'check_run'
+      && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')
+      || (github.event_name == 'workflow_run'
+      && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'pull_request_target'
+      || (github.event.workflow_run.event == 'dynamic'
+      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/')))))))
+      && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: ci-controller
