@@ -10,8 +10,16 @@
 # The verdict is green only when the head changes no CI definition (tools/ci/trust.py), is up to
 # date with main, and merge.yml's `results` job, which judges the run with main's verdict.py,
 # passed on every attempt. Anything else, an answer the API would not give included, posts
-# failure, never neutral. A head that changes a definition is not judged until a run of main's
-# definitions on its tree exists (#4584 step 4).
+# failure, never neutral.
+#
+# A head that changes a CI definition is not judged by its own run, which used its own
+# definitions: that run posts nothing, and the `trusted` job makes main's definitions on the
+# head's tree, one commit on main's tip built through the API with the controller App's token,
+# on the branch `trusted-run/<head>`, and runs main's merge.yml there (#4584 step 4). That
+# commit changes no workflow file against its parent and every push trigger here is main's
+# alone, so its push starts nothing. When that run completes, its verdict is posted on the head,
+# only if its commit is still exactly main's definitions on the head's tree, and its branch is
+# deleted.
 #
 # The check run is posted with the controller App's token (personalclaw-ci-controller, the one
 # App main-protect will name), minted only when there is one to post and handed only to the
@@ -46,6 +54,10 @@ jobs:
     permissions:
       contents: read   # main's tip, both trees and the comparison
       actions: read    # the run, every attempt's jobs and the run's artifact digests
+    outputs:
+      dispatch: ${{ steps.decide.outputs.dispatch }}
+      base: ${{ steps.decide.outputs.base }}
+      cleanup: ${{ steps.decide.outputs.cleanup }}
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -81,3 +93,59 @@ jobs:
           set -euo pipefail
           python3 -m tools.ci merge-controller post --repo "$GITHUB_REPOSITORY" \
             --body "$RUNNER_TEMP/merge-verdict.json"
+
+  trusted:
+    # A head that changes a CI definition: make main's definitions on its tree and run main's
+    # merge.yml there. Once that run's verdict is posted, delete its branch, and any trusted-run
+    # branch older than a day with it.
+    needs: post
+    if: needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ci-controller
+    permissions:
+      contents: read   # both trees, read through the API
+      actions: write   # dispatch main's merge.yml on the trusted-run branch
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's tools/ci again, from the default branch, with no credential kept.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: the controller's token
+        id: controller
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CONTROLLER_APP_ID }}
+          private-key: ${{ secrets.CONTROLLER_APP_KEY }}
+          permission-contents: write
+      - name: delete judged or old trusted-run branches, then make the head's trusted run
+        id: tree
+        env:
+          GH_TOKEN: ${{ steps.controller.outputs.token }}
+          HEAD_SHA: ${{ needs.post.outputs.dispatch }}
+          BASE: ${{ needs.post.outputs.base }}
+          CLEANUP: ${{ needs.post.outputs.cleanup }}
+        run: |
+          set -euo pipefail
+          # The judged run's branch and any older than a day first, then the new one, so a
+          # sweep never takes the branch this run is about to use.
+          if [ -n "$CLEANUP" ]; then
+            gone=()
+            for branch in $CLEANUP; do gone+=(--branch "$branch"); done
+            python3 -m tools.ci merge-controller cleanup --repo "$GITHUB_REPOSITORY" "${gone[@]}"
+          fi
+          if [ -n "$HEAD_SHA" ]; then
+            python3 -m tools.ci merge-controller trusted --repo "$GITHUB_REPOSITORY" \
+              --candidate "$HEAD_SHA" --base "$BASE"
+          fi
+      - name: run main's merge.yml on it
+        if: steps.tree.outputs.branch != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.tree.outputs.branch }}
+        run: |
+          set -euo pipefail
+          python3 -m tools.ci merge-controller dispatch --repo "$GITHUB_REPOSITORY" --branch "$BRANCH"

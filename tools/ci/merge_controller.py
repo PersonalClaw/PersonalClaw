@@ -13,10 +13,25 @@ failing closed:
    or a dispatch. Any other run posts nothing: another workflow named Merge, which a candidate
    can add, a push to ``main`` or a schedule. Only a run of merge.yml itself can bring a verdict.
 2. The head changes no definition (``trust``), compared with ``main``'s tip. A head that does is
-   not judged: its run used its own workflows and ``tools/ci``, so its ``results`` say nothing
-   about what ``main``'s would. Until a run of ``main``'s definitions on such a head exists
-   (#4584 step 4), its verdict is red, named as not judged.
+   not judged by its own run, which used its own workflows and ``tools/ci``: that run posts
+   nothing, and starts a run of ``main``'s definitions on the head's tree instead (#4584 step 4),
+   but only from the head's own ``pull_request`` run, completed: that run passed the fork
+   approval gate, so no head's code runs in the base repository without the approval its own run
+   needed. A head with no such run gets no trusted run. Until that run reports, the head has no
+   verdict, which a required check reads as not passed.
 3. The head is not behind ``main``, so the squash commit lands the tree the run tested.
+
+**The trusted run.** ``trusted`` builds one commit through the API with the controller App's
+token: ``main``'s tip as its parent, ``main``'s definitions, and every other path as the head
+has it. It points the branch ``trusted-run/<head>`` at it, and ``dispatch`` runs ``main``'s
+``merge.yml`` there with the job's own token. The commit changes no workflow file against its
+parent, and every workflow's push trigger is ``main``'s alone, so the push starts nothing and
+needs no permission over workflow files. When that run completes, its verdict is the head's,
+posted on the head, only when its commit is still exactly that: a parent on ``main``, the same
+definitions as ``main``'s tip, and the head's every other path. One whose definitions ``main``
+has moved past starts again, if the head still has its own completed run; any other is red.
+Once its verdict is posted, red or green, its branch is deleted, and every completed Merge run
+also sweeps away any trusted-run branch older than a day.
 4. The ``results`` job, which judges the run with ``main``'s ``verdict.py``, concluded
    ``success`` on every attempt, by the API's job list. Missing, cancelled, skipped or red on any
    attempt is red: a rerun never turns a red into a green.
@@ -39,6 +54,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import datetime
 import http.client
 import json
 import os
@@ -59,6 +75,10 @@ MERGE_WORKFLOW = f".github/workflows/{workflows.MERGE}"
 #: The events whose merge.yml run judges a pull request's head: the pull request itself, and a
 #: dispatch of the head's branch (how a merge run is started until #3915's flip).
 JUDGED_EVENTS = frozenset({"pull_request", "workflow_dispatch"})
+#: The branch a trusted run of a head is made on: this prefix, then the head's full id.
+TRUSTED_PREFIX = "trusted-run/"
+#: A trusted-run branch older than this is swept away, whatever became of its run.
+SWEEP_AFTER = datetime.timedelta(days=1)
 #: merge.yml's job that judges the run with main's verdict.py.
 RESULTS_JOB = "results"
 #: The artifacts each planned entry uploads: its record, the evidence a green names.
@@ -82,6 +102,8 @@ _BODY_KEYS = frozenset(
 Get = merge_verdict.Get
 #: ``post(path, body)``: the API's status and its decoded answer; status 0 is no answer.
 Post = Callable[[str, Mapping[str, object]], tuple[int, object]]
+#: ``api(method, path, body)``: the same, for any method; ``body`` None sends none.
+Api = Callable[[str, str, "Mapping[str, object] | None"], tuple[int, object]]
 
 
 class Unread(Exception):
@@ -136,6 +158,10 @@ class Run:
     head_sha: str
     event: str
     url: str
+    #: The branch the run was dispatched on.
+    branch: str = ""
+    #: For a trusted run, the head it judges; None for a head's own run.
+    candidate: str | None = None
 
 
 def read_run(get: Get, repo: str, run_id: int) -> Run | str:
@@ -156,7 +182,14 @@ def read_run(get: Get, repo: str, run_id: int) -> Run | str:
     head, attempt = run.get("head_sha"), _int(run.get("run_attempt"))
     if not isinstance(head, str) or not _SHA.fullmatch(head) or attempt is None or attempt < 1:
         raise Unread(f"run {run_id} names no head or no attempt")
-    return Run(run_id, attempt, head, str(run.get("event")), str(run.get("html_url") or ""))
+    branch = str(run.get("head_branch") or "")
+    candidate = None
+    if run.get("event") == "workflow_dispatch" and branch.startswith(TRUSTED_PREFIX):
+        candidate = branch.removeprefix(TRUSTED_PREFIX)
+        if not _SHA.fullmatch(candidate):
+            return f"run {run_id} is on {branch!r}, which names no head"
+    event, url = str(run.get("event")), str(run.get("html_url") or "")
+    return Run(run_id, attempt, head, event, url, branch, candidate)
 
 
 def results_reasons(get: Get, repo: str, run: Run) -> tuple[list[str], list[str]]:
@@ -283,13 +316,26 @@ class Posting:
         }
 
 
-def _red(run: Run, reasons: list[str]) -> Posting:
+@dataclass(frozen=True)
+class Outcome:
+    """What a Merge run's completion does: the check run to post, on the head it judges; the
+    head a trusted run is started for, and on which commit of ``main``; and the trusted run's
+    branch to delete once its verdict is posted. ``why`` says why nothing is posted."""
+
+    posting: Posting | None = None
+    why: str = ""
+    dispatch: str | None = None
+    base: str | None = None
+    cleanup: str | None = None
+
+
+def _red(run: Run, reasons: list[str], head: str) -> Posting:
     summary = "\n".join(
         ["This head's merge verdict is red:", "", *[f"- {r}" for r in reasons], ""]
         + [f"From Merge run {run.url or run.id}, attempt {run.attempt}.", "", ADVISORY]
     )
     return Posting(
-        run.head_sha,
+        head,
         "failure",
         {"title": f"Red: {reasons[0]}"[:255], "summary": summary},
         run.url,
@@ -297,42 +343,160 @@ def _red(run: Run, reasons: list[str]) -> Posting:
     )
 
 
-def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Posting | str:
-    """The check run this run's verdict posts, or why it posts none (rule 1)."""
+def _names(paths: list[str]) -> str:
+    shown = ", ".join(f"`{p}`" for p in paths[:10])
+    return shown + (f" and {len(paths) - 10} more" if len(paths) > 10 else "")
+
+
+def trusted_tree_problem(
+    get: Get,
+    repo: str,
+    commit: str,
+    tree: trust.Tree,
+    base: str,
+    base_tree: trust.Tree,
+    head_tree: trust.Tree,
+) -> tuple[str, bool]:
+    """Why a trusted run's commit is not ``main``'s definitions on the head's tree, or ``""``;
+    and whether making it again would mend it (``main``'s definitions moved past it)."""
+    answer = _read(get, f"/repos/{repo}/git/commits/{commit}")
+    parents = answer.get("parents") if isinstance(answer, Mapping) else None
+    if not isinstance(parents, list) or len(parents) != 1 or not isinstance(parents[0], Mapping):
+        return "its commit has not exactly one parent", False
+    parent = parents[0].get("sha")
+    if not isinstance(parent, str) or not _SHA.fullmatch(parent):
+        raise Unread(f"commit {commit}'s parent names no commit")
+    if behind_by(get, repo, parent, base):
+        return f"its parent {parent} is not on main", False
+    if not trust.compare_trees(base_tree, tree, base=base, head=commit).trusted:
+        return "main's definitions have moved since its commit was made", True
+    definitions = (
+        trust.tree_definitions(base_tree)
+        | trust.tree_definitions(tree)
+        | trust.tree_definitions(head_tree)
+    )
+    differ = sorted(
+        p
+        for p in (set(tree.blobs) | set(head_tree.blobs)) - definitions
+        if tree.blobs.get(p) != head_tree.blobs.get(p)
+    )
+    if differ:
+        return f"its tree is not the head's outside the definitions: {_names(differ)}", False
+    return "", False
+
+
+def own_run_completed(get: Get, repo: str, head: str) -> bool:
+    """Whether the head has a completed ``pull_request`` run of merge.yml of its own: the run
+    that passed the fork approval gate, which a trusted run of it waits for."""
+    query = urllib.parse.urlencode(
+        {"head_sha": head, "event": "pull_request", "status": "completed", "per_page": 1}
+    )
+    answer = _read(get, f"/repos/{repo}/actions/workflows/{workflows.MERGE}/runs?{query}")
+    count = _int(answer.get("total_count")) if isinstance(answer, Mapping) else None
+    if count is None:
+        raise Unread(f"{head}'s own runs give no count")
+    return count > 0
+
+
+def stale_branches(get: Get, repo: str, now: datetime.datetime) -> list[str]:
+    """Every trusted-run branch whose commit was made more than :data:`SWEEP_AFTER` ago."""
+    refs = _read(get, f"/repos/{repo}/git/matching-refs/heads/{TRUSTED_PREFIX}")
+    if not isinstance(refs, list):
+        raise Unread("the trusted-run branches are not a list")
+    stale: list[str] = []
+    for ref in refs:
+        name = ref.get("ref") if isinstance(ref, Mapping) else None
+        target = ref.get("object") if isinstance(ref, Mapping) else None
+        sha = target.get("sha") if isinstance(target, Mapping) else None
+        if not isinstance(name, str) or not isinstance(sha, str) or not _SHA.fullmatch(sha):
+            raise Unread("a trusted-run branch names no commit")
+        branch = name.removeprefix("refs/heads/")
+        if not _SHA.fullmatch(branch.removeprefix(TRUSTED_PREFIX)):
+            continue
+        commit = _read(get, f"/repos/{repo}/git/commits/{sha}")
+        made = commit.get("committer") if isinstance(commit, Mapping) else None
+        when = made.get("date") if isinstance(made, Mapping) else None
+        try:
+            at = datetime.datetime.fromisoformat(str(when).replace("Z", "+00:00"))
+        except ValueError:
+            raise Unread(f"{branch}'s commit names no date") from None
+        if now - at > SWEEP_AFTER:
+            stale.append(branch)
+    return sorted(stale)
+
+
+def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome:
+    """What this run's completion does (the module's rules)."""
     if not _SHA.fullmatch(controller_revision):
         raise ValueError(f"the controller revision must be a full commit id: {controller_revision}")
     found = read_run(get, repo, run_id)
     if isinstance(found, str):
-        return found
+        return Outcome(why=found)
     run = found
+    head = run.candidate or run.head_sha
+    cleanup = run.branch if run.candidate else None
     try:
-        reasons, labels = results_reasons(get, repo, run)
         base = main_tip(get, repo)
         _, base_tree = api_tree(get, repo, base)
-        tree_oid, head_tree = api_tree(get, repo, run.head_sha)
-        comparison = trust.compare_trees(base_tree, head_tree, base=base, head=run.head_sha)
-        if not comparison.trusted:
-            names = ", ".join(f"`{c.path}`" for c in comparison.changes[:10])
-            more = len(comparison.changes) - 10
-            reasons.insert(
-                0,
-                f"not judged: the head changes {len(comparison.changes)} CI definitions "
-                f"({names}{f' and {more} more' if more > 0 else ''}), so its own run is advisory, "
-                "and no run of main's definitions on its tree exists yet (#4584)",
+        tree_oid, head_tree = api_tree(get, repo, head)
+        if run.candidate is None:
+            comparison = trust.compare_trees(base_tree, head_tree, base=base, head=head)
+            if not comparison.trusted:
+                changed = [c.path for c in comparison.changes]
+                if run.event != "pull_request":
+                    return Outcome(
+                        why=(
+                            f"{head} changes {len(changed)} CI definitions, and this is not its "
+                            "own pull_request run, so no trusted run is made from it"
+                        )
+                    )
+                return Outcome(
+                    why=(
+                        f"{head} changes {len(changed)} CI definitions ({_names(changed)}), so "
+                        "its own run is not judged: a run of main's definitions on its tree is "
+                        "started instead"
+                    ),
+                    dispatch=head,
+                    base=base,
+                )
+            judged = "its own Merge run"
+        else:
+            _, run_tree = api_tree(get, repo, run.head_sha)
+            problem, again = trusted_tree_problem(
+                get, repo, run.head_sha, run_tree, base, base_tree, head_tree
             )
-        behind = behind_by(get, repo, base, run.head_sha)
+            if again and not own_run_completed(get, repo, head):
+                return Outcome(
+                    why=(
+                        f"the trusted run of {head} is stale, and the head has no completed "
+                        "pull_request run of its own, so none is made again"
+                    ),
+                    cleanup=cleanup,
+                )
+            if again:
+                return Outcome(
+                    why=f"the trusted run of {head} is stale: {problem}; it is started again",
+                    dispatch=head,
+                    base=base,
+                )
+            if problem:
+                red = _red(run, [f"the trusted run: {problem}"], head)
+                return Outcome(posting=red, cleanup=cleanup)
+            judged = f"a run of main's definitions on its tree (`{run.head_sha}`)"
+        reasons, labels = results_reasons(get, repo, run)
+        behind = behind_by(get, repo, base, head)
         if behind:
             reasons.append(f"the head is {behind} commits behind main: update the branch")
         records = evidence(get, repo, run) if not reasons else {}
         if not reasons and not records:
             reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
     except (Unread, trust.Refused) as exc:
-        return _red(run, [f"unread: {exc}"])
+        return Outcome(posting=_red(run, [f"unread: {exc}"], head), cleanup=cleanup)
     if reasons:
-        return _red(run, reasons)
+        return Outcome(posting=_red(run, reasons, head), cleanup=cleanup)
     receipt = {
         "controller_revision": controller_revision,
-        "head_sha": run.head_sha,
+        "head_sha": head,
         "tree_oid": tree_oid,
         "external_revisions": {},
         "toolchain": {"runner": ",".join(labels) or "unnamed", "definitions": base},
@@ -340,9 +504,9 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Postin
     }
     summary = "\n".join(
         [
-            f"Every attempt of Merge run {run.url or run.id} judged this head green.",
-            f"- the head changes no CI definition against main's `{base}`",
-            "- it is up to date with main",
+            f"Judged by {judged}: every attempt of Merge run {run.url or run.id} was green.",
+            f"- the definitions that ran are main's at `{base}`",
+            "- the head is up to date with main",
             f"- {len(records)} job records, their digests in the receipt below",
             "",
             ADVISORY,
@@ -351,7 +515,95 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Postin
     output = merge_verdict.render_output(
         receipt, title="Green: every planned job passed on this head", summary=summary
     )
-    return Posting(run.head_sha, "success", output, run.url, f"{run.id}/{run.attempt}")
+    posting = Posting(head, "success", output, run.url, f"{run.id}/{run.attempt}")
+    return Outcome(posting=posting, cleanup=cleanup)
+
+
+# ── The trusted run ───────────────────────────────────────────────────────────────────────────
+
+
+def _call(api: Api, method: str, path: str, body: Mapping[str, object] | None, ok: int) -> Any:
+    status, answer = api(method, path, body)
+    if status != ok:
+        raise RuntimeError(f"{method} {path} answered {status}: {answer!r}")
+    return answer
+
+
+def _kind(entry: trust.Entry) -> str:
+    return "commit" if entry.mode == "160000" else "blob"
+
+
+def _branch(head: str) -> str:
+    if not _SHA.fullmatch(head):
+        raise ValueError(f"a trusted run is made for a full commit id, not {head!r}")
+    return TRUSTED_PREFIX + head
+
+
+def make_trusted(get: Get, api: Api, repo: str, head: str, base: str) -> tuple[str, str]:
+    """Build ``main``'s definitions on the head's tree as one commit on ``base``, and point the
+    head's trusted-run branch at it; the commit and the branch."""
+    branch = _branch(head)
+    base_oid, base_tree = api_tree(get, repo, base)
+    _, head_tree = api_tree(get, repo, head)
+    definitions = trust.tree_definitions(base_tree) | trust.tree_definitions(head_tree)
+    entries: list[dict[str, object]] = []
+    for path, entry in sorted(head_tree.blobs.items()):
+        if path not in definitions and base_tree.blobs.get(path) != entry:
+            entries.append(
+                {"path": path, "mode": entry.mode, "type": _kind(entry), "sha": entry.oid}
+            )
+    for path, entry in sorted(base_tree.blobs.items()):
+        if path not in definitions and path not in head_tree.blobs:
+            entries.append({"path": path, "mode": entry.mode, "type": _kind(entry), "sha": None})
+    tree = base_oid
+    if entries:
+        made = _call(
+            api, "POST", f"/repos/{repo}/git/trees", {"base_tree": base_oid, "tree": entries}, 201
+        )
+        made_oid = made.get("sha") if isinstance(made, Mapping) else None
+        if not isinstance(made_oid, str) or not _SHA.fullmatch(made_oid):
+            raise RuntimeError(f"the trusted run's tree has no id: {made!r}")
+        tree = made_oid
+    message = (
+        f"main's definitions on {head}\n\nThe tree a trusted run of {head} tests (#3910): "
+        f"main's CI definitions at {base}, and every other path as the head has it. It is "
+        "never merged; the branch is deleted once its verdict is posted.\n"
+    )
+    made = _call(
+        api,
+        "POST",
+        f"/repos/{repo}/git/commits",
+        {"message": message, "tree": tree, "parents": [base]},
+        201,
+    )
+    commit = made.get("sha") if isinstance(made, Mapping) else None
+    if not isinstance(commit, str) or not _SHA.fullmatch(commit):
+        raise RuntimeError(f"the trusted run's commit has no id: {made!r}")
+    status, _ = api("GET", f"/repos/{repo}/git/ref/heads/{branch}", None)
+    if status == 404:
+        ref = {"ref": f"refs/heads/{branch}", "sha": commit}
+        _call(api, "POST", f"/repos/{repo}/git/refs", ref, 201)
+    elif status == 200:
+        moved = {"sha": commit, "force": True}
+        _call(api, "PATCH", f"/repos/{repo}/git/refs/heads/{branch}", moved, 200)
+    else:
+        raise RuntimeError(f"the branch {branch} could not be read ({status})")
+    return commit, branch
+
+
+def dispatch(api: Api, repo: str, branch: str) -> None:
+    """Run ``main``'s merge.yml on the trusted-run branch."""
+    _branch(branch.removeprefix(TRUSTED_PREFIX))
+    path = f"/repos/{repo}/actions/workflows/{workflows.MERGE}/dispatches"
+    _call(api, "POST", path, {"ref": branch}, 204)
+
+
+def delete_branch(api: Api, repo: str, branch: str) -> None:
+    """Delete a judged trusted run's branch; one already gone is fine."""
+    _branch(branch.removeprefix(TRUSTED_PREFIX))
+    status, answer = api("DELETE", f"/repos/{repo}/git/refs/heads/{branch}", None)
+    if status not in (204, 404, 422):
+        raise RuntimeError(f"DELETE {branch} answered {status}: {answer!r}")
 
 
 # ── Posting ───────────────────────────────────────────────────────────────────────────────────
@@ -375,9 +627,10 @@ def check_body(body: object) -> Mapping[str, Any]:
     return body
 
 
-def github_post(token: str) -> Post:
-    def post(path: str, body: Mapping[str, object]) -> tuple[int, object]:
-        request = urllib.request.Request(API + path, data=json.dumps(body).encode(), method="POST")
+def github_api(token: str) -> Api:
+    def api(method: str, path: str, body: Mapping[str, object] | None) -> tuple[int, object]:
+        data = json.dumps(body).encode() if body is not None else None
+        request = urllib.request.Request(API + path, data=data, method=method)
         request.add_header("Accept", "application/vnd.github+json")
         request.add_header("X-GitHub-Api-Version", "2022-11-28")
         request.add_header("Authorization", f"Bearer {token}")
@@ -392,7 +645,12 @@ def github_post(token: str) -> Post:
         except (OSError, http.client.HTTPException) as error:
             return 0, f"{type(error).__name__}: {error}"
 
-    return post
+    return api
+
+
+def github_post(token: str) -> Post:
+    api = github_api(token)
+    return lambda path, body: api("POST", path, body)
 
 
 def post(repo: str, body: Mapping[str, Any], send: Post) -> int:
@@ -414,47 +672,83 @@ def _output(name: str, value: str) -> None:
             out.write(f"{name}={value}\n")
 
 
-def main(argv: list[str] | None = None, *, get: Get | None = None) -> int:
+def main(argv: list[str] | None = None, *, get: Get | None = None, api: Api | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m tools.ci merge-controller", description=(__doc__ or "").split("\n")[0]
     )
     sub = parser.add_subparsers(dest="command", required=True)
     one = sub.add_parser("decide", help="judge a Merge run and write the check run to post")
-    one.add_argument("--repo", required=True)
-    one.add_argument("--run-id", required=True, type=int)
     one.add_argument("--controller-revision", required=True)
+    one.add_argument("--run-id", required=True, type=int)
     one.add_argument("--out", required=True, type=Path)
     two = sub.add_parser("post", help="post the check run with the App's token (GH_TOKEN)")
-    two.add_argument("--repo", required=True)
     two.add_argument("--body", required=True, type=Path)
+    three = sub.add_parser("trusted", help="make a head's trusted-run commit (the App's token)")
+    three.add_argument("--candidate", required=True)
+    three.add_argument("--base", required=True)
+    four = sub.add_parser("dispatch", help="run main's merge.yml on a trusted-run branch")
+    four.add_argument("--branch", required=True)
+    five = sub.add_parser("cleanup", help="delete trusted-run branches (the App's token)")
+    five.add_argument("--branch", required=True, action="append")
+    for each in (one, two, three, four, five):
+        each.add_argument("--repo", required=True)
     args = parser.parse_args(argv)
     if not _REPO.fullmatch(args.repo):
         parser.error(f"--repo must be OWNER/NAME: {args.repo}")
     token = os.environ.get("GH_TOKEN", "")
+    reader = get or merge_verdict.github_get(API, token)
+    writer = api or github_api(token)
     if args.command == "decide":
-        reader = get or merge_verdict.github_get(API, token)
         try:
-            found = decide(reader, args.repo, args.run_id, args.controller_revision)
+            outcome = decide(reader, args.repo, args.run_id, args.controller_revision)
         except Unread as exc:
             print(f"::error title=merge verdict unread::{exc}")
             return 2
-        if isinstance(found, str):
-            print(f"no verdict to post: {found}")
+        try:
+            sweep = stale_branches(reader, args.repo, datetime.datetime.now(datetime.timezone.utc))
+        except Unread as exc:
+            print(f"::warning title=no sweep::the trusted-run branches could not be read: {exc}")
+            sweep = []
+        _output("dispatch", outcome.dispatch or "")
+        _output("base", outcome.base or "")
+        doomed = set(sweep) | ({outcome.cleanup} if outcome.cleanup else set())
+        if outcome.dispatch:
+            doomed.discard(TRUSTED_PREFIX + outcome.dispatch)
+        _output("cleanup", " ".join(sorted(doomed)))
+        if outcome.posting is None:
+            print(f"no verdict to post: {outcome.why}")
             _output("post", "false")
             return 0
+        found = outcome.posting
         args.out.write_text(json.dumps(found.body(), indent=2) + "\n", encoding="utf-8")
         print(f"merge-verdict on {found.head_sha}: {found.conclusion}: {found.output['title']}")
         _output("post", "true")
         return 0
-    try:
-        body = check_body(json.loads(args.body.read_text(encoding="utf-8")))
-        if not token:
-            raise ValueError("no GH_TOKEN: the controller App's token posts the verdict")
-        check_id = post(args.repo, body, github_post(token))
-    except (OSError, ValueError, RuntimeError, trust.Refused) as exc:
-        print(f"::error title=merge verdict not posted::{exc}")
+    if not token and api is None:
+        print(f"::error title=no token::{args.command} needs GH_TOKEN")
         return 1
-    print(f"posted merge-verdict {body['conclusion']} on {body['head_sha']} (check run {check_id})")
+    try:
+        if args.command == "post":
+            body = check_body(json.loads(args.body.read_text(encoding="utf-8")))
+            check_id = post(args.repo, body, lambda path, b: writer("POST", path, b))
+            said = f"{body['conclusion']} on {body['head_sha']} (check run {check_id})"
+            print(f"posted merge-verdict {said}")
+        elif args.command == "trusted":
+            if not _SHA.fullmatch(args.base):
+                raise ValueError(f"--base must be a full commit id: {args.base}")
+            commit, branch = make_trusted(reader, writer, args.repo, args.candidate, args.base)
+            print(f"main's definitions on {args.candidate}: {commit} on {branch}")
+            _output("branch", branch)
+        elif args.command == "dispatch":
+            dispatch(writer, args.repo, args.branch)
+            print(f"dispatched {workflows.MERGE} on {args.branch}")
+        else:
+            for branch in args.branch:
+                delete_branch(writer, args.repo, branch)
+                print(f"deleted {branch}")
+    except (OSError, ValueError, RuntimeError, Unread, trust.Refused) as exc:
+        print(f"::error title=merge controller {args.command} failed::{exc}")
+        return 1
     return 0
 
 

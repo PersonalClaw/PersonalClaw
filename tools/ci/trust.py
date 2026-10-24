@@ -396,6 +396,14 @@ def _definitions(tree: Tree, helpers: Mapping[str, tuple[str, ...]]) -> set[str]
     return roots | table | set(_entry_points(tree, helpers))
 
 
+def tree_definitions(
+    tree: Tree, helpers: Mapping[str, tuple[str, ...]] = REVIEWED_HELPERS
+) -> frozenset[str]:
+    """Every definition file in a tree however it was read (:func:`definition_paths` for one
+    read from git)."""
+    return frozenset(_definitions(tree, helpers))
+
+
 def definition_paths(
     repo: Path, rev: str, *, helpers: Mapping[str, tuple[str, ...]] = REVIEWED_HELPERS
 ) -> frozenset[str]:

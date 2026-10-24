@@ -2,9 +2,10 @@
 
 ``tools/ci/merge_controller.py`` runs against a fake API: a run, its attempts' jobs, both trees
 and their blobs, the comparison with main and the run's artifacts. A red, cancelled, skipped or
-missing ``results`` posts failure, never neutral; a head that changes a definition is not
-judged; another workflow named Merge posts nothing; and a green carries the receipt
-``verify-check-run`` reads.
+missing ``results`` posts failure, never neutral; another workflow named Merge posts nothing; and
+a green carries the receipt ``verify-check-run`` reads. A head that changes a definition is judged
+only by a run of main's definitions on its tree: its own run posts nothing and starts that run,
+whose commit the controller builds through the API and checks again before it counts.
 """
 
 from __future__ import annotations
@@ -70,9 +71,18 @@ class FakeApi:
         path = f"/repos/{REPO}/actions/runs/{RUN}/attempts/{attempt}/jobs?per_page=100&page=1"
         self.answers[path] = {"total_count": len(listed), "jobs": listed}
 
-    def tree(self, commit: str, files: Mapping[str, str], truncated: bool = False) -> None:
-        tree_oid = _oid(commit + "tree")
-        self.answers[f"/repos/{REPO}/git/commits/{commit}"] = {"tree": {"sha": tree_oid}}
+    def tree(
+        self,
+        commit: str,
+        files: Mapping[str, str],
+        truncated: bool = False,
+        parents: tuple[str, ...] = (),
+    ) -> None:
+        tree_oid = _oid(commit + "tree" + "".join(sorted(f + v for f, v in files.items())))
+        self.answers[f"/repos/{REPO}/git/commits/{commit}"] = {
+            "tree": {"sha": tree_oid},
+            "parents": [{"sha": p} for p in parents],
+        }
         entries = []
         for path, text in files.items():
             oid = _oid(text)
@@ -105,7 +115,9 @@ class FakeApi:
 
 
 def _decide(api: FakeApi) -> mc.Posting | str:
-    return mc.decide(api, REPO, RUN, CONTROLLER)
+    """The check run the run posts, or why it posts none."""
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    return outcome.posting or outcome.why
 
 
 def _red(api: FakeApi) -> mc.Posting:
@@ -116,6 +128,10 @@ def _red(api: FakeApi) -> mc.Posting:
     return found
 
 
+def api_tree_oid(commit: str, api: FakeApi | None = None) -> str:
+    return (api or FakeApi()).answers[f"/repos/{REPO}/git/commits/{commit}"]["tree"]["sha"]
+
+
 def test_a_green_run_posts_success_with_the_receipt_the_reader_takes() -> None:
     found = _decide(FakeApi())
     assert isinstance(found, mc.Posting) and found.conclusion == "success"
@@ -123,7 +139,7 @@ def test_a_green_run_posts_success_with_the_receipt_the_reader_takes() -> None:
     assert body["name"] == "merge-verdict" and body["head_sha"] == HEAD
     receipt = merge_verdict.read_receipt(body)
     assert receipt.controller_revision == CONTROLLER and receipt.head_sha == HEAD
-    assert receipt.tree_oid == _oid(HEAD + "tree")
+    assert receipt.tree_oid == api_tree_oid(HEAD)
     assert receipt.evidence_digests == {"ci-record-unit": DIGEST}
     assert receipt.toolchain == {"runner": "ubuntu-24.04", "definitions": MAIN}
 
@@ -164,12 +180,15 @@ def test_a_red_on_an_earlier_attempt_is_never_rerun_into_green() -> None:
         (f"{WF}merge-verdict.yml", "name: Merge verdict\n"),
     ],
 )
-def test_a_head_that_changes_a_definition_is_not_judged(path: str, text: str) -> None:
+def test_a_heads_own_run_that_changes_a_definition_posts_nothing_and_starts_a_trusted_run(
+    path: str, text: str
+) -> None:
     api = FakeApi()
     api.tree(HEAD, {MERGE_PATH: MERGE_YML, "README.md": "hi\n", path: text})
-    found = _red(api)
-    assert found.output["title"].startswith("Red: not judged: the head changes 1 CI definitions")
-    assert f"`{path}`" in found.output["title"]
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert outcome.posting is None, "its own green run is never its verdict"
+    assert (outcome.dispatch, outcome.base, outcome.cleanup) == (HEAD, MAIN, None)
+    assert "changes 1 CI definitions" in outcome.why and f"`{path}`" in outcome.why
 
 
 def test_a_head_behind_main_posts_failure() -> None:
@@ -289,5 +308,280 @@ def test_decide_writes_the_body_and_says_whether_to_post(tmp_path: Path, monkeyp
     api = FakeApi()
     api.run(event="push")
     assert mc.main([*argv, "--out", str(tmp_path / "none.json")], get=api) == 0
-    assert outputs.read_text().splitlines() == ["post=true", "post=false"]
+    assert outputs.read_text().splitlines() == [
+        "dispatch=",
+        "base=",
+        "cleanup=",
+        "post=true",
+        "dispatch=",
+        "base=",
+        "cleanup=",
+        "post=false",
+    ]
     assert not (tmp_path / "none.json").exists()
+
+
+# ── The trusted run (#4584 step 4) ─────────────────────────────────────────────────────────────
+
+TRUSTED = "e" * 40  # the trusted run's commit: main's definitions on the head's tree
+BRANCH = mc.TRUSTED_PREFIX + HEAD
+VERDICT_PY = "tools/ci/verdict.py"
+MAINS_VERDICT = "def decide(*a): return judge(*a)\n"
+HEADS_VERDICT = "def decide(*a): return 'green'\n"
+OWN_RUNS = (
+    f"/repos/{REPO}/actions/workflows/merge.yml/runs?head_sha={HEAD}&event=pull_request"
+    "&status=completed&per_page=1"
+)
+
+
+def _trusted_api(run_tree: Mapping[str, str] | None = None) -> FakeApi:
+    """A head that edits tools/ci/verdict.py to pass everything and changes README, and the
+    trusted run of it: main's verdict.py on the head's README, on main's tip."""
+    api = FakeApi()
+    api.tree(MAIN, {MERGE_PATH: MERGE_YML, VERDICT_PY: MAINS_VERDICT, "README.md": "hi\n"})
+    api.tree(HEAD, {MERGE_PATH: MERGE_YML, VERDICT_PY: HEADS_VERDICT, "README.md": "changed\n"})
+    files = run_tree or {MERGE_PATH: MERGE_YML, VERDICT_PY: MAINS_VERDICT, "README.md": "changed\n"}
+    api.tree(TRUSTED, files, parents=(MAIN,))
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{MAIN}"] = {"behind_by": 0}
+    api.answers[OWN_RUNS] = {"total_count": 1, "workflow_runs": [{"id": 1}]}
+    api.run(event="workflow_dispatch", head_branch=BRANCH, head_sha=TRUSTED)
+    return api
+
+
+def test_a_head_that_edits_tools_ci_is_judged_by_mains_definitions_on_its_tree() -> None:
+    own = _trusted_api()
+    own.run(event="pull_request", head_sha=HEAD)
+    first = mc.decide(own, REPO, RUN, CONTROLLER)
+    assert first.posting is None and first.dispatch == HEAD, "its own green run is not counted"
+    outcome = mc.decide(_trusted_api(), REPO, RUN, CONTROLLER)
+    assert outcome.posting is not None and outcome.posting.conclusion == "success"
+    assert (
+        outcome.posting.head_sha == HEAD
+    ), "the verdict is posted on the head, not the run's commit"
+    assert outcome.cleanup == BRANCH and outcome.dispatch is None
+    receipt = merge_verdict.read_receipt(outcome.posting.body())
+    assert receipt.head_sha == HEAD and receipt.toolchain["definitions"] == MAIN
+    assert receipt.tree_oid == api_tree_oid(HEAD, _trusted_api())
+    assert "a run of main's definitions on its tree" in outcome.posting.output["summary"]
+
+
+def test_a_red_trusted_run_is_the_heads_red() -> None:
+    api = _trusted_api()
+    api.jobs(1, ("results", "completed", "failure"))
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert outcome.posting is not None and outcome.posting.conclusion == "failure"
+    assert outcome.posting.head_sha == HEAD and outcome.cleanup == BRANCH
+
+
+def test_a_head_with_no_completed_own_pull_request_run_gets_no_trusted_run() -> None:
+    dispatched = _trusted_api()
+    dispatched.run(event="workflow_dispatch", head_sha=HEAD, head_branch="some-branch")
+    outcome = mc.decide(dispatched, REPO, RUN, CONTROLLER)
+    assert outcome.posting is None and outcome.dispatch is None
+    assert "not its own pull_request run" in outcome.why
+    stale = _trusted_api(
+        {MERGE_PATH: MERGE_YML, VERDICT_PY: "an older main's verdict\n", "README.md": "changed\n"}
+    )
+    stale.answers[OWN_RUNS] = {"total_count": 0, "workflow_runs": []}
+    outcome = mc.decide(stale, REPO, RUN, CONTROLLER)
+    assert outcome.posting is None and outcome.dispatch is None and outcome.cleanup == BRANCH
+    assert "no completed pull_request run of its own" in outcome.why
+
+
+def _refs(api: FakeApi, made: Mapping[str, str]) -> None:
+    refs = []
+    for name, when in made.items():
+        sha = _oid(name + when)
+        refs.append({"ref": f"refs/heads/{name}", "object": {"sha": sha}})
+        api.answers[f"/repos/{REPO}/git/commits/{sha}"] = {"committer": {"date": when}}
+    api.answers[f"/repos/{REPO}/git/matching-refs/heads/{mc.TRUSTED_PREFIX}"] = refs
+
+
+def test_the_sweep_takes_trusted_run_branches_older_than_a_day_only() -> None:
+    api = FakeApi()
+    old, new = mc.TRUSTED_PREFIX + "1" * 40, mc.TRUSTED_PREFIX + "2" * 40
+    _refs(
+        api,
+        {
+            old: "2026-10-21T10:00:00Z",
+            new: "2026-10-23T09:00:00Z",
+            mc.TRUSTED_PREFIX + "not-a-head": "2026-10-01T00:00:00Z",
+        },
+    )
+    now = mc.datetime.datetime(2026, 10, 23, 12, 0, tzinfo=mc.datetime.timezone.utc)
+    assert mc.stale_branches(api, REPO, now) == [old]
+
+
+def test_a_posted_trusted_verdict_and_the_sweep_leave_no_branch_but_the_one_in_use(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    argv = ["decide", "--repo", REPO, "--run-id", str(RUN), "--controller-revision", CONTROLLER]
+    api = _trusted_api()
+    old = mc.TRUSTED_PREFIX + "1" * 40
+    _refs(api, {old: "2020-01-01T00:00:00Z", BRANCH: "2020-01-01T00:00:00Z"})
+    assert mc.main([*argv, "--out", str(tmp_path / "v.json")], get=api) == 0
+    lines = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
+    assert lines["post"] == "true" and set(lines["cleanup"].split()) == {old, BRANCH}
+    outputs.unlink()
+    again = _trusted_api()
+    again.run(event="pull_request", head_sha=HEAD)
+    _refs(again, {BRANCH: "2020-01-01T00:00:00Z"})
+    assert mc.main([*argv, "--out", str(tmp_path / "w.json")], get=again) == 0
+    lines = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
+    assert lines["dispatch"] == HEAD and lines["cleanup"] == "", "the branch in use is kept"
+
+
+def test_a_trusted_run_whose_definitions_main_has_moved_past_starts_again() -> None:
+    api = _trusted_api(
+        {MERGE_PATH: MERGE_YML, VERDICT_PY: "an older main's verdict\n", "README.md": "changed\n"}
+    )
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert outcome.posting is None and (outcome.dispatch, outcome.base) == (HEAD, MAIN)
+    assert "stale" in outcome.why
+
+
+@pytest.mark.parametrize(
+    "files, says",
+    [
+        (
+            {MERGE_PATH: MERGE_YML, VERDICT_PY: MAINS_VERDICT, "README.md": "not the head's\n"},
+            "not the head's outside the definitions: `README.md`",
+        ),
+        (
+            {
+                MERGE_PATH: MERGE_YML,
+                VERDICT_PY: MAINS_VERDICT,
+                "README.md": "changed\n",
+                "x": "1\n",
+            },
+            "not the head's outside the definitions: `x`",
+        ),
+    ],
+)
+def test_a_trusted_run_on_any_other_tree_is_red(files: Mapping[str, str], says: str) -> None:
+    outcome = mc.decide(_trusted_api(files), REPO, RUN, CONTROLLER)
+    assert outcome.posting is not None and outcome.posting.conclusion == "failure"
+    assert says in outcome.posting.output["title"] and outcome.dispatch is None
+    assert outcome.cleanup == BRANCH, "a posted verdict leaves no branch"
+
+
+def test_a_trusted_run_whose_parent_is_not_on_main_is_red() -> None:
+    api = _trusted_api()
+    other = "9" * 40
+    api.tree(
+        TRUSTED,
+        {MERGE_PATH: MERGE_YML, VERDICT_PY: MAINS_VERDICT, "README.md": "changed\n"},
+        parents=(other,),
+    )
+    api.answers[f"/repos/{REPO}/compare/{other}...{MAIN}"] = {"behind_by": 2}
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert outcome.posting is not None and "is not on main" in outcome.posting.output["title"]
+
+
+def test_a_dispatch_on_a_branch_that_names_no_head_posts_nothing() -> None:
+    api = _trusted_api()
+    api.run(event="workflow_dispatch", head_branch=mc.TRUSTED_PREFIX + "main", head_sha=TRUSTED)
+    assert "names no head" in str(_decide(api))
+
+
+class FakeWriter:
+    def __init__(self, answers: dict[tuple[str, str], tuple[int, object]]) -> None:
+        self.answers = answers
+        self.calls: list[tuple[str, str, Any]] = []
+
+    def __call__(self, method: str, path: str, body: Any) -> tuple[int, object]:
+        self.calls.append((method, path, body))
+        return self.answers.get((method, path), (404, None))
+
+    def body(self, method: str, path: str) -> Any:
+        return next(b for m, p, b in self.calls if (m, p) == (method, path))
+
+
+def _writer(extra: dict[tuple[str, str], tuple[int, object]] | None = None) -> FakeWriter:
+    return FakeWriter(
+        {
+            ("POST", f"/repos/{REPO}/git/trees"): (201, {"sha": "1" * 40}),
+            ("POST", f"/repos/{REPO}/git/commits"): (201, {"sha": TRUSTED}),
+            ("POST", f"/repos/{REPO}/git/refs"): (201, {}),
+            **(extra or {}),
+        }
+    )
+
+
+def test_the_trusted_commit_is_mains_definitions_on_the_heads_tree() -> None:
+    api = _trusted_api()
+    api.tree(
+        MAIN,
+        {
+            MERGE_PATH: MERGE_YML,
+            VERDICT_PY: MAINS_VERDICT,
+            "README.md": "hi\n",
+            "OLD.md": "gone in the head\n",
+        },
+    )
+    writer = _writer()
+    assert mc.make_trusted(api, writer, REPO, HEAD, MAIN) == (TRUSTED, BRANCH)
+    tree = writer.body("POST", f"/repos/{REPO}/git/trees")
+    assert tree["base_tree"] == api_tree_oid(MAIN, api)
+    by_path = {e["path"]: e for e in tree["tree"]}
+    assert set(by_path) == {"README.md", "OLD.md"}, "no definition is taken from the head"
+    assert by_path["README.md"]["sha"] == _oid("changed\n") and by_path["OLD.md"]["sha"] is None
+    commit = writer.body("POST", f"/repos/{REPO}/git/commits")
+    assert commit["parents"] == [MAIN] and commit["tree"] == "1" * 40
+    assert writer.body("POST", f"/repos/{REPO}/git/refs") == {
+        "ref": f"refs/heads/{BRANCH}",
+        "sha": TRUSTED,
+    }
+
+
+def test_a_trusted_branch_that_exists_is_moved_to_the_new_commit() -> None:
+    writer = _writer(
+        {
+            ("GET", f"/repos/{REPO}/git/ref/heads/{BRANCH}"): (200, {"object": {"sha": "0" * 40}}),
+            ("PATCH", f"/repos/{REPO}/git/refs/heads/{BRANCH}"): (200, {}),
+        }
+    )
+    mc.make_trusted(_trusted_api(), writer, REPO, HEAD, MAIN)
+    assert writer.body("PATCH", f"/repos/{REPO}/git/refs/heads/{BRANCH}") == {
+        "sha": TRUSTED,
+        "force": True,
+    }
+
+
+def test_a_head_that_changes_only_definitions_is_run_on_mains_own_tree() -> None:
+    api = _trusted_api()
+    api.tree(HEAD, {MERGE_PATH: MERGE_YML, VERDICT_PY: HEADS_VERDICT, "README.md": "hi\n"})
+    writer = _writer()
+    mc.make_trusted(api, writer, REPO, HEAD, MAIN)
+    assert all(p != f"/repos/{REPO}/git/trees" for _, p, _ in writer.calls)
+    assert writer.body("POST", f"/repos/{REPO}/git/commits")["tree"] == api_tree_oid(MAIN, api)
+
+
+def test_the_dispatch_runs_mains_merge_workflow_on_the_trusted_branch_only() -> None:
+    path = f"/repos/{REPO}/actions/workflows/merge.yml/dispatches"
+    writer = FakeWriter({("POST", path): (204, None)})
+    mc.dispatch(writer, REPO, BRANCH)
+    assert writer.calls == [("POST", path, {"ref": BRANCH})]
+    with pytest.raises(ValueError, match="full commit id"):
+        mc.dispatch(writer, REPO, "main")
+
+
+def test_cleanup_deletes_every_branch_it_is_given() -> None:
+    other = mc.TRUSTED_PREFIX + "3" * 40
+    paths = [f"/repos/{REPO}/git/refs/heads/{b}" for b in (BRANCH, other)]
+    writer = FakeWriter({("DELETE", p): (204, None) for p in paths})
+    argv = ["cleanup", "--repo", REPO, "--branch", BRANCH, "--branch", other]
+    assert mc.main(argv, api=writer) == 0
+    assert [(m, p) for m, p, _ in writer.calls] == [("DELETE", p) for p in paths]
+
+
+def test_a_judged_trusted_branch_is_deleted_and_one_already_gone_is_fine() -> None:
+    gone = FakeWriter({})
+    mc.delete_branch(gone, REPO, BRANCH)
+    broken = FakeWriter({("DELETE", f"/repos/{REPO}/git/refs/heads/{BRANCH}"): (500, None)})
+    with pytest.raises(RuntimeError, match="answered 500"):
+        mc.delete_branch(broken, REPO, BRANCH)
+    with pytest.raises(ValueError, match="full commit id"):
+        mc.delete_branch(gone, REPO, "release")
