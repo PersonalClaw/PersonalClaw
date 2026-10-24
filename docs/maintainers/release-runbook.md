@@ -18,7 +18,7 @@ weekly rehearsal runs, and writes their manifest. Every job that publishes waits
 | `artifacts / build` | sdist + wheel (SPA bundled inside), and the wheel's SBOM | refuses a ref that is not a release tag at its first step; inspects the wheel's contents and metadata against the checkout, then installs it alone into a scratch venv and requires the SPA served, every bundled app enabled and the default model offered; fails unless the SBOM lists the wheel and every package installed with it |
 | `artifacts / gateway-dashboard` | nothing; it is purely a gate | boots the gateway image built from this commit and requires a **served bundle**, not a status — the image build needs it, so a dashboard-less image is never pushed |
 | `artifacts / images` | both images for both arches with their attestations, each to an OCI layout, and each arch's SBOM | needs `build` and `gateway-dashboard`; loads each arch from its layout and runs the image's own liveness command inside it |
-| `artifacts / desktop-mac` | `PersonalClaw-X.Y.Z-arm64.dmg`, ad-hoc signed, not notarized (Apple silicon only) | boots the bundled backend from inside the mounted dmg |
+| `artifacts / desktop-mac` | `PersonalClaw-X.Y.Z-arm64.dmg` (on `macos-26`) and `PersonalClaw-X.Y.Z-x64.dmg` (on `macos-26-intel`), ad-hoc signed, not notarized | per arch: `lipo -archs` lists only that arch for the shell and the backend; boots the bundled backend and then starts the app from inside the mounted dmg |
 | `artifacts / desktop-linux` | unsigned `PersonalClaw-X.Y.Z.AppImage` + `personalclaw-desktop_X.Y.Z_amd64.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
 | `artifacts / manifest` | the digest-bound manifest of every file and image above | writes and verifies it; a planted changed wheel must fail the verify |
 | `pypi` | core package on PyPI | needs `artifacts`; environment `release` — **needs your approval** |
@@ -210,7 +210,7 @@ It builds every artifact the tag builds, as the tag this tree's version names, t
 - the wheel and sdist with the wheel's SBOM and its contract;
 - the gateway image's dashboard smoke;
 - both images for both arches with their attestations, to an OCI layout;
-- the dmg, the AppImage and the deb.
+- the two dmgs (arm64 and x64), the AppImage and the deb.
 
 It smokes each as the release does, then writes and verifies one digest-bound manifest of them
 all, with a planted mismatch that must fail. It publishes nothing: no environment, no registry
@@ -348,7 +348,7 @@ docker manifest inspect ghcr.io/personalclaw/personalclaw-gateway:X.Y.Z \
   | grep -c architecture        # expect >1 for multi-arch
 
 # 4. The GitHub Release exists with real notes and every asset: the wheel, the sdist,
-#    personalclaw-wheel.spdx.json, four image SBOMs, the dmg, the AppImage and the deb
+#    personalclaw-wheel.spdx.json, four image SBOMs, the arm64 and x64 dmgs, the AppImage and the deb
 gh release view vX.Y.Z
 
 # 5. The wheel carries GitHub's build provenance

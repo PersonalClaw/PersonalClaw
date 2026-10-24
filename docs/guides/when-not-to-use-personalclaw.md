@@ -141,8 +141,9 @@ install yourself, is unacceptable.
 
 The Electron desktop shell is explicitly experimental, and it **has no auto-update
 channel** — the README's tech-stack note says exactly that. CI builds it for every
-release, which attaches an Apple-silicon `.dmg` and an x86-64 Linux AppImage and `.deb`.
-None carries a publisher's signature. The dmg is ad-hoc signed and not notarized, because
+release, which attaches a `.dmg` for Apple silicon, one for Intel Macs, and an x86-64 Linux
+AppImage and `.deb`. None carries a publisher's signature. The dmgs are ad-hoc signed and not
+notarized, because
 notarization needs a paid Apple Developer account the project has deliberately not taken
 on, so macOS Gatekeeper charges you one approval step per installed version; the Linux
 files are unsigned, the platform norm ([The desktop app → Platforms](desktop.md#platforms)).

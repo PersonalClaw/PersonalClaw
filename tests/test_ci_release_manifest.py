@@ -83,8 +83,22 @@ def _job(name: str, artifacts: list[str], *, tools: bool = True, bases: int = 0)
             }
             for arch in ("amd64", "arm64")[:bases]
         ],
+        "built_from_source": [],
         "artifacts": artifacts,
     }
+
+
+#: A library a build compiled from its locked sdist (tools/ci/cryptography_from_sdist.py).
+FROM_SOURCE = {
+    "package": "cryptography",
+    "version": "50.0.0",
+    "sdist": "sha256:" + "c" * 64,
+    "wheel": "cryptography-50.0.0-cp311-abi3-macosx_10_9_x86_64.whl",
+    "wheel_sha256": "sha256:" + "d" * 64,
+    "rust": "rustc 1.98.0 (abc 2026-09-01)",
+    "openssl": "OpenSSL 3.6.3 9 Jun 2026",
+    "installed_openssl": "OpenSSL 3.6.3 9 Jun 2026",
+}
 
 
 #: What built STAGED and the gateway image: one job per artifact kind, each artifact once.
@@ -489,6 +503,30 @@ def _refusing_manifests(manifest: dict, data: bytes) -> list[tuple[str, bytes, s
         ("builds that are an object", remade(builds={}), None, "builds are not a list"),
         ("a build with an unknown key", build(0, signed=True), None, "unknown.*signed"),
         (
+            "a library built from source with no Rust named",
+            build(0, built_from_source=[{**FROM_SOURCE, "rust": ""}]),
+            None,
+            "artifacts / build: cryptography built from source names no rust",
+        ),
+        (
+            "a library built from source from no sdist digest",
+            build(0, built_from_source=[{**FROM_SOURCE, "sdist": "50.0.0.tar.gz"}]),
+            None,
+            "artifacts / build: cryptography built from source names no sdist digest",
+        ),
+        (
+            "a library carrying another OpenSSL than it was built against",
+            build(0, built_from_source=[{**FROM_SOURCE, "installed_openssl": "OpenSSL 4.0.1"}]),
+            None,
+            "carries 'OpenSSL 4.0.1', not the 'OpenSSL 3.6.3 9 Jun 2026' it was built against",
+        ),
+        (
+            "libraries built from source that are not a list",
+            build(0, built_from_source=FROM_SOURCE),
+            None,
+            "artifacts / build: what it built from source is not a list",
+        ),
+        (
             "a build with no runner image version",
             build(0, runner={**first["runner"], "version": ""}),
             None,
@@ -557,7 +595,7 @@ def test_a_manifest_that_is_not_the_approved_one_is_refused(
 ) -> None:
     manifest, data = _manifest(tmp_path)
     rows = _refusing_manifests(manifest, data)
-    assert len(rows) == 56, "a refusal row was dropped"
+    assert len(rows) == 60, "a refusal row was dropped"
     for name, bytes_, expected, reason in rows:
         with row(subtests, case=name):
             with pytest.raises(rm.Refused, match=reason):

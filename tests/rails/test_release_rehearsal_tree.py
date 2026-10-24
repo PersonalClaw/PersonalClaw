@@ -278,6 +278,7 @@ def _build(job: str, artifacts: list[str], *, tools: str = "", bases: int = 0) -
         "actions": [{"action": "actions/checkout", "ref": "v7", "sha": "a" * 40}],
         "toolchain": {tool: tools or None for tool in ("python", "uv", "node", "npm")},
         "bases": [{"image": "pkg:docker/python@3", "digest": "sha256:" + "b" * 64}] * bases,
+        "built_from_source": [],
         "artifacts": artifacts,
     }
 

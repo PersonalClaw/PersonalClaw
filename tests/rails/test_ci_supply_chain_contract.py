@@ -1457,6 +1457,20 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 expect="20.19.0 reached its end of life",
             ),
             _plant(".nvmrc on a newer dated line passes", ".nvmrc", _NVMRC, "26.1.0", fails=False),
+            # The floor the Intel Mac app's cryptography build holds its OpenSSL to.
+            _line(
+                "no OpenSSL floor for the Intel cryptography build",
+                _POLICY,
+                "openssl_minimum =",
+                expect="cryptography_from_source must name openssl_minimum",
+            ),
+            _line(
+                "an OpenSSL floor that is not X.Y.Z",
+                _POLICY,
+                "openssl_minimum =",
+                'openssl_minimum = "3.6"',
+                expect="cryptography_from_source must name openssl_minimum",
+            ),
             # Every place a Node can come from.
             _append(
                 "an OS-package nodejs in a Dockerfile",

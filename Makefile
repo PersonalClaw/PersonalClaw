@@ -31,6 +31,8 @@ DEV_OVERLAY  := $(BUILD_OVERLAY) -f $(COMPOSE_DIR)/compose.dev.yaml
 
 WEB_DIR         := web
 DESKTOP_DIR     := desktop
+# electron-builder's name for this host's arch, the one `desktop-dist` builds the shell for.
+DESKTOP_MAC_ARCH = $(if $(filter arm64,$(shell uname -m)),arm64,x64)
 PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
 .PHONY: help format lock lint test selection-map check gate test-e2e test-visual build clean harness-validate gates \
@@ -327,7 +329,10 @@ desktop: pyinstaller
 	npm ci  # workspace root install (see web-build note); covers the desktop member
 
 ## desktop-dist: build the macOS .dmg in desktop/dist/, and VERIFY its signature state.
-## Run on macOS — release.yml's `desktop-mac` job is the canonical caller.
+## Run on macOS — release.yml's `desktop-mac` job is the canonical caller, once per arch.
+## The shell is built for this host's arch, as the bundled backend is (personalclaw-backend.spec
+## builds with the host's own Python), so the dmg is `PersonalClaw-<version>-arm64.dmg` on Apple
+## silicon and `PersonalClaw-<version>-x64.dmg` on Intel.
 ##
 ## The app is shipped AD-HOC SIGNED AND NOT NOTARIZED, on purpose
 ## (producing the installer does not require a real signature, and one needs a paid Apple
@@ -366,7 +371,7 @@ desktop: pyinstaller
 ## System Settings -> Privacy & Security after dragging it to Applications. That is
 ## expected, is NOT gated here, and is documented in docs/guides/desktop.md.
 desktop-dist: desktop
-	cd $(DESKTOP_DIR) && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist
+	cd $(DESKTOP_DIR) && CSC_IDENTITY_AUTO_DISCOVERY=false npm run dist -- --$(DESKTOP_MAC_ARCH)
 	@set -eu; \
 	  n=$$(ls -1d $(DESKTOP_DIR)/dist/*/PersonalClaw.app 2>/dev/null | wc -l | tr -d ' '); \
 	  if [ "$$n" -ne 1 ]; then \

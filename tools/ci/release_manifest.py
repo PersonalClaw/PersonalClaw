@@ -16,7 +16,8 @@ tools/ci/release_manifest.py``, the way a trusted job runs the default branch's 
   (:func:`staged`, :func:`image_from_index`, :func:`build`). Each build is one job's: the runner
   image its set-up log reported and the one the image itself names, every action it downloaded
   with its SHA, the base images that ran with their digests, the Python, uv, Node and npm
-  versions it used, and the artifacts it built.
+  versions it used, each library it compiled from its locked sdist with the Rust and OpenSSL it
+  built with, and the artifacts it built.
   Every file and image is one build's, and a build that lacks any of these is refused: an image's
   names its bases and may name no host tool, and a file's names all four tools. The folder holds
   only regular files and folders with plain names: a symlink, a special file, a file or folder it
@@ -66,7 +67,13 @@ KEYS = frozenset({"version", "source", "files", "images", "builds", "digest"})
 FILE_KEYS = frozenset({"digest", "size"})
 IMAGE_KEYS = frozenset({"index", "platforms"})
 SOURCE_KEYS = frozenset({"ref", "commit"})
-BUILD_KEYS = frozenset({"job", "runner", "actions", "toolchain", "bases", "artifacts"})
+BUILD_KEYS = frozenset(
+    {"job", "runner", "actions", "toolchain", "bases", "built_from_source", "artifacts"}
+)
+#: What a library a build compiled from its locked sdist names (tools/ci/build_identity.py).
+FROM_SOURCE_KEYS = frozenset(
+    {"package", "version", "sdist", "wheel", "wheel_sha256", "rust", "openssl", "installed_openssl"}
+)
 RUNNER_KEYS = frozenset({"image", "version", "image_os", "image_version"})
 ACTION_KEYS = frozenset({"action", "ref", "sha"})
 BASE_KEYS = frozenset({"image", "digest"})
@@ -435,6 +442,23 @@ def _check_builds(builds: Any, files: set[str], images: set[str]) -> None:
             base = _exact(base, BASE_KEYS, f"{job}'s base")
             _text(base["image"], f"{job}: a base's image")
             _digest(base["digest"], f"{job}: {base['image']}")
+        built = entry["built_from_source"]
+        if not isinstance(built, list):
+            raise Refused(f"{job}: what it built from source is not a list")
+        for library in built:
+            library = _exact(library, FROM_SOURCE_KEYS, f"{job}'s library built from source")
+            name = f"{library['package']} built from source"
+            for key in sorted(FROM_SOURCE_KEYS - {"sdist", "wheel_sha256"}):
+                if not isinstance(library[key], str) or not library[key].strip():
+                    raise Refused(f"{job}: {name} names no {key}")
+            for key in ("sdist", "wheel_sha256"):
+                if not isinstance(library[key], str) or not _DIGEST.fullmatch(library[key]):
+                    raise Refused(f"{job}: {name} names no {key} digest")
+            if library["installed_openssl"] != library["openssl"]:
+                raise Refused(
+                    f"{job}: {name} carries {library['installed_openssl']!r}, not the "
+                    f"{library['openssl']!r} it was built against"
+                )
         tools = _exact(entry["toolchain"], frozenset(TOOLS), f"{job}'s toolchain")
         if any(a in images for a in artifacts):
             if not bases:

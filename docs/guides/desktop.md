@@ -621,13 +621,19 @@ share there shows the buddy.
 
 ## Platforms
 
-The shell ships for **macOS (Apple silicon)** and **Linux x86-64**. There is no Windows
+The shell ships for **macOS (Apple silicon and Intel)** and **Linux x86-64**. There is no Windows
 build — see below for exactly why and what would change that.
 
 ### macOS — .dmg, not notarized, and one approval on first launch
 
-Every release attaches `PersonalClaw-<version>-arm64.dmg`, built by CI on a macOS runner
-from the same tree as the release tag. Open it and drag **PersonalClaw** to Applications.
+Every release attaches two dmgs, built by CI from the same tree as the release tag:
+
+- `PersonalClaw-<version>-arm64.dmg` for a Mac with Apple silicon;
+- `PersonalClaw-<version>-x64.dmg` for an Intel Mac.
+
+Not sure which you have? Apple menu → **About This Mac**: a **Chip** line naming Apple M1 or
+later is Apple silicon, and a **Processor** line naming Intel is Intel. Open the dmg for your Mac
+and drag **PersonalClaw** to Applications.
 
 **Do not use the one-click Install button — it cannot work on this build.** Recent macOS
 versions offer an **Install** affordance when you open a `.dmg`. Clicking it here fails
@@ -671,10 +677,20 @@ contents — `codesign --verify --deep --strict /Applications/PersonalClaw.app` 
 cleanly, and it will fail if a single file in the app was altered after it was built — but it
 proves nothing about *who* built it. That is why the download source is the integrity story.
 
-**Apple silicon only.** The dmg carries a PyInstaller-bundled backend, and a frozen
-Python binary cannot be cross-compiled, so the artifact matches the CI runner's
-architecture (arm64). There is no Intel build: it would need its own x86_64 runner, and
-nothing here claims Intel support until a job proves it.
+**One dmg per kind of Mac.** The dmg carries a PyInstaller-bundled backend, and a frozen
+Python binary cannot be cross-compiled, so each dmg is built on a CI runner of its own
+architecture: `macos-26` for Apple silicon and `macos-26-intel` for Intel. Each release checks
+that the app and its backend in each dmg are built for that architecture alone, then starts
+both from the mounted dmg on that runner. There is no universal dmg: it would be twice the
+download.
+
+**The Intel build carries a cryptography compiled by CI.** cryptography, which the backend uses
+for its encryption, has published no build for Intel Macs since its 49.0.0. So on the Intel
+runner, CI builds the exact release the lock file pins from its source, checked against the
+lock's hash, and links OpenSSL into it statically: the runner's OpenSSL 3, 3.6.3 when this was
+written, and the release's build record names the one each release carries. The Apple-silicon
+dmg carries cryptography's own published build. `personalclaw doctor --crypto` shows what yours
+carries and checks that it works.
 
 ### Linux — AppImage and .deb, unsigned
 
@@ -708,7 +724,8 @@ cannot reach.
 
 ### Building it yourself
 
-From a checkout, `make desktop-dist` builds the dmg on an Apple-silicon Mac and
+From a checkout, `make desktop-dist` builds the dmg for the Mac it runs on (arm64 on
+Apple silicon, x64 on Intel) and
 `make desktop-dist-linux` builds the AppImage and .deb on x86-64 Linux: the targets the
 release's `desktop-mac` and `desktop-linux` jobs run, in the venv those jobs make
 (`.github/workflows/release.yml`).

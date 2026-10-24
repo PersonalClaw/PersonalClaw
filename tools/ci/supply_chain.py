@@ -1656,8 +1656,16 @@ def read_policy(text: str) -> Policy:
     except tomllib.TOMLDecodeError as error:
         broken(f"not valid TOML: {error}")
         return policy
-    for key in sorted(set(data) - {"node_end_of_life", "audited_write", "exception"}):
+    known = {"node_end_of_life", "cryptography_from_source", "audited_write", "exception"}
+    for key in sorted(set(data) - known):
         broken(f"unknown key {key}")
+    source = data.get("cryptography_from_source")
+    floor = source.get("openssl_minimum") if isinstance(source, dict) else None
+    if not isinstance(floor, str) or not re.fullmatch(r"\d+\.\d+\.\d+", floor):
+        broken(
+            "cryptography_from_source must name openssl_minimum, the oldest OpenSSL X.Y.Z the "
+            "Intel Mac app's cryptography may be built against"
+        )
     table = data.get("node_end_of_life")
     if not isinstance(table, dict) or not table:
         broken("node_end_of_life must date each Node line CI may run")

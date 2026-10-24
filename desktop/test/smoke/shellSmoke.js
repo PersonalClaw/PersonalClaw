@@ -4,7 +4,7 @@
  * The packed shell's smoke (#3942): launch the app electron-builder unpacked, as a user starts it,
  * and watch it reach its own gateway and draw the chat.
  *
- *   node desktop/test/smoke/shellSmoke.js <executable> --gateway-pid-file <file> [--app <dir>] [--timeout-ms N]
+ *   node desktop/test/smoke/shellSmoke.js <executable> [--gateway-pid-file <file>] [--app <dir>] [--first-run] [--timeout-ms N]
  *
  * The shell spawns the backend in its place (`writeStubBackend.js` writes it), waits for its ready
  * line, signs its window in and loads the gateway. The smoke drives the window over the DevTools
@@ -29,6 +29,11 @@
  * than through `xvfb-run`, so nothing between the smoke and the app can close the pipe's fds.
  * `--app` starts Electron's own binary on a source folder instead of a packed app, for trying the
  * smoke where the packed app is not this platform's.
+ *
+ * `--first-run` is for the app a release ships, with its own bundled backend in place of the stub:
+ * that gateway starts on its first run, where `#/chat` draws no composer until a provider is set
+ * up, so the smoke stops after the desktop bridge (the chat and link steps stay desktop-smoke's),
+ * and still fails on anything that threw.
  */
 
 const crypto = require("node:crypto");
@@ -183,7 +188,7 @@ async function stopGateway(pidFile) {
  * Run the smoke against the app at *executable*. Resolves `{ok, steps, reason, mainOutput}`; never
  * throws for a failure the app made, so a planted control can read the reason.
  */
-async function smoke(executable, { app: appDir = null, gatewayPidFile = null, timeoutMs = DEFAULT_TIMEOUT_MS, env = process.env, log = () => {} } = {}) {
+async function smoke(executable, { app: appDir = null, gatewayPidFile = null, firstRun = false, timeoutMs = DEFAULT_TIMEOUT_MS, env = process.env, log = () => {} } = {}) {
   if (gatewayPidFile) {
     await stopGateway(gatewayPidFile);
     fs.rmSync(gatewayPidFile, { force: true });
@@ -247,9 +252,21 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, ti
       if (Date.now() > end) return fail("the page did not load again after its reload");
       await wait(250);
     }
+    const settle = async () => {
+      await wait(500);
+      const errors = pageErrors(cdp.events, sessionId);
+      if (errors.length) return fail(`the page threw: ${errors.join("; ")}`);
+      if (MAIN_ERROR.test(output)) return fail("the main process threw");
+      step("no error in the main process or the page");
+      return { ok: true, steps, reason: null, mainOutput: output.slice(-4000) };
+    };
     const bridge = await evaluate("typeof window.pclawDesktop");
     if (bridge !== "object") return fail(`the preload put no desktop bridge on the page (window.pclawDesktop is ${bridge})`);
     step("the preload's desktop bridge is on the page");
+    if (firstRun) {
+      step("a first run stops here: its chat draws no composer until a provider is set up");
+      return await settle();
+    }
     await evaluate("location.hash = '#/chat'; true");
     let mounted = false;
     while (!mounted) {
@@ -325,12 +342,7 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, ti
     step("reloading the address and the same link again brought back the same draft, and sent nothing");
 
     // 4. Nothing threw on the way.
-    await wait(500);
-    const errors = pageErrors(cdp.events, sessionId);
-    if (errors.length) return fail(`the page threw: ${errors.join("; ")}`);
-    if (MAIN_ERROR.test(output)) return fail("the main process threw");
-    step("no error in the main process or the page");
-    return { ok: true, steps, reason: null, mainOutput: output.slice(-4000) };
+    return await settle();
   } finally {
     if (!exited) {
       for (const [sig, tries] of [["SIGTERM", 40], ["SIGKILL", 20]]) {
@@ -349,19 +361,28 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, ti
   }
 }
 
-module.exports = { COMPOSER, DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, devtoolsPipe, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
+/** The command line's options: `<executable>` first, then the flags the usage line names. */
+function cliOptions(argv) {
+  const [executable, ...rest] = argv;
+  const opt = (name) => (rest.indexOf(name) >= 0 ? rest[rest.indexOf(name) + 1] : null);
+  return {
+    executable: executable ? path.resolve(executable) : null,
+    app: opt("--app") ? path.resolve(opt("--app")) : null,
+    gatewayPidFile: opt("--gateway-pid-file") ? path.resolve(opt("--gateway-pid-file")) : null,
+    firstRun: rest.includes("--first-run"),
+    timeoutMs: opt("--timeout-ms") ? Number(opt("--timeout-ms")) : DEFAULT_TIMEOUT_MS,
+  };
+}
+
+module.exports = { COMPOSER, DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
 
 if (require.main === module) {
-  const [executable, ...rest] = process.argv.slice(2);
+  const { executable, ...options } = cliOptions(process.argv.slice(2));
   if (!executable) {
-    console.error("usage: node desktop/test/smoke/shellSmoke.js <executable> --gateway-pid-file <file> [--app <dir>] [--timeout-ms N]");
+    console.error("usage: node desktop/test/smoke/shellSmoke.js <executable> [--gateway-pid-file <file>] [--app <dir>] [--first-run] [--timeout-ms N]");
     process.exit(2);
   }
-  const opt = (name) => (rest.indexOf(name) >= 0 ? rest[rest.indexOf(name) + 1] : null);
-  const timeoutMs = opt("--timeout-ms") ? Number(opt("--timeout-ms")) : DEFAULT_TIMEOUT_MS;
-  const app = opt("--app") ? path.resolve(opt("--app")) : null;
-  const gatewayPidFile = opt("--gateway-pid-file") ? path.resolve(opt("--gateway-pid-file")) : null;
-  smoke(path.resolve(executable), { app, gatewayPidFile, timeoutMs, log: (s) => console.log(`shell-smoke: ${s}`) }).then((r) => {
+  smoke(executable, { ...options, log: (s) => console.log(`shell-smoke: ${s}`) }).then((r) => {
     if (!r.ok) console.log(`shell-smoke: FAILED: ${r.reason}\n--- the app's output, last part ---\n${r.mainOutput}`);
     console.log(`SHELL_SMOKE ${JSON.stringify({ ok: r.ok, reason: r.reason })}`);
     process.exit(r.ok ? 0 : 1);

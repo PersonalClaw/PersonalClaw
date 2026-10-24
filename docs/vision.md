@@ -21,8 +21,8 @@ It is local-first, provider-agnostic, and MIT-licensed.
 3. **Automation** — triggers, schedules, and workflows that fire without the user present.
 
 **Delivery surfaces** (same core everywhere): local server, Docker compose, and the desktop
-app, which every release ships as a macOS dmg for Apple silicon (ad-hoc signed, not notarized)
-and a Linux AppImage and `.deb` for x86-64 (unsigned).
+app, which every release ships as a macOS dmg for Apple silicon and one for Intel (ad-hoc
+signed, not notarized) and a Linux AppImage and `.deb` for x86-64 (unsigned).
 
 ---
 
