@@ -66,6 +66,7 @@ from personalclaw.inbound import auth, tokens
 from personalclaw.inbound.audit import audit
 from personalclaw.inbound.gate import admission_problem
 from personalclaw.net.guard import evaluate
+from personalclaw.net.header_limits import RESPONSE_HEADER_LINE_MAX
 from personalclaw.net.policy import LISTED, EgressPolicy
 
 logger = logging.getLogger(__name__)
@@ -459,7 +460,11 @@ async def _forward(
     timeout = aiohttp.ClientTimeout(
         total=None if stream else timeout_s, sock_connect=timeout_s, sock_read=timeout_s
     )
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    async with aiohttp.ClientSession(
+        timeout=timeout,
+        max_line_size=RESPONSE_HEADER_LINE_MAX,
+        max_field_size=RESPONSE_HEADER_LINE_MAX,
+    ) as session:
         async with session.post(
             upstream.url, data=body, headers=headers, allow_redirects=False
         ) as resp:

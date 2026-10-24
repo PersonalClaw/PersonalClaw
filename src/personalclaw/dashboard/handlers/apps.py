@@ -1421,6 +1421,7 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     from personalclaw.apps.backend_runtime import get_backend_supervisor
     from personalclaw.apps.manager import _read_installed
     from personalclaw.dashboard.token_auth import app_session_token
+    from personalclaw.net.header_limits import RESPONSE_HEADER_LINE_MAX
 
     name = request.match_info["name"]
     tail = request.match_info.get("tail", "")
@@ -1484,7 +1485,11 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     fwd_headers[PROXY_SIGNATURE_HEADER] = signature
     timeout = aiohttp.ClientTimeout(total=_PROXY_TIMEOUT)
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            max_line_size=RESPONSE_HEADER_LINE_MAX,
+            max_field_size=RESPONSE_HEADER_LINE_MAX,
+        ) as session:
             async with session.request(
                 request.method,
                 target_url,

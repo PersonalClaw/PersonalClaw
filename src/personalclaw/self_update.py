@@ -819,6 +819,8 @@ async def fetch_releases() -> list[dict[str, object]]:
     """
     import aiohttp
 
+    from personalclaw.net.header_limits import RESPONSE_HEADER_LINE_MAX
+
     cache = read_releases_cache()
     cached_list = _releases_from_cache(cache)
     etag = str(cache.get("etag") or "")
@@ -832,7 +834,11 @@ async def fetch_releases() -> list[dict[str, object]]:
 
     try:
         timeout = aiohttp.ClientTimeout(total=_HTTP_TIMEOUT_S)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            max_line_size=RESPONSE_HEADER_LINE_MAX,
+            max_field_size=RESPONSE_HEADER_LINE_MAX,
+        ) as session:
             async with session.get(_RELEASES_LIST_URL, headers=headers) as resp:
                 if resp.status == 304:
                     # Unchanged since the last fetch, and GitHub said so: the list is current now.

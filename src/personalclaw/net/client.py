@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from personalclaw.net.guard import GuardDecision, evaluate, refusal_for
+from personalclaw.net.header_limits import RESPONSE_HEADER_LINE_MAX
 from personalclaw.net.policy import CONNECTOR, STRICT, EgressPolicy, egress_policy_for
 
 logger = logging.getLogger(__name__)
@@ -185,7 +186,12 @@ async def fetch(
             connector = aiohttp.TCPConnector(
                 resolver=_pinned_resolver({host: cur_decision.pinned_ips})
             )
-        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+        async with aiohttp.ClientSession(
+            timeout=timeout,
+            connector=connector,
+            max_line_size=RESPONSE_HEADER_LINE_MAX,
+            max_field_size=RESPONSE_HEADER_LINE_MAX,
+        ) as session:
             async with session.request(
                 method,
                 cur_url,

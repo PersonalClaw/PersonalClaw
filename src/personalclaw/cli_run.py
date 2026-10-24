@@ -451,9 +451,15 @@ async def _turn_socket(
     """
     import aiohttp
 
+    from personalclaw.net.header_limits import RESPONSE_HEADER_LINE_MAX
+
     base = f"http://127.0.0.1:{port}"
     try:
-        async with aiohttp.ClientSession(headers=owner_headers(token)) as http:
+        async with aiohttp.ClientSession(
+            headers=owner_headers(token),
+            max_line_size=RESPONSE_HEADER_LINE_MAX,
+            max_field_size=RESPONSE_HEADER_LINE_MAX,
+        ) as http:
             async with http.ws_connect(base + "/api/ws") as ws:
                 resp = await http.post(
                     base + "/api/chat?ws=1",

@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.net.client import EgressBlocked, audit, refusal_in
 from personalclaw.net.guard import GuardDecision, evaluate, refusal_for
+from personalclaw.net.header_limits import RESPONSE_HEADER_LINE_MAX
 from personalclaw.net.policy import (
     CONNECTOR,
     EgressPolicy,
@@ -257,7 +258,12 @@ def http_session(
         shared_by_every_run=shared_by_every_run,
         then=then,
     )
-    return aiohttp.ClientSession(connector=_asking_connector()(guard), **options)
+    return aiohttp.ClientSession(
+        connector=_asking_connector()(guard),
+        max_line_size=options.pop("max_line_size", RESPONSE_HEADER_LINE_MAX),
+        max_field_size=options.pop("max_field_size", RESPONSE_HEADER_LINE_MAX),
+        **options,
+    )
 
 
 __all__ = [
