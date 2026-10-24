@@ -132,8 +132,8 @@ def _problems(
     if pr.get("dismiss_stale_reviews_on_push") is not True:
         found.append(f"{_MAIN} keeps stale reviews")
     methods = pr.get("allowed_merge_methods")
-    if not methods or not set(methods) <= {"squash", "rebase"}:
-        found.append(f"{_MAIN} allows merge methods {methods!r}")
+    if methods != ["squash"]:
+        found.append(f"{_MAIN} allows merge methods {methods!r}, not squash alone")
     return found
 
 
@@ -189,6 +189,8 @@ def _pr(key: str, value: object) -> Callable[[dict[str, Any]], None]:
         (_pr("required_review_thread_resolution", False), "conversations open"),
         (_pr("dismiss_stale_reviews_on_push", False), "stale reviews"),
         (_pr("allowed_merge_methods", ["squash", "rebase", "merge"]), "merge methods"),
+        (_pr("allowed_merge_methods", ["squash", "rebase"]), "merge methods"),
+        (_pr("allowed_merge_methods", ["rebase"]), "merge methods"),
         (_pr("allowed_merge_methods", []), "merge methods"),
         (lambda d: d.update(name="main"), "names the ruleset 'main'"),
     ],
