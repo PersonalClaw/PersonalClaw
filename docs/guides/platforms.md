@@ -21,7 +21,7 @@ one, and the token points at something you can go read or re-run:
 | Linux x86-64 | first-class | `CI:ci/test (ubuntu-24.04)` + `CI:breadth/ubuntu (ubuntu-24.04)` + `CI:release/images smoke (linux/amd64)` |
 | Linux arm64 | first-class | `CI:breadth/arm (ubuntu-24.04-arm)` + `CI:release/images smoke (linux/arm64)` |
 | macOS Apple silicon | first-class | `CI:ci/test-macos (macos-26)` + `CI:breadth/macos (macos-26)` |
-| macOS Intel | best-effort | `community` — no Intel runner in CI; the x86-64 Python/wheel path is the same as Linux x86-64 |
+| macOS Intel | best-effort | `CI:release/desktop-mac smoke (x64)` boots the bundled backend on `macos-26-intel`; the test suite runs on Apple silicon only, and the x86-64 Python/wheel path is the same as Linux x86-64 |
 | Windows via WSL2 | supported | `checklist:Windows via WSL2` (this page) |
 | Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` (this page) — written, **not yet executed verbatim**; the release runbook's Windows checklist records the first run |
 | Windows native | not supported | — see [windows-native-audit](../research/windows-native-audit.md) |
@@ -42,8 +42,9 @@ executed is not evidence, however precisely it is cited.**
 
 The matrix above is the **backend**. The desktop *shell* is narrower: every release
 attaches an unsigned Linux x86-64 AppImage and deb (`CI:release/desktop-linux smoke`)
-and an Apple-silicon macOS dmg, ad-hoc signed and not notarized
-(`CI:release/desktop-mac smoke`), and there is no Windows build — see
+and two macOS dmgs, one for Apple silicon and one for Intel, ad-hoc signed and not notarized
+(`CI:release/desktop-mac smoke`, on `macos-26` and `macos-26-intel`), and there is no Windows
+build — see
 [the desktop guide](desktop.md#platforms) for the per-OS signing story and the dated
 Windows deferral.
 

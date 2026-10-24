@@ -455,6 +455,14 @@ The posture is announced on stderr, so stdout stays pipeable.
         help="Print resolved install paths (reference docs, config, skills, install dir) and exit",  # noqa: E501
     )
     doctor_parser.add_argument(
+        "--crypto",
+        action="store_true",
+        help=(
+            "Check the cryptography library this install carries (a Fernet round trip and an "
+            "X.509 parse), print its version and its OpenSSL's, and exit"
+        ),
+    )
+    doctor_parser.add_argument(
         "--rebuild-routing-stats",
         action="store_true",
         help="Refold routing_stats.json from the model-call audit log and exit",
@@ -1861,6 +1869,8 @@ def main() -> None:
     elif args.command == "doctor":
         if getattr(args, "paths", False):
             _doctor_paths()
+        elif getattr(args, "crypto", False):
+            _doctor_crypto()
         elif getattr(args, "rebuild_routing_stats", False):
             _doctor_rebuild_routing_stats()
         else:
@@ -2009,6 +2019,7 @@ from personalclaw.cli_commands import (  # noqa: E402
 from personalclaw.cli_config import _config_cmd  # noqa: E402
 from personalclaw.cli_doctor import (  # noqa: E402
     _doctor,
+    _doctor_crypto,
     _doctor_paths,
     _doctor_rebuild_routing_stats,
 )

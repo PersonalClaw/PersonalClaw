@@ -8,8 +8,10 @@ it the identity of the job that built it: not what the workflow text names, but 
   npm versions it used (``--tool NAME=VERSION``, all four; an image's build names none, since the
   bases it built on are its toolchain); every image that ran (``--bases``, the provenance
   BuildKit attached to each platform, which ``tools/ci/oci_layout.py`` reads out of the layout,
-  and ``--containers``, ``docker image ls --digests`` after the job's containers ran); and what it
-  built (``--artifact``, file globs, and ``--image``).
+  and ``--containers``, ``docker image ls --digests`` after the job's containers ran); each library
+  it compiled from its locked sdist rather than installed as a wheel (``--built-from-source``, the
+  record ``tools/ci/cryptography_from_sdist.py`` writes: the sdist and wheel it built, the Rust and
+  the OpenSSL it built with); and what it built (``--artifact``, file globs, and ``--image``).
 - ``collect`` runs in the manifest job. It finds each record's own job in this run by the
   runner's name, and reads that job's set-up log from the API: the runner image GitHub reports
   there, and every action the job downloaded, nested ones included, each with the SHA it
@@ -46,6 +48,17 @@ API = "https://api.github.com"
 RECORD_VERSION = 1
 #: The tools each build names, in this order.
 TOOLS = ("python", "uv", "node", "npm")
+#: What a library built from its sdist names: what it was built from, into and with.
+FROM_SOURCE_KEYS = (
+    "package",
+    "version",
+    "sdist",
+    "wheel",
+    "wheel_sha256",
+    "rust",
+    "openssl",
+    "installed_openssl",
+)
 
 _STAMP = re.compile(r"^\ufeff?\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ")
 _COLOUR = re.compile(r"\x1b\[[0-9;]*m")
@@ -185,6 +198,7 @@ def collect(
                 ],
                 "toolchain": {tool: tools.get(tool) if not images else None for tool in TOOLS},
                 "bases": [dict(base) for base in record.get("bases") or []],
+                "built_from_source": [dict(s) for s in record.get("built_from_source") or []],
                 "artifacts": sorted([*images, *(str(a) for a in record.get("artifacts") or [])]),
             }
         )
@@ -223,6 +237,28 @@ def _bases(paths: Iterable[str], containers: str | None) -> list[dict[str, str]]
     return list(unique.values())
 
 
+def from_source(paths: Iterable[str]) -> list[dict[str, str]]:
+    """Each library the build compiled from its locked sdist, as its record names it."""
+    found: list[dict[str, str]] = []
+    for path in paths:
+        built = _json(Path(path).read_text(encoding="utf-8"), path)
+        if not isinstance(built, dict):
+            raise Refused(f"{path} is not one library built from source")
+        for key in FROM_SOURCE_KEYS:
+            if not isinstance(built.get(key), str) or not built[key].strip():
+                raise Refused(f"{path} names no {key}")
+        for key in ("sdist", "wheel_sha256"):
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", built[key]):
+                raise Refused(f"{path} names no {key} digest")
+        if built["installed_openssl"] != built["openssl"]:
+            raise Refused(
+                f"{path}: its library carries {built['installed_openssl']!r}, not the "
+                f"{built['openssl']!r} it was built against"
+            )
+        found.append({key: built[key] for key in FROM_SOURCE_KEYS})
+    return sorted(found, key=lambda s: s["package"])
+
+
 def record(
     *,
     environ: Mapping[str, str],
@@ -231,6 +267,7 @@ def record(
     tools: Sequence[str],
     bases: Sequence[str],
     containers: str | None,
+    built_from_source: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The job's own record, from its environment and arguments."""
     for key in ("RUNNER_NAME", "ImageOS", "ImageVersion"):
@@ -266,6 +303,7 @@ def record(
         "images": sorted(set(images)),
         "toolchain": {tool: named[tool] for tool in TOOLS if tool in named},
         "bases": found,
+        "built_from_source": from_source(built_from_source),
     }
 
 
@@ -352,6 +390,7 @@ def _record_command(argv: list[str]) -> int:
     parser.add_argument("--tool", action="append", default=[])
     parser.add_argument("--bases", action="append", default=[])
     parser.add_argument("--containers")
+    parser.add_argument("--built-from-source", action="append", default=[])
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", args.name):
         raise Refused(f"--name {args.name!r} is not a plain name")
@@ -362,6 +401,7 @@ def _record_command(argv: list[str]) -> int:
         tools=args.tool,
         bases=args.bases,
         containers=args.containers,
+        built_from_source=args.built_from_source,
     )
     args.out.mkdir(parents=True, exist_ok=True)
     path = args.out / f"{args.name}.json"

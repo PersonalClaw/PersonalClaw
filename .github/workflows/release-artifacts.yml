@@ -4,7 +4,7 @@
 #   · the wheel and sdist, with the wheel's SBOM and its contract;
 #   · the gateway image's dashboard smoke;
 #   · both images for both arches, with their attestations, each arch smoked from its layout;
-#   · the macOS dmg and the Linux AppImage and deb;
+#   · the macOS dmgs, one for Apple silicon and one for Intel, and the Linux AppImage and deb;
 # each smoked as the release smokes it. Then one digest-bound manifest of them all
 # (tools/ci/release_manifest.py), with what built each as it ran (tools/ci/build_identity.py),
 # written and verified, with a planted mismatch that must fail.
@@ -518,13 +518,21 @@ jobs:
     # step and docs/guides/desktop.md must say so — shipping it silently would be the
     # dishonest version of this job.
     #
-    # ARM64 ONLY, and stated rather than implied. `macos-26` is Apple silicon, and the
-    # bundled backend is a PyInstaller binary, which CANNOT be cross-compiled — so this dmg
-    # runs on Apple silicon only. Intel coverage needs a real x86_64 runner (macos-13) as a
-    # second leg; it is deliberately not claimed here until a job proves it, exactly as
-    # desktop-linux declines to claim arm64.
-    runs-on: macos-26
-    timeout-minutes: 15
+    # ONE DMG PER ARCH, EACH BUILT ON ITS OWN. The bundled backend is a PyInstaller binary,
+    # which CANNOT be cross-compiled: its Python and every native module in it are the build
+    # host's. So each leg builds on a runner of its own arch, `macos-26` (Apple silicon) and
+    # `macos-26-intel`, and names its dmg for it (`PersonalClaw-<version>-arm64.dmg`,
+    # `PersonalClaw-<version>-x64.dmg`). One universal dmg would be twice the download, and
+    # its x86_64 shell would still carry the build host's arm64 backend.
+    name: desktop-mac (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          # `lipo` is what `lipo -archs` must print for the leg's shell and backend: the one arch.
+          - { arch: arm64, runner: macos-26, lipo: arm64 }
+          - { arch: x64, runner: macos-26-intel, lipo: x86_64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -546,13 +554,32 @@ jobs:
         # Same reasoning as desktop-linux: the spec collect_submodules()s
         # openai/anthropic/slack_sdk, which are extras and must be importable here, the
         # venv is synced from uv.lock, and PyInstaller is pinned to what desktop-linux pins.
+        # The Intel leg syncs everything but cryptography, which the next step builds.
+        env:
+          FROM_SOURCE: ${{ matrix.arch == 'x64' && 'cryptography' || '' }}
         run: |
-          uv sync --locked --no-editable --extra anthropic --extra openai --extra slack
+          set -euo pipefail
+          uv sync --locked --no-editable --extra anthropic --extra openai --extra slack ${FROM_SOURCE:+--no-install-package "$FROM_SOURCE"}
           uv pip install --python .venv/bin/python pyinstaller==6.22.3 pyinstaller-hooks-contrib==2026.8
+      - name: Build cryptography from its locked sdist (Intel)
+        # cryptography ships no Intel-Mac wheel past 48.0.1, so this leg builds the release uv.lock
+        # pins from its sdist, checked against the lock's sha256 and size, with the runner's
+        # OpenSSL 3 linked statically: the backend then needs no OpenSSL dylib, which an Intel Mac
+        # without Homebrew does not have. The installed library must be the one built, carrying
+        # the OpenSSL it was built against (tools/ci/cryptography_from_sdist.py); the record goes
+        # into this leg's build record.
+        if: matrix.arch == 'x64'
+        run: |
+          set -euo pipefail
+          export OPENSSL_STATIC=1 OPENSSL_DIR="$(brew --prefix openssl@3)"
+          mkdir -p built-from-source
+          python3 -I tools/ci/cryptography_from_sdist.py build --python .venv/bin/python --out built-from-source/wheelhouse --record built-from-source/cryptography.json
+          uv pip install --python .venv/bin/python --no-deps built-from-source/wheelhouse/cryptography-*.whl
+          python3 -I tools/ci/cryptography_from_sdist.py installed --python .venv/bin/python --out built-from-source/wheelhouse --record built-from-source/cryptography.json
       - name: Build the dmg (ad-hoc signed, not notarized)
         # make desktop-dist = web-build (SPA) -> pyinstaller (the bundled
         # personalclaw-backend the shell spawns) -> stage into desktop/backend-dist
-        # -> electron-builder --mac (dmg per desktop/package.json, whose afterPack hook
+        # -> electron-builder --mac for this host's arch (dmg per desktop/package.json, whose afterPack hook
         # ad-hoc re-signs the packed bundle before the dmg is assembled). The target sets
         # CSC_IDENTITY_AUTO_DISCOVERY=false and then verifies the built .app is ad-hoc
         # signed with a VALID seal and no third-party authority — so a runner that ever
@@ -560,11 +587,12 @@ jobs:
         # linker seal, fails here instead of shipping an uninstallable dmg.
         run: make desktop-dist
       - name: Smoke the artifact (release-blocking)
-        # The Electron shell is NOT launched (no display, same call as desktop-linux).
-        # What IS executed for real is the bundled backend, from inside the mounted dmg,
-        # on this OS/arch — a bundle that packages but cannot start must fail the release.
-        # Locally built files carry no com.apple.quarantine xattr, so Gatekeeper does not
-        # block this exec; that is why the smoke can run at all on an unsigned build.
+        # The dmg is this leg's arch alone, and so is what runs in it: `lipo -archs` lists exactly
+        # one arch for the shell's own binary and for the bundled backend. Then both run, on this
+        # runner's own CPU, from inside the mounted dmg, as a user's copy runs: a bundle that
+        # packages but cannot start must fail the release. Locally built files carry no
+        # com.apple.quarantine xattr, so Gatekeeper does not block them; that is why the smoke can
+        # run at all on an unsigned build.
         #
         # 🔴 `"$BACKEND" --version` USED TO BE THE WHOLE EXECUTION ASSERTION, and argparse's
         # `--version` prints and exits before the runner catalogue is read, before any
@@ -573,12 +601,25 @@ jobs:
         # single extension. `scripts/smoke_backend_bundle.sh` boots the packaged gateway and
         # drives the surfaces that force those reads; it is a script, not inline shell,
         # because `desktop-linux` needs the identical assertion and two copies drift.
+        #
+        # The shell starts last, with desktop-smoke's own smoke (desktop/test/smoke/shellSmoke.js)
+        # in `--first-run`: its window must reach the gateway its bundled backend started, with
+        # the desktop bridge on the page and nothing thrown. A first run draws no chat composer
+        # until a provider is set up, so the chat steps stay desktop-smoke's. The app stops its
+        # own gateway when it quits, so nothing may still run from the mount after it.
+        env:
+          ARCH: ${{ matrix.arch }}
+          LIPO: ${{ matrix.lipo }}
         run: |
           set -euo pipefail
           cd desktop/dist
           ls -la
-          DMG=$(ls -1 *.dmg | head -1)
-          test -n "$DMG"
+          DMGS=(*.dmg)
+          if [ "${#DMGS[@]}" -ne 1 ] || [[ "${DMGS[0]}" != *-"$ARCH".dmg ]]; then
+            echo "::error::desktop/dist holds ${DMGS[*]}, not one dmg named for $ARCH"
+            exit 1
+          fi
+          DMG=${DMGS[0]}
           MNT=$(mktemp -d)
           hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -quiet
           trap 'hdiutil detach "$MNT" -quiet || true' EXIT
@@ -602,27 +643,81 @@ jobs:
           sh "$GITHUB_WORKSPACE/scripts/verify_macos_app_signature.sh" "$APP"
           BACKEND="$APP/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend"
           test -x "$BACKEND"
+          for bin in "$APP/Contents/MacOS/PersonalClaw" "$BACKEND"; do
+            got=$(lipo -archs "$bin")
+            if [ "$got" != "$LIPO" ]; then
+              echo "::error::$bin is built for $got, not $LIPO alone"
+              exit 1
+            fi
+            echo "$bin: $got"
+          done
+          # Every Mach-O in the backend links only /usr/lib, /System and the bundle's own files, and
+          # cryptography's Rust extension carries OpenSSL inside it rather than linking a dylib.
+          BUNDLE=$(dirname "$BACKEND")
+          python3 -I "$GITHUB_WORKSPACE/tools/ci/macho_links.py" "$BUNDLE" --executable "$BACKEND"
+          RUST_EXTENSIONS=$(find "$BUNDLE" -path '*/cryptography/hazmat/bindings/_rust*.so')
+          if [ "$(printf '%s\n' "$RUST_EXTENSIONS" | grep -c .)" -ne 1 ]; then
+            echo "::error::the backend holds not one cryptography Rust extension: $RUST_EXTENSIONS"
+            exit 1
+          fi
+          if otool -L "$RUST_EXTENSIONS" | grep -E 'lib(ssl|crypto)[.0-9]*\.dylib'; then
+            echo "::error::cryptography links OpenSSL as a dylib, which an Intel Mac may not have"
+            exit 1
+          fi
           sh "$GITHUB_WORKSPACE/scripts/smoke_backend_bundle.sh" "$BACKEND"
-          # Name the arch in the log so an arm64-only dmg is never mistaken for universal.
-          echo "built arch: $(uname -m)"
+          # cryptography works from the dmg with no library path of the runner's: a Fernet round
+          # trip and an X.509 parse, and on Intel the OpenSSL it carries is the one it was built
+          # against.
+          CRYPTO=$(env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH -u DYLD_INSERT_LIBRARIES "$BACKEND" doctor --crypto)
+          printf '%s\n' "$CRYPTO"
+          if [ "$ARCH" = x64 ]; then
+            BUILT=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["openssl"])' "$GITHUB_WORKSPACE/built-from-source/cryptography.json")
+            if ! printf '%s\n' "$CRYPTO" | grep -qxF "$(printf 'openssl\t%s' "$BUILT")"; then
+              echo "::error::the backend's cryptography does not carry $BUILT, the OpenSSL it was built against"
+              exit 1
+            fi
+          fi
+          node "$GITHUB_WORKSPACE/desktop/test/smoke/shellSmoke.js" "$APP/Contents/MacOS/PersonalClaw" --first-run
+          if pgrep -fl "$MNT/"; then
+            echo "::error::a process still runs from the dmg after the app quit"
+            exit 1
+          fi
+      - name: A Homebrew-linked library fails the link check (its planted control)
+        # The check above must be seen to bite: Homebrew's libssl links Homebrew's libcrypto by its
+        # Homebrew path, the library an Intel Mac without Homebrew does not have.
+        run: |
+          set -euo pipefail
+          PLANT=$(mktemp -d)
+          cp "$(brew --prefix openssl@3)/lib/libssl.3.dylib" "$PLANT/"
+          if python3 -I tools/ci/macho_links.py "$PLANT" --executable "$PLANT/libssl.3.dylib" > "$RUNNER_TEMP/plant.out"; then
+            echo "::error::the link check passed a library that links Homebrew's libcrypto"
+            exit 1
+          fi
+          sed 's/^::error::/planted, and refused: /' "$RUNNER_TEMP/plant.out"
+          grep -q 'libcrypto.3.dylib, which is outside it' "$RUNNER_TEMP/plant.out"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: desktop-mac
+          name: desktop-mac-${{ matrix.arch }}
           path: desktop/dist/*.dmg
+          if-no-files-found: error
           retention-days: ${{ inputs.retention-days }}
       - name: Record what built it
         # The runner, the toolchain and what this job built, for the release manifest, which adds
-        # the actions this job's own set-up log shows (tools/ci/build_identity.py).
+        # the actions this job's own set-up log shows (tools/ci/build_identity.py). The Intel leg
+        # also names the cryptography it built from source, with the Rust and the OpenSSL it used.
+        env:
+          FROM_SOURCE: ${{ matrix.arch == 'x64' && 'built-from-source/cryptography.json' || '' }}
         run: >-
-          python3 -I tools/ci/build_identity.py record --out build-record --name desktop-mac
+          python3 -I tools/ci/build_identity.py record --out build-record --name desktop-mac-${{ matrix.arch }}
           --artifact 'desktop/dist/*.dmg'
           --tool "python=$(.venv/bin/python -c 'import platform; print(platform.python_version())')"
           --tool "uv=$(uv --version)" --tool "node=$(node --version)" --tool "npm=$(npm --version)"
+          ${FROM_SOURCE:+--built-from-source "$FROM_SOURCE"}
       - name: Upload the build record
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: build-record-desktop-mac
-          path: build-record/desktop-mac.json
+          name: build-record-desktop-mac-${{ matrix.arch }}
+          path: build-record/desktop-mac-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: ${{ inputs.retention-days }}
 
@@ -630,7 +725,7 @@ jobs:
     # Linux desktop shell — UNSIGNED AppImage + .deb (the Linux target ships now;
     # Windows stays deferred — the native port is a no-go
     # per docs/research/windows-native-audit.md:302 and no Windows signing
-    # secrets exist). The macOS dmg is built by `desktop-mac` above and is also
+    # secrets exist). The macOS dmgs are built by `desktop-mac` above and are also
     # unsigned, on purpose; the difference is that Gatekeeper consumes a
     # signature and Linux has no equivalent gate, so here
     # "unsigned" is the platform norm, not a downgrade — docs/guides/desktop.md says
@@ -760,7 +855,11 @@ jobs:
           A="$RUNNER_TEMP/artifacts"
           mkdir staged indexes
           cp "$A"/dist/*.whl "$A"/dist/*.tar.gz staged/
-          cp "$A"/desktop-linux/*.AppImage "$A"/desktop-linux/*.deb "$A"/desktop-mac/*.dmg staged/
+          cp "$A"/desktop-linux/*.AppImage "$A"/desktop-linux/*.deb "$A"/desktop-mac-*/*.dmg staged/
+          # Every desktop-mac leg's dmg, each named for its arch.
+          for arch in arm64 x64; do
+            ls staged/PersonalClaw-*-"$arch".dmg
+          done
           cp "$A"/wheel-sbom/*.spdx.json "$A"/image-sbom-gateway/*.spdx.json "$A"/image-sbom-web/*.spdx.json staged/
           cp "$A"/image-index-gateway/*.index.json "$A"/image-index-web/*.index.json indexes/
           mkdir records

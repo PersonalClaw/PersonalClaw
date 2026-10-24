@@ -169,7 +169,7 @@ means a design boundary we expect to still hold at 1.0**, not a backlog item:
 | need accounts for more than one person | **never** | single-user by construction — *"no hub in core, ever"* |
 | want a native phone app | **no** | the phone is the dashboard installed as a PWA, not a store app |
 | need a native Windows install | **no** | WSL2 or Docker Desktop only; a native port was audited and found no-go |
-| want a signed, auto-updating desktop app | **no** | each release's Apple-silicon dmg and x86-64 Linux AppImage/deb carry no publisher's signature (the dmg is ad-hoc signed, not notarized), and there is no update channel |
+| want a signed, auto-updating desktop app | **no** | each release's macOS dmgs (Apple silicon and Intel) and x86-64 Linux AppImage/deb carry no publisher's signature (the dmgs are ad-hoc signed, not notarized), and there is no update channel |
 | want it to live in a chat app other than Slack, Telegram, Discord or email | **no** | those four are channel apps in the Store; any other is a channel app you would build |
 | expect web search to work out of the box | **no** | no search provider ships bundled — it is a seam you fill |
 | plan to install apps you do not trust | **no** | the platform *vets* what you install; it does not confine it after |
@@ -323,9 +323,9 @@ its own, and it can be switched off — see [Privacy](#privacy). Per-platform de
 
 > **Tech stack:** Python 3.12–3.13 · aiohttp gateway · React + Vite SPA · SQLite · MIT.
 > **Run modes:** local process · Docker Compose · systemd/launchd service. (An Electron
-> desktop shell is experimental: every release attaches an Apple-silicon dmg, ad-hoc signed
-> and not notarized, and an x86-64 Linux AppImage and deb, unsigned, built by CI. It has no
-> auto-update channel.)
+> desktop shell is experimental: every release attaches a macOS dmg for Apple silicon and one
+> for Intel, ad-hoc signed and not notarized, and an x86-64 Linux AppImage and deb, unsigned,
+> built by CI. It has no auto-update channel.)
 
 **Platform support.** Every row names what proves it — `CI:<job>` is a workflow job,
 `checklist:<section>` is a documented manual walkthrough, `community` is user-reported
@@ -337,7 +337,7 @@ and not verified by us. Details and the `[models]`-extra per-arch reality:
 | Linux x86-64 | first-class | `CI:ci/test (ubuntu-24.04)` + `CI:breadth/ubuntu (ubuntu-24.04)` + release smoke |
 | Linux arm64 | first-class | `CI:breadth/arm (ubuntu-24.04-arm)` + release smoke |
 | macOS Apple silicon | first-class | `CI:ci/test-macos (macos-26)` + `CI:breadth/macos (macos-26)` |
-| macOS Intel | best-effort | `community` |
+| macOS Intel | best-effort | `CI:release/desktop-mac smoke (x64)` boots the bundled backend on `macos-26-intel`; the test suite runs on Apple silicon only |
 | Windows via WSL2 | supported | `checklist:Windows via WSL2` — [Platforms](docs/guides/platforms.md) |
 | Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` — [Platforms](docs/guides/platforms.md) |
 | Windows native | not supported | — |

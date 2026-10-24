@@ -1,6 +1,6 @@
 # Release — triggered by a version tag (v*). Builds the ONE artifact set every install channel
 # projects from (wheel with prebuilt web/dist + multi-arch images + the unsigned Linux desktop
-# AppImage/deb + the unsigned macOS dmg) through release-artifacts.yml, which also smokes each and
+# AppImage/deb + the unsigned macOS dmgs) through release-artifacts.yml, which also smokes each and
 # writes their digest-bound manifest, and only then publishes: to PyPI via Trusted Publishing (no
 # stored tokens), the images to GHCR from the layouts that were smoked, the GitHub Release, and
 # provenance. Publish jobs sit behind the `release` / `release-client` environments
@@ -220,7 +220,7 @@ jobs:
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          # Pattern, not a literal name: `desktop-linux` AND `desktop-mac` both land here so
+          # Pattern, not a literal name: `desktop-linux` AND each `desktop-mac-<arch>` land here so
           # the `gh release create ... desktop-dist/*` glob below attaches every desktop
           # installer. Mirrors the image-sbom step above. A literal name silently cut the
           # release without the dmg when desktop-mac was added.

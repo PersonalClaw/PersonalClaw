@@ -12,6 +12,15 @@
 "24" = 2028-04-30
 "26" = 2029-04-30
 
+# The oldest OpenSSL the Intel Mac app's cryptography may be built against. cryptography ships no
+# Intel-Mac wheel past 48.0.1, so the release's x64 desktop-mac leg builds the locked release from
+# its sdist, linked statically to the runner image's openssl@3 (tools/ci/cryptography_from_sdist.py),
+# and refuses an OpenSSL older than this. Raise it when an OpenSSL advisory names a release at or
+# above it. Matching that OpenSSL against advisories is on the Backlog, with re-checking it on each
+# image bump.
+[cryptography_from_source]
+openssl_minimum = "3.6.3"
+
 # Audited writes. Every write permission a job holds, its own or inherited from the top of its
 # workflow, must be listed here with the steps that use it and why. So must every actions/checkout
 # that keeps its credentials (permission = "persist-credentials"); there are none. A step is

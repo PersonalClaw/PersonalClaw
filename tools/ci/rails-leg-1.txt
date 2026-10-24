@@ -53,6 +53,7 @@ tests/rails/test_control_bridge_tree.py
 tests/rails/test_dependency_bounds_tree.py
 tests/rails/test_deployment_commands_parse_tree.py
 tests/rails/test_desktop_macos_signature_gate_tree.py
+tests/rails/test_each_mac_dmg_is_its_own_arch_tree.py
 tests/rails/test_docs_lint_baseline_tree.py
 tests/rails/test_e2e_gateway_home_is_the_runs_tree.py
 tests/rails/test_e2e_home_seed_matches_the_boot_tree.py

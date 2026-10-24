@@ -5,7 +5,7 @@
 # It calls release-artifacts.yml, the build half of release.yml, as the tag the tree's own
 # version names (pyproject.toml's `version`, as vX.Y.Z), so every job reads the version a release
 # of this tree would. It builds the wheel and sdist with their SBOM, both images for both arches
-# with their attestations to an OCI layout, the macOS dmg and the Linux AppImage and deb, smokes
+# with their attestations to an OCI layout, the two macOS dmgs and the Linux AppImage and deb, smokes
 # each as the release does, and writes and verifies one digest-bound manifest of them all (#3911
 # consumes it). Everything goes up only as a workflow artifact kept 3 days.
 #

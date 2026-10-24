@@ -8,7 +8,7 @@ const { PassThrough } = require("node:stream");
 const asar = require("@electron/asar");
 
 const { stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
-const { DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, carriedOut, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
+const { DEVTOOLS_SWITCH, LOOPBACK_PAGE, MAIN_ERROR, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
 const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, plantedCopy, shellSources } = require("./smoke/packedApp");
 
 // ── The packed shell's smoke, its parts (#3942) ───────────────────────────────────────────────
@@ -106,6 +106,20 @@ describe("a link the smoke hands the app (#3827)", () => {
     assert.deepEqual(linkLaunchArgs(null, "/tmp/u", "personalclaw://settings"), ["--user-data-dir=/tmp/u", "personalclaw://settings"]);
     assert.deepEqual(linkLaunchArgs("/src/desktop", "/tmp/u", "personalclaw://settings"), ["/src/desktop", "--user-data-dir=/tmp/u", "personalclaw://settings"]);
     assert.ok(!linkLaunchArgs(null, "/tmp/u", "x").includes(DEVTOOLS_SWITCH), "the second launch closes nothing the first one's pipe needs");
+  });
+});
+
+describe("the command line", () => {
+  it("runs the whole smoke unless told the app is on its first run, as a release's own is", () => {
+    const desktopSmoke = cliOptions(["app/personalclaw", "--gateway-pid-file", "gateway.pid", "--timeout-ms", "9000"]);
+    assert.equal(desktopSmoke.executable, path.resolve("app/personalclaw"));
+    assert.equal(desktopSmoke.gatewayPidFile, path.resolve("gateway.pid"));
+    assert.equal(desktopSmoke.timeoutMs, 9000);
+    assert.equal(desktopSmoke.firstRun, false, "desktop-smoke's run checks the chat and the links");
+    const release = cliOptions(["/Volumes/x/PersonalClaw.app/Contents/MacOS/PersonalClaw", "--first-run"]);
+    assert.equal(release.firstRun, true);
+    assert.equal(release.gatewayPidFile, null, "the shipped backend leaves no pid file: the app stops it");
+    assert.equal(cliOptions([]).executable, null);
   });
 });
 

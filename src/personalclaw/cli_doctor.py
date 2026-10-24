@@ -282,6 +282,78 @@ def _doctor_paths() -> None:
         print(f"{label}\t{path}")
 
 
+def _doctor_crypto() -> None:
+    """Check the cryptography library this install carries, as ``key<TAB>value`` lines.
+
+    A Fernet round trip (AES and HMAC, through the OpenSSL it carries), and an X.509 certificate
+    made, written as PEM and parsed back (its own ASN.1 reader), after the versions of
+    cryptography and of that OpenSSL. Any failure is named on its line and exits 1.
+
+    No Intel-Mac wheel of cryptography exists past 48.0.1, so the Intel Mac app builds the locked
+    release from its sdist, statically linked to the build runner's OpenSSL, and the release's
+    smoke runs this from inside the mounted dmg: a build like that can package cleanly and still
+    fail the first time it runs.
+    """
+    try:
+        import datetime
+
+        import cryptography
+        from cryptography import x509
+        from cryptography.fernet import Fernet
+        from cryptography.hazmat.backends.openssl.backend import backend
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.serialization import Encoding
+        from cryptography.x509.oid import NameOID
+    except Exception as exc:  # noqa: BLE001 - a library that cannot load is what this reports
+        print(f"cryptography\tFAILED: {exc}")
+        raise SystemExit(1) from None
+    print(f"cryptography\t{cryptography.__version__}")
+    print(f"openssl\t{backend.openssl_version_text()}")
+
+    def fernet() -> str | None:
+        message = b"personalclaw doctor --crypto"
+        box = Fernet(Fernet.generate_key())
+        return (
+            None
+            if box.decrypt(box.encrypt(message)) == message
+            else "the round trip came back changed"
+        )
+
+    def certificate() -> str | None:
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "personalclaw doctor")])
+        now = datetime.datetime.now(datetime.timezone.utc)
+        made = (
+            x509.CertificateBuilder()
+            .subject_name(name)
+            .issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + datetime.timedelta(days=1))
+            .sign(key, hashes.SHA256())
+        )
+        parsed = x509.load_pem_x509_certificate(made.public_bytes(Encoding.PEM))
+        parsed.verify_directly_issued_by(parsed)
+        if parsed.subject != name or parsed.fingerprint(hashes.SHA256()) != made.fingerprint(
+            hashes.SHA256()
+        ):
+            return "the certificate parsed back is not the one written"
+        return None
+
+    failed = False
+    for label, check in (("fernet", fernet), ("x509", certificate)):
+        try:
+            problem = check()
+        except Exception as exc:  # noqa: BLE001 - each check's failure is reported, not raised
+            problem = f"{type(exc).__name__}: {exc}"
+        print(f"{label}\tFAILED: {problem}" if problem else f"{label}\tok")
+        failed = failed or problem is not None
+    if failed:
+        raise SystemExit(1)
+
+
 def _doctor_rebuild_routing_stats() -> None:
     """Refold ``routing_stats.json`` from the model-call audit — the rebuild path.
 

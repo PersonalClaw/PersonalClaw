@@ -8,6 +8,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **Every release ships a Mac dmg for Intel beside the Apple-silicon one: `PersonalClaw-<version>-x64.dmg`, built and started on an Intel runner, with its own Intel backend. cryptography publishes no Intel-Mac build since 49.0.0, so the Intel backend carries one CI compiles from the locked source, statically linked to the runner's OpenSSL (3.6.3 at this writing; each release's build record names its own).**
+- **`personalclaw doctor --crypto` checks the cryptography library an install carries: a Fernet round trip and an X.509 certificate made and parsed back, with its version and its OpenSSL's.**
+
 ## [0.2.7] — 2026-10-23
 
 A polish release before 0.3.0. A running turn's status now sits at the bottom of the chat, just above the composer. The code map finds definitions again on a machine that had not fetched its grammars, four controls that were hard to press on a phone are 44 px targets, Back from the code cockpit lands on a clean page, and a new loop's composer fits one row at 600 px. The gateway image, its agent CLIs and the desktop app take security fixes. No upgrade step is needed.

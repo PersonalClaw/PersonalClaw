@@ -48,6 +48,7 @@ def _record(**changes: object) -> dict[str, object]:
         "images": [],
         "toolchain": {"python": "3.12.15", "uv": "uv 0.13.1", "node": "v24.22.0", "npm": "11.6.2"},
         "bases": [],
+        "built_from_source": [],
     }
     record.update(changes)
     return record
@@ -306,3 +307,61 @@ def test_collect_reads_the_runs_jobs_and_logs_through_the_api(
     assert [b["job"] for b in json.loads(out.read_text())] == ["artifacts / build"]
     monkeypatch.delenv("RUNS_TOKEN")
     assert bi.main([*argv, "--run-id", "42", "--out", str(out)]) == 2
+
+
+# ── a library built from source ────────────────────────────────────────────────────────────────
+
+FROM_SOURCE = {
+    "package": "cryptography",
+    "version": "50.0.0",
+    "sdist": "sha256:" + "c" * 64,
+    "wheel": "cryptography-50.0.0-cp311-abi3-macosx_10_9_x86_64.whl",
+    "wheel_sha256": "sha256:" + "d" * 64,
+    "rust": "rustc 1.98.0 (abc 2026-09-01)",
+    "openssl": "OpenSSL 3.6.3 9 Jun 2026",
+    "installed_openssl": "OpenSSL 3.6.3 9 Jun 2026",
+}
+
+
+def _record_with_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: object
+) -> dict[str, object]:
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "PersonalClaw-0.2.6-x64.dmg").write_bytes(b"")
+    (tmp_path / "from-source.json").write_text(json.dumps(source))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RUNNER_NAME", "GitHub Actions 1000131001")
+    monkeypatch.setenv("ImageOS", "macos26")
+    monkeypatch.setenv("ImageVersion", "20261013.0424.1")
+    argv = ["record", "--out", "out", "--name", "desktop-mac-x64", "--artifact", "dist/*"]
+    argv += ["--tool", "python=3.12.15", "--tool", "uv=uv 0.13.1"]
+    argv += ["--tool", "node=v24.22.0", "--tool", "npm=11.6.2"]
+    argv += ["--built-from-source", "from-source.json"]
+    assert bi.main(argv) == 0
+    return json.loads((tmp_path / "out" / "desktop-mac-x64.json").read_text())
+
+
+def test_a_library_the_build_compiled_from_its_sdist_is_recorded_and_collected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = _record_with_source(tmp_path, monkeypatch, FROM_SOURCE)
+    assert record["built_from_source"] == [FROM_SOURCE]
+    (build,) = bi.collect([record], JOBS, _logs())
+    assert build["built_from_source"] == [FROM_SOURCE]
+
+
+@pytest.mark.parametrize(
+    ("source", "says"),
+    [
+        ({k: v for k, v in FROM_SOURCE.items() if k != "rust"}, "names no rust"),
+        ({**FROM_SOURCE, "wheel_sha256": "d" * 64}, "names no wheel_sha256 digest"),
+        ({**FROM_SOURCE, "installed_openssl": "OpenSSL 4.0.1"}, "not the 'OpenSSL 3.6.3"),
+        ([FROM_SOURCE], "is not one library built from source"),
+    ],
+)
+def test_a_library_built_from_source_that_names_too_little_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, source: object, says: str
+) -> None:
+    with pytest.raises(AssertionError):
+        _record_with_source(tmp_path, monkeypatch, source)
+    assert says in capsys.readouterr().err
