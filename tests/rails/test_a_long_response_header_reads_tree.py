@@ -6,11 +6,8 @@ It runs once per CI run, in the rails job. The module named above says what it h
 from __future__ import annotations
 
 import ast
-from pathlib import Path
 
-import personalclaw
-
-PACKAGE = Path(personalclaw.__file__).parent
+import source_index
 
 
 def test_every_aiohttp_session_takes_the_header_limits():
@@ -18,11 +15,11 @@ def test_every_aiohttp_session_takes_the_header_limits():
     again."""
     sessions: list[str] = []
     missing: list[str] = []
-    for path in sorted(PACKAGE.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
+    for path in source_index.package_files():
+        source = source_index.text(path)
         if "ClientSession(" not in source:
             continue
-        for node in ast.walk(ast.parse(source)):
+        for node in ast.walk(source_index.tree(path)):
             func = node.func if isinstance(node, ast.Call) else None
             if not (
                 isinstance(func, ast.Attribute)
@@ -31,7 +28,7 @@ def test_every_aiohttp_session_takes_the_header_limits():
                 and func.value.id == "aiohttp"
             ):
                 continue
-            where = f"{path.relative_to(PACKAGE)}:{node.lineno}"
+            where = f"{source_index.rel(path)}:{node.lineno}"
             sessions.append(where)
             named = {k.arg: ast.get_source_segment(source, k.value) or "" for k in node.keywords}
             if any(
