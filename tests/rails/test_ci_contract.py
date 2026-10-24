@@ -7611,8 +7611,12 @@ class _Mapped:
     reuse: str = "never"
 
 
-#: A breadth.yml job is named ``breadth.yml:<id>`` in this table; a bare name is ci.yml's.
+#: A breadth.yml job is named ``breadth.yml:<id>`` in this table, and the single-container
+#: workflow's ``docker-single-container.yml:<id>``; a bare name is ci.yml's.
 _IN_BREADTH = "breadth.yml:"
+_IN_DOCKER = "docker-single-container.yml:"
+#: Each workflow this row maps entries to, by the prefix its jobs carry in this table.
+_MAPPED_PREFIXES = ("", _IN_BREADTH, _IN_DOCKER)
 
 _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "static": _Mapped(("lint", "harness"), ("change", "merge")),
@@ -7663,6 +7667,9 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "browse-live": _Mapped(("browse-live",), ("merge",), security="security", live=True),
     "apps-contract": _Mapped(("apps-contract",), ("merge",)),
     "audit": _Mapped(("audit",), ("merge",), live=True),
+    # The gateway image's build and smoke (#3917): the single-container workflow's job until the
+    # flip retires it. Its Dockerfile's apt installs are pinned by no lock, so it is never reused.
+    "image": _Mapped((_IN_DOCKER + "single-container",), ("merge",)),
 }
 
 #: ci.yml's jobs that decide what runs or gather what ran, and validate nothing themselves.
@@ -7676,20 +7683,29 @@ _ORCHESTRATION = frozenset(
         # breadth.yml's: the earlier record and the shard plan, and the run's report.
         "breadth.yml:freshness",
         "breadth.yml:report",
+        # The single-container workflow's: did a pull request's run already smoke this tree.
+        _IN_DOCKER + "tree-check",
     }
 )
 
 
+def _prefix_of(key: str) -> str:
+    """The prefix of the workflow a job key of this table is in: empty for ci.yml's."""
+    return next((p for p in _MAPPED_PREFIXES if p and key.startswith(p)), "")
+
+
+def _workflow_name(key: str) -> str:
+    return _prefix_of(key)[:-1] or "ci.yml"
+
+
 def _where(key: str) -> str:
     """A job key of this table as a reader names it: ``ci.yml job X`` or ``breadth.yml job X``."""
-    if key.startswith(_IN_BREADTH):
-        return f"breadth.yml job {key[len(_IN_BREADTH):]}"
-    return f"ci.yml job {key}"
+    return f"{_workflow_name(key)} job {key[len(_prefix_of(key)):]}"
 
 
 def _owners(keys: Sequence[str]) -> str:
     """The workflows the keys are in, as a possessive: ``ci.yml's``, ``breadth.yml's``, or both."""
-    found = sorted({"breadth.yml" if k.startswith(_IN_BREADTH) else "ci.yml" for k in keys})
+    found = sorted({_workflow_name(k) for k in keys})
     return " and ".join(f"{w}'s" for w in reversed(found)) if len(found) > 1 else f"{found[0]}'s"
 
 
@@ -8271,7 +8287,7 @@ def _catalogue_check(root: Path) -> list[str]:
     except catalogue.CatalogueError as exc:
         return exc.problems
     jobs: dict[str, Any] = {}
-    for rel, prefix in ((_CI, ""), (_BREADTH, _IN_BREADTH)):
+    for rel, prefix in ((_CI, ""), (_BREADTH, _IN_BREADTH), (_DOCKER, _IN_DOCKER)):
         workflow = yaml.safe_load((root / rel).read_text(encoding="utf-8")) or {}
         jobs.update({prefix + str(k): v for k, v in (workflow.get("jobs") or {}).items()})
     actions = local_actions.actions_at(root)
@@ -8302,13 +8318,13 @@ def _catalogue_check(root: Path) -> list[str]:
             continue
         missing = [c for c in entry.ci_jobs if c not in jobs]
         for ci_job in missing:
-            where = "breadth.yml" if ci_job.startswith(_IN_BREADTH) else "ci.yml"
+            where = _workflow_name(ci_job)
             bad.append(f"{job.id}: maps to {_where(ci_job)}, which {where} does not have")
         if missing:
             continue
         # An entry that runs in both workflows holds each one's run: lines on its own.
-        for in_breadth in (False, True):
-            own = [c for c in entry.ci_jobs if c.startswith(_IN_BREADTH) is in_breadth]
+        for prefix in _MAPPED_PREFIXES:
+            own = [c for c in entry.ci_jobs if _prefix_of(c) == prefix]
             if own:
                 _claim(job, [line for c in own for line in lines[c]], claims, bad)
         _installs(job, [jobs[c] for c in entry.ci_jobs], bad)
@@ -8348,7 +8364,7 @@ def _catalogue_scaffold(root: Path) -> None:
     """The tree's own ci.yml and catalogue, which agree, the scripts its script entries run, and
     a marked stand-in for each module the tree marks security, so the census finds what the
     entries' steps run."""
-    for rel in (_CI, _BREADTH, catalogue.CATALOGUE, _SETUP_ACTION):
+    for rel in (_CI, _BREADTH, _DOCKER, catalogue.CATALOGUE, _SETUP_ACTION):
         _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
     for job in catalogue.read(REPO).jobs:
         for rel in job.script or ():
@@ -8400,6 +8416,14 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
     check=_catalogue_check,
     scaffold=_catalogue_scaffold,
     controls=(
+        # The image entry's step is the single-container workflow's smoke line (#3917).
+        _plant(
+            "the single-container smoke given an argument its catalogue entry does not take",
+            _DOCKER,
+            'smoke.py --image "$IMAGE"',
+            'smoke.py --image "$IMAGE" --readme README.md',
+            expect="docker-single-container.yml job single-container runs",
+        ),
         _plant_files(
             "collection-parses spelling it --co, which runs no test, passes",
             _collect_step(" --co", ' "--co",'),
@@ -12367,9 +12391,9 @@ _TREE_CHECK_JOB = "tree-check"
 #: The external input of an entry that reads the run's one shard plan, which `shard-plan` makes.
 _SHARD_HISTORY = "shard-history"
 #: The expensive tier, which runs once per candidate (#3915): the suite's shards, the browser
-#: run and the package. The image joins it when it is a catalogue job.
+#: run, the package and the gateway image's build and smoke.
 _EXPENSIVE = frozenset(
-    {"python-suite", "python-suite-macos", "e2e", "e2e-shard", "e2e-stateful", "package"}
+    {"python-suite", "python-suite-macos", "e2e", "e2e-shard", "e2e-stateful", "package", "image"}
 )
 
 _RUNNER_IDENTITY_LINE = (

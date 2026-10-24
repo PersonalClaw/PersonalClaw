@@ -203,6 +203,8 @@ _INPUT_ROWS = {
     "web-build": ("web/src/App.tsx", None),
     "desktop-smoke": ("desktop/main.js", "src/personalclaw/app.py"),
     "package": ("setup.cfg", None),
+    # A backend-only change boots the image it ships (#3917).
+    "image": ("src/personalclaw/app.py", "docs/vision.md"),
     "e2e": ("web/src/App.tsx", "docs/vision.md"),
     "e2e-shard": ("web/src/App.tsx", "docs/vision.md"),
     "e2e-stateful": ("web/src/App.tsx", "docs/vision.md"),
