@@ -45,7 +45,7 @@ Two consequences worth knowing before you start:
   environments. Nothing reaches PyPI until you approve both in the run's UI.
 - **Publishing is idempotent.** Both PyPI jobs use `skip-existing`, so re-running
   a release whose version is already published no-ops instead of failing.
-- **A re-run writes nothing it did not build.** Before `pypi`, `images` and `notes` write, each
+- **A re-run writes nothing it did not build.** Before `pypi`, `pypi-client`, `images` and `notes` write, each
   reads what its target already holds (PyPI's files for the version, the registry's index under
   this release's own tag, the tag's Release's assets) and holds it against the run's approved
   manifest (`tools/ci/release_targets.py`, then `release-manifest compare`). An object there with
@@ -55,7 +55,7 @@ Two consequences worth knowing before you start:
   left out, and changes nothing already published: `notes` uploads just the assets a Release
   lacks. For an image only the release's own tag, `:X.Y.Z`, is compared: `:X.Y`, `:latest` and
   `:beta` move from release to release by design, so they name an earlier release's index until
-  this one moves them. `pypi-client` joins once the client is in the manifest.
+  this one moves them.
 - **One release at a time.** Every release run shares the concurrency group `release`, which never
   cancels. A second tag's run waits, unstarted, until the first has finished, its approvals
   included. GitHub keeps one waiting run per group, so a third tag's run would replace the waiting

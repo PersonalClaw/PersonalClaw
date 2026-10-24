@@ -84,7 +84,7 @@ def test_the_rule_reads_every_setup_uv_step_the_workflows_have():
     found = {name: len(setup_uv_steps(wf, actions)) for name, wf in _workflows().items()}
     assert found.get("breadth.yml", 0) >= 5, found
     assert found.get("merge.yml", 0) >= 4 and found.get("pr.yml", 0) >= 1, found
-    assert {"release.yml", "nix.yml", "headless-run-smoke.yml"} <= {
+    assert {"release-artifacts.yml", "nix.yml", "headless-run-smoke.yml"} <= {
         n for n, c in found.items() if c
     }
 
