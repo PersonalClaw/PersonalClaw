@@ -33,6 +33,7 @@ let
         stdenv
         fetchurl
         autoPatchelfHook
+        zlib
         python313
         ;
     } locked)

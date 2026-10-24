@@ -30,6 +30,7 @@
   stdenv,
   fetchurl,
   autoPatchelfHook,
+  zlib,
   python313,
 }:
 
@@ -129,12 +130,24 @@ let
       # (`urllib3.optional-dependencies.socks`); nothing installs one unless asked.
       optional-dependencies = pkgs.${pin.name}.optional-dependencies or { };
       nativeBuildInputs = lib.optionals patch [ autoPatchelfHook ];
-      buildInputs = lib.optionals patch [ stdenv.cc.cc.lib ];
-      pythonImportsCheck = [ (lib.replaceStrings [ "-" ] [ "_" ] pin.name) ];
+      buildInputs = lib.optionals patch ([ stdenv.cc.cc.lib ] ++ systemLibraries.${pin.name} or [ ]);
+      pythonImportsCheck = [ (importNames.${pin.name} or (lib.replaceStrings [ "-" ] [ "_" ] pin.name)) ];
       meta = lib.optionalAttrs (!pure wheel) {
         sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
       };
     };
+
+  # The libraries a pin's platform wheel takes from the system rather than bundling, as its
+  # manylinux policy allows: Pillow's extensions and the image libraries it bundles link the
+  # system's zlib.
+  systemLibraries = {
+    pillow = [ zlib ];
+  };
+
+  # The module a pin is imported as, where it is not the distribution's name with `_` for `-`.
+  importNames = {
+    pillow = "PIL";
+  };
 
   # uv.lock names a package as PEP 503 does; nixpkgs' `pname` is the distribution's own name.
   normalize = name: lib.toLower (lib.replaceStrings [ "_" "." ] [ "-" "-" ] name);
