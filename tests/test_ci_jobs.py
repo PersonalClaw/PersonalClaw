@@ -54,6 +54,16 @@ def _the_user_database_names_a_planted_home(tmp_path, monkeypatch):
     monkeypatch.setattr(pwd, "getpwuid", planted)
 
 
+@pytest.fixture(autouse=True)
+def _the_runner_s_setup_uv_names_only_what_a_test_plants(monkeypatch):
+    """A test that runs a job as on GitHub reads the runner's setup-uv variables from this
+    process's environment (``jobs._cache_env``), so it plants the ones it reads. The suite's own
+    runner sets them too: test-macos runs Python 3.13.16, whose ``UV_PYTHON`` a planted job
+    naming 3.12.15 refuses."""
+    for name in ("UV_PYTHON", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _git(repo: Path, *args: str) -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(
