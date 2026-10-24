@@ -12,8 +12,7 @@ on:
     tags: ["v*"]
   # A dispatch builds the ref it is run on: `artifacts` builds as `$GITHUB_REF_NAME`. On a branch
   # nothing publishes: the build refuses the branch at its first step, `artifacts` fails, and
-  # every job that publishes waits on it, while gateway-dashboard and the two desktop builds,
-  # which need nothing, run. On a tag it is that tag's release, run with the workflow as it is at
+  # every job that publishes waits on it, while the two desktop builds, which need nothing, run. On a tag it is that tag's release, run with the workflow as it is at
   # the tag. The weekly rehearsal (release-rehearsal.yml) runs all of the build on main instead.
   workflow_dispatch:
 

@@ -238,7 +238,7 @@ jobs:
           retention-days: ${{ inputs.retention-days }}
 
   gateway-dashboard:
-    # RELEASE-BLOCKING: the gateway image built from THIS commit must SERVE ITS DASHBOARD.
+    # RELEASE-BLOCKING: the gateway image this release ships must SERVE ITS DASHBOARD.
     #
     # 🔴 THE GAP THIS CLOSES. `images`' own smoke runs `personalclaw --version` with
     # `--entrypoint ''`, so the gateway NEVER STARTS: it proves the binary exists on both
@@ -250,43 +250,40 @@ jobs:
     # bundle. The wheel could not ship broken (`scripts/verify_wheel.py` is a release gate);
     # the image could. That asymmetry is the whole reason this job exists.
     #
-    # WHY BEFORE THE PUSH. `images` pushes `:X.Y.Z`, `:X.Y` and `:latest` and only THEN
-    # smokes what it pushed, so an assertion bolted on after it would leave a dashboard-less
-    # `:latest` in GHCR — the tag README.md's one-liner and docs/guides/containers.md both
-    # point at — with no GitHub Release to explain it. `images` NEEDS this job instead.
+    # WHY THE LAYOUT `images` BUILT, AND NO BUILD OF ITS OWN (#3917). The release builds the
+    # image once: `images` builds both arches clean, with no cache, to an OCI layout, and
+    # release.yml pushes exactly that layout. This job smokes the same bytes: it downloads the
+    # layout, holds its index to the one `images` read (the index the release manifest records
+    # and every pushed tag must name), and loads linux/amd64 out of it. A second build here
+    # would smoke an image nobody ships.
+    #
+    # WHY BEFORE THE PUSH. release.yml's `images` (the push) and `notes` (the GitHub Release)
+    # need `artifacts`, which holds this job, so a red here pushes no tag: no dashboard-less
+    # `:latest` in GHCR, the tag README.md's one-liner and docs/guides/containers.md point at.
     #
     # WHY A JOB AND NOT A STEP. A step cannot name which property broke, only a job can —
     # the argument `ci.yml` acted on when it split `walkthrough` out of `e2e-a11y`. A red
     # step inside `images (gateway)` reads as "the image build failed"; a red
     # `gateway-dashboard` names the contract.
     #
-    # WHY IT BUILDS RATHER THAN PULLS. A pull answers the published-artifact question, which
-    # `ghcr-anonymous-pull.yml` already owns, and could not run before the push it exists to
-    # gate. `--target runtime` is the stage `images`' own default target resolves to, since
-    # `runtime` is the last stage in the file.
-    #
-    # ONE RECIPE, NOT TWO DIALECTS. This build and this invocation are
-    # `.github/workflows/docker-single-container.yml`'s, differing only in the local tag, and
-    # `tools/docker_single_container_smoke.py` owns the assertion — healthz 200, `/` 200 HTML
-    # carrying the SPA mount point, and the shell's FIRST script fetched and required to come
-    # back as JavaScript — plus its own negative control, because a fabricated `/assets/*.js`
-    # answered by the SPA's index.html fallback is 200 too, and a status-only check calls that
-    # green. It then asks the image's INSTALLED package for the default chat model's sign-off
-    # record and requires `/api/onboarding` to offer the download: the image once shipped
-    # without that record behind all-200 responses, and the wheel gate, which read the record
-    # from the repository, could not see it. Last, signed in, seven API endpoints must answer
-    # 200 with the JSON their handlers answer. Exit 1 = the image is broken; exit 2
-    # = the run could not measure, which is never a pass.
+    # ONE RECIPE. `tools/docker_single_container_smoke.py` owns the assertion, as it does for
+    # `.github/workflows/docker-single-container.yml` — healthz 200, `/` 200 HTML carrying the
+    # SPA mount point, and the shell's FIRST script fetched and required to come back as
+    # JavaScript — plus its own negative control, because a fabricated `/assets/*.js` answered
+    # by the SPA's index.html fallback is 200 too, and a status-only check calls that green. It
+    # then asks the image's INSTALLED package for the default chat model's sign-off record and
+    # requires `/api/onboarding` to offer the download: the image once shipped without that
+    # record behind all-200 responses, and the wheel gate, which read the record from the
+    # repository, could not see it. Last, signed in, seven API endpoints must answer 200 with
+    # the JSON their handlers answer. Exit 1 = the image is broken; exit 2 = the run could not
+    # measure, which is never a pass.
     #
     # amd64 ONLY, stated rather than implied: this boots a real gateway, and arm64 under QEMU
     # is a far slower, different measurement. `images`' per-arch `--entrypoint ''` smoke
     # remains the arm64 evidence and is untouched.
+    needs: [images]
     runs-on: ubuntu-24.04
-    # The gateway image build is the long pole — a CPU-only torch install, four bundled ACP
-    # adapter CLIs, and a Node stage for the SPA. Same bound as the PR-side job, because it is
-    # the same build, and set well above its measured cost rather than tightly (#3326 was the
-    # cost of bounding a job BELOW its own runtime).
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -294,23 +291,43 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build the gateway image (amd64, runtime target)
-        # `--target runtime` skips the in-image `test` stage: the question here is whether the
-        # shipped image serves a dashboard, and ci.yml already runs the suite.
+      - name: The gateway image's layout, as `images` built and smoked it
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-layout-gateway
+          path: ${{ runner.temp }}/layout
+      - name: The gateway image's index, as `images` read it
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-index-gateway
+          path: ${{ runner.temp }}/index
+      - name: Load linux/amd64 out of that layout, after holding its index to the one read
+        id: load
+        env:
+          # A local tag, loaded and never pushed.
+          IMAGE: personalclaw-gateway:release-dashboard
+          LAYOUT: ${{ runner.temp }}/layout/personalclaw-gateway.oci.tar
+          INDEX: ${{ runner.temp }}/index/personalclaw-gateway.index.json
         run: |
-          docker build \
-            --file deploy/docker/Dockerfile.backend \
-            --target runtime \
-            --tag personalclaw-gateway:release-dashboard \
-            .
-      - name: Assert the built image serves the dashboard (release-blocking)
+          set -euo pipefail
+          # The layout read again: its index, byte for byte the one `images` read and the
+          # manifest records, so the image smoked is the one every pushed tag names.
+          python3 -I tools/ci/oci_layout.py "$LAYOUT" --name personalclaw-gateway --out "$RUNNER_TEMP/again"
+          cmp "$INDEX" "$RUNNER_TEMP/again/personalclaw-gateway.index.json"
+          echo "index sha256:$(sha256sum "$INDEX" | cut -d' ' -f1)" | tee -a "$GITHUB_STEP_SUMMARY"
+          skopeo copy --quiet --override-os linux --override-arch amd64 "oci-archive:$LAYOUT" "docker-archive:$RUNNER_TEMP/gateway-amd64.tar:$IMAGE"
+          rm "$LAYOUT"
+          docker load --quiet --input "$RUNNER_TEMP/gateway-amd64.tar"
+          rm "$RUNNER_TEMP/gateway-amd64.tar"
+          echo "id=$(docker image inspect --format '{{.Id}}' "$IMAGE")" | tee -a "$GITHUB_OUTPUT"
+      - name: Assert the image serves the dashboard (release-blocking)
         # The tool makes its own scratch cwd (so a checkout cannot satisfy the command by
         # accident) and rewrites only the image ref, the container name and the volume name —
         # the `docker run` itself is READ out of README.md, so a README that drifts into being
-        # wrong cannot leave this green.
-        run: |
-          python3 tools/docker_single_container_smoke.py \
-            --image personalclaw-gateway:release-dashboard
+        # wrong cannot leave this green. The image is the one just loaded, by its content ID.
+        env:
+          IMAGE: ${{ steps.load.outputs.id }}
+        run: python3 tools/docker_single_container_smoke.py --image "$IMAGE"
 
   images:
     # The release's image build, for both arches with the supply-chain attestations, to an OCI
@@ -319,7 +336,7 @@ jobs:
     # Each arch is smoked from the layout itself, and the layout goes up as a workflow artifact:
     # release.yml pushes exactly it, every digest kept, so what a user pulls is what was smoked
     # and what the manifest records.
-    needs: [build, gateway-dashboard]
+    needs: [build]
     runs-on: ubuntu-24.04
     timeout-minutes: 165
     strategy:
@@ -381,6 +398,8 @@ jobs:
           outputs: type=oci,dest=${{ runner.temp }}/personalclaw-${{ matrix.name }}.oci.tar
           sbom: true
           provenance: mode=max
+          # Clean, for provenance: it reads no cache (#3917).
+          no-cache: true
       - name: The image's index and its SBOM attestations, read from the layout
         env:
           IMAGE_NAME: personalclaw-${{ matrix.name }}
