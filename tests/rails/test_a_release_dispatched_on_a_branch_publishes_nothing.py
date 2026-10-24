@@ -166,7 +166,7 @@ def test_what_a_dispatch_on_a_branch_runs_can_publish_nothing() -> None:
     workflow = _load(_ARTIFACTS)
     jobs = workflow["jobs"]
     runs_on_a_branch = sorted(name for name, job in jobs.items() if not _needs(job))
-    assert runs_on_a_branch == ["build", "desktop-linux", "desktop-mac", "gateway-dashboard"]
+    assert runs_on_a_branch == ["build", "desktop-linux", "desktop-mac"]
     holding = {name: _can_publish(workflow, jobs[name]) for name in runs_on_a_branch}
     assert not any(holding.values()), holding
     scripts = json.loads((_ROOT / "desktop" / "package.json").read_text(encoding="utf-8"))

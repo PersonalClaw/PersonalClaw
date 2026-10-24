@@ -8,8 +8,10 @@ hold to.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 
+import pytest
 import yaml
 from docker_single_container_shared import _REPO, get_handler
 
@@ -27,7 +29,7 @@ _ARTIFACTS_WORKFLOW = _REPO / ".github" / "workflows" / "release-artifacts.yml"
 _RELEASE_GATE_JOB = "gateway-dashboard"
 
 
-#: The tag that job builds and hands to the smoke tool.
+#: The local tag that job loads the layout's linux/amd64 image as.
 _RELEASE_GATE_IMAGE = "personalclaw-gateway:release-dashboard"
 
 
@@ -71,28 +73,33 @@ def _run_scripts(job: object) -> str:
     return "\n".join(str(step["run"]) for step in steps if isinstance(step, dict) and "run" in step)
 
 
-def test_release_asserts_the_image_dashboard_against_the_image_it_built() -> None:
-    """The gate exists, builds the runtime stage itself, and drives the shared smoke tool.
-
-    Building rather than pulling is load-bearing twice over: a published tag is a PAST
-    commit (so a pull answers "did the last release bundle the SPA"), and
-    `ghcr-anonymous-pull.yml` already owns the published-artifact question.
+def test_release_asserts_the_dashboard_of_the_image_it_ships() -> None:
+    """The gate exists, builds nothing, and drives the shared smoke tool on the linux/amd64 image
+    loaded out of the layout `images` built, after holding that layout's index to the one
+    `images` read: the index the release manifest records and release.yml pushes (#3917).
     """
     job = _release_jobs().get(_RELEASE_GATE_JOB)
-    assert job is not None, (
+    assert isinstance(job, dict), (
         f"release-artifacts.yml has no {_RELEASE_GATE_JOB!r} job, so nothing at release time "
         "starts the "
         "gateway — the `--entrypoint ''` smoke proves the binary exists, not the dashboard"
     )
+    downloads = [
+        (step.get("with") or {}).get("name")
+        for step in job["steps"]
+        if str(step.get("uses", "")).startswith("actions/download-artifact@")
+    ]
+    assert downloads == ["image-layout-gateway", "image-index-gateway"], downloads
     script = _run_scripts(job)
-    assert "docker build" in script
-    assert "--file deploy/docker/Dockerfile.backend" in script
-    assert "--target runtime" in script
-    assert f"--tag {_RELEASE_GATE_IMAGE}" in script
-    assert "tools/docker_single_container_smoke.py" in script
-    assert f"--image {_RELEASE_GATE_IMAGE}" in script, (
-        "the gate must be pointed at the tag it just built; without --image the tool runs the "
-        "README's own :latest and reports on a past release"
+    assert "docker build" not in script and "buildx" not in script, "the gate builds its own image"
+    assert 'tools/ci/oci_layout.py "$LAYOUT"' in script
+    assert 'cmp "$INDEX" "$RUNNER_TEMP/again/personalclaw-gateway.index.json"' in script
+    assert '--override-arch amd64 "oci-archive:$LAYOUT"' in script
+    smoke = next(s for s in job["steps"] if "docker_single_container_smoke" in str(s.get("run")))
+    assert smoke["run"] == 'python3 tools/docker_single_container_smoke.py --image "$IMAGE"'
+    assert smoke["env"] == {"IMAGE": "${{ steps.load.outputs.id }}"}, (
+        "the gate must smoke the image it loaded, by its content ID; without --image the tool "
+        "runs the README's own :latest and reports on a past release"
     )
 
 
@@ -100,15 +107,15 @@ def test_a_dashboardless_image_is_never_published_or_released() -> None:
     """The wiring IS the gate. A warning, or an assertion after the push, is not one.
 
     A dashboard assertion added *after* the push would leave a broken `:latest` in GHCR —
-    the tag README.md's one-liner points at — with no GitHub Release to explain it. Hence the
-    build's `images` job needs the gate, release.yml's `images` (the push) needs `artifacts`,
-    which holds both, and `notes` (the GitHub Release) still needs `images`, so the whole
-    chain refuses.
+    the tag README.md's one-liner points at — with no GitHub Release to explain it. The gate
+    smokes the layout `images` built, so it needs `images`; release.yml's `images` (the push)
+    needs `artifacts`, which holds both, and `notes` (the GitHub Release) still needs `images`,
+    so the whole chain refuses.
     """
     jobs = _release_jobs()
-    assert _RELEASE_GATE_JOB in _needs(jobs.get("images")), (
-        f"the `images` job does not need {_RELEASE_GATE_JOB!r}, so the multi-arch build runs "
-        "regardless of the dashboard assertion and a broken `:latest` ships"
+    assert "images" in _needs(jobs.get(_RELEASE_GATE_JOB)), (
+        f"{_RELEASE_GATE_JOB!r} does not need `images`, so it cannot smoke the layout that "
+        "release.yml pushes"
     )
     release = _release_jobs(_RELEASE_WORKFLOW)
     assert "artifacts" in _needs(
@@ -118,6 +125,134 @@ def test_a_dashboardless_image_is_never_published_or_released() -> None:
         "the GitHub Release must stay downstream of `images`; without that edge the dashboard "
         "gate cannot block the release"
     )
+
+
+#: What builds an image, or fetches one from a registry, in a run: line.
+_BUILDS_OR_PULLS = re.compile(
+    r"\b(?:docker|podman)\s+(?:buildx\s+)?(?:build|bake|pull)\b|\bbuildah\b|\bcrane\s+pull\b"
+)
+_BUILD_ACTIONS = ("docker/build-push-action@", "docker/bake-action@")
+
+
+def _builds_or_pulls(run: str) -> bool:
+    """A run: block that builds an image, or copies one out of a registry: a `skopeo copy`
+    whose source (the next to last word: options come first) is `docker://`. A copy to one,
+    release.yml's push, is not a pull."""
+    if _BUILDS_OR_PULLS.search(run):
+        return True
+    for line in run.replace("\\\n", " ").splitlines():
+        try:
+            words = shlex.split(line, comments=True)
+        except ValueError:
+            continue
+        if "skopeo" in words and "copy" in words[words.index("skopeo") :]:
+            rest = words[words.index("copy", words.index("skopeo")) + 1 :]
+            if len(rest) >= 2 and rest[-2].startswith("docker://"):
+                return True
+    return False
+
+
+def _release_builds(texts: dict[str, str]) -> list[str]:
+    """Each place release.yml and release-artifacts.yml build an image or fetch one by a tag."""
+    found: list[str] = []
+    for name, text in texts.items():
+        for job_id, job in (yaml.safe_load(text).get("jobs") or {}).items():
+            for step in (job or {}).get("steps") or []:
+                where = f"{name}:{job_id}"
+                if str(step.get("uses", "")).startswith(_BUILD_ACTIONS):
+                    found.append(f"{where} builds with {step['uses'].split('@')[0]}")
+                if _builds_or_pulls(str(step.get("run", ""))):
+                    found.append(f"{where} builds or pulls in a run: line")
+    return found
+
+
+def _release_texts() -> dict[str, str]:
+    return {
+        "release.yml": _RELEASE_WORKFLOW.read_text(encoding="utf-8"),
+        "release-artifacts.yml": _ARTIFACTS_WORKFLOW.read_text(encoding="utf-8"),
+    }
+
+
+def _release_build_problems(texts: dict[str, str]) -> list[str]:
+    bad: list[str] = []
+    builds = _release_builds(texts)
+    if builds != ["release-artifacts.yml:images builds with docker/build-push-action"]:
+        bad.append(f"the release builds its images other than once, in `images`: {builds}")
+    images = yaml.safe_load(texts["release-artifacts.yml"])["jobs"]["images"]
+    for step in images["steps"]:
+        if str(step.get("uses", "")).startswith("docker/build-push-action@"):
+            given = step.get("with") or {}
+            if given.get("no-cache") is not True:
+                bad.append("the release's image build may read a cache: it sets no no-cache")
+            if {"cache-from", "cache-to"} & set(given) or "type=gha" in str(given):
+                bad.append("the release's image build names a cache")
+    return bad
+
+
+def test_the_release_builds_each_image_once_with_no_cache() -> None:
+    """`images` builds both images once, clean, and nothing after it builds or pulls by a tag:
+    `gateway-dashboard` and release.yml's push read the layout it built (#3917)."""
+    assert _release_build_problems(_release_texts()) == []
+
+
+_DASHBOARD_LOAD = '          rm "$LAYOUT"\n'
+
+
+@pytest.mark.parametrize(
+    "name, old, new, says",
+    [
+        (
+            "release-artifacts.yml",
+            _DASHBOARD_LOAD,
+            _DASHBOARD_LOAD + '          docker build --target runtime --tag "$IMAGE" .\n',
+            "gateway-dashboard builds or pulls",
+        ),
+        (
+            "release-artifacts.yml",
+            _DASHBOARD_LOAD,
+            _DASHBOARD_LOAD
+            + "          docker pull ghcr.io/personalclaw/personalclaw-gateway:latest\n",
+            "gateway-dashboard builds or pulls",
+        ),
+        (
+            "release-artifacts.yml",
+            _DASHBOARD_LOAD,
+            _DASHBOARD_LOAD
+            + "          skopeo copy docker://ghcr.io/personalclaw/personalclaw-gateway:latest"
+            + ' "docker-archive:/tmp/x.tar"\n',
+            "gateway-dashboard builds or pulls",
+        ),
+        (
+            "release-artifacts.yml",
+            "          # Clean, for provenance: it reads no cache (#3917).\n"
+            "          no-cache: true\n",
+            "",
+            "sets no no-cache",
+        ),
+        (
+            "release-artifacts.yml",
+            "          no-cache: true\n",
+            "          no-cache: true\n          cache-from: type=gha,scope=gateway-runtime\n",
+            "names a cache",
+        ),
+    ],
+)
+def test_a_planted_rebuild_or_cache_in_the_release_fails(
+    name: str, old: str, new: str, says: str
+) -> None:
+    texts = _release_texts()
+    assert texts[name].count(old) == 1, f"the plant's anchor is not once: {old!r}"
+    texts[name] = texts[name].replace(old, new)
+    assert any(says in p for p in _release_build_problems(texts)), _release_build_problems(texts)
+
+
+def test_a_build_step_added_to_release_yml_fails() -> None:
+    texts = _release_texts()
+    workflow = yaml.safe_load(texts["release.yml"])
+    job = workflow["jobs"]["images"]
+    job["steps"].append({"uses": "docker/build-push-action@0000", "with": {"push": True}})
+    texts["release.yml"] = yaml.safe_dump(workflow)
+    assert any("release.yml:images builds with" in p for p in _release_build_problems(texts))
 
 
 def test_the_version_only_arch_smoke_is_left_intact() -> None:

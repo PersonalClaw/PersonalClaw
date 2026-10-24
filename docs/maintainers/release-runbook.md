@@ -16,8 +16,8 @@ weekly rehearsal runs, and writes their manifest. Every job that publishes waits
 | Job | What it produces | Gate |
 |---|---|---|
 | `artifacts / build` | sdist + wheel (SPA bundled inside), and the wheel's SBOM | refuses a ref that is not a release tag at its first step; inspects the wheel's contents and metadata against the checkout, then installs it alone into a scratch venv and requires the SPA served, every bundled app enabled and the default model offered; fails unless the SBOM lists the wheel and every package installed with it |
-| `artifacts / gateway-dashboard` | nothing; it is purely a gate | boots the gateway image built from this commit and requires a **served bundle**, not a status — the image build needs it, so a dashboard-less image is never pushed |
-| `artifacts / images` | both images for both arches with their attestations, each to an OCI layout, and each arch's SBOM | needs `build` and `gateway-dashboard`; loads each arch from its layout and runs the image's own liveness command inside it |
+| `artifacts / images` | both images for both arches with their attestations, each to an OCI layout, and each arch's SBOM, built once and clean (no cache) | needs `build`; loads each arch from its layout and runs the image's own liveness command inside it |
+| `artifacts / gateway-dashboard` | nothing; it is purely a gate | needs `images`: holds the gateway layout's index to the one `images` read, loads linux/amd64 out of that layout and requires a **served bundle**, not a status. It builds nothing, so the image smoked is the one pushed, and every job that publishes waits on it, so a dashboard-less image is never pushed |
 | `artifacts / desktop-mac` | `PersonalClaw-X.Y.Z-arm64.dmg` (on `macos-26`) and `PersonalClaw-X.Y.Z-x64.dmg` (on `macos-26-intel`), ad-hoc signed, not notarized | per arch: `lipo -archs` lists only that arch for the shell and the backend; boots the bundled backend and then starts the app from inside the mounted dmg |
 | `artifacts / desktop-linux` | unsigned `PersonalClaw-X.Y.Z.AppImage` + `personalclaw-desktop_X.Y.Z_amd64.deb` (x86-64) | boots the bundled backend out of the extracted AppImage |
 | `artifacts / manifest` | the digest-bound manifest of every file and image above | writes and verifies it; a planted changed wheel must fail the verify |
@@ -224,8 +224,8 @@ The older way still works, and runs less. Dispatch the release workflow on `main
 gh workflow run release.yml -R PersonalClaw/PersonalClaw --ref main
 ```
 
-Inside `artifacts`, `gateway-dashboard`, `desktop-mac` and `desktop-linux` need no other job,
-so they run. `build` refuses `main` at its first step after the checkout ("Classify the
+Inside `artifacts`, `desktop-mac` and `desktop-linux` need no other job, so they run.
+`gateway-dashboard` needs `images`, which needs `build`, so neither runs. `build` refuses `main` at its first step after the checkout ("Classify the
 release tag"), so `artifacts` fails and every job that publishes (`pypi`, `pypi-client`,
 `images`, `notes`, `attest`, `website-follow`) is skipped, nothing is published and no
 approval is asked. The run therefore ends red, on `build`, and that is the expected result.
