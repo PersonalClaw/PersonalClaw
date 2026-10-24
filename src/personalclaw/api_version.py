@@ -249,3 +249,6 @@ def negotiate(
             ),
         )
     return ApiVersionOutcome(negotiated=client, refusal=None)
+
+
+# Scratch (#3917): a backend-only change for the warm-build measurement. Never merged.
