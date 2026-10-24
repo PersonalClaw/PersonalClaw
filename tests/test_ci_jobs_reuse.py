@@ -298,6 +298,8 @@ def test_a_fingerprint_that_is_refused_turns_reuse_off_and_runs_everything(repo,
             }
         ],
         "recorded": {"rails": f"not recorded: reuse is off: {why}"},
+        # The run's folder is outside the checkout, so its jobs' scratch is in it: none made.
+        "scratch": {"path": None, "kept": False},
     }
 
 
@@ -933,3 +935,53 @@ def test_the_docs_name_every_tree_job_of_the_merge_tier():
         re.S,
     )
     assert set(re.findall(r"`([^`]+)`", said)) == tree
+
+
+def _scratch_job(log: Path) -> Job:
+    """A job that writes where its temporary folder is, and leaves a read-only file there."""
+    program = (
+        "import os, sys\n"
+        "left = os.path.join(sys.argv[1], 'left.txt')\n"
+        "open(left, 'w').write('kept?')\n"
+        "os.chmod(left, 0o400)\n"
+        f"open({str(log)!r}, 'w').write(sys.argv[1])\n"
+    )
+    return _job("scratch", log, command=(Step((PY, "-c", program, "{runner_temp}")),))
+
+
+def _tier_inside(repo: Path, job: Job, **options: object) -> tuple[int, dict]:
+    """Run the tier with its folder inside the checkout, as a local run's default is."""
+    work = repo / ".local" / "run-job" / "planted"
+    host = jobs.Host(root=repo, family="ubuntu-", path=os.environ.get("PATH", os.defpath))
+    code, _, _ = jobs.run_tier(
+        Catalogue((job,)), "merge", host, jobs.Options(**options), work, fingerprint=_no_probes
+    )
+    return code, json.loads((work / jobs.RECEIPT).read_text())
+
+
+def test_a_runs_scratch_in_the_temporary_folder_is_removed_when_the_run_ends(repo, tmp_path):
+    """A run whose folder is in the checkout makes its jobs' scratch in the system's temporary
+    folder, outside the checkout, and removes it when it ends, a read-only file a job left
+    included, so job homes do not pile up there. The receipt names where it was."""
+    log = tmp_path / "where"
+    code, receipt = _tier_inside(repo, _scratch_job(log))
+    assert code == run.OK
+    used = Path(log.read_text())
+    assert not used.resolve().is_relative_to(repo.resolve()), used
+    base = Path(receipt["scratch"]["path"])
+    assert used.is_relative_to(base), (used, base)
+    assert receipt["scratch"]["kept"] is False
+    assert not base.exists(), f"the run left its jobs' scratch in {base}"
+
+
+def test_a_kept_runs_scratch_stays_where_its_receipt_says(repo, tmp_path):
+    """``--keep-scratch`` (Options.keep_scratch) keeps it, for a look at what a job left."""
+    log = tmp_path / "where"
+    code, receipt = _tier_inside(repo, _scratch_job(log), keep_scratch=True)
+    assert code == run.OK
+    base = Path(receipt["scratch"]["path"])
+    try:
+        assert receipt["scratch"]["kept"] is True
+        assert (Path(log.read_text()) / "left.txt").exists(), "the kept scratch is not there"
+    finally:
+        jobs._remove_tree(base)

@@ -837,7 +837,7 @@ def test_where_HOME_is_the_real_home_the_guard_watches_what_it_did_before(tmp_pa
 @pytest.mark.parametrize("where", ["beside the real home", "under the real home"])
 def test_where_HOME_is_a_scratch_folder_the_guard_watches_the_user_databases_home(tmp_path, where):
     """``under the real home`` is the runner's own layout: a job's scratch home is under the
-    checkout's ``.local/run-job``, and a checkout is often under the real home."""
+    runner's temporary folder (``/home/runner/work/_temp``), which is under the real home."""
     planted = tmp_path / "real-home"
     planted.mkdir()
     scratch_home = {

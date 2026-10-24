@@ -92,6 +92,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -212,6 +213,10 @@ class Options:
     #: How long a job of a local tier run may wait for the memory it needs before the run gives
     #: it up (``--admission-wait``; tools/ci/admission.py).
     admission_wait: float = admission.WAIT_S
+    #: Keep the folder a run inside the checkout made in the system's temporary folder for its
+    #: jobs' scratch (``--keep-scratch``; :func:`scratch_base`). Removed when the run ends
+    #: otherwise.
+    keep_scratch: bool = False
 
 
 @dataclass
@@ -1331,6 +1336,61 @@ def install_chromium(
     return run.OK, [], False
 
 
+#: Each run folder inside a checkout, and the folder of the system's temporary folder its jobs'
+#: scratch folders go in instead (:func:`scratch_base`), made once a run.
+_SCRATCH_BASES: dict[Path, Path] = {}
+
+
+def scratch_base(host: Host, work: Path) -> Path:
+    """Where the run in ``work`` makes its jobs' scratch folders: ``work/jobs``, unless ``work`` is
+    inside the checkout, as a local run's default ``.local/run-job/<run>`` is. Then a folder the
+    run makes in the system's temporary folder, which only its owner can open.
+
+    A job's home and temporary folder inside the checkout put every tree one of its tests plants
+    in its temporary folder inside the checkout too, where git answers for the checkout, whose
+    ``.gitignore`` names ``.local/``: a rail that asks git what a planted tree holds heard nothing
+    and passed what it should have failed (#3920, a licence rail's planted CLA file). On GitHub
+    the run folder is the runner's temporary folder, outside the checkout, as it stays."""
+    work = Path(work).resolve()
+    if not work.is_relative_to(Path(host.root).resolve()):
+        return work / "jobs"
+    if work not in _SCRATCH_BASES:
+        _SCRATCH_BASES[work] = Path(tempfile.mkdtemp(prefix=f"personalclaw-{work.name}-"))
+    return _SCRATCH_BASES[work] / "jobs"
+
+
+def release_scratch(work: Path, *, keep: bool) -> Path | None:
+    """The end of the run in ``work``: the folder :func:`scratch_base` made for its jobs' scratch,
+    their homes and temporary folders with it, is removed unless ``keep``, so they do not pile up
+    in the system's temporary folder from run to run. Returns its path, for the receipt to name,
+    or None when the run made none (its scratch is ``work/jobs``, or no job ran)."""
+    base = _SCRATCH_BASES.pop(Path(work).resolve(), None)
+    if base is not None and not keep:
+        _remove_tree(base)
+    return base
+
+
+def _remove_tree(path: Path) -> None:
+    """Remove ``path`` and everything under it: a file or folder a job left read-only (a module
+    cache's) is made writable first. What still cannot be removed is said, not raised: the run's
+    result stands."""
+
+    def writable(function, name, _exc) -> None:  # type: ignore[no-untyped-def]
+        for each in (os.path.dirname(name), name):
+            try:
+                os.chmod(each, 0o700)
+            except OSError:
+                pass
+        try:
+            function(name)
+        except OSError:
+            pass
+
+    shutil.rmtree(path, onexc=writable)
+    if path.exists():
+        print(f"run: the jobs' scratch folder {path} could not all be removed", file=sys.stderr)
+
+
 def run_one(
     cat: Catalogue,
     job: Job,
@@ -1357,7 +1417,7 @@ def run_one(
     head, clean = _state(host)
     revisions = external_revisions([job], host)
     slug = re.sub(r"[^a-z0-9-]+", "-", key.lower()).strip("-")
-    scratch = run.Scratch.create(work / "jobs" / slug)
+    scratch = run.Scratch.create(scratch_base(host, work) / slug)
     runner_temp = Path(os.environ["RUNNER_TEMP"]) if host.on_github else scratch.tmp
     values = {"runner_temp": str(runner_temp)}
     if shard is not None:
@@ -1907,7 +1967,7 @@ def _recorded(reuse: _Reuse, job: Job, outcomes: Sequence[Outcome], now: float) 
     return "recorded" if done.recorded else f"not recorded: {done.reason}"
 
 
-def _write_receipt(work: Path, reuse: _Reuse) -> None:
+def _write_receipt(work: Path, reuse: _Reuse, scratch: Path | None, *, kept: bool) -> None:
     work.mkdir(parents=True, exist_ok=True)
     if reuse.receipt is None:
         why = reuse.off or "no receipt"
@@ -1932,6 +1992,9 @@ def _write_receipt(work: Path, reuse: _Reuse) -> None:
     else:
         data = reuse.receipt.to_json()
     data["recorded"] = dict(sorted(reuse.recorded.items()))
+    # Where the jobs' homes and temporary folders were, outside the checkout, and whether they
+    # are still there (``--keep-scratch``); null for a run whose scratch is the run's folder.
+    data["scratch"] = {"path": str(scratch) if scratch else None, "kept": bool(scratch) and kept}
     (work / RECEIPT).write_text(json.dumps(data, sort_keys=True, indent=1) + "\n")
 
 
@@ -2046,53 +2109,64 @@ def run_tier(
     planned: dict[str, list[str]] = {}
     memory = host.memory
     peaks = admission.Peaks(_peaks_path(host) if memory is not None else None)
-    for job in jobs:
-        for shard in range(1, job.shards + 1) if job.shards > 1 else [None]:
-            planned.setdefault(job.id, []).append(key_of(job, shard))
-            if fail_fast and any(o.code == run.RED for o in outcomes):
-                outcomes.append(
-                    Outcome(key_of(job, shard), run.PARTIAL, ["not run: --fail-fast"], ran=False)
-                )
-                continue
-            if any(o.interrupted for o in outcomes):
-                outcomes.append(
-                    Outcome(key_of(job, shard), run.PARTIAL, ["not run: interrupted"], ran=False)
-                )
-                continue
-            # Each outcome says its job's receipt line first: reused, or why it ran.
-            line = reuse.line(job.id) if reuse is not None else None
-            if reuse is not None and reuse.reused(job.id) is not None and line is not None:
-                outcomes.append(Outcome(key_of(job, shard), run.OK, [line], reused=True))
-                continue
-            if memory is not None and not cannot_run_here(
-                job, host, working_tree=options.working_tree
-            ):
-                need, how = admission.need_mb(
-                    workers=max(1, int(_worker_count(job, options) or 1)),
-                    peak_mb=peaks.get(job.id),
-                    declared_gb=job.mem_gb,
-                )
-                refused = admission.admit(
-                    key_of(job, shard), need, how, memory, wait_s=options.admission_wait
-                )
-                if refused is not None:
-                    outcomes.append(Outcome(key_of(job, shard), run.PARTIAL, [refused], ran=False))
+    try:
+        for job in jobs:
+            for shard in range(1, job.shards + 1) if job.shards > 1 else [None]:
+                planned.setdefault(job.id, []).append(key_of(job, shard))
+                if fail_fast and any(o.code == run.RED for o in outcomes):
+                    outcomes.append(
+                        Outcome(
+                            key_of(job, shard), run.PARTIAL, ["not run: --fail-fast"], ran=False
+                        )
+                    )
                     continue
-            try:
-                outcome = run_one(cat, job, shard, host, options, work)
-            finally:
-                if memory is not None:
-                    admission.release(memory)
-            if outcome.ran and outcome.peak_mb is not None:
-                peaks.record(job.id, outcome.peak_mb)
-            if line is not None and outcome.ran:
-                outcome.reasons.insert(0, line)
-            outcomes.append(outcome)
-        if reuse is not None and reuse.reused(job.id) is None:
-            own = [o for o in outcomes if o.key in planned[job.id]]
-            _record_pass(reuse, job, own, time.time())
+                if any(o.interrupted for o in outcomes):
+                    outcomes.append(
+                        Outcome(
+                            key_of(job, shard), run.PARTIAL, ["not run: interrupted"], ran=False
+                        )
+                    )
+                    continue
+                # Each outcome says its job's receipt line first: reused, or why it ran.
+                line = reuse.line(job.id) if reuse is not None else None
+                if reuse is not None and reuse.reused(job.id) is not None and line is not None:
+                    outcomes.append(Outcome(key_of(job, shard), run.OK, [line], reused=True))
+                    continue
+                if memory is not None and not cannot_run_here(
+                    job, host, working_tree=options.working_tree
+                ):
+                    need, how = admission.need_mb(
+                        workers=max(1, int(_worker_count(job, options) or 1)),
+                        peak_mb=peaks.get(job.id),
+                        declared_gb=job.mem_gb,
+                    )
+                    refused = admission.admit(
+                        key_of(job, shard), need, how, memory, wait_s=options.admission_wait
+                    )
+                    if refused is not None:
+                        outcomes.append(
+                            Outcome(key_of(job, shard), run.PARTIAL, [refused], ran=False)
+                        )
+                        continue
+                try:
+                    outcome = run_one(cat, job, shard, host, options, work)
+                finally:
+                    if memory is not None:
+                        admission.release(memory)
+                if outcome.ran and outcome.peak_mb is not None:
+                    peaks.record(job.id, outcome.peak_mb)
+                if line is not None and outcome.ran:
+                    outcome.reasons.insert(0, line)
+                outcomes.append(outcome)
+            if reuse is not None and reuse.reused(job.id) is None:
+                own = [o for o in outcomes if o.key in planned[job.id]]
+                _record_pass(reuse, job, own, time.time())
+    finally:
+        scratch = release_scratch(work, keep=options.keep_scratch)
+    if scratch is not None and options.keep_scratch:
+        print(f"run: the jobs' scratch folders are kept in {scratch}", file=sys.stderr)
     if reuse is not None:
-        _write_receipt(work, reuse)
+        _write_receipt(work, reuse, scratch, kept=options.keep_scratch)
     if options.working_tree:
         # No job left a record, so nothing is judged: the run says what its steps did.
         unjudged = verdict.Reason("", "working tree", "no record was written, so none is judged")
@@ -2197,6 +2271,12 @@ def _parser(prog: str, description: str) -> argparse.ArgumentParser:
         help="run on the checkout as it stands, uncommitted changes included: no record, and"
         " the exit is the steps' result",
     )
+    parser.add_argument(
+        "--keep-scratch",
+        action=_OnceFlag,
+        help="keep the jobs' homes and temporary folders, which a run whose folder is in the"
+        " checkout makes in the system's temporary folder and removes when it ends",
+    )
     return parser
 
 
@@ -2229,6 +2309,7 @@ def _setup(args: argparse.Namespace) -> tuple[Catalogue, Host, Options, Path]:
         working_tree=args.working_tree,
         reuse=not getattr(args, "no_reuse", False),
         admission_wait=getattr(args, "admission_wait", None) or admission.WAIT_S,
+        keep_scratch=bool(args.keep_scratch),
     )
     return cat, host, options, work
 
@@ -2278,7 +2359,12 @@ def run_job_main(argv: list[str]) -> int:
             shard = int(match.group(1))
         elif args.shard is not None:
             raise Unreadable(f"{job.id} is not sharded, so it takes no --shard")
-        outcome = run_one(cat, job, shard, host, options, work)
+        try:
+            outcome = run_one(cat, job, shard, host, options, work)
+        finally:
+            scratch = release_scratch(work, keep=options.keep_scratch)
+        if scratch is not None and options.keep_scratch:
+            print(f"run-job: the job's scratch folder is kept in {scratch}", file=sys.stderr)
     except (Unreadable, catalogue.CatalogueError, ValueError, OSError) as exc:
         problems = exc.problems if isinstance(exc, catalogue.CatalogueError) else [str(exc)]
         for problem in problems:
