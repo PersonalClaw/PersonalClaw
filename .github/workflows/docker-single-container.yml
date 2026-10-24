@@ -11,7 +11,9 @@
 # find `personalclaw`, as the dashboard's terminal needs. And, signed in, seven API endpoints
 # must answer 200 with the JSON their handlers answer (step 9).
 # `tools/docker_single_container_smoke.py` owns the assertions (and their negative control);
-# this file only decides WHICH image it runs against.
+# this file only decides WHICH image it runs against. merge.yml runs the same build and smoke
+# through run-job for a catalogue entry that names `{image}` (#3917), and the flip (#3915)
+# retires this file.
 #
 # 🪤 IT BUILDS THE IMAGE, IT DOES NOT PULL `:latest`. Two reasons, and the first is the
 # important one:
@@ -30,12 +32,13 @@
 # commit, so it is deliberately not wired as a standing gate.
 name: Docker single-container dashboard
 
+# Both path lists are one: every path the Dockerfile copies and the smoke reads, image-cache.yml's
+# too (tests/rails/test_ci_image_cache_tree.py). src/personalclaw/ and uv.lock are in it, so a
+# backend-only change boots the image it ships (#3917).
 on:
   pull_request:
     paths:
-      - deploy/docker/Dockerfile.backend
-      # The agent CLIs' lock, which the image installs with npm ci.
-      - deploy/docker/agent-clis/**
+      - deploy/docker/**
       - .dockerignore
       - setup.py
       - MANIFEST.in
@@ -43,24 +46,17 @@ on:
       - web/**
       - package.json
       - package-lock.json
-      # What steps 5-6 of the smoke judge: the probe, the record, and the package-data glob
-      # that ships it into the image's installed package.
       - pyproject.toml
+      - uv.lock
+      - src/personalclaw/**
+      - scripts/install_git_hooks.sh
       - scripts/installed_bundled_model_probe.py
-      - src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt
-      # What step 7 judges: the profile a login shell in the image reads.
-      - deploy/docker/personalclaw-profile.sh
-      # Step 9 judges routes under src/personalclaw/, which are not listed: they would build the
-      # image on most PRs. tests/rails/test_docker_single_container_tree.py holds each to a GET
-      # route the gateway serves on every PR; their answers are judged live here and at release.
       - tools/docker_single_container_smoke.py
       - .github/workflows/docker-single-container.yml
   push:
     branches: [main]
     paths:
-      - deploy/docker/Dockerfile.backend
-      # The agent CLIs' lock, which the image installs with npm ci.
-      - deploy/docker/agent-clis/**
+      - deploy/docker/**
       - .dockerignore
       - setup.py
       - MANIFEST.in
@@ -68,16 +64,11 @@ on:
       - web/**
       - package.json
       - package-lock.json
-      # What steps 5-6 of the smoke judge: the probe, the record, and the package-data glob
-      # that ships it into the image's installed package.
       - pyproject.toml
+      - uv.lock
+      - src/personalclaw/**
+      - scripts/install_git_hooks.sh
       - scripts/installed_bundled_model_probe.py
-      - src/personalclaw/apps/native/bundled-chat/bundled-model-signoff.txt
-      # What step 7 judges: the profile a login shell in the image reads.
-      - deploy/docker/personalclaw-profile.sh
-      # Step 9 judges routes under src/personalclaw/, which are not listed: they would build the
-      # image on most PRs. tests/rails/test_docker_single_container_tree.py holds each to a GET
-      # route the gateway serves on every PR; their answers are judged live here and at release.
       - tools/docker_single_container_smoke.py
       - .github/workflows/docker-single-container.yml
   workflow_dispatch:
@@ -157,18 +148,36 @@ jobs:
         with:
           persist-credentials: false
 
+      # The release's buildx, pinned as release-artifacts.yml pins it.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.38.0
+          # moby/buildkit:v0.34.0, the linux/amd64 manifest (this runner's platform) of index
+          # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
+          driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
       - name: Build the gateway image (amd64, runtime target)
-        # `--target runtime` skips the in-image `test` stage (stage 3): this job's question is
-        # whether the shipped image serves a dashboard, and ci.yml already runs the suite.
-        run: |
-          docker build \
-            --file deploy/docker/Dockerfile.backend \
-            --target runtime \
-            --tag personalclaw-gateway:single-container-ci \
-            .
+        id: image
+        # `target: runtime` skips the in-image `test` stage (stage 3): this job's question is
+        # whether the shipped image serves a dashboard, and ci.yml already runs the suite. The
+        # layers come from main's cache, which this step reads and never writes: image-cache.yml,
+        # on main, is its one writer. `github-token` is empty, so the build holds no token.
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.backend
+          target: runtime
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          github-token: ""
+          cache-from: type=gha,scope=gateway-runtime
 
       - name: Assert the README one-liner reaches a usable dashboard
         # Run from a scratch directory, per the requirement. The tool makes its own temp cwd so the
         # checkout cannot satisfy the command by accident, and rewrites only the image ref,
-        # the container name and the volume name.
-        run: python3 tools/docker_single_container_smoke.py --image personalclaw-gateway:single-container-ci
+        # the container name and the volume name. The image is the build's own, by its content
+        # ID, never a tag.
+        env:
+          IMAGE: ${{ steps.image.outputs.imageid }}
+        run: python3 tools/docker_single_container_smoke.py --image "$IMAGE"

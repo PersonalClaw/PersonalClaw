@@ -66,10 +66,9 @@ _AGENT_INSTALL = "RUN npm ci --omit=dev --no-fund --no-audit &&"
 _AGENT_COPY = f"COPY {_AGENT_MANIFEST} {_AGENT_LOCK} ./\n"
 _AGENT_SCHEDULE = "    schedule:\n      interval: weekly\n"
 _DOCKER_SMOKE = ".github/workflows/docker-single-container.yml"
-_SMOKE_PATH = (
-    "      # The agent CLIs' lock, which the image installs with npm ci.\n"
-    f"      - {_AGENT_CLIS}/**\n"
-)
+#: The image smoke's path for everything under deploy/docker/: the Dockerfile and the agent CLIs'
+#: lock among it.
+_SMOKE_PATH = "      - deploy/docker/**\n"
 _AGENT_PINS: dict[str, str] = json.loads((REPO / _AGENT_MANIFEST).read_text(encoding="utf-8"))[
     "dependencies"
 ]
@@ -1760,7 +1759,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "the image smoke not run on a pull request that moves the agent CLIs' lock",
                 _DOCKER_SMOKE,
-                f"  pull_request:\n    paths:\n      - {_BACKEND}\n{_SMOKE_PATH}",
+                f"  pull_request:\n    paths:\n{_SMOKE_PATH}",
                 f"  pull_request:\n    paths:\n      - {_BACKEND}\n",
                 expect=f"{_DOCKER_SMOKE} runs on a pull_request that changes {_BACKEND} but not "
                 f"on one that changes {_AGENT_LOCK}",
@@ -1768,7 +1767,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "the image smoke not run on a push that moves the agent CLIs' lock",
                 _DOCKER_SMOKE,
-                f"    branches: [main]\n    paths:\n      - {_BACKEND}\n{_SMOKE_PATH}",
+                f"    branches: [main]\n    paths:\n{_SMOKE_PATH}",
                 f"    branches: [main]\n    paths:\n      - {_BACKEND}\n",
                 expect=f"{_DOCKER_SMOKE} runs on a push that changes {_BACKEND} but not on one "
                 f"that changes {_AGENT_LOCK}",
@@ -1776,14 +1775,14 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "the image smoke taking the agent CLIs' lock back out of its paths",
                 _DOCKER_SMOKE,
-                f"      - {_AGENT_CLIS}/**\n",
-                f"      - {_AGENT_CLIS}/**\n      - '!{_AGENT_LOCK}'\n",
+                _SMOKE_PATH,
+                f"{_SMOKE_PATH}      - '!{_AGENT_LOCK}'\n",
                 expect=f"but not on one that changes {_AGENT_LOCK}",
             ),
             _plant(
                 "the image smoke on all of deploy/ but the agent CLIs' lock",
                 _DOCKER_SMOKE,
-                f"  pull_request:\n    paths:\n      - {_BACKEND}\n{_SMOKE_PATH}",
+                f"  pull_request:\n    paths:\n{_SMOKE_PATH}",
                 f"  pull_request:\n    paths:\n      - deploy/**\n      - '!{_AGENT_CLIS}/**'\n",
                 expect=f"{_DOCKER_SMOKE} runs on a pull_request that changes {_BACKEND} but not "
                 f"on one that changes {_AGENT_LOCK}",
@@ -1791,8 +1790,8 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             _plant(
                 "the image smoke listing the agent CLIs' two files passes",
                 _DOCKER_SMOKE,
-                f"      - {_AGENT_CLIS}/**\n",
-                f"      - {_AGENT_MANIFEST}\n      - {_AGENT_LOCK}\n",
+                _SMOKE_PATH,
+                f"      - {_BACKEND}\n      - {_AGENT_MANIFEST}\n      - {_AGENT_LOCK}\n",
                 fails=False,
             ),
             _plant(

@@ -523,9 +523,11 @@ whitespace, and named once. A command is a list of steps. Each step is an argv r
 repository root, or from `workdir` under it, with its own `env` set on top of the job's: the
 workflow step's own `env:`, such as a flag that turns a skip into a failure. A value only the runner
 knows is written as a placeholder: `{runner_temp}`, `{shard}`, `{base}` (the commit a diff is taken
-against), `{python}` (the uv-managed interpreter of the entry's `python`) or `{run_number}` (the
+against), `{python}` (the uv-managed interpreter of the entry's `python`), `{run_number}` (the
 run's number, which every attempt of the run keeps; another value every run, so a job whose steps
-name it is never reused, by TTL or by tree). An argument or an `env`
+name it is never reused, by TTL or by tree) or `{image}` (the gateway image's content ID, which the
+workflow's build step makes and `run-job --image` takes; see "The gateway image's layer cache"
+below). An argument or an `env`
 value containing `$`, or a placeholder the catalogue does not have, is refused, so no step reads the
 environment around the catalogue. An `env` name is a variable name (`[A-Z_][A-Z0-9_]*`), and not one
 the runner owns (`tools.ci.run.runner_owns`: `PATH`, `HOME`, `TMPDIR`, the locale, git's variables
@@ -712,7 +714,8 @@ overrides (`--areas`, beside the catalogue by default):
   taken from the catalogue. Each also carries what a workflow's test stage needs: `slug`, the
   key as the record artifact's name spells it (`verdict.record_slug`, since a workflow cannot
   work it out from the key), `history` (the checkout needs the whole history: a step names
-  `{base}`, which `run-job` reads as the merge-base with `origin/main`), `programs` (the toolchain's `SETUP_PROGRAMS`, which the setup action installs)
+  `{base}`, which `run-job` reads as the merge-base with `origin/main`), `image` (the stage job
+  builds the gateway image first: a step names `{image}`), `programs` (the toolchain's `SETUP_PROGRAMS`, which the setup action installs)
   and `external` (the job's external inputs: the shard plan, a partner checkout). `after`
   names the planned jobs whose output the entry's job uses (the catalogue's `after`), and
   `stage` is 1 for an entry that waits for none, else one more
@@ -1061,6 +1064,31 @@ read from the API at `github.event.before`. It is standard-library Python, run o
 own `python3` with nothing checked out or installed. A pull request that changes the check is
 judged by the copy it replaces, and the merge that adds the check runs the whole gate.
 `docker-single-container.yml` asks the same question about its own runs before it builds.
+
+### The gateway image's layer cache
+
+The gateway image is built for a smoke by `docker-single-container.yml` and by the stage job of
+an entry that names `{image}` (#3917), each with the release's pinned buildx, and each reads its
+layers from the Actions cache, scope `gateway-runtime`. GitHub keys each cache entry to the ref
+of the run that saved it: a run reads its own ref's entries and the default branch's, and saves
+only to its own. `image-cache.yml` alone saves, and only on `main`: after a push the image's
+inputs reach, or on a dispatch, it builds every stage into the cache (`mode=max`) and smokes
+nothing, since the pull request's run did. A push to `main` seldom builds the image otherwise,
+because the tested tree above skips a squash merge's. So:
+
+- the cache's one writer runs `main`'s code over `main`'s tree;
+- a pull request, a trusted run, a scratch branch or a fork reads `main`'s layers and writes none,
+  so nothing a candidate runs reaches another run's build;
+- a release builds clean, with no cache at all.
+
+Each build is given no secret, no build argument, no SSH and no step env, and an empty
+`github-token`, so it holds no token; the cache's own credential is the runner's, which only the
+action holds. A smoke runs the build's own image by its content ID (`imageid`), never a tag.
+`tests/rails/test_ci_image_cache_tree.py` holds all of it, and holds the two workflows' path
+filters to one list that reaches every path the Dockerfile copies.
+
+The pool is shared and holds 10 GB, most of it CodeQL's databases, so an entry can be evicted. A
+build that misses is slower, never wrong.
 
 Runs on `main` are grouped by commit and never cancelled, so no merge goes unchecked because
 a later one replaced it. The suite's shards are the one exception (see "A burst of merges"
@@ -1730,9 +1758,10 @@ shadow mode, and the recall study.
   server; never `GITHUB_ACTIONS`, which says the run is on GitHub), then the workflow's
   (`UV_PYTHON_PREFERENCE`), then the job's, then the step's; of the caller's it gets only
   `PATH`. `{runner_temp}` is the job's own temporary folder, `{shard}` the shard asked for,
-  `{base}` `--base` or the merge base with `origin/main`, and `{run_number}` the run's
+  `{base}` `--base` or the merge base with `origin/main`, `{run_number}` the run's
   `GITHUB_RUN_NUMBER` on GitHub and `0` here, where no numbered run runs, whatever the caller
-  set. The `chromium` install is the browser legs' three steps since #5265
+  set, and `{image}` the content ID `--image` names, or here, without one, the one a plain
+  `docker build` of the gateway image's `runtime` stage makes first. The `chromium` install is the browser legs' three steps since #5265
   (`jobs.install_chromium`): Playwright's build without apt within 5 minutes, a check that
   Chromium starts within 2, and only when that check fails its system libraries from apt within
   5 more, named as the apt mirror when they do not finish, then the check again. A hung mirror

@@ -1273,6 +1273,105 @@ def test_a_run_number_github_gives_as_no_number_is_refused_before_the_step_runs(
     assert not out.exists()
 
 
+# ── the gateway image ────────────────────────────────────────────────────────────────────────
+
+_AN_IMAGE = "sha256:" + "ab" * 32
+
+
+def _says_its_image(out: Path) -> Step:
+    """A step that writes the value it is given for ``{image}``, as the smoke takes it."""
+    return Step(
+        (PY, "-c", f"import sys; open({str(out)!r}, 'w').write(sys.argv[2])", "--image", "{image}")
+    )
+
+
+def _docker(tmp_path: Path, *, exit_code: int = 0, image: str = _AN_IMAGE) -> str:
+    """A PATH whose ``docker`` notes its argv and writes *image* to the ``--iidfile`` it is
+    given, then exits *exit_code*: a build with no daemon."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    program = bin_dir / "docker"
+    program.write_text(
+        f"#!{PY}\n"
+        "import json, sys\n"
+        f"open({str(tmp_path / 'docker-argv.json')!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+        "if '--iidfile' in sys.argv:\n"
+        f"    open(sys.argv[sys.argv.index('--iidfile') + 1], 'w').write({image!r})\n"
+        f"sys.exit({exit_code})\n",
+        encoding="utf-8",
+    )
+    program.chmod(0o755)
+    return f"{bin_dir}{os.pathsep}{os.environ.get('PATH', os.defpath)}"
+
+
+def test_the_image_on_github_is_the_one_its_build_step_made(repo, tmp_path, monkeypatch):
+    """``{image}`` is the content ID ``--image`` names, which the workflow's build step made, and
+    nothing is built here."""
+    _on_a_github_run(tmp_path, monkeypatch)
+    out = tmp_path / "said"
+    host = _host(repo, on_github=True, path=_docker(tmp_path))
+    job = _job("image", steps=(_says_its_image(out),))
+    outcome = _run(repo, job, tmp_path, host=host, image=_AN_IMAGE)
+    assert outcome.code == run.OK, outcome.reasons
+    assert out.read_text() == _AN_IMAGE
+    assert not (tmp_path / "docker-argv.json").exists(), "the run built an image of its own"
+
+
+def test_an_image_job_on_github_with_no_built_image_runs_nothing(repo, tmp_path, monkeypatch):
+    _on_a_github_run(tmp_path, monkeypatch)
+    out = tmp_path / "said"
+    host = _host(repo, on_github=True, path=_docker(tmp_path))
+    with pytest.raises(jobs.Unreadable, match="the workflow's build step makes the image"):
+        _run(repo, _job("image", steps=(_says_its_image(out),)), tmp_path, host=host)
+    assert not out.exists()
+    assert not (tmp_path / "docker-argv.json").exists()
+
+
+def test_the_image_here_is_built_first_from_the_gateway_dockerfile(repo, tmp_path):
+    """A local run with no ``--image`` builds the gateway image's runtime stage plainly, and the
+    step gets the content ID the build wrote."""
+    out = tmp_path / "said"
+    host = _host(repo, path=_docker(tmp_path))
+    outcome = _run(repo, _job("image", steps=(_says_its_image(out),)), tmp_path, host=host)
+    assert outcome.code == run.OK, outcome.reasons
+    assert out.read_text() == _AN_IMAGE
+    argv = json.loads((tmp_path / "docker-argv.json").read_text())
+    assert argv[:5] == ["build", "--file", jobs.GATEWAY_DOCKERFILE, "--target", "runtime"]
+    assert argv[5] == "--iidfile" and argv[-1] == "."
+
+
+@pytest.mark.parametrize(
+    "exit_code, image", [(1, _AN_IMAGE), (0, "personalclaw-gateway:latest"), (0, "")]
+)
+def test_an_image_that_did_not_build_runs_no_step(repo, tmp_path, exit_code, image):
+    """A failed build, or one that wrote no content ID, leaves no image to smoke."""
+    out = tmp_path / "said"
+    host = _host(repo, path=_docker(tmp_path, exit_code=exit_code, image=image))
+    with pytest.raises(jobs.Unreadable, match="the gateway image did not build"):
+        _run(repo, _job("image", steps=(_says_its_image(out),)), tmp_path, host=host)
+    assert not out.exists()
+
+
+def test_an_image_job_with_no_docker_cannot_run_here(repo, tmp_path):
+    job = _job("image", steps=(_says_its_image(tmp_path / "said"),))
+    host = _host(repo, path=str(tmp_path / "empty"))
+    assert "it smokes the gateway image, and docker is not on PATH" in jobs.cannot_run_here(
+        job, host
+    )
+
+
+@pytest.mark.parametrize("given", ["personalclaw-gateway:ci", "sha256:abc", "ab" * 32])
+def test_an_image_that_is_no_content_id_is_refused(given, tmp_path, capsys):
+    from tools.ci.__main__ import main
+
+    planted = tmp_path / "catalogue.toml"
+    planted.write_text(_PLANTED, encoding="utf-8")
+    argv = ["run-job", "plain", "--image", given, "--catalogue", str(planted)]
+    assert main([*argv, "--out", str(tmp_path / "out")]) == run.PARTIAL
+    assert "--image is a content ID" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists(), "nothing ran"
+
+
 # ── a tier ───────────────────────────────────────────────────────────────────────────────────
 
 
@@ -1962,7 +2061,7 @@ def test_changed_on_a_working_tree_sees_uncommitted_and_untracked_paths(repo, tm
 
 def _given_twice() -> list:
     """Each option of the two verbs, as ``(verb, option)``."""
-    shared = ("--catalogue", "--base", "--workers", "--out", "--working-tree")
+    shared = ("--catalogue", "--base", "--workers", "--out", "--working-tree", "--image")
     rows = [(verb, option) for verb in ("run-job", "run") for option in shared]
     rows += [("run-job", "--shard"), ("run", "--changed"), ("run", "--fail-fast")]
     return [pytest.param(verb, option, id=f"{verb} {option}") for verb, option in rows]
@@ -1980,6 +2079,7 @@ def test_every_option_of_the_two_verbs_given_twice_is_refused(verb, option, tmp_
         "--workers": "2",
         "--out": str(tmp_path / "out"),
         "--shard": "1/4",
+        "--image": _AN_IMAGE,
     }
     once = [option, values[option]] if option in values else [option]
     rest = [

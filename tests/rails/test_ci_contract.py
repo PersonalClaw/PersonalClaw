@@ -12378,7 +12378,8 @@ _RUNNER_IDENTITY_LINE = (
 )
 #: The one line a stage job runs besides its runner's identity.
 _RUN_JOB_LINE = (
-    'python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"'
+    'python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} ${IMAGE:+--image "$IMAGE"}'
+    ' --out "$RUNNER_TEMP/run-job"'
 )
 
 #: Each orchestration job's run: lines, by job and by what they do, as both workflows' jobs of
@@ -12609,13 +12610,16 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
-#: and the artifacts the entry reads and writes.
+#: the artifacts the entry reads and writes, and the gateway image's build for an entry that
+#: smokes it (tests/rails/test_ci_image_cache_tree.py holds that build).
 _STAGE_ACTIONS = frozenset(
     {
         "actions/checkout",
         "./.github/actions/setup",
         "actions/download-artifact",
         "actions/upload-artifact",
+        "docker/setup-buildx-action",
+        "docker/build-push-action",
     }
 )
 

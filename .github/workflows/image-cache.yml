@@ -1,0 +1,86 @@
+# The gateway image's layer cache, and its one writer (#3917).
+#
+# docker-single-container.yml, and the catalogue's `image` job in merge.yml, build the gateway
+# image with the release's pinned buildx and read its layers from the Actions cache, scope
+# `gateway-runtime`. GitHub keys each cache entry to the ref of the run that saved it: a run reads
+# its own ref's entries and the default branch's, and saves only to its own. This workflow alone
+# saves, and only on main, on a push the image's inputs reach or a dispatch. So the one writer
+# runs main's code over main's tree; a pull request, a trusted run, a scratch branch or a fork
+# reads main's layers and writes none; and a release, which builds clean with no cache at all,
+# reads none. tests/rails/test_ci_image_cache_tree.py holds all of it.
+#
+# A push to main seldom builds the image otherwise: docker-single-container.yml skips a tree a
+# pull request's run already built and smoked, and a squash merge's tree is that one. So this
+# builds after each such push, from the cache it refreshes, and smokes nothing: the pull request
+# did. The pool is shared and full (CodeQL's databases fill most of it), so an entry can be
+# evicted, and a build that misses is slower, never wrong.
+name: Gateway image cache
+
+on:
+  push:
+    branches: [main]
+    # The catalogue's `image` inputs, path for path, and this file.
+    paths:
+      - deploy/docker/**
+      - .dockerignore
+      - setup.py
+      - MANIFEST.in
+      - README.md
+      - web/**
+      - package.json
+      - package-lock.json
+      - pyproject.toml
+      - uv.lock
+      - src/personalclaw/**
+      - scripts/install_git_hooks.sh
+      - scripts/installed_bundled_model_probe.py
+      - tools/docker_single_container_smoke.py
+      - .github/workflows/image-cache.yml
+  workflow_dispatch:
+
+# One writer at a time. A push that lands while one builds waits, and a newer push replaces a
+# waiting one: the newest tree's layers are the ones worth keeping.
+concurrency:
+  group: image-cache
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  write:
+    # A dispatch can name any branch: only main's run writes.
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The release's buildx, pinned as release-artifacts.yml pins it.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.38.0
+          # moby/buildkit:v0.34.0, the linux/amd64 manifest (this runner's platform) of index
+          # sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c.
+          driver-opts: image=moby/buildkit:v0.34.0@sha256:3eea2ed5d1766c44eb4740853abf56ba85ad40b2c8d4a22e047cbacf15f463c8
+      - name: Build the gateway image into main's layer cache
+        # Every stage's layers (`mode=max`): the deps and web stages are the slow ones, and a
+        # change to src/ rebuilds only what follows them. The image itself goes nowhere
+        # (`type=cacheonly`). A cache the service refuses fails nothing (`ignore-error`): the
+        # next push writes it. `github-token` is empty, so the build holds no token.
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.backend
+          target: runtime
+          push: false
+          provenance: false
+          sbom: false
+          github-token: ""
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=gateway-runtime
+          cache-to: type=gha,mode=max,scope=gateway-runtime,ignore-error=true
