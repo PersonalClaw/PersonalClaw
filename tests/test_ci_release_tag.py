@@ -12,6 +12,7 @@ import io
 import json
 import os
 import subprocess
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -521,6 +522,8 @@ def test_main_creates_no_tag_while_a_release_runs(
 # earlier red run of the commit refuses unless the owner's record names it. It never waits.
 
 BREADTH_TAG = "rehearsal-v1.2.3-aaaaaaa"
+#: A gating shard: a red one refuses whatever owns it.
+GATING = "ubuntu-24.04-arm-3.13/3"
 
 
 def _record(run_id: int, tree: str, *, attempt: int = 1, **legs: dict[str, object]) -> dict:
@@ -530,6 +533,11 @@ def _record(run_id: int, tree: str, *, attempt: int = 1, **legs: dict[str, objec
     }
     entries.update(legs)
     return {"version": 1, "run_id": run_id, "attempt": attempt, "tree": tree, "legs": entries}
+
+
+def _red(key: str, attempt: int = 1, **marks: object) -> dict[str, object]:
+    """Shard *key*'s entry, red on *attempt*."""
+    return {"inputs": {}, "result": breadth_evidence.RED, "attempt": attempt, **marks}
 
 
 class BreadthApi:
@@ -543,8 +551,32 @@ class BreadthApi:
         self.runs: list[dict[str, object]] = []
         self.artifacts: dict[int, list[dict[str, object]]] = {}
         self.zips: dict[int, bytes] = {}
+        self.issues: list[dict[str, object]] = []
         self.fail = ""
         self.paths: list[str] = []
+
+    def issue(
+        self,
+        leg: str,
+        number: int,
+        *,
+        login: str = "github-actions[bot]",
+        kind: str = "Bot",
+        association: str = "NONE",
+        title: str = "",
+    ) -> "BreadthApi":
+        """An open issue, as breadth's report files one for a red leg."""
+        self.issues.append(
+            {
+                "number": number,
+                "title": title or breadth_evidence.issue_title(leg),
+                "state": "open",
+                "user": {"login": login, "type": kind},
+                "author_association": association,
+                "html_url": f"https://github.com/{REPOSITORY}/issues/{number}",
+            }
+        )
+        return self
 
     def run(
         self,
@@ -606,6 +638,13 @@ class BreadthApi:
         for run_id, listed in self.artifacts.items():
             if path == f"/repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100&page=1":
                 return {"total_count": len(listed), "artifacts": listed}
+        if path.startswith("/search/issues?"):
+            query = urllib.parse.parse_qs(path.split("?", 1)[1])["q"][0]
+            assert query.startswith(f"repo:{REPOSITORY} is:issue is:open in:title "), query
+            phrase = query.split("in:title ", 1)[1].strip('"')
+            # The search matches words, not the exact title: the gate reads the title again.
+            found = [i for i in self.issues if phrase.split(":")[0] in str(i["title"])]
+            return {"total_count": len(found), "incomplete_results": False, "items": found}
         raise OSError(f"HTTP Error 404: Not Found ({path})")
 
     def download(self, path: str) -> bytes:
@@ -680,7 +719,7 @@ def test_the_gate_never_waits_on_a_run_that_has_not_finished(
 
 def test_the_newest_run_must_be_a_rehearsal_tags_push(planted: dict[str, object]) -> None:
     for event, branch in (
-        ("workflow_dispatch", BREADTH_TAG),
+        ("schedule", BREADTH_TAG),
         ("push", "release/v1.2"),
         ("workflow_dispatch", "side"),
     ):
@@ -691,14 +730,29 @@ def test_the_newest_run_must_be_a_rehearsal_tags_push(planted: dict[str, object]
 
 
 @pytest.mark.parametrize(
-    "conclusion", ["failure", "cancelled", "timed_out", "skipped", "action_required"]
+    "conclusion", ["cancelled", "timed_out", "skipped", "action_required", "startup_failure"]
 )
-def test_a_newest_run_that_did_not_succeed_is_refused(
+def test_a_newest_run_that_measured_nothing_is_refused(
     planted: dict[str, object], conclusion: str
 ) -> None:
     api = BreadthApi(planted)
     api.run(70, _record(70, api.tree), conclusion=conclusion)
     assert conclusion in _breadth_refusal(planted, api)
+
+
+def test_a_failed_run_is_judged_by_its_records(planted: dict[str, object]) -> None:
+    """A red leg's job fails its run, so a run whose only reds are advisory concludes failure:
+    its records say which legs were red, and a gating red refuses."""
+    advisory = BreadthApi(planted)
+    advisory.run(
+        70, _record(70, advisory.tree, **{"coverage/5": _red("coverage/5")}), conclusion="failure"
+    )
+    advisory.issue("coverage", 4769)
+    assert "#4769" in _breadth(planted, advisory)
+    gating = BreadthApi(planted)
+    key = "ubuntu-24.04-3.13/2"
+    gating.run(70, _record(70, gating.tree, **{key: _red(key)}), conclusion="failure")
+    assert key in _breadth_refusal(planted, gating)
 
 
 def test_a_record_with_a_red_or_carried_leg_does_not_satisfy_a_release(
@@ -751,7 +805,7 @@ def test_an_earlier_red_run_of_the_commit_refuses_unless_the_owner_recorded_why(
 ) -> None:
     def api() -> BreadthApi:
         made = BreadthApi(planted)
-        made.run(69, _record(69, made.tree), conclusion="failure", event="workflow_dispatch")
+        made.run(69, _record(69, made.tree, **{GATING: _red(GATING)}), event="workflow_dispatch")
         return made.run(70, _record(70, made.tree))
 
     said = _breadth_refusal(planted, api())
@@ -770,8 +824,8 @@ def test_an_owners_record_cannot_excuse_the_newest_run(planted: dict[str, object
     commit = str(planted["readme"])
     _excuse(planted, {"run_id": 70, "commit": commit, "why": "no"})
     api = BreadthApi(planted)
-    api.run(70, _record(70, api.tree), conclusion="failure")
-    assert "failure" in _breadth_refusal(planted, api)
+    api.run(70, _record(70, api.tree, **{GATING: _red(GATING)}))
+    assert GATING in _breadth_refusal(planted, api)
 
 
 @pytest.mark.parametrize(
@@ -821,7 +875,7 @@ def test_a_malformed_owners_record_refuses_rather_than_excuses(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{not json", encoding="utf-8")
     api = BreadthApi(planted)
-    api.run(69, _record(69, api.tree), conclusion="failure").run(70, _record(70, api.tree))
+    api.run(69, _record(69, api.tree, **{GATING: _red(GATING)})).run(70, _record(70, api.tree))
     assert release_tag.BREADTH_EXCEPTIONS in _breadth_refusal(planted, api)
 
 
@@ -870,3 +924,114 @@ def test_main_reads_breadth_before_it_creates_a_release_tag_and_a_rehearsal_read
     out = capsys.readouterr().out
     assert "its breadth is green: https://github.com/owner/project/actions/runs/70" in out, out
     assert post.calls[2][1]["tag"] == "v1.2.3"
+
+
+# ── advisory legs are owned, not gating; a dispatch re-measures an excused red (#3911) ────────
+#
+# The gating legs (each OS, Python and architecture, and random-order) must be green. The
+# advisory ones (the next-Ubuntu canary and what reads it, and coverage) measure: they must have
+# run, and each red one must have an open issue named for it, filed by breadth's report or by a
+# maintainer, which the gate lists. A dispatch on a rehearsal tag may decide, as a re-measure,
+# only when an earlier run of the commit was red and the owner's record names that run.
+
+
+def test_the_advisory_legs_are_breadths_own() -> None:
+    assert release_tag.ADVISORY_LEGS <= set(breadth_evidence.SHARDS)
+    assert {"canary", "coverage"} <= release_tag.ADVISORY_LEGS
+    for gating in ("ubuntu-24.04-3.13", "macos-26-3.12", "ubuntu-24.04-arm-3.13", "random-order"):
+        assert gating not in release_tag.ADVISORY_LEGS
+
+
+def test_an_advisory_red_with_its_open_issue_passes_and_is_listed(
+    planted: dict[str, object],
+) -> None:
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree, **{"canary/1": _red("canary/1"), "coverage/5": _red("c")}))
+    api.issue("canary", 4768).issue("coverage", 4769)
+    said = _breadth(planted, api)
+    assert "/actions/runs/70" in said and "#4768" in said and "#4769" in said, said
+
+
+def test_an_advisory_red_with_no_open_issue_refuses_naming_the_title(
+    planted: dict[str, object],
+) -> None:
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree, **{"canary/1": _red("canary/1")}))
+    api.issue("coverage", 4769)
+    said = _breadth_refusal(planted, api)
+    assert "breadth: canary is red" in said, said
+
+
+def test_an_issue_an_outsider_opened_owns_nothing(planted: dict[str, object]) -> None:
+    """On a public repository anyone may open an issue under that title."""
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree, **{"canary/1": _red("canary/1")}))
+    api.issue("canary", 9001, login="someone", kind="User", association="NONE")
+    api.issue("canary", 9002, title="breadth: canary is red again")
+    assert "breadth: canary is red" in _breadth_refusal(planted, api)
+    owned = BreadthApi(planted)
+    owned.run(70, _record(70, owned.tree, **{"canary/1": _red("canary/1")}))
+    owned.issue("canary", 9003, login="keyurgolani", kind="User", association="OWNER")
+    assert "#9003" in _breadth(planted, owned)
+
+
+def test_an_advisory_leg_that_did_not_run_refuses(planted: dict[str, object]) -> None:
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree, **{"canary/2": _red("canary/2", missing=True)}))
+    api.issue("canary", 4768)
+    assert "did not run" in _breadth_refusal(planted, api)
+
+
+def test_a_gating_red_refuses_whatever_issue_it_has(planted: dict[str, object]) -> None:
+    for key in ("ubuntu-24.04-arm-3.13/3", "random-order/4", "macos-26-3.12/2", "security/1"):
+        api = BreadthApi(planted)
+        api.run(70, _record(70, api.tree, **{key: _red(key)}))
+        api.issue(breadth_evidence.leg_of(key), 4771)
+        said = _breadth_refusal(planted, api)
+        assert key in said, said
+
+
+def test_an_earlier_attempts_red_counts_as_its_leg_does(planted: dict[str, object]) -> None:
+    advisory = BreadthApi(planted)
+    first = _record(70, advisory.tree, **{"coverage/2": _red("coverage/2")})
+    advisory.run(70, first, _record(70, advisory.tree, attempt=2), attempt=2)
+    advisory.issue("coverage", 4769)
+    assert _breadth(planted, advisory).startswith(
+        "https://github.com/owner/project/actions/runs/70"
+    )
+    gating = BreadthApi(planted)
+    first = _record(70, gating.tree, **{"ubuntu-24.04-3.13/1": _red("ubuntu-24.04-3.13/1")})
+    gating.run(70, first, _record(70, gating.tree, attempt=2), attempt=2)
+    assert "ubuntu-24.04-3.13/1" in _breadth_refusal(planted, gating)
+
+
+def test_an_issue_search_the_gate_cannot_read_refuses(planted: dict[str, object]) -> None:
+    api = BreadthApi(planted)
+    api.run(70, _record(70, api.tree, **{"canary/1": _red("canary/1")}))
+    api.issue("canary", 4768)
+    api.fail = "/search/issues"
+    assert "cannot read" in _breadth_refusal(planted, api)
+
+
+def test_a_dispatch_on_a_rehearsal_tag_re_measures_only_an_excused_red(
+    planted: dict[str, object],
+) -> None:
+    commit = str(planted["readme"])
+
+    def api(*, earlier: bool = True) -> BreadthApi:
+        made = BreadthApi(planted)
+        legs = {GATING: _red(GATING)} if earlier else {}
+        made.run(69, _record(69, made.tree, **legs))
+        return made.run(70, _record(70, made.tree), event="workflow_dispatch")
+
+    # Not excused: the red refuses, as any earlier red does.
+    assert "/actions/runs/69" in _breadth_refusal(planted, api())
+    # Excused by the owner's record: the dispatch decides.
+    _excuse(planted, {"run_id": 69, "commit": commit, "why": "the arm runner was lost"})
+    assert _breadth(planted, api()).endswith("/actions/runs/70")
+    # With no red before it there is nothing to re-measure, so a dispatch decides nothing.
+    said = _breadth_refusal(planted, api(earlier=False))
+    assert "re-measure" in said, said
+    alone = BreadthApi(planted)
+    alone.run(70, _record(70, alone.tree), event="workflow_dispatch")
+    assert "re-measure" in _breadth_refusal(planted, alone)

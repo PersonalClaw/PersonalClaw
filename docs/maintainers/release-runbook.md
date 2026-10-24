@@ -294,9 +294,16 @@ takes hours, and the tagging workflow never waits for it: until it has finished 
 tag of the commit is refused, naming the run, or saying no run exists yet. So the order is
 rehearse, then breadth, then tag.
 
-- **Green:** tag the same commit (below).
+- **Green:** tag the same commit (below). Green means every gating leg (each OS, Python and
+  architecture, random-order, security, the installer smoke, the audit, the union checks) is
+  green. The advisory legs (the canary and coverage) must have run, and each red one needs an
+  open `breadth: <leg> is red` issue, filed by breadth's report or a maintainer. The tagging
+  workflow names each such red with its issue.
 - **Red:** fix it, land the fix, and rehearse the new commit. It gets its own
-  `rehearsal-v0.1.3-<sha7>`, so no tag is moved or deleted. Rehearsal tags stay.
+  `rehearsal-v0.1.3-<sha7>`, so no tag is moved or deleted. Rehearsal tags stay. To measure the
+  same commit again instead (a runner lost, an outside outage), the owner first names the red
+  run in the record below, then dispatches breadth on the rehearsal tag
+  (`gh workflow run breadth.yml --ref rehearsal-v0.1.3-<sha7>`); that dispatch then decides.
 - **An earlier red of the same commit** refuses its tag, even behind a green run, unless the
   owner's record names it. The newest run is never passed over. The record is
   `.github/release-breadth-exceptions.json` on `main`:

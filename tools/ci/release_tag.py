@@ -13,10 +13,12 @@ it with a tag and a commit. It refuses, naming why, unless:
   workflow a push to ``main`` runs in, the newer shape first (``workflows.MAIN_PUSH``,
   ``merge.yml`` once #3915's flip lands, ``ci.yml`` until then), so the gate outlives the flip.
 - the commit's breadth is green (#3911, :func:`breadth_green`), for a release tag: the newest
-  ``breadth.yml`` run of the commit off ``main`` is a rehearsal tag's push, completed green, with
-  a digest-verified record of every attempt, every leg run there and green; and an earlier red
-  run of the commit is named in the owner's record (:data:`BREADTH_EXCEPTIONS`). It never waits:
-  until that run exists and has finished, it refuses;
+  ``breadth.yml`` run of the commit off ``main`` is a rehearsal tag's push, with a
+  digest-verified record of every attempt in which every gating leg ran and is green and every
+  advisory leg (:data:`ADVISORY_LEGS`) ran, each red one owned by an open issue named for it;
+  and an earlier red run of the commit is named in the owner's record
+  (:data:`BREADTH_EXCEPTIONS`), after which a dispatch on the rehearsal tag may re-measure it.
+  It never waits: until that run exists and has finished, it refuses;
 - no ``release.yml`` run is still going (#3911, :func:`no_release_running`): every release
   shares one concurrency group, where GitHub keeps one waiting run, so a tag made behind a
   running release could have its run replaced by the next and never be released.
@@ -50,6 +52,7 @@ import re
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -338,33 +341,123 @@ def _breadth_records(
     return records
 
 
+#: The breadth legs that measure rather than gate (#3911): the next-Ubuntu canary and the two
+#: legs that read its suite (``continue-on-error`` in breadth.yml), and coverage. A release
+#: needs each of them run, and each red one owned by an open issue named for it; every other
+#: leg (each OS, Python and architecture, random-order, security, the installer smoke, the
+#: audit and the union checks) must be green.
+ADVISORY_LEGS = frozenset({"canary", "planned-ids-canary", "shard-union-canary", "coverage"})
+#: The conclusions a finished run's records are read under. A red leg's job fails its run, so a
+#: run whose only reds are advisory concludes ``failure``; the records say which legs. Any other
+#: conclusion (cancelled, timed out, never started) measured nothing a release may rest on.
+_JUDGED_CONCLUSIONS = ("success", "failure")
+#: Who files a leg's issue: breadth's report, as the workflow's bot, or a maintainer. On a
+#: public repository anyone may open an issue under that title, and theirs owns nothing.
+_ISSUE_BOT = "github-actions[bot]"
+_MAINTAINERS = ("OWNER", "MEMBER", "COLLABORATOR")
+
+
+def _release_findings(
+    records: list[dict[str, Any]], run_attempt: int
+) -> tuple[list[str], set[str]]:
+    """What in a run's records refuses a release outright, and which advisory legs are red.
+
+    The run must hold a record of every attempt up to ``run_attempt``; the newest attempt's
+    must hold every expected shard, each run there (none carried, none that never ran); a gating
+    shard red on any attempt refuses. An advisory shard red on any attempt makes its leg red,
+    which an open issue owns (:func:`_owning_issue`)."""
+    refusals: list[str] = []
+    advisory: set[str] = set()
+    attempts = {r.get("attempt") for r in records}
+    lacking = [n for n in range(1, run_attempt + 1) if n not in attempts]
+    if run_attempt < 1 or lacking:
+        refusals.append(f"lacks a record of attempt {', '.join(map(str, lacking)) or run_attempt}")
+    for record in records:
+        found = record.get("legs")
+        legs: dict[str, Any] = found if isinstance(found, dict) else {}
+        newest = record.get("attempt") == run_attempt
+        if newest:
+            missing = sorted(breadth_evidence.expected_keys() - set(legs))
+            if missing:
+                refusals.append(f"lacks {', '.join(missing[:5])}")
+        for key, leg in sorted(legs.items()):
+            leg_id = breadth_evidence.leg_of(key)
+            if newest and leg.get("reused_from"):
+                refusals.append(f"carried {key} from another run")
+            elif newest and leg.get("missing") and leg_id in ADVISORY_LEGS:
+                refusals.append(f"advisory {key} did not run")
+            elif leg.get("result") != breadth_evidence.GREEN:
+                if leg_id in ADVISORY_LEGS:
+                    advisory.add(leg_id)
+                else:
+                    refusals.append(f"{key} is red on attempt {record.get('attempt')}")
+    return sorted(set(refusals)), advisory
+
+
+def _owning_issue(repository: str, leg: str, get: Get) -> str | None:
+    """The open issue that owns advisory *leg*'s red, titled as breadth's report titles it."""
+    title = breadth_evidence.issue_title(leg)
+    query = urllib.parse.urlencode(
+        {"q": f'repo:{repository} is:issue is:open in:title "{title}"', "per_page": 100}
+    )
+    answer = _ask(get, f"/search/issues?{query}", f"the issues titled {title!r}")
+    items = answer.get("items") if isinstance(answer, dict) else None
+    if not isinstance(items, list) or (
+        isinstance(answer, dict) and answer.get("incomplete_results")
+    ):
+        raise trust.Refused(f"cannot read the issues titled {title!r}: {answer!r}")
+    for item in items:
+        user = item.get("user") if isinstance(item, dict) else None
+        if (
+            isinstance(user, dict)
+            and item.get("title") == title
+            and item.get("state") == "open"
+            and "pull_request" not in item
+            and (
+                (user.get("login") == _ISSUE_BOT and user.get("type") == "Bot")
+                or item.get("author_association") in _MAINTAINERS
+            )
+        ):
+            return f"#{item.get('number')}"
+    return None
+
+
 def _breadth_red(
     repository: str, run: dict[str, Any], tree: str, get: Get, download: Download
-) -> str | None:
-    """Why a finished run is not a green a release may rest on; None when it is one."""
-    if run.get("conclusion") != "success":
-        return f"concluded {run.get('conclusion')}"
+) -> tuple[str | None, list[str]]:
+    """Why a finished run is not one a release may rest on (None when it is one), and each
+    advisory red it holds with the issue that owns it."""
+    if run.get("conclusion") not in _JUDGED_CONCLUSIONS:
+        return f"concluded {run.get('conclusion')}", []
     run_id = int(run.get("id") or 0)
     try:
         records = _breadth_records(repository, run_id, get, download)
     except breadth_evidence.Refused as refused:
-        return f"has a record that does not verify: {refused}"
+        return f"has a record that does not verify: {refused}", []
     if not records:
-        return "holds no breadth record"
+        return "holds no breadth record", []
     for record in records:
         if record.get("run_id") != run_id:
-            return f"holds a record of run {record.get('run_id')}"
+            return f"holds a record of run {record.get('run_id')}", []
         if record.get("tree") != tree:
-            return f"holds a record of tree {record.get('tree')}, not the commit's {tree}"
+            return f"holds a record of tree {record.get('tree')}, not the commit's {tree}", []
     attempt = run.get("run_attempt")
-    if not isinstance(attempt, int) or not breadth_evidence.satisfies_release(
-        records, run_attempt=attempt
-    ):
-        return (
-            "does not satisfy a release: a release needs a record of every attempt, and every "
-            "leg run there, none carried, all green"
-        )
-    return None
+    if not isinstance(attempt, int):
+        return "names no attempt", []
+    refusals, advisory = _release_findings(records, attempt)
+    if refusals:
+        return f"does not satisfy a release: {'; '.join(refusals[:8])}", []
+    owned: list[str] = []
+    for leg in sorted(advisory):
+        issue = _owning_issue(repository, leg, get)
+        if issue is None:
+            return (
+                f"has advisory {leg} red with no open issue titled "
+                f"'{breadth_evidence.issue_title(leg)}' to own it",
+                [],
+            )
+        owned.append(f"{leg} {issue}")
+    return None, owned
 
 
 def breadth_green(repository: str, commit: str, get: Get, download: Download, *, repo: Path) -> str:
@@ -372,13 +465,17 @@ def breadth_green(repository: str, commit: str, get: Get, download: Download, *,
     naming why. It never waits: a run still going refuses.
 
     The newest ``breadth.yml`` run of the commit off ``main`` must be a rehearsal tag's push,
-    completed green, every record of it verified under its digest, naming that run and the
-    commit's tree, and together satisfying a release (``breadth_evidence.satisfies_release``).
-    The run's commit is the tagged commit, whose definitions :func:`check` holds to ``main``'s,
-    so the breadth.yml that ran is ``main``'s. An earlier red run of the commit refuses unless
-    the owner's record (:data:`BREADTH_EXCEPTIONS`, from *repo*, ``main``'s checkout) names it
-    with this commit: a re-dispatch is a new measurement, and passing over an earlier red is the
-    owner's call (#4712). The newest run is never passed over."""
+    finished, every record of it verified under its digest and naming that run and the commit's
+    tree. Together the records must hold every attempt, and in the newest every shard, none
+    carried; every gating shard green on every attempt; and every advisory leg run, each red one
+    owned by an open issue titled as breadth's report titles it, filed by that report or a
+    maintainer (:func:`_release_findings`, :func:`_owning_issue`). The advisory reds are named
+    beside the URL. The run's commit is the tagged commit, whose definitions :func:`check` holds
+    to ``main``'s, so the breadth.yml that ran is ``main``'s. An earlier red run of the commit
+    refuses unless the owner's record (:data:`BREADTH_EXCEPTIONS`, from *repo*, ``main``'s
+    checkout) names it with this commit: passing over a red is the owner's call (#4712). Once it
+    does, a dispatch on the rehearsal tag may be the newest run, as the owner's re-measure; with
+    no such red a dispatch decides nothing. The newest run is never passed over."""
     done = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "--verify", f"{commit}^{{tree}}"],
         capture_output=True,
@@ -403,27 +500,41 @@ def breadth_green(repository: str, commit: str, get: Get, download: Download, *,
     newest = max(runs, key=lambda r: int(r.get("id") or 0))
     url = str(newest.get("html_url") or f"run {newest.get('id')}")
     branch = str(newest.get("head_branch") or "")
-    if newest.get("event") != "push" or not branch.startswith(REHEARSAL_PREFIX + "v"):
+    event = newest.get("event")
+    if event not in ("push", "workflow_dispatch") or not branch.startswith(REHEARSAL_PREFIX + "v"):
         raise trust.Refused(
-            f"the newest breadth run of {commit} ({url}) is a {newest.get('event')} on {branch}, "
-            "not a rehearsal tag's push: rehearse the tag, and tag once that run is green"
+            f"the newest breadth run of {commit} ({url}) is a {event} on {branch}, not a "
+            "rehearsal tag's push: rehearse the tag, and tag once that run is green"
         )
-    why = _breadth_red(repository, newest, tree, get, download)
+    why, owned = _breadth_red(repository, newest, tree, get, download)
     if why:
         raise trust.Refused(
-            f"the newest breadth run of {commit} ({url}) {why}: a release rests only on a green "
-            "record of every leg"
+            f"the newest breadth run of {commit} ({url}) {why}: a release rests only on every "
+            "gating leg green and every advisory red owned"
         )
     excused = breadth_exceptions(repo)
+    reds = 0
     for run in sorted(runs, key=lambda r: int(r.get("id") or 0)):
         if run is newest:
             continue
-        why = _breadth_red(repository, run, tree, get, download)
-        if why and excused.get(int(run.get("id") or 0)) != commit:
+        why, _ = _breadth_red(repository, run, tree, get, download)
+        if not why:
+            continue
+        reds += 1
+        if excused.get(int(run.get("id") or 0)) != commit:
             raise trust.Refused(
                 f"an earlier breadth run of {commit} ({run.get('html_url')}) {why}, and the "
                 f"owner's record ({BREADTH_EXCEPTIONS} on main) names no reason to pass over it"
             )
+    # A dispatch on the rehearsal tag is how the owner measures the commit again after a red
+    # the record names; with no such red it re-measures nothing, and only the push decides.
+    if event == "workflow_dispatch" and not reds:
+        raise trust.Refused(
+            f"the newest breadth run of {commit} ({url}) is a dispatch, which decides only as a "
+            "re-measure of an earlier red run the owner's record names; there is none"
+        )
+    if owned:
+        return f"{url} (advisory reds, each owned: {', '.join(owned)})"
     return url
 
 

@@ -1,11 +1,12 @@
 """``.github/workflows/release-tag.yml``'s trust shape: the one way a ``v*`` tag is made (#4584).
 
 It runs only on a dispatch, its one job only on main, in the ``ci-controller`` environment, with
-``contents: read`` and ``actions: read``. The dispatch inputs reach the steps only as environment
-variables, never as text in a command. ``python -m tools.ci release-tag`` checks the commit and
-the tag, and reads the commit's push run on main with the job's own token (#3911), before the
-release controller's App token is made; that token is asked for ``contents: write`` alone and
-reaches only the step that creates the tag. Each rule fails on a planted edit of the real file.
+``contents: read``, ``actions: read`` and ``issues: read``. The dispatch inputs reach the steps
+only as environment variables, never as text in a command. ``python -m tools.ci release-tag``
+checks the commit and the tag, and reads the commit's push run on main, its breadth and the
+issues that own breadth's advisory reds with the job's own token (#3911), before the release
+controller's App token is made; that token is asked for ``contents: write`` alone and reaches
+only the step that creates the tag. Each rule fails on a planted edit of the real file.
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ def _problems(text: str) -> list[str]:
         found.append(f"the job runs on {job.get('if')!r}, not main alone")
     if job.get("environment") != "ci-controller":
         found.append(f"the job deploys to {job.get('environment')!r}")
-    if job.get("permissions") != {"contents": "read", "actions": "read"}:
+    if job.get("permissions") != {"contents": "read", "actions": "read", "issues": "read"}:
         found.append(f"the job holds {job.get('permissions')!r}")
     steps = job.get("steps") or []
     names = [s.get("name") for s in steps]
@@ -151,6 +152,7 @@ def test_the_tagging_workflow_checks_first_and_hands_the_token_to_one_step() -> 
             "      actions: write\n",
             "the job holds",
         ),
+        ("      issues: read\n", "      issues: write\n", "the job holds"),
         (
             '--commit "$COMMIT" --repository "$GITHUB_REPOSITORY" "${more[@]}"',
             '--commit "$COMMIT" "${more[@]}"',
