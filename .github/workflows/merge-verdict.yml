@@ -9,22 +9,23 @@
 # triggering run's event and branch only to start no runner for a run that can judge no pull
 # request's head; it names nothing of the candidate anywhere else.
 #
-# The verdict is green only when the head changes no CI definition (tools/ci/trust.py), is up to
-# date with main, merge.yml's `results` job, which judges the run with main's verdict.py, passed
-# on every attempt, and the head's dependency review (dependency-review.yml, main's copy) passed
-# (#4585 step 6), and CodeQL analysed the head in every language main's analyses name, with no
-# alert of the pull request's own. Anything else, an answer the API would not give included,
+# The verdict is green only when the head is up to date with main, merge.yml's `results` job,
+# which judges the run with main's verdict.py, passed on every attempt, and the head's dependency
+# review (dependency-review.yml, main's copy) passed (#4585 step 6), and CodeQL analysed the head
+# in every language main's analyses name, with no alert of the pull request's own; and, for a head
+# that changes a CI definition (tools/ci/trust.py), main's CI contract passed over its
+# definitions. Anything else, an answer the API would not give included,
 # posts failure, never neutral. A completed Dependency review run, or code scanning's CodeQL
 # check, judges its head again from the head's own completed Merge run, so they may finish in any
 # order.
 #
-# A head that changes a CI definition is not judged by its own run, which used its own
-# definitions: that run posts nothing, and the `trusted` job makes main's definitions on the
-# head's tree, one commit on main's tip built through the API with the controller App's token,
-# on the branch `trusted-run/<head>`, and runs main's merge.yml there (#4584 step 4). That
-# commit changes no workflow file against its parent and every push trigger here is main's
-# alone, so its push starts nothing. When that run completes, its verdict is posted on the head,
-# only if its commit is still exactly main's definitions on the head's tree, and its branch is
+# A head that changes a CI definition is judged by its own run and by main's CI contract over its
+# definitions (#4584 step 4). The `contract` job points the branch `contract-run/<head>` at
+# main's tip with the controller App's token and runs main's contract.yml there, which runs
+# main's contract rails against the head's tree. The branch is main's tip, so every push trigger
+# there is main's alone and its push starts nothing, and the workflow that runs is main's; what
+# that run writes to the Actions cache is the branch's, never main's, since it runs the head's
+# tools/ci. When it completes, the head is judged again and its verdict posted, and the branch is
 # deleted.
 #
 # The check run is posted with the controller App's token (personalclaw-ci-controller, the one
@@ -39,10 +40,11 @@
 name: Merge verdict
 
 on:
-  # A Merge run is judged. A Dependency review run, or GitHub's dynamic CodeQL workflow (matched
-  # by its run's path, never its name), judges its head again.
+  # A Merge run is judged. A Dependency review run, GitHub's dynamic CodeQL workflow (matched by
+  # its run's path, never its name), or a Contract run (by its path and branch) judges its head
+  # again.
   workflow_run:
-    workflows: ["Merge", "Dependency review", "CodeQL"]
+    workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]
     types: [completed]
   # Code scanning's CodeQL check, completed, wakes the poster to judge its head again; its
   # conclusion is never read. The job skips every other check run without a runner.
@@ -65,7 +67,7 @@ permissions:
 jobs:
   post:
     # Only what can judge a pull request's head takes a runner: the sweep; a completed dispatch
-    # off main (a trusted run, a dispatch proof); and, once merge.yml runs on pull requests
+    # off main (a contract run, a dispatch proof); and, once merge.yml runs on pull requests
     # (MERGE_VERDICT_LIVE, which #3915's flip sets to 'true'), code scanning's CodeQL check and a
     # completed run of a pull request (its own, its dependency review, or CodeQL's on
     # refs/pull/*). A push, a dispatch on main, CodeQL on main and any other check run start no
@@ -139,10 +141,10 @@ jobs:
           python3 -m tools.ci merge-controller post --repo "$GITHUB_REPOSITORY" \
             --body "$RUNNER_TEMP/merge-verdict.json"
 
-  trusted:
-    # A head that changes a CI definition: make main's definitions on its tree and run main's
-    # merge.yml there. Once that run's verdict is posted, delete its branch, and any trusted-run
-    # branch older than a day with it.
+  contract:
+    # A head that changes a CI definition: point its contract branch at main's tip and run main's
+    # contract.yml there. Before that, delete the contract branches of judged heads and any no
+    # longer at main's tip, and trusted-run branches the old path left.
     needs: post
     if: >-
       (github.event_name == 'schedule'
@@ -162,8 +164,8 @@ jobs:
     timeout-minutes: 10
     environment: ci-controller
     permissions:
-      contents: read   # both trees, read through the API
-      actions: write   # dispatch main's merge.yml on the trusted-run branch
+      contents: read   # main's tip
+      actions: write   # dispatch main's contract.yml on the contract branch
     steps:
       - name: Runner identity
         # The image this job ran on, so a runner image that moves is visible in the log.
@@ -179,7 +181,7 @@ jobs:
           app-id: ${{ vars.CONTROLLER_APP_ID }}
           private-key: ${{ secrets.CONTROLLER_APP_KEY }}
           permission-contents: write
-      - name: delete judged or old trusted-run branches, then make the head's trusted run
+      - name: delete judged and stale contract branches, then point the head's at main's tip
         id: tree
         env:
           GH_TOKEN: ${{ steps.controller.outputs.token }}
@@ -188,18 +190,18 @@ jobs:
           CLEANUP: ${{ needs.post.outputs.cleanup }}
         run: |
           set -euo pipefail
-          # The judged run's branch and any older than a day first, then the new one, so a
-          # sweep never takes the branch this run is about to use.
+          # The judged and stale branches first, then the new one, so a sweep never takes the
+          # branch this run is about to use.
           if [ -n "$CLEANUP" ]; then
             gone=()
             for branch in $CLEANUP; do gone+=(--branch "$branch"); done
             python3 -m tools.ci merge-controller cleanup --repo "$GITHUB_REPOSITORY" "${gone[@]}"
           fi
           if [ -n "$HEAD_SHA" ]; then
-            python3 -m tools.ci merge-controller trusted --repo "$GITHUB_REPOSITORY" \
-              --candidate "$HEAD_SHA" --base "$BASE"
+            python3 -m tools.ci merge-controller contract-branch --repo "$GITHUB_REPOSITORY" \
+              --head "$HEAD_SHA" --base "$BASE"
           fi
-      - name: run main's merge.yml on it
+      - name: run main's contract.yml on it
         if: steps.tree.outputs.branch != ''
         env:
           GH_TOKEN: ${{ github.token }}

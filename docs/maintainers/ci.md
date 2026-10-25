@@ -285,33 +285,66 @@ the `tools/ci` it runs, whatever the candidate brings. `python -m tools.ci merge
 decide` (`tools/ci/merge_controller.py`) reads everything through the API by the run's id:
 the run, every attempt's jobs, both trees (`trust.compare_trees` over blobs the API returns, so
 nothing of the candidate is fetched or checked out), the comparison with `main` and the run's
-artifact digests. The rules, in order:
+artifact digests. The rules, each failing closed; a red names every one the head fails, so one
+verdict says all it must fix:
 
 - **Which runs post:** only this repository's `merge.yml`, completed, on a `pull_request` or a
   dispatch. Another workflow named Merge, which a candidate can add, a push and a schedule post
   nothing.
-- **A head that changes a CI definition,** against `main`'s tip, is judged by a run of `main`'s
-  definitions on its tree, never by its own run, which posts nothing (#4584 step 4). The
-  `trusted` job builds one commit through the API with the controller App's token: `main`'s tip
-  as its parent, `main`'s definitions, and every other path as the head has it. It points
-  `trusted-run/<head>` at it and runs `main`'s merge.yml there with its own token, which holds
-  `actions: write` alone. The commit changes no workflow file against its parent, and every
-  push trigger here is `main`'s alone, so the push starts nothing; its caches belong to that
-  branch, never to `main`. When that run completes, its verdict is posted on the head, only if
-  its commit still has a parent on `main`, `main`'s tip's definitions and the head's every other
-  path. One whose definitions `main` has moved past is made again; any other is red. Then the
-  branch is deleted. Until that run reports, the head has no verdict, which a required check
-  reads as not passed.
-- **Up to date:** a head behind `main` is red, so the squash lands the tree the run tested.
+- **A head that changes a CI definition,** against `main`'s tip, is judged by two things, both
+  green (#4584 step 4): its own run, by every rule here, which shows the change works as
+  written; and `main`'s CI contract over its definitions, which shows it weakens nothing
+  `main`'s contract holds CI to. The contract is `main`'s copy of every CI rail
+  (`tests/rails/test_ci_*.py` and the workflow rails `tools/ci/contract.py` lists) and their
+  helpers, run against the head's tree: the head's `tools/ci`, catalogue and workflows are what
+  is tested, and its own copy of the contract is replaced before anything runs, so editing it
+  cannot help. A change that alters a contract row lands in two merges: the row first, passing
+  `main`'s old row, then its use (the `docker` word: #5510, then #5507). Relaxing a row is
+  narrowing a check, and goes to core review.
+
+  The `contract` job points the branch `contract-run/<head>` at `main`'s tip with the controller
+  App's token and runs `main`'s `contract.yml` there with its own token (`actions: write`). The
+  branch is `main`'s tip, so the workflow that runs is `main`'s and every push trigger there is
+  `main`'s alone, and what the run writes to the Actions cache is that branch's, never `main`'s,
+  since it runs the head's `tools/ci`. It holds `contents: read` alone, no secret and no
+  environment, keeps no credential and saves no cache: setup-uv runs with its cache off, not
+  through the setup action, which saves one (the contract row "main's contract run holds nothing
+  worth taking and saves no cache"). It lays out the head's tree beside its checkout
+  (`git worktree`) and runs `python -m tools.ci contract` with `main`'s locked environment. A
+  contract run counts only when it is `contract.yml`, dispatched on the head's branch at
+  `main`'s tip and named for the head (its `run-name`, `Contract <head>`); one at an older tip
+  runs again. It is started only from the head's own completed `pull_request` run, which passed
+  the fork approval gate, once per head and tip, and the head has no green until it reports. When
+  it completes, the head is judged again and its verdict posted, and the branch is deleted; every
+  completed run also sweeps away contract branches no longer at `main`'s tip.
+
+  The judge is not in the head's process. The rails import the head's `tools/ci`, so they run in
+  a child pytest, and `main`'s `tools/ci/contract.py` reads the child's junit report from a path
+  it names: green only when the child exited 0 and the report holds every rail with no failure
+  and no error. A head whose `tools/ci` exits 0 on import writes no report, so it is red.
+
+  What the contract run does not defend against: the child runs the head's code, because that is
+  what it tests, so a head built to forge the child's report is not caught by the contract run.
+  It catches a head that weakens CI by mistake or by a shortcut: a dropped job, an edit to its
+  own copy of the contract, a removed plant, a forced exit. A head built to forge the report is
+  covered by the other controls: core review of every `tools/ci` change, commit provenance (see
+  "Commit provenance") and squash-only merges. Running the data rails with no head code in the
+  process at all is the follow-up #5518, after 0.3.0.
+
+  The old trusted run (main's definitions on the head's tree, on `trusted-run/<head>`) ran each
+  such head's own tests against definitions without its change, so it could only fail; its
+  leftover branches are swept away after a day.
+- **Up to date:** a head behind `main` is red, so the squash lands the tree the run tested. Its
+  definitions are not compared (against `main`'s tip it would read as changing every definition
+  `main` changed since), so no contract runs for it until it updates.
 - **The run's verdict:** merge.yml's `results` job, which judges the run with main's
   `verdict.py`, concluded `success` on every attempt. Missing, cancelled, skipped or red on any
   attempt is red, and a rerun never turns a red into a green.
 - **The dependency review (#4585 step 6):** the newest `pull_request_target` run of
   `dependency-review.yml` on the head, `main`'s copy, concluded `success`. One that has not run,
   is still running or did not pass is red. The poster also follows Dependency review: when one
-  completes, it judges that head again from the head's own completed Merge run, or from its
-  trusted run for a head that changes a definition, and starts nothing. So the two finish in
-  either order.
+  completes, it judges that head again from the head's own completed Merge run (and, for a head
+  that changes a definition, its contract run). So they finish in any order.
 - **CodeQL, read from what it ran:** the newest run of GitHub's dynamic CodeQL workflow
   (`dynamic/github-code-scanning/codeql`) on the head finished, with an `Analyze (<language>)`
   job concluded `success` for each language `main`'s default-setup analyses name; each of those
@@ -336,7 +369,7 @@ artifact digests. The rules, in order:
   again, through the REST reads that stay the gate, and a query that gives no answer leaves the
   sweep reading every head.
 - **What takes a runner:** both jobs' one condition starts one only for what can judge a pull
-  request's head. The schedule and a completed dispatch off `main` (a trusted run, a dispatch
+  request's head. The schedule and a completed dispatch off `main` (a contract run, a dispatch
   proof) always do. A pull request's wakes, code scanning's CodeQL check and a completed run of
   a pull request (its own Merge run, its dependency review, CodeQL's on `refs/pull/*`), do only
   while the repository variable `MERGE_VERDICT_LIVE` is `true`. It is `false` until #3915's flip
@@ -350,7 +383,8 @@ artifact digests. The rules, in order:
   same six hours started the sweep once, not 36 times. It is the backstop for the one gap above,
   so a late sweep only makes a waiting red wait longer; it never posts a wrong verdict.
 - **The receipt:** a green names the controller's commit on `main`, the head and its tree, the
-  runner and the definitions commit, and the digests of the run's `ci-record-*` artifacts as the
+  runner and the definitions commit (`main`'s tip, or for a head that changes them the head, with
+  the contract run that judged them), and the digests of the run's `ci-record-*` artifacts as the
   API reports them. With no record artifact there is no evidence, so no green. The partner head
   is not recorded yet; the partner rule comes with the apps half of #3910.
 
@@ -358,9 +392,10 @@ The verdict is `success` or `failure`, never neutral; an answer the API would no
 `failure`, named as unread. The `post` job reads with its own token (`contents: read`,
 `actions: read`, `security-events: read`), in the `ci-controller` environment, which only `main` may deploy to. Only when
 there is a verdict to post does it mint the controller App's token, with `checks: write` alone,
-and only the step that posts holds it. The `trusted` job, in the same environment, mints it with
-`contents: write` alone, for the step that makes the trusted run's commit. `post` refuses a body that is not one completed `merge-verdict`
-check run, or a green without its receipt.
+and only the step that posts holds it. The `contract` job, in the same environment, mints it with
+`contents: write` alone, for the step that points the head's contract branch at `main`'s tip.
+`post` refuses a body that is not one completed `merge-verdict` check run, or a green without its
+receipt.
 
 It is advisory: `main-protect` does not require `merge-verdict` yet. It will once #3915's flip is
 live and three pull requests' posted verdicts have matched their real results (#3910's plan,
@@ -374,7 +409,7 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
 
 ### The rows that hold it
 
-`tests/rails/test_ci_contract.py` holds five workflow rules, each with a planted violation per form:
+`tests/rails/test_ci_contract.py` holds six workflow rules, each with a planted violation per form:
 
 - No `pull_request_target` or `workflow_run` workflow checks out candidate code: a checkout of
   the pull request's or the run's head, a `refs/pull/` ref, `github.head_ref`, the pull
@@ -383,6 +418,10 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
 - No job that runs candidate code holds a write permission or a secret: a write grant,
   `write-all`, no `permissions` at all (the repository default is unknown to the file), a
   `secrets.` reference anywhere in the job, or `secrets: inherit`.
+- `contract.yml`, which runs a head's code for its contract run, holds nothing worth taking:
+  `contents: read` alone, no job's own permissions, no `secrets.` reference, no environment and
+  no cache save (`actions/cache` or `actions/cache/save`, setup-uv with its cache on, setup-node
+  with a cache, or a local action, which may cache). A restore alone is fine.
 - Only `release.yml` holds a publishing permission (`contents`, `packages`, `id-token`,
   `attestations` or `deployments` write, or `write-all`) or any deployment environment. A new
   environment has to argue its way into `release.yml`. The one other is `settings-report`, on
@@ -416,8 +455,9 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   and a scheduled run are not a candidate's, so `main`'s own grouping is not this row's.
 
 Main's `tools/ci` now reads a pull request's catalogue (see "Main's copy reads a pull request's
-catalogue" under "The catalogue"), but these rows still run in the candidate's own suite, so a
-candidate could delete one. Running them from main's copy is #3915's.
+catalogue" under "The catalogue"), and these rows still run in the candidate's own suite. A
+candidate that edits this table changes a definition (`trust.CONTRACT_TABLE`), so `main`'s copy
+of it also runs over the candidate, as its contract run (see "The merge controller's poster").
 
 ## The catalogue
 

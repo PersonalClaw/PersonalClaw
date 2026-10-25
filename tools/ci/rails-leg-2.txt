@@ -39,6 +39,7 @@ tests/rails/test_ci_release_tag_tree.py
 tests/rails/test_ci_junit_artifacts_tree.py
 tests/rails/test_ci_python_suite_inputs_tree.py
 tests/rails/test_ci_job_inputs_tree.py
+tests/rails/test_main_contract_over_a_head_tree.py
 tests/rails/test_workflow_path_filters_tree.py
 tests/rails/test_ci_supply_chain_contract.py
 tests/rails/test_ci_telemetry_schedules.py

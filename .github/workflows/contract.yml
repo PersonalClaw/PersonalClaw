@@ -1,0 +1,79 @@
+# Contract: main's CI contract over a head's definitions (#4584 step 4).
+#
+# A head that changes a CI definition is judged by two things, both green: its own runs, and
+# this: main's copy of the CI contract and definition rails, with their helpers, run against the
+# head's tree (tools/ci/contract.py, whose list of rails is main's). The head's tools/ci,
+# catalogue and workflows are what is tested; its own copy of the contract is replaced first.
+#
+# The poster (merge-verdict.yml) dispatches it on the branch contract-run/<head>, which points at
+# main's tip, so the workflow that runs is main's, and what it writes to the Actions cache is that
+# branch's, never main's: it runs the head's tools/ci, which is what it tests. It holds no secret
+# and no write token, keeps no credential and saves no cache. A run counts for the head only when it
+# is this file, dispatched on the head's branch at main's tip and named for the head
+# (merge_controller.contract_run).
+#
+# The verdict is main's: the rails run in a child pytest, and main's tools/ci/contract.py reads the
+# child's junit report, so a head that exits 0 on import is red. The child runs the head's code,
+# so a head built to forge that report is not caught here: core review of every tools/ci change,
+# commit provenance and squash-only merges cover it (a data-only child is #5518). See
+# docs/maintainers/ci.md, "The merge controller's poster".
+name: Contract
+# The head it judges, so the poster can tell its run from another head's on the same branch.
+run-name: Contract ${{ inputs.head }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      head:
+        description: the head whose definitions main's contract judges (a full commit id)
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  # Every uv step uses a uv-managed CPython, never the runner image's own (see merge.yml's env).
+  UV_PYTHON_PREFERENCE: only-managed
+
+concurrency:
+  group: contract-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    # Only on the head's own contract branch: the branch names the head it judges.
+    if: github.ref == format('refs/heads/contract-run/{0}', inputs.head)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # The branch is main's tip: main's tools/ci, rails and lock.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # setup-uv directly, not the setup action, whose cache it saves: this job runs the head's
+      # code, so it saves nothing another run would restore (tests/rails/test_ci_contract.py).
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.13.1"
+          python-version: "3.12.15"
+          enable-cache: false
+      - name: Install (locked, main's)
+        run: uv sync --locked --extra dev
+      - name: lay out the head's tree beside main's
+        env:
+          HEAD_SHA: ${{ inputs.head }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error title=no head::'$HEAD_SHA' is not a full commit id"
+            exit 1
+          fi
+          git fetch --no-tags --depth=1 origin "$HEAD_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+          git worktree add --detach "$RUNNER_TEMP/head" "$HEAD_SHA"
+      - name: main's CI contract over the head's definitions
+        run: uv run --no-sync python -m tools.ci contract --main "$GITHUB_WORKSPACE" --head "$RUNNER_TEMP/head"

@@ -38,6 +38,13 @@ def _release_tag(argv: list[str]) -> int:
     return release_tag.main(argv)
 
 
+def _contract(argv: list[str]) -> int:
+    # Imported when called: only the poster's contract job runs it.
+    from . import contract
+
+    return contract.main(argv)
+
+
 def _merge_controller(argv: list[str]) -> int:
     # Imported when called, as the verifier is: the poster reads tools/ci/trust.py.
     from . import merge_controller
@@ -64,6 +71,7 @@ def _verify_check_run(argv: list[str]) -> int:
 COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "audit": audit.main,
     "catalogue-check": catalogue_check.main,
+    "contract": _contract,
     "explain": catalogue.explain_main,
     "fetch": fetch.main,
     "image-pins": image_pins.main,
