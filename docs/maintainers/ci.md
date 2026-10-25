@@ -314,9 +314,15 @@ verdict says all it must fix:
   contract run counts only when it is `contract.yml`, dispatched on the head's branch at
   `main`'s tip and named for the head (its `run-name`, `Contract <head>`); one at an older tip
   runs again. It is started only from the head's own completed `pull_request` run, which passed
-  the fork approval gate, once per head and tip, and the head has no green until it reports. When
-  it completes, the head is judged again and its verdict posted, and the branch is deleted; every
-  completed run also sweeps away contract branches no longer at `main`'s tip.
+  the fork approval gate, once per head and tip. Until it reports, the head is a red that waits on
+  it ("waiting: main's CI contract over its definitions is ..."), marked waiting like a red that
+  waits on CodeQL. The `contract` job dispatches it with the job's token, and GitHub starts no
+  workflow for that token's events, so the run's completion wakes nothing (Contract 40180833095
+  passed at 09:32:43 on 2026-10-25 and no poster run followed). Every poster run judges waiting
+  reds again (below), so the head's verdict is posted and its branch deleted by the next poster
+  run after the contract reports, whatever woke it. A Contract run a person runs again does wake
+  the poster. Every completed run also
+  sweeps away contract branches no longer at `main`'s tip.
 
   The judge is not in the head's process. The rails import the head's `tools/ci`, so they run in
   a child pytest, and `main`'s `tools/ci/contract.py` reads the child's junit report from a path
@@ -354,20 +360,25 @@ verdict says all it must fix:
   request that planted one `js/code-injection` showed exactly that alert there and not on
   `main`, with all three analyses green. The `CodeQL` summary check is never read for its
   conclusion: GitHub computes it when the first language's analysis uploads, so it reads
-  `neutral` on most pull requests. A red whose only reasons wait on CodeQL (not run, still
-  running, still processing) is marked waiting in its output, and such heads are judged again:
-  when GitHub's CodeQL workflow completes (followed by name, matched by its run's path), when the
-  summary check completes (`check_run`, which starts a runner only for code scanning's CodeQL
-  check), and every ten minutes, for open pull requests whose newest verdict is a waiting red,
-  posting only a verdict that changed. The CodeQL workflow's wake is proved: the completion of
-  main's CodeQL run 40071173659 started poster run 40072081053. The schedule stays all the same,
-  for one gap: that wake fires when the run completes, right after its last language uploads,
-  and a head judged before that upload is processed waits with nothing left to wake it, since
-  the summary check fired at the first upload. The schedule closes that gap and nothing else.
-  Its first read is one GraphQL query of every open pull request's head and the App's verdicts
-  on it: when none waits, the sweep ends there; otherwise only the heads that wait are read
-  again, through the REST reads that stay the gate, and a query that gives no answer leaves the
-  sweep reading every head.
+  `neutral` on most pull requests. A red whose only reasons wait on CodeQL (not run, still running,
+  still processing) or on its contract run is marked waiting in its output, and such heads are
+  judged again: when GitHub's CodeQL workflow completes (followed by name, matched by its run's
+  path), when the summary check completes (`check_run`, which starts a runner only for code
+  scanning's CodeQL check), and by the sweep, for open pull requests whose newest verdict is a
+  waiting red, posting only a verdict that changed. The sweep runs every ten minutes by its cron,
+  but GitHub fires that schedule far less often: 7 times of 144 in the 24 hours to 09:47 UTC on
+  2026-10-25, 110 to 283 minutes apart. So every poster run, whatever woke it, also judges again the
+  three heads whose waiting verdict is oldest (`WAITING_PER_RUN`), past its own head and only when
+  the one GraphQL read answers. Heads under review wake the poster all the time, so a waiting head
+  is picked up within minutes of any activity. The CodeQL workflow's wake is proved: the completion
+  of main's CodeQL run 40071173659 started poster run 40072081053. The sweep stays all the same, for
+  one gap: that wake fires when the run completes, right after its last language uploads, and a head
+  judged before that upload is processed waits with nothing left to wake it, since the summary check
+  fired at the first upload. The sweep closes that gap, and it is the only wake for a head whose
+  contract run has reported. Its first read is one GraphQL query of every open pull request's head
+  and the App's verdicts on it: when none waits, the sweep ends there; otherwise only the heads that
+  wait are read again, through the REST reads that stay the gate, and a query that gives no answer
+  leaves the sweep reading every head.
 - **What takes a runner:** both jobs' one condition starts one only for what can judge a pull
   request's head. The schedule and a completed dispatch off `main` (a contract run, a dispatch
   proof) always do. A pull request's wakes, code scanning's CodeQL check and a completed run of

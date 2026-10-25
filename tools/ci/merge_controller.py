@@ -19,7 +19,9 @@ closed; a red names every rule the head fails, so one verdict says all it must f
    (``tools/ci/contract.py``). The contract is run only from the head's own ``pull_request``
    run, completed: that run passed the fork approval gate, so no head's code runs in the base
    repository without the approval its own run needed. Until the contract run reports, the head
-   has no green, which a required check reads as not passed.
+   is a red that waits on it, which a required check reads as not passed. The poster dispatches
+   it with the job's token, whose events start no workflow, so its completion wakes nothing: the
+   schedule's sweep of waiting reds judges the head again and posts its verdict.
 3. The head is not behind ``main``, so the squash commit lands the tree the run tested, and the
    contract judged the head against the ``main`` it would land on. A head that is behind is
    red whatever else holds, and its definitions are not compared: against ``main``'s tip, a head
@@ -118,9 +120,12 @@ CONTRACT_PREFIX = "contract-run/"
 CONTRACT_TITLE = "Contract {head}"
 #: The old path's trusted-run branches, which the sweep still deletes.
 TRUSTED_PREFIX = "trusted-run/"
-#: A reason that only waits on CodeQL to finish or to process, which a later look may clear.
+#: A reason that only waits, on CodeQL to finish or to process or on the head's contract run to
+#: report, which a later look may clear.
 WAITING = "waiting: "
-#: The fenced block a red's output text carries when every reason only waits on CodeQL.
+#: The waiting reason of a head whose contract run has not reported.
+WAITING_CONTRACT = f"{WAITING}main's CI contract over its definitions "
+#: The fenced block a red's output text carries when every reason only waits.
 WAITING_FENCE = "merge-verdict-waiting"
 #: A trusted-run branch the old path left, older than this, is swept away.
 SWEEP_AFTER = datetime.timedelta(days=1)
@@ -378,7 +383,9 @@ def _red(run: Run, reasons: list[str], head: str) -> Posting:
     )
     output = {"title": f"Red: {reasons[0]}"[:255], "summary": summary}
     if all(r.startswith(WAITING) for r in reasons):
-        output["text"] = f"```{WAITING_FENCE}\ncodeql\n```\n"
+        # What it waits on, one per line: the sweep reads only the fence.
+        waits = ["contract" if r.startswith(WAITING_CONTRACT) else "codeql" for r in reasons]
+        output["text"] = f"```{WAITING_FENCE}\n" + "\n".join(sorted(set(waits))) + "\n```\n"
     return Posting(head, "failure", output, run.url, f"{run.id}/{run.attempt}")
 
 
@@ -670,6 +677,11 @@ def _waiting(check: Mapping[str, Any]) -> bool:
 #: More open pull requests than this are not looked at again in one sweep.
 SWEEP_LIMIT = 100
 
+#: A poster run woken by anything but the schedule also judges again this many waiting heads,
+#: the oldest waiting verdict first. The schedule alone is no backstop: in the 24 hours to
+#: 2026-10-25 09:47 UTC it fired 7 times of its 144, 110 to 283 minutes apart.
+WAITING_PER_RUN = 3
+
 #: The sweep's first question in one read: each open pull request into main, its head, and the
 #: controller's merge verdicts on it. ``checkType`` is GitHub's default, the newest of each suite.
 WAITING_QUERY = """
@@ -701,15 +713,16 @@ query($owner: String!, $name: String!, $app: Int!) {
 
 def waiting_heads(query: Query, repo: str, app: int) -> list[str] | None:
     """The heads of the open pull requests into main whose newest merge verdict of the App's is a
-    red that waits on CodeQL, from one GraphQL read. None when that read gives no answer this
-    reads, or more pull requests than a sweep looks at: the sweep then reads each head itself."""
+    red that only waits (on CodeQL or on its contract run), the oldest such verdict first, from
+    one GraphQL read. None when that read gives no answer this reads, or more pull requests than
+    a sweep looks at: the sweep then reads each head itself."""
     owner, name = repo.split("/", 1)
     try:
         answer = query(WAITING_QUERY, {"owner": owner, "name": name, "app": app})
         pulls = answer["data"]["repository"]["pullRequests"]
         if int(pulls["totalCount"]) > SWEEP_LIMIT:
             return None
-        heads: list[str] = []
+        heads: list[tuple[int, str]] = []
         for pull in pulls["nodes"]:
             (node,) = pull["commits"]["nodes"]
             commit = node["commit"]
@@ -722,24 +735,42 @@ def waiting_heads(query: Query, repo: str, app: int) -> list[str] | None:
                 and newest["conclusion"] == "FAILURE"
                 and f"```{WAITING_FENCE}" in (newest["text"] or "")
             ):
-                heads.append(str(commit["oid"]))
-        return heads
+                heads.append((int(newest["databaseId"]), str(commit["oid"])))
+        return [oid for _, oid in sorted(heads)]
     except (OSError, KeyError, TypeError, ValueError):
         return None
 
 
 def judge_waiting(
-    get: Get, repo: str, app: int, controller_revision: str, query: Query | None = None
+    get: Get,
+    repo: str,
+    app: int,
+    controller_revision: str,
+    query: Query | None = None,
+    *,
+    limit: int | None = None,
+    skip: frozenset[str] = frozenset(),
 ) -> list[Outcome]:
     """Every open pull request into main whose newest merge verdict, the controller App's, is a
-    red that only waits on CodeQL: judge its head again, and keep only what changed.
+    red that only waits (on CodeQL, or on its contract run, whose completion wakes nothing): judge
+    its head again, and keep only what changed. A head whose contract run has reported comes back
+    with its verdict and its contract branch to delete.
 
     With ``query``, one GraphQL read first names the heads that wait (:func:`waiting_heads`): none,
     and the sweep ends there; some, and only those are read again, through the REST reads below,
-    which stay the gate. A read that gives no answer leaves the sweep reading every head."""
+    which stay the gate. A read that gives no answer leaves the sweep reading every head.
+
+    With ``limit`` (a poster run woken by something else), only the first ``limit`` heads the one
+    read names, past ``skip``, are judged again, and a read that gives no answer judges none: the
+    schedule's own sweep reads every head."""
     waiting = waiting_heads(query, repo, app) if query is not None else None
+    if limit is not None:
+        if waiting is None:
+            print("the one read of the open heads gave no answer: no waiting head judged here")
+            return []
+        waiting = [h for h in waiting if h not in skip][:limit]
     if waiting is not None and not waiting:
-        print("no open pull request's merge verdict waits on CodeQL: nothing to judge again")
+        print("no open pull request's merge verdict only waits: nothing to judge again")
         return []
     if query is not None and waiting is None:
         print("the one read of the open heads gave no answer: reading each head")
@@ -855,21 +886,21 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         return Outcome(posting=_red(run, [*reasons, f"unread: {exc}"], head))
     # A head that changes a definition: its contract run is started once, at main's tip, and its
     # verdict waits for it. Once that run has reported, its branch goes with the posted verdict.
+    # Until it reports, the head is a red that waits on it: a contract run dispatched with the
+    # job's token raises no workflow_run when it completes, so the schedule's sweep, which judges
+    # every waiting red again, is what posts the head's verdict once it has.
     start = head if changed and contract is None else None
     judged = changed and contract is not None and contract.status == "completed"
     cleanup = CONTRACT_PREFIX + head if judged else None
+    if changed and not judged:
+        running = (
+            "is started"
+            if contract is None
+            else f"is {contract.status!r}: contract run {contract.url or contract.id}"
+        )
+        reasons.append(f"{WAITING_CONTRACT}{running}")
     if reasons:
         return Outcome(posting=_red(run, reasons, head), dispatch=start, base=base, cleanup=cleanup)
-    if changed and not judged:
-        running = "is started" if contract is None else f"is {contract.status!r}"
-        return Outcome(
-            why=(
-                f"{head} changes {len(changed)} CI definitions ({_names(changed)}): its own runs "
-                f"are green, and main's contract over its definitions {running}"
-            ),
-            dispatch=start,
-            base=base,
-        )
     toolchain = {"runner": ",".join(labels) or "unnamed", "definitions": base}
     ran = [f"- the definitions that ran are main's at `{base}`"]
     if changed and contract is not None:
@@ -1064,9 +1095,14 @@ def main(
     which.add_argument("--run-id", type=int, help="a completed run of Merge or Dependency review")
     which.add_argument("--check-run-id", type=int, help="a completed CodeQL check run")
     which.add_argument(
-        "--waiting", action="store_true", help="judge again every open head waiting on CodeQL"
+        "--waiting", action="store_true", help="judge again every open head whose red only waits"
     )
-    one.add_argument("--controller-app-id", type=int, help="with --waiting: whose verdicts to read")
+    one.add_argument(
+        "--controller-app-id",
+        type=int,
+        help="whose verdicts to read: with --waiting every waiting head is judged again; with a "
+        f"run or a check run, also up to {WAITING_PER_RUN} of them",
+    )
     one.add_argument("--out", required=True, type=Path)
     two = sub.add_parser("post", help="post the check run with the App's token (GH_TOKEN)")
     two.add_argument("--body", required=True, type=Path)
@@ -1116,6 +1152,23 @@ def main(
             sweep = []
         # Only one head's own outcome starts a contract run; a sweep never does.
         single = outcomes[0] if len(outcomes) == 1 and not args.waiting else None
+        if single is not None and args.controller_app_id:
+            # Whatever woke this run, a few heads whose red only waits are judged again too: the
+            # schedule fires far less often than it says, and a contract run wakes nothing.
+            mine = frozenset({single.posting.head_sha} if single.posting else set())
+            graph = query if query is not None else None if get else github_graphql(token)
+            try:
+                outcomes += judge_waiting(
+                    reader,
+                    args.repo,
+                    args.controller_app_id,
+                    args.controller_revision,
+                    graph,
+                    limit=WAITING_PER_RUN,
+                    skip=mine,
+                )
+            except Unread as exc:
+                print(f"::warning title=no waiting heads::{exc}")
         dispatch_head = single.dispatch if single else None
         _output("dispatch", dispatch_head or "")
         _output("base", (single.base if single else None) or "")
