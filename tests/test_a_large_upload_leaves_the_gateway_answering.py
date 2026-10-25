@@ -29,6 +29,8 @@ import ctypes
 import gc
 import json
 import os
+import select
+import socket
 import subprocess
 import sys
 import tempfile
@@ -148,6 +150,25 @@ class _ProcThreadInfo(ctypes.Structure):
     )
 
 
+class _ProcTaskInfo(ctypes.Structure):
+    """``struct proc_taskinfo`` from macOS's ``<sys/proc_info.h>``. Its totals count every thread
+    the process has had, its ``threads`` fields only the ones it has: the difference is the CPU
+    time of the threads that have ended. Times are in Mach absolute time units."""
+
+    _fields_ = [
+        (f"pti_{name}", ctypes.c_uint64)
+        for name in (
+            "virtual_size resident_size total_user total_system threads_user threads_system"
+        ).split()
+    ] + [
+        (f"pti_{name}", ctypes.c_int32)
+        for name in (
+            "policy faults pageins cow_faults messages_sent messages_received syscalls_mach "
+            "syscalls_unix csw threadnum numrunning priority"
+        ).split()
+    ]
+
+
 #: macOS run states (``<mach/thread_info.h>``) in which a thread is neither running nor ready to
 #: run: stopped, waiting, waiting uninterruptibly, halted.
 _NOT_READY = frozenset({2, 3, 4, 5})
@@ -178,6 +199,20 @@ class _NoCpu:
     accounts for nothing, since to be ready it would have had to run before it could wait again.
     So a thread beside the loop that waits for a CPU is never counted as the loop's wait, and a
     step or answer beside such a thread is counted in wall time.
+
+    A thread that started and ended between two snapshots is in neither list, but its ready time
+    is in the process's count. A blocking read in the crowded plant is one: its writer thread
+    starts with the read and ends before it, and it waited for a CPU inside a health check's
+    answer, which left that wait out as the loop's (0.068 s counted of 0.363 s, beside a block of
+    0.2 s, on a CI runner). So a snapshot also takes the CPU time of the threads that have ended,
+    which the kernel keeps, and which any thread that ran and ended adds to. When it grows between
+    two snapshots, some thread came and went, and nothing is left out: the window is counted in
+    wall time. A thread that is ending is in neither either: listed, it can no longer be read,
+    and its CPU reaches that count only once the kernel is done with it (up to 2.5 ms after its
+    join, on this machine, under load). So a snapshot that lists a thread it cannot read, or
+    whose kernel thread count is above the threads it read, saw a thread ending (or one starting
+    after the list, which leaves out less too), and a window either end of which did is counted
+    in wall time too.
 
     Where the kernel offers neither count, everything reads 0 and the probe measures wall time."""
 
@@ -230,22 +265,38 @@ class _NoCpu:
                         counts[int(thread)] = int(schedstat.read().split()[1]) / 1e9
                 except (FileNotFoundError, ProcessLookupError):
                     pass  # a thread that ended meanwhile
-            return SimpleNamespace(at=at, ready=0.0, threads=counts, done=time.monotonic())
+            return SimpleNamespace(
+                at=at, ready=0.0, threads=counts, ended=0, ending=False, done=time.monotonic()
+            )
         if self.source == "none":
-            return SimpleNamespace(at=at, ready=0.0, threads={}, done=at)
+            return SimpleNamespace(at=at, ready=0.0, threads={}, ended=0, ending=False, done=at)
         pid, info, threads = os.getpid(), _ProcThreadInfo(), {}
         listed = self._libsystem.proc_pidinfo(pid, 28, 0, self._ids, ctypes.sizeof(self._ids))
-        for thread in self._ids[: max(0, listed) // 8]:  # PROC_PIDLISTTHREADIDS
+        ids = self._ids[: max(0, listed) // 8]
+        for thread in ids:  # PROC_PIDLISTTHREADIDS
             size = ctypes.sizeof(info)  # PROC_PIDTHREADID64INFO
             if self._libsystem.proc_pidinfo(pid, 15, thread, ctypes.byref(info), size) == size:
                 used = (info.pth_user_time + info.pth_system_time) / 1e9
                 threads[thread] = (used, info.pth_run_state)
-        usage = _RusageInfoV4()
+        usage, task = _RusageInfoV4(), _ProcTaskInfo()
         if self._libsystem.proc_pid_rusage(pid, 4, ctypes.byref(usage)) != 0:
             raise OSError(ctypes.get_errno(), "proc_pid_rusage")
+        size = ctypes.sizeof(task)  # PROC_PIDTASKINFO
+        if self._libsystem.proc_pidinfo(pid, 4, 0, ctypes.byref(task), size) != size:
+            raise OSError(ctypes.get_errno(), "proc_pidinfo PROC_PIDTASKINFO")
         ready = usage.ri_runnable_time - usage.ri_user_time - usage.ri_system_time
+        ended = task.pti_total_user + task.pti_total_system
+        ended -= task.pti_threads_user + task.pti_threads_system
+        # A thread listed but not read, or one the kernel counts that was not listed, was ending
+        # or starting.
+        ending = len(threads) < len(ids) or task.pti_threadnum > len(threads)
         return SimpleNamespace(
-            at=at, ready=ready * self._seconds, threads=threads, done=time.monotonic()
+            at=at,
+            ready=ready * self._seconds,
+            threads=threads,
+            ended=ended,
+            ending=ending,
+            done=time.monotonic(),
         )
 
     def waited(self, first: SimpleNamespace, then: SimpleNamespace, threads: set[int]) -> float:
@@ -256,6 +307,8 @@ class _NoCpu:
                 for t in threads
                 if t in then.threads
             )
+        if then.ended != first.ended or first.ending or then.ending:
+            return 0.0  # a thread came and went, or was ending or starting, unread at either end
         between = then.done - first.at
         others = 0.0
         for thread in first.threads.keys() | then.threads.keys():
@@ -285,7 +338,8 @@ class _Probe:
     no CPU (:class:`_NoCpu`) is left out: a loaded runner stretches a step without the loop
     waiting on anything, and a step's own waits are never in that count. A step is never counted
     as less than the CPU time the loop thread used in it. A health check's answer leaves out the
-    same: the time the loop thread spent ready with no CPU, never another thread's. The wall
+    same: the time the loop thread spent ready with no CPU, never another thread's, and it too is
+    never counted as less than the loop thread's CPU time over it. The wall
     times are reported beside (:attr:`worst_step_wall`, :attr:`slowest_answer_wall`).
 
     A 10 ms tick is kept beside it, and its longest gap (:attr:`worst_gap`) is reported: that gap
@@ -311,10 +365,19 @@ class _Probe:
         def run(handle):
             if threading.get_ident() != loop_thread:
                 return real(handle)
-            no_cpu = probe.no_cpu
-            own = no_cpu.loop_waited()
-            first = no_cpu.snapshot() if own is None else None
-            began, cpu = time.monotonic(), time.thread_time()
+            try:
+                no_cpu = probe.no_cpu
+                own = no_cpu.loop_waited()
+                first = no_cpu.snapshot() if own is None else None
+                began, cpu = time.monotonic(), time.thread_time()
+            except BaseException:
+                # An exception raised in the probe's own work, as a timeout's alarm is wherever
+                # it lands, must not drop the loop's callback: the loop has already taken it off
+                # its queue. A task whose wakeup is dropped is never woken again, not even to be
+                # cancelled, and the loop's close then waits for it forever (a test teardown hung
+                # for two hours, on a task waiting on a future already done).
+                real(handle)
+                raise
             try:
                 return real(handle)
             finally:
@@ -337,6 +400,12 @@ class _Probe:
         return run
 
     async def during(self, work):
+        if self.asking:
+            # The first health check reads the home and the serving root, and waits on the disk
+            # for them, by design (handlers_system._Identity): asked before the work, so the
+            # answers timed are the gateway's every-time answers.
+            first = await self.client.get("/api/healthz")
+            await first.read()
         self.no_cpu.open()
         try:
             with patch.object(
@@ -365,16 +434,16 @@ class _Probe:
             while not stop.is_set():
                 own = self.no_cpu.loop_waited()
                 first = self.no_cpu.snapshot() if own is None else None
-                asked = time.monotonic()
+                asked, cpu = time.monotonic(), time.thread_time()
                 r = await self.client.get("/api/healthz")
                 await r.read()
                 assert r.status == 200
-                now = time.monotonic()
+                now, cpu = time.monotonic(), time.thread_time() - cpu
                 if own is not None:
                     waited = max(0.0, self.no_cpu.loop_waited() - own)
                 else:
                     waited = self.no_cpu.waited(first, self.no_cpu.snapshot(), loop)
-                self.slowest_answer = max(self.slowest_answer, max(0.0, now - asked - waited))
+                self.slowest_answer = max(self.slowest_answer, now - asked - waited, cpu)
                 self.slowest_answer_wall = max(self.slowest_answer_wall, now - asked)
                 if started and not finished:
                     self.answered_during += 1
@@ -758,9 +827,11 @@ def _block_by_writing(tmp_path) -> None:
     drainer.join()
 
 
-def _block_by_reading(tmp_path) -> None:
+def _block_by_reading(tmp_path, late: float = 0.0) -> float:
     """A read that waits, as a read from a busy disk does, using no CPU meanwhile: from a pipe
-    whose writer writes only after :data:`_PLANTED`."""
+    whose writer writes only after :data:`_PLANTED`. *late* holds the reader back between opening
+    its end and reading, as a thread kept that long from a CPU is. It returns how long the read
+    itself waited."""
     fifo = tmp_path / "slow-read"
     os.mkfifo(fifo)
 
@@ -772,8 +843,36 @@ def _block_by_reading(tmp_path) -> None:
     feeder = threading.Thread(target=feed)
     feeder.start()
     with open(fifo, "rb") as reader:
+        if late:
+            time.sleep(late)
+        began = time.monotonic()
         assert len(reader.read(4096)) == 4096
+        waited = time.monotonic() - began
     feeder.join()
+    return waited
+
+
+def _block_by_waiting_to_read(_tmp_path, late: float = 0.0) -> float:
+    """A read that waits, as one from a peer that sends nothing does, using no CPU meanwhile: a
+    wait on a socket for something to read, for :data:`_PLANTED`. The kernel times it from the
+    call's own start (select's timeout is relative), so all of it is spent waiting, however long
+    the thread waited for a CPU before the call, or *late* held it back. :func:`_block_by_reading`'s
+    read is not: its writer's delay runs from when both ends of the pipe are open, so a thread
+    kept from a CPU that long after opening its end finds the data already there, and never
+    blocks. It returns how long the wait took."""
+    ours, theirs = socket.socketpair()
+    with ours, theirs:
+        if late:
+            time.sleep(late)
+        began = time.monotonic()
+        readable, _, _ = select.select([ours], [], [], _PLANTED)
+        waited = time.monotonic() - began
+    assert not readable, "the peer that sends nothing sent something"
+    return waited
+
+
+#: The block the crowded plant makes (:func:`_blocked_while_answering_app`).
+_CROWDED_BLOCK = _block_by_waiting_to_read
 
 
 _PLANTED_BLOCKS = {
@@ -887,6 +986,29 @@ async def test_a_process_stopped_while_the_loop_is_idle_does_not_fail_the_probe(
     assert stop.stopped, "premise: the process was stopped"
     assert probe.worst_gap >= _STOPPED, f"premise: the tick counted the stop; {probe.says()}"
     assert probe.worst_step < _BOUND, f"the stop was counted as a step; {probe.says()}"
+
+
+def test_an_exception_in_the_probes_own_work_still_runs_the_loops_callback():
+    """🔴 Red before: the probe runs each of the loop's callbacks through its own code, and a
+    timeout's alarm raises wherever it lands. Landing in the probe's work before the callback, it
+    dropped the callback the loop had already taken off its queue, so the task that callback was to
+    wake was never woken. Cancelled at the teardown, a task like that never ends (its waiter is
+    already done), and the loop's close waited for it until the run was killed. The exception still
+    goes on, after the callback has run."""
+
+    class Alarm(BaseException):
+        pass
+
+    def landing() -> float | None:
+        raise Alarm
+
+    probe = _Probe(client=None, asking=False)
+    probe.no_cpu.loop_waited = landing
+    ran: list[str] = []
+    run = probe._timed(threading.get_ident(), ran.append)
+    with pytest.raises(Alarm):
+        run("the loop's callback")
+    assert ran == ["the loop's callback"]
 
 
 #: The starved request below runs this many steps, each until it has run this long in wall time or
@@ -1104,8 +1226,11 @@ class _HeldHealthCheck:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def arm(self) -> None:
+        from personalclaw.dashboard import handlers_system
+
         self._loop = asyncio.get_running_loop()
         self._armed.set()
+        handlers_system._IDENTITY.forget()  # so the next health check reads, as the first does
 
     def identity(self, real):
         def call(*args, **kwargs):
@@ -1124,7 +1249,7 @@ def _blocked_while_answering_app(held: _HeldHealthCheck, where) -> web.Applicati
             held.arm()
             await held.under_way.wait()
             began = time.monotonic()
-            _block_by_reading(where)  # on the loop, while that health check waits on it
+            _CROWDED_BLOCK(where)  # on the loop, while that health check waits on it
             held.blocked = (began, time.monotonic())
         return web.json_response({"ok": True})
 
@@ -1134,7 +1259,7 @@ def _blocked_while_answering_app(held: _HeldHealthCheck, where) -> web.Applicati
     return app
 
 
-#: The probe over a blocking read on the loop, made while a health check is under way, beside a
+#: The probe over a wait to read on the loop, made while a health check is under way, beside a
 #: thread that hashes as an upload's worker does and so is ready to run whenever it is not.
 _BESIDE_A_READY_THREAD_CHILD = (
     textwrap.dedent("""
@@ -1192,13 +1317,19 @@ _BESIDE_A_READY_THREAD_CHILD = (
 
 def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_path):
     """The vacuity arm for the time left out: the time a thread beside the loop spends waiting
-    for a CPU is not the loop's. A blocking read on the loop for 0.2 s, made while a health check
+    for a CPU is not the loop's. A wait to read on the loop for 0.2 s, made while a health check
     is under way, at the lowest priority while every CPU is taken, beside a thread that hashes
     and so waits for a CPU most of that time, is a step over the bound and an answer over it.
 
     The crowd is set up again (:func:`_until_crowded`) until the thread beside waited for a CPU
     during the block: on a CI runner a try that stalled made its block after the busy processes
-    let go, when the thread beside had a CPU to itself."""
+    let go, when the thread beside had a CPU to itself.
+
+    The wait is timed from its own call (:func:`_block_by_waiting_to_read`), not a read from
+    :func:`_block_by_reading`'s pipe. On Linux CI (run 40181486016) that read's writer waited
+    out its 0.2 s while the loop, at the lowest priority, waited for a CPU, so the read found its
+    data there and never blocked: no step was charged more than 0.054 s, from a longest step of
+    0.507 s in wall time, the rest the loop's own wait for a CPU."""
     seen = _until_crowded(
         tmp_path,
         _BESIDE_A_READY_THREAD_CHILD,
@@ -1211,6 +1342,108 @@ def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_
     says = f"the thread beside used {seen['share']:.0%} of a CPU during the block; {seen['says']}"
     assert seen["worst_step"] >= _BOUND, f"the step missed the block; {says}"
     assert seen["slowest_answer"] >= _BOUND, f"the answer missed the block; {says}"
+
+
+@pytest.mark.parametrize("late", [0.0, 1.5 * _PLANTED], ids=["on time", "late"])
+def test_the_crowded_plants_read_waits_all_its_time_however_late_the_loop_comes_to_it(
+    tmp_path, late
+):
+    """On Linux CI (run 40181486016) the crowded plant read from :func:`_block_by_reading`'s pipe,
+    whose writer's delay runs from when both ends are open. The loop, at the lowest priority
+    under the crowd, waited for a CPU past that delay, found the data there and never blocked, so
+    the probe rightly charged it none of the block. Its wait now runs from its own call: a
+    reader held back past the delay, as that loop was, still waits all of it."""
+    waited = _CROWDED_BLOCK(tmp_path, late=late)
+    says = f"the read waited {waited:.3f}s of {_PLANTED}s, {late:g}s late"
+    assert waited >= _PLANTED * 0.95, says
+
+
+#: Between two snapshots, at the lowest priority while every CPU is taken: a thread that spins for
+#: 0.3 s, so it is ready to run whenever it is not running, and ends, while the thread that stands
+#: for the loop waits for it to end.
+_ENDED_THREAD_CHILD = (
+    textwrap.dedent("""
+    import json, os, sys, threading, time
+    sys.path.insert(0, sys.argv[1])
+    import test_a_large_upload_leaves_the_gateway_answering as upload
+    """)
+    + textwrap.dedent(_LOWEST)
+    + textwrap.dedent("""
+    no_cpu, spun = upload._NoCpu(), {}
+    lowest()
+
+    def spin():
+        began, cpu = time.monotonic(), time.thread_time()
+        while time.monotonic() - began < 0.3:
+            pass
+        spun["share"] = (time.thread_time() - cpu) / (time.monotonic() - began)
+
+    with upload._in_the_background_band():
+        first = no_cpu.snapshot()
+        thread = threading.Thread(target=spin)
+        thread.start()
+        thread.join()
+        then = no_cpu.snapshot()
+    print(json.dumps({
+        "status": 200, "says": no_cpu.source, "share": spun["share"],
+        "waited": no_cpu.waited(first, then, {threading.get_native_id()}),
+    }), flush=True)
+    """)
+)
+
+
+def test_a_thread_that_came_and_went_is_never_counted_as_the_loops_wait(tmp_path):
+    """🔴 Red before, on macOS: a thread that started and ended between two snapshots was in
+    neither list, so its time ready to run was left in the process's count and charged to the
+    loop thread. The crowded plant's read has one, its writer, and on a CI runner a health check's
+    answer beside the block left out 0.295 s of that thread's wait as the loop's. Here the thread
+    that stands for the loop is blocked the whole time, waiting for the spinning thread to end,
+    so none of the wait between the two snapshots is its own."""
+    seen = _until_crowded(
+        tmp_path,
+        _ENDED_THREAD_CHILD,
+        premise="the thread that ended waited for a CPU",
+        holds=lambda seen: seen["share"] < 0.5,
+        measure="the share of a CPU it used",
+        measured=lambda seen: f"{seen['share']:.0%}",
+    )
+    says = f"the thread that ended used {seen['share']:.0%} of a CPU ({seen['says']})"
+    assert seen["waited"] < 0.05, f"the loop was charged {seen['waited']:.3f}s; {says}"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS's count is the process's alone")
+@pytest.mark.parametrize("ending", ["a thread listed but not read", "one more counted than read"])
+def test_a_thread_ending_at_a_snapshot_has_its_window_counted_in_wall_time(ending):
+    """A thread that is ending is in neither snapshot's list, nor yet in the ended threads' CPU:
+    the measure plant above once had 0.163 s charged to the loop that way, under load. A snapshot
+    that lists a thread it cannot read, or whose kernel thread count is above the threads it
+    read, saw one ending, and a window with such an end leaves nothing out."""
+    no_cpu = _NoCpu()
+    first = no_cpu.snapshot()
+    assert not first.ending, "premise: no thread was ending at the first snapshot"
+    real = no_cpu._libsystem.proc_pidinfo
+    unread = []
+
+    def told(pid, flavor, arg, buf, size):
+        got = real(pid, flavor, arg, buf, size)
+        if ending == "one more counted than read" and flavor == 4:  # PROC_PIDTASKINFO
+            buf._obj.pti_threadnum += 1
+        if ending == "a thread listed but not read" and flavor == 15 and not unread:
+            unread.append(arg)
+            return 0  # the first thread listed can no longer be read
+        return got
+
+    class _Told:
+        def __getattr__(self, name):
+            return told if name == "proc_pidinfo" else getattr(no_cpu._libsystem_real, name)
+
+    no_cpu._libsystem_real, no_cpu._libsystem = no_cpu._libsystem, _Told()
+    then = no_cpu.snapshot()
+    assert then.ending, f"{ending}, and the snapshot did not see a thread ending"
+    # With the process's count grown by more than every thread read can account for, the
+    # window is still counted in wall time.
+    grown = SimpleNamespace(**{**vars(then), "ready": then.ready + 1.0})
+    assert no_cpu.waited(first, grown, {threading.get_native_id()}) == 0.0
 
 
 # ── what the upload's requests read and write on disk, they do off the loop ─────────────────
