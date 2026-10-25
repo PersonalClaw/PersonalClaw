@@ -13698,6 +13698,112 @@ A_COMMIT_NEVER_JUDGES_ITS_OWN_PUSH = Row(
     ),
 )  # fmt: skip
 
+#: The most jobs one merge-tier run holds at once (#3915), so concurrent pull requests share the
+#: account's runners rather than one taking them.
+_MERGE_AT_ONCE = 14
+
+
+def _cap(job: dict[str, Any]) -> int | None:
+    cap = (job.get("strategy") or {}).get("max-parallel")
+    return cap if isinstance(cap, int) and not isinstance(cap, bool) and cap > 0 else None
+
+
+def merge_at_once_violations(root: Path) -> list[str]:
+    """merge.yml holds at most :data:`_MERGE_AT_ONCE` jobs at once. Each stage job caps its
+    entries with an integer ``max-parallel``; jobs no ``needs`` orders may run together, a stage
+    job counting its cap and any other job one; and the most that may run together is at most
+    the bound. The plan lists every suite shard (an entry that reads the run's shard plan) within
+    its stage job's cap, so the cap never holds back the run's longest entries."""
+    workflow = _tier_workflows(root)["merge.yml"]
+    if not workflow:
+        return [f"{_MERGE_YML} is missing"]
+    jobs = _trust_jobs(workflow)
+    bad: list[str] = []
+    weight: dict[str, int] = {}
+    for job_id, job in jobs.items():
+        if not _is_stage_job(job_id, job):
+            weight[job_id] = 1
+            continue
+        cap = _cap(job)
+        if cap is None:
+            bad.append(
+                f"merge.yml job {job_id} sets no max-parallel"
+                f" ({(job.get('strategy') or {}).get('max-parallel')!r}), so its whole matrix"
+                " starts at once"
+            )
+        else:
+            weight[job_id] = cap
+    if bad:
+        return bad
+    needs = {
+        job_id: set(
+            [job.get("needs")] if isinstance(job.get("needs"), str) else job.get("needs") or []
+        )
+        for job_id, job in jobs.items()
+    }
+    after: dict[str, set[str]] = {}
+
+    def upstream(job_id: str) -> set[str]:
+        if job_id not in after:
+            after[job_id] = set()
+            for need in needs.get(job_id, ()):
+                after[job_id] |= {need, *upstream(need)}
+        return after[job_id]
+
+    ids = sorted(jobs)
+    most, together = 0, ()
+    for mask in range(1, 1 << len(ids)):
+        chosen = [ids[n] for n in range(len(ids)) if mask >> n & 1]
+        if any(a in upstream(b) or b in upstream(a) for a in chosen for b in chosen if a < b):
+            continue
+        held = sum(weight[j] for j in chosen)
+        if held > most:
+            most, together = held, tuple(chosen)
+    if most > _MERGE_AT_ONCE:
+        bad.append(
+            f"merge.yml holds {most} jobs at once"
+            f" ({' + '.join(f'{j} {weight[j]}' for j in together)}), more than {_MERGE_AT_ONCE}"
+        )
+    for stage_job, entries in ci_plan.stage_jobs(_tier_plan(root, "merge")).items():
+        cap = weight.get(stage_job)
+        for n, entry in enumerate(entries):
+            if cap is not None and _SHARD_HISTORY in entry["external"] and n >= cap:
+                bad.append(
+                    f"merge.yml job {stage_job} starts {cap} entries at a time, and the plan lists"
+                    f" {entry['key']} as entry {n + 1}, so it waits for one to finish"
+                )
+    return bad
+
+
+_TEST_CAP = "      max-parallel: 10\n"
+
+A_MERGE_TIER_RUN_HOLDS_AT_MOST_14_JOBS = Row(
+    name="a-merge-tier-run-holds-at-most-14-jobs-at-once",
+    check=merge_at_once_violations,
+    scaffold=_tier_scaffold,
+    controls=(
+        _plant_in_job("a stage job with no cap", _MERGE_YML, "test", _TEST_CAP, "",
+                      expect="merge.yml job test sets no max-parallel (None)"),
+        _plant_in_job("a cap written as an expression", _MERGE_YML, "test", _TEST_CAP,
+                      "      max-parallel: ${{ 10 }}\n",
+                      expect="merge.yml job test sets no max-parallel"),
+        _plant_in_job("the test stage at 11 beside build's 4", _MERGE_YML, "test", _TEST_CAP,
+                      "      max-parallel: 11\n", expect="merge.yml holds 15 jobs at once"),
+        _plant_in_job("test-2 at 5 beside the test stage's 10", _MERGE_YML, "test-2",
+                      "      max-parallel: 4\n", "      max-parallel: 5\n",
+                      expect="merge.yml holds 15 jobs at once (test 10 + test-2 5)"),
+        _plant_in_job("test-3 not waiting for test-2, so the two run together", _MERGE_YML,
+                      "test-3", "    needs: [changes, build, test-2]\n",
+                      "    needs: [changes, build]\n",
+                      expect="merge.yml holds 18 jobs at once"),
+        _plant_in_job("the test stage at 9, so a macOS shard waits for a free one", _MERGE_YML,
+                      "test", _TEST_CAP, "      max-parallel: 9\n",
+                      expect="lists python-suite-macos (2/2) as entry 10"),
+        _plant_in_job("build at 1 passes: fewer at once is no fault", _MERGE_YML, "build",
+                      "      max-parallel: 4\n", "      max-parallel: 1\n", fails=False),
+    ),
+)  # fmt: skip
+
 ROWS = (
     *ROWS,
     THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS,
@@ -13707,6 +13813,7 @@ ROWS = (
     MERGE_YML_PUSH_STAGE_RUNS_THE_SECURITY_CORPUS_AND_APPS_CONTRACT,
     THE_TIER_WORKFLOWS_TAKE_NO_TRUST,
     A_COMMIT_NEVER_JUDGES_ITS_OWN_PUSH,
+    A_MERGE_TIER_RUN_HOLDS_AT_MOST_14_JOBS,
 )
 
 

@@ -1091,6 +1091,16 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   listed step no job of either workflow runs fails too; a stage job runs its runner's identity
   and the run-job line and nothing else, its other steps use only the checkout, the setup action
   and the artifact actions, and every stage job's steps are the same.
+- "a-merge-tier-run-holds-at-most-14-jobs-at-once": a merge-tier run holds at most 14 jobs at
+  once (#3915), so concurrent pull requests share the account's runners. Each of `merge.yml`'s
+  stage jobs caps its entries with `max-parallel` (`test` 10; `build`, `test-2` and `test-3` 4
+  each), the most jobs no `needs` orders, counting a stage job's cap and any other job as one, is
+  at most 14 (`test` beside one of the others), and the plan lists every suite shard within its
+  stage job's cap, so the cap never holds back the run's longest entries. The cap is
+  `max-parallel` rather than a smaller plan: it changes when entries start, not what the tier
+  runs, and needs no change to main's planner. Plants: a stage job with no cap or one written as
+  an expression, the test stage at 11, `test-2` at 5, `test-3` beside `test-2`, and the test
+  stage at 9, which leaves a macOS shard waiting.
 - "the-tier-workflows-run-their-tiers-matrix-and-judge-its-records": the plan step plans the
   workflow's tier for its stage jobs; the stage jobs are exactly the parts the tier's whole plan
   splits into, each reading its own part after the stage before, with the matrix's runner and cap
