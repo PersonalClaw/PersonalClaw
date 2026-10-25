@@ -1,4 +1,4 @@
-# PR — the change tier's fast feedback on one candidate (#3915), on dispatch only for now.
+# PR — the change tier's fast feedback on one candidate (#3915).
 #
 # THE SAME SHAPE AS merge.yml: PLAN, TEST, RESULTS. `changes` plans the change tier with main's
 # planner (tools/ci/plan.py) and prints the plan as a job matrix: one entry per planned catalogue
@@ -11,11 +11,10 @@
 # another head, run or later attempt or of another partner head than the one `changes` read, and
 # a failed job of this run each read red.
 #
-# DISPATCH ONLY, BESIDE ci.yml. ci.yml stays the check every pull request and every push to main
-# runs, so no check a pull request reports today moves. This carries no push stage: the checks a
-# push to main runs whatever its tree (the tree check, the security corpus, apps-contract) are
-# merge.yml's to hold, never the feedback tier's. Its result posts no check of its own, and
-# `merge-verdict` is the trusted controller's alone (#3910).
+# ON EVERY PULL REQUEST, AND ON DISPATCH. This carries no push stage: the checks a push to main
+# runs whatever its tree (the tree check, the security corpus, apps-contract) are merge.yml's to
+# hold, never the feedback tier's. Its result posts no check of its own, and `merge-verdict` is
+# the trusted controller's alone (#3910).
 #
 # The run's records are kept 30 days: the controller reads them at merge, after the run.
 #
@@ -24,19 +23,23 @@
 name: PR
 
 on:
+  pull_request: {}
   workflow_dispatch: {}
 
-# One run per commit at a time, and a run in flight is never cancelled: a later dispatch of the
-# same commit waits. The workflow's name is in the key, so this never waits on merge.yml.
+# One run per pull request at a time: a newer push to it cancels the older run, whose records
+# name the older head, which the verdict reads as stale. A dispatch runs one commit, and a run of
+# it in flight is never cancelled: a later dispatch of the same commit waits. The workflow's name
+# is in the key, so this never cancels merge.yml.
 concurrency:
-  group: pr-${{ github.sha }}
-  cancel-in-progress: false
+  group: pr-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 env:
-  # Every uv step uses a uv-managed CPython, never the runner image's own (see ci.yml's env).
+  # Every uv step uses a uv-managed CPython, never the runner image's own: an installed Python
+  # that is exactly the version asked for wins over a download by default (see breadth.yml's env).
   UV_PYTHON_PREFERENCE: only-managed
 
 jobs:
@@ -44,7 +47,8 @@ jobs:
     # ── The plan ────────────────────────────────────────────────────────────────────────────
     # The changed paths are what this commit changed against main's tip. The planner and its
     # rules are main's, archived from main's tip into a folder of their own, never this
-    # checkout's, as ci.yml's `changes` plans. Only the keys and the stage job's matrix are
+    # checkout's (merge.yml's push stage reads a push's at the commit it replaced, `JUDGE`, which
+    # this workflow, with no push stage, leaves empty). Only the keys and the stage job's matrix are
     # published, each read back first; an answer that is not a plan publishes nothing and fails
     # the job, so `results` reads an empty plan and a failed job, red. Main's check of the
     # catalogue stands in front of merge.yml's verdict, the tier a merge counts.
@@ -88,6 +92,7 @@ jobs:
           TIER: change
           STAGE_JOBS: test
           PUSH_PLAN: ""
+          JUDGE: ""
         run: |
           set -uo pipefail
           listed="$RUNNER_TEMP/changed.json"
@@ -100,7 +105,7 @@ jobs:
           echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
           judge="$RUNNER_TEMP/judge"
           if ! { rm -rf "$judge" && mkdir -p "$judge" \
-                 && git fetch --no-tags --depth=1 origin refs/heads/main \
+                 && git fetch --no-tags --depth=1 origin "${JUDGE:-refs/heads/main}" \
                  && git archive FETCH_HEAD tools/ci | tar -x -C "$judge"; }; then
             echo "::error title=no plan::main's tools/ci could not be fetched, so nothing is planned and the verdict is red. Re-run the job."
             exit 1
@@ -248,7 +253,7 @@ jobs:
           name: reports-${{ matrix.slug }}-${{ github.run_attempt }}
           path: |
             reports/
-            web/e2e-report.json
+            web/e2e-report*.json
             web/test-results/
             web/playwright-report/
           if-no-files-found: ignore
@@ -289,13 +294,16 @@ jobs:
 
   results:
     # ── The run's verdict, by main's verdict.py ─────────────────────────────────────────────
-    # It runs whatever ran before it (`always()`), so a cancelled or failed job, or a stage that
-    # never started, is read rather than leaving no verdict. Main's copy of tools/ci/verdict.py,
+    # It runs whatever ran before it unless the run itself was cancelled (`!cancelled()`), so a
+    # cancelled or failed job, or a stage that never started, is read rather than leaving no
+    # verdict, and a cancelled run publishes none (#2946). Main's copy of tools/ci/verdict.py,
     # read from the API, judges the plan's keys against the records this run's entries uploaded
-    # and against `needs`; this checkout's copy never judges itself. It is standard-library
+    # and against `needs`; this checkout's copy never judges itself. `JUDGE` is empty here, as
+    # PUSH_PLAN is: merge.yml's push stage sets it to the commit a push replaced, and the step's
+    # text is merge.yml's word for word. It is standard-library
     # Python, run under `python3 -I`, so nothing this run brings is installed or imported.
     needs: [changes, test]
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -310,6 +318,8 @@ jobs:
         with:
           pattern: ci-record-*
           path: ${{ runner.temp }}/records
+      # merge.yml's verdict step, word for word but for JUDGE, which only merge.yml's push stage
+      # sets. Only merge.yml's push to main writes the superseded proof it reads.
       - name: the verdict over the plan's keys and the run's records
         if: ${{ !cancelled() }}
         env:
@@ -319,11 +329,12 @@ jobs:
           KEY_PARTNERS: ${{ needs.changes.outputs.key-partners }}
           APPS_PARTNER: ${{ needs.changes.outputs.apps-partner }}
           HEAD_SHA: ${{ github.sha }}
+          JUDGE: ""
         run: |
           set -u
           judge="$RUNNER_TEMP/verdict.py"
           if ! gh api -H "Accept: application/vnd.github.raw" \
-               "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=main" > "$judge"; then
+               "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=${JUDGE:-main}" > "$judge"; then
             echo "::error title=no verdict::main's tools/ci/verdict.py could not be read, so nothing judged this run. Re-run the job."
             exit 1
           fi
@@ -331,8 +342,13 @@ jobs:
           printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
           printf '%s' "${KEY_PARTNERS:-"{}"}" > "$RUNNER_TEMP/key-partners.json"
           mkdir -p "$RUNNER_TEMP/records"
+          proof=""
+          if [ -f "$RUNNER_TEMP/superseded.json" ]; then
+            proof="$RUNNER_TEMP/superseded.json"
+          fi
           python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
             --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
             --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
             --key-partners "$RUNNER_TEMP/key-partners.json" \
+            ${proof:+--superseded "$proof"} \
             --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"

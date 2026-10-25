@@ -63,7 +63,7 @@ def _job(workflow: str, job: str) -> dict:
     return doc["jobs"][job]
 
 
-@pytest.mark.parametrize("workflow", ["ci.yml", "breadth.yml"])
+@pytest.mark.parametrize("workflow", ["breadth.yml"])
 def test_the_audit_job_runs_the_command_and_nothing_masks_it(workflow: str) -> None:
     job = _job(workflow, "audit")
     assert "continue-on-error" not in job, workflow
@@ -75,7 +75,17 @@ def test_the_audit_job_runs_the_command_and_nothing_masks_it(workflow: str) -> N
     assert not any("pip_audit ||" in r or "npm audit ||" in r for r in runs)
 
 
-def test_the_pull_request_audit_waits_on_tree_check_like_every_gated_job() -> None:
-    job = _job("ci.yml", "audit")
-    assert job["needs"] == ["tree-check"] or job["needs"] == "tree-check"
-    assert job["if"] == "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}"
+def test_the_catalogues_audit_runs_the_command_once() -> None:
+    """The tier workflows run the catalogue's audit through run-job, whose steps are argvs (no
+    shell to mask an exit) and whose stage job the CI contract table holds to its two lines, so
+    a red audit fails its entry."""
+    from tools.ci import catalogue
+
+    job = catalogue.read(REPO).job("audit")
+    want = ("-m", "tools.ci", "audit", "run")
+    commands = [
+        s.argv
+        for s in job.command
+        if any(s.argv[i : i + len(want)] == want for i in range(len(s.argv)))
+    ]
+    assert len(commands) == 1, [s.argv for s in job.command]

@@ -2,11 +2,11 @@
 
 One entry per validation job says what the job runs, on what, for which tiers, what it reads
 from outside the tree, and whether its result may stand for a later run of the same inputs.
-``ci.yml`` and ``breadth.yml`` still run their own ``run:`` lines (``pr.yml`` and ``merge.yml``,
-on dispatch only, run each job through ``run-job``), and the CI contract table's row "every
-catalogue command is the workflow's" holds the two to each other: each entry's steps are its
-ci.yml jobs' lines, token for token and in order, and each line of those jobs that validates
-something is one entry's step.
+``pr.yml`` and ``merge.yml`` run each change and merge job through ``run-job``. ``breadth.yml``
+still runs its own ``run:`` lines, and the CI contract table's row "every catalogue command is
+the workflow's" holds the two to each other: each breadth entry's steps are its breadth.yml
+jobs' lines, token for token and in order, and each line of those jobs that validates something
+is one entry's step.
 
 A command is a list of steps, each an argv run from the repository root (or from ``workdir``
 under it), with its own ``env`` set on top of its job's. A value only the runner knows is spelled
@@ -28,7 +28,7 @@ live job main has stays, with its posture and its tiers, until main's own copy m
 A ``nightly`` mark, which lets a live job out of a plan its inputs do not reach, likewise counts
 only once main's copy carries it (:func:`trusted_marks`).
 
-This module is imported by ``python -m tools.ci``, which ci.yml's shard planner runs on the
+This module is imported by ``python -m tools.ci``, which merge.yml's shard planner runs on the
 runner image's own ``python3`` before anything is installed, so it imports the standard library
 only.
 """

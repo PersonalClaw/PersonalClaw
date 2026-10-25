@@ -74,9 +74,9 @@ PENDING = "pending"
 CANDIDATE_RUN = "candidate"
 DEFAULT_BRANCH_RUN = "default branch"
 
-#: The ``ci.yml`` job whose ``catalogue-check`` step runs main's ``tools/ci`` over the candidate's
-#: catalogue (``tools/ci/catalogue_check.py``). No catalogue entry, so no plan, names it; rule 5
-#: requires it of the run that counts, beside the plan.
+#: The ``merge.yml`` job whose ``catalogue-check`` step runs main's ``tools/ci`` over the
+#: candidate's catalogue (``tools/ci/catalogue_check.py``). No catalogue entry, so no plan, names
+#: it; rule 5 requires it of the run that counts, beside the plan.
 CATALOGUE_CHECK = "changes"
 
 #: A full object id, SHA-1 or SHA-256. Matched with ``fullmatch``, so nothing may follow it.

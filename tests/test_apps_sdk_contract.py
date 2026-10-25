@@ -1,6 +1,6 @@
 """The apps' SDK contract runs on every change that can alter the SDK, and charges it fairly.
 
-``ci.yml``'s ``apps-contract`` job checks out PersonalClawApps and runs its SDK contract checks
+The catalogue's ``apps-contract`` job checks out PersonalClawApps and runs its SDK contract checks
 against the core under review (``scripts/apps_sdk_contract.py``); the catalogue's declared
 inputs decide whether it runs (``tools/ci/plan.py``, held in
 ``tests/rails/test_apps_sdk_contract_tree.py``). Railed here in two parts:

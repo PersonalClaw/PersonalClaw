@@ -38,7 +38,7 @@ Two failure modes this closes, both of which read as success:
 
 ## One run, three ways to share the gateway
 
-The harness builds nothing. It serves the `web/dist` that `make web-build` (or CI's `web` job) built and stamped, and the preview refuses a dist whose stamp does not match the checked-out sources (`scripts/spa_dist_freshness.py check --require-stamp`), so a stale or unstamped build fails before any test runs. Every spec but the visual rail and the specs that run alone (below) runs in one invocation, `npx playwright test --grep-invert @visual`, in this order:
+The harness builds nothing. It serves the `web/dist` that `make web-build` (or CI's `web-build` job) built and stamped, and the preview refuses a dist whose stamp does not match the checked-out sources (`scripts/spa_dist_freshness.py check --require-stamp`), so a stale or unstamped build fails before any test runs. Every spec but the visual rail and the specs that run alone (below) runs in one invocation, `npx playwright test --grep-invert @visual`, in this order:
 
 1. **`smoke`** — `smoke.spec.ts`, the render smoke: the built bundle mounts on six routes with every `/api` call answered in the page, so it reaches no gateway. Its planted render crash, widget catch and uncaught error must each be caught. The local pre-push gate runs this project alone: `PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps`.
 2. **`chromium`** — every spec `isolation.ts` calls *shared*, in parallel against the one gateway and home.

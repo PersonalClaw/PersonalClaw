@@ -10,7 +10,7 @@ Chat, autonomous goal loops, long-term memory, a knowledge base, skills, schedul
 automation, and channel integrations — all behind one gateway process and one web
 dashboard you own. Local-first, provider-agnostic, no analytics, MIT.
 
-[![CI on main](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
+[![CI on main](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/merge.yml/badge.svg?branch=main&event=push)](https://github.com/PersonalClaw/PersonalClaw/actions/workflows/merge.yml?query=branch%3Amain+event%3Apush)
 [![License: MIT](https://img.shields.io/badge/License-MIT-informational.svg)](LICENSE)
 [![Python 3.12 – 3.13](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![No analytics](https://img.shields.io/badge/analytics-none-brightgreen.svg)](#privacy)
@@ -242,7 +242,8 @@ These are exercised on a genuinely clean machine rather than a dev box, and no s
 covers them all, so here is which one covers what: `scripts/fresh_install_validate.sh` drives
 **pip, Homebrew and Nix** in a throwaway container; the `install-smoke` job in
 `.github/workflows/breadth.yml` drives the **bootstrap one-liner** on a bare current Ubuntu
-(`ubuntu:26.04`) with neither curl nor CA roots preinstalled; `.github/workflows/docker-single-container.yml` builds
+(`ubuntu:26.04`) with neither curl nor CA roots preinstalled; the catalogue's `image` job, which
+`.github/workflows/merge.yml` runs on every pull request that changes what the image ships, builds
 the image and drives the **Docker** one-liner all the way to a *rendered dashboard*, not just a
 `200` from `/api/healthz`; `.github/workflows/nix.yml` builds the **Nix** flake, boots its
 gateway and reads its dashboard on every change to the flake, `pyproject.toml` or `uv.lock`, and
@@ -334,9 +335,9 @@ and not verified by us. Details and the `[models]`-extra per-arch reality:
 
 | Platform | Support | Proof |
 |---|---|---|
-| Linux x86-64 | first-class | `CI:ci/test (ubuntu-24.04)` + `CI:breadth/ubuntu (ubuntu-24.04)` + release smoke |
+| Linux x86-64 | first-class | `CI:merge/python-suite (ubuntu-24.04)` + `CI:breadth/ubuntu (ubuntu-24.04)` + release smoke |
 | Linux arm64 | first-class | `CI:breadth/arm (ubuntu-24.04-arm)` + release smoke |
-| macOS Apple silicon | first-class | `CI:ci/test-macos (macos-26)` + `CI:breadth/macos (macos-26)` |
+| macOS Apple silicon | first-class | `CI:merge/python-suite-macos (macos-26)` + `CI:breadth/macos (macos-26)` |
 | macOS Intel | best-effort | `CI:release/desktop-mac smoke (x64)` boots the bundled backend on `macos-26-intel`; the test suite runs on Apple silicon only |
 | Windows via WSL2 | supported | `checklist:Windows via WSL2` — [Platforms](docs/guides/platforms.md) |
 | Windows via Docker Desktop | supported | `checklist:Windows via Docker Desktop` — [Platforms](docs/guides/platforms.md) |

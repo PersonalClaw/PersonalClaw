@@ -37,8 +37,9 @@ from rails_repo import REPO
 _WORKFLOWS = ".github/workflows"
 HELD = ("nix.yml", "action-pins.yml", "release-image-tooling.yml")
 
-#: Workflows whose filter another rail holds, and that rail.
-HELD_ELSEWHERE = {"docker-single-container.yml": "tests/rails/test_ci_image_tree.py"}
+#: Workflows whose filter another rail holds, and that rail. None since #3915's flip retired
+#: docker-single-container.yml, whose build is the catalogue's `image` entry.
+HELD_ELSEWHERE: dict[str, str] = {}
 
 #: The workflows with a step that builds the project, and why their filter names only part of it.
 PROJECT_BUILDS = {

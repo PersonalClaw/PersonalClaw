@@ -126,7 +126,7 @@ the machine collecting (the apps boundary test collects a sibling apps checkout'
 is there).
 
 To regenerate it (the junit artifacts are kept 7 days; `gh run download <run> -n
-junit-test-shard-<n>` fetches one):
+reports-python-suite-<n>-<shards>-<attempt>` fetches one shard's reports):
 
 ```bash
 .venv/bin/python -m pytest --collect-only -qq -n 0 > .local/scratch/collection.txt

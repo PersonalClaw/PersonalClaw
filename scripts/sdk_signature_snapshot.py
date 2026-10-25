@@ -15,8 +15,8 @@ constant's type and value, except for a value that is the release itself (``__ve
 type alone is recorded. The records live in ``src/personalclaw/sdk/signatures.json``, and
 ``tests/test_sdk_signature_snapshot.py`` fails until the file matches the code. Because the file
 sits in ``src/personalclaw/sdk/``, a change to a re-exported core function (#3599 touched only
-``context.py``) still touches the SDK directory, which is what ``ci.yml``'s ``apps-contract`` job
-keys on.
+``context.py``) still touches the SDK directory, which is what the catalogue's ``apps-contract``
+entry keys on.
 
 THE LOUD-BREAK RULE. A parameter that keeps its place and changes its type breaks old callers
 silently: they still bind, and fail inside the body, where an app can swallow the error. When a

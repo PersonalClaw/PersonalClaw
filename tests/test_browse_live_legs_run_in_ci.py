@@ -9,8 +9,8 @@ made it invisible — ``test_browse_behavioural_proof_is_reachable.py``'s own lo
 (1). A skipped surface reads exactly like a pass, so the green check said "the safety script
 blocks ``fetch()``" while having never opened a browser.
 
-The catalogue's ``browse-live`` job closes that, in both of CI's shapes (``ci.yml``'s job, held
-to the catalogue token for token, and the tier workflows' entry through ``run-job``): it installs
+The catalogue's ``browse-live`` job closes that, as the tier workflows run it through ``run-job``:
+it installs
 a Chromium and sets the require-env, so a browser that is missing, renamed by a Playwright bump,
 or unlaunchable is a RED there instead of twenty quiet skips. This file is the rail over that
 WIRING, because the wiring is now the load-bearing part — delete the env line, or drop a module
@@ -72,7 +72,7 @@ def env_value(job: Job, key: str) -> str | None:
 def provisions_a_browser(job: Job) -> bool:
     """Whether whatever runs the job puts a Chromium on the runner before its steps: the
     ``chromium`` install in its toolchain, which run-job runs as ``npx playwright install
-    chromium`` (``tools/ci/jobs.py``) and ci.yml's job as its own step."""
+    chromium`` (``tools/ci/jobs.py``)."""
     return "chromium" in job.toolchain
 
 

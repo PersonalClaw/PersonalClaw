@@ -7,7 +7,7 @@
 # demands — the class of red (unsorted import, unformatted block) that otherwise
 # fails CI after the fact and sends a contributor back for a fixup round.
 #
-# Scope mirrors the CI lint job (ci.yml): black + isort + flake8. mypy is
+# Scope mirrors CI's static entry (tools/ci/catalogue.toml): black + isort + flake8. mypy is
 # deliberately NOT run here — a per-file type check without the full module
 # graph produces false positives, and it is slow; it stays on CI and the full
 # local gate. Run `make lint` for the complete check including mypy.

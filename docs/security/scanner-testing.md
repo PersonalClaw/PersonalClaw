@@ -35,8 +35,8 @@ python -m pytest tests/security/ -k invisible-char
 The corpus also runs unattended, in a job of its own named `security`, which executes
 `tests/security/` plus the supply-chain scanner's tests:
 
-- `.github/workflows/ci.yml` runs it on every pull request and every push to `main`, whatever
-  else the run skips, on Linux and Python 3.12. The merge tier requires it
+- `.github/workflows/pr.yml` and `.github/workflows/merge.yml` run it on every pull request, and
+  `merge.yml` on every push to `main`, whatever else the run skips, on Linux and Python 3.12. The merge tier requires it
   (`MERGE_SECURITY_JOBS` in `tools/ci/catalogue.py`), so a merge verdict where it is missing,
   skipped or cancelled is red.
 - `.github/workflows/breadth.yml` runs it on every nightly `schedule:` run (09:37 UTC) and on

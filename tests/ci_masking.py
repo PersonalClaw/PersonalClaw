@@ -69,8 +69,6 @@ class Tolerated:
     outcome_read: bool = False
 
 
-_CI = ".github/workflows/ci.yml"
-_DOCKER = ".github/workflows/docker-single-container.yml"
 _MERGE = ".github/workflows/merge.yml"
 _WALK = ".github/workflows/clean-machine-walkthroughs.yml"
 _BREADTH = ".github/workflows/breadth.yml"
@@ -82,54 +80,21 @@ _TREE_KEYED_LEGS = ("rails-macos", "collection-parses")
 
 MASKED: tuple[Masked, ...] = (
     Masked(
-        _CI,
-        'python3 "$check" --workflow ci.yml || true',
+        _MERGE,
+        'python3 -I "$check" --workflow merge.yml || true',
         "tree-check: a check that crashes or is refused writes no answer, and the `case` below "
-        "reads anything but tested=true|false as tested=false, so every job runs.",
+        "reads anything but tested=true|false as tested=false, so the whole tier is planned.",
     ),
     Masked(
-        _CI,
+        _MERGE,
         'answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)',
         "tree-check: no answer file reads as empty, which the `case` below makes tested=false.",
     ),
     Masked(
-        _CI,
-        '--job "$SHARD_JOB" --group-prefix "$GROUP_PREFIX" || true',
-        "The `test` and `test-macos-gate` gates' superseded proof: a check that crashes writes "
-        "no answer, and the gate reads anything but superseded=<sha> as unproven. It exits 1 "
-        "either way; the contract row runs the script and holds that.",
-    ),
-    Masked(
-        _CI,
-        'line=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)',
-        "The `test` and `test-macos-gate` gates' superseded proof: no answer file reads as "
-        "empty, which is unproven, and the gate exits 1 either way.",
-    ),
-    Masked(
-        _CI,
-        "--jq '.[0].number // empty' 2>/dev/null || true",
-        "The feedback relay's pull request number, looked up by branch: none found means there "
-        "is nothing to post to, and the step says so.",
-    ),
-    Masked(
         _MERGE,
-        'python3 "$check" --workflow merge.yml || true',
-        "tree-check, as in ci.yml: no answer is tested=false, so the whole tier is planned.",
-    ),
-    Masked(
-        _MERGE,
-        'answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)',
-        "tree-check, as in ci.yml: no answer file is tested=false.",
-    ),
-    Masked(
-        _DOCKER,
-        'python3 "$check" --workflow docker-single-container.yml || true',
-        "tree-check, as in ci.yml: no answer is tested=false, so the image is built.",
-    ),
-    Masked(
-        _DOCKER,
-        'answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)',
-        "tree-check, as in ci.yml: no answer file is tested=false.",
+        '--group-prefix merge-suite- --out "$RUNNER_TEMP/superseded.json" || true',
+        "results: a superseded check that crashes or is refused adds no key, so the verdict reads "
+        "the shard cancelled, red.",
     ),
     Masked(
         _WALK,
@@ -222,15 +187,6 @@ TOLERATED: tuple[Tolerated, ...] = (
         "The canary's union check: its planned suite collected on the next Ubuntu image, and its "
         "shards held to it. Its red is the image's news, as the canary's is, and the gating "
         "union (`shard-union`) never reads the canary's ids.",
-    ),
-    Tolerated(
-        _CI,
-        ("e2e-shard", "e2e-stateful", "browse-live"),
-        "chromium-starts",
-        "A Chromium that does not start on the runner image is the cue to install its system "
-        "libraries, not a failure: the next step runs apt only then, and checks again, so a "
-        "browser that still cannot start fails the job there.",
-        outcome_read=True,
     ),
     Tolerated(
         ".github/workflows/pr-feedback.yml",
@@ -381,24 +337,23 @@ def _read_together(
 PLANTS: tuple[tuple[str, str, str, str], ...] = (
     (
         "a pytest whose exit status is thrown away",
-        _CI,
-        '--shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-test-shard-'
-        "${{ matrix.shard }}.xml",
-        '--shard-list "$RUNNER_TEMP/shard.txt" --junitxml=reports/junit-test-shard-'
-        "${{ matrix.shard }}.xml || true",
+        _BREADTH,
+        '--shard-ids "$RUNNER_TEMP/ids/shard-ids-ubuntu-${{ matrix.shard }}.txt"\n',
+        '--shard-ids "$RUNNER_TEMP/ids/shard-ids-ubuntu-${{ matrix.shard }}.txt" || true\n',
     ),
     (
         "a validation step that may fail without failing its job",
-        _CI,
-        "      - name: audit the graphs core ships\n",
-        "      - name: audit the graphs core ships\n        continue-on-error: true\n",
+        _MERGE,
+        "      - name: main's tools/ci checks this run's catalogue\n",
+        "      - name: main's tools/ci checks this run's catalogue\n"
+        "        continue-on-error: true\n",
     ),
     (
         "a job that may fail without failing the run",
-        _CI,
-        "    timeout-minutes: 15\n    permissions:\n      contents: read\n    steps:\n",
-        "    timeout-minutes: 15\n    continue-on-error: true\n    permissions:\n"
-        "      contents: read\n    steps:\n",
+        _MERGE,
+        "    outputs:\n      tested: ${{ steps.answer.outputs.tested }}\n",
+        "    continue-on-error: true\n"
+        "    outputs:\n      tested: ${{ steps.answer.outputs.tested }}\n",
     ),
     (
         "a masked command in the image build",

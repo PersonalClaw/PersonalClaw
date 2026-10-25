@@ -10,8 +10,8 @@ environment back in front.
 
 These run the script under this host's own ``/bin/sh`` against that reset PATH, which is what a
 test run without a container runtime can hold. The built image's own login shell is step 7 of
-``tools/docker_single_container_smoke.py``, which the single-container workflow runs against the
-image it builds.
+``tools/docker_single_container_smoke.py``, which the catalogue's ``image`` entry runs against
+the image it builds.
 """
 
 from __future__ import annotations

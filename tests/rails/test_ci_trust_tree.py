@@ -283,12 +283,39 @@ def test_the_entry_points_of_each_command_form(planted: Path) -> None:
     }
 
 
+def test_a_catalogue_steps_script_is_an_entry_point_and_its_change_a_definition_change(
+    planted: Path,
+) -> None:
+    """The tier workflows run the catalogue's steps through run-job (#3915), so a script a step
+    runs is a definition: a candidate that changes it is judged by the default branch's run."""
+    catalogue = (
+        '[[job]]\nid = "gates"\ncommand = [\n'
+        '  { argv = ["uv", "run", "python", "scripts/gate.py"] },\n'
+        '  { argv = ["node", "e2e/check.mjs"], workdir = "web" },\n]\n'
+    )
+    _git(planted, "switch", "-q", "main")
+    _write(
+        planted,
+        {"tools/ci/catalogue.toml": catalogue, "scripts/gate.py": "", "web/e2e/check.mjs": ""},
+    )
+    _commit(planted, "a catalogue whose steps run two files")
+    _git(planted, "switch", "-q", "-C", "candidate")
+    found = trust.entry_points(planted, "main", helpers=_HELPERS)
+    assert {"scripts/gate.py", "web/e2e/check.mjs"} <= found, sorted(found)
+    changed = _candidate(planted, {"scripts/gate.py": "print('always green')\n"})
+    assert not changed.trusted
+    assert {(c.path, c.kind) for c in changed.changes} == {("scripts/gate.py", "modified")}
+
+
 def test_the_real_workflows_name_the_entry_points_they_run(tmp_path: Path) -> None:
-    """This repository's workflows, read by the same parser, find the files they really run."""
+    """This repository's workflows and catalogue, read by the same parser, find the files they
+    really run."""
     repo = tmp_path / "real"
     repo.mkdir()
     _git(repo, "init", "-q", "-b", "main")
     shutil.copytree(REPO / ".github" / "workflows", repo / ".github" / "workflows")
+    (repo / "tools" / "ci").mkdir(parents=True)
+    shutil.copy(REPO / "tools" / "ci" / "catalogue.toml", repo / "tools" / "ci" / "catalogue.toml")
     expected = {
         "Makefile",
         "package.json",

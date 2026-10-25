@@ -3,7 +3,7 @@
 
 Every catalogue here is inline text, so this module reads nothing of the tree. The ``changes``
 job's step that runs the check from main's copy is held in
-``tests/rails/test_ci_plan_step_tree.py``.
+``tests/rails/test_ci_tier_workflow_steps_tree.py``.
 """
 
 from __future__ import annotations

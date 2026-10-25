@@ -308,7 +308,7 @@ Frontend tests run from the repo root: `npm run test:web` (vitest).
 repository-owned `pre-commit` hook formats the staged Python files with black
 and isort — writing the fixes back into the commit — and then runs flake8,
 blocking the commit only on issues that can't be auto-fixed (an unused import,
-an undefined name). It mirrors CI's `lint` job so the mechanical reformatting
+an undefined name). It mirrors CI's `static` job so the mechanical reformatting
 that otherwise fails a PR after the fact is handled before the commit is made.
 It runs only when a commit stages a `.py` file, so frontend-only and docs
 commits are unaffected. mypy is not run here (a per-file type check without the
@@ -329,7 +329,7 @@ with `make web-build` (which stamps the build) and then
 `cd web && PW_ONLY_SMOKE=1 npx playwright test --project=smoke --no-deps`. The
 preview refuses a dist whose stamp does not match the sources, so an unstamped or
 stale build fails before any test. In CI the smoke runs on every pull request, in whichever
-`e2e-shard` leg Playwright's split gives it, against the build the `web` job stamped and
+`e2e-shard` leg Playwright's split gives it, against the build the `web-build` job stamped and
 uploaded, and the `e2e` job judges the report merged from every leg. That is its gate: the
 pre-push hook does not run it, and a contract row holds the merge tier to it.
 
@@ -584,26 +584,24 @@ When `lint` does fail in CI, a bot posts the exact fix as a PR comment — that
 works on fork PRs too, via a relay workflow, because CI itself is given a
 read-only token on a fork and cannot comment.
 
-### Reading a red `test` without reading the log
+### Reading a red suite shard without reading the log
 
 A failing test job annotates only `Process completed with exit code 1`, which
 does not name the case — and the suite's log is long enough that the summary is
-sometimes truncated away. So every pytest step in CI writes a JUnit XML and
-uploads it as a run artifact even when the job fails. Download the small XML
-instead of the log:
+sometimes truncated away. So every pytest step in CI writes a JUnit XML, and each
+job uploads its reports as a run artifact, `reports-<job>-<attempt>`, even when it
+fails. Download the small XML instead of the log:
 
 ```bash
 gh run list --branch <your-branch> --limit 1            # get the run id
-gh run download <run-id> --name junit-test-shard-2      # 1…4, one per shard
+gh run download <run-id> --name reports-python-suite-2-3-1   # shard 2 of 3, attempt 1
 ```
 
 `<testcase>` elements with a `<failure>` child are the failures, with the node
-id and the assertion message. The other jobs publish theirs under
-`junit-browse-live` (the `e2e` job's browse proof), `junit-rails-1` to `junit-rails-3` (the
-three legs of the rails), `junit-npm-floors`, `junit-client` and
-`junit-lint-installer`, and the `e2e` job uploads its browser run's JSON, blob and HTML
-reports as `e2e-reports`;
-the nightly `full` workflow adds one per matrix leg. This is how you tell a
+id and the assertion message. Every other job's reports are under its own name the
+same way (`reports-rails-1-3-1` for the first leg of the rails, `reports-browse-live-1`
+for the browse proof), the browser legs' with their JSON and HTML reports;
+the nightly `breadth` workflow adds one per matrix leg. This is how you tell a
 known flake from a genuine break without a blind re-run.
 
 **A flaky failure stays red.** A test that fails and then passes on a re-run is

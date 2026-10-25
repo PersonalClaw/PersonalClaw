@@ -47,9 +47,9 @@ paths = ["deploy/website/install.sh", "deploy/website/install.sh.sha256"]
 jobs = ["static"]
 reason = "static proves the installer: sh -n, dash -n and shellcheck run on it, and tests/test_website_installer.py holds its digest"
 
-# The image smoke is a workflow of its own (docker-single-container.yml, gated by its own paths:
-# list) and no catalogue job yet, so the paths only it reads plan the whole merge tier until it
-# is one. The rest of its list is planned by the jobs that read them.
+# The paths only the image smoke reads plan the whole merge tier, as they did while the smoke was
+# a workflow of its own; the catalogue's `image` entry is planned by them too. The rest of its
+# list is planned by the jobs that read them.
 [[override]]
 paths = [
   "deploy/docker/",

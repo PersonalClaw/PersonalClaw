@@ -66,7 +66,7 @@ from typing import Any
 
 import yaml
 
-from . import shell_installs
+from . import catalogue, plan, shell_installs
 
 POLICY_FILE = "tools/ci/supply-chain.toml"
 DEPENDABOT_FILE = ".github/dependabot.yml"
@@ -189,6 +189,7 @@ def tree_paths(root: Path) -> list[Path]:
         root / ".nvmrc",
         root / "package.json",
         root / "package-lock.json",
+        root / catalogue.CATALOGUE,
         *image_manifest_paths(root),
     ]
 
@@ -1904,10 +1905,28 @@ def _selects(paths: list[str], path: str) -> bool:
 
 def _image_smoke_paths(tree: Tree) -> list[Violation]:
     """A workflow whose `paths:` run it on a change of a Dockerfile also runs on a change of
-    each npm lock that Dockerfile installs, so the pull request Dependabot opens to move a lock
-    builds the image that installs it."""
+    each npm lock that Dockerfile installs, and so does a catalogue entry whose inputs reach the
+    Dockerfile, so the pull request Dependabot opens to move a lock builds the image that
+    installs it."""
     bad: list[Violation] = []
     installed = _locks_installed(tree)
+    try:
+        jobs = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE).jobs
+    except catalogue.CatalogueError:
+        jobs = ()  # a catalogue that cannot be read is the catalogue's own check's to report
+    for job in jobs:
+        for lock, dockerfiles in sorted(installed.items()):
+            if not tree.get(lock) or plan.reaches(job.inputs, lock):
+                continue
+            for dockerfile in sorted(d for d in dockerfiles if plan.reaches(job.inputs, d)):
+                message = (
+                    f"the catalogue's {job.id} runs on a change of {dockerfile} but not on one "
+                    f"of {lock}, which it installs, so a Dependabot pull request that moves the "
+                    "lock never builds the image"
+                )
+                bad.append(
+                    Violation("dependabot", catalogue.CATALOGUE, f"{job.id} {lock}", message)
+                )
     for rel, data in _workflows(tree):
         loaded: dict[Any, Any] = data
         triggers = loaded.get("on", loaded.get(True))

@@ -46,8 +46,9 @@ on:
     - cron: "17 5 * * 2"
   workflow_dispatch:
 
-# Same branch-keyed dedupe as ci.yml — see the two traps documented in its `concurrency`
-# block for why this is keyed on the branch rather than on `github.ref` or the head SHA.
+# Keyed on the head repository and branch rather than on `github.ref` or the head SHA, so a new
+# push to a pull request cancels its older run and a fork's branch of the same name is a group of
+# its own.
 concurrency:
   group: nix-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true

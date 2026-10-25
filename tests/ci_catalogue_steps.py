@@ -1,11 +1,9 @@
-"""What a candidate's CI runs, read from the catalogue, in both of its shapes (#3915).
+"""What a candidate's CI runs, read from the catalogue (#3915).
 
-Until the flip deletes it, ``ci.yml``'s jobs run their own steps, and ``pr.yml``'s and
-``merge.yml``'s stage jobs run the catalogue's through ``run-job``. The contract row "every
-catalogue command is the workflow's" (``tests/rails/test_ci_contract.py``) holds each ``ci.yml``
-job's validating steps to its entry's, token for token, with the same working directory, step env
-and job env. So a rail that reads an entry's steps here holds what both shapes run, and still
-holds it once ``ci.yml`` is gone.
+``pr.yml``'s and ``merge.yml``'s stage jobs run the catalogue's steps through ``run-job``, and the
+contract row "every catalogue command is the workflow's" (``tests/rails/test_ci_contract.py``)
+holds each ``breadth.yml`` job's validating steps to its entry's, token for token. So a rail that
+reads an entry's steps here holds what CI runs.
 """
 
 from __future__ import annotations

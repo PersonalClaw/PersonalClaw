@@ -109,10 +109,16 @@ from .catalogue import Catalogue, Job, Step
 #: its declared list.
 RUNNER_ENV: dict[str, str] = {"CI": "true"}
 
-#: The env ci.yml gives every job, at the workflow's top level. A test holds it to ci.yml's.
+#: The runner's variables a step gets on GitHub, as GitHub gives them to every step: the event and
+#: the full ref, which say whether the run is a push to main, the one run whose rails legs record
+#: what each rail read (tests/rails_reads.py). Off GitHub none is passed, so a local run records
+#: nothing, and ``GITHUB_ACTIONS``, which says the run is on GitHub, never is.
+RUNNER_PASSED = ("GITHUB_EVENT_NAME", "GITHUB_REF")
+
+#: The env the tier workflows give every job, at their top level. A test holds it to theirs.
 WORKFLOW_ENV: dict[str, str] = {"UV_PYTHON_PREFERENCE": "only-managed"}
 
-#: Each toolchain word whatever runs a job installs, as ci.yml installs it.
+#: Each toolchain word whatever runs a job installs, as it installs it.
 INSTALL_ARGV: dict[str, tuple[str, ...]] = {
     "uv-sync": ("uv", "sync", "--locked", "--extra", "dev"),
     "npm-ci": ("npm", "ci"),
@@ -133,10 +139,10 @@ SANDBOX_HELPER_HOSTED = "github-hosted"
 #: A step that runs the helper itself, as desktop-smoke does on the packed app.
 SANDBOX_HELPER_STEP: tuple[str, ...] = ("sh", "tools/ci/sandbox_helper.sh")
 
-#: The `chromium` install's bounds and commands beside :data:`INSTALL_ARGV`'s, as CI's browser legs
-#: run them since #5265 (:func:`install_chromium`): Playwright's build without apt, a check that it
-#: starts, and its system libraries from apt only when that check fails. A hung apt mirror then
-#: holds the job for a bound that names it, never its whole limit.
+#: The `chromium` install's bounds and commands beside :data:`INSTALL_ARGV`'s (#5265,
+#: :func:`install_chromium`): Playwright's build without apt, a check that it starts, and its
+#: system libraries from apt only when that check fails. A hung apt mirror then holds the job for a
+#: bound that names it, never its whole limit.
 CHROMIUM_INSTALL_S = 300
 CHROMIUM_START_CHECK: tuple[str, ...] = (
     "node",
@@ -337,10 +343,41 @@ def _python(job: Job, host: Host) -> str:
     return found
 
 
+#: A commit id as an event names it: a SHA-1 or a SHA-256 object id, in lowercase hex.
+_OBJECT_ID = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
 def _base(host: Host, options: Options) -> str:
+    """``--base``; on GitHub, a push to main's commit it replaced (the event's ``before``), as the
+    push's own diff; else the merge-base with ``origin/main``, which is a pull request's base on
+    its merge commit, and on a push to main the pushed commit itself."""
     if options.base:
         return options.base
+    replaced = pushed_before(host)
+    if replaced is not None:
+        return replaced
     return _git(host, "merge-base", "HEAD", "origin/main").strip()
+
+
+def pushed_before(host: Host) -> str | None:
+    """On GitHub, the commit a push to ``refs/heads/main`` replaced, from its own event; else, or
+    for a push that created the branch (an all-zero ``before``), none."""
+    event_path = os.environ.get("GITHUB_EVENT_PATH", "")
+    if not host.on_github or not event_path:
+        return None
+    if (os.environ.get("GITHUB_EVENT_NAME"), os.environ.get("GITHUB_REF")) != (
+        "push",
+        "refs/heads/main",
+    ):
+        return None
+    try:
+        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    before = event.get("before") if isinstance(event, dict) else None
+    if not isinstance(before, str) or not _OBJECT_ID.fullmatch(before) or not before.strip("0"):
+        return None
+    return before
 
 
 # ── one job ──────────────────────────────────────────────────────────────────────────────────
@@ -483,10 +520,12 @@ def _cache_env(job: Job, host: Host) -> dict[str, str]:
 
 
 def _base_env(job: Job, host: Host, options: Options) -> dict[str, str]:
-    """What every step of *job* gets below its job's own env and its own: the runner's, the
-    workflow's, the caches (:func:`_cache_env`), and the worker count when the job names a
-    variable for it (``workers_env``)."""
+    """What every step of *job* gets below its job's own env and its own: the runner's (and, on
+    GitHub, :data:`RUNNER_PASSED`), the workflow's, the caches (:func:`_cache_env`), and the
+    worker count when the job names a variable for it (``workers_env``)."""
     env = {**RUNNER_ENV, **WORKFLOW_ENV, **_cache_env(job, host)}
+    if host.on_github:
+        env.update({name: os.environ[name] for name in RUNNER_PASSED if name in os.environ})
     count = _worker_count(job, options, host)
     if job.workers_env and count is not None:
         env[job.workers_env] = count
@@ -1274,8 +1313,8 @@ def pull_request_number(host: Host) -> str | None:
 
 def write_feedback(folder: Path, argv: Sequence[str], kept: Path, number: str) -> None:
     """Leave a failed step's kept output as the remediation ``pr-feedback.yml`` posts:
-    ``violations.md``, the step's command and its output as ``ci.yml``'s lint job writes them,
-    and ``pr.txt``, the pull request's number. The output is data the relay fences; nothing here
+    ``violations.md``, the step's command and its output, and ``pr.txt``, the pull request's
+    number. The output is data the relay fences; nothing here
     reads it as anything else."""
     words = list(argv[2:] if list(argv[:2]) == ["uv", "run"] else argv)
     text = kept.read_bytes().decode("utf-8", errors="replace").rstrip()
@@ -1314,8 +1353,8 @@ def _only_failed(result: run.Result) -> bool:
 def install_chromium(
     step: Callable[[Sequence[str], float], run.Result],
 ) -> tuple[int, list[str], bool]:
-    """The `chromium` toolchain word's install, as CI's browser legs make it since #5265. *step*
-    runs one command within the seconds it is given, or what is left of the job when that is less.
+    """The `chromium` toolchain word's install, in three steps (#5265). *step* runs one command
+    within the seconds it is given, or what is left of the job when that is less.
 
     1. ``npx playwright install chromium``, the build the lock pins, within
        :data:`CHROMIUM_INSTALL_S`, and no apt.
@@ -1553,8 +1592,8 @@ def run_one(
             peaks.append(result.peak_mb)
         if result.code != run.OK:
             reasons.extend(f"step {n}: {v}" for v in result.violations)
-            # A lint step that exited non-zero on its own, as ci.yml's lint job hands its
-            # violations on: a timeout, a signal or the tripwire is no remediation.
+            # A lint step that exited non-zero on its own hands its violations on: a timeout, a
+            # signal or the tripwire is no remediation.
             number = pull_request_number(host)
             exited = result.violations == (f"the job exited {result.returncode}",)
             if kept is not None and kept.is_file() and exited and number is not None:

@@ -15,8 +15,8 @@ makes. Every run and artifact it skips, and why, is in the status's refusals.
 
 **Every history shown from the run it came from.** A history archive is kept only when it holds
 one member, ``history-<run>-<attempt>.jsonl``, named after the archive, whose run line is that run
-and attempt in the one schema and a counted run (a push to main of ``ci.yml`` or ``merge.yml``, or
-a scheduled or dispatched Breadth run on main), and that run is one its own workflow's listing
+and attempt in the one schema and a counted run (a push to main of ``merge.yml``, or a scheduled
+or dispatched Breadth run on main), and that run is one its own workflow's listing
 shows, in this repository, with that attempt. A history whose run cannot be shown is refused,
 fetched or carried.
 

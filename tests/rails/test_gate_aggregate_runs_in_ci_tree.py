@@ -4,9 +4,9 @@
 They run once per CI run, in the rails job. The module named above says what they
 hold to.
 
-The call site is read from the catalogue (``tests/ci_catalogue_steps.py``), whose steps both of
-CI's shapes run: ``ci.yml``'s jobs, held to them token for token, and the tier workflows' stage
-jobs through ``run-job``. A step there is an argv, so no comment can stand in for the call.
+The call site is read from the catalogue (``tests/ci_catalogue_steps.py``), whose steps the tier
+workflows' stage jobs run through ``run-job``. A step there is an argv, so no comment can stand in
+for the call.
 """
 
 from __future__ import annotations

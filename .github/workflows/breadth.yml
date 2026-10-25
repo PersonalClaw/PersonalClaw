@@ -1,7 +1,7 @@
 # Breadth — nightly, and on dispatch. The platforms and checks a pull request's run does not
 # cover: other Pythons, arm64, macOS on 3.12, coverage, and the checks that may not be reused.
-# A pull request's run (ci.yml) is its tree's one expensive execution, on Ubuntu/3.12 and
-# macOS/3.13; this is what is left (#3913).
+# A pull request's merge run (merge.yml) is its tree's one expensive execution, on Ubuntu/3.12
+# and macOS/3.13; this is what is left (#3913).
 #
 # EVERY RUN WRITES A DIGEST-BOUND EVIDENCE RECORD. Each shard records the exact inputs it ran on
 # (the tree, the runner image and its version, the architecture, Python, uv and Node, and any
@@ -376,11 +376,12 @@ jobs:
   rails-macos:
     # report holds each key to this job's latest attempt, by this name.
     name: breadth-leg rails-macos-26-3.12/1
-    # The rails (tests/rails, #3928) run once per CI run, on Linux, in ci.yml's `rails` job, and in
-    # no suite shard. A rail that depends on the OS (path separators, a case-insensitive file
-    # system) would lose macOS coverage with that, so this leg runs the same set on macOS nightly.
-    # It also runs breadth's one whole-tree harness scan (ci.yml runs it in `harness`): breadth
-    # runs no static job, and the scan reads only the tree, which this leg's entry is keyed on.
+    # The rails (tests/rails, #3928) run once per CI run, on Linux, in the catalogue's `rails`
+    # entry, and in no suite shard. A rail that depends on the OS (path separators, a
+    # case-insensitive file system) would lose macOS coverage with that, so this leg runs the same
+    # set on macOS nightly. It also runs breadth's one whole-tree harness scan (the tiers run it in
+    # `static`): breadth runs no static job, and the scan reads only the tree, which this leg's
+    # entry is keyed on.
     needs: [freshness]
     if: ${{ !cancelled() }}
     runs-on: macos-26
@@ -804,8 +805,8 @@ jobs:
 
   coverage:
     # ── Combines the shards into the one report, and carries the stable `coverage` id ────────
-    # Green only when every shard passed, as ci.yml's `test` is for `test-shard`, and
-    # `!cancelled()` for the reason it gives (#2946). It keeps the whole suite's report or none: with a shard red
+    # Green only when every shard passed, and `!cancelled()` so a cancelled run publishes no
+    # verdict (#2946). It keeps the whole suite's report or none: with a shard red
     # there is no meaningful coverage number, so the steps after the gate do not run.
     needs: [coverage-shard]
     if: ${{ !cancelled() }}
@@ -868,7 +869,7 @@ jobs:
     # scanned-bytes==installed-bytes race invariant + the red-on-weakness meta-test).
     # Its own job, not a line in the matrix, so a corpus regression is legible on its
     # own; one process, pytest's default, keeps the integrity-race output readable. Published methodology:
-    # docs/security/scanner-testing.md. ci.yml's `security` job runs the same on every run, and no
+    # docs/security/scanner-testing.md. The tiers' `security` entry runs the same on every run, and no
     # suite shard collects these files (tools/ci/shards.py JOB_OWNED); this leg and
     # `security-macos` are the nightly's runs of them.
     needs: [freshness]
@@ -912,7 +913,7 @@ jobs:
           tests/security
           tests/test_supply_chain_scanner.py
           tests/test_supply_chain_gates.py
-      # Same argument as ci.yml's `test-shard` upload step.
+      # Always, so a red run still says which test failed: the XML names each failure.
       - name: Upload JUnit results (security corpus)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -992,7 +993,7 @@ jobs:
           tests/security
           tests/test_supply_chain_scanner.py
           tests/test_supply_chain_gates.py
-      # Same argument as ci.yml's `test-shard` upload step.
+      # Always, so a red run still says which test failed: the XML names each failure.
       - name: Upload JUnit results (security corpus, macOS)
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1462,7 +1463,7 @@ jobs:
   audit:
     # report holds each key to this job's latest attempt, by this name.
     name: breadth-leg audit/1
-    # The dependency audit ci.yml's `audit` runs on a pull request (tools/ci/audit.py), every
+    # The dependency audit the merge tier's `audit` runs on a pull request (tools/ci/audit.py), every
     # night on main, where a new advisory lands without a commit: red on a tool that did not
     # run and on an unwaived high or critical finding, and that red opens the leg's issue.
     needs: [freshness]

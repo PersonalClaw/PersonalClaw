@@ -34,12 +34,14 @@ from test_each_tree_check_runs_in_one_place import named_runs
 from tools.ci import catalogue, shards, verdict
 
 _WORKFLOWS = Path(".github") / "workflows"
-_CI = (_WORKFLOWS / "ci.yml").as_posix()
 _BREADTH = (_WORKFLOWS / "breadth.yml").as_posix()
+#: The owner the tier workflows run: the catalogue's entry, through run-job, in every pull
+#: request's run (its tiers) and every push's (``every_push``).
+CATALOGUE_OWNER = "the catalogue"
 
 #: Each job that owns the corpus: its workflow, its id, and the runner family it runs on.
 OWNERS: tuple[tuple[str, str, str], ...] = (
-    ("ci.yml", "security", "ubuntu-"),
+    (CATALOGUE_OWNER, "security", "ubuntu-"),
     ("breadth.yml", "security", "ubuntu-"),
     ("breadth.yml", "security-macos", "macos-"),
 )
@@ -68,6 +70,9 @@ def violations(root: Path) -> list[str]:
     pythons: set[str] = set()
     for workflow, job_id, runner in OWNERS:
         where = f"{workflow}:{job_id}"
+        if workflow == CATALOGUE_OWNER:
+            bad += _entry_violations(cat, job_id, runner, named, pythons)
+            continue
         data = yaml.safe_load((root / _WORKFLOWS / workflow).read_text(encoding="utf-8"))
         job = (data.get("jobs") or {}).get(job_id)
         if not isinstance(job, dict):
@@ -92,13 +97,6 @@ def violations(root: Path) -> list[str]:
         if not named_pythons:
             bad.append(f"{where} names no python-version")
         pythons |= named_pythons
-        if workflow == "ci.yml":
-            if "if" in job or job.get("needs") or gated:
-                bad.append("ci.yml:security does not run on every pull request and every run")
-            if job.get("permissions") != {"contents": "read"}:
-                bad.append(f"ci.yml:security holds {job.get('permissions')!r}, not contents: read")
-            if "secrets." in json.dumps(job):
-                bad.append("ci.yml:security names a secret")
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     allowed = SpecifierSet(str(project["requires-python"]))
     ran = {p.rsplit(".", 1)[0] for p in pythons}
@@ -121,8 +119,33 @@ def violations(root: Path) -> list[str]:
     return bad
 
 
+def _entry_violations(
+    cat: catalogue.Catalogue, job_id: str, runner: str, named: set, pythons: set[str]
+) -> list[str]:
+    """The catalogue entry's half: on the runner family, running exactly the corpus, on every
+    pull request (its merge tier) and every push to main (``every_push``), its Python added to
+    *pythons*. Its job's permissions and secrets are the tier workflows' stage jobs', which the
+    CI contract table holds read-only and secret-free."""
+    where = f"{CATALOGUE_OWNER}:{job_id}"
+    try:
+        job = cat.job(job_id)
+    except KeyError:
+        return [f"{CATALOGUE_OWNER} has no {job_id} job"]
+    bad = [] if job.platform.startswith(runner) else [f"{where} runs on {job.platform!r}"]
+    runs = {rel for owner, rel in named if owner == job_id}
+    bad += [f"{where} does not run {rel}" for rel in sorted(CORPUS - runs)]
+    bad += [f"{where} runs {rel}, which is not the corpus" for rel in sorted(runs - CORPUS)]
+    if job_id not in (cat.every_push or ()):
+        bad.append(f"a push to main does not run {job_id}, whatever its tree check answers")
+    if job.python:
+        pythons.add(job.python)
+    else:
+        bad.append(f"{where} names no python")
+    return bad
+
+
 def _scaffold(root: Path) -> None:
-    for rel in (catalogue.CATALOGUE, _CI, _BREADTH, "pyproject.toml"):
+    for rel in (catalogue.CATALOGUE, _BREADTH, "pyproject.toml"):
         target = root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text((REPO / rel).read_text(encoding="utf-8"), encoding="utf-8")
@@ -230,25 +253,15 @@ CONTROLS = (
         "the merge tier lacks security",
     ),
     Control(
-        "ci.yml's security job gated again",
-        _edit(_CI, ("  security:\n", "  security:\n    if: ${{ github.event_name == 'x' }}\n")),
-        "does not run on every pull request",
-    ),
-    Control(
-        "ci.yml's security job waiting on tree-check",
-        _edit(_CI, ("  security:\n", "  security:\n    needs: [tree-check]\n")),
-        "does not run on every pull request",
-    ),
-    Control(
-        "ci.yml's corpus step gated to pushes",
-        _in_job(
-            _CI,
-            "security",
-            "      - name: pytest (adversarial scanner corpus)\n",
-            "      - name: pytest (adversarial scanner corpus)\n"
-            "        if: ${{ github.event_name == 'push' }}\n",
+        "security no longer run by every push",
+        _edit(
+            catalogue.CATALOGUE,
+            (
+                'every_push = ["browse-live", "security", "apps-contract"]',
+                'every_push = ["browse-live", "apps-contract"]',
+            ),
         ),
-        "does not run on every pull request",
+        "every_push",
     ),
     Control(
         "breadth's macOS corpus step gated",
@@ -262,39 +275,27 @@ CONTROLS = (
         "breadth.yml:security-macos runs pytest under if:",
     ),
     Control(
-        "ci.yml's security job given another read scope",
+        "the catalogue's security step no longer running tests/security",
         _edit(
-            _CI,
+            catalogue.CATALOGUE,
             (
-                "    permissions:\n      contents: read\n    # No PERSONALCLAW_HOME",
-                "    permissions:\n      contents: read\n      actions: read\n"
-                "    # No PERSONALCLAW_HOME",
+                '"--junitxml=reports/junit-security-corpus.xml", "tests/security", ',
+                '"--junitxml=reports/junit-security-corpus.xml", ',
             ),
         ),
-        "not contents: read",
+        "the catalogue:security does not run tests/security",
     ),
     Control(
-        "ci.yml's security job given a write",
+        "the catalogue's security moved to macOS",
         _edit(
-            _CI,
+            catalogue.CATALOGUE,
             (
-                "    permissions:\n      contents: read\n    # No PERSONALCLAW_HOME",
-                "    permissions:\n      contents: write\n    # No PERSONALCLAW_HOME",
+                'id = "security"\ntiers = ["change", "merge", "breadth"]',
+                'id = "security"\ntiers = ["change", "merge", "breadth"]\nplatform = "macos-26"',
             ),
         ),
-        "not contents: read",
-    ),
-    Control(
-        "ci.yml's security job no longer running tests/security",
-        _edit(
-            _CI,
-            (
-                "          --junitxml=reports/junit-security-corpus.xml\n"
-                "          tests/security\n",
-                "          --junitxml=reports/junit-security-corpus.xml\n",
-            ),
-        ),
-        "ci.yml:security does not run tests/security",
+        # The loader refuses it first: the merge tier's security evidence is a ubuntu-* run.
+        "security: platform is macos-26",
     ),
     Control(
         "breadth's macOS leg gone",

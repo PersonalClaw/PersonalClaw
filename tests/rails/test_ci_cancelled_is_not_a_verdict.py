@@ -3,8 +3,9 @@
 Two defects, one root: the workflows treated "no answer" as "a failing answer", and then
 arranged for there to be no answer most of the time.
 
-**The manufactured red.** ``ci.yml``'s ``test`` and ``breadth.yml``'s ``coverage`` are aggregation
-gates over a sharded matrix. Both were ``if: ${{ always() }}``, and ``always()`` runs a job
+**The manufactured red.** ``ci.yml``'s ``test`` (retired with ci.yml by #3915) and
+``breadth.yml``'s ``coverage`` were aggregation gates over a sharded matrix, both
+``if: ${{ always() }}``, and ``always()`` runs a job
 *even when the run itself was cancelled* — at which point ``needs.<shard>.result`` is
 ``cancelled`` and the gate's ``!= success`` test turned that into ``exit 1``. Until #3915 ci.yml
 also ran on a feature branch's ``push``, and its concurrency group collapsed that run onto the
@@ -29,15 +30,23 @@ a failing shard report *skipped* instead of red, hiding real failures) and a per
 (which stops the cancellation by fanning a 24-leg matrix out per merge). So each relation is
 stated on its own:
 
-1. no aggregate gate is gated on bare ``always()``;
-2. each is gated on ``!cancelled()`` — a failing shard still reaches the gate and reds, because
+1. no verdict job is gated on bare ``always()``: ``breadth.yml``'s ``coverage`` gate, and each
+   tier workflow's ``results``, whose steps would otherwise run on a cancelled run and publish a
+   green check for a run that measured nothing;
+2. each is gated on ``!cancelled()`` — a failing shard still reaches it and reds, because
    ``fail-fast: false`` means a shard failure never cancels the run;
-3. each gate script handles ``cancelled`` as its OWN branch, so a shard cancelled on a live run
-   is not silently folded into the generic failure message;
-4. ``breadth.yml`` does not cancel in progress — a verification of main always completes;
-5. ``ci.yml`` still DOES cancel in progress on every branch but ``main`` — a newer push to a
-   pull request's branch must cancel the run it supersedes, and fixing #2946 must not cost
-   that — and never on ``main``, where a push is its commit's check (#3913).
+3. a shard cancelled on a live run is its OWN case, not folded into the generic failure: the
+   ``coverage`` gate says *unproven*, and the tier's verdict reads the job ``cancelled``, red
+   (``tests/test_ci_verdict_records.py``). On a push to main, a suite shard a newer push's
+   waiting shard replaced reads ``superseded``, red, when main's ``tools/ci/superseded.py``
+   proves it from the API (``merge.yml``'s ``results``), and ``cancelled`` otherwise;
+4. main's verification run never cancels in progress: ``breadth.yml``'s group, and
+   ``merge.yml``'s, which cancels only a pull request's run;
+5. the tier still DOES cancel a pull request's run in progress — a newer push to its branch
+   must cancel the run it supersedes, and fixing #2946 must not cost that.
+
+ci.yml, whose ``test`` gate this file first held, was retired by #3915; its verdict is the
+tier's ``results``.
 
 Parsed with a line scan rather than PyYAML, matching the convention its siblings
 ``tests/rails/test_ci_concurrency_dedupe.py`` and ``tests/rails/test_ci_tier_enforcement.py``
@@ -50,18 +59,26 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 from rails_repo import REPO
 
 REPO_ROOT = REPO
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
-CI_YML = WORKFLOWS / "ci.yml"
 BREADTH_YML = WORKFLOWS / "breadth.yml"
+PR_YML = WORKFLOWS / "pr.yml"
+MERGE_YML = WORKFLOWS / "merge.yml"
+TIER = (PR_YML, MERGE_YML)
 
 #: ``(workflow file, aggregation job name, the sharded matrix job it aggregates)``.
-AGGREGATE_GATES: tuple[tuple[Path, str, str], ...] = (
-    (CI_YML, "test", "test-shard"),
-    (BREADTH_YML, "coverage", "coverage-shard"),
+AGGREGATE_GATES: tuple[tuple[Path, str, str], ...] = ((BREADTH_YML, "coverage", "coverage-shard"),)
+
+#: The verdict jobs relations 1 and 2 hold: each aggregation gate and each tier's ``results``.
+VERDICT_JOBS: tuple[tuple[Path, str], ...] = tuple((p, j) for p, j, _ in AGGREGATE_GATES) + tuple(
+    (p, "results") for p in TIER
 )
+
+#: A tier workflow's cancel-in-progress: true for a pull request's run, false for any other.
+_ONLY_A_PULL_REQUEST = "${{ github.event_name == 'pull_request' }}"
 
 
 def _job_block(path: Path, job: str) -> list[str]:
@@ -126,10 +143,20 @@ def test_the_aggregate_gate_was_actually_found(path: Path, job: str, shard_job: 
     assert _job_if(path, job), f"{path.name}: the {job!r} job carries no job-level `if:`"
 
 
-def test_both_workflows_declare_a_concurrency_group() -> None:
+@pytest.mark.parametrize("path", TIER, ids=lambda p: p.name)
+def test_the_tier_verdict_was_actually_found(path: Path) -> None:
+    body = "\n".join(_job_block(path, "results"))
+    assert "verdict.py" in body, (
+        f"{path.name}: the `results` job runs no verdict.py, so it is not the verdict this file "
+        f"thinks it is"
+    )
+    assert _job_if(path, "results"), f"{path.name}: the `results` job carries no job-level `if:`"
+
+
+@pytest.mark.parametrize("path", (BREADTH_YML, *TIER), ids=lambda p: p.name)
+def test_each_workflow_declares_a_concurrency_group(path: Path) -> None:
     """Floor for relations 4 and 5: a missing block must fail loudly, not read as compliant."""
-    assert _cancel_in_progress(CI_YML)
-    assert _cancel_in_progress(BREADTH_YML)
+    assert _cancel_in_progress(path)
 
 
 # ---------------------------------------------------------------------------
@@ -137,8 +164,8 @@ def test_both_workflows_declare_a_concurrency_group() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path,job,shard_job", AGGREGATE_GATES, ids=lambda v: getattr(v, "name", v))
-def test_the_gate_is_not_run_on_a_cancelled_run(path: Path, job: str, shard_job: str) -> None:
+@pytest.mark.parametrize("path,job", VERDICT_JOBS, ids=lambda v: getattr(v, "name", v))
+def test_the_gate_is_not_run_on_a_cancelled_run(path: Path, job: str) -> None:
     """Relations 1 + 2 — the manufactured red, stated directly.
 
     ``!cancelled()`` and not ``success()``: the gate MUST still run when a shard FAILS, because
@@ -149,9 +176,9 @@ def test_the_gate_is_not_run_on_a_cancelled_run(path: Path, job: str, shard_job:
     expr = _job_if(path, job)
     assert "cancelled()" in expr, (
         f"{path.name}: the {job!r} gate is `if: {expr}`, which says nothing about cancellation. "
-        f"With bare `always()` a cancelled run still runs this gate, `needs.{shard_job}.result` "
-        f"is 'cancelled', and the `!= success` test publishes a {job!r} FAILURE for a run that "
-        f"measured nothing — on the same SHA as the surviving run's real verdict (#2946)."
+        f"With bare `always()` a cancelled run still runs this job, and it publishes a {job!r} "
+        f"verdict for a run that measured nothing — a red where the gate reads the cancelled "
+        f"shard, a green where every step it would judge with is skipped (#2946)."
     )
     assert re.search(r"!\s*cancelled\(\)", expr), (
         f"{path.name}: the {job!r} gate is `if: {expr}`. It must be gated on `!cancelled()` so "
@@ -212,19 +239,73 @@ def test_mains_verification_run_is_never_cancelled_by_the_next_merge() -> None:
     )
 
 
-def test_the_pr_gate_still_cancels_superseded_runs() -> None:
+def test_mains_merge_run_is_never_cancelled_by_the_next_merge() -> None:
+    """Relation 4 for the tier: a push to main is its commit's check, so ``merge.yml`` cancels in
+    progress only a pull request's run (#3913)."""
+    value = _cancel_in_progress(MERGE_YML)
+    assert value == _ONLY_A_PULL_REQUEST, (
+        f"merge.yml's concurrency has `cancel-in-progress: {value}`. A push to main is its "
+        f"commit's check: the next merge must queue behind it, not erase it, so the run cancels "
+        f"in progress only for a pull request, `{_ONLY_A_PULL_REQUEST}`."
+    )
+
+
+@pytest.mark.parametrize("path", TIER, ids=lambda p: p.name)
+def test_the_pr_gate_still_cancels_superseded_runs(path: Path) -> None:
     """Relation 5 — cancelling a superseded run must not become collateral damage of fixing
     #2946.
 
-    Off main, ci.yml's one run per push is the pull request's (#3915). A newer push to its
-    branch must cancel the run for the older head, or every push leaves its predecessor holding
-    runners. The fix for the manufactured red is in the aggregate gate's condition, NOT in the
-    group: turning cancellation off here would trade a cosmetic red for runner capacity.
+    A newer push to a pull request's branch must cancel the run for the older head, or every push
+    leaves its predecessor holding runners. The fix for the manufactured red is in the verdict
+    job's condition, NOT in the group: turning cancellation off here would trade a cosmetic red
+    for runner capacity.
     """
-    value = _cancel_in_progress(CI_YML)
-    assert value == "${{ github.ref != 'refs/heads/main' }}", (
-        f"ci.yml's concurrency has `cancel-in-progress: {value}`. On every branch but main it "
-        "must be true, so a newer push to a pull request's branch cancels the run for the "
-        "older head; on main false, since a push to main is its commit's check. The cancelled "
-        "run's red is fixed in the `test` gate's `if:`, not by keeping superseded runs alive."
+    value = _cancel_in_progress(path)
+    assert value == _ONLY_A_PULL_REQUEST, (
+        f"{path.name}'s concurrency has `cancel-in-progress: {value}`. A pull request's run must "
+        f"cancel in progress, so a newer push to its branch cancels the run for the older head; "
+        f"any other run is its commit's check. The cancelled run's verdict is fixed in "
+        f"`results`' `if:`, not by keeping superseded runs alive."
     )
+
+
+#: The group a suite shard on main shares across commits, less its key, as the stage jobs spell
+#: it: `merge-<'suite' on main's first attempt>-<matrix.key>`.
+_SUITE_GROUP_PREFIX = "merge-suite-"
+_SUITE_JOBS = ("python-suite", "python-suite-macos")
+
+
+def test_a_push_to_main_proves_a_replaced_suite_shard_before_the_verdict() -> None:
+    """Relation 3 on main: merge.yml's ``results`` runs the previous main commit's
+    ``superseded.py``, not this checkout's, under ``python3 -I`` with nothing installed, on a
+    push to main alone, for each suite job and in the stage jobs' own group, and the verdict
+    step after it reads the proof. A proof that cannot be made writes nothing, so the shard
+    reads cancelled."""
+    text = MERGE_YML.read_text(encoding="utf-8")
+    results = yaml.safe_load(text)["jobs"]["results"]
+    steps = [str(step.get("run", "")) for step in results["steps"]]
+    [proving] = [n for n, run in enumerate(steps) if "superseded.py" in run]
+    [judging] = [n for n, run in enumerate(steps) if "--records" in run]
+    assert proving < judging, "the verdict runs before the proof it reads"
+    assert results["steps"][proving]["if"] == (
+        "${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+    ), "the proof is made off a push to main"
+    proof, verdict = steps[proving], steps[judging]
+    assert "contents/tools/ci/superseded.py?ref=${BEFORE}" in proof, "not the previous commit's"
+    assert results["steps"][proving]["env"]["BEFORE"] == "${{ github.event.before }}"
+    assert 'python3 -I "$check" --workflow merge.yml --job "$job"' in proof
+    assert f"for job in {' '.join(_SUITE_JOBS)}; do" in proof
+    assert f'--group-prefix {_SUITE_GROUP_PREFIX} --out "$RUNNER_TEMP/superseded.json"' in proof
+    assert 'if [ -f "$RUNNER_TEMP/superseded.json" ]; then' in verdict
+    assert '${proof:+--superseded "$proof"}' in verdict, "the verdict is not given the proof"
+    for scope in ("actions", "checks"):
+        assert (
+            results["permissions"].get(scope) == "read"
+        ), f"results cannot read what superseded.py asks the API ({scope})"
+    group = (
+        "group: merge-${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' && "
+        "matrix.id == 'python-suite' && 'suite' || github.ref == 'refs/heads/main' && "
+        "github.run_attempt == '1' && matrix.id == 'python-suite-macos' && 'suite' || "
+        "github.event.pull_request.number || github.sha }}-${{ matrix.key }}"
+    )
+    assert group in text, "the stage jobs' suite group is not the one the proof reads"

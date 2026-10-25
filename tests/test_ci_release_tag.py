@@ -203,7 +203,7 @@ def _green_breadth(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _green_runs(monkeypatch: pytest.MonkeyPatch, commit: str) -> None:
     """The commit's push run on main is green, read with the job's token."""
-    green = FakeGet(ci_yml=[_run("ci.yml", sha=commit)])
+    green = FakeGet(merge_yml=[_run("merge.yml", sha=commit)])
     monkeypatch.setattr(release_tag, "github_get", lambda token: green)
     monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
     _green_breadth(monkeypatch)
@@ -330,23 +330,21 @@ def _gate_refusal(get: FakeGet) -> str:
 
 
 def test_a_commit_whose_own_main_push_run_is_green_may_be_tagged() -> None:
-    get = FakeGet(ci_yml=[_run("ci.yml")])
+    get = FakeGet(merge_yml=[_run("merge.yml")])
     assert release_tag.main_push_green(REPOSITORY, COMMIT, get).endswith("/runs/1007")
-    # merge.yml is asked first, then ci.yml, each for this commit's push runs on main.
-    assert [p.split("/actions/workflows/")[1].split("/")[0] for p in get.paths] == [
-        "merge.yml",
-        "ci.yml",
-    ]
+    # merge.yml alone is asked, for this commit's push runs on main.
+    assert [p.split("/actions/workflows/")[1].split("/")[0] for p in get.paths] == ["merge.yml"]
     for path in get.paths:
         assert path.startswith(f"/repos/{REPOSITORY}/actions/workflows/")
         assert f"head_sha={COMMIT}" in path and "event=push" in path and "branch=main" in path
 
 
-def test_the_newer_shape_decides_and_its_red_is_not_passed_over() -> None:
-    """Once #3915's flip lands, merge.yml's push run is the commit's: a red there is never passed
-    over for ci.yml's green."""
-    green = FakeGet(merge_yml=[_run("merge.yml")], ci_yml=[_run("ci.yml", conclusion="failure")])
-    assert release_tag.main_push_green(REPOSITORY, COMMIT, green)
+def test_a_green_push_run_of_another_workflow_proves_nothing() -> None:
+    """merge.yml's push run is the commit's. A commit from before #3915's flip has only the
+    deleted ci.yml's, which is never read, so it cannot be tagged; and pr.yml has no push run."""
+    for other in ("ci.yml", "pr.yml"):
+        get = FakeGet(**{other.replace(".", "_"): [_run(other)]})
+        assert "has no push run on main in merge.yml" in _gate_refusal(get)
     red = FakeGet(merge_yml=[_run("merge.yml", conclusion="failure")], ci_yml=[_run("ci.yml")])
     assert "merge.yml" in _gate_refusal(red) and "concluded failure" in _gate_refusal(red)
 
@@ -354,46 +352,50 @@ def test_the_newer_shape_decides_and_its_red_is_not_passed_over() -> None:
 @pytest.mark.parametrize(
     ("run", "says"),
     [
-        # A shard a newer push replaced, or one nothing proved, reds the run's gate.
-        (_run("ci.yml", conclusion="failure"), "concluded failure, not success"),
-        (_run("ci.yml", conclusion="cancelled"), "concluded cancelled, not success"),
-        (_run("ci.yml", conclusion="timed_out"), "concluded timed_out, not success"),
-        (_run("ci.yml", status="in_progress", conclusion=None), "is in_progress"),
-        (_run("ci.yml", status="queued", conclusion=None), "is queued"),
+        # A suite shard a newer push replaced reads cancelled, which reds the run's verdict.
+        (_run("merge.yml", conclusion="failure"), "concluded failure, not success"),
+        (_run("merge.yml", conclusion="cancelled"), "concluded cancelled, not success"),
+        (_run("merge.yml", conclusion="timed_out"), "concluded timed_out, not success"),
+        (_run("merge.yml", status="in_progress", conclusion=None), "is in_progress"),
+        (_run("merge.yml", status="queued", conclusion=None), "is queued"),
     ],
 )
 def test_a_run_that_is_not_green_is_refused_naming_it(run: dict[str, object], says: str) -> None:
-    reason = _gate_refusal(FakeGet(ci_yml=[run]))
+    reason = _gate_refusal(FakeGet(merge_yml=[run]))
     assert says in reason and str(run["html_url"]) in reason, reason
 
 
 def test_the_newest_run_of_the_commit_is_the_one_read() -> None:
-    get = FakeGet(ci_yml=[_run("ci.yml", number=7), _run("ci.yml", number=9, conclusion="failure")])
+    get = FakeGet(
+        merge_yml=[_run("merge.yml", number=7), _run("merge.yml", number=9, conclusion="failure")]
+    )
     assert "/runs/1009" in _gate_refusal(get)
-    get = FakeGet(ci_yml=[_run("ci.yml", number=9), _run("ci.yml", number=7, conclusion="failure")])
+    get = FakeGet(
+        merge_yml=[_run("merge.yml", number=9), _run("merge.yml", number=7, conclusion="failure")]
+    )
     assert release_tag.main_push_green(REPOSITORY, COMMIT, get).endswith("/runs/1009")
 
 
 @pytest.mark.parametrize(
     "other",
     [
-        _run("ci.yml", sha="c" * 40),
-        _run("ci.yml", event="pull_request"),
-        _run("ci.yml", event="workflow_dispatch"),
-        _run("ci.yml", branch="side"),
-        _run("ci.yml", repository="someone/fork"),
+        _run("merge.yml", sha="c" * 40),
+        _run("merge.yml", event="pull_request"),
+        _run("merge.yml", event="workflow_dispatch"),
+        _run("merge.yml", branch="side"),
+        _run("merge.yml", repository="someone/fork"),
         _run("pr.yml"),
     ],
 )
 def test_a_run_that_is_not_this_commits_push_to_main_proves_nothing(
     other: dict[str, object],
 ) -> None:
-    assert "has no push run on main" in _gate_refusal(FakeGet(ci_yml=[other]))
+    assert "has no push run on main" in _gate_refusal(FakeGet(merge_yml=[other]))
 
 
 def test_a_commit_with_no_push_run_on_main_is_refused() -> None:
     reason = _gate_refusal(FakeGet())
-    assert "has no push run on main in merge.yml or ci.yml" in reason
+    assert "has no push run on main in merge.yml," in reason
 
 
 def test_an_answer_the_gate_cannot_read_is_refused_not_passed() -> None:
@@ -417,7 +419,7 @@ def test_main_reads_the_gate_before_it_creates_and_a_red_run_creates_nothing(
     post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/v1.2.3"}))
     monkeypatch.setattr(release_tag, "github_post", lambda token: post)
     _green_breadth(monkeypatch)
-    red = FakeGet(ci_yml=[_run("ci.yml", sha=commit, conclusion="failure")])
+    red = FakeGet(merge_yml=[_run("merge.yml", sha=commit, conclusion="failure")])
     tokens: list[str] = []
     monkeypatch.setattr(release_tag, "github_get", lambda token: tokens.append(token) or red)
     monkeypatch.setenv("GH_TOKEN", "an-app-token")
@@ -426,7 +428,7 @@ def test_main_reads_the_gate_before_it_creates_and_a_red_run_creates_nothing(
     assert release_tag.main([*argv, "--repository", REPOSITORY, "--create"]) == 1
     assert "concluded failure" in capsys.readouterr().out
     assert post.calls == [] and tokens == ["the-jobs-token"]
-    green = FakeGet(ci_yml=[_run("ci.yml", sha=commit)])
+    green = FakeGet(merge_yml=[_run("merge.yml", sha=commit)])
     monkeypatch.setattr(release_tag, "github_get", lambda token: green)
     assert release_tag.main([*argv, "--repository", REPOSITORY, "--create"]) == 0
     out = capsys.readouterr().out
@@ -500,7 +502,9 @@ def test_main_creates_no_tag_while_a_release_runs(
     commit = str(planted["readme"])
     post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/v1.2.3"}))
     monkeypatch.setattr(release_tag, "github_post", lambda token: post)
-    running = FakeGet(ci_yml=[_run("ci.yml", sha=commit)], release_yml=[_release("in_progress")])
+    running = FakeGet(
+        merge_yml=[_run("merge.yml", sha=commit)], release_yml=[_release("in_progress")]
+    )
     monkeypatch.setattr(release_tag, "github_get", lambda token: running)
     _green_breadth(monkeypatch)
     monkeypatch.setenv("GH_TOKEN", "an-app-token")
@@ -903,7 +907,7 @@ def test_main_reads_breadth_before_it_creates_a_release_tag_and_a_rehearsal_read
         (201, {"ref": "refs/tags/v1.2.3"}),
     )
     monkeypatch.setattr(release_tag, "github_post", lambda token: post)
-    runs = FakeGet(ci_yml=[_run("ci.yml", sha=commit)])
+    runs = FakeGet(merge_yml=[_run("merge.yml", sha=commit)])
     breadth = BreadthApi(planted)
 
     def answers(path: str) -> object:

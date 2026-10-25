@@ -811,17 +811,33 @@ class TestCorpusIsComplete:
         assert "tests/security/corpus" in text
         assert "pytest" in text
 
+    def test_the_tier_workflows_run_the_catalogues_security_job_on_every_candidate(self):
+        """No suite shard collects the corpus, so the catalogue's ``security`` entry is where a
+        candidate's run runs it: pr.yml and merge.yml run it through run-job on every pull
+        request (its tiers), and merge.yml on every push to main (``every_push``)."""
+        from tools.ci import catalogue
+
+        cat = catalogue.read(REPO_ROOT)
+        job = cat.job("security")
+        assert job.platform.startswith("ubuntu-"), job.platform
+        words = {w for step in job.command for w in step.argv}
+        for path in (
+            "tests/security",
+            "tests/test_supply_chain_scanner.py",
+            "tests/test_supply_chain_gates.py",
+        ):
+            assert path in words, f"the catalogue's security does not run {path}"
+        assert "security" in cat.merge_jobs and "security" in (cat.every_push or ())
+
     @pytest.mark.parametrize(
         "workflow, job, runner",
         [
-            ("ci.yml", "security", "ubuntu-"),
             ("breadth.yml", "security", "ubuntu-"),
             ("breadth.yml", "security-macos", "macos-"),
         ],
     )
     def test_each_tier_has_a_security_job_that_runs_the_corpus(self, workflow, job, runner):
-        """No suite shard collects the corpus, so these jobs are where it runs: ci.yml's on
-        every pull request and push to main, and breadth.yml's nightly on Linux and macOS."""
+        """And breadth.yml's own jobs run it nightly on Linux and macOS."""
         import yaml
 
         wf = REPO_ROOT / ".github" / "workflows" / workflow
@@ -837,11 +853,8 @@ class TestCorpusIsComplete:
             "tests/test_supply_chain_gates.py",
         ):
             assert path in runs, f"{workflow}:{job} does not run {path}"
-        if workflow == "ci.yml":
-            assert "if" not in spec, "ci.yml's security job must run on every run"
-        else:
-            on = data.get(True) or data.get("on") or {}
-            assert "schedule" in on, "breadth.yml is not nightly"
+        on = data.get(True) or data.get("on") or {}
+        assert "schedule" in on, "breadth.yml is not nightly"
 
 
 class TestCorpusRedsOnAWeakenedScanner:

@@ -1,6 +1,6 @@
 """The real catalogue's plans (tools/ci/plan.py over tools/ci/catalogue.toml).
 
-It reads the tree's catalogue, its overrides (tools/ci/areas.toml), ci.yml and scripts, so it is
+It reads the tree's catalogue, its overrides (tools/ci/areas.toml), workflows and scripts, so it is
 a rail: it runs once per CI run, in the rails job. tests/test_ci_plan.py holds the planner itself
 on a planted catalogue.
 """
@@ -60,10 +60,11 @@ MUST_RUN_E2E = (
     "desktop/main.js",
     "mobile/package.json",
     # The workflows, which define the jobs and when they run.
-    ".github/workflows/ci.yml",
+    ".github/workflows/merge.yml",
+    ".github/workflows/pr.yml",
     ".github/workflows/release.yml",
     ".github/workflows/breadth.yml",
-    # The local action the jobs set their toolchain up with, which defines them as ci.yml does.
+    # The local action the jobs set their toolchain up with, which defines them as a workflow does.
     ".github/actions/setup/action.yml",
     # A path in no rule at all.
     "an-unheard-of-top-level-dir/thing.ts",
@@ -153,16 +154,16 @@ _E2E_REASONS: tuple[tuple[str, str], ...] = (
         "packages/personalclaw-client-py/**",
         (
             "independently versioned/published client, NOT part of the core uv workspace "
-            "(ci.yml's `client` job builds it in its own venv) and not imported by "
+            "(the `client` job builds it in its own venv) and not imported by "
             "src/personalclaw/."
         ),
     ),
     (
-        ".github/** except workflows/ci.yml and actions/**",
+        ".github/** except workflows/ and actions/**",
         (
-            "issue templates, dependabot config and the other workflows cannot change a "
-            "rendered pixel. ci.yml and the local actions under .github/actions/ are EXCLUDED "
-            "from this exemption because they define the `e2e` job itself: ci.yml writes its "
+            "issue templates and dependabot config cannot change a rendered pixel. The "
+            "workflows and the local actions under .github/actions/ are EXCLUDED from this "
+            "exemption because they define the `e2e` job's run: merge.yml's stage job runs its "
             "steps, and a local action runs its own steps inside the job wherever the job "
             "calls it. Editing either must re-validate the job, or a broken job definition "
             "would be waved through by the very gate it broke."
@@ -237,7 +238,8 @@ def test_a_declared_input_schedules_its_job(job_id: str) -> None:
 
 #: Each override's planted path, and what it must plan: the jobs it adds, or the whole tier.
 _OVERRIDE_ROWS = {
-    ".github/workflows/ci.yml": "whole",
+    ".github/workflows/merge.yml": "whole",
+    ".github/workflows/pr.yml": "whole",
     ".github/workflows/release.yml": "whole",
     ".github/actions/setup/action.yml": "whole",
     "tools/ci/plan.py": "whole",
@@ -299,16 +301,18 @@ def test_every_tracked_file_under_a_whole_tier_folder_plans_the_whole_tier(folde
         assert any(why in r for why in reasons for r in p.full_reasons), (path, p.full_reasons)
 
 
-def test_a_local_action_a_job_calls_plans_the_whole_tier() -> None:
-    """A local action's steps run inside each ci.yml job that calls it, and inside each action
+@pytest.mark.parametrize("workflow", ("pr.yml", "merge.yml"))
+def test_a_local_action_a_job_calls_plans_the_whole_tier(workflow: str) -> None:
+    """A local action's steps run inside each tier job that calls it, and inside each action
     that calls it, so it defines those jobs as the workflow does: a change to any of its files
-    plans the whole tier, as a change to ci.yml does."""
-    jobs = yaml.safe_load((REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8"))["jobs"]
+    plans the whole tier, as a change to the workflow does."""
+    path = REPO / ".github" / "workflows" / workflow
+    jobs = yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]
     actions = local_actions.actions_at(REPO)
     folders = sorted(
         {f for job in jobs.values() for f in local_actions.called(job.get("steps") or [], actions)}
     )
-    assert folders, "ci.yml calls no local action, so this check read nothing"
+    assert folders, f"{workflow} calls no local action, so this check read nothing"
     for folder in folders:
         for name in (*local_actions.ACTION_FILES, "run.sh"):
             rel = posixpath.normpath(f"{folder}/{name}")
@@ -489,6 +493,10 @@ _SDK_TRIGGERS: tuple[str, ...] = (
     ".github/actions/",
 )
 
+#: The trigger #3915 deleted with ci.yml. The workflows that replaced it plan the whole tier,
+#: apps-contract with it (tools/ci/areas.toml), so no input of the job names a workflow.
+_DELETED_TRIGGER = ".github/workflows/ci.yml"
+
 
 def _the_classifier_ran_apps_contract(path: str) -> bool:
     return any(path.startswith(t) if t.endswith("/") else path == t for t in _SDK_TRIGGERS)
@@ -496,8 +504,8 @@ def _the_classifier_ran_apps_contract(path: str) -> bool:
 
 def test_apps_contracts_inputs_are_the_sdk_classifiers_triggers() -> None:
     """ci.yml ran apps-contract on what the SDK classifier said, and the catalogue's inputs are
-    that classifier's triggers: the two lists are one."""
-    assert set(_CAT.job("apps-contract").inputs) == set(_SDK_TRIGGERS)
+    that classifier's triggers, less the deleted workflow: the two lists are one."""
+    assert set(_CAT.job("apps-contract").inputs) == set(_SDK_TRIGGERS) - {_DELETED_TRIGGER}
 
 
 def test_every_tracked_path_the_classifier_ran_apps_contract_on_plans_it() -> None:
@@ -550,92 +558,3 @@ def test_the_planner_imports_only_the_standard_library() -> None:
     }
     imported.discard("__future__")
     assert imported and imported <= set(sys.stdlib_module_names)
-
-
-# ── the wiring: ci.yml runs the planner, and the gated jobs read its answer ──────────────────
-
-_CI = REPO / ".github" / "workflows" / "ci.yml"
-
-
-def _ci() -> dict:
-    return yaml.safe_load(_CI.read_text(encoding="utf-8"))
-
-
-# The `changes` job's plan step, run as written against planted and real answers, is
-# tests/rails/test_ci_plan_step_tree.py's: what it publishes, its judge, the label, its warnings.
-
-
-#: Each gated job's whole condition. A job output is a string, so `full` is compared with
-#: the string 'false', and an unwritten output (the empty string) runs the job.
-GATED_IF = {
-    **{
-        job: (
-            "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && "
-            "(needs.changes.outputs.full != 'false' || "
-            f"contains(fromJSON(needs.changes.outputs.jobs || '[]'), '{job}')) }}}}"
-        )
-        for job in ("e2e", "e2e-shard", "e2e-stateful", "ui-quality", "desktop-smoke")
-    },
-    "apps-contract": (
-        "${{ !cancelled() && (needs.changes.outputs.full != 'false' || "
-        "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'apps-contract')) }}"
-    ),
-}
-
-
-@pytest.mark.parametrize("job", sorted(GATED_IF))
-def test_each_gated_job_takes_both_the_needs_and_the_condition(job: str) -> None:
-    spec = _ci()["jobs"][job]
-    assert "changes" in (spec.get("needs") or []), f"{job} does not `needs: [changes]`"
-    condition = " ".join(str(spec.get("if") or "").split())
-    assert condition == GATED_IF[job], f"{job}'s condition is {condition!r}"
-
-
-def test_every_planned_job_the_workflow_gates_is_a_catalogue_job() -> None:
-    gated = {
-        job_id
-        for job_id, spec in _ci()["jobs"].items()
-        if "needs.changes.outputs" in str(spec.get("if") or "")
-    }
-    assert gated == set(GATED_IF)
-    assert gated <= {j.id for j in _CAT.jobs}
-
-
-def test_the_browse_proof_is_a_job_of_its_own_that_no_plan_gates() -> None:
-    """browse-live is security evidence: it runs on every diff, not inside the gated e2e job,
-    and is never reused, so a push to main whose tree a pull-request run tested runs it too."""
-    jobs = _ci()["jobs"]
-    browse = jobs["browse-live"]
-    assert "needs" not in browse and "if" not in browse, (browse.get("needs"), browse.get("if"))
-    runs = " ".join(str(s.get("run", "")) for s in jobs["e2e"]["steps"])
-    assert "test_browse_safety_script.py" not in runs
-
-
-@pytest.mark.parametrize(
-    "mutant",
-    [
-        "needs.changes.outputs.full == 'true'",
-        "needs.changes.outputs.full != 'true'",
-        "!(needs.changes.outputs.full != 'false')",
-        "needs.changes.outputs.full != 'false' && false",
-        "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'e2e')",
-        "(needs.changes.outputs.full != 'false' || "
-        "contains(fromJSON(needs.changes.outputs.jobs || '[]'), 'web'))",
-    ],
-    ids=[
-        "full must be true",
-        "an unwritten full skips",
-        "wrapped in a not",
-        "an always-false clause",
-        "the list alone",
-        "another job's id",
-    ],
-)
-def test_the_condition_check_refuses_a_wrong_gate(mutant: str, monkeypatch) -> None:
-    """The planted control: each wrong condition on e2e fails the check above."""
-    jobs = _ci()["jobs"]
-    condition = "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && " + mutant + " }}"
-    planted = {**jobs, "e2e": {**jobs["e2e"], "if": condition}}
-    monkeypatch.setattr(sys.modules[__name__], "_ci", lambda: {"jobs": planted})
-    with pytest.raises(AssertionError):
-        test_each_gated_job_takes_both_the_needs_and_the_condition("e2e")

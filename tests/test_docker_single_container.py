@@ -7,16 +7,16 @@ the two halves that were measured missing:
 * **the command exists, and there is only one.** ``grep -c 'docker run' README.md`` was
   **0** when the change was written, so the "copied verbatim from README.md" half had nothing
   to copy. This suite is what keeps that from silently regressing in the fast gate, on
-  every platform, with no daemon — the rail in
-  ``.github/workflows/docker-single-container.yml`` needs a Linux runner and an image build.
+  every platform, with no daemon — the catalogue's ``image`` entry, which merge.yml runs,
+  needs a Linux runner and an image build.
 * **the SPA is bundled into the image.** ``Dockerfile.backend`` must build ``web/dist`` and
   place it where ``setup.py``'s ``BuildWithWeb._find_web_dist`` looks, BEFORE the
   ``pip install`` that grafts it. Without that the image answers ``/api/healthz`` 200 and
   serves no dashboard — the failure this test exists to catch.
 
 What is deliberately NOT here: the live drive (boot the container, fetch ``/``, fetch the
-first bundle). That needs a daemon and belongs to the workflow. Asserting the argv-rewriting
-and the Dockerfile's structure is what makes a green run of that workflow mean something —
+first bundle). That needs a daemon and belongs to the ``image`` entry. Asserting the argv-rewriting
+and the Dockerfile's structure is what makes a green run of that entry mean something —
 a rail that retargeted the *volume* spec as if it were the image ref would have tested
 whatever ``:latest`` resolves to while reporting on the commit under review.
 """
@@ -634,11 +634,6 @@ def test_spa_stage_installs_with_the_hook_script_in_place() -> None:
         "the hook script is copied after `npm ci`, so its postinstall finds no script and the SPA "
         "stage fails before vite — the image would carry no dashboard"
     )
-
-
-# ---------------------------------------------------------------------------
-# The workflow
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

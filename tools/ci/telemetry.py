@@ -15,10 +15,10 @@ Every line is within ``MAX_LINE_BYTES``, its line break included, the bound each
 weekly report and its fetch, the shard planner, the parity check) holds a history line to and
 refuses a whole history past: a line that would pass it fails the collection and writes nothing.
 
-**Which runs count.** A push to ``main``, of ``merge.yml`` or of ``ci.yml`` until the flip
-retires it (``workflows.MAIN_PUSH``), and a scheduled or dispatched Breadth run on ``main``, all
-from this repository. That is decided from the run itself, before any
-artifact is listed or downloaded, so a pull request's artifacts are never read at all.
+**Which runs count.** A push to ``main``, of ``merge.yml`` (``workflows.MAIN_PUSH``), and a
+scheduled or dispatched Breadth run on ``main``, all from this repository. That is decided from
+the run itself, before any artifact is listed or downloaded, so a pull request's artifacts are
+never read at all.
 
 **A first result is never replaced.** Each attempt is collected on its own, from that attempt's
 own facts (``attempts/<n>``: its start, its end, its conclusion), its own jobs, and only the
@@ -159,8 +159,7 @@ CPU_PROPERTY = "ci_cpu"
 #: Where the workflows live, repository-relative: the folder the Actions API's ``path`` names.
 WORKFLOWS = ".github/workflows"
 #: The workflows whose runs are collected, by the ``path`` the API reports for a run: a push to
-#: main's (ci.yml's until the flip, merge.yml's after it), and breadth's.
-CI_PATH = f"{WORKFLOWS}/{workflows.LEGACY}"
+#: main's, merge.yml's, and breadth's.
 MERGE_PATH = f"{WORKFLOWS}/{workflows.MERGE}"
 BREADTH_PATH = f"{WORKFLOWS}/breadth.yml"
 #: The collector's own workflow: the run that uploads each history, which a reader checks.

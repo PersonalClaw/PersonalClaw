@@ -5,9 +5,9 @@
 # `python -m tools.ci release-tag` (tools/ci/release_tag.py), from main's own checkout, refuses
 # unless the tag is a release tag by the release's parser, the commit is on main, the commit's
 # workflows, actions and tools/ci are main's (so the tag's release.yml is main's), no tag of that
-# name exists, the commit's own push run on main is green (#3911): read in merge.yml, else
-# ci.yml, and, for a release tag, the commit's breadth is green (#3911): the newest breadth.yml
-# run of the commit, a rehearsal tag's push, with a digest-verified record of every attempt in
+# name exists, the commit's own push run on main is green (#3911): read in merge.yml, and, for
+# a release tag, the commit's breadth is green (#3911): the newest breadth.yml run of the
+# commit, a rehearsal tag's push, with a digest-verified record of every attempt in
 # which every gating leg is green and each advisory red (canary, coverage) has an open issue
 # that owns it, and no earlier red run of it unless the owner's record names it
 # (.github/release-breadth-exceptions.json). A dispatch on the rehearsal tag may decide only as

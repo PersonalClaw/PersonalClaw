@@ -17,9 +17,6 @@ from docker_single_container_shared import _REPO, get_handler
 
 from tools import docker_single_container_smoke as smoke
 
-_WORKFLOW = _REPO / ".github" / "workflows" / "docker-single-container.yml"
-
-
 _RELEASE_WORKFLOW = _REPO / ".github" / "workflows" / "release.yml"
 #: Where the release builds and smokes its images: release.yml calls it as `artifacts`.
 _ARTIFACTS_WORKFLOW = _REPO / ".github" / "workflows" / "release-artifacts.yml"
@@ -31,22 +28,6 @@ _RELEASE_GATE_JOB = "gateway-dashboard"
 
 #: The local tag that job loads the layout's linux/amd64 image as.
 _RELEASE_GATE_IMAGE = "personalclaw-gateway:release-dashboard"
-
-
-def test_workflow_runs_the_smoke_tool_against_the_image_it_built() -> None:
-    """It must not quietly test `:latest` — that answers about a past release, not this diff.
-    The smoke runs the build's own image, by the content ID the build wrote, so no tag can stand
-    in."""
-    workflow = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
-    runs = [str(s.get("run", "")) for s in workflow["jobs"]["single-container"]["steps"]]
-    assert (
-        "docker build --file deploy/docker/Dockerfile.backend --target runtime"
-        ' --iidfile "$RUNNER_TEMP/gateway-image.id" .'
-    ) in runs
-    assert (
-        "python3 tools/docker_single_container_smoke.py"
-        ' --image-id-file "$RUNNER_TEMP/gateway-image.id"'
-    ) in runs
 
 
 def _release_jobs(path: Path = _ARTIFACTS_WORKFLOW) -> dict[str, object]:

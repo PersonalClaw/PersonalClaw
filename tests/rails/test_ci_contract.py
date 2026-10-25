@@ -24,7 +24,7 @@ import re
 import shlex
 import shutil
 import tomllib
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -114,6 +114,16 @@ def _steps(tree: Tree) -> Iterator[tuple[str, str, dict[str, Any], dict[str, Any
             yield name, job_id, job, step
 
 
+def _tier_entries(tree: Tree) -> tuple[list[catalogue.Job], list[str]]:
+    """The catalogue's change- and merge-tier entries, whose steps run-job runs in the tier
+    workflows, and why the catalogue cannot be read (each problem once)."""
+    try:
+        cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
+    except catalogue.CatalogueError as exc:
+        return [], [f"the catalogue does not load: {problem}" for problem in exc.problems]
+    return [e for e in cat.jobs if {"change", "merge"} & set(e.tiers)], []
+
+
 def _matrix_values(job: dict[str, Any], key: str) -> list[str]:
     matrix = (job.get("strategy") or {}).get("matrix") or {}
     if not isinstance(matrix, dict):
@@ -172,9 +182,9 @@ def _action(step: dict[str, Any]) -> str:
     return str(step.get("uses", "")).split("@", 1)[0]
 
 
-def _legs(job: dict[str, Any], value: str) -> list[tuple[str, str]]:
-    """Each leg's runner and *value* (a step's input), with ``${{ matrix.<key> }}`` resolved per
-    leg: the cross product of the matrix's lists, and each ``include`` entry as a leg of its own."""
+def _matrix_legs(job: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each leg of a job's matrix: the cross product of its lists, and each ``include`` entry as
+    a leg of its own."""
     matrix = (job.get("strategy") or {}).get("matrix") or {}
     if not isinstance(matrix, dict):
         matrix = {}
@@ -184,7 +194,13 @@ def _legs(job: dict[str, Any], value: str) -> list[tuple[str, str]]:
     legs: list[dict[str, Any]] = [{}]
     for key, values in lists.items():
         legs = [{**leg, key: item} for leg in legs for item in values]
-    legs += [entry for entry in matrix.get("include") or [] if isinstance(entry, dict)]
+    return legs + [entry for entry in matrix.get("include") or [] if isinstance(entry, dict)]
+
+
+def _legs(job: dict[str, Any], value: str) -> list[tuple[str, str]]:
+    """Each leg's runner and *value* (a step's input), with ``${{ matrix.<key> }}`` resolved per
+    leg (:func:`_matrix_legs`)."""
+    legs = _matrix_legs(job)
 
     def resolve(text: str, leg: dict[str, Any]) -> str:
         return re.sub(r"\$\{\{\s*matrix\.(\w+)\s*\}\}", lambda m: str(leg.get(m[1], "")), text)
@@ -570,7 +586,9 @@ def _plant(
     return Control(name, plant, fails, expect)
 
 
-def _plants(name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str = "") -> Control:
+def _plants(
+    name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str = "", fails: bool = True
+) -> Control:
     """A violation planted by several edits of one file, each of which must find its text."""
 
     def plant(root: Path) -> None:
@@ -580,7 +598,7 @@ def _plants(name: str, rel: str, edits: tuple[tuple[str, str], ...], expect: str
             text = text.replace(old, new, 1)
         _write(root, rel, text)
 
-    return Control(name, plant, True, expect)
+    return Control(name, plant, fails, expect)
 
 
 def _plant_in_job(
@@ -1300,18 +1318,18 @@ def _add_to_job(workflow: str, text: str) -> Callable[[Path], None]:
 
 
 _LINT_PERMISSIONS = "    permissions:\n      contents: read\n      pull-requests: read\n"
-_DISPATCHED = "on:\n  workflow_dispatch: {}\n"
+_ON_EVERY_PULL_REQUEST = "on:\n  pull_request: {}\n"
 
 
 def _flipped(rel: str) -> Callable[[Path], None]:
-    """The tree's pr.yml or merge.yml as #3915's flip runs it: on every pull request too."""
+    """The tree's pr.yml or merge.yml, which run on every pull request since #3915's flip."""
 
     def plant(root: Path) -> None:
         text = (REPO / rel).read_text(encoding="utf-8")
-        assert text.count(_DISPATCHED) == 1, f"{rel} no longer opens on a dispatch alone"
-        _write(
-            root, rel, text.replace(_DISPATCHED, "on:\n  pull_request:\n  workflow_dispatch: {}\n")
-        )
+        assert (
+            text.count(_ON_EVERY_PULL_REQUEST) == 1
+        ), f"{rel} no longer runs on every pull request"
+        _write(root, rel, text)
 
     return plant
 
@@ -1658,35 +1676,98 @@ def _job_level_preference(root: Path, only_first: bool = False) -> None:
 # ── The pull request builds the wheel after the SPA, and verifies that wheel ────────────────
 
 
+def _entry_argvs(tree: Tree, job_id: str) -> tuple[catalogue.Job | None, list[str]]:
+    """The catalogue's ``job_id`` entry, or None and why."""
+    try:
+        cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
+    except catalogue.CatalogueError as exc:
+        return None, [f"the catalogue does not load: {problem}" for problem in exc.problems]
+    try:
+        return cat.job(job_id), []
+    except KeyError:
+        return None, [f"the catalogue has no {job_id} entry"]
+
+
+def _first_step(job: catalogue.Job, *words: str) -> int | None:
+    """The index of the job's first step whose argv holds every one of ``words``."""
+    return next((i for i, s in enumerate(job.command) if set(words) <= set(s.argv)), None)
+
+
 def wheel_violations(tree: Tree) -> list[str]:
-    """``ci.yml``'s ``web`` job builds the wheel after the SPA build and runs the wheel contract
-    on it. The wheel must carry the SPA, so a wheel built before ``npm run build`` would verify
-    a dashboard-less build."""
-    bad: list[str] = []
-    workflow = dict(_workflows(tree)).get("ci.yml")
-    if workflow is None:
-        return ["ci.yml is missing"]
-    jobs = workflow.get("jobs") or {}
-    runs = [str(s.get("run", "")) for s in (jobs.get("web") or {}).get("steps") or []]
-
-    def first(word: str) -> int | None:
-        return next((i for i, run in enumerate(runs) if word in run), None)
-
-    spa, build, verify = first("npm run build"), first("uv build"), first("verify_wheel.py")
-    if spa is None:
-        bad.append("ci.yml:web builds no SPA")
-    if build is None or "--wheel" not in runs[build]:
-        bad.append("ci.yml:web builds no wheel (`uv build --wheel`)")
-    if verify is None or "--wheel" not in runs[verify]:
-        bad.append("ci.yml:web runs no wheel contract (`verify_wheel.py --wheel`)")
-    if None not in (spa, build, verify) and not (spa < build < verify):  # type: ignore[operator]
-        bad.append("ci.yml:web must build the SPA, then the wheel, then verify that wheel")
+    """The catalogue's ``package`` builds the wheel after ``web-build``'s SPA build and runs the
+    wheel contract on it. The wheel must carry the SPA, so a wheel built before ``npm run build``
+    would verify a dashboard-less build: package runs after web-build (``after``), whose dist
+    its stage job downloads first, and builds the wheel, then verifies that wheel."""
+    package, bad = _entry_argvs(tree, "package")
+    web, more = _entry_argvs(tree, "web-build")
+    bad += more
+    if package is None or web is None:
+        return bad
+    if _first_step(web, "npm", "run", "build") is None:
+        bad.append("web-build builds no SPA (`npm run build`)")
+    if "web-build" not in package.after:
+        bad.append("package does not run after web-build, so its wheel may carry no SPA")
+    build, verify = _first_step(package, "uv", "build", "--wheel"), _first_step(
+        package, "scripts/verify_wheel.py", "--wheel"
+    )
+    if build is None:
+        bad.append("package builds no wheel (`uv build --wheel`)")
+    if verify is None:
+        bad.append("package runs no wheel contract (`verify_wheel.py --wheel`)")
+    if None not in (build, verify) and not build < verify:  # type: ignore[operator]
+        bad.append("package must build the wheel, then verify that wheel")
     return bad
 
 
 # ── A browser install never waits on apt unless the browser cannot start ─────────────────────
+#
+# run-job installs Chromium as `npx playwright install chromium` (tools/ci/jobs.py INSTALL_ARGV),
+# never with --with-deps, so no tier job runs apt. A workflow job that installs it itself is held
+# to the shape below: no apt unless Chromium does not start, and then bounded.
 
 _PROBE_ID = "chromium-starts"
+
+
+#: A workflow job that installs Chromium in the shape the row holds, in a workflow of its own.
+_BROWSER_WORKFLOW = """name: Browser
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: install chromium
+        timeout-minutes: 5
+        run: npx playwright install chromium
+      - name: Check that Chromium starts
+        id: chromium-starts
+        continue-on-error: true
+        timeout-minutes: 2
+        run: node -e "require('playwright').chromium.launch().then((browser) => browser.close())"
+      - name: Install Chromium's system libraries
+        if: ${{ steps.chromium-starts.outcome == 'failure' }}
+        timeout-minutes: 6
+        run: |
+          if ! timeout 300 npx playwright install-deps chromium; then
+            exit 1
+          fi
+"""
+
+
+def _browser_workflow(*edits: tuple[str, str]) -> Callable[[Path], None]:
+    """:data:`_BROWSER_WORKFLOW` written as a workflow of the tree, each edit made in turn."""
+
+    def plant(root: Path) -> None:
+        text = _BROWSER_WORKFLOW
+        for old, new in edits:
+            assert old in text, f"no {old!r} in the planted browser workflow"
+            text = text.replace(old, new, 1)
+        _write(root, f"{_WORKFLOWS}/browser.yml", text)
+
+    return plant
 
 
 def browser_install_violations(tree: Tree) -> list[str]:
@@ -1728,57 +1809,60 @@ def browser_install_violations(tree: Tree) -> list[str]:
 
 # ── The e2e legs' web-dist is a finished build ───────────────────────────────────────────────
 
-#: What marks a ``web`` step that reads the vite build's output: its licence check, its stamp, the
-#: desktop built-page legs, and the ``web-dist`` upload the e2e legs serve.
+#: What marks a web-build step that reads the vite build's output: its licence check, its stamp
+#: and the desktop built-page legs.
 _READS_THE_BUILD = (
     "check_asset_licenses.py",
     "spa_dist_freshness.py stamp",
     "test:desktop:built",
-    "actions/upload-artifact",
 )
 
 
+#: A step condition that runs it on a red job too: any status function but the implied success.
+_STATUS_FUNCTION = re.compile(r"\b(?:always|cancelled|failure|success)\(\)")
+
+
 def web_dist_violations(tree: Tree) -> list[str]:
-    """``ci.yml``'s ``web`` job builds the SPA whatever its tests answered (``!cancelled()``), so a
-    red vitest or desktop leg still hands the e2e legs a dist (#3905). Each step that reads that
-    build runs only when the build itself succeeded, so a failed build uploads no half-built
-    ``web-dist`` and its checks report the build's red, not their own."""
-    workflow = dict(_workflows(tree)).get("ci.yml")
-    if workflow is None:
-        return ["ci.yml is missing"]
-    steps = ((workflow.get("jobs") or {}).get("web") or {}).get("steps") or []
-    build = next((s for s in steps if "npm run build" in str(s.get("run", ""))), None)
-    if build is None:
-        return ["ci.yml:web builds no SPA"]
-    bad: list[str] = []
-    if "!cancelled()" not in str(build.get("if", "")):
-        bad.append("ci.yml:web's SPA build must run whatever the tests before it answered")
-    sid = build.get("id")
-    if not sid:
-        return [*bad, "ci.yml:web's SPA build has no id, so no step can ask how it ended"]
-    for step in steps[steps.index(build) + 1 :]:
-        if not any(r in f"{step.get('run', '')} {step.get('uses', '')}" for r in _READS_THE_BUILD):
-            continue
-        cond = " ".join(str(step.get("if", "")).split())
-        if "!cancelled()" not in cond or f"steps.{sid}.outcome == 'success'" not in cond:
-            bad.append(
-                f"ci.yml:web step {step.get('name')!r} reads the SPA build, so it must run on"
-                f" `!cancelled() && steps.{sid}.outcome == 'success'`"
-            )
+    """The ``web-dist`` the e2e legs and package read is a finished build (#3905): the catalogue's
+    web-build builds the SPA in its first step, before every step that reads the build, and
+    run-job stops at the first step that fails, so a failed build runs none of them; and each
+    tier workflow's step that uploads ``web-dist`` runs only on the job's success (no status
+    function in its ``if:``), after run-job, so a failed build uploads no half-built dist."""
+    web, bad = _entry_argvs(tree, "web-build")
+    if web is not None:
+        build = _first_step(web, "npm", "run", "build")
+        if build is None:
+            bad.append("web-build builds no SPA (`npm run build`)")
+        else:
+            for n, step in enumerate(web.command[:build], 1):
+                if any(r in shlex.join(step.argv) for r in _READS_THE_BUILD):
+                    bad.append(f"web-build: command step {n} reads the build before it is built")
+    for name in _TIER_WORKFLOWS:
+        workflow = _workflow(tree, name) or {}
+        for job_id, job in (workflow.get("jobs") or {}).items():
+            steps = (job or {}).get("steps") or [] if isinstance(job, dict) else []
+            ran = [i for i, s in enumerate(steps) if "tools.ci run-job" in str(s.get("run", ""))]
+            for i, step in enumerate(steps):
+                given = (step.get("with") or {}) if isinstance(step, dict) else {}
+                if _action(step) != "actions/upload-artifact" or given.get("name") != "web-dist":
+                    continue
+                where = f"{name}:{job_id} step {step.get('name')!r}"
+                if _STATUS_FUNCTION.search(str(step.get("if", ""))):
+                    bad.append(
+                        f"{where} uploads web-dist under `if: {step.get('if')}`, on a red build too"
+                    )
+                if not ran or i < ran[0]:
+                    bad.append(f"{where} uploads web-dist before run-job builds it")
     return bad
 
 
 # ── The tested tree on main, and the nightly breadth ────────────────────────────────────────
 #
-# A push to main runs ``ci.yml``'s jobs again only when no green pull-request run tested its
-# tree, and platform breadth moves to ``breadth.yml``, a nightly whose legs reuse an earlier
+# A push to main runs ``merge.yml``'s whole tier again only when no green pull-request run tested
+# its tree, and platform breadth is ``breadth.yml``'s, a nightly whose legs reuse an earlier
 # result only on identical inputs. These rows hold the shape that makes both claims true.
 
 _GATE = "needs.tree-check.outputs.tested != 'true'"
-#: ``ci.yml`` jobs that run whatever ``tree-check`` answers: the check itself, the plan, the
-#: security corpus and the browse proof (security evidence, never reused, so never skipped)
-#: and the SDK contract.
-_ALWAYS_RUN = frozenset({"tree-check", "changes", "security", "browse-live", "apps-contract"})
 _ON_MAIN = "github.ref == 'refs/heads/main'"
 
 
@@ -1807,46 +1891,15 @@ def _runs(job: dict[str, Any]) -> str:
     return "\n".join(str(step.get("run", "")) for step in job.get("steps") or [])
 
 
-def _pytest_run(job: dict[str, Any]) -> str:
-    return next(
-        (str(s["run"]) for s in job.get("steps") or [] if "pytest" in str(s.get("run", ""))), ""
-    )
-
-
-def _waits_on_tree_check(where: str, job: dict[str, Any]) -> list[str]:
-    """A gated job needs ``tree-check``, survives a failed dependency, and runs unless tested."""
-    bad: list[str] = []
-    condition = str(job.get("if", ""))
-    if "tree-check" not in _needs(job):
-        bad.append(f"{where} does not wait on tree-check")
-    if "!cancelled()" not in condition:
-        bad.append(f"{where} is not gated on `!cancelled()`, so a failed check skips it")
-    if _GATE not in condition:
-        bad.append(f"{where} does not run on every answer but `tested == 'true'`")
-    return bad
-
-
-#: ``ci.yml``'s suite jobs. On a push to main they share one group per job and shard, with
-#: cancel-in-progress false, so a newer push's waiting shard replaces an older one that has not
-#: started and a burst of merges runs the suite on its newest commit (#3915). A re-run (a later
-#: ``run_attempt``) keys on its own commit, so it can neither replace nor be replaced.
-_SUITE_GROUPED = ("test-shard", "test-macos")
-#: Each suite job's gate: the job that fails on a red or cancelled shard and names the red.
-_GATES = {"test": "test-shard", "test-macos-gate": "test-macos"}
-#: The suite groups as ``ci.yml`` writes them: on main's first attempt, one group per job and
-#: shard shared by every push (``ci-suite-main-main-<job>-<n>``); on a re-run on main, the commit's
-#: own; on a pull request, per head repository and branch, as the workflow's own group is.
-_SUITE_KEY = (
-    "ci-suite-${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' && github.ref_name"
-    " || github.ref == 'refs/heads/main' && github.sha"
-    " || github.event.pull_request.head.repo.full_name || github.repository }}"
-    "-${{ github.head_ref || github.ref_name }}"
-)
-_SHARD_GROUP = f"      group: {_SUITE_KEY}-test-shard-${{{{ matrix.shard }}}}\n"
-_MACOS_GROUP = (
-    f"    concurrency:\n      group: {_SUITE_KEY}-test-macos-${{{{ matrix.shard }}}}\n"
-    "      cancel-in-progress: false\n"
-)
+#: merge.yml's run group: a pull request's run keys on its number, every other run on its commit.
+_MERGE_RUN_GROUP = "merge-${{ github.event.pull_request.number || github.sha }}"
+#: The catalogue entries whose shards share one group per shard on main's first attempt
+#: (decision 9): a newer push's waiting shard replaces an older one that has not started, so a
+#: burst of merges runs the suite on its newest commit, and the older run reads that shard red. A
+#: re-run (a later ``run_attempt``) keys on its own commit, so it can neither replace nor be
+#: replaced, and every other entry keys on its commit, so no push's security corpus or
+#: apps-contract is ever replaced.
+_SUITE_ENTRIES = frozenset({"python-suite", "python-suite-macos"})
 
 
 def _main_push_at(sha: str, attempt: str = "1") -> dict[str, Any]:
@@ -1856,305 +1909,104 @@ def _main_push_at(sha: str, attempt: str = "1") -> dict[str, Any]:
     return context
 
 
-def _main_prefix(group: str) -> str:
-    """A suite group on main's first attempt, less its shard index: what the gate reads."""
-    return _evaluate(re.sub(r"\$\{\{\s*matrix\.shard\s*\}\}", "", group), _main_push_at("1" * 40))
-
-
-def _suite_group_violations(where: str, job_id: str, job: dict[str, Any]) -> list[str]:
-    """A suite job's own group: shared by every main push, one per shard, never cancelling."""
+def _stage_group_violations(tree: Tree, job_id: str, job: dict[str, Any]) -> list[str]:
+    """A merge.yml stage job's own group, entry by entry of the tier's plan: shared
+    by every main push for a suite shard, one per shard, the commit's own for every other entry
+    and for a re-run, and never cancelling."""
+    where = f"merge.yml:{job_id}"
     concurrency = job.get("concurrency")
     if not isinstance(concurrency, dict) or "group" not in concurrency:
         return [
-            f"{where}:{job_id} has no concurrency group of its own, so every push to main "
-            "queues its whole suite (#3915)"
+            f"{where} has no concurrency group of its own, so every push to main queues its whole"
+            " suite (#3915)"
         ]
     group = str(concurrency["group"])
     bad: list[str] = []
     if concurrency.get("cancel-in-progress") is not False:
-        bad.append(f"{where}:{job_id}'s group can cancel a running shard: set it to false")
-    if not re.search(r"\$\{\{\s*matrix\.shard\s*\}\}", group):
-        bad.append(
-            f"{where}:{job_id}'s group does not name its shard, so its shards replace each other"
-        )
-    try:
-        one = _evaluate(group, _main_push_at("1" * 40))
-        two = _evaluate(group, _main_push_at("2" * 40))
-    except ValueError as exc:
-        return [*bad, f"{where}:{job_id}: {exc}"]
-    if one != two:
-        bad.append(
-            f"{where}:{job_id}'s group on main is per commit ({one!r} and {two!r}), so a newer "
-            "push never replaces a waiting shard"
-        )
-    elif job_id not in one:
-        bad.append(f"{where}:{job_id}'s group on main ({one!r}) does not name the job")
-    # A re-run keeps its run id and raises run_attempt. In the shared group an older commit's
-    # re-run would replace the tip's waiting shard, so a re-run on main keys on its own commit.
-    try:
-        rerun_one = _evaluate(group, _main_push_at("1" * 40, attempt="2"))
-        rerun_two = _evaluate(group, _main_push_at("2" * 40, attempt="2"))
-    except ValueError as exc:
-        return [*bad, f"{where}:{job_id}: {exc}"]
-    if rerun_one in (one, two) or rerun_one == rerun_two:
-        bad.append(
-            f"{where}:{job_id}'s group for a re-run on main ({rerun_one!r}) is the shared one or "
-            "another commit's, so a re-run of an older commit can replace the tip's waiting shard"
-        )
+        bad.append(f"{where}'s group can cancel a running entry: set it to false")
+    legs = _matrix_legs(_literal_matrix(tree, "merge.yml", job))
+    if not legs:
+        return [*bad, f"{where}: no planned entry to read its group for"]
+    shared: dict[str, str] = {}
+    for leg in legs:
+        key, suite = str(leg.get("key", "")), str(leg.get("id", "")) in _SUITE_ENTRIES
+        resolved = _leg_group(group, leg)
+        try:
+            one, two, rerun_one, rerun_two = (
+                _evaluate(resolved, _main_push_at(sha, attempt))
+                for sha, attempt in (
+                    ("1" * 40, "1"),
+                    ("2" * 40, "1"),
+                    ("1" * 40, "2"),
+                    ("2" * 40, "2"),
+                )
+            )
+        except ValueError as exc:
+            return [*bad, f"{where}: {exc}"]
+        if suite and one != two:
+            bad.append(
+                f"{where}: {key}'s group on main is per commit ({one!r} and {two!r}), so a newer"
+                " push never replaces a waiting shard"
+            )
+        elif not suite and one == two:
+            bad.append(
+                f"{where}: {key}'s group on main ({one!r}) is shared by every push, so a newer"
+                " push replaces its waiting run"
+            )
+        if suite and one in shared:
+            bad.append(f"{where}: {key} and {shared[one]} share the group {one!r} on main")
+        shared.setdefault(one, key)
+        # A re-run keeps its run id and raises run_attempt. In the shared group an older commit's
+        # re-run would replace the tip's waiting shard, so a re-run on main keys on its own commit.
+        if rerun_one in (one, two) and suite or rerun_one == rerun_two:
+            bad.append(
+                f"{where}: {key}'s group for a re-run on main ({rerun_one!r}) is the shared one or"
+                " another commit's, so a re-run of an older commit can replace the tip's"
+            )
     return bad
 
 
-def _main_never_cancels(
-    where: str, workflow: dict[str, Any], suite: tuple[str, ...] = ()
-) -> list[str]:
+def _merge_never_cancels(tree: Tree, workflow: dict[str, Any]) -> list[str]:
+    """No merge.yml run on main is cancelled: its group is its commit's, it cancels in progress
+    only a pull request's run, and the stage jobs alone have a group of their own."""
     concurrency = workflow.get("concurrency") or {}
     group = str(concurrency.get("group", ""))
-    cancel = concurrency.get("cancel-in-progress", False)
     bad: list[str] = []
-    if f"{_ON_MAIN} && github.sha" not in group:
-        bad.append(f"{where}: a run on main is not grouped by its own commit")
-    off_main = "github.ref != 'refs/heads/main'"
-    if cancel is True or (isinstance(cancel, str) and off_main not in cancel):
-        bad.append(f"{where}: a run on main can be cancelled")
-    # Groups are shared across the repository, and a new pending entry replaces the old one,
-    # so a job's own group can replace a main run's job whatever the workflow's is. Only the
-    # suite jobs may have one, and they must (decision 9).
-    jobs = {k: v for k, v in (workflow.get("jobs") or {}).items() if isinstance(v, dict)}
-    for job_id, job in jobs.items():
-        if job_id in suite:
-            bad.extend(_suite_group_violations(where, job_id, job))
-        elif "concurrency" in job:
-            bad.append(f"{where}:{job_id} has its own concurrency group, which can cancel it")
-    if suite:
-        bad.extend(_gate_names_superseded_violations(where, jobs))
-    return bad
-
-
-def _gate_names_superseded_violations(where: str, jobs: dict[str, dict[str, Any]]) -> list[str]:
-    """Each suite job's gate fails on every shard that did not pass, names a superseded shard
-    only from the previous main commit's copy of the check for its own job's group, and never
-    exits 0 on a cancelled shard. Held by RUNNING the gate's script on planted answers."""
-    bad: list[str] = []
-    for gate_id, shard_id in _GATES.items():
-        gate, shards = jobs.get(gate_id), jobs.get(shard_id)
-        if gate is None or shards is None:
-            bad.append(f"{where} has no `{gate_id}` gate over `{shard_id}`")
-            continue
-        bad.extend(_gate_violations(f"{where}:{gate_id}", gate, shard_id, shards))
-    return bad
-
-
-#: The gate step's env, as each gate must bind it.
-_GATE_ENV = {
-    "GH_TOKEN": "${{ github.token }}",
-    "BEFORE": "${{ github.event.before }}",
-}
-
-
-def _gate_violations(
-    where: str, gate: dict[str, Any], shard_id: str, shards: dict[str, Any]
-) -> list[str]:
-    bad: list[str] = []
-    needs = set(_needs(gate))
-    if not {"tree-check", shard_id} <= needs:
-        bad.append(f"{where} does not wait on tree-check and {shard_id}")
-    # The gate runs exactly when its shards were planned, so it can never be skipped while they
-    # ran, and no clause on their result can skip it on a cancelled shard.
-    if str(gate.get("if", "")) != str(shards.get("if", "")):
-        bad.append(
-            f"{where}'s `if:` ({gate.get('if')!r}) is not {shard_id}'s ({shards.get('if')!r})"
-        )
-    steps = [s for s in gate.get("steps") or [] if "RESULT" in (s.get("env") or {})]
-    if len(steps) != 1:
-        return [*bad, f"{where} has no one step that reads its shards' RESULT"]
-    step = steps[0]
-    env = {str(k): str(v) for k, v in (step.get("env") or {}).items()}
-    concurrency = shards.get("concurrency")
-    group = str(concurrency.get("group", "")) if isinstance(concurrency, dict) else ""
     try:
-        prefix = _main_prefix(group)
-    except ValueError:
-        return bad  # reported by the group check
-    want = {
-        **_GATE_ENV,
-        "RESULT": f"${{{{ needs.{shard_id}.result }}}}",
-        "SHARD_JOB": shard_id,
-        "GROUP_PREFIX": prefix,
-    }
-    for name, value in want.items():
-        if env.get(name) != value:
-            bad.append(f"{where} binds {name} to {env.get(name)!r}, not {value!r}")
-    run = str(step.get("run", ""))
-    if "${{" in run:
-        bad.append(f"{where} pastes an expression into its script; it must come through env")
-    if bad:
-        return bad
-    bad.extend(_gate_behaviour(where, run, env))
+        one, two = (_evaluate(group, _main_push_at(sha)) for sha in ("1" * 40, "2" * 40))
+        cancels = _cancels(concurrency.get("cancel-in-progress", False), _main_push_at("1" * 40))
+    except ValueError as exc:
+        return [f"merge.yml: {exc}"]
+    if one == two or "1" * 40 not in one:
+        bad.append(f"merge.yml: a run on main is not grouped by its own commit ({one!r})")
+    if cancels:
+        bad.append("merge.yml: a run on main can be cancelled")
+    for job_id, job in (workflow.get("jobs") or {}).items():
+        if not isinstance(job, dict):
+            continue
+        if _planned_tier("merge.yml", job) is not None:
+            bad.extend(_stage_group_violations(tree, job_id, job))
+        elif "concurrency" in job:
+            bad.append(f"merge.yml:{job_id} has its own concurrency group, which can cancel it")
     return bad
-
-
-_SHA_B = "b" * 40
-_BEFORE = "d" * 40
-#: (name, the run's event and ref, the shards' result, the answer the check writes or None for
-#: no answer file, whether `gh` fails, the exit code, the `::error title=`, text the error names)
-_GATE_CASES: tuple[tuple[str, str, str, str, str | None, bool, int, str, str], ...] = (
-    ("green", "push", "refs/heads/main", "success", None, False, 0, "", "passed"),
-    ("a failed shard", "push", "refs/heads/main", "failure", None, False, 1, "failed", ""),
-    ("superseded", "push", "refs/heads/main", "cancelled", f"superseded={_SHA_B}", False, 1,
-     "superseded", f"superseded by {_SHA_B}"),
-    ("superseded, a SHA-256 id", "push", "refs/heads/main", "cancelled", "superseded=" + "b" * 64,
-     False, 1, "superseded", "superseded by " + "b" * 64),
-    ("no commit named", "push", "refs/heads/main", "cancelled", "superseded=", False, 1,
-     "unproven", ""),
-    ("not hex", "push", "refs/heads/main", "cancelled", "superseded=not-a-commit", False, 1,
-     "unproven", ""),
-    ("forty characters, not hex", "push", "refs/heads/main", "cancelled", "superseded=" + "z" * 40,
-     False, 1, "unproven", ""),
-    ("hex but 39 characters", "push", "refs/heads/main", "cancelled", "superseded=" + "b" * 39,
-     False, 1, "unproven", ""),
-    ("hex but 41 characters", "push", "refs/heads/main", "cancelled", "superseded=" + "b" * 41,
-     False, 1, "unproven", ""),
-    ("hex but 65 characters", "push", "refs/heads/main", "cancelled", "superseded=" + "b" * 65,
-     False, 1, "unproven", ""),
-    ("two lines", "push", "refs/heads/main", "cancelled", f"superseded={_SHA_B}\nsuperseded=x",
-     False, 1, "unproven", ""),
-    ("no answer file", "push", "refs/heads/main", "cancelled", None, False, 1, "unproven", ""),
-    ("the check cannot be fetched", "push", "refs/heads/main", "cancelled",
-     f"superseded={_SHA_B}", True, 1, "unproven", ""),
-    ("a pull request", "pull_request", "refs/pull/41/merge", "cancelled",
-     f"superseded={_SHA_B}", False, 1, "unproven", ""),
-    ("a tag named main", "push", "refs/tags/main", "cancelled", f"superseded={_SHA_B}", False, 1,
-     "unproven", ""),
-)  # fmt: skip
-
-_GH_STUB = """#!/bin/sh
-printf 'gh %s\\n' "$*" >> "$STUB_LOG"
-[ -n "${STUB_GH_FAIL:-}" ] && exit 1
-echo "# the fetched check"
-"""
-_PY_STUB = """#!/bin/sh
-printf 'python3 %s\\n' "$*" >> "$STUB_LOG"
-if [ -z "${STUB_NO_ANSWER:-}" ]; then printf '%s\\n' "$STUB_ANSWER" >> "$GITHUB_OUTPUT"; fi
-exit 0
-"""
-
-
-def _gate_behaviour(where: str, run: str, env: dict[str, str]) -> list[str]:
-    """Run the gate's script under ``bash -e`` (GitHub's default shell) with ``gh`` and
-    ``python3`` stubbed, once per planted answer, and hold its exit code and its error."""
-    return list(_gate_answers(where, run, env["SHARD_JOB"], env["GROUP_PREFIX"]))
-
-
-@functools.cache
-def _gate_answers(where: str, run: str, shard_job: str, group_prefix: str) -> tuple[str, ...]:
-    """The gate's violations, cached on all they depend on: the gate, its script and the two
-    names its env binds. The row checks a copy of the scaffold for every plant, and most plants
-    leave both gates' scripts as they are, so each script the row sees runs once, not once per
-    plant. Its planted answers run side by side, each in its own process and temporary folder."""
-    import os
-    import subprocess
-    import tempfile
-
-    bad: list[str] = []
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp)
-        bin_dir = root / "bin"
-        bin_dir.mkdir()
-        for name, body in (("gh", _GH_STUB), ("python3", _PY_STUB)):
-            (bin_dir / name).write_text(body, encoding="utf-8")
-            (bin_dir / name).chmod(0o755)
-        script = root / "gate.sh"
-        script.write_text(run, encoding="utf-8")
-        running: list[tuple[tuple[Any, ...], Path, Path, subprocess.Popen[str]]] = []
-        try:
-            for index, case in enumerate(_GATE_CASES):
-                _name, event, ref, result, answer, gh_fails = case[:6]
-                temp = root / f"temp-{index}"
-                temp.mkdir()
-                log = temp / "calls.log"
-                log.write_text("", encoding="utf-8")
-                case_env = {
-                    "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
-                    "RUNNER_TEMP": str(temp),
-                    "GITHUB_REPOSITORY": "PersonalClaw/PersonalClaw",
-                    "GITHUB_EVENT_NAME": event,
-                    "GITHUB_REF": ref,
-                    "GH_TOKEN": "token",
-                    "BEFORE": _BEFORE,
-                    "RESULT": result,
-                    "SHARD_JOB": shard_job,
-                    "GROUP_PREFIX": group_prefix,
-                    "STUB_LOG": str(log),
-                    "STUB_ANSWER": answer or "",
-                }
-                if answer is None:
-                    case_env["STUB_NO_ANSWER"] = "1"
-                if gh_fails:
-                    case_env["STUB_GH_FAIL"] = "1"
-                gate = subprocess.Popen(
-                    ["bash", "-e", str(script)],
-                    env=case_env,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                running.append((case, temp, log, gate))
-            for case, temp, log, gate in running:
-                name, event, ref, result, _answer, gh_fails, code, title, names = case
-                stdout, stderr = gate.communicate(timeout=60)
-                out = stdout + stderr
-                calls = log.read_text(encoding="utf-8")
-                if gate.returncode != code:
-                    bad.append(f"{where} exits {gate.returncode} on {name}, not {code}: {out!r}")
-                    continue
-                if code == 0:
-                    if "::error" in out:
-                        bad.append(f"{where} reports an error on {name}: {out!r}")
-                    continue
-                if f"::error title=test shards {title}::" not in out:
-                    bad.append(f"{where} does not name {name} '{title}': {out!r}")
-                if names and names not in out:
-                    bad.append(f"{where} does not say {names!r} on {name}: {out!r}")
-                main_push = (event, ref) == ("push", "refs/heads/main") and result == "cancelled"
-                if not main_push and calls:
-                    bad.append(f"{where} reads the API on {name}, where nothing can be superseded")
-                if main_push and not gh_fails:
-                    fetch = f"contents/tools/ci/superseded.py?ref={_BEFORE}"
-                    if fetch not in calls:
-                        bad.append(
-                            f"{where} does not fetch the previous main commit's check: {calls!r}"
-                        )
-                    want = (
-                        f"python3 -I {temp}/superseded.py --workflow ci.yml --job "
-                        f"{shard_job} --group-prefix {group_prefix}"
-                    )
-                    if want not in calls:
-                        bad.append(f"{where} does not run the fetched check as {want!r}: {calls!r}")
-        finally:
-            for *_, gate in running:
-                if gate.returncode is None:
-                    gate.kill()
-                    gate.communicate()
-    return tuple(bad)
 
 
 def main_push_runs_violations(tree: Tree) -> list[str]:
-    """``ci.yml`` runs on every push to main and on no other push, and no main run is ever
+    """``merge.yml`` runs on every push to main and on no other push, and no main run is ever
     cancelled. The suite's shards are the one exception: a newer push's waiting shard replaces
-    an older one's in their shared group, and the gates name that red as superseded.
+    an older one's in their shared group, and that run's verdict reads the shard red.
 
     A pull request's run is its candidate's check. A push run on the same feature branch only
-    duplicated it: the shared group cancelled one of the two, and a later push run could cancel
-    the ``pull_request`` run that ``tree-check`` reads (#3915)."""
-    workflow = _workflow(tree, "ci.yml")
+    duplicates it (#3915)."""
+    workflow = _workflow(tree, "merge.yml")
     if workflow is None:
-        return ["ci.yml is missing"]
+        return ["merge.yml is missing"]
     push = _triggers(workflow).get("push", "absent")
     bad: list[str] = []
     if push == "absent":
-        bad.append("ci.yml does not run on a push")
+        bad.append("merge.yml does not run on a push")
     elif not isinstance(push, dict):
-        bad.append("ci.yml runs on a bare `push:`, which every branch and tag push also starts")
+        bad.append("merge.yml runs on a bare `push:`, which every branch and tag push also starts")
     else:
         branches = [str(b) for b in push.get("branches") or []]
         # GitHub reads branch patterns in order, so a later `!` pattern drops what an earlier
@@ -2165,96 +2017,84 @@ def main_push_runs_violations(tree: Tree) -> list[str]:
             or any(b.startswith("!") for b in branches)
             or {"paths", "paths-ignore"} & set(push)
         ):
-            bad.append(f"ci.yml's push trigger leaves main, or some pushes to it, out: {push}")
+            bad.append(f"merge.yml's push trigger leaves main, or some pushes to it, out: {push}")
         others = [b for b in branches if b != "main" and not b.startswith("!")]
         if "branches-ignore" in push or others:
             bad.append(
-                f"ci.yml runs on a push to a branch other than main ({push}), which only "
+                f"merge.yml runs on a push to a branch other than main ({push}), which only "
                 "duplicates that branch's pull_request run"
             )
         # Beside a branch filter, a tags-ignore starts a run on every tag it does not match.
         if {"tags", "tags-ignore"} & set(push):
-            bad.append("ci.yml runs on a tag push, which is release.yml's")
-    return bad + _main_never_cancels("ci.yml", workflow, _SUITE_GROUPED)
+            bad.append("merge.yml runs on a tag push, which is release.yml's")
+    return bad + _merge_never_cancels(tree, workflow)
 
 
-def _suite_words(command: str) -> list[str]:
-    """A pytest command's words, less the two a macOS shard may differ in: its worker count and
-    its report's path. Everything else (paths, selections, the split) must be the same."""
-    return re.sub(r"\s-n\s+\S+|\s--junitxml=\S+", "", " " + command).split()
+def _suite_words(argv: Sequence[str]) -> list[str]:
+    """A pytest step's words, less the two a macOS shard may differ in: its worker count and its
+    report's path. Everything else (paths, selections, the split) must be the same."""
+    words = list(argv)
+    if "-n" in words:
+        at = words.index("-n")
+        del words[at : at + 2]
+    return [w for w in words if not w.startswith("--junitxml=")]
+
+
+#: The suite's two merge-tier entries, and the leg of the shard plan each lists its share from.
+_SUITE, _SUITE_MACOS = "python-suite", "python-suite-macos"
+_SUITE_LEGS = {_SUITE: "test-shard", _SUITE_MACOS: "test-macos"}
+
+
+def _suite_step(job: catalogue.Job, word: str) -> catalogue.Step | None:
+    return next((s for s in job.command if word in s.argv), None)
 
 
 def macos_leg_violations(tree: Tree) -> list[str]:
-    """``test-macos`` runs ``test-shard``'s split suite on macOS, on pull requests into main and
-    on a main push no green pull-request run tested."""
-    jobs = (_workflow(tree, "ci.yml") or {}).get("jobs") or {}
-    macos, ubuntu = jobs.get("test-macos"), jobs.get("test-shard")
-    if macos is None or ubuntu is None:
-        return ["ci.yml has no test-macos or no test-shard"]
-    bad = _waits_on_tree_check("ci.yml:test-macos", macos)
-    condition = str(macos.get("if", ""))
-    on_pr = "github.event_name == 'pull_request' && github.base_ref == 'main'"
-    if on_pr not in condition:
-        bad.append("ci.yml:test-macos does not run on pull requests into main")
-    if f"github.event_name == 'push' && {_ON_MAIN}" not in condition:
-        bad.append("ci.yml:test-macos does not run on a push to main no pull-request run tested")
-    if not str(macos.get("runs-on", "")).startswith("macos-"):
-        bad.append(f"ci.yml:test-macos runs on {macos.get('runs-on')!r}, not macOS")
-    shards, theirs = _matrix_values(macos, "shard"), _matrix_values(ubuntu, "shard")
-    if shards != theirs:
-        bad.append(f"ci.yml:test-macos splits into {len(shards)}, test-shard into {len(theirs)}")
-    command = _pytest_run(macos)
-    listing = f"--leg test-macos --shard ${{{{ matrix.shard }}}}/{len(shards)} "
-    if listing not in " ".join(_runs(macos).split()) + " ":
-        bad.append("ci.yml:test-macos does not list its own shard of its own leg's plan")
-    if _suite_words(command) != _suite_words(_pytest_run(ubuntu)):
-        bad.append("ci.yml:test-macos's pytest selects other than test-shard's")
-    if (macos.get("env") or {}) != (ubuntu.get("env") or {}) or any(
-        "PYTEST_ADDOPTS" in (s.get("env") or {}) or "PYTEST_ADDOPTS" in str(s.get("run", ""))
-        for s in macos.get("steps") or []
-    ):
-        bad.append("ci.yml:test-macos's environment differs from test-shard's")
-    if " ".join(condition.split()) != _MACOS_IF:
-        bad.append(f"ci.yml:test-macos's condition is not {_MACOS_IF!r}")
-    mine, theirs_step = _pytest_step(macos), _pytest_step(ubuntu)
-    for key in ("if", "working-directory", "env", "shell"):
-        if mine.get(key) != theirs_step.get(key):
-            bad.append(f"ci.yml:test-macos's pytest step's {key} differs from test-shard's")
-    if (macos.get("defaults") or {}) != (ubuntu.get("defaults") or {}):
-        bad.append("ci.yml:test-macos's defaults differ from test-shard's")
-    matrices = [(j.get("strategy") or {}).get("matrix") or {} for j in (macos, ubuntu)]
-    if [m.get("exclude") for m in matrices] != [matrices[1].get("exclude")] * 2:
-        bad.append("ci.yml:test-macos excludes shards test-shard runs")
-    return bad
-
-
-#: test-macos's whole condition: a clause kept but made dead (`&& github.event_name != 'push'`)
-#: would pass a check that only looks for each clause's text.
-_MACOS_IF = (
-    "${{ !cancelled() && needs.tree-check.outputs.tested != 'true' && "
-    "((github.event_name == 'pull_request' && github.base_ref == 'main') || "
-    "(github.event_name == 'push' && github.ref == 'refs/heads/main')) }}"
-)
-
-
-def _pytest_step(job: dict[str, Any]) -> dict[str, Any]:
-    return next((s for s in job.get("steps") or [] if "pytest" in str(s.get("run", ""))), {})
-
-
-def tree_check_gating_violations(tree: Tree) -> list[str]:
-    """Every ``ci.yml`` job outside the always-run set waits on ``tree-check``'s answer."""
-    jobs = (_workflow(tree, "ci.yml") or {}).get("jobs") or {}
-    if "tree-check" not in jobs:
-        return ["ci.yml has no tree-check job"]
+    """``python-suite-macos`` runs ``python-suite``'s split suite, in the same tiers and whenever
+    it runs: on a pull request's merge run and on a push to main no green pull-request run tested
+    (the merge tier's push stage plans it beside every other merge job). That it runs on macOS,
+    and in the merge tier, the catalogue's loader holds: it is security evidence."""
+    try:
+        cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
+    except catalogue.CatalogueError as exc:
+        return [f"the catalogue does not load: {problem}" for problem in exc.problems]
+    try:
+        macos, ubuntu = cat.job(_SUITE_MACOS), cat.job(_SUITE)
+    except KeyError:
+        return [f"the catalogue has no {_SUITE_MACOS} beside {_SUITE}"]
     bad: list[str] = []
-    for job_id, job in jobs.items():
-        if job_id not in _ALWAYS_RUN:
-            bad += _waits_on_tree_check(f"ci.yml:{job_id}", job)
+    if macos.tiers != ubuntu.tiers:
+        bad.append(f"{_SUITE_MACOS} runs in {macos.tiers}, {_SUITE} in {ubuntu.tiers}")
+    pushed = [j in (cat.every_push or ()) for j in (_SUITE_MACOS, _SUITE)]
+    if pushed[0] != pushed[1]:
+        bad.append(f"{_SUITE_MACOS} and {_SUITE} differ in whether every push to main runs them")
+    if macos.shards != ubuntu.shards:
+        bad.append(f"{_SUITE_MACOS} splits into {macos.shards}, {_SUITE} into {ubuntu.shards}")
+    for job in (macos, ubuntu):
+        listing = _suite_step(job, "shards")
+        want = ["--leg", _SUITE_LEGS[job.id], "--shard", f"{{shard}}/{job.shards}"]
+        if listing is None or not _contains(list(listing.argv), want):
+            bad.append(f"{job.id} does not list its own shard of its own leg's plan")
+    mine, theirs = _suite_step(macos, "pytest"), _suite_step(ubuntu, "pytest")
+    if mine is None or theirs is None:
+        return [*bad, f"{_SUITE_MACOS} or {_SUITE} runs no pytest"]
+    if _suite_words(mine.argv) != _suite_words(theirs.argv):
+        bad.append(f"{_SUITE_MACOS}'s pytest selects other than {_SUITE}'s")
+    if dict(macos.env) != dict(ubuntu.env) or "PYTEST_ADDOPTS" in macos.env:
+        bad.append(f"{_SUITE_MACOS}'s environment differs from {_SUITE}'s")
+    for key in ("workdir", "env"):
+        if getattr(mine, key) != getattr(theirs, key) or "PYTEST_ADDOPTS" in mine.env:
+            bad.append(f"{_SUITE_MACOS}'s pytest step's {key} differs from {_SUITE}'s")
     return bad
+
+
+def _contains(words: list[str], run: list[str]) -> bool:
+    """Whether ``run`` is a contiguous run of ``words``."""
+    return any(words[i : i + len(run)] == run for i in range(len(words) - len(run) + 1))
 
 
 _FETCH_BEFORE = "contents/tools/ci/tree_tested.py?ref=${BEFORE}"
-_CHECKED_OUT_COPY = re.compile(r"python3?\s+(?:\./)?tools/ci/tree_tested\.py")
+_CHECKED_OUT_COPY = re.compile(r"python3?(?:\s+-\w+)*\s+(?:\./)?tools/ci/tree_tested\.py")
 
 
 def _tree_check_violations(where: str, job: dict[str, Any] | None, asks: str) -> list[str]:
@@ -2277,8 +2117,8 @@ def _tree_check_violations(where: str, job: dict[str, Any] | None, asks: str) ->
         bad.append(f"{where} runs the checked-out copy of the check")
     if _UV_COMMAND.search(run):
         bad.append(f"{where} installs or runs through uv")
-    if f'python3 "$check" --workflow {asks}' not in " ".join(run.split()):
-        bad.append(f"{where} does not ask the fetched check about {asks}")
+    if f'python3 -I "$check" --workflow {asks}' not in " ".join(run.split()):
+        bad.append(f"{where} does not ask the fetched check about {asks}, under python3 -I")
     return bad
 
 
@@ -2286,9 +2126,91 @@ def tree_check_reads_before_violations(tree: Tree) -> list[str]:
     """``tree-check`` runs the PREVIOUS main commit's copy of the script: read-only, nothing
     checked out, nothing installed."""
     bad: list[str] = []
-    for name in ("ci.yml", "docker-single-container.yml"):
-        jobs = (_workflow(tree, name) or {}).get("jobs") or {}
-        bad += _tree_check_violations(f"{name}:tree-check", jobs.get("tree-check"), name)
+    jobs = (_workflow(tree, "merge.yml") or {}).get("jobs") or {}
+    bad += _tree_check_violations("merge.yml:tree-check", jobs.get("tree-check"), "merge.yml")
+    return bad
+
+
+#: The one condition merge.yml's superseded proof runs under: a push to main alone.
+_ON_A_PUSH_TO_MAIN = (
+    "${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+)
+_FETCH_SUPERSEDED = "contents/tools/ci/superseded.py?ref=${BEFORE}"
+
+
+def superseded_proof_violations(tree: Tree) -> list[str]:
+    """On a push to main alone, merge.yml's ``results`` proves which cancelled suite shard a newer
+    push's waiting shard replaced (decision 9), before the verdict reads the proof: one step,
+    with the run's token, runs the PREVIOUS main commit's copy of ``superseded.py`` under
+    ``python3 -I``, for exactly the suite jobs whose shards share one group per shard on main,
+    in that group alone, and writes the file the verdict step passes as ``--superseded``.
+    The proof's commit is held to a full object id by the verdict (``decide_main_push``)."""
+    where = "merge.yml:results"
+    jobs = (_workflow(tree, "merge.yml") or {}).get("jobs") or {}
+    results = jobs.get("results")
+    if not isinstance(results, dict):
+        return [f"{where} is missing"]
+    bad: list[str] = []
+    permissions = results.get("permissions") or {}
+    for scope in ("actions", "checks"):
+        if permissions.get(scope) != "read":
+            bad.append(
+                f"{where} grants {scope}: {permissions.get(scope)!r}, not read, and superseded.py"
+                " reads the run's jobs and a cancelled shard's annotations"
+            )
+    steps = [s for s in results.get("steps") or [] if isinstance(s, dict)]
+    proving = [n for n, s in enumerate(steps) if "superseded.py" in str(s.get("run", ""))]
+    judging = [n for n, s in enumerate(steps) if "--records" in str(s.get("run", ""))]
+    if len(proving) != 1:
+        return [*bad, f"{where} proves superseded shards in {len(proving)} steps, not one"]
+    step = steps[proving[0]]
+    run = " ".join(str(step.get("run", "")).split())
+    if any(n < proving[0] for n in judging):
+        bad.append(f"{where} proves superseded shards after the verdict that reads the proof")
+    if step.get("if") != _ON_A_PUSH_TO_MAIN:
+        bad.append(
+            f"{where} proves superseded shards under {step.get('if')!r}, not on a push to main"
+            " alone"
+        )
+    env = step.get("env") or {}
+    if env.get("GH_TOKEN") != "${{ github.token }}":
+        bad.append(f"{where}'s proof is given no token of the run's")
+    if env.get("BEFORE") != "${{ github.event.before }}" or _FETCH_SUPERSEDED not in run:
+        bad.append(f"{where} does not fetch the previous main commit's copy of superseded.py")
+    if re.search(r"python3?(?:\s+-\w+)*\s+(?:\./)?tools/ci/superseded\.py", run):
+        bad.append(f"{where} runs the checked-out copy of superseded.py")
+    calls = re.findall(r"python3?((?:\s+-\w+)*)\s+\"\$check\"", run)
+    if not calls or any("-I" not in flags.split() for flags in calls):
+        bad.append(f"{where} does not run the fetched superseded.py under python3 -I")
+    if "--workflow merge.yml" not in run:
+        bad.append(f"{where} does not ask superseded.py about merge.yml's runs")
+    # The suite jobs and the group, as the stage jobs' own concurrency spells them.
+    groups = {
+        str((job.get("concurrency") or {}).get("group", ""))
+        for job in jobs.values()
+        if isinstance(job, dict) and isinstance(job.get("concurrency"), dict)
+    }
+    shared = sorted(
+        {m for g in groups for m in re.findall(r"matrix\.id == '([^']+)' && 'suite'", g)}
+    )
+    loop = re.search(r"for job in ([^;]+); do", run)
+    proved = sorted(loop.group(1).split()) if loop else []
+    if proved != shared:
+        bad.append(
+            f"{where} proves {proved}, not the suite jobs whose shards share a group on main"
+            f" ({shared})"
+        )
+    prefixes = {m for g in groups for m in re.findall(r"group: (\S+?)\$\{\{", f"group: {g}")}
+    want = {f"{p}suite-" for p in prefixes}
+    named = set(re.findall(r"--group-prefix (\S+)", run))
+    if not named or named != want:
+        bad.append(f"{where} reads the groups {sorted(named)}, not the shared group {sorted(want)}")
+    out = re.search(r'--out "([^"]+)"', run)
+    verdict_run = " ".join(str(steps[judging[0]].get("run", "")).split()) if judging else ""
+    if out is None or f'if [ -f "{out.group(1)}" ]' not in verdict_run:
+        bad.append(f"{where}'s verdict does not read the file the proof writes")
+    if '${proof:+--superseded "$proof"}' not in verdict_run:
+        bad.append(f"{where}'s verdict is not given the proof (--superseded)")
     return bad
 
 
@@ -2362,7 +2284,9 @@ def _starts_on_a_change(workflow: dict[str, Any]) -> bool:
 
 def push_breadth_violations(tree: Tree) -> list[str]:
     """No ``macos-14`` leg anywhere (any size, any case, in the forms :func:`_runner_labels`
-    reads), and coverage only in a workflow no pull request or branch push starts."""
+    reads, or as a catalogue entry's platform), and coverage only in a workflow no pull request
+    or branch push starts and in no catalogue entry of the change or merge tier, which the tier
+    workflows run on every pull request and push."""
     bad: list[str] = []
     for name, workflow in _workflows(tree):
         on_change = _starts_on_a_change(workflow)
@@ -2375,6 +2299,20 @@ def push_breadth_violations(tree: Tree) -> list[str]:
             steps = job.get("steps") or []
             if on_change and any(_measures_coverage(str(s.get("run", ""))) for s in steps):
                 bad.append(f"{name}:{job_id} measures coverage on a push or pull request")
+    try:
+        cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
+    except catalogue.CatalogueError as exc:
+        return [*bad, *(f"the catalogue does not load: {problem}" for problem in exc.problems)]
+    for entry in cat.jobs:
+        if re.fullmatch(r"macos-14(?:-.+)?", entry.platform, flags=re.IGNORECASE):
+            bad.append(f"the catalogue's {entry.id} runs on macos-14")
+        tiers = sorted({"change", "merge"} & set(entry.tiers))
+        words = [w for step in entry.command for w in step.argv]
+        if tiers and any(w == "--cov" or w.startswith("--cov=") for w in words):
+            bad.append(
+                f"the catalogue's {entry.id} measures coverage in the {' and '.join(tiers)} tier,"
+                " which every pull request or push runs"
+            )
     return bad
 
 
@@ -2464,21 +2402,19 @@ def _macos_at_once(job: dict[str, Any]) -> int:
 
 def macos_budget_violations(tree: Tree) -> list[str]:
     """A pull request's macOS jobs and breadth's macOS suite leg, at once, fit the account's
-    macOS runners: ci.yml's macOS jobs today, and the merge tier's macOS shards, which merge.yml
-    runs, as the catalogue gives them. The legs that wait for breadth's macOS suite run after
-    it, never beside it (:data:`_AFTER_THE_MACOS_SUITE`), so they are not counted."""
+    macOS runners: the merge tier's macOS shards, which merge.yml runs, as the catalogue gives
+    them. The legs that wait for breadth's macOS suite run after it, never beside it
+    (:data:`_AFTER_THE_MACOS_SUITE`), so they are not counted."""
     breadth = _macos_at_once(_breadth_jobs(tree).get("macos") or {})
-    ci_jobs = (_workflow(tree, "ci.yml") or {}).get("jobs") or {}
-    ci = sum(_macos_at_once(job) for job in ci_jobs.values())
     cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
     merge = sum(j.shards for j in cat.tier("merge") if j.platform.startswith("macos"))
     bad: list[str] = []
-    for what, held in (("ci.yml's pull request run", ci), ("the merge tier's run", merge)):
-        if held + breadth > _MACOS_RUNNERS:
-            bad.append(
-                f"{what} holds {held} macOS runners and breadth's macos leg {breadth} at once:"
-                f" {held + breadth}, more than the {_MACOS_RUNNERS} the account runs"
-            )
+    if merge + breadth > _MACOS_RUNNERS:
+        bad.append(
+            f"the merge tier's run holds {merge} macOS runners and breadth's macos leg"
+            f" {breadth} at once: {merge + breadth}, more than the {_MACOS_RUNNERS} the account"
+            " runs"
+        )
     return bad
 
 
@@ -3068,22 +3004,6 @@ def collection_parses_violations(tree: Tree) -> list[str]:
     return bad
 
 
-def docker_tree_check_violations(tree: Tree) -> list[str]:
-    """``docker-single-container.yml`` builds on a main push only when the tree is untested, and
-    never cancels a main run."""
-    workflow = _workflow(tree, "docker-single-container.yml")
-    if workflow is None:
-        return ["docker-single-container.yml is missing"]
-    jobs = workflow.get("jobs") or {}
-    if "tree-check" not in jobs:
-        return ["docker-single-container.yml has no tree-check job"]
-    bad: list[str] = []
-    for job_id, job in jobs.items():
-        if job_id != "tree-check":
-            bad += _waits_on_tree_check(f"docker-single-container.yml:{job_id}", job)
-    return bad + _main_never_cancels("docker-single-container.yml", workflow)
-
-
 def job_timeout_violations(tree: Tree) -> list[str]:
     """Every job carries its own ``timeout-minutes``, in every workflow.
 
@@ -3154,13 +3074,21 @@ def suite_workers_violations(tree: Tree) -> list[str]:
         for words in _commands(str(step.get("run", ""))):
             if _runs_the_suite(words) and not _sets_workers(_pytest_args(words)):
                 bad.append(f"{name}:{job_id} runs the suite with no -n: {' '.join(words)}")
-    return bad
+    entries, bad_catalogue = _tier_entries(tree)
+    for entry in entries:
+        for step in entry.command:
+            words = list(step.argv)
+            if _runs_the_suite(words) and not _sets_workers(_pytest_args(words)):
+                bad.append(
+                    f"the catalogue's {entry.id} runs the suite with no -n: {shlex.join(words)}"
+                )
+    return bad + bad_catalogue
 
 
 _SHARD_LIST = '--shard-list "$RUNNER_TEMP/shard.txt"'
 _PLAN_FILE = '--plan "$RUNNER_TEMP/shard-plan/plan.json"'
 #: The job that plans each workflow's suite shards once for the run.
-_PLANNERS = {"ci.yml": "shard-plan", "breadth.yml": "freshness"}
+_PLANNERS = {"merge.yml": "shard-plan", "breadth.yml": "freshness"}
 _PLAN_LEG = re.compile(r"--leg\s+([\w-]+):([\w.-]+):([\w.-]+):(\d+)")
 
 
@@ -3174,8 +3102,14 @@ def suite_shard_violations(tree: Tree) -> list[str]:
       ``--shard-list``. N is the job's matrix size, and the plan names the leg with that N and
       the prefix of the job's junit artifact;
     - no suite step passes pytest-split's ``--splits`` or ``--group``.
+
+    merge.yml's stage jobs run the catalogue's entries, so there the entry is the shard: an entry
+    of the change or merge tier whose step runs the suite reads the plan (``shard-history``),
+    lists its own leg's shard ``{shard}`` of its shard count before pytest, and runs pytest with
+    that list; and merge.yml's plan names its leg with that count and a prefix its reports carry.
     """
     bad: list[str] = []
+    leg_plans: dict[str, dict[str, tuple[str, int]]] = {}
     for name, planner in _PLANNERS.items():
         jobs = (_workflow(tree, name) or {}).get("jobs") or {}
         steps = (jobs.get(planner) or {}).get("steps") or []
@@ -3187,6 +3121,7 @@ def suite_shard_violations(tree: Tree) -> list[str]:
         if not any(f"tools.ci shards check {_PLAN_FILE}" in r for r in runs[plans[0] + 1 :]):
             bad.append(f"{name}:{planner} uploads a plan it never checked")
         legs = {m[0]: (m[2], int(m[3])) for m in _PLAN_LEG.findall(runs[plans[0]])}
+        leg_plans[name] = legs
         for job_id, job in jobs.items():
             steps = job.get("steps") or []
             texts = [" ".join(str(s.get("run", "")).split()) for s in steps]
@@ -3229,6 +3164,52 @@ def suite_shard_violations(tree: Tree) -> list[str]:
                 bad.append(f"{where}: the plan names it {planned}, not in {n} shards")
             elif not any(r.startswith(planned[0]) for r in reports):
                 bad.append(f"{where}: no junit report is named {planned[0]}*, as the plan reads")
+    entries, problems = _tier_entries(tree)
+    return bad + problems + _suite_entry_violations(entries, leg_plans.get("merge.yml", {}))
+
+
+#: How a suite entry lists its shard of the run's plan, less its leg and its share.
+_ENTRY_LISTS = ("shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json")
+_ENTRY_LIST_OUT = ("--out", "{runner_temp}/shard.txt")
+
+
+def _suite_entry_violations(
+    entries: list[catalogue.Job], legs: dict[str, tuple[str, int]]
+) -> list[str]:
+    """Each change- or merge-tier entry whose step runs the suite runs its share of merge.yml's
+    one plan, which ``legs`` (leg -> report prefix and shard count) gives."""
+    bad: list[str] = []
+    for entry in entries:
+        steps = [list(step.argv) for step in entry.command]
+        suite = [i for i, words in enumerate(steps) if _runs_the_suite(words)]
+        if not suite:
+            continue
+        where, first = f"the catalogue's {entry.id}", suite[0]
+        if any(not _contains(steps[i], ["--shard-list", "{runner_temp}/shard.txt"]) for i in suite):
+            bad.append(f"{where} runs the suite without its shard's list")
+        if any(w.startswith(("--splits", "--group")) for i in suite for w in steps[i]):
+            bad.append(f"{where} still splits with pytest-split")
+        if "shard-history" not in entry.external_inputs:
+            bad.append(f"{where} does not read the run's shard plan (shard-history)")
+        listed = [
+            words
+            for words in steps[:first]
+            if _contains(words, list(_ENTRY_LISTS)) and _contains(words, list(_ENTRY_LIST_OUT))
+        ]
+        leg = next((w[w.index("--leg") + 1] for w in listed if "--leg" in w[:-1]), None)
+        share = f"{{shard}}/{entry.shards}"
+        if leg is None or not any(_contains(w, ["--leg", leg, "--shard", share]) for w in listed):
+            bad.append(f"{where} does not list its own shard of {entry.shards} before pytest")
+            continue
+        named = legs.get(leg)
+        if named is None or named[1] != entry.shards:
+            bad.append(
+                f"{where}: merge.yml's plan names {leg} {named}, not in {entry.shards} shards"
+            )
+        elif not entry.junit or not all(
+            report.rsplit("/", 1)[-1].startswith(named[0]) for report in entry.junit
+        ):
+            bad.append(f"{where}: its reports are not named {named[0]}*, as the plan reads")
     return bad
 
 
@@ -3270,17 +3251,28 @@ def breadth_keeps_its_plan_violations(tree: Tree) -> list[str]:
 
 
 def no_cov_violations(tree: Tree) -> list[str]:
-    """No workflow command passes ``--no-cov``.
+    """No workflow command, and no step of a change- or merge-tier catalogue entry, passes
+    ``--no-cov``.
 
     Coverage is off unless a command asks for it with ``--cov``, so ``--no-cov`` undoes nothing.
     One left in a command reads as though a default still measured coverage.
     """
-    return [
-        f"{name}:{job_id} passes --no-cov: {' '.join(words)}"
-        for name, job_id, _job, step in _steps(tree)
-        for words in _commands(str(step.get("run", "")))
-        if "--no-cov" in words
-    ]
+    entries, bad = _tier_entries(tree)
+    return (
+        [
+            f"{name}:{job_id} passes --no-cov: {' '.join(words)}"
+            for name, job_id, _job, step in _steps(tree)
+            for words in _commands(str(step.get("run", "")))
+            if "--no-cov" in words
+        ]
+        + [
+            f"the catalogue's {entry.id} passes --no-cov: {shlex.join(step.argv)}"
+            for entry in entries
+            for step in entry.command
+            if "--no-cov" in step.argv
+        ]
+        + bad
+    )
 
 
 # ── No fixed waits in tests ─────────────────────────────────────────────────────────────────
@@ -3518,20 +3510,40 @@ FIXED_WAITS = Row(
 )
 
 
-_CI = ".github/workflows/ci.yml"
 _BREADTH = ".github/workflows/breadth.yml"
-#: The composite action ci.yml's jobs set up their toolchain with.
+#: The composite action the tier workflows' stage jobs set up their toolchain with.
 _SETUP_ACTION = ".github/actions/setup/action.yml"
-_DOCKER = ".github/workflows/docker-single-container.yml"
-_TESTED_IF = "if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}"
-_MACOS_RUN = "uv run pytest -n 2 --dist worksteal -q"
 
 
-def _ci_alone(root: Path) -> None:
-    """The scaffold of a toolchain row whose check reads ci.yml and nothing else. The row copies
-    its scaffold for every control, and under load a copy of every toolchain file for each one
-    cost the row as much as its checks did."""
-    _write(root, _CI, (REPO / _CI).read_text(encoding="utf-8"))
+#: python-suite-macos's two steps as the catalogue spells them.
+_SUITE_MACOS_LEG = '"--leg", "test-macos", "--shard", "{shard}/3"'
+_SUITE_MACOS_PYTEST = (
+    '"-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt",'
+    ' "--junitxml=reports/junit-test-macos-{shard}.xml"'
+)
+
+
+#: python-suite's pytest step, and breadth.yml's macOS suite leg's head, as the tree spells them.
+_SUITE_PYTEST = (
+    '"-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list",'
+    ' "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-shard-{shard}.xml"'
+)
+_BREADTH_MACOS_HEAD = (
+    "    runs-on: macos-26\n    timeout-minutes: 45\n    strategy:\n      fail-fast: false\n"
+    "      max-parallel: 1\n      matrix:\n"
+)
+
+
+def _catalogue_alone(root: Path) -> None:
+    """The scaffold of a toolchain row whose check reads the catalogue and nothing else."""
+    _write(root, catalogue.CATALOGUE, (REPO / catalogue.CATALOGUE).read_text(encoding="utf-8"))
+
+
+def _merge_alone(root: Path) -> None:
+    """The scaffold of a toolchain row whose check reads merge.yml and the catalogue its stage
+    jobs' matrices come from, and nothing else."""
+    for rel in (_MERGE_YML, catalogue.CATALOGUE):
+        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
 
 
 # ── No test walks a source root itself ───────────────────────────────────────────────────────
@@ -3695,6 +3707,18 @@ def _every(rel: str, old: str, new: str) -> Callable[[Path], None]:
     return plant
 
 
+def _setup_caller(node: str) -> Callable[[Path], None]:
+    """A planted workflow whose one job, ``web``, calls the setup action for Node alone, its
+    ``node`` input given as *node*, and names no Python: a call no tier job makes literally."""
+    text = (
+        "name: Setup call\non:\n  workflow_dispatch:\npermissions:\n  contents: read\njobs:\n"
+        "  web:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n    steps:\n"
+        "      - uses: ./.github/actions/setup\n        with:\n"
+        f"          node: {node}\n"
+    )
+    return lambda root: _write(root, f"{_WORKFLOWS}/setup-call.yml", text)
+
+
 def _node_on_a_literal(root: Path) -> None:
     """The setup action's setup-node on a literal version, not ``.nvmrc``."""
     _plant("", _SETUP_ACTION, "node-version-file: .nvmrc", 'node-version: "24"').plant(root)
@@ -3711,10 +3735,10 @@ def _uv_step_env(line: str) -> Callable[[Path], None]:
 
 
 def _first_call_env(line: str) -> Callable[[Path], None]:
-    """ci.yml's first call of the setup action, apps-contract's, given an ``env:`` of one *line*."""
+    """pr.yml's call of the setup action, its stage job's, given an ``env:`` of one *line*."""
     return _plant(
         "",
-        _CI,
+        _PR_YML,
         "        uses: ./.github/actions/setup\n",
         f"        uses: ./.github/actions/setup\n        env:\n          {line}\n",
     ).plant
@@ -3736,7 +3760,7 @@ ROWS: tuple[Row, ...] = (
         "python",
         python_violations,
         (
-            # ci.yml's jobs set up uv through the setup action, so the plant is inside it.
+            # The tier jobs set up uv through the setup action, so the plant is inside it.
             _plant(
                 "setup-uv without python-version",
                 _SETUP_ACTION,
@@ -3747,16 +3771,27 @@ ROWS: tuple[Row, ...] = (
             # Text outside one ${{ }}, here a block scalar's newline, makes the condition a
             # string GitHub fills in, which is always true: web's Node call then runs setup-uv
             # with no Python.
-            _plant(
+            Control(
                 "the setup action's uv `if:` as a block scalar, which GitHub always runs",
-                _SETUP_ACTION,
-                "      if: inputs.python-version != ''\n",
-                "      if: |\n        ${{ inputs.python-version != '' }}\n",
-                expect="ci.yml:web: astral-sh/setup-uv names no python-version",
+                _both(
+                    _plant(
+                        "",
+                        _SETUP_ACTION,
+                        "      if: inputs.python-version != ''\n",
+                        "      if: |\n        ${{ inputs.python-version != '' }}\n",
+                    ).plant,
+                    _setup_caller('"true"'),
+                ),
+                expect="setup-call.yml:web: astral-sh/setup-uv names no python-version",
+            ),
+            Control(
+                "a call of the setup action for Node alone passes",
+                _setup_caller('"true"'),
+                fails=False,
             ),
             _plant(
                 "a minor, not a patch",
-                ".github/workflows/ci.yml",
+                ".github/workflows/flake-report.yml",
                 'python-version: "3.12.15"',
                 'python-version: "3.12"',
             ),
@@ -3801,12 +3836,12 @@ ROWS: tuple[Row, ...] = (
                 _SETUP_ACTION,
                 '        version: "0.13.1"\n',
                 "",
-                expect="ci.yml:lint: uv (newest) is not an exact X.Y.Z",
+                expect="flake-report.yml:rerun: uv (newest) is not an exact X.Y.Z",
             ),
             Control(
                 "the setup action read from action.yaml installs the newest uv",
                 _setup_action_as_yaml,
-                expect="ci.yml:lint: uv (newest) is not an exact X.Y.Z",
+                expect="flake-report.yml:rerun: uv (newest) is not an exact X.Y.Z",
             ),
             _plant(
                 "an interpreter installed apart",
@@ -3834,7 +3869,7 @@ ROWS: tuple[Row, ...] = (
         (
             _plant(
                 "a workflow that runs uv without it",
-                ".github/workflows/ci.yml",
+                _PR_YML,
                 _PREFERENCE,
                 "",
             ),
@@ -3862,15 +3897,15 @@ ROWS: tuple[Row, ...] = (
                 _SETUP_ACTION,
                 "        prune-cache: true\n",
                 "        prune-cache: true\n      env:\n        UV_PYTHON_PREFERENCE: system\n",
-                expect="ci.yml:lint:Install uv: UV_PYTHON_PREFERENCE is 'system'",
+                expect="pr.yml:test:Install uv: UV_PYTHON_PREFERENCE is 'system'",
             ),
             _plant(
                 "a call of the setup action overrides it",
-                _CI,
+                _PR_YML,
                 "        uses: ./.github/actions/setup\n",
                 "        uses: ./.github/actions/setup\n"
                 "        env:\n          UV_PYTHON_PREFERENCE: system\n",
-                expect="ci.yml:apps-contract:Install uv: UV_PYTHON_PREFERENCE is 'system'",
+                expect="pr.yml:test:Install uv: UV_PYTHON_PREFERENCE is 'system'",
             ),
             # The call's env sits beneath the action step's own, in both directions.
             Control(
@@ -3879,12 +3914,12 @@ ROWS: tuple[Row, ...] = (
                     _uv_step_env("UV_PYTHON_PREFERENCE: system"),
                     _first_call_env("UV_PYTHON_PREFERENCE: only-managed"),
                 ),
-                expect="ci.yml:apps-contract:Install uv: UV_PYTHON_PREFERENCE is 'system'",
+                expect="pr.yml:test:Install uv: UV_PYTHON_PREFERENCE is 'system'",
             ),
             Control(
                 "a call overrides it over a uv step with an env of its own",
                 _both(_uv_step_env("OTHER: x"), _first_call_env("UV_PYTHON_PREFERENCE: system")),
-                expect="ci.yml:apps-contract:Install uv: UV_PYTHON_PREFERENCE is 'system'",
+                expect="pr.yml:test:Install uv: UV_PYTHON_PREFERENCE is 'system'",
             ),
             Control(
                 "set on one uv job of several, not the workflow, fails",
@@ -3911,22 +3946,19 @@ ROWS: tuple[Row, ...] = (
                 _SETUP_ACTION,
                 "node-version-file: .nvmrc",
                 'node-version: "24"',
-                expect="ci.yml:web: setup-node does not read .nvmrc alone",
+                expect="merge.yml:build: setup-node does not read .nvmrc alone",
             ),
             # GitHub compares strings ignoring case, and only the runner evaluates an
             # expression, so either call still runs the action's setup-node.
             Control(
                 "a call that asks for Node in capitals",
-                _both(_every(_CI, 'node: "true"', 'node: "TRUE"'), _node_on_a_literal),
-                expect="ci.yml:web: setup-node does not read .nvmrc alone",
+                _both(_setup_caller('"TRUE"'), _node_on_a_literal),
+                expect="setup-call.yml:web: setup-node does not read .nvmrc alone",
             ),
             Control(
                 "a call whose node input is an expression",
-                _both(
-                    _every(_CI, 'node: "true"', "node: ${{ github.event_name != '' }}"),
-                    _node_on_a_literal,
-                ),
-                expect="ci.yml:web: setup-node does not read .nvmrc alone",
+                _both(_setup_caller("${{ github.event_name != '' }}"), _node_on_a_literal),
+                expect="setup-call.yml:web: setup-node does not read .nvmrc alone",
             ),
             _plant(".nvmrc a major", ".nvmrc", _NVMRC, _NVMRC.split(".")[0]),
             _plant(
@@ -3991,7 +4023,7 @@ ROWS: tuple[Row, ...] = (
                 "  steps:\n",
                 "  steps:\n    - name: Runner identity\n      shell: bash\n"
                 '      run: echo "runner image ${ImageOS:?no image} ${ImageVersion:?no version}"\n',
-                expect="ci.yml:lint: a Runner identity step inside a local action",
+                expect="flake-report.yml:rerun: a Runner identity step inside a local action",
             ),
         ),
     ),
@@ -4000,36 +4032,47 @@ ROWS: tuple[Row, ...] = (
         wheel_violations,
         (
             _plant(
-                "web without the wheel contract",
-                ".github/workflows/ci.yml",
-                "        run: uv run --no-project python scripts/verify_wheel.py"
-                ' --wheel "dist/*.whl"\n',
-                "        run: ls dist\n",
+                "package without the wheel contract",
+                catalogue.CATALOGUE,
+                '  { argv = ["uv", "run", "--no-project", "python", "scripts/verify_wheel.py",'
+                ' "--wheel", "dist/*.whl"] },\n',
+                '  { argv = ["ls", "dist"] },\n',
+                expect="package runs no wheel contract",
             ),
             _plant(
                 "a wheel built without --wheel (the sdist path)",
-                ".github/workflows/ci.yml",
-                "run: uv build --wheel --out-dir dist",
-                "run: uv build --out-dir dist",
+                catalogue.CATALOGUE,
+                '"uv", "build", "--wheel", "--out-dir", "dist"',
+                '"uv", "build", "--out-dir", "dist"',
+                expect="package builds no wheel",
             ),
-            Control(
-                "the wheel built before the SPA",
-                _both(
-                    _replace(
-                        "ci.yml",
-                        "      - name: build (vite)\n"
-                        "        id: spa-build\n"
-                        "        if: ${{ !cancelled() }}\n"
-                        "        run: npm run build\n",
-                        "",
-                    ),
-                    _replace(
-                        "ci.yml",
-                        '--wheel "dist/*.whl"\n',
-                        '--wheel "dist/*.whl"\n      - name: the SPA, late\n'
-                        "        run: npm run build\n",
+            _plant(
+                "package not after web-build, so its wheel may carry no SPA",
+                catalogue.CATALOGUE,
+                'timeout_min = 45\nafter = ["web-build"]\ncommand = [\n'
+                '  { argv = ["uv", "build", "--wheel"',
+                'timeout_min = 45\ncommand = [\n  { argv = ["uv", "build", "--wheel"',
+                expect="package does not run after web-build",
+            ),
+            _plants(
+                "the wheel verified before it is built",
+                catalogue.CATALOGUE,
+                (
+                    ('  { argv = ["uv", "build", "--wheel", "--out-dir", "dist"] },\n', ""),
+                    (
+                        '"--wheel", "dist/*.whl"] },\n',
+                        '"--wheel", "dist/*.whl"] },\n'
+                        '  { argv = ["uv", "build", "--wheel", "--out-dir", "dist"] },\n',
                     ),
                 ),
+                expect="package must build the wheel, then verify that wheel",
+            ),
+            _plant(
+                "web-build without its SPA build",
+                catalogue.CATALOGUE,
+                '  { argv = ["npm", "run", "build"] },\n',
+                "",
+                expect="web-build builds no SPA",
             ),
         ),
     ),
@@ -4037,27 +4080,43 @@ ROWS: tuple[Row, ...] = (
         "browser-installs-wait-on-apt-only-when-chromium-cannot-start",
         browser_install_violations,
         (
-            _plant(
+            Control(
+                "a workflow job that installs Chromium as run-job's install does, start-checked,"
+                " passes",
+                _browser_workflow(),
+                fails=False,
+            ),
+            Control(
                 "a browser install with --with-deps",
-                _CI,
-                "        timeout-minutes: 5\n        run: npx playwright install chromium\n",
-                "        timeout-minutes: 5\n"
-                "        run: npx playwright install --with-deps chromium\n",
+                _browser_workflow(
+                    (
+                        "run: npx playwright install chromium\n",
+                        "run: npx playwright install --with-deps chromium\n",
+                    )
+                ),
                 expect="with --with-deps, which runs apt",
             ),
-            _plant(
+            Control(
                 "apt run whatever the start check said",
-                _CI,
-                "        if: ${{ steps.chromium-starts.outcome == 'failure' }}\n",
-                "",
+                _browser_workflow(
+                    ("        if: ${{ steps.chromium-starts.outcome == 'failure' }}\n", "")
+                ),
                 expect="without the start check having failed",
             ),
-            _plant(
+            Control(
                 "an apt install with no timeout around it",
-                _CI,
-                "          if ! timeout 300 npx playwright install-deps chromium; then\n",
-                "          if ! npx playwright install-deps chromium; then\n",
+                _browser_workflow(
+                    (
+                        "          if ! timeout 300 npx playwright install-deps chromium; then\n",
+                        "          if ! npx playwright install-deps chromium; then\n",
+                    )
+                ),
                 expect="no `timeout` around it",
+            ),
+            Control(
+                "a browser install never checked to start",
+                _browser_workflow(("        id: chromium-starts\n", "")),
+                expect="never checks that it starts",
             ),
         ),
     ),
@@ -4065,20 +4124,40 @@ ROWS: tuple[Row, ...] = (
         "web-dist-only-from-a-finished-build",
         web_dist_violations,
         (
-            _plant(
-                "an upload that does not check the build's outcome",
-                _CI,
-                "      - name: upload the build (web-dist)\n"
-                "        if: ${{ !cancelled() && steps.spa-build.outcome == 'success' }}\n",
-                "      - name: upload the build (web-dist)\n        if: ${{ !cancelled() }}\n",
-                expect="'upload the build (web-dist)'",
+            _plant_in_job(
+                "an upload that runs on a red build too",
+                _MERGE_YML,
+                "build",
+                "        if: ${{ matrix.id == 'web-build' }}\n",
+                "        if: ${{ always() && matrix.id == 'web-build' }}\n",
+                expect="'Upload the build (web-dist)' uploads web-dist under `if:",
+            ),
+            _plant_in_job(
+                "an upload that runs whatever the build answered",
+                _MERGE_YML,
+                "build",
+                "        if: ${{ matrix.id == 'web-build' }}\n",
+                "        if: ${{ !cancelled() && matrix.id == 'web-build' }}\n",
+                expect="on a red build too",
+            ),
+            _plants(
+                "a check that reads the build before it is built",
+                catalogue.CATALOGUE,
+                (
+                    ('  { argv = ["npm", "run", "build"] },\n', ""),
+                    (
+                        '"--built-web"] },\n',
+                        '"--built-web"] },\n  { argv = ["npm", "run", "build"] },\n',
+                    ),
+                ),
+                expect="web-build: command step 1 reads the build before it is built",
             ),
             _plant(
-                "a build that runs only after green tests",
-                _CI,
-                "        id: spa-build\n        if: ${{ !cancelled() }}\n",
-                "        id: spa-build\n",
-                expect="whatever the tests before it answered",
+                "web-build without its SPA build",
+                catalogue.CATALOGUE,
+                '  { argv = ["npm", "run", "build"] },\n',
+                "",
+                expect="web-build builds no SPA",
             ),
         ),
     ),
@@ -4088,492 +4167,323 @@ ROWS: tuple[Row, ...] = (
         (
             _plant(
                 "branches-ignore: [main]",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 "    branches-ignore: [main]\n",
             ),
             _plant(
                 "branches-ignore of one feature branch",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 "    branches-ignore: [feature]\n",
                 expect="a branch other than main",
             ),
             _plant(
                 "main and a release branch, named without a glob",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 "    branches: [main, release]\n",
                 expect="a branch other than main",
             ),
             _plant(
                 "a tag push beside main",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 '    branches: [main]\n    tags: ["v*"]\n',
                 expect="tag push",
             ),
             _plant(
                 "a tags-ignore beside main",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 '    branches: [main]\n    tags-ignore: ["v*"]\n',
                 expect="tag push",
             ),
             _plant(
                 'every branch again (branches: ["**"])',
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 '    branches: ["**"]\n',
                 expect="a branch other than main",
             ),
             _plant(
                 "main and one feature pattern",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 '    branches: [main, "feature-*"]\n',
                 expect="a branch other than main",
             ),
             _plant(
-                "cancel-in-progress: true on main",
-                _CI,
-                "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
-                "  cancel-in-progress: true\n",
-            ),
-            _plant(
-                "a main run grouped by branch, not by commit",
-                _CI,
-                "github.ref == 'refs/heads/main' && github.sha || ",
-                "",
+                "no push trigger",
+                _MERGE_YML,
+                "  push:\n",
+                "  push-off:\n",
+                expect="does not run on a push",
             ),
             _plant(
                 "a bare push: (every branch and tag push would start it)",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 "",
                 expect="bare `push:`",
             ),
             _plant(
                 'a "!main" after "main"',
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 '    branches: [main, "!main"]\n',
                 expect="leaves main",
             ),
             _plant(
                 "a paths-ignore on the main trigger",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 '    branches: [main]\n    paths-ignore: ["docs/**"]\n',
                 expect="leaves main",
             ),
             _plant(
                 "no main at all",
-                _CI,
+                _MERGE_YML,
                 "    branches: [main]\n",
                 "    branches: [release]\n",
                 expect="leaves main",
             ),
             _plant(
-                "a job-level concurrency group outside the suite",
-                _CI,
-                "  web:\n",
-                "  web:\n    concurrency:\n      group: web-${{ github.sha }}\n"
+                "cancel-in-progress: true on main",
+                _MERGE_YML,
+                "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+                "  cancel-in-progress: true\n",
+                expect="a run on main can be cancelled",
+            ),
+            _plant(
+                "a main run grouped by branch, not by commit",
+                _MERGE_YML,
+                "  group: " + _MERGE_RUN_GROUP + "\n",
+                "  group: merge-${{ github.event.pull_request.number || github.ref }}\n",
+                expect="a run on main is not grouped by its own commit",
+            ),
+            _plant(
+                "a job-level concurrency group outside the stage jobs",
+                _MERGE_YML,
+                "\n  shard-plan:\n",
+                "\n  shard-plan:\n    concurrency:\n      group: plan-${{ github.sha }}\n"
                 "      cancel-in-progress: false\n",
-                expect="ci.yml:web has its own concurrency group",
+                expect="merge.yml:shard-plan has its own concurrency group",
             ),
-            _plant(
-                "test-macos with no group of its own",
-                _CI,
-                _MACOS_GROUP,
-                "",
-                expect="ci.yml:test-macos has no concurrency group of its own",
+            _plant_in_job(
+                "a stage job with no group of its own",
+                _MERGE_YML,
+                "test-2",
+                "    concurrency:\n",
+                "    concurrency-off:\n",
+                expect="merge.yml:test-2 has no concurrency group of its own",
             ),
-            _plant(
-                "a suite group that cancels a running shard",
-                _CI,
-                _SHARD_GROUP + "      cancel-in-progress: false\n",
-                _SHARD_GROUP + "      cancel-in-progress: true\n",
-                expect="can cancel a running shard",
+            _plant_in_job(
+                "a stage group that cancels a running entry",
+                _MERGE_YML,
+                "test",
+                "      cancel-in-progress: false\n",
+                "      cancel-in-progress: true\n",
+                expect="merge.yml:test's group can cancel a running entry",
             ),
-            _plant(
-                "a suite group with no cancel-in-progress (an expression is not false)",
-                _CI,
-                _SHARD_GROUP + "      cancel-in-progress: false\n",
-                _SHARD_GROUP + "      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
-                expect="can cancel a running shard",
+            _plant_in_job(
+                "a stage group with no cancel-in-progress (an expression is not false)",
+                _MERGE_YML,
+                "test",
+                "      cancel-in-progress: false\n",
+                "      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
+                expect="merge.yml:test's group can cancel a running entry",
             ),
-            _plant(
+            _plant_in_job(
                 "a suite group per commit on main",
-                _CI,
-                "-test-shard-${{ matrix.shard }}\n",
-                "-test-shard-${{ matrix.shard }}-${{ github.sha }}\n",
-                expect="is per commit",
+                _MERGE_YML,
+                "test",
+                "matrix.id == 'python-suite' && 'suite' ||",
+                "matrix.id == 'python-suite' && github.sha ||",
+                expect="python-suite (1/3)'s group on main is per commit",
             ),
-            _plant(
+            _plant_in_job(
+                "the macOS suite left out of the shared group",
+                _MERGE_YML,
+                "test",
+                " || github.ref == 'refs/heads/main' && github.run_attempt == '1' &&"
+                " matrix.id == 'python-suite-macos' && 'suite'",
+                "",
+                expect="python-suite-macos (1/3)'s group on main is per commit",
+            ),
+            _plant_in_job(
                 "a suite group that does not name its shard",
-                _CI,
-                "-test-shard-${{ matrix.shard }}\n",
-                "-test-shard\n",
-                expect="does not name its shard",
+                _MERGE_YML,
+                "test",
+                "}}-${{ matrix.key }}\n",
+                "}}-${{ matrix.id }}\n",
+                expect="python-suite (2/3) and python-suite (1/3) share the group",
             ),
-            _plant(
-                "test-shard and test-macos in one group",
-                _CI,
-                "-test-macos-${{ matrix.shard }}\n",
-                "-test-shard-${{ matrix.shard }}\n",
-                expect="ci.yml:test-macos's group on main",
+            _plant_in_job(
+                "the two suites in one group",
+                _MERGE_YML,
+                "test",
+                "}}-${{ matrix.key }}\n",
+                "}}-${{ matrix.shard }}\n",
+                expect="python-suite-macos (1/3) and python-suite (1/3) share the group",
             ),
-            _plant(
+            _plant_in_job(
+                "every entry in the shared group on main",
+                _MERGE_YML,
+                "test",
+                "matrix.id == 'python-suite' && 'suite' ||",
+                "'suite' ||",
+                expect="security's group on main",
+            ),
+            _plant_in_job(
                 "a re-run on main joins the shared group",
-                _CI,
-                "github.ref == 'refs/heads/main' && github.run_attempt == '1' && github.ref_name",
-                "github.ref == 'refs/heads/main' && github.ref_name",
-                expect="a re-run on main",
+                _MERGE_YML,
+                "test",
+                "github.ref == 'refs/heads/main' && github.run_attempt == '1' &&"
+                " matrix.id == 'python-suite' &&",
+                "github.ref == 'refs/heads/main' && matrix.id == 'python-suite' &&",
+                expect="python-suite (1/3)'s group for a re-run on main",
             ),
-            # The gates, by behaviour: each plant is one edit of the `test` gate's script or
-            # env, and the row runs the script on planted answers and reads its exit code.
-            _plant(
-                "the gate exits 0 on a superseded shard",
-                _CI,
-                "that commit's run is the one to read.\"\n",
-                "that commit's run is the one to read.\"\n              exit 0\n",
-                expect="ci.yml:test exits 0 on superseded, not 1",
-            ),
-            _plant(
-                "the gate exits 0 when the check names no commit",
-                _CI,
-                '            exit 1\n          fi\n          if [ "$result" != "success" ]',
-                '            exit 0\n          fi\n          if [ "$result" != "success" ]',
-                expect="ci.yml:test exits 0 on no commit named, not 1",
-            ),
-            _plant(
-                "the gate fetches the merge's own copy of the check",
-                _CI,
-                "contents/tools/ci/superseded.py?ref=${BEFORE}",
-                "contents/tools/ci/superseded.py?ref=${GITHUB_SHA}",
-                expect="does not fetch the previous main commit's check",
-            ),
-            _plant(
-                "the gate binds BEFORE to the pushed commit",
-                _CI,
-                "          BEFORE: ${{ github.event.before }}\n"
-                "          RESULT: ${{ needs.test-shard",
-                "          BEFORE: ${{ github.sha }}\n          RESULT: ${{ needs.test-shard",
-                expect="ci.yml:test binds BEFORE",
-            ),
-            _plant(
-                "the gate runs the fetched check without -I",
-                _CI,
-                'python3 -I "$check"',
-                'python3 "$check"',
-                expect="does not run the fetched check",
-            ),
-            _plant(
-                "the gate reads the API off a push to main",
-                _CI,
-                'if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; '
-                'then\n              check="$RUNNER_TEMP/superseded.py"',
-                'if true; then\n              check="$RUNNER_TEMP/superseded.py"',
-                expect="reads the API on a pull request",
-            ),
-            _plant(
-                "the gate takes a commit that is not hex",
-                _CI,
-                '            case "$newer" in\n              *[!0-9a-f]*) newer="" ;;\n'
-                "            esac\n",
-                "",
-                expect="ci.yml:test does not name forty characters, not hex 'unproven'",
-            ),
-            _plant(
-                "the gate takes hex of any length",
-                _CI,
-                '            case "${#newer}" in\n              40|64) ;;\n'
-                '              *) newer="" ;;\n            esac\n',
-                "",
-                expect="hex but 39 characters",
-            ),
-            _plant(
-                "the gate reads another job's group",
-                _CI,
-                "GROUP_PREFIX: ci-suite-main-main-test-shard-\n",
-                "GROUP_PREFIX: ci-suite-main-main-test-macos-\n",
-                expect="ci.yml:test binds GROUP_PREFIX",
-            ),
-            _plant(
-                "the gate skips a cancelled shard",
-                _CI,
-                "    needs: [tree-check, test-shard]\n"
-                "    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true' }}\n",
-                "    needs: [tree-check, test-shard]\n"
-                "    if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true'"
-                " && needs.test-shard.result != 'cancelled' }}\n",
-                expect="ci.yml:test's `if:`",
-            ),
-            _plant(
-                "the gate pastes its shards' result into the script",
-                _CI,
-                'result="$RESULT"',
-                "result='${{ needs.test-shard.result }}'",
-                expect="pastes an expression",
-            ),
-            _plant(
-                "the gate names no superseded red",
-                _CI,
-                "::error title=test shards superseded::",
-                "::error title=test shards unproven::",
-                expect="does not name superseded 'superseded'",
-            ),
-            _plant(
-                "the macOS gate reads test-shard's group",
-                _CI,
-                "GROUP_PREFIX: ci-suite-main-main-test-macos-\n",
-                "GROUP_PREFIX: ci-suite-main-main-test-shard-\n",
-                expect="ci.yml:test-macos-gate binds GROUP_PREFIX",
-            ),
-            _plant(
-                "no gate over test-macos",
-                _CI,
-                "  test-macos-gate:\n",
-                "  test-macos-check:\n",
-                expect="has no `test-macos-gate` gate",
-            ),
-            # One plant per clause of the gate checker, each its own anchor.
-            _plant(
-                "the gate reads another job's result",
-                _CI,
-                "          RESULT: ${{ needs.test-shard.result }}\n"
-                "          SHARD_JOB: test-shard\n",
-                "          RESULT: ${{ needs.tree-check.result }}\n"
-                "          SHARD_JOB: test-shard\n",
-                expect="ci.yml:test binds RESULT",
-            ),
-            _plant(
-                "the macOS gate reads tree-check's result",
-                _CI,
-                "RESULT: ${{ needs.test-macos.result }}",
-                "RESULT: ${{ needs.tree-check.result }}",
-                expect="ci.yml:test-macos-gate binds RESULT",
-            ),
-            _plant(
-                "the gate does not wait on its shards",
-                _CI,
-                "    needs: [tree-check, test-shard]\n    if: ${{ !cancelled()",
-                "    needs: [tree-check, shard-plan]\n    if: ${{ !cancelled()",
-                expect="ci.yml:test does not wait on tree-check and test-shard",
-            ),
-            _plant(
-                "the gate names another shard job",
-                _CI,
-                "          SHARD_JOB: test-shard\n",
-                "          SHARD_JOB: test-macos\n",
-                expect="ci.yml:test binds SHARD_JOB",
-            ),
-            _plant(
-                "the gate has no token",
-                _CI,
-                "          GH_TOKEN: ${{ github.token }}\n"
-                "          BEFORE: ${{ github.event.before }}\n"
-                "          RESULT: ${{ needs.test-shard",
-                "          BEFORE: ${{ github.event.before }}\n"
-                "          RESULT: ${{ needs.test-shard",
-                expect="ci.yml:test binds GH_TOKEN",
-            ),
-            _plant(
-                "the gate does not name the newer commit",
-                _CI,
-                "superseded by ${newer}. It stays red",
-                "superseded by a newer commit. It stays red",
-                expect="ci.yml:test does not say 'superseded by " + _SHA_B,
-            ),
-            _plant(
+            _plant_in_job(
                 "every commit's re-run on main shares one group",
-                _CI,
-                "&& github.ref_name || github.ref == 'refs/heads/main' && github.sha ||",
-                "&& github.ref_name || github.ref == 'refs/heads/main' && github.repository ||",
-                expect="ci.yml:test-shard's group for a re-run on main",
-            ),
-            _plant(
-                "a second step reads the shards' result",
-                _CI,
-                '          echo "every ${SHARD_JOB} shard passed"\n',
-                '          echo "every ${SHARD_JOB} shard passed"\n'
-                "      - name: a second reader\n        env:\n          RESULT: success\n"
-                "        run: echo\n",
-                expect="ci.yml:test has no one step that reads its shards' RESULT",
-            ),
-            _plant(
-                "the gate reports an error when green",
-                _CI,
-                '          echo "every ${SHARD_JOB} shard passed"\n',
-                '          echo "::error title=x::every ${SHARD_JOB} shard passed"\n',
-                expect="ci.yml:test reports an error on green",
+                _MERGE_YML,
+                "test",
+                "|| github.event.pull_request.number || github.sha }}",
+                "|| github.event.pull_request.number || github.repository }}",
+                expect="'s group for a re-run on main",
             ),
             Control("the per-commit group on main passes", _nothing, fails=False),
         ),
-        scaffold=_ci_alone,
+        scaffold=_merge_alone,
     ),
     _toolchain_row(
         "test-macos-before-the-merge",
         macos_leg_violations,
         (
             _plant(
-                "test-macos without the tree-check condition",
-                _CI,
-                "if: ${{ !cancelled() && needs.tree-check.outputs.tested != 'true'"
-                " && ((github.event_name",
-                "if: ${{ !cancelled() && ((github.event_name",
+                "the macOS suite on a non-macOS runner",
+                catalogue.CATALOGUE,
+                'platform = "macos-26"\npython = "3.13.16"\ntimeout_min = 50\n',
+                'platform = "ubuntu-24.04"\npython = "3.13.16"\ntimeout_min = 50\n',
+                expect="python-suite-macos: platform is ubuntu-24.04, but the merge tier's",
+            ),
+            _plants(
+                "a shard count other than python-suite's",
+                catalogue.CATALOGUE,
+                (
+                    ("workers = 2\nshards = 3\n", "workers = 2\nshards = 2\n"),
+                    (_SUITE_MACOS_LEG, _SUITE_MACOS_LEG.replace("/3", "/2")),
+                ),
+                expect="python-suite-macos splits into 2, python-suite into 3",
             ),
             _plant(
-                "test-macos on a non-macOS runner",
-                _CI,
-                "    runs-on: macos-26\n",
-                "    runs-on: ubuntu-24.04\n",
+                "a -k only the macOS suite has",
+                catalogue.CATALOGUE,
+                _SUITE_MACOS_PYTEST,
+                _SUITE_MACOS_PYTEST.replace('"-q",', '"-q", "-k", "not vector",'),
+                expect="python-suite-macos's pytest selects other",
             ),
             _plant(
-                "a shard count other than test-shard's",
-                _CI,
-                "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
-                "      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n",
-                "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
-                "      fail-fast: false\n      matrix:\n        shard: [1, 2]\n",
+                "an --ignore only the macOS suite has",
+                catalogue.CATALOGUE,
+                _SUITE_MACOS_PYTEST,
+                _SUITE_MACOS_PYTEST.replace(
+                    '"-q",', '"-q", "--ignore=tests/test_vector_index.py",'
+                ),
+                expect="python-suite-macos's pytest selects other",
             ),
             _plant(
-                "a -k only test-macos has",
-                _CI,
-                _MACOS_RUN,
-                '_MACOS -k "not vector"'.replace("_MACOS", _MACOS_RUN),
+                "a positional path only the macOS suite has",
+                catalogue.CATALOGUE,
+                _SUITE_MACOS_PYTEST,
+                _SUITE_MACOS_PYTEST.replace('"tests",', '"tests", "tests/security",'),
+                expect="python-suite-macos's pytest selects other",
             ),
-            _plant(
-                "an --ignore only test-macos has",
-                _CI,
-                _MACOS_RUN,
-                f"{_MACOS_RUN} --ignore=tests/test_vector_index.py",
-            ),
-            Control(
-                "a selection both shard sets share passes",
-                _both(
-                    _replace("ci.yml", _MACOS_RUN, f'{_MACOS_RUN} -m "not slow"'),
-                    _replace(
-                        "ci.yml",
-                        "uv run pytest -n auto --dist worksteal -q tests --shard-list",
-                        'uv run pytest -n auto --dist worksteal -q -m "not slow"'
-                        " tests --shard-list",
+            _plants(
+                "a selection both suites share passes",
+                catalogue.CATALOGUE,
+                (
+                    (
+                        _SUITE_MACOS_PYTEST,
+                        _SUITE_MACOS_PYTEST.replace('"-q",', '"-q", "-m", "not slow",'),
+                    ),
+                    (
+                        '"-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list",'
+                        ' "{runner_temp}/shard.txt",'
+                        ' "--junitxml=reports/junit-test-shard-{shard}.xml"',
+                        '"-n", "auto", "--dist", "worksteal", "-q", "-m", "not slow", "tests",'
+                        ' "--shard-list", "{runner_temp}/shard.txt",'
+                        ' "--junitxml=reports/junit-test-shard-{shard}.xml"',
                     ),
                 ),
                 fails=False,
             ),
             _plant(
-                "test-macos only on pull requests (an untested main merge skips it)",
-                _CI,
-                " || (github.event_name == 'push' && github.ref == 'refs/heads/main')",
-                "",
+                "the macOS suite in a tier the suite is not",
+                catalogue.CATALOGUE,
+                'id = "python-suite-macos"\ntiers = ["merge"]',
+                'id = "python-suite-macos"\ntiers = ["merge", "breadth"]',
+                expect="python-suite-macos runs in ('merge', 'breadth'), python-suite in",
+            ),
+            _plants(
+                "the macOS suite out of the merge tier",
+                catalogue.CATALOGUE,
+                (
+                    (
+                        'id = "python-suite-macos"\ntiers = ["merge"]',
+                        'id = "python-suite-macos"\ntiers = ["breadth"]',
+                    ),
+                    ('  "python-suite-macos",\n', ""),
+                ),
+                expect="the merge tier lacks python-suite-macos",
+            ),
+            _plant(
+                "the macOS suite on every push, the suite only on an untested one",
+                catalogue.CATALOGUE,
+                'every_push = ["browse-live", "security", "apps-contract"]',
+                'every_push = ["browse-live", "security", "apps-contract", "python-suite-macos"]',
+                expect="differ in whether every push to main runs them",
             ),
             _plant(
                 "every macOS shard lists shard 1",
-                _CI,
-                "--leg test-macos --shard ${{ matrix.shard }}/3",
-                "--leg test-macos --shard 1/3",
+                catalogue.CATALOGUE,
+                _SUITE_MACOS_LEG,
+                _SUITE_MACOS_LEG.replace("{shard}/3", "1/3"),
+                expect="python-suite-macos does not list its own shard",
             ),
             _plant(
-                "test-macos listing test-shard's plan",
-                _CI,
-                "--leg test-macos --shard ${{ matrix.shard }}/3",
-                "--leg test-shard --shard ${{ matrix.shard }}/3",
+                "the macOS suite listing python-suite's leg",
+                catalogue.CATALOGUE,
+                _SUITE_MACOS_LEG,
+                _SUITE_MACOS_LEG.replace("test-macos", "test-shard"),
+                expect="python-suite-macos does not list its own shard",
             ),
             _plant(
-                "a positional path only test-macos has",
-                _CI,
-                _MACOS_RUN,
-                f"{_MACOS_RUN} tests/security",
+                "PYTEST_ADDOPTS narrowing the macOS suite's pytest step",
+                catalogue.CATALOGUE,
+                _SUITE_MACOS_PYTEST + "] },",
+                _SUITE_MACOS_PYTEST + '], env = { PYTEST_ADDOPTS = "-k vector" } },',
+                expect="python-suite-macos's pytest step's env differs",
             ),
             _plant(
-                "PYTEST_ADDOPTS narrowing test-macos",
-                _CI,
-                "        run: " + _MACOS_RUN,
-                "        env:\n          PYTEST_ADDOPTS: -k vector\n        run: " + _MACOS_RUN,
+                "PYTEST_ADDOPTS in the macOS suite's job env",
+                catalogue.CATALOGUE,
+                'shards = 3\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
+                ' PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\njunit = ["reports/junit-test-macos',
+                'shards = 3\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
+                ' PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1", PYTEST_ADDOPTS = "-k vector" }\n'
+                'junit = ["reports/junit-test-macos',
+                expect="python-suite-macos's environment differs",
             ),
             _plant(
-                "PYTEST_ADDOPTS in test-macos's job env",
-                _CI,
-                "      # has one.\n      PERSONALCLAW_SKIP_APP_BACKENDS",
-                "      # has one.\n      PYTEST_ADDOPTS: \"-k 'not vector'\"\n"
-                "      PERSONALCLAW_SKIP_APP_BACKENDS",
-            ),
-            _plant(
-                "PYTEST_ADDOPTS written to $GITHUB_ENV by an earlier step",
-                _CI,
-                "          brew install tmux\n          tmux -V\n",
-                "          brew install tmux\n"
-                '          echo "PYTEST_ADDOPTS=-k vector" >> "$GITHUB_ENV"\n'
-                "          tmux -V\n",
-            ),
-            _plant(
-                "the push clause kept but made dead",
-                _CI,
-                "(github.event_name == 'push' && github.ref == 'refs/heads/main')) }}",
-                "(github.event_name == 'push' && github.ref == 'refs/heads/main'))"
-                " && github.event_name != 'push' }}",
-            ),
-            _plant(
-                "a step-level if: on test-macos's pytest",
-                _CI,
-                "      - name: pytest (macOS shard ${{ matrix.shard }} of 3"
-                " — two workers, no coverage)\n",
-                "      - name: pytest (macOS shard ${{ matrix.shard }} of 3"
-                " — two workers, no coverage)\n"
-                "        if: github.event_name == 'pull_request'\n",
-            ),
-            _plant(
-                "test-macos's pytest narrowed by working-directory",
-                _CI,
-                "      - name: pytest (macOS shard ${{ matrix.shard }} of 3"
-                " — two workers, no coverage)\n",
-                "      - name: pytest (macOS shard ${{ matrix.shard }} of 3"
-                " — two workers, no coverage)\n"
-                "        working-directory: tests/security\n",
-            ),
-            _plant(
-                "test-macos excludes a shard",
-                _CI,
-                "        shard: [1, 2, 3]\n    env:\n      # As `test-shard`",
-                "        shard: [1, 2, 3]\n        exclude:\n          - shard: 3\n"
-                "    env:\n      # As `test-shard`",
+                "the macOS suite's pytest narrowed by its working directory",
+                catalogue.CATALOGUE,
+                _SUITE_MACOS_PYTEST + "] },",
+                _SUITE_MACOS_PYTEST + '], workdir = "tests/security" },',
+                expect="python-suite-macos's pytest step's workdir differs",
             ),
         ),
-    ),
-    _toolchain_row(
-        "every-gated-job-waits-on-tree-check",
-        tree_check_gating_violations,
-        (
-            _plant(
-                "a new job without needs",
-                _CI,
-                "jobs:\n  tree-check:\n",
-                "jobs:\n  planted:\n    runs-on: ubuntu-24.04\n    steps:\n"
-                "      - run: true\n  tree-check:\n",
-            ),
-            _plant(
-                "a job that drops its needs", _CI, "  web:\n    needs: [tree-check]\n", "  web:\n"
-            ),
-            _plant(
-                "an if: without !cancelled()",
-                _CI,
-                _TESTED_IF,
-                "if: ${{ needs.tree-check.outputs.tested != 'true' }}",
-            ),
-            _plant(
-                "tested == 'false' (a failed check would skip the job)",
-                _CI,
-                _TESTED_IF,
-                "if: ${{ !cancelled() && needs.tree-check.outputs.tested == 'false' }}",
-            ),
-            Control(
-                "an always-run job with no needs passes (changes, security)",
-                _nothing,
-                fails=False,
-            ),
-        ),
+        scaffold=_catalogue_alone,
     ),
     _toolchain_row(
         "tree-check-runs-the-previous-commits-copy",
@@ -4581,61 +4491,198 @@ ROWS: tuple[Row, ...] = (
         (
             _plant(
                 "the checked-out copy",
-                _CI,
-                'python3 "$check" --workflow ci.yml',
-                "python3 tools/ci/tree_tested.py --workflow ci.yml",
+                _MERGE_YML,
+                'python3 -I "$check" --workflow merge.yml',
+                "python3 -I tools/ci/tree_tested.py --workflow merge.yml",
             ),
             _plant(
-                "docker-single-container.yml runs the checked-out copy",
-                _DOCKER,
-                'python3 "$check" --workflow docker-single-container.yml',
-                "python3 tools/ci/tree_tested.py --workflow docker-single-container.yml",
+                "the fetched check run without -I",
+                _MERGE_YML,
+                'python3 -I "$check" --workflow merge.yml',
+                'python3 "$check" --workflow merge.yml',
+                expect="does not ask the fetched check about merge.yml, under python3 -I",
             ),
             _plant(
                 "the copy read at the pushed commit",
-                _CI,
+                _MERGE_YML,
                 "BEFORE: ${{ github.event.before }}",
                 "BEFORE: ${{ github.sha }}",
             ),
             _plant(
+                "the check asked about another workflow's runs",
+                _MERGE_YML,
+                'python3 -I "$check" --workflow merge.yml',
+                'python3 -I "$check" --workflow pr.yml',
+                expect="does not ask the fetched check about merge.yml",
+            ),
+            _plant(
                 "uv sync before the check",
-                _CI,
-                "          set -u\n",
-                "          set -u\n          uv sync --locked\n",
+                _MERGE_YML,
+                '          set -u\n          answer=""\n',
+                '          set -u\n          uv sync --locked\n          answer=""\n',
             ),
             _plant(
                 "the pushed tree checked out",
-                _CI,
+                _MERGE_YML,
                 "      - name: did a green pull-request run already test this tree\n",
                 "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
                 "      - name: did a green pull-request run already test this tree\n",
             ),
             _plant(
                 "a write grant",
-                _CI,
+                _MERGE_YML,
                 "      actions: read         # the pull request's runs and their first attempts\n",
                 "      actions: write\n",
             ),
         ),
+    ),
+    # The superseded proof on a push to main: the old ci.yml `test`/`test-macos-gate` gates'
+    # plants, each on the step that replaced them.
+    _toolchain_row(
+        "a-push-to-mains-superseded-proof-is-the-previous-commits",
+        superseded_proof_violations,
+        (
+            _plant(
+                "the proof read at the pushed commit",
+                _MERGE_YML,
+                "contents/tools/ci/superseded.py?ref=${BEFORE}",
+                "contents/tools/ci/superseded.py?ref=${GITHUB_SHA}",
+                expect="does not fetch the previous main commit's copy of superseded.py",
+            ),
+            _plant(
+                "the proof read at main's tip, which on a push is the pushed commit",
+                _MERGE_YML,
+                "contents/tools/ci/superseded.py?ref=${BEFORE}",
+                "contents/tools/ci/superseded.py?ref=main",
+                expect="does not fetch the previous main commit's copy of superseded.py",
+            ),
+            _plant_in_job(
+                "the proof binds BEFORE to the pushed commit",
+                _MERGE_YML,
+                "results",
+                "          BEFORE: ${{ github.event.before }}\n",
+                "          BEFORE: ${{ github.sha }}\n",
+                expect="does not fetch the previous main commit's copy of superseded.py",
+            ),
+            _plant(
+                "the checked-out superseded.py",
+                _MERGE_YML,
+                'python3 -I "$check" --workflow merge.yml --job',
+                "python3 -I tools/ci/superseded.py --workflow merge.yml --job",
+                expect="runs the checked-out copy of superseded.py",
+            ),
+            _plant(
+                "the fetched superseded.py run without -I",
+                _MERGE_YML,
+                'python3 -I "$check" --workflow merge.yml --job',
+                'python3 "$check" --workflow merge.yml --job',
+                expect="does not run the fetched superseded.py under python3 -I",
+            ),
+            _plant(
+                "the proof made on any event",
+                _MERGE_YML,
+                "        if: " + _ON_A_PUSH_TO_MAIN + "\n",
+                "        if: ${{ !cancelled() }}\n",
+                expect="not on a push to main alone",
+            ),
+            _plant(
+                "the proof made on a pull request too",
+                _MERGE_YML,
+                "        if: " + _ON_A_PUSH_TO_MAIN + "\n",
+                "        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}\n",
+                expect="not on a push to main alone",
+            ),
+            _plant(
+                "no proof over the macOS suite",
+                _MERGE_YML,
+                "for job in python-suite python-suite-macos; do",
+                "for job in python-suite; do",
+                expect="proves ['python-suite'], not the suite jobs",
+            ),
+            _plant(
+                "a proof over a job outside the shared group",
+                _MERGE_YML,
+                "for job in python-suite python-suite-macos; do",
+                "for job in python-suite python-suite-macos e2e; do",
+                expect="proves ['e2e', 'python-suite', 'python-suite-macos'], not",
+            ),
+            _plant(
+                "the proof reads another group",
+                _MERGE_YML,
+                "--group-prefix merge-suite- --out",
+                "--group-prefix merge- --out",
+                expect="reads the groups ['merge-'], not the shared group ['merge-suite-']",
+            ),
+            _plant(
+                "the proof asks about another workflow's runs",
+                _MERGE_YML,
+                'python3 -I "$check" --workflow merge.yml --job',
+                'python3 -I "$check" --workflow pr.yml --job',
+                expect="does not ask superseded.py about merge.yml's runs",
+            ),
+            _plant_in_job(
+                "the proof given no token",
+                _MERGE_YML,
+                "results",
+                "          GH_TOKEN: ${{ github.token }}\n          BEFORE:",
+                "          BEFORE:",
+                expect="proof is given no token of the run's",
+            ),
+            _plant(
+                "the proof written where the verdict does not read it",
+                _MERGE_YML,
+                '--out "$RUNNER_TEMP/superseded.json"',
+                '--out "$RUNNER_TEMP/proof.json"',
+                expect="verdict does not read the file the proof writes",
+            ),
+            _plant(
+                "the verdict not given the proof",
+                _MERGE_YML,
+                '            ${proof:+--superseded "$proof"} \\\n',
+                "",
+                expect="verdict is not given the proof (--superseded)",
+            ),
+            _plant_in_job(
+                "a second step that proves superseded shards",
+                _MERGE_YML,
+                "results",
+                "      - name: the verdict over the plan's keys and the run's records\n",
+                "      - name: a second proof\n"
+                '        run: python3 -I "$RUNNER_TEMP/superseded.py" --workflow merge.yml\n'
+                "      - name: the verdict over the plan's keys and the run's records\n",
+                expect="proves superseded shards in 2 steps, not one",
+            ),
+            _plant(
+                "results without the annotations' read",
+                _MERGE_YML,
+                "      checks: read     # a cancelled shard's annotations (superseded.py)\n",
+                "",
+                expect="grants checks: None, not read",
+            ),
+            _plant(
+                "results without the runs' read",
+                _MERGE_YML,
+                "      actions: read    # this run's jobs and main's later push runs"
+                " (superseded.py)\n",
+                "",
+                expect="grants actions: None, not read",
+            ),
+        ),
+        scaffold=_merge_alone,
     ),
     _toolchain_row(
         "no-macos-14-and-no-coverage-on-a-push",
         push_breadth_violations,
         (
             _plant(
-                "a macos-14 leg in ci.yml",
-                _CI,
-                "    runs-on: macos-26\n",
-                "    runs-on: macos-14\n",
-            ),
-            _plant(
                 "a macos-14 leg in breadth.yml", _BREADTH, "runs-on: macos-26", "runs-on: macos-14"
             ),
             _plant(
-                "--cov in ci.yml",
-                _CI,
-                _MACOS_RUN,
-                "uv run pytest --cov=personalclaw -n 2 -q",
+                "a macos-14 entry in the catalogue",
+                catalogue.CATALOGUE,
+                'platform = "macos-26"\npython = "3.13.16"\ntimeout_min = 50\n',
+                'platform = "macos-14"\npython = "3.13.16"\ntimeout_min = 50\n',
+                expect="the catalogue's python-suite-macos runs on macos-14",
             ),
             _plant(
                 "breadth's coverage on a branch push",
@@ -4644,79 +4691,98 @@ ROWS: tuple[Row, ...] = (
                 '    tags: ["rehearsal-v*"]\n    branches: ["**"]\n',
             ),
             _plant(
-                "--cov on a gate shard",
-                _CI,
-                "uv run pytest -n auto --dist worksteal -q tests --shard-list",
-                "uv run pytest -n auto --dist worksteal --cov=personalclaw -q tests --shard-list",
+                "--cov in a merge-tier entry",
+                catalogue.CATALOGUE,
+                _SUITE_PYTEST,
+                _SUITE_PYTEST.replace('"-q",', '"--cov=personalclaw", "-q",'),
+                expect="python-suite measures coverage in the merge tier",
             ),
             _plant(
                 "--cov personalclaw, the spaced form",
-                _CI,
-                "uv run pytest -n auto --dist worksteal -q tests --shard-list",
-                "uv run pytest -n auto --dist worksteal --cov personalclaw -q tests --shard-list",
+                catalogue.CATALOGUE,
+                _SUITE_PYTEST,
+                _SUITE_PYTEST.replace('"-q",', '"--cov", "personalclaw", "-q",'),
+                expect="python-suite measures coverage in the merge tier",
+            ),
+            _plant(
+                "a second pytest step in a change-tier entry, with --cov",
+                catalogue.CATALOGUE,
+                '"--junitxml=reports/junit-lint-installer.xml"],',
+                '"--junitxml=reports/junit-lint-installer.xml", "--cov=personalclaw"],',
+                expect="static measures coverage in the change and merge tier",
+            ),
+            _plant(
+                "an entry's root venv python -m pytest with --cov",
+                catalogue.CATALOGUE,
+                '  { argv = ["uv", "run", "pytest", "tests/test_npm_advisory_floors.py",',
+                '  { argv = [".venv/bin/python", "-m", "pytest", "--cov",'
+                ' "tests/test_npm_advisory_floors.py",',
+                expect="rails-checks measures coverage in the change and merge tier",
+            ),
+            Control(
+                "a pull request workflow that measures coverage",
+                lambda root: _write(
+                    root,
+                    f"{_WORKFLOWS}/covered.yml",
+                    "name: Covered\non:\n  pull_request:\npermissions: {}\njobs:\n  cov:\n"
+                    "    runs-on: ubuntu-24.04\n    steps:\n"
+                    "      - run: uv run pytest --cov=personalclaw -n 2 -q\n",
+                ),
+                expect="covered.yml:cov measures coverage on a push or pull request",
             ),
             _plant(
                 "runs-on: [macos-14]",
-                _CI,
+                _BREADTH,
                 "    runs-on: macos-26\n",
                 "    runs-on: [macos-14]\n",
             ),
             _plant(
                 "runs-on: macos-14-xlarge",
-                _CI,
+                _BREADTH,
                 "    runs-on: macos-26\n",
                 "    runs-on: macos-14-xlarge\n",
             ),
-            _plant("runs-on: macOS-14", _CI, "    runs-on: macos-26\n", "    runs-on: macOS-14\n"),
+            _plant(
+                "runs-on: macOS-14", _BREADTH, "    runs-on: macos-26\n", "    runs-on: macOS-14\n"
+            ),
             _plant(
                 "runs-on as a {group, labels} mapping",
-                _CI,
+                _BREADTH,
                 "    runs-on: macos-26\n",
                 "    runs-on:\n      group: g\n      labels: [macos-14]\n",
             ),
             _plant(
                 "macos-14 as an expression's literal",
-                _CI,
+                _BREADTH,
                 "    runs-on: macos-26\n",
                 "    runs-on: ${{ github.event_name == 'push' && 'macos-14' || 'macos-26' }}\n",
             ),
             _plant(
                 "macos-14 through a matrix key",
-                _CI,
-                "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
-                "      fail-fast: false\n      matrix:\n",
-                "    runs-on: ${{ matrix.runner }}\n    timeout-minutes: 50\n    strategy:\n"
-                "      fail-fast: false\n      matrix:\n        runner: [macos-14]\n",
+                _BREADTH,
+                _BREADTH_MACOS_HEAD,
+                _BREADTH_MACOS_HEAD.replace("runs-on: macos-26", "runs-on: ${{ matrix.runner }}")
+                + "        runner: [macos-14]\n",
             ),
             _plant(
                 "macos-14 nested in a matrix object",
-                _CI,
-                "    runs-on: macos-26\n    timeout-minutes: 50\n    strategy:\n"
-                "      fail-fast: false\n      matrix:\n",
-                "    runs-on: ${{ matrix.platform.os }}\n    timeout-minutes: 50\n    strategy:\n"
-                "      fail-fast: false\n      matrix:\n        platform: [{os: macos-14}]\n",
-            ),
-            _plant(
-                "the root venv's python -m pytest with --cov",
-                _CI,
-                "uv run pytest tests/test_npm_advisory_floors.py ",
-                ".venv/bin/python -m pytest tests/test_npm_advisory_floors.py --cov ",
-            ),
-            _plant(
-                "a second pytest in a step, with --cov",
-                _CI,
-                "          uv run pytest tests/test_website_installer.py"
-                " --junitxml=reports/junit-lint-installer.xml\n",
-                "          uv run pytest tests/test_website_installer.py"
-                " --junitxml=reports/junit-lint-installer.xml\n"
-                "          uv run pytest tests/test_website_installer.py --cov=personalclaw\n",
+                _BREADTH,
+                _BREADTH_MACOS_HEAD,
+                _BREADTH_MACOS_HEAD.replace(
+                    "runs-on: macos-26", "runs-on: ${{ matrix.platform.os }}"
+                )
+                + "        platform: [{os: macos-14}]\n",
             ),
             Control(
                 "a pytest that names no --cov passes: the addopts measure nothing",
                 _nothing,
                 fails=False,
             ),
-            Control("coverage in breadth.yml passes", _nothing, fails=False),
+            Control(
+                "coverage in breadth.yml, and in the breadth tier's entries, passes",
+                _nothing,
+                fails=False,
+            ),
         ),
     ),
     _toolchain_row(
@@ -4774,13 +4840,12 @@ ROWS: tuple[Row, ...] = (
                 "timeout_min = 50\nworkers = 2\nshards = 5\n",
                 expect="the merge tier's run holds 5 macOS runners",
             ),
-            _plant_in_job(
-                "ci.yml's test-macos in five shards",
-                ".github/workflows/ci.yml",
-                "test-macos",
-                "        shard: [1, 2, 3]\n",
-                "        shard: [1, 2, 3, 4, 5]\n",
-                expect="ci.yml's pull request run holds 5 macOS runners",
+            _plant(
+                "a second macOS entry in the merge tier, the browser legs' two shards",
+                catalogue.CATALOGUE,
+                'id = "e2e-shard"\ntiers = ["merge"]\n',
+                'id = "e2e-shard"\ntiers = ["merge"]\nplatform = "macos-26"\n',
+                expect="the merge tier's run holds 5 macOS runners",
             ),
             _plant(
                 "breadth's macos leg uncapped: six shards at once",
@@ -5192,24 +5257,6 @@ ROWS: tuple[Row, ...] = (
         ),
     ),
     _toolchain_row(
-        "docker-single-container-checks-the-tree",
-        docker_tree_check_violations,
-        (
-            _plant(
-                "a build job without needs: tree-check",
-                _DOCKER,
-                "    needs: [tree-check]\n" f"    {_TESTED_IF}\n",
-                "",
-            ),
-            _plant(
-                "a main run that can be cancelled",
-                _DOCKER,
-                "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
-                "  cancel-in-progress: true\n",
-            ),
-        ),
-    ),
-    _toolchain_row(
         "breadth-shards-record-what-they-ran",
         breadth_shards_violations,
         (
@@ -5525,7 +5572,7 @@ ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "a job in a cancelling group without one",
-                _CI,
+                _MERGE_YML,
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
                 "    runs-on: ubuntu-24.04\n",
             ),
@@ -5543,31 +5590,31 @@ ROWS: tuple[Row, ...] = (
             ),
             _plant(
                 "a job whose cap is zero",
-                _CI,
+                _MERGE_YML,
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 0\n",
             ),
             _plant(
                 "a job whose cap is negative",
-                _CI,
+                _MERGE_YML,
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: -5\n",
             ),
             _plant(
                 "a job whose cap is a fraction",
-                _CI,
+                _MERGE_YML,
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 5.5\n",
             ),
             _plant(
                 "a job whose cap is a string",
-                _CI,
+                _MERGE_YML,
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: '5'\n",
             ),
             _plant(
                 "a job whose cap is a boolean",
-                _CI,
+                _MERGE_YML,
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n",
                 "    runs-on: ubuntu-24.04\n    timeout-minutes: true\n",
             ),
@@ -5575,7 +5622,7 @@ ROWS: tuple[Row, ...] = (
                 "a job that calls a reusable workflow, without one, passes",
                 _plant(
                     "a reusable call",
-                    _CI,
+                    _MERGE_YML,
                     "jobs:\n",
                     "jobs:\n  called:\n    uses: ./.github/workflows/reusable.yml\n",
                 ).plant,
@@ -5619,37 +5666,68 @@ ROWS: tuple[Row, ...] = (
         suite_shard_violations,
         (
             _plant(
-                "a suite shard with no shard list",
-                _CI,
-                '-q tests --shard-list "$RUNNER_TEMP/shard.txt"'
-                " --junitxml=reports/junit-test-shard-",
-                "-q --junitxml=reports/junit-test-shard-",
+                "a suite entry with no shard list",
+                catalogue.CATALOGUE,
+                _SUITE_PYTEST,
+                _SUITE_PYTEST.replace(' "--shard-list", "{runner_temp}/shard.txt",', ""),
+                expect="the catalogue's python-suite runs the suite without its shard's list",
             ),
-            _plant(
-                "a shard listing another N",
-                _CI,
-                "--leg test-shard --shard ${{ matrix.shard }}/3",
-                "--leg test-shard --shard ${{ matrix.shard }}/2",
+            _plants(
+                "a suite entry listing another N",
+                catalogue.CATALOGUE,
+                (
+                    (
+                        '"--leg", "test-shard", "--shard", "{shard}/3"',
+                        '"--leg", "test-shard", "--shard", "{shard}/2"',
+                    ),
+                ),
+                expect="python-suite does not list its own shard of 3 before pytest",
             ),
             _plant(
                 "the plan naming a leg in another N",
-                _CI,
-                "--leg test-shard:ci.yml:junit-test-shard-:3",
-                "--leg test-shard:ci.yml:junit-test-shard-:2",
+                _MERGE_YML,
+                "--leg test-shard:main-push:junit-test-shard-:3",
+                "--leg test-shard:main-push:junit-test-shard-:2",
+                expect="merge.yml's plan names test-shard ('junit-test-shard-', 2), not in 3",
+            ),
+            _plant(
+                "the plan leaving a suite entry's leg out",
+                _MERGE_YML,
+                "          --leg test-macos:main-push:junit-test-macos-:3\n",
+                "",
+                expect="merge.yml's plan names test-macos None",
+            ),
+            _plant(
+                "a report prefix the entry's reports do not carry",
+                _MERGE_YML,
+                "--leg test-shard:main-push:junit-test-shard-:3",
+                "--leg test-shard:main-push:junit-test-shards-:3",
+                expect="its reports are not named junit-test-shards-*",
+            ),
+            _plant(
+                "a suite entry that does not read the plan",
+                catalogue.CATALOGUE,
+                'external_inputs = ["shard-history"]\ntoolchain = ["uv-sync", "tmux"]\n'
+                'cache = ["uv"]\nsecurity = "security"\nplatform = "macos-26"',
+                'external_inputs = []\ntoolchain = ["uv-sync", "tmux"]\ncache = ["uv"]\n'
+                'security = "security"\nplatform = "macos-26"',
+                expect="python-suite-macos does not read the run's shard plan",
+            ),
+            _plant(
+                "a suite entry back on pytest-split",
+                catalogue.CATALOGUE,
+                _SUITE_PYTEST,
+                _SUITE_PYTEST.replace('"-q",', '"-q", "--splits", "3",'),
+                expect="python-suite still splits with pytest-split",
             ),
             _plant(
                 "a plan nobody checks",
-                _CI,
+                _MERGE_YML,
                 "      - name: every collectable file is in exactly one shard of each leg\n"
                 "        run: python3 -m tools.ci shards check"
                 ' --plan "$RUNNER_TEMP/shard-plan/plan.json"\n',
                 "",
-            ),
-            _plant(
-                "a shard that does not wait on the plan",
-                _CI,
-                "    needs: [tree-check, shard-plan]\n",
-                "    needs: [tree-check]\n",
+                expect="merge.yml:shard-plan uploads a plan it never checked",
             ),
             _plant(
                 "a breadth leg the plan leaves out",
@@ -5677,11 +5755,18 @@ ROWS: tuple[Row, ...] = (
         "every pytest step that runs the suite sets its worker count",
         suite_workers_violations,
         (
-            _plant(
-                "a suite shard with no -n",
-                _CI,
-                "uv run pytest -n auto --dist worksteal -q tests --shard-list",
-                "uv run pytest -q tests --shard-list",
+            # The loader refuses an entry whose workers no step passes, so the plant drops both.
+            _plants(
+                "a suite entry with no -n",
+                catalogue.CATALOGUE,
+                (
+                    (_SUITE_PYTEST, _SUITE_PYTEST.replace('"-n", "auto", ', "")),
+                    (
+                        'timeout_min = 55\nworkers = "auto"\nshards = 3\n',
+                        "timeout_min = 55\nshards = 3\n",
+                    ),
+                ),
+                expect="the catalogue's python-suite runs the suite with no -n",
             ),
             _plant(
                 "a breadth shard with no -n",
@@ -5693,39 +5778,47 @@ ROWS: tuple[Row, ...] = (
                 " --junitxml=reports/junit-ubuntu.xml",
             ),
             _plant(
-                "a pytest that names no path, so collects testpaths",
-                _CI,
-                "uv run pytest tests/test_npm_advisory_floors.py ",
-                "uv run pytest ",
+                "an entry's pytest that names no path, so collects testpaths",
+                catalogue.CATALOGUE,
+                '"pytest", "tests/test_npm_advisory_floors.py",',
+                '"pytest",',
+                expect="runs the suite with no -n",
             ),
             _plant(
-                "a pytest that names tests/ itself",
-                _CI,
-                "uv run pytest tests/test_npm_advisory_floors.py ",
-                "uv run pytest tests/ ",
+                "an entry's pytest that names tests/ itself",
+                catalogue.CATALOGUE,
+                '"pytest", "tests/test_npm_advisory_floors.py",',
+                '"pytest", "tests/",',
+                expect="runs the suite with no -n",
             ),
             _plant(
-                "the root venv's python -m pytest of the suite",
-                _CI,
-                "uv run pytest tests/test_npm_advisory_floors.py ",
-                ".venv/bin/python -m pytest ",
+                "an entry's root venv python -m pytest of the suite",
+                catalogue.CATALOGUE,
+                '"uv", "run", "pytest", "tests/test_npm_advisory_floors.py",',
+                '".venv/bin/python", "-m", "pytest",',
+                expect="runs the suite with no -n",
             ),
-            Control(
-                "a suite shard with -n4 passes",
-                _replace(
-                    "ci.yml",
-                    "uv run pytest -n auto --dist worksteal -q tests --shard-list",
-                    "uv run pytest -n4 --dist worksteal -q tests --shard-list",
+            _plants(
+                "a suite entry with -n4 passes",
+                catalogue.CATALOGUE,
+                (
+                    (_SUITE_PYTEST, _SUITE_PYTEST.replace('"-n", "auto",', '"-n4",')),
+                    (
+                        'timeout_min = 55\nworkers = "auto"\nshards = 3\n',
+                        "timeout_min = 55\nworkers = 4\nshards = 3\n",
+                    ),
                 ),
                 fails=False,
             ),
-            Control(
-                "a suite shard with --numprocesses=4 passes",
-                _replace(
-                    "ci.yml",
-                    "uv run pytest -n auto --dist worksteal -q tests --shard-list",
-                    "uv run pytest --numprocesses=4 --dist worksteal -q tests --shard-list",
-                ),
+            _plant(
+                "a breadth shard with --numprocesses=4 passes",
+                _BREADTH,
+                "uv run pytest -n auto --dist worksteal -q tests"
+                ' --shard-list "$RUNNER_TEMP/shard.txt"'
+                " --junitxml=reports/junit-ubuntu.xml",
+                "uv run pytest --numprocesses=4 --dist worksteal -q tests"
+                ' --shard-list "$RUNNER_TEMP/shard.txt"'
+                " --junitxml=reports/junit-ubuntu.xml",
                 fails=False,
             ),
             Control("steps that name their own files, with no -n, pass", _nothing, fails=False),
@@ -5736,16 +5829,18 @@ ROWS: tuple[Row, ...] = (
         no_cov_violations,
         (
             _plant(
-                "--no-cov on a single-file step",
-                _CI,
-                "tests/test_npm_advisory_floors.py --junitxml",
-                "tests/test_npm_advisory_floors.py --no-cov --junitxml",
+                "--no-cov on an entry's single-file step",
+                catalogue.CATALOGUE,
+                '"tests/test_npm_advisory_floors.py",',
+                '"tests/test_npm_advisory_floors.py", "--no-cov",',
+                expect="the catalogue's rails-checks passes --no-cov",
             ),
             _plant(
-                "--no-cov on a suite shard",
-                _CI,
-                "uv run pytest -n auto --dist worksteal -q tests --shard-list",
-                "uv run pytest -n auto --dist worksteal --no-cov -q tests --shard-list",
+                "--no-cov on a suite entry",
+                catalogue.CATALOGUE,
+                _SUITE_PYTEST,
+                _SUITE_PYTEST.replace('"-q",', '"--no-cov", "-q",'),
+                expect="the catalogue's python-suite passes --no-cov",
             ),
             _plant(
                 "--no-cov inside a folded multi-line run",
@@ -5807,6 +5902,8 @@ _MERGE_SHA = "merge0000"
 _EXPRESSION = re.compile(r"\$\{\{(.+?)\}\}", re.S)
 _OPERAND = re.compile(r"\s*(!)?\s*([A-Za-z_][\w.-]*)\s*(?:(==|!=)\s*'([^']*)')?\s*")
 _LITERAL = re.compile(r"\s*'([^']*)'\s*")
+#: Two quoted literals compared, as a matrix property read from its leg leaves the comparison.
+_LITERALS_COMPARED = re.compile(r"\s*'([^']*)'\s*(==|!=)\s*'([^']*)'\s*")
 
 
 def _pr_context(*, head_repo: str, action: str, merged: bool = False) -> dict[str, Any]:
@@ -5866,6 +5963,10 @@ def _operand(context: dict[str, Any], text: str) -> Any:
     literal = _LITERAL.fullmatch(text)
     if literal is not None:
         return literal.group(1)
+    compared = _LITERALS_COMPARED.fullmatch(text)
+    if compared is not None:
+        left, op, right = compared.groups()
+        return (left.lower() == right.lower()) is (op == "==")
     match = _OPERAND.fullmatch(text)
     if match is None:
         raise ValueError(f"an expression this row cannot evaluate: {text.strip()!r}")
@@ -6040,9 +6141,10 @@ def closed_pr_runs_violations(tree: Tree) -> list[str]:
     return list(dict.fromkeys(bad))
 
 
-_CANCEL_CI_GROUP = (
-    "      group: ci-${{ github.event.pull_request.head.repo.full_name || github.repository }}"
-    "-${{ github.head_ref }}\n"
+_CANCEL_MERGE_GROUP = "      group: merge-${{ github.event.pull_request.number }}\n"
+_CANCEL_NIX_GROUP = (
+    "      group: nix-${{ github.event.pull_request.head.repo.full_name"
+    " || github.repository }}-${{ github.head_ref }}\n"
 )
 _CANCEL_PINS_GROUP = (
     "      group: action-pins-refs/pull/${{ github.event.pull_request.number }}/merge\n"
@@ -6088,20 +6190,28 @@ CLOSED_PR_RUNS_ARE_CANCELLED = _toolchain_row(
             expect="no workflow-level concurrency group",
         ),
         _plant(
-            "ci.yml's own key copied, which a merged close evaluates to main's commit",
+            "a key read from the ref, which a merged close evaluates to main's",
             _CANCELLER_PATH,
-            _CANCEL_CI_GROUP,
-            "      group: ci-${{ github.ref == 'refs/heads/main' && github.sha"
-            " || github.event.pull_request.head.repo.full_name || github.repository }}"
-            "-${{ github.head_ref || github.ref_name }}\n",
+            _CANCEL_MERGE_GROUP,
+            "      group: merge-${{ github.ref == 'refs/heads/main' && github.sha"
+            " || github.event.pull_request.number }}\n",
             expect="once it is merged",
         ),
         _plant(
-            "ci.yml's own cancel-in-progress copied, which is false on a merged close",
+            "a cancel-in-progress read from the ref, which is false on a merged close",
             _CANCELLER_PATH,
             "      cancel-in-progress: true\n",
             "      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n",
-            expect="ci.yml: no",
+            expect="pr.yml: no",
+        ),
+        # A closed event is a pull_request event with its number, so the tier's own key and
+        # cancel-in-progress read on it as on the pull request's runs.
+        _plant(
+            "merge.yml's own key copied passes",
+            _CANCELLER_PATH,
+            _CANCEL_MERGE_GROUP,
+            "      group: merge-${{ github.event.pull_request.number || github.sha }}\n",
+            fails=False,
         ),
         _plant(
             "a job that does not cancel in progress",
@@ -6120,22 +6230,22 @@ CLOSED_PR_RUNS_ARE_CANCELLED = _toolchain_row(
         _plant(
             "a group without the head repository, so a fork's run is missed",
             _CANCELLER_PATH,
-            _CANCEL_CI_GROUP,
-            "      group: ci-${{ github.repository }}-${{ github.head_ref }}\n",
+            _CANCEL_NIX_GROUP,
+            "      group: nix-${{ github.repository }}-${{ github.head_ref }}\n",
             expect="from a fork",
         ),
         _plant(
             "a group that joins the merge's push to main",
             _CANCELLER_PATH,
             _CANCEL_PINS_GROUP,
-            "      group: ci-${{ github.sha }}-${{ github.ref_name }}\n",
+            "      group: merge-${{ github.sha }}\n",
             expect="cancel main's check",
         ),
         _plant(
             "an expression the row cannot evaluate",
             _CANCELLER_PATH,
-            _CANCEL_CI_GROUP,
-            "      group: ci-${{ format('{0}', github.head_ref) }}\n",
+            _CANCEL_MERGE_GROUP,
+            "      group: merge-${{ format('{0}', github.head_ref) }}\n",
             expect="cannot evaluate",
         ),
         _plant(
@@ -6427,11 +6537,8 @@ ROWS = (*ROWS, EVERY_RAIL_LIVES_IN_TESTS_RAILS)
 # ci.yml's rails job is a matrix with one leg per list in rails_census.LEGS: leg i runs pytest
 # over tests/rails with `--shard-list` naming LEGS[i-1]. `rails check` holds the lists to every
 # rail, each once; this row holds the legs to the lists, so no list runs on two legs and none on
-# no leg. fail-fast is off, so a red leg never cancels the other legs' runs and reports, and the
-# step that runs a leg's list has no `if:` of its own, so no leg skips it. The catalogue's rails
-# entry, the one a local run of the tier runs, renders the same list for each of its shards.
-
-_MATRIX_SHARD = re.compile(r"\$\{\{\s*matrix\.shard\s*\}\}")
+# no leg. The legs are the catalogue's rails entry's shards: the tier workflows run each shard the
+# plan gives as a matrix line of its own, fail-fast off, so a red leg never cancels the others.
 
 
 def _shard_lists(args: list[str]) -> list[str]:
@@ -6454,75 +6561,28 @@ def _runs_rails(words: list[str]) -> bool:
 
 
 def rails_legs_violations(root: Path) -> list[str]:
-    """Each list runs once, on its own leg: ci.yml's rails matrix is one list of shards, 1 to
-    len(LEGS), with fail-fast off; each leg runs pytest over tests/rails once, with no if: of
-    its own, and its ``--shard-list`` is its list; and the catalogue's rails entry has as many
-    shards, shard i rendering list i."""
+    """Each list runs once, on its own leg: the catalogue's rails entry has one shard per list,
+    and shard i runs pytest over tests/rails once, over list i. The tier workflows run each shard
+    of the entry the plan gives as a leg of its own (one matrix line per shard, fail-fast off,
+    which the tier rows hold), so the entry is the legs."""
     named = rails_census.LEGS
-    want = [str(n) for n in range(1, len(named) + 1)]
-    workflow = yaml.safe_load((root / _CI).read_text(encoding="utf-8")) or {}
-    job = (workflow.get("jobs") or {}).get(catalogue.MERGE_NEEDS_JOB)
-    if not isinstance(job, dict):
-        return [f"ci.yml has no {catalogue.MERGE_NEEDS_JOB} job"]
-    bad: list[str] = []
-    strategy = job.get("strategy") if isinstance(job.get("strategy"), dict) else {}
-    matrix = strategy.get("matrix")
-    legs: list[str] = []
-    if (
-        not isinstance(matrix, dict)
-        or set(matrix) != {"shard"}
-        or not isinstance(matrix["shard"], list)
-    ):
-        bad.append(f"ci.yml's rails matrix is not one list of shards: {matrix!r}")
-    else:
-        legs = [str(v) for v in matrix["shard"]]
-        if sorted(legs) != want:
-            bad.append(
-                f"ci.yml's rails legs are {legs}, and rails_census.LEGS makes them {want}:"
-                " one leg per list, each once"
-            )
-    if strategy.get("fail-fast") is not False:
-        bad.append(
-            "ci.yml's rails job does not set fail-fast: false, so a red leg cancels the other"
-            " legs' runs and their reports"
-        )
-    for leg in legs:
-        runs: list[tuple[dict[str, Any], list[str]]] = []
-        for step in job.get("steps") or []:
-            text = _MATRIX_SHARD.sub(lambda _m, leg=leg: leg, str(step.get("run", "")))
-            runs += [
-                (step, _shard_lists(_pytest_args(w))) for w in _commands(text) if _runs_rails(w)
-            ]
-        if len(runs) != 1:
-            bad.append(
-                f"leg {leg} of ci.yml's rails job runs pytest over tests/rails {len(runs)} times"
-            )
-            continue
-        step, lists = runs[0]
-        if leg in want and lists != [named[int(leg) - 1]]:
-            bad.append(
-                f"leg {leg} of ci.yml's rails job runs {lists or 'every rail'},"
-                f" and its list is {named[int(leg) - 1]}"
-            )
-        if "if" in step:
-            bad.append(
-                f"leg {leg} of ci.yml's rails job runs its list under if: {step['if']!r},"
-                " so a leg can skip it"
-            )
     try:
         entry = catalogue.read(root).job(catalogue.MERGE_NEEDS_JOB)
     except (OSError, KeyError, catalogue.CatalogueError) as exc:
-        return [*bad, f"{catalogue.CATALOGUE}'s rails entry cannot be read: {exc}"]
+        return [f"{catalogue.CATALOGUE}'s rails entry cannot be read: {exc}"]
+    bad: list[str] = []
     if entry.shards != len(named):
         bad.append(
             f"rails: shards is {entry.shards}, and rails_census.LEGS names {len(named)} lists"
         )
     for shard in range(1, entry.shards + 1):
+        runs = [step for step in entry.command if _runs_rails(list(step.argv))]
+        if len(runs) != 1:
+            bad.append(f"rails: shard {shard} runs pytest over tests/rails {len(runs)} times")
+            continue
         lists = [
             listed.replace("{shard}", str(shard))
-            for step in entry.command
-            if _runs_rails(list(step.argv))
-            for listed in _shard_lists(_pytest_args(list(step.argv)))
+            for listed in _shard_lists(_pytest_args(list(runs[0].argv)))
         ]
         if shard <= len(named) and lists != [named[shard - 1]]:
             bad.append(
@@ -6533,17 +6593,13 @@ def rails_legs_violations(root: Path) -> list[str]:
 
 
 def _rails_legs_scaffold(root: Path) -> None:
-    for rel in (_CI, catalogue.CATALOGUE):
-        _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
+    _write(root, catalogue.CATALOGUE, (REPO / catalogue.CATALOGUE).read_text(encoding="utf-8"))
 
 
-# Anchored on the rails job's own comment: the browser legs' matrix is the same three lines.
-_RAILS_LEGS = (
-    "      # One red leg does not cancel the others: every leg's report lands in one push.\n"
-    "      fail-fast: false\n      matrix:\n        shard: [1, 2, 3]\n"
+_RAILS_ENTRY_LIST = '"--shard-list", "tools/ci/rails-leg-{shard}.txt"'
+_RAILS_ENTRY_HEAD = (
+    '  { argv = ["uv", "run", "pytest", "-n", "4", "--dist", "worksteal", "-q", "tests/rails",'
 )
-_RAILS_LEG_STEP = "      - name: the rails, leg ${{ matrix.shard }} of 3 (tests/rails)\n"
-_RAILS_LEG_LIST = "--shard-list tools/ci/rails-leg-${{ matrix.shard }}.txt"
 
 EACH_RAILS_LIST_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
     name="each list of the rails runs once, on its own leg",
@@ -6551,82 +6607,33 @@ EACH_RAILS_LIST_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
     scaffold=_rails_legs_scaffold,
     controls=(
         _plant(
-            "a matrix that runs list 1 on two legs fails",
-            _CI,
-            _RAILS_LEGS,
-            _RAILS_LEGS.replace("[1, 2, 3]", "[1, 1, 3]"),
-            expect="ci.yml's rails legs are ['1', '1', '3']",
-        ),
-        _plant(
-            "a matrix with two legs, as the halves were, fails",
-            _CI,
-            _RAILS_LEGS,
-            _RAILS_LEGS.replace("[1, 2, 3]", "[1, 2]"),
-            expect="ci.yml's rails legs are ['1', '2']",
-        ),
-        _plant(
-            "a fourth leg fails",
-            _CI,
-            _RAILS_LEGS,
-            _RAILS_LEGS.replace("[1, 2, 3]", "[1, 2, 3, 4]"),
-            expect="ci.yml's rails legs are ['1', '2', '3', '4']",
-        ),
-        _plant(
-            "a matrix that adds a leg by include fails",
-            _CI,
-            _RAILS_LEGS,
-            _RAILS_LEGS + "        include:\n          - shard: 1\n",
-            expect="ci.yml's rails matrix is not one list of shards",
-        ),
-        _plant(
-            "a leg that reads list 1 whatever its shard fails",
-            _CI,
-            _RAILS_LEG_LIST,
-            "--shard-list tools/ci/rails-leg-1.txt",
-            expect="leg 3 of ci.yml's rails job runs ['tools/ci/rails-leg-1.txt']",
-        ),
-        _plant(
-            "a leg that reads the old half's list fails",
-            _CI,
-            _RAILS_LEG_LIST,
-            "--shard-list tools/ci/rails-half-${{ matrix.shard }}.txt",
-            expect="leg 2 of ci.yml's rails job runs ['tools/ci/rails-half-2.txt']",
-        ),
-        _plant(
-            "a leg that runs every rail fails",
-            _CI,
-            _RAILS_LEG_LIST + " ",
-            "",
-            expect="leg 1 of ci.yml's rails job runs every rail",
-        ),
-        _plant(
-            "fail-fast on fails",
-            _CI,
-            _RAILS_LEGS,
-            _RAILS_LEGS.replace("fail-fast: false", "fail-fast: true"),
-            expect="does not set fail-fast: false",
-        ),
-        _plant(
-            "the step that runs a leg's list skipped on one leg fails",
-            _CI,
-            _RAILS_LEG_STEP,
-            _RAILS_LEG_STEP + "        if: ${{ matrix.shard != 3 }}\n",
-            expect="leg 3 of ci.yml's rails job runs its list under if:",
-        ),
-        _plant(
-            "a second run of tests/rails on each leg fails",
-            _CI,
-            _RAILS_LEG_STEP,
-            "      - name: one rail again\n"
-            "        run: uv run pytest -q tests/rails/test_ci_contract.py\n" + _RAILS_LEG_STEP,
-            expect="leg 1 of ci.yml's rails job runs pytest over tests/rails 2 times",
-        ),
-        _plant(
             "the catalogue's shards reading list 1 fail",
             catalogue.CATALOGUE,
-            '"--shard-list", "tools/ci/rails-leg-{shard}.txt"',
+            _RAILS_ENTRY_LIST,
             '"--shard-list", "tools/ci/rails-leg-1.txt"',
             expect="rails: shard 2 of the catalogue's entry runs ['tools/ci/rails-leg-1.txt']",
+        ),
+        _plant(
+            "a shard that reads the old half's list fails",
+            catalogue.CATALOGUE,
+            _RAILS_ENTRY_LIST,
+            '"--shard-list", "tools/ci/rails-half-{shard}.txt"',
+            expect="rails: shard 2 of the catalogue's entry runs ['tools/ci/rails-half-2.txt']",
+        ),
+        _plant(
+            "a shard that runs every rail fails",
+            catalogue.CATALOGUE,
+            _RAILS_ENTRY_LIST + ", ",
+            "",
+            expect="rails: shard 1 of the catalogue's entry runs every rail",
+        ),
+        _plant(
+            "a second run of tests/rails on each shard fails",
+            catalogue.CATALOGUE,
+            _RAILS_ENTRY_HEAD,
+            '  { argv = ["uv", "run", "pytest", "-q", "tests/rails/test_ci_contract.py"] },\n'
+            + _RAILS_ENTRY_HEAD,
+            expect="rails: shard 1 runs pytest over tests/rails 2 times",
         ),
         _plant(
             "the catalogue's rails in two shards fail",
@@ -6636,17 +6643,10 @@ EACH_RAILS_LIST_RUNS_ONCE_ON_ITS_OWN_LEG = Row(
             expect="rails: shards is 2, and rails_census.LEGS names 3 lists",
         ),
         _plant(
-            "the legs listed in another order pass",
-            _CI,
-            _RAILS_LEGS,
-            _RAILS_LEGS.replace("[1, 2, 3]", "[3, 1, 2]"),
-            fails=False,
-        ),
-        _plant(
             "a list passed as --shard-list=FILE passes",
-            _CI,
-            _RAILS_LEG_LIST,
-            _RAILS_LEG_LIST.replace("--shard-list ", "--shard-list="),
+            catalogue.CATALOGUE,
+            _RAILS_ENTRY_LIST,
+            '"--shard-list=tools/ci/rails-leg-{shard}.txt"',
             fails=False,
         ),
     ),
@@ -6766,132 +6766,26 @@ ROWS = (*ROWS, EVERY_RAIL_IS_IN_EXACTLY_ONE_LEG)
 # A site baseline (tests/site_baseline.py) read against the gate's base commit admits a line the
 # base lacks only with `added` and a reason, and writes each such line to the job summary. With no
 # base it compares the file with the working tree alone, which passes: a rails job that lost its
-# base would let a branch grow its own list unseen. So the step that runs tests/rails reads
-# BASE_SHA from the job's `base` step, an earlier step that fetches the base as apps-contract's
-# does (the pull request's base, or on a push to main the commit it replaced), and the catalogue's
-# rails entry gives its step the same `{base}`. The base step is held to that fetch itself, not
-# only to apps-contract's copy, so one edit to both cannot make the head the base.
-
-_BASE_STEP = "base"
-_BASE_OUTPUT = "${{ steps.base.outputs.ref }}"
-_BASE_SOURCE = "apps-contract"
-#: The base step's keys but its name: no if: or continue-on-error, which could leave its ref, and
-#: so BASE_SHA, empty, and an empty BASE_SHA compares with no base.
-_BASE_STEP_KEYS = frozenset({"id", "env", "run"})
-#: What the base step reads: the pull request's base, and on a push the commit it replaced.
-_BASE_STEP_ENV = {
-    "BASE_SHA": "${{ github.event.pull_request.base.sha }}",
-    "BEFORE": "${{ github.event.before }}",
-}
-#: The base step's run: block, compared by its commands' words (a comment may change): the pull
-#: request's base; on a push to main the commit it replaced; else main. Each arm fetches the
-#: commit it hands on, and a fetch that fails fails the step.
-_BASE_STEP_RUN = r"""
-if [ -n "${BASE_SHA:-}" ]; then
-  git fetch --no-tags --depth=1 origin "$BASE_SHA"
-  echo "ref=$BASE_SHA" >> "$GITHUB_OUTPUT"
-elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
-     && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-  echo "base: the previous main commit $BEFORE"
-  git fetch --no-tags --depth=1 origin "$BEFORE"
-  echo "ref=$BEFORE" >> "$GITHUB_OUTPUT"
-else
-  git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
-  echo "ref=origin/main" >> "$GITHUB_OUTPUT"
-fi
-"""
-
-
-def _step_with_id(steps: list[dict[str, Any]], step_id: str) -> tuple[int, dict[str, Any]] | None:
-    return next(((n, step) for n, step in enumerate(steps) if step.get("id") == step_id), None)
-
-
-def _dict_steps(job: object) -> list[dict[str, Any]]:
-    steps = job.get("steps") if isinstance(job, dict) else None
-    return [step for step in steps or [] if isinstance(step, dict)]
-
-
-def _without_name(step: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in step.items() if key != "name"}
-
-
-def _command_words(run: object) -> list[list[str]]:
-    return [words for words in _commands(str(run or "")) if words]
-
-
-def _base_step_violations(step: dict[str, Any]) -> list[str]:
-    """What makes the rails job's base step other than the gate's base fetch."""
-    where = f"ci.yml's rails job's {_BASE_STEP!r} step"
-    bad: list[str] = []
-    if set(step) - {"name"} != _BASE_STEP_KEYS:
-        bad.append(
-            f"{where} has the keys {sorted(set(step) - {'name'})}, not {sorted(_BASE_STEP_KEYS)}:"
-            " an if: or continue-on-error could leave BASE_SHA empty, which compares with no base"
-        )
-    if step.get("env") != _BASE_STEP_ENV:
-        bad.append(
-            f"{where} sets {step.get('env')!r}, not {_BASE_STEP_ENV!r}: its base may be the head"
-            " or another commit than the pull request's base"
-        )
-    if _command_words(step.get("run")) != _command_words(_BASE_STEP_RUN):
-        bad.append(
-            f"{where} runs another block than the gate's base fetch: it may hand on another"
-            " commit than the one it fetched, or fail without failing the step"
-        )
-    return bad
+# base would let a branch grow its own list unseen. So the catalogue's rails entry gives the step
+# that runs tests/rails `BASE_SHA = "{base}"`, which run-job renders as the gate's base: a pull
+# request's base, or on a push to main the commit it replaced (tools/ci/jobs.py, held by
+# tests/test_ci_jobs.py), the base apps-contract's `--base-ref {base}` reads too.
 
 
 def rails_base_violations(root: Path) -> list[str]:
-    """ci.yml's rails job has a ``base`` step that is the gate's base fetch (:data:`_BASE_STEP_ENV`
-    and :data:`_BASE_STEP_RUN`, and nothing else but its name) and apps-contract's but for its
-    name, before the step that runs tests/rails, whose env takes ``BASE_SHA`` from that step's
-    ``ref``; and the catalogue's rails entry sets ``BASE_SHA`` to ``{base}`` on the step that runs
-    tests/rails."""
-    workflow = yaml.safe_load((root / _CI).read_text(encoding="utf-8")) or {}
-    jobs = workflow.get("jobs") or {}
-    if not isinstance(jobs.get(catalogue.MERGE_NEEDS_JOB), dict):
-        return [f"ci.yml has no {catalogue.MERGE_NEEDS_JOB} job"]
-    bad: list[str] = []
-    steps = _dict_steps(jobs[catalogue.MERGE_NEEDS_JOB])
-    found = _step_with_id(steps, _BASE_STEP)
-    wanted = _step_with_id(_dict_steps(jobs.get(_BASE_SOURCE)), _BASE_STEP)
-    if found is None:
-        bad.append(
-            f"ci.yml's rails job has no step with id {_BASE_STEP!r}, so no base commit is"
-            " fetched and BASE_SHA names none"
-        )
-    else:
-        bad += _base_step_violations(found[1])
-        if wanted is None:
-            bad.append(f"ci.yml's {_BASE_SOURCE} job has no step with id {_BASE_STEP!r} to match")
-        elif _without_name(found[1]) != _without_name(wanted[1]):
-            bad.append(
-                f"ci.yml's rails job's {_BASE_STEP!r} step is not {_BASE_SOURCE}'s, so it may"
-                " fetch or name another commit than the gate's base"
-            )
+    """The catalogue's rails entry sets ``BASE_SHA`` to ``{base}`` on each step that runs
+    tests/rails, and has one."""
     variable = site_baseline.BASE_VARIABLE
-    rails_at = [
-        n
-        for n, step in enumerate(steps)
-        if any(_runs_rails(words) for words in _commands(str(step.get("run", ""))))
-    ]
-    if not rails_at:
-        bad.append("ci.yml's rails job has no step that runs tests/rails")
-    for n in rails_at:
-        name, value = steps[n].get("name"), (steps[n].get("env") or {}).get(variable)
-        if value != _BASE_OUTPUT:
-            bad.append(
-                f"ci.yml's rails step {name!r} takes {variable} from {value!r}, not"
-                f" {_BASE_OUTPUT}: its site baselines are compared with no base, or another"
-            )
-        elif found is not None and found[0] > n:
-            bad.append(f"ci.yml's rails job fetches its base after the step {name!r}")
     try:
         entry = catalogue.read(root).job(catalogue.MERGE_NEEDS_JOB)
     except (OSError, KeyError, catalogue.CatalogueError) as exc:
-        return [*bad, f"{catalogue.CATALOGUE}'s rails entry cannot be read: {exc}"]
-    for n, step in enumerate(entry.command, 1):
-        if _runs_rails(list(step.argv)) and step.env.get(variable) != "{base}":
+        return [f"{catalogue.CATALOGUE}'s rails entry cannot be read: {exc}"]
+    bad: list[str] = []
+    rails = [(n, s) for n, s in enumerate(entry.command, 1) if _runs_rails(list(s.argv))]
+    if not rails:
+        bad.append("rails: no command step runs tests/rails")
+    for n, step in rails:
+        if step.env.get(variable) != "{base}":
             bad.append(
                 f"rails: command step {n} runs tests/rails with {variable}="
                 f"{step.env.get(variable)!r}, not {{base}}"
@@ -6912,50 +6806,8 @@ def _edits(*edits: tuple[str, str, str]) -> Callable[[Path], None]:
     return plant
 
 
-_RAILS_BASE_ENV = "        env:\n          BASE_SHA: ${{ steps.base.outputs.ref }}\n"
 _RAILS_JUNIT_TOML = '"--junitxml=reports/junit-rails-{shard}.xml"]'
 _RAILS_BASE_TOML = _RAILS_JUNIT_TOML + ', env = { BASE_SHA = "{base}" } },'
-#: The rails job's base step, by the name only it has, and its first lines.
-_RAILS_BASE_NAME = (
-    "      - name: fetch the base commit (each site baseline is compared with its copy there)\n"
-)
-_RAILS_BASE_HEAD = (
-    _RAILS_BASE_NAME
-    + "        id: base\n        env:\n"
-    + "          BASE_SHA: ${{ github.event.pull_request.base.sha }}\n"
-)
-_RAILS_LATER_STEP = "      # Same argument as `test-shard`'s upload step, one artifact per leg.\n"
-#: apps-contract's base step, by the name only it has.
-_APPS_BASE_NAME = (
-    "      - name: fetch the base commit (its SDK snapshot and CHANGELOG are the baseline)\n"
-)
-
-
-def _in_both_base_steps(name: str, old: str, new: str, expect: str) -> Control:
-    """One edit made alike in the rails job's base step and in apps-contract's, so the two stay
-    equal: the first *old* inside each step."""
-
-    def plant(root: Path) -> None:
-        text = (root / _CI).read_text(encoding="utf-8")
-        for anchor in (_RAILS_BASE_NAME, _APPS_BASE_NAME):
-            start = text.index(anchor)
-            end = text.index("\n      - ", start)
-            at = text.find(old, start, end)
-            assert at >= 0, f"the plant {name!r} found no {old!r} in the step {anchor.strip()!r}"
-            text = text[:at] + new + text[at + len(old) :]
-        _write(root, _CI, text)
-
-    return Control(name, plant, True, expect)
-
-
-def _base_step_after_the_rails(root: Path) -> None:
-    """The rails job's base step, unchanged, moved to just after the step that runs a leg's list."""
-    text = (root / _CI).read_text(encoding="utf-8")
-    start = text.index(_RAILS_BASE_NAME)
-    end = text.index("\n      - ", start) + 1
-    block, text = text[start:end], text[:start] + text[end:]
-    assert _RAILS_LATER_STEP in text, f"no {_RAILS_LATER_STEP!r} in {_CI}"
-    _write(root, _CI, text.replace(_RAILS_LATER_STEP, block + _RAILS_LATER_STEP, 1))
 
 
 EACH_RAILS_LEG_COMPARES_WITH_THE_GATES_BASE = Row(
@@ -6963,79 +6815,12 @@ EACH_RAILS_LEG_COMPARES_WITH_THE_GATES_BASE = Row(
     check=rails_base_violations,
     scaffold=_rails_legs_scaffold,
     controls=(
-        Control(
-            "a rails step with no BASE_SHA fails, in ci.yml and the catalogue alike",
-            _edits(
-                (_CI, _RAILS_LEG_STEP + _RAILS_BASE_ENV, _RAILS_LEG_STEP),
-                (catalogue.CATALOGUE, _RAILS_BASE_TOML, _RAILS_JUNIT_TOML + " },"),
-            ),
-            expect="takes BASE_SHA from None",
-        ),
-        _plant(
-            "BASE_SHA taken from the commit under test fails",
-            _CI,
-            _RAILS_LEG_STEP + _RAILS_BASE_ENV,
-            _RAILS_LEG_STEP + _RAILS_BASE_ENV.replace("steps.base.outputs.ref", "github.sha"),
-            expect="takes BASE_SHA from '${{ github.sha }}'",
-        ),
-        _plant(
-            "a rails job with no base step fails",
-            _CI,
-            _RAILS_BASE_HEAD,
-            _RAILS_BASE_HEAD.replace("        id: base\n", ""),
-            expect="has no step with id 'base'",
-        ),
-        _plant(
-            "a base step that names the head as the base fails",
-            _CI,
-            _RAILS_BASE_HEAD,
-            _RAILS_BASE_HEAD.replace(".base.sha", ".head.sha"),
-            expect="'base' step is not apps-contract's",
-        ),
-        # The same edit in both jobs keeps the two steps equal: the base step is held to the
-        # gate's base itself, not only to apps-contract's.
-        _in_both_base_steps(
-            "a base step that names the head as the base, in both jobs alike, fails",
-            "BASE_SHA: ${{ github.event.pull_request.base.sha }}\n",
-            "BASE_SHA: ${{ github.event.pull_request.head.sha }}\n",
-            expect="rails job's 'base' step sets",
-        ),
-        _in_both_base_steps(
-            "a base step whose push base is the commit under test, in both jobs alike, fails",
-            "BEFORE: ${{ github.event.before }}\n",
-            "BEFORE: ${{ github.sha }}\n",
-            expect="rails job's 'base' step sets",
-        ),
-        _in_both_base_steps(
-            "a base step that hands on another ref, in both jobs alike, fails",
-            'echo "ref=$BASE_SHA"',
-            'echo "ref=$BEFORE"',
-            expect="rails job's 'base' step runs",
-        ),
-        _in_both_base_steps(
-            "a base step that may fail and leave BASE_SHA empty, in both jobs alike, fails",
-            "        id: base\n",
-            "        id: base\n        continue-on-error: true\n",
-            expect="rails job's 'base' step has the keys",
-        ),
-        _plant(
-            "a rails job with no step that runs tests/rails fails",
-            _CI,
-            "-q tests/rails --shard-list",
-            "-q tests/railz --shard-list",
-            expect="has no step that runs tests/rails",
-        ),
         _plant(
             "a catalogue rails step whose BASE_SHA is not {base} fails",
             catalogue.CATALOGUE,
             _RAILS_BASE_TOML,
             _RAILS_BASE_TOML.replace('"{base}"', '"main"'),
             expect="runs tests/rails with BASE_SHA='main', not {base}",
-        ),
-        Control(
-            "the base step moved after the step that runs tests/rails fails",
-            _base_step_after_the_rails,
-            expect="fetches its base after the step",
         ),
         _plant(
             "a catalogue rails step with no BASE_SHA fails",
@@ -7045,11 +6830,11 @@ EACH_RAILS_LEG_COMPARES_WITH_THE_GATES_BASE = Row(
             expect="rails: command step 1 runs tests/rails with BASE_SHA=None, not {base}",
         ),
         _plant(
-            "the base step renamed passes",
-            _CI,
-            _RAILS_BASE_NAME,
-            _RAILS_BASE_NAME.replace("its copy there", "the base's copy"),
-            fails=False,
+            "a rails entry with no step that runs tests/rails fails",
+            catalogue.CATALOGUE,
+            '"-q", "tests/rails", "--shard-list"',
+            '"-q", "tests/railz", "--shard-list"',
+            expect="rails: no command step runs tests/rails",
         ),
     ),
 )
@@ -7153,12 +6938,12 @@ PROVENANCE_RUNS_ON_EVERY_MAIN_PUSH = _toolchain_row(
             "permissions:\n  contents: write\n",
         ),
         _plant(
-            "the main-push check back in ci.yml",
-            ".github/workflows/ci.yml",
-            "  rails:\n",
-            "  provenance-again:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: python3 "
-            "scripts/check_commit_provenance.py --mode main --range x..y\n\n  rails:\n",
-            expect="ci.yml runs the main-push check",
+            "the main-push check in merge.yml too",
+            _MERGE_YML,
+            "\n  results:\n",
+            "\n  provenance-again:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: python3 "
+            "scripts/check_commit_provenance.py --mode main --range x..y\n\n  results:\n",
+            expect="merge.yml runs the main-push check",
         ),
         Control("the tree's provenance.yml passes", _nothing, fails=False),
     ),
@@ -7855,127 +7640,121 @@ ROWS = (*ROWS, SUITE_TEMP_STAYS_OUT_OF_THE_HOME)
 
 # ── Every catalogue command is the workflow's ────────────────────────────────────────────────
 #
-# tools/ci/catalogue.toml lists CI's validation jobs (#3909). Nothing runs from it yet, so each
-# entry must say what ci.yml already runs, and ci.yml must run nothing an entry does not say.
-# Every entry reads and validates and maps to the ci.yml jobs below. Each of its steps is one of
-# those jobs' run: lines, token for token, from the same working directory with the same step env,
-# once the runner's spellings of a value are read as the catalogue's placeholders; its steps come
-# in ci.yml's order, none twice. The other way, every run: line of a mapped job is one entry's
-# step, except the closed set of lines below that validate nothing. Its cap, runner, Python,
-# environment, reports and shard count are the jobs'; an entry whose steps run a security-marked
-# module is security posture; and its posture and tiers are the ones this table gives it. An
-# install is toolchain, never a step: each install an entry's toolchain names is one its ci.yml
-# jobs run. Every ci.yml job is an entry's or orchestration. The table is the one a reader of the
-# catalogue goes by.
+# tools/ci/catalogue.toml lists CI's validation jobs (#3909). The tier workflows run each change
+# and merge entry through run-job, so its steps, cap, runner, Python and env are the catalogue's
+# own (the tier rows below hold each stage job to its lines). breadth.yml still writes its jobs'
+# steps, so each breadth entry must say what breadth.yml runs, and breadth.yml must run nothing an
+# entry does not say. Each breadth entry maps to the breadth.yml jobs below. Each of its steps is
+# one of those jobs' run: lines, token for token, from the same working directory with the same
+# step env, once the runner's spellings of a value are read as the catalogue's placeholders; its
+# steps come in breadth.yml's order, none twice. The other way, every run: line of a mapped job is
+# one entry's step, except the closed set of lines below that validate nothing. Its cap, runner,
+# Python, environment and shard count are the jobs'. An install is toolchain, never a step: each
+# install a breadth entry's toolchain names is one its breadth.yml jobs run. Every breadth.yml job
+# is an entry's or orchestration. Of every entry, breadth's or not: its reports are the ones its
+# steps write, each script it runs stops at its first failing command, one whose steps run a
+# security-marked module is security posture, and its posture and tiers are the ones this table
+# gives it. The table is the one a reader of the catalogue goes by.
 
 
 @dataclass(frozen=True)
 class _Mapped:
-    """One entry as this row holds it: the ci.yml jobs it maps to, its tiers and its posture."""
+    """One entry as this row holds it: the breadth.yml jobs it maps to (none for an entry that runs
+    in the change and merge tiers alone), its tiers and its posture."""
 
-    ci_jobs: tuple[str, ...]
+    jobs: tuple[str, ...]
     tiers: tuple[str, ...]
     security: str = "ordinary"
     live: bool = False
     reuse: str = "never"
 
 
-#: A breadth.yml job is named ``breadth.yml:<id>`` in this table, and the single-container
-#: workflow's ``docker-single-container.yml:<id>``; a bare name is ci.yml's.
-_IN_BREADTH = "breadth.yml:"
-_IN_DOCKER = "docker-single-container.yml:"
+#: A breadth.yml job is named by its id in this table.
 #: Each workflow this row maps entries to, by the prefix its jobs carry in this table.
-_MAPPED_PREFIXES = ("", _IN_BREADTH, _IN_DOCKER)
+_MAPPED_PREFIXES = ("",)
 
 _CATALOGUE_JOBS: dict[str, _Mapped] = {
-    "static": _Mapped(("lint", "harness"), ("change", "merge")),
-    "rails": _Mapped(("rails",), ("change", "merge"), reuse="tree"),
-    "rails-checks": _Mapped(("rails-checks",), ("change", "merge"), reuse="tree"),
-    "python-suite": _Mapped(("test-shard",), ("merge",), security="security"),
-    "python-suite-macos": _Mapped(("test-macos",), ("merge",), security="security"),
-    "security": _Mapped(
-        ("security", "breadth.yml:security"), ("change", "merge", "breadth"), security="security"
-    ),
-    "security-macos": _Mapped(("breadth.yml:security-macos",), ("breadth",), security="security"),
-    "suite-ubuntu": _Mapped(("breadth.yml:ubuntu",), ("breadth",), security="security"),
-    "suite-macos": _Mapped(("breadth.yml:macos",), ("breadth",), security="security"),
-    "suite-arm": _Mapped(("breadth.yml:arm",), ("breadth",), security="security"),
-    "suite-canary": _Mapped(("breadth.yml:canary",), ("breadth",), security="security"),
+    "static": _Mapped((), ("change", "merge")),
+    "rails": _Mapped((), ("change", "merge"), reuse="tree"),
+    "rails-checks": _Mapped((), ("change", "merge"), reuse="tree"),
+    "python-suite": _Mapped((), ("merge",), security="security"),
+    "python-suite-macos": _Mapped((), ("merge",), security="security"),
+    "security": _Mapped(("security",), ("change", "merge", "breadth"), security="security"),
+    "security-macos": _Mapped(("security-macos",), ("breadth",), security="security"),
+    "suite-ubuntu": _Mapped(("ubuntu",), ("breadth",), security="security"),
+    "suite-macos": _Mapped(("macos",), ("breadth",), security="security"),
+    "suite-arm": _Mapped(("arm",), ("breadth",), security="security"),
+    "suite-canary": _Mapped(("canary",), ("breadth",), security="security"),
     # The suite in seeded orders: it runs the security-marked modules, and its seeds change every
     # run, so it is never reused.
-    "random-order": _Mapped(("breadth.yml:random-order",), ("breadth",), security="security"),
-    "coverage-shard": _Mapped(("breadth.yml:coverage-shard",), ("breadth",), security="security"),
-    "coverage": _Mapped(("breadth.yml:coverage",), ("breadth",)),
-    "rails-macos": _Mapped(("breadth.yml:rails-macos",), ("breadth",), reuse="tree"),
-    "audit-nightly": _Mapped(("breadth.yml:audit",), ("breadth",), live=True),
+    "random-order": _Mapped(("random-order",), ("breadth",), security="security"),
+    "coverage-shard": _Mapped(("coverage-shard",), ("breadth",), security="security"),
+    "coverage": _Mapped(("coverage",), ("breadth",)),
+    "rails-macos": _Mapped(("rails-macos",), ("breadth",), reuse="tree"),
+    "audit-nightly": _Mapped(("audit",), ("breadth",), live=True),
     # Collects the whole suite and runs no test (catalogue.collect_only), so it is no security
     # evidence: ordinary, and it may carry an earlier result.
-    "collection-parses": _Mapped(("breadth.yml:collection-parses",), ("breadth",), reuse="tree"),
+    "collection-parses": _Mapped(("collection-parses",), ("breadth",), reuse="tree"),
     # It reads the installer the website serves and PyPI as they are the night it runs: live,
     # like the nightly audit, so its evidence is never reused, by TTL or by tree.
-    "install-smoke": _Mapped(("breadth.yml:install-smoke",), ("breadth",), live=True),
-    "planned-ids-ubuntu": _Mapped(("breadth.yml:planned-ids-ubuntu",), ("breadth",)),
-    "planned-ids-macos": _Mapped(("breadth.yml:planned-ids-macos",), ("breadth",)),
-    "planned-ids-arm": _Mapped(("breadth.yml:planned-ids-arm",), ("breadth",)),
-    "planned-ids-coverage-shard": _Mapped(
-        ("breadth.yml:planned-ids-coverage-shard",), ("breadth",)
-    ),
-    "planned-ids-canary": _Mapped(("breadth.yml:planned-ids-canary",), ("breadth",)),
-    "planned-ids-random-order": _Mapped(("breadth.yml:planned-ids-random-order",), ("breadth",)),
-    "shard-union": _Mapped(("breadth.yml:shard-union",), ("breadth",)),
-    "shard-union-canary": _Mapped(("breadth.yml:shard-union-canary",), ("breadth",)),
-    "client": _Mapped(("client",), ("change", "merge")),
-    "web-unit": _Mapped(("web",), ("change", "merge"), reuse="tree"),
-    "web-build": _Mapped(("web",), ("merge",), reuse="tree"),
-    "package": _Mapped(("web",), ("merge",)),
-    "e2e": _Mapped(("e2e",), ("merge",)),
-    "e2e-shard": _Mapped(("e2e-shard",), ("merge",)),
-    "e2e-stateful": _Mapped(("e2e-stateful",), ("merge",)),
-    "ui-quality": _Mapped(("ui-quality",), ("merge",)),
-    "desktop-smoke": _Mapped(("desktop-smoke",), ("merge",)),
-    "browse-live": _Mapped(("browse-live",), ("merge",), security="security", live=True),
-    "apps-contract": _Mapped(("apps-contract",), ("merge",)),
-    "audit": _Mapped(("audit",), ("merge",), live=True),
-    # The gateway image's build and smoke (#3917): the single-container workflow's job. Its
+    "install-smoke": _Mapped(("install-smoke",), ("breadth",), live=True),
+    "planned-ids-ubuntu": _Mapped(("planned-ids-ubuntu",), ("breadth",)),
+    "planned-ids-macos": _Mapped(("planned-ids-macos",), ("breadth",)),
+    "planned-ids-arm": _Mapped(("planned-ids-arm",), ("breadth",)),
+    "planned-ids-coverage-shard": _Mapped(("planned-ids-coverage-shard",), ("breadth",)),
+    "planned-ids-canary": _Mapped(("planned-ids-canary",), ("breadth",)),
+    "planned-ids-random-order": _Mapped(("planned-ids-random-order",), ("breadth",)),
+    "shard-union": _Mapped(("shard-union",), ("breadth",)),
+    "shard-union-canary": _Mapped(("shard-union-canary",), ("breadth",)),
+    "client": _Mapped((), ("change", "merge")),
+    "web-unit": _Mapped((), ("change", "merge"), reuse="tree"),
+    "web-build": _Mapped((), ("merge",), reuse="tree"),
+    "package": _Mapped((), ("merge",)),
+    "e2e": _Mapped((), ("merge",)),
+    "e2e-shard": _Mapped((), ("merge",)),
+    "e2e-stateful": _Mapped((), ("merge",)),
+    "ui-quality": _Mapped((), ("merge",)),
+    "desktop-smoke": _Mapped((), ("merge",)),
+    "browse-live": _Mapped((), ("merge",), security="security", live=True),
+    "apps-contract": _Mapped((), ("merge",)),
+    "audit": _Mapped((), ("merge",), live=True),
+    # The gateway image's build and smoke (#3917), which merge.yml runs through run-job. Its
     # Dockerfile's apt installs are pinned by no lock, so it is never reused.
-    "image": _Mapped((_IN_DOCKER + "single-container",), ("merge",)),
+    "image": _Mapped((), ("merge",)),
 }
 
-#: ci.yml's jobs that decide what runs or gather what ran, and validate nothing themselves.
-_ORCHESTRATION = frozenset(
-    {
-        "tree-check",
-        "changes",
-        "shard-plan",
-        "test",
-        "test-macos-gate",
-        # breadth.yml's: the earlier record and the shard plan, and the run's report.
-        "breadth.yml:freshness",
-        "breadth.yml:report",
-        # The single-container workflow's: did a pull request's run already smoke this tree.
-        _IN_DOCKER + "tree-check",
-    }
-)
+#: Each mapped job is at most one entry's, so a run: line of it is one entry's step or none.
+_MAPPED_JOBS = [b for entry in _CATALOGUE_JOBS.values() for b in entry.jobs]
+assert len(_MAPPED_JOBS) == len(set(_MAPPED_JOBS)), "a workflow job mapped to two entries"
+
+#: The mapped workflow's jobs that decide what runs or gather what ran, and validate nothing
+#: themselves: breadth.yml's earlier record and shard plan, and its run's report.
+_ORCHESTRATION = frozenset({"freshness", "report"})
 
 
 def _prefix_of(key: str) -> str:
-    """The prefix of the workflow a job key of this table is in: empty for ci.yml's."""
+    """The prefix of the workflow a job key of this table is in: empty for breadth.yml's."""
     return next((p for p in _MAPPED_PREFIXES if p and key.startswith(p)), "")
 
 
 def _workflow_name(key: str) -> str:
-    return _prefix_of(key)[:-1] or "ci.yml"
+    return _prefix_of(key)[:-1] or "breadth.yml"
 
 
 def _where(key: str) -> str:
-    """A job key of this table as a reader names it: ``ci.yml job X`` or ``breadth.yml job X``."""
+    """A job key of this table as a reader names it: ``breadth.yml job X``."""
     return f"{_workflow_name(key)} job {key[len(_prefix_of(key)):]}"
 
 
 def _owners(keys: Sequence[str]) -> str:
-    """The workflows the keys are in, as a possessive: ``ci.yml's``, ``breadth.yml's``, or both."""
+    """The workflows the keys are in, as a possessive: ``breadth.yml's``."""
     found = sorted({_workflow_name(k) for k in keys})
-    return " and ".join(f"{w}'s" for w in reversed(found)) if len(found) > 1 else f"{found[0]}'s"
+    return " and ".join(f"{w}'s" for w in found) if len(found) > 1 else f"{found[0]}'s"
+
+
+def _names(keys: Sequence[str]) -> str:
+    """The workflows the keys are in: ``breadth.yml``."""
+    return " and ".join(sorted({_workflow_name(k) for k in keys}))
 
 
 def _norm(value: str, *, expressions_only: bool = False) -> str:
@@ -7991,18 +7770,7 @@ def _norm(value: str, *, expressions_only: bool = False) -> str:
     return value
 
 
-_CI = ".github/workflows/ci.yml"
-
-#: The variables a workflow step sets only to carry a placeholder's value (the base a diff is
-#: taken against): the placeholder stands for them, so a step's env is compared without them.
-_PLACEHOLDER_VARIABLES = frozenset(
-    spelling[1:]
-    for spellings in catalogue.PLACEHOLDERS.values()
-    for spelling in spellings
-    if re.fullmatch(r"\$[A-Z_][A-Z0-9_]*", spelling)
-)
-
-#: The run: lines of a mapped ci.yml job that validate nothing, by what they do. Each is read
+#: The run: lines of a mapped breadth.yml job that validate nothing, by what they do. Each is read
 #: the way a run: line is (placeholders, folded lines, words), so it matches only itself: a
 #: closed set of lines, not a pattern. Every other line of a mapped job is one entry's step.
 _NOT_COMMANDS: dict[str, str] = {
@@ -8011,90 +7779,7 @@ _NOT_COMMANDS: dict[str, str] = {
     """,  # noqa: E501
     "an install the job's toolchain names": r"""
         uv sync --locked --extra dev
-        npm ci
-        npx playwright install chromium
-        sh tools/ci/install_electron.sh
-        sudo apt-get update -qq
-        sudo apt-get install -y --no-install-recommends tmux
-        if command -v tmux >/dev/null 2>&1; then tmux -V; exit 0; fi
-        brew install tmux
-        tmux -V
-        for tool in shellcheck dash; do
-          command -v "$tool" >/dev/null 2>&1 || {
-            sudo apt-get install -y --no-install-recommends "$tool"
-          }
-        done
-        shellcheck --version | head -2
     """,
-    "the browser's start check, and its system libraries from apt only when it cannot start": r"""
-        node -e "require('playwright').chromium.launch().then((browser) => browser.close())"
-        uv run python -c "import subprocess, sys; sys.path.insert(0, 'tests'); import browse_chrome; subprocess.run([browse_chrome.find_chrome() or sys.exit('no Chromium found'), '--headless', '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--dump-dom', 'about:blank'], check=True, timeout=60, stdout=subprocess.DEVNULL)"
-        echo "::warning::Chromium did not start on this runner image, so its system libraries install from apt"
-        if ! timeout 300 npx playwright install-deps chromium; then
-          echo "::error::Chromium's system libraries did not install within 5 minutes: the apt mirror is slow or down" >&2
-          exit 1
-        fi
-    """,  # noqa: E501
-    "the shell around a step: its options, and the branch on which base there is": r"""
-        set -eu
-        if [ -n "${BASE_SHA:-}" ]; then
-        elif [ "$GITHUB_REF" = "refs/heads/main" ] && [ -n "${BEFORE:-}" ] \
-             && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
-        else
-        fi
-        echo "base: the previous main commit $BEFORE"
-    """,
-    "the fetch of the base, handed to the next step through GITHUB_OUTPUT": r"""
-        git fetch --no-tags --depth=1 origin "$BASE_SHA"
-        echo "ref=$BASE_SHA" >> "$GITHUB_OUTPUT"
-        git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
-        echo "ref=origin/main" >> "$GITHUB_OUTPUT"
-    """,
-    "the browser merge's gate on each leg's own result, which only the run knows": r"""
-        echo "e2e-shard: ${SHARDS:-no result}, e2e-stateful: ${STATEFUL:-no result}"
-        if [ "$SHARDS" != "success" ] || [ "$STATEFUL" != "success" ]; then
-          echo "::error title=a browser leg did not pass::the merged run counts only when every leg passed. Open the leg that did not."
-          exit 1
-        fi
-    """,  # noqa: E501
-    "a value only the runner knows, set through GITHUB_ENV for the steps after it": r"""
-        echo "VITEST_MAX_WORKERS=$(nproc)" | tee -a "$GITHUB_ENV"
-    """,
-    "the lint job's wrapper, which runs every tool and keeps its output for the relay": r"""
-        status=0
-        : > /tmp/lint-out.txt
-        run_tool() {
-          label=$1
-          shift
-          if out=$("$@" 2>&1); then
-            printf '%s\n' "$out"
-          else
-            status=1
-            { echo "**$label**"; echo '```'; printf '%s\n' "$out"; echo '```'; } >> /tmp/lint-out.txt
-          fi
-        }
-        if [ "$status" -ne 0 ]; then
-          {
-            echo "violations<<LINTEOF"
-            cat /tmp/lint-out.txt
-            echo "LINTEOF"
-          } >> "$GITHUB_OUTPUT"
-        fi
-        exit "$status"
-    """,  # noqa: E501
-    "the lint job's feedback relay": r"""
-        if [ -n "${EVENT_PR:-}" ]; then
-          number="$EVENT_PR"
-          number=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY%%/*}:${HEAD_BRANCH}" \
-            --jq '.[0].number // empty' 2>/dev/null || true)
-        printf 'number=%s\n' "${number:-}" >> "$GITHUB_OUTPUT"
-        echo "feedback relay target: PR ${number:-<none — nothing will be posted>}"
-        mkdir -p /tmp/lint-feedback
-        printf '%s' "$VIOLATIONS" > /tmp/lint-feedback/violations.md
-        printf '%s' "$PR_NUMBER" > /tmp/lint-feedback/pr.txt
-        wc -c /tmp/lint-feedback/violations.md /tmp/lint-feedback/pr.txt
-    """,  # noqa: E501
     "breadth's: the uv-managed interpreter {python} finds, made present before it is found": r"""
 uv venv "$RUNNER_TEMP/shard-python"
 """,  # noqa: E501
@@ -8305,8 +7990,8 @@ _NOT_COMMAND_LINES = frozenset(
 
 @dataclass(frozen=True)
 class _Line:
-    """One validating run: line of a ci.yml job, the argv it runs (the lint job's
-    ``run_tool LABEL argv`` read through), where and with what step env."""
+    """One validating run: line of a mapped workflow job, the argv it runs, where and with what
+    step env."""
 
     job: str
     step: int
@@ -8321,6 +8006,15 @@ class _Line:
 
 #: Each variable a shell word expands, by its whole name: ``$NAME`` or ``${NAME...}``.
 _SHELL_VARIABLE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
+
+#: The variables a workflow step sets only to carry a placeholder's value (the base a diff is
+#: taken against): the placeholder stands for them, so a step's env is compared without them.
+_PLACEHOLDER_VARIABLES = frozenset(
+    spelling[1:]
+    for spellings in catalogue.PLACEHOLDERS.values()
+    for spelling in spellings
+    if re.fullmatch(r"\$[A-Z_][A-Z0-9_]*", spelling)
+)
 
 
 def _step_env(step: dict[str, Any]) -> tuple[tuple[str, str], ...]:
@@ -8344,9 +8038,9 @@ def _step_env(step: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     )
 
 
-def _job_lines(ci_job: str, job: dict[str, Any], bad: list[str]) -> list[_Line]:
-    """A ci.yml job's validating lines, in order. A line repeated in one step (the arms of a
-    branch that differ only in which variable holds the base) is one line."""
+def _job_lines(key: str, job: dict[str, Any], bad: list[str]) -> list[_Line]:
+    """A mapped workflow job's validating lines, in order. A line repeated in one step is one
+    line."""
     lines: list[_Line] = []
     for index, step in enumerate(job.get("steps") or []):
         if "run" not in step:
@@ -8355,16 +8049,16 @@ def _job_lines(ci_job: str, job: dict[str, Any], bad: list[str]) -> list[_Line]:
         seen: set[tuple[str, ...]] = set()
         for text, words in _run_lines(str(step["run"])):
             if words is None:
-                bad.append(f"{_where(ci_job)} runs {text!r} ({name!r}), which no argv can be")
+                bad.append(f"{_where(key)} runs {text!r} ({name!r}), which no argv can be")
                 continue
             if tuple(words) in _NOT_COMMAND_LINES:
                 continue
-            argv = tuple(words[2:] if words[0] == "run_tool" and len(words) > 2 else words)
+            argv = tuple(words)
             if argv in seen:
                 continue
             seen.add(argv)
             workdir = str(step.get("working-directory", ""))
-            lines.append(_Line(ci_job, index, name, argv, workdir, _step_env(step)))
+            lines.append(_Line(key, index, name, argv, workdir, _step_env(step)))
     return lines
 
 
@@ -8415,21 +8109,22 @@ def _claim(
             for i, line in enumerate(lines)
             if line.argv == step.argv and line.workdir == step.workdir
         ]
-        jobs = ", ".join(_CATALOGUE_JOBS[job.id].ci_jobs)
+        jobs = ", ".join(map(_where, _CATALOGUE_JOBS[job.id].jobs))
         if not hits:
             bad.append(f"{job.id}: command step {n} ({step.render()}) is no run: line of {jobs}")
             continue
         later = [i for i in hits if i > last]
         if not later:
+            where = _workflow_name(lines[hits[0]].job)
             if last in hits:
                 bad.append(
                     f"{job.id}: command step {n} repeats command step {last_step}"
-                    f" ({step.render()}): ci.yml runs it once"
+                    f" ({step.render()}): {where} runs it once"
                 )
             else:
                 bad.append(
-                    f"{job.id}: command step {n} is out of ci.yml's order ({step.render()}):"
-                    f" ci.yml runs it before command step {last_step}"
+                    f"{job.id}: command step {n} is out of {where}'s order"
+                    f" ({step.render()}): {where} runs it before command step {last_step}"
                 )
             continue
         last, last_step = later[0], n
@@ -8438,16 +8133,16 @@ def _claim(
         if tuple(sorted(step.env.items())) != line.env:
             bad.append(
                 f"{job.id}: command step {n} ({step.render()}) sets env {dict(step.env)},"
-                f" and its ci.yml step sets {dict(line.env)}"
+                f" and its {_workflow_name(line.job)} step sets {dict(line.env)}"
             )
 
 
-def _installs(job: catalogue.Job, ci_jobs: list[Any], bad: list[str]) -> None:
-    """Each install the entry's toolchain names is one its ci.yml jobs run."""
+def _installs(job: catalogue.Job, mapped: list[Any], bad: list[str], where: str) -> None:
+    """Each install the entry's toolchain names is one its mapped jobs, in *where*, run."""
     ran = {
         tool
-        for ci_job in ci_jobs
-        for step in ci_job.get("steps") or []
+        for workflow_job in mapped
+        for step in workflow_job.get("steps") or []
         if "run" in step
         for _, words in _run_lines(str(step["run"]))
         if words
@@ -8455,7 +8150,7 @@ def _installs(job: catalogue.Job, ci_jobs: list[Any], bad: list[str]) -> None:
         if tuple(words[: len(prefix)]) == prefix
     }
     for tool in sorted({t for _, t in catalogue.INSTALLS} & set(job.toolchain) - ran):
-        bad.append(f"{job.id}: toolchain names {tool}, and none of its ci.yml jobs installs it")
+        bad.append(f"{job.id}: toolchain names {tool}, and none of its {where} jobs installs it")
 
 
 def _same_job(
@@ -8465,23 +8160,23 @@ def _same_job(
     bad: list[str],
     actions: dict[str, dict[str, Any]] | None = None,
 ) -> None:
-    """The entry's cap, runner, Python, env, reports and shards are its ci.yml jobs'. A setup
-    step inside a local action counts at the index of the step that calls the action."""
-    ci_jobs = _CATALOGUE_JOBS[job.id].ci_jobs
-    cap = max(int(jobs[c].get("timeout-minutes") or 0) for c in ci_jobs)
+    """The entry's cap, runner, Python, env and shards are its mapped jobs'. A setup step
+    inside a local action counts at the index of the step that calls the action."""
+    mapped = _CATALOGUE_JOBS[job.id].jobs
+    cap = max(int(jobs[c].get("timeout-minutes") or 0) for c in mapped)
     if job.timeout_min != cap:
         bad.append(
-            f"{job.id}: timeout_min is {job.timeout_min}, and {_owners(ci_jobs)} cap is {cap}"
+            f"{job.id}: timeout_min is {job.timeout_min}, and {_owners(mapped)} cap is {cap}"
         )
-    runners = sorted({str(jobs[c].get("runs-on")) for c in ci_jobs})
+    runners = sorted({str(jobs[c].get("runs-on")) for c in mapped})
     if runners != [job.platform]:
         bad.append(
-            f"{job.id}: platform is {job.platform}, and {_owners(ci_jobs)[:-2]} runs it on"
+            f"{job.id}: platform is {job.platform}, and {_names(mapped)} runs it on"
             f" {', '.join(runners)}"
         )
     # The Python is the one setup-uv set before the entry's first step on each of its jobs.
     pythons: set[str] = set()
-    for c in ci_jobs:
+    for c in mapped:
         first = min((line.step for line in mine if line.job == c), default=None)
         for index, s in local_actions.expand(jobs[c].get("steps") or [], actions or {}):
             if _action(s) != "astral-sh/setup-uv" or (first is not None and index >= first):
@@ -8493,16 +8188,15 @@ def _same_job(
                 pythons.add(value)
     if pythons and job.python not in pythons:
         bad.append(
-            f"{job.id}: python is {job.python or 'unset'}, and {_owners(ci_jobs)} setup-uv sets"
+            f"{job.id}: python is {job.python or 'unset'}, and {_owners(mapped)} setup-uv sets"
             f" {', '.join(sorted(pythons))} before its steps"
         )
     elif not pythons and job.python not in (None, "image"):
         bad.append(
-            f"{job.id}: python is {job.python}, and {_owners(ci_jobs)[:-2]} sets none before its"
-            " steps"
+            f"{job.id}: python is {job.python}, and {_names(mapped)} sets none before its" " steps"
         )
     env: dict[str, str] = {}
-    for c in ci_jobs:
+    for c in mapped:
         env.update(
             {
                 str(k): _norm(str(v))
@@ -8511,16 +8205,20 @@ def _same_job(
             }
         )
     if dict(job.env) != env:
-        bad.append(f"{job.id}: env is {dict(job.env)}, and {_owners(ci_jobs)} is {env}")
+        bad.append(f"{job.id}: env is {dict(job.env)}, and {_owners(mapped)} is {env}")
+    shards = max(len(_matrix_values(jobs[c], "shard")) or 1 for c in mapped)
+    if job.shards != shards:
+        bad.append(f"{job.id}: shards is {job.shards}, and {_names(mapped)} runs {shards}")
+
+
+def _reports(job: catalogue.Job, bad: list[str]) -> None:
+    """The reports an entry lists are the ones its steps write, in their order."""
     written = [path for step in job.command for path in _junit_paths(step.argv)]
     if list(job.junit) != written:
         bad.append(
             f"{job.id}: junit lists {', '.join(job.junit) or 'nothing'}, and its steps write"
             f" {', '.join(written) or 'none'}"
         )
-    shards = max(len(_matrix_values(jobs[c], "shard")) or 1 for c in ci_jobs)
-    if job.shards != shards:
-        bad.append(f"{job.id}: shards is {job.shards}, and {_owners(ci_jobs)[:-2]} runs {shards}")
 
 
 def _posture(job: catalogue.Job, marked: frozenset[str], bad: list[str]) -> None:
@@ -8556,14 +8254,14 @@ def _catalogue_check(root: Path) -> list[str]:
     except catalogue.CatalogueError as exc:
         return exc.problems
     jobs: dict[str, Any] = {}
-    for rel, prefix in ((_CI, ""), (_BREADTH, _IN_BREADTH), (_DOCKER, _IN_DOCKER)):
+    for rel, prefix in ((_BREADTH, ""),):
         workflow = yaml.safe_load((root / rel).read_text(encoding="utf-8")) or {}
         jobs.update({prefix + str(k): v for k, v in (workflow.get("jobs") or {}).items()})
     actions = local_actions.actions_at(root)
     bad: list[str] = []
-    mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.ci_jobs}
-    for ci_job in sorted(set(jobs) - mapped - _ORCHESTRATION):
-        bad.append(f"{_where(ci_job)} is no catalogue entry's, and not orchestration")
+    mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.jobs}
+    for key in sorted(set(jobs) - mapped - _ORCHESTRATION):
+        bad.append(f"{_where(key)} is no catalogue entry's, and not orchestration")
     lines = {c: _job_lines(c, jobs[c], bad) for c in sorted(mapped & set(jobs))}
     ran = {
         tuple(words)
@@ -8583,34 +8281,31 @@ def _catalogue_check(root: Path) -> list[str]:
     for job in cat.jobs:
         entry = _CATALOGUE_JOBS.get(job.id)
         if entry is None:
-            bad.append(f"{job.id}: no ci.yml job is mapped to it in this row")
+            bad.append(f"{job.id}: this row has no line for it")
             continue
-        missing = [c for c in entry.ci_jobs if c not in jobs]
-        for ci_job in missing:
-            where = _workflow_name(ci_job)
-            bad.append(f"{job.id}: maps to {_where(ci_job)}, which {where} does not have")
-        if missing:
+        _reports(job, bad)
+        _stops_at_a_failure(job, root, bad)
+        _posture(job, marked, bad)
+        missing = [c for c in entry.jobs if c not in jobs]
+        for key in missing:
+            bad.append(
+                f"{job.id}: maps to {_where(key)}, which {_workflow_name(key)} does not have"
+            )
+        if missing or not entry.jobs:
             continue
         # An entry that runs in both workflows holds each one's run: lines on its own.
         for prefix in _MAPPED_PREFIXES:
-            own = [c for c in entry.ci_jobs if _prefix_of(c) == prefix]
+            own = [c for c in entry.jobs if _prefix_of(c) == prefix]
             if own:
                 _claim(job, [line for c in own for line in lines[c]], claims, bad)
-        _installs(job, [jobs[c] for c in entry.ci_jobs], bad)
-        _stops_at_a_failure(job, root, bad)
+        _installs(job, [jobs[c] for c in entry.jobs], bad, _names(entry.jobs))
         mine = [line for line, holders in claims.items() if job.id in holders]
         _same_job(job, jobs, mine, bad, actions)
-        _posture(job, marked, bad)
     for line, holders in claims.items():
         if not holders:
             bad.append(
                 f"{_where(line.job)} runs {line.text()} ({line.name!r}),"
                 " and no entry's command holds it"
-            )
-        elif len(holders) > 1:
-            bad.append(
-                f"{_where(line.job)} runs {line.text()} once, and it is a step of"
-                f" {', '.join(holders)}"
             )
     return bad
 
@@ -8630,10 +8325,10 @@ def _stops_at_a_failure(job: catalogue.Job, root: Path, bad: list[str]) -> None:
 
 
 def _catalogue_scaffold(root: Path) -> None:
-    """The tree's own ci.yml and catalogue, which agree, the scripts its script entries run, and
-    a marked stand-in for each module the tree marks security, so the census finds what the
-    entries' steps run."""
-    for rel in (_CI, _BREADTH, _DOCKER, catalogue.CATALOGUE, _SETUP_ACTION):
+    """The tree's own breadth.yml and catalogue, which agree, the
+    scripts its script entries run, and a marked stand-in for each module the tree marks security,
+    so the census finds what the entries' steps run."""
+    for rel in (_BREADTH, catalogue.CATALOGUE, _SETUP_ACTION):
         _write(root, rel, (REPO / rel).read_text(encoding="utf-8"))
     for job in catalogue.read(REPO).jobs:
         for rel in job.script or ():
@@ -8680,19 +8375,47 @@ def _collect_step(yml: str, toml: str) -> tuple[tuple[str, str, str], ...]:
 
 _RUNS_MARKED = "collection-parses: security is ordinary, but its steps run security-marked modules"
 
+_RAILS_MACOS_STEP = (
+    "        run: uv run pytest -n 2 --dist worksteal -q tests/rails"
+    " --junitxml=reports/junit-rails-macos.xml\n"
+)
+#: collection-parses's one step env, as breadth.yml and the catalogue spell it.
+_COLLECT_ENV = (
+    (_BREADTH, "          PYTHONPATH: tests\n"),
+    (catalogue.CATALOGUE, 'env = { PYTHONPATH = "tests" } },'),
+)
+
+
+def _ubuntu_suite_step_env(root: Path) -> None:
+    """suite-ubuntu's pytest step given ``BLOB`` in both files: breadth.yml's as ``${{ matrix.shard
+    }}``, an expression GitHub expands in env:, the catalogue's as ``{shard}``."""
+    _plant_in_job(
+        "",
+        _BREADTH,
+        "ubuntu",
+        "        id: pytest\n",
+        "        id: pytest\n        env:\n          BLOB: blob-${{ matrix.shard }}\n",
+    ).plant(root)
+    step = '"--shard-ids", "{runner_temp}/ids/shard-ids-ubuntu-{shard}.txt"] },'
+    _plant(
+        "", catalogue.CATALOGUE, step, step.replace("] },", '], env = { BLOB = "blob-{shard}" } },')
+    ).plant(root)
+
+
+def _collect_env(yml: str, toml: str) -> tuple[tuple[str, str, str], ...]:
+    """collection-parses's step env with one more variable in each file."""
+    (b, b_old), (c, c_old) = _COLLECT_ENV
+    return (
+        (b, b_old, b_old + f"          {yml}\n"),
+        (c, c_old, c_old.replace('"tests" }', f'"tests", {toml} }}')),
+    )
+
+
 EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
     name="every catalogue command is the workflow's",
     check=_catalogue_check,
     scaffold=_catalogue_scaffold,
     controls=(
-        # The image entry's step is the single-container workflow's smoke line (#3917).
-        _plant(
-            "the single-container smoke given an argument its catalogue entry does not take",
-            _DOCKER,
-            'smoke.py --image-id-file "$RUNNER_TEMP/gateway-image.id"',
-            'smoke.py --image-id-file "$RUNNER_TEMP/gateway-image.id" --readme README.md',
-            expect="docker-single-container.yml job single-container runs",
-        ),
         _plant_files(
             "collection-parses spelling it --co, which runs no test, passes",
             _collect_step(" --co", ' "--co",'),
@@ -8721,13 +8444,6 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             expect=_RUNS_MARKED,
         ),
         _plant(
-            "the setup action sets a Python of its own",
-            _SETUP_ACTION,
-            "        python-version: ${{ inputs.python-version }}\n",
-            '        python-version: "3.13.16"\n',
-            expect="python is 3.12.15, and ci.yml's setup-uv sets 3.13.16 before its steps",
-        ),
-        _plant(
             "an entry without timeout_min",
             catalogue.CATALOGUE,
             'reuse = "tree"\ntimeout_min = 10\n',
@@ -8751,33 +8467,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a command one token off the workflow's",
             catalogue.CATALOGUE,
-            '"worksteal", "-q", "tests/rails"',
-            '"worksteal", "-qq", "tests/rails"',
-            expect="rails: command step 1",
-        ),
-        _plant(
-            "the workflow's command changed without its entry",
-            _CI,
-            "uv run pytest -n 4 --dist worksteal -q tests/rails",
-            "uv run pytest -n 4 --dist worksteal -q -x tests/rails",
-            expect="rails: command step 1",
-        ),
-        # The files the shards leave to a job (shards.JOB_OWNED) other than the security corpus,
-        # whose own rail reads each owner's steps: ci.yml's jobs run their own steps, so this row
-        # is what keeps each running there by name until the flip deletes ci.yml.
-        _plant(
-            "ci.yml's lint job no longer running the installer's tests",
-            _CI,
-            "uv run pytest tests/test_website_installer.py --junitxml",
-            "uv run pytest --junitxml",
-            expect="static: command step 10",
-        ),
-        _plant(
-            "ci.yml's rails-checks job no longer running the npm floors' tests",
-            _CI,
-            "run: uv run pytest tests/test_npm_advisory_floors.py --junitxml",
-            "run: uv run pytest --junitxml",
-            expect="rails-checks: command step 3",
+            '"worksteal", "-q", "tests/rails", "--junitxml=reports/junit-rails-macos.xml"',
+            '"worksteal", "-qq", "tests/rails", "--junitxml=reports/junit-rails-macos.xml"',
+            expect="rails-macos: command step 1",
         ),
         _plant(
             "the first random-order seed drawn from another number than the run's",
@@ -8794,42 +8486,28 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             expect="random-order: command step 3",
         ),
         _plant(
-            "a step moved to another working directory",
-            catalogue.CATALOGUE,
-            '"@visual"], workdir = "web", env',
-            '"@visual"], env',
-            expect="e2e-shard: command step 1",
-        ),
-        _plant(
-            "an entry naming a ci.yml job that does not exist",
-            _CI,
-            "\n  client:\n",
-            "\n  client-py:\n",
-            expect="client: maps to ci.yml job client, which ci.yml does not have",
-        ),
-        _plant(
-            "a ci.yml job no entry covers",
-            _CI,
-            "\n  client:\n",
-            "\n  client-py:\n",
-            expect="ci.yml job client-py is no catalogue entry's",
+            "an entry naming a breadth.yml job that does not exist",
+            _BREADTH,
+            "\n  rails-macos:\n",
+            "\n  rails-macos-26:\n",
+            expect="rails-macos: maps to breadth.yml job rails-macos, which breadth.yml does not",
         ),
         Control(
-            "an entry this row maps to no job",
+            "an entry this row has no line for",
             _append(
                 catalogue.CATALOGUE,
                 '\n[[job]]\nid = "extra"\ntiers = ["weekly"]\ninputs = ["docs/"]\n'
                 'external_inputs = []\ntoolchain = []\ncache = []\nsecurity = "ordinary"\n'
                 'timeout_min = 5\ncommand = [{ argv = ["true"] }]\n',
             ),
-            expect="extra: no ci.yml job is mapped to it in this row",
+            expect="extra: this row has no line for it",
         ),
         _plant(
             "a cap that differs from the job's",
             catalogue.CATALOGUE,
             'python = "3.12.15"\ntimeout_min = 25\n',
             'python = "3.12.15"\ntimeout_min = 30\n',
-            expect="security: timeout_min is 30, and ci.yml's and breadth.yml's cap is 25",
+            expect="security: timeout_min is 30, and breadth.yml's cap is 25",
         ),
         _plant(
             "the suite on one platform marked ordinary",
@@ -8841,60 +8519,28 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a step without its workflow step's environment",
             catalogue.CATALOGUE,
-            'env = { PERSONALCLAW_REQUIRE_BROWSE_PROOF = "1", PERSONALCLAW_SKIP_APP_BACKENDS',
-            "env = { PERSONALCLAW_SKIP_APP_BACKENDS",
-            expect="browse-live: command step 1",
-        ),
-        _plant(
-            "the rails step's BASE_SHA gone from ci.yml alone fails",
-            _CI,
-            _RAILS_LEG_STEP + _RAILS_BASE_ENV,
-            _RAILS_LEG_STEP,
-            expect="rails: command step 1",
-        ),
-        # A placeholder's variable is dropped from a step's env only when a command of its run:
-        # block reads it: one a comment names still reaches the process, so it is compared.
-        _plants(
-            "a rails step env the catalogue lacks, named only in a comment of its run:, fails",
-            _CI,
-            (
-                (
-                    _RAILS_LEG_STEP + _RAILS_BASE_ENV,
-                    _RAILS_LEG_STEP + _RAILS_BASE_ENV + "          BEFORE: ${{ github.sha }}\n",
-                ),
-                (
-                    "        run: uv run pytest -n 4 --dist worksteal -q tests/rails ",
-                    "        run: |\n          # not read here: $BEFORE\n"
-                    "          uv run pytest -n 4 --dist worksteal -q tests/rails ",
-                ),
-            ),
-            expect="rails: command step 1",
-        ),
-        # Only a placeholder's variable: any other one a command reads, here through a line that
-        # validates nothing, is the step's env and is compared.
-        _plants(
-            "a rails step env the catalogue lacks, read by a line that validates nothing, fails",
-            _CI,
-            (
-                (
-                    _RAILS_LEG_STEP + _RAILS_BASE_ENV,
-                    _RAILS_LEG_STEP + _RAILS_BASE_ENV + "          RUNNER_ARCH: X64\n",
-                ),
-                (
-                    "        run: uv run pytest -n 4 --dist worksteal -q tests/rails ",
-                    "        run: |\n          "
-                    + _NOT_COMMANDS["the runner's identity"].strip()
-                    + "\n          uv run pytest -n 4 --dist worksteal -q tests/rails ",
-                ),
-            ),
-            expect="rails: command step 1",
+            ', env = { PYTHONPATH = "tests" } },',
+            " },",
+            expect="collection-parses: command step 1",
         ),
         _plant(
             "the workflow step's environment changed without its entry",
-            _CI,
-            'PERSONALCLAW_REQUIRE_BROWSE_PROOF: "1"',
-            'PERSONALCLAW_REQUIRE_BROWSE_PROOF: "0"',
-            expect="browse-live: command step 1",
+            _BREADTH,
+            "          PYTHONPATH: tests\n",
+            "          PYTHONPATH: tests:harness\n",
+            expect="collection-parses: command step 1",
+        ),
+        # GitHub expands only `${{ }}` in a step's env:, so `$RUNNER_TEMP` there is the literal
+        # text, and the entry's `{runner_temp}` is the real folder when it runs locally.
+        _plant_files(
+            "a step env that spells a placeholder the shell's way",
+            _collect_env("PW_SCRATCH: $RUNNER_TEMP/pw", 'PW_SCRATCH = "{runner_temp}/pw"'),
+            expect="collection-parses: command step 1",
+        ),
+        Control(
+            "a step env that spells a placeholder as an expression passes",
+            _ubuntu_suite_step_env,
+            fails=False,
         ),
         _plant(
             "a merge tier without the rails job",
@@ -8906,128 +8552,57 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         Control("the catalogue removed", _remove(catalogue.CATALOGUE), expect="is missing"),
         # Both directions, in order: every validating run: line is one entry's step.
         _plants(
-            "an entry missing a step ci.yml runs: the suite without its pytest",
+            "an entry missing a step breadth.yml runs: the suite without its pytest",
             catalogue.CATALOGUE,
             (
                 (
                     '  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q",'
                     ' "tests", "--shard-list", "{runner_temp}/shard.txt",'
-                    ' "--junitxml=reports/junit-test-shard-{shard}.xml"] },\n',
+                    ' "--junitxml=reports/junit-ubuntu.xml", "--shard-ids",'
+                    ' "{runner_temp}/ids/shard-ids-ubuntu-{shard}.txt"] },\n',
                     "",
                 ),
-                ('timeout_min = 55\nworkers = "auto"\n', "timeout_min = 55\n"),
-            ),
-            expect="ci.yml job test-shard runs uv run pytest -n auto --dist worksteal -q tests",
-        ),
-        _plant(
-            "an entry missing a step ci.yml runs: the installer proof and its flag",
-            catalogue.CATALOGUE,
-            '  { argv = ["uv", "run", "pytest", "tests/test_website_installer.py",'
-            ' "--junitxml=reports/junit-lint-installer.xml"],'
-            ' env = { PERSONALCLAW_REQUIRE_INSTALL_PROOF = "1" } },\n',
-            "",
-            expect="ci.yml job lint runs uv run pytest tests/test_website_installer.py",
-        ),
-        _plant(
-            "a workflow step no entry holds",
-            _CI,
-            "        run: uv run python scripts/gate_report.py\n",
-            "        run: uv run python scripts/gate_report.py\n"
-            "      - name: a new rail\n        run: uv run python scripts/new_rail.py\n",
-            expect="ci.yml job rails-checks runs uv run python scripts/new_rail.py",
-        ),
-        _plant(
-            "two steps swapped",
-            catalogue.CATALOGUE,
-            '  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2",'
-            ' "matrix", "idle", "stateful"], workdir = "web" },\n'
-            '  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"],'
-            ' workdir = "web" },\n',
-            '  { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"],'
-            ' workdir = "web" },\n'
-            '  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2",'
-            ' "matrix", "idle", "stateful"], workdir = "web" },\n',
-            expect="e2e: command step 2 is out of ci.yml's order",
-        ),
-        _plant(
-            "a step env that names another shard's folder",
-            _CI,
-            "          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/shard-${{ matrix.shard }}\n",
-            "          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/shard-1\n",
-            expect="e2e-shard: command step 1",
-        ),
-        # GitHub expands only `${{ }}` in a step's env:, so `$RUNNER_TEMP` there is the literal
-        # text, and the entry's `{runner_temp}` is the real folder when it runs locally.
-        _plant_files(
-            "a step env that spells a placeholder the shell's way",
-            (
                 (
-                    _CI,
-                    "          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/stateful\n",
-                    "          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/stateful\n"
-                    "          PW_SCRATCH: $RUNNER_TEMP/pw\n",
-                ),
-                (
-                    catalogue.CATALOGUE,
-                    'PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/stateful" }',
-                    'PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/stateful",'
-                    ' PW_SCRATCH = "{runner_temp}/pw" }',
+                    'workers = "auto"\nshards = 4\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
+                    ' PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\n'
+                    'junit = ["reports/junit-ubuntu.xml"]',
+                    'shards = 4\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
+                    ' PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\njunit = []',
                 ),
             ),
-            expect="e2e-stateful: command step 3",
+            expect="breadth.yml job ubuntu runs uv run pytest -n auto --dist worksteal -q tests",
         ),
         _plant(
             "a step listed twice",
             catalogue.CATALOGUE,
-            '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n',
-            '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n' * 2,
-            expect="rails-checks: command step 3 repeats command step 2",
-        ),
-        _plant(
-            "one line held by two entries",
-            catalogue.CATALOGUE,
-            '  { argv = ["npm", "run", "test:mobile"] },\n',
-            '  { argv = ["npm", "run", "test:mobile"] },\n  { argv = ["npm", "run", "build"] },\n',
-            expect="ci.yml job web runs npm run build once, and it is a step of web-unit, web-",
+            '"tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },\n',
+            '"tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },\n'
+            '  { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q",'
+            ' "tests/rails", "--junitxml=reports/junit-rails-macos.xml"] },\n',
+            expect="rails-macos: command step 2 repeats command step 1",
         ),
         _plant(
             "a gate that a printf pipes into",
-            _CI,
-            "        run: uv run python scripts/gate_report.py\n",
-            "        run: uv run python scripts/gate_report.py\n"
-            "      - name: a new gate\n"
+            _BREADTH,
+            _RAILS_MACOS_STEP,
+            _RAILS_MACOS_STEP + "      - name: a new gate\n"
             "        run: printf '%s\\n' \"$PWD\" | uv run python scripts/new_gate.py\n",
-            expect="ci.yml job rails-checks runs printf",
+            expect="breadth.yml job rails-macos runs printf",
         ),
         _plant(
             "a gate added to an install line",
-            _CI,
+            _BREADTH,
             "        run: uv sync --locked --extra dev\n",
             "        run: uv sync --locked --extra dev && uv run pytest tests/test_more.py\n",
-            expect="ci.yml job apps-contract runs uv sync --locked --extra dev",
-        ),
-        _plant(
-            "a line this row says validates nothing that ci.yml no longer runs",
-            _CI,
-            "          brew install tmux\n",
-            "          brew install tmux screen\n",
-            expect="this row lists brew install tmux as a line that validates nothing",
+            expect="runs uv sync --locked --extra dev '&&' uv run pytest tests/test_more.py",
         ),
         _plant(
             "a line no argv can be",
-            _CI,
-            "        run: uv run python -m tools.ci rails check\n",
-            "        run: |\n          uv run python -m tools.ci rails check\n"
-            "          echo it's checked\n",
-            expect="ci.yml job rails-checks runs \"echo it's checked\" ('every rail lives in"
-            " tests/rails'), which no argv can be",
-        ),
-        _plant(
-            "a line that wraps the step in echo is not the step",
-            _CI,
-            'run_tool "flake8" uv run flake8',
-            'echo "flake8" uv run flake8',
-            expect="static: command step 3",
+            _BREADTH,
+            "        run: uv run python -m harness scan\n",
+            "        run: |\n          uv run python -m harness scan\n"
+            "          echo it's scanned\n",
+            expect='breadth.yml job rails-macos runs "echo it\'s scanned"',
         ),
         # The census: an entry whose steps run a security-marked module is security posture.
         _plant(
@@ -9134,11 +8709,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             expect="web-unit: command step 1 is an install (npm ci)",
         ),
         _plant(
-            "a toolchain install no ci.yml job of the entry runs",
+            "a toolchain install no breadth.yml job of the entry runs",
             catalogue.CATALOGUE,
-            '  "tests/fixtures/",\n]\nexternal_inputs = []\ntoolchain = ["uv"]',
-            '  "tests/fixtures/",\n]\nexternal_inputs = []\ntoolchain = ["uv", "uv-sync"]',
-            expect="package: toolchain names uv-sync, and none of its ci.yml jobs installs it",
+            'id = "coverage"\ntiers = ["breadth"]\ninputs = [":(glob)**"]\nexternal_inputs = []\n'
+            'toolchain = ["uv-sync"]',
+            'id = "coverage"\ntiers = ["breadth"]\ninputs = [":(glob)**"]\nexternal_inputs = []\n'
+            'toolchain = ["uv-sync", "electron"]',
+            expect="coverage: toolchain names electron, and none of its breadth.yml jobs installs",
         ),
         _plant(
             "the audit not live, and reused by tree",
@@ -9158,9 +8735,9 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a runner that differs from the job's",
             catalogue.CATALOGUE,
-            'id = "static"\ntiers = ["change", "merge"]',
-            'id = "static"\nplatform = "ubuntu-22.04"\ntiers = ["change", "merge"]',
-            expect="static: platform is ubuntu-22.04, and ci.yml runs it on ubuntu-24.04",
+            'id = "coverage"\ntiers = ["breadth"]',
+            'id = "coverage"\nplatform = "ubuntu-22.04"\ntiers = ["breadth"]',
+            expect="coverage: platform is ubuntu-22.04, and breadth.yml runs it on ubuntu-24.04",
         ),
         _plant(
             "reports that are not the ones its steps write",
@@ -9172,39 +8749,32 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a Python that differs from the job's",
             catalogue.CATALOGUE,
-            'security = "ordinary"\npython = "3.12.15"\ntimeout_min = 5\n',
-            'security = "ordinary"\npython = "3.12.14"\ntimeout_min = 5\n',
-            expect="client: python is 3.12.14, and ci.yml's setup-uv sets 3.12.15 before its",
+            'platform = "macos-26"\npython = "3.12.15"\nreuse = "tree"\ntimeout_min = 30\n',
+            'platform = "macos-26"\npython = "3.12.14"\nreuse = "tree"\ntimeout_min = 30\n',
+            expect="rails-macos: python is 3.12.14, and breadth.yml's setup-uv sets 3.12.15 before",
         ),
         _plant(
             "no Python where the job sets one",
             catalogue.CATALOGUE,
-            'security = "ordinary"\npython = "3.12.15"\ntimeout_min = 5\n',
-            'security = "ordinary"\ntimeout_min = 5\n',
-            expect="client: python is unset, and ci.yml's setup-uv sets 3.12.15 before its",
+            'platform = "macos-26"\npython = "3.12.15"\nreuse = "tree"\ntimeout_min = 30\n',
+            'platform = "macos-26"\nreuse = "tree"\ntimeout_min = 30\n',
+            expect="rails-macos: python is unset, and breadth.yml's setup-uv sets 3.12.15 before",
         ),
         _plant(
             "a job env that differs from the job's",
             catalogue.CATALOGUE,
             'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\n'
-            'junit = ["reports/junit-rails-{shard}.xml"',
+            'junit = ["reports/junit-rails-macos.xml"',
             'PERSONALCLAW_TEST_CONTAINER_RUNTIME = "0" }\n'
-            'junit = ["reports/junit-rails-{shard}.xml"',
-            expect="rails: env is",
-        ),
-        _plant(
-            "a shard count that differs from the job's, its steps unchanged",
-            catalogue.CATALOGUE,
-            'workers = "auto"\nshards = 3\n',
-            'workers = "auto"\nshards = 2\n',
-            expect="python-suite: shards is 2, and ci.yml runs 3",
+            'junit = ["reports/junit-rails-macos.xml"',
+            expect="rails-macos: env is",
         ),
         _plant(
             "a run: line folded over two lines with a backslash still matches",
-            _CI,
-            "run: uv run pytest -n 4 --dist worksteal -q tests/rails --shard-list",
-            "run: |\n          uv run pytest -n 4 --dist worksteal -q tests/rails \\\n"
-            "            --shard-list",
+            _BREADTH,
+            "run: uv run pytest -n 2 --dist worksteal -q tests/rails --junitxml",
+            "run: |\n          uv run pytest -n 2 --dist worksteal -q tests/rails \\\n"
+            "            --junitxml",
             fails=False,
         ),
         # breadth.yml's half (#3909): every breadth job is an entry's, or orchestration.
@@ -9275,7 +8845,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             '  "tools/ci/install_smoke_current.sh",\n  "tools/ci/install_smoke_staged.sh",\n',
             '  "tools/ci/install_smoke_staged.sh",\n  "tools/ci/install_smoke_current.sh",\n',
-            expect="install-smoke: command step 2 is out of ci.yml's order",
+            expect="install-smoke: command step 2 is out of breadth.yml's order",
         ),
         Control(
             "a closed breadth line no mapped job runs any more",
@@ -10077,15 +9647,16 @@ def _unresolved_name(job: dict[str, Any]) -> str:
     return _matrix_gap(job, name)
 
 
-def _matrix_gap(job: dict[str, Any], text: str) -> str:
-    """Why ``text``'s ``${{ matrix.<key> }}`` cannot be read from a literal matrix, or ``""``."""
+def _matrix_gap(job: dict[str, Any], text: str, keys: Iterable[str] | None = None) -> str:
+    """Why ``text``'s ``${{ matrix.<key> }}`` (or the ``keys`` given) cannot be read from a
+    literal matrix, or ``""``."""
     matrix = (job.get("strategy") or {}).get("matrix")
     if not isinstance(matrix, dict):
         return "a matrix that is an expression"
     include = matrix.get("include", [])
     if not isinstance(include, list):
         return "an include that is an expression"
-    for key in _MATRIX_REF.findall(text):
+    for key in _MATRIX_REF.findall(text) if keys is None else keys:
         values = matrix.get(key)
         given = list(values) if isinstance(values, list) else []
         given += [e[key] for e in include if isinstance(e, dict) and key in e]
@@ -10126,17 +9697,16 @@ def merge_verdict_violations(tree: Tree) -> list[str]:
     return bad
 
 
-_CI = f"{_WORKFLOWS}/ci.yml"
 _JOBS = "\njobs:\n"
 _SHA40 = "0" * 40
 
 
-def _ci_adds_job(text: str) -> str:
+def _adds_job(text: str) -> str:
     return _JOBS + text
 
 
 _POSTED_CHECK_RUN = (
-    "  results:\n    runs-on: ubuntu-24.04\n    steps:\n"
+    "  planted:\n    runs-on: ubuntu-24.04\n    steps:\n"
     "      - run: gh api repos/${{ github.repository }}/check-runs -f name=merge-verdict"
     " -f head_sha=${{ github.event.pull_request.head.sha }} -f conclusion=success\n"
 )
@@ -10147,14 +9717,15 @@ _REUSABLE = (
 _VERDICT_JOB = "  merge-verdict:\n    runs-on: ubuntu-24.04\n    steps:\n      - run: echo green\n"
 
 #: pr.yml as the flip will run it: on pull_request, one group per pull request.
-_PR_YML_ON_PULL_REQUEST = _both(
-    _plant("", _PR_YML, "on:\n  workflow_dispatch: {}\n",
-           "on:\n  pull_request:\n  workflow_dispatch: {}\n").plant,
-    _plant("", _PR_YML, "  group: pr-${{ github.sha }}\n",
-           "  group: pr-${{ github.event.pull_request.number || github.sha }}\n").plant,
-)  # fmt: skip
 #: A catalogue job of the change tier renamed merge-verdict, which a planned stage job would run
 #: under: the key the plan gives its entry is the job's id.
+#: merge.yml's stage jobs' one group (decision 9), as the workflow writes it.
+_MERGE_STAGE_GROUP = (
+    "      group: merge-${{ github.ref == 'refs/heads/main' && github.run_attempt == '1' &&"
+    " matrix.id == 'python-suite' && 'suite' || github.ref == 'refs/heads/main' &&"
+    " github.run_attempt == '1' && matrix.id == 'python-suite-macos' && 'suite' ||"
+    " github.event.pull_request.number || github.sha }}-${{ matrix.key }}\n"
+)
 _CATALOGUE_JOB_NAMED_MERGE_VERDICT = _both(
     _plant("", catalogue.CATALOGUE, 'id = "client"\n', 'id = "merge-verdict"\n').plant,
     _plant("", catalogue.CATALOGUE, '  "client",\n', '  "merge-verdict",\n').plant,
@@ -10166,60 +9737,60 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
     (
         _plant(
             "a candidate job whose id is merge-verdict",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(_VERDICT_JOB),
-            expect="ci.yml:merge-verdict runs candidate code under the check name",
+            _adds_job(_VERDICT_JOB),
+            expect="pr.yml:merge-verdict runs candidate code under the check name",
         ),
         _plant(
             "a candidate job named merge-verdict",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-verdict\n    runs-on: ubuntu-24.04\n    steps: []\n"
+            _adds_job(
+                "  planted:\n    name: merge-verdict\n    runs-on: ubuntu-24.04\n    steps: []\n"
             ),
-            expect="ci.yml:results runs candidate code under the check name",
+            expect="pr.yml:planted runs candidate code under the check name",
         ),
         _plant(
             "the name in another case",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: Merge-Verdict\n    runs-on: ubuntu-24.04\n    steps: []\n"
+            _adds_job(
+                "  planted:\n    name: Merge-Verdict\n    runs-on: ubuntu-24.04\n    steps: []\n"
             ),
             expect="under the check name",
         ),
         _plant(
             "a job named from its matrix, whose one leg is merge-verdict",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+            _adds_job(
+                "  planted:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
                 "    strategy:\n      matrix:\n        part: [verdict]\n    steps: []\n"
             ),
-            expect="ci.yml:results runs candidate code under the check name",
+            expect="pr.yml:planted runs candidate code under the check name",
         ),
         _plant(
             "a step that posts a check run by that name",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(_POSTED_CHECK_RUN),
-            expect="ci.yml:results runs candidate code and names merge-verdict",
+            _adds_job(_POSTED_CHECK_RUN),
+            expect="pr.yml:planted runs candidate code and names merge-verdict",
         ),
         _plant(
             "an action handed the name",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    runs-on: ubuntu-24.04\n    steps:\n"
+            _adds_job(
+                "  planted:\n    runs-on: ubuntu-24.04\n    steps:\n"
                 f"      - uses: some/checks-action@{_SHA40}\n"
                 "        with:\n          name: merge-verdict\n          conclusion: success\n"
             ),
-            expect="ci.yml:results runs candidate code and names merge-verdict",
+            expect="pr.yml:planted runs candidate code and names merge-verdict",
         ),
         _plant(
             "the name in the candidate workflow's own env",
-            _CI,
+            _PR_YML,
             "\nenv:\n",
             "\nenv:\n  CHECK_NAME: merge-verdict\n",
             expect="names merge-verdict outside its jobs",
@@ -10230,9 +9801,9 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
                 _new_workflow(f"{_WORKFLOWS}/reusable.yml", _REUSABLE),
                 _plant(
                     "",
-                    _CI,
+                    _PR_YML,
                     _JOBS,
-                    _ci_adds_job("  called:\n    uses: ./.github/workflows/reusable.yml\n"),
+                    _adds_job("  called:\n    uses: ./.github/workflows/reusable.yml\n"),
                 ).plant,
             ),
             expect="reusable.yml:merge-verdict",
@@ -10248,9 +9819,9 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a candidate check whose name only starts with merge-verdict",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
+            _adds_job(
                 "  preview:\n    name: merge-verdict-preview\n    runs-on: ubuntu-24.04\n"
                 "    steps: []\n"
             ),
@@ -10258,20 +9829,20 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a job name quoted with a trailing space",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                '  results:\n    name: "merge-verdict "\n    runs-on: ubuntu-24.04\n'
+            _adds_job(
+                '  planted:\n    name: "merge-verdict "\n    runs-on: ubuntu-24.04\n'
                 "    steps: []\n"
             ),
-            expect="ci.yml:results runs candidate code under the check name",
+            expect="pr.yml:planted runs candidate code under the check name",
         ),
         _plant(
             "a job named from a matrix that is an expression",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+            _adds_job(
+                "  planted:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
                 "    strategy:\n      matrix: ${{ fromJSON(needs.plan.outputs.parts) }}\n"
                 "    steps: []\n"
             ),
@@ -10279,10 +9850,10 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a job named from a matrix value that is an expression",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+            _adds_job(
+                "  planted:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
                 "    strategy:\n      matrix:\n"
                 "        part: ${{ fromJSON(needs.plan.outputs.parts) }}\n    steps: []\n"
             ),
@@ -10290,20 +9861,20 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a job named from a matrix key the matrix does not have",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-${{ matrix.other }}\n    runs-on: ubuntu-24.04\n"
+            _adds_job(
+                "  planted:\n    name: merge-${{ matrix.other }}\n    runs-on: ubuntu-24.04\n"
                 "    strategy:\n      matrix:\n        part: [verdict]\n    steps: []\n"
             ),
             expect="matrix.other, which the matrix gives no literal value",
         ),
         _plant(
             "a job named from a matrix whose include is an expression",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+            _adds_job(
+                "  planted:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
                 "    strategy:\n      matrix:\n        part: [preview]\n"
                 "        include: ${{ fromJSON(needs.plan.outputs.inc) }}\n    steps: []\n"
             ),
@@ -10311,10 +9882,10 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a job named from an include entry that is an expression",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+            _adds_job(
+                "  planted:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
                 "    strategy:\n      matrix:\n"
                 "        include: [{part: '${{ needs.plan.outputs.p }}'}]\n    steps: []\n"
             ),
@@ -10322,10 +9893,10 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a job named from a matrix value that is an expression beside an include",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+            _adds_job(
+                "  planted:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
                 "    strategy:\n      matrix:\n"
                 "        part: ${{ fromJSON(needs.plan.outputs.parts) }}\n"
                 "        include: [{part: preview}]\n    steps: []\n"
@@ -10334,43 +9905,43 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a job named from an expression other than the matrix",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: ${{ needs.plan.outputs.check }}\n"
+            _adds_job(
+                "  planted:\n    name: ${{ needs.plan.outputs.check }}\n"
                 "    runs-on: ubuntu-24.04\n    steps: []\n"
             ),
             expect="an expression other than a matrix value",
         ),
         _plant(
             "a key PyYAML reads as a date",
-            _CI,
+            _PR_YML,
             "\nenv:\n",
             "\nenv:\n  2026-01-01: merge-verdict\n",
             expect="names merge-verdict outside its jobs",
         ),
         _plant(
             "the name as a key, with a value that is not it",
-            _CI,
+            _PR_YML,
             "\nenv:\n",
             "\nenv:\n  merge-verdict: on\n",
             expect="names merge-verdict outside its jobs",
         ),
         _plant(
             "a job named from a literal matrix with no such leg",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
-                "  results:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
+            _adds_job(
+                "  planted:\n    name: merge-${{ matrix.part }}\n    runs-on: ubuntu-24.04\n"
                 "    strategy:\n      matrix:\n        part: [preview]\n    steps: []\n"
             ),
             fails=False,
         ),
         _plant(
             "a step that names merge-verdict-preview, a longer word",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
+            _adds_job(
                 "  preview:\n    runs-on: ubuntu-24.04\n    steps:\n"
                 "      - run: echo merge-verdict-preview\n"
             ),
@@ -10378,9 +9949,9 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a step that names pre-merge-verdict, a longer word",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
+            _adds_job(
                 "  preview:\n    runs-on: ubuntu-24.04\n    steps:\n"
                 "      - run: echo pre-merge-verdict\n"
             ),
@@ -10388,9 +9959,9 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         ),
         _plant(
             "a job named merge-verdict preview, not the name itself",
-            _CI,
+            _PR_YML,
             _JOBS,
-            _ci_adds_job(
+            _adds_job(
                 "  preview:\n    name: merge-verdict preview\n    runs-on: ubuntu-24.04\n"
                 "    steps: []\n"
             ),
@@ -10415,28 +9986,25 @@ NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
         # A tier workflow's stage job is named from its planned matrix: each entry's key, which
         # the tree's catalogue gives, so the row reads every key the tier's plan can give it.
         Control(
-            "pr.yml on pull_request, its stage job named by the planned matrix, passes",
-            _PR_YML_ON_PULL_REQUEST,
+            "pr.yml, its stage job named by the planned matrix, passes",
+            _nothing,
             fails=False,
         ),
         Control(
-            "pr.yml on pull_request beside a catalogue job named merge-verdict",
-            _both(_PR_YML_ON_PULL_REQUEST, _CATALOGUE_JOB_NAMED_MERGE_VERDICT),
+            "pr.yml beside a catalogue job named merge-verdict",
+            _CATALOGUE_JOB_NAMED_MERGE_VERDICT,
             expect="pr.yml:test runs candidate code under the check name merge-verdict",
         ),
         Control(
             "a planned matrix's expression in a workflow that is not a tier workflow",
-            _plant(
-                "",
-                _CI,
-                _JOBS,
-                _ci_adds_job(
-                    "  results:\n    name: ${{ matrix.key }}\n    runs-on: ubuntu-24.04\n"
-                    "    strategy:\n      matrix: ${{ fromJSON(needs.changes.outputs.test) }}\n"
-                    "    steps: []\n"
-                ),
-            ).plant,
-            expect="ci.yml:results runs candidate code under a name the row cannot read",
+            _new_workflow(
+                f"{_WORKFLOWS}/new-check.yml",
+                "name: New check\non:\n  pull_request:\npermissions: {}\njobs:\n"
+                "  planted:\n    name: ${{ matrix.key }}\n    runs-on: ubuntu-24.04\n"
+                "    strategy:\n      matrix: ${{ fromJSON(needs.changes.outputs.test) }}\n"
+                "    steps: []\n",
+            ),
+            expect="new-check.yml:planted runs candidate code under a name the row cannot read",
         ),
     ),
 )
@@ -10641,15 +10209,33 @@ def _unmodelled(group: str) -> str:
     return ""
 
 
+#: A matrix property inside an expression: ``matrix.<key>``, not after a word or a dot.
+_MATRIX_PROPERTY = re.compile(r"(?<![\w.])matrix\.([\w-]+)")
+
+
 def _group_legs(job: dict[str, Any], group: str) -> list[str]:
-    """A job's group once per matrix leg, its ``${{ matrix.<key> }}`` read from a literal
-    matrix. A matrix the row cannot read raises, as an expression it cannot evaluate does."""
-    if not _MATRIX_REF.search(group):
+    """A job's group once per matrix leg, each ``matrix.<key>`` in its expressions read from a
+    literal matrix as a quoted literal. A matrix the row cannot read raises, as an expression it
+    cannot evaluate does."""
+    keys = {k for body in _EXPRESSION.findall(group) for k in _MATRIX_PROPERTY.findall(body)}
+    if not keys:
         return [group]
-    gap = _matrix_gap(job, group)
+    gap = _matrix_gap(job, group, sorted(keys))
     if gap:
         raise ValueError(f"an expression this row cannot evaluate: {gap}")
-    return sorted({value for _runner, value in _legs(job, group)})
+
+    return sorted({_leg_group(group, leg) for leg in _matrix_legs(job)})
+
+
+def _leg_group(group: str, leg: dict[str, Any]) -> str:
+    """``group`` with each ``matrix.<key>`` in its expressions read from ``leg`` as a quoted
+    literal."""
+
+    def one(match: re.Match[str]) -> str:
+        body = _MATRIX_PROPERTY.sub(lambda m: f"'{leg.get(m[1], '')}'", match.group(1))
+        return "${{" + body + "}}"
+
+    return _EXPRESSION.sub(one, group)
 
 
 def _concurrency_group(value: object) -> str | None:
@@ -10821,9 +10407,9 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
         Control("a group written as a bare string",
                 _new_pr_workflow("new-check.yml", "concurrency: one-lane\n"),
                 expect="new-check.yml"),
-        _plant("a job's own group that every pull request shares", _CI, _JOBS, _ci_adds_job(
+        _plant("a job's own group that every pull request shares", _PR_YML, _JOBS, _adds_job(
             "  lane:\n    runs-on: ubuntu-24.04\n    concurrency:\n      group: lane\n"
-            "      cancel-in-progress: true\n    steps: []\n"), expect="ci.yml:lane"),
+            "      cancel-in-progress: true\n    steps: []\n"), expect="pr.yml:lane"),
         Control("a group that lands on another workflow's group for another pull request",
                 _new_pr_workflow("new-check.yml",
                                  "concurrency:\n  group: nix-${{ github.repository }}-feature-b\n"),
@@ -10868,7 +10454,7 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                                     "name: Reusable\non:\n  workflow_call:\n"
                                     "concurrency:\n  group: reusable-lane\n"
                                     "permissions: {}\njobs: {}\n"),
-                      _plant("", _CI, _JOBS, _ci_adds_job(
+                      _plant("", _PR_YML, _JOBS, _adds_job(
                           "  called:\n    uses: ./.github/workflows/reusable.yml\n")).plant),
                 expect="reusable.yml: the group 'reusable-lane' is shared by"),
         # A GitHub re-run keeps its run id and commit and raises run_attempt.
@@ -10895,26 +10481,26 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                                     "    inputs:\n      lane:\n        type: string\n"
                                     "concurrency:\n  group: r-${{ inputs.lane || github.ref }}\n"
                                     "permissions: {}\njobs: {}\n"),
-                      _plant("", _CI, _JOBS, _ci_adds_job(
+                      _plant("", _PR_YML, _JOBS, _adds_job(
                           "  called:\n    uses: ./.github/workflows/reusable.yml\n"
                           "    with:\n      lane: one\n")).plant),
                 expect="it reads `inputs`"),
-        _plant("a job's group keyed on a matrix the row cannot read", _CI, _JOBS,
-               _ci_adds_job("  lane:\n    runs-on: ubuntu-24.04\n"
-                            "    strategy:\n      matrix: ${{ fromJSON(needs.plan.outputs.m) }}\n"
-                            "    concurrency:\n      group: lane-${{ matrix.part }}\n"
-                            "    steps: []\n"),
+        _plant("a job's group keyed on a matrix the row cannot read", _PR_YML, _JOBS,
+               _adds_job("  lane:\n    runs-on: ubuntu-24.04\n"
+                         "    strategy:\n      matrix: ${{ fromJSON(needs.plan.outputs.m) }}\n"
+                         "    concurrency:\n      group: lane-${{ matrix.part }}\n"
+                         "    steps: []\n"),
                expect="a matrix that is an expression"),
-        _plant("a job's group per literal matrix leg, shared by every pull request", _CI, _JOBS,
-               _ci_adds_job("  lane:\n    runs-on: ubuntu-24.04\n"
-                            "    strategy:\n      matrix:\n        part: [1, 2]\n"
-                            "    concurrency:\n      group: lane-${{ matrix.part }}\n"
-                            "    steps: []\n"),
-               expect="ci.yml:lane: the group 'lane-1' is shared by"),
+        _plant("a job's group per literal matrix leg, shared by every pull request", _PR_YML, _JOBS,
+               _adds_job("  lane:\n    runs-on: ubuntu-24.04\n"
+                         "    strategy:\n      matrix:\n        part: [1, 2]\n"
+                         "    concurrency:\n      group: lane-${{ matrix.part }}\n"
+                         "    steps: []\n"),
+               expect="pr.yml:lane: the group 'lane-1' is shared by"),
         # A workflow_run listener of a candidate workflow is held to relation 1.
-        Control("a listener of CI with one group for every pull request",
+        Control("a listener of PR with one group for every pull request",
                 _new_workflow(f"{_WORKFLOWS}/listener.yml",
-                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"CI\"]\n"
+                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"PR\"]\n"
                               "    types: [completed]\n"
                               "concurrency:\n  group: listener\n  cancel-in-progress: true\n"
                               "permissions: {}\njobs: {}\n"),
@@ -10935,9 +10521,9 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                               "concurrency:\n  group: listener\n  cancel-in-progress: true\n"
                               "permissions: {}\njobs: {}\n"),
                 expect="listener.yml: the group 'listener' is shared by the listener of"),
-        Control("a listener of CI keyed on the run it listens to",
+        Control("a listener of PR keyed on the run it listens to",
                 _new_workflow(f"{_WORKFLOWS}/listener.yml",
-                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"CI\"]\n"
+                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"PR\"]\n"
                               "    types: [completed]\n"
                               "concurrency:\n  group: l-${{ github.event.workflow_run.id }}"
                               "-${{ github.event.workflow_run.run_attempt }}\n"
@@ -10945,7 +10531,7 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                 fails=False),
         Control("a listener that listens on main alone",
                 _new_workflow(f"{_WORKFLOWS}/listener.yml",
-                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"CI\"]\n"
+                              "name: Listener\non:\n  workflow_run:\n    workflows: [\"PR\"]\n"
                               "    branches: [main]\n"
                               "concurrency:\n  group: listener\npermissions: {}\njobs: {}\n"),
                 fails=False),
@@ -10956,19 +10542,21 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                 fails=False),
         # A tier workflow's stage job reads its planned matrix: each entry the tier's plan can
         # give it, from the tree's catalogue.
-        Control("pr.yml on pull_request, a stage job's group keyed on the pull request and entry",
-                _both(_PR_YML_ON_PULL_REQUEST,
-                      _plant_in_job("", _PR_YML, "test", "    needs: [changes]\n",
-                                    "    needs: [changes]\n    concurrency:\n"
-                                    "      group: pr-${{ github.event.pull_request.number }}"
-                                    "-${{ matrix.key }}\n").plant),
+        Control("pr.yml, a stage job's group keyed on the pull request and entry",
+                _plant_in_job("", _PR_YML, "test", "    needs: [changes]\n",
+                              "    needs: [changes]\n    concurrency:\n"
+                              "      group: pr-${{ github.event.pull_request.number }}"
+                              "-${{ matrix.key }}\n").plant,
                 fails=False),
-        Control("pr.yml on pull_request, a stage job's group keyed on the entry alone",
-                _both(_PR_YML_ON_PULL_REQUEST,
-                      _plant_in_job("", _PR_YML, "test", "    needs: [changes]\n",
-                                    "    needs: [changes]\n    concurrency:\n"
-                                    "      group: entry-${{ matrix.key }}\n").plant),
+        Control("pr.yml, a stage job's group keyed on the entry alone",
+                _plant_in_job("", _PR_YML, "test", "    needs: [changes]\n",
+                              "    needs: [changes]\n    concurrency:\n"
+                              "      group: entry-${{ matrix.key }}\n").plant,
                 expect="pr.yml:test: the group 'entry-"),
+        Control("merge.yml, a stage job's group keyed on the entry alone",
+                _plant_in_job("", _MERGE_YML, "test", _MERGE_STAGE_GROUP,
+                              "      group: entry-${{ matrix.key }}\n").plant,
+                expect="merge.yml:test: the group 'entry-"),
     ),
 )  # fmt: skip
 
@@ -11681,10 +11269,10 @@ def _test_runner(words: list[str]) -> str | None:
 
 def raw_test_command_violations(tree: Tree) -> list[str]:
     """No job of any workflow file runs a test runner unless the job is a catalogue entry's."""
-    mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.ci_jobs}
+    mapped = {c for entry in _CATALOGUE_JOBS.values() for c in entry.jobs}
     bad: list[str] = []
     for name, job_id, job in _jobs(tree):
-        if (str(job_id) if name == "ci.yml" else f"{name}:{job_id}") in mapped:
+        if (str(job_id) if name == "breadth.yml" else f"{name}:{job_id}") in mapped:
             continue
         for n, step in enumerate(_job_steps(tree, job), 1):
             for words in _commands(str(step.get("run", ""))):
@@ -11712,7 +11300,7 @@ def _raw_test(name: str, rel: str, job: str, run: str, expect: str = "") -> Cont
     return Control(name, plant, fails=bool(expect), expect=expect)
 
 
-_IN_CI_ORCHESTRATION = (".github/workflows/ci.yml", "changes")
+_IN_MERGE_ORCHESTRATION = (".github/workflows/merge.yml", "changes")
 _IN_BREADTH_ORCHESTRATION = (".github/workflows/breadth.yml", "freshness")
 _IN_RELEASE = (".github/workflows/release-artifacts.yml", "build")
 _IN_SMOKE = (".github/workflows/headless-run-smoke.yml", "smoke")
@@ -11732,9 +11320,9 @@ NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST = _toolchain_row(
     "no-workflow-job-outside-the-catalogue-runs-a-test",
     raw_test_command_violations,
     (
-        _refused("pytest", _IN_CI_ORCHESTRATION, "pytest tests/test_more.py"),
-        _refused("pytest by its path", _IN_CI_ORCHESTRATION, ".venv/bin/pytest tests"),
-        _refused("python -m pytest", _IN_CI_ORCHESTRATION, "python -m pytest tests"),
+        _refused("pytest", _IN_MERGE_ORCHESTRATION, "pytest tests/test_more.py"),
+        _refused("pytest by its path", _IN_MERGE_ORCHESTRATION, ".venv/bin/pytest tests"),
+        _refused("python -m pytest", _IN_MERGE_ORCHESTRATION, "python -m pytest tests"),
         _refused("python3.13 -I -m pytest", _IN_RELEASE, "python3.13 -I -m pytest tests"),
         _refused("uv run pytest", _IN_BREADTH_ORCHESTRATION, "uv run pytest tests"),
         _refused(
@@ -11743,24 +11331,24 @@ NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST = _toolchain_row(
             "uv run --frozen --extra dev python -m pytest tests",
         ),
         _refused("uv run -m pytest", _IN_SMOKE, "uv run -m pytest tests"),
-        _refused("vitest", _IN_CI_ORCHESTRATION, "vitest run"),
-        _refused("npx vitest", _IN_CI_ORCHESTRATION, "npx vitest run"),
+        _refused("vitest", _IN_MERGE_ORCHESTRATION, "vitest run"),
+        _refused("npx vitest", _IN_MERGE_ORCHESTRATION, "npx vitest run"),
         _refused("npx --yes vitest", _IN_RELEASE, "npx --yes vitest run"),
         _refused("npm exec vitest", _IN_RELEASE, "npm exec -- vitest run"),
-        _refused("npm test", _IN_CI_ORCHESTRATION, "npm test"),
+        _refused("npm test", _IN_MERGE_ORCHESTRATION, "npm test"),
         _refused("npm test in a workspace", _IN_SMOKE, "npm --prefix web test"),
-        _refused("npm run test", _IN_CI_ORCHESTRATION, "npm run test"),
+        _refused("npm run test", _IN_MERGE_ORCHESTRATION, "npm run test"),
         _refused("npm run test:web", _IN_RELEASE, "npm run test:web"),
         _refused("npm run test:e2e -w web", _IN_SMOKE, "npm run -w web test:e2e"),
-        _refused("playwright", _IN_CI_ORCHESTRATION, "playwright test"),
+        _refused("playwright", _IN_MERGE_ORCHESTRATION, "playwright test"),
         _refused("npx playwright", _IN_SMOKE, "npx playwright test"),
         _refused("jest", _IN_RELEASE, "jest"),
         _refused("mocha", _IN_RELEASE, "mocha test/"),
         _refused("tox", _IN_BREADTH_ORCHESTRATION, "tox -e py313"),
         _refused("nox", _IN_BREADTH_ORCHESTRATION, "nox -s tests"),
         _refused("python -m unittest", _IN_SMOKE, "python -m unittest discover"),
-        _refused("make test", _IN_CI_ORCHESTRATION, "make test"),
-        _refused("make check", _IN_CI_ORCHESTRATION, "make check"),
+        _refused("make test", _IN_MERGE_ORCHESTRATION, "make test"),
+        _refused("make check", _IN_MERGE_ORCHESTRATION, "make check"),
         _refused("make gate", _IN_RELEASE, "make gate"),
         _refused("make e2e", _IN_SMOKE, "make e2e"),
         _refused("make e2e-live", _IN_SMOKE, "make e2e-live"),
@@ -11769,7 +11357,7 @@ NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST = _toolchain_row(
         _refused("make with a variable, then check", _IN_RELEASE, "make PYTHON=python3 check"),
         _refused(
             "after cd",
-            _IN_CI_ORCHESTRATION,
+            _IN_MERGE_ORCHESTRATION,
             "cd web && npx vitest run",
             command="npx vitest run",
         ),
@@ -11788,7 +11376,7 @@ NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST = _toolchain_row(
             "|\n          set -eu\n          echo starting\n          uv run pytest tests\n",
             command="uv run pytest tests",
         ),
-        _passes("an echo that names pytest passes", _IN_CI_ORCHESTRATION, "echo pytest --co"),
+        _passes("an echo that names pytest passes", _IN_MERGE_ORCHESTRATION, "echo pytest --co"),
         _passes("installing pytest passes", _IN_RELEASE, "uv pip install pytest"),
         _passes("python -c that imports pytest passes", _IN_RELEASE, "python -c 'import pytest'"),
         _passes("a build script passes", _IN_RELEASE, "npm run build"),
@@ -11798,7 +11386,7 @@ NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST = _toolchain_row(
         _passes("a comment naming pytest passes", _IN_SMOKE, "true  # pytest runs elsewhere"),
         _passes(
             "a test runner in an entry's own job passes",
-            (".github/workflows/ci.yml", "rails"),
+            (".github/workflows/breadth.yml", "rails-macos"),
             "uv run pytest tests/test_more.py",
         ),
     ),
@@ -12025,9 +11613,12 @@ ROWS = (*ROWS, THE_HARNESS_GATES_RUN_IN_THE_MERGE_TIER)
 # marked once runs in exactly one job of each such tier, so it is neither skipped nor run twice.
 # Static's validate runs with --strict, so a warning fails it as an error does: no other run checks
 # that the shipped specs carry none. The scan is the whole tree's: `scan --diff` judges only a
-# change's lines, so it is not the check. It holds the workflows to the other half: a step that
-# runs harness validate, harness scan, the gate aggregate or the rails census fails its job, with
-# no continue-on-error on the step or its job, no `|| true` after the command, and no `if:` that
+# change's lines, so it is not the check. The tier workflows run each change and merge entry's
+# steps through run-job, which fails the job on the first step that fails, so a check of those
+# tiers alone is held by the catalogue half. It holds breadth.yml, which writes its own steps, to
+# the other half: each check of the breadth tier is a step of it, and a step that runs harness
+# validate, harness scan, the gate aggregate or the rails census fails its job, with no
+# continue-on-error on the step or its job, no `|| true` after the command, and no `if:` that
 # can skip it while the job goes on green. A breadth leg that records an entry may gate the step
 # on its carry decision alone, since a step that decision skips is the earlier entry carried. The
 # outcome that leg records is evaluated as GitHub would, with the step's outcome set to each one
@@ -12094,7 +11685,7 @@ OWNED_CHECKS: tuple[tuple[str, frozenset[str], tuple[str, ...], bool, str], ...]
 #: the lines a change touched, not the tree.
 _NOT_THE_CHECK: dict[str, frozenset[str]] = {"the whole-tree harness scan": frozenset({"--diff"})}
 
-_OWNED_WORKFLOWS = (".github/workflows/ci.yml", ".github/workflows/breadth.yml")
+_OWNED_WORKFLOWS = (".github/workflows/breadth.yml",)
 #: The checks whose step must itself fail its job.
 _FAILS_ITS_JOB = frozenset(
     {"harness validate", "the whole-tree harness scan", "the gate aggregate", "the rails census"}
@@ -12169,9 +11760,9 @@ def _carried_red_violations(
 
 
 def owning_job_violations(root: Path) -> list[str]:
-    """Each owned check is in a job of every tier that needs it (exactly one where marked),
-    and every workflow step that runs one fails its job, every time the job runs, and its red
-    in any entry its leg records."""
+    """Each owned check is in a job of every tier that needs it (exactly one where marked), each
+    of the breadth tier is a breadth.yml step, and every breadth.yml step that runs one fails its
+    job, every time the job runs, and its red in any entry its leg records."""
     try:
         cat = catalogue.read(root)
     except FileNotFoundError:
@@ -12222,9 +11813,9 @@ def owning_job_violations(root: Path) -> list[str]:
                         )
                     if outcome is not None:
                         bad.extend(_carried_red_violations(where, step, job, outcome))
-    for what, *_rest in OWNED_CHECKS:
-        if what not in seen:
-            bad.append(f"no workflow step runs {what}")
+    for what, _words, tiers, _once, _text in OWNED_CHECKS:
+        if "breadth" in tiers and what not in seen:
+            bad.append(f"no breadth.yml step runs {what}")
     return bad
 
 
@@ -12243,17 +11834,9 @@ _RAILS_MACOS_PYTEST = (
     ' "--junitxml=reports/junit-rails-macos.xml"] },\n'
 )
 _GATES_STEP = '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n'
-_CI_VALIDATE = (
-    "      - name: harness validate (spec shape + reference resolution)\n"
-    "        run: uv run python -m harness validate --strict\n"
-)
 #: The start of a breadth-only job's command (security-macos's), where a planted step is in no
 #: other tier.
 _BREADTH_ONLY_COMMAND = 'junit = ["reports/junit-security-corpus-macos.xml"]\ncommand = [\n'
-_CI_SCAN = (
-    "      - name: harness scan (static boundary scanner over the whole tree)\n"
-    "        run: uv run python -m harness scan\n"
-)
 _BREADTH_SCAN_GATE = "        id: scan\n        if: ${{ steps.decide.outputs.run != 'false' }}\n"
 
 
@@ -12262,7 +11845,7 @@ def _entry_records(name: str, expression: str, fails: bool = True, expect: str =
     finds the step the row reads, so a rewritten OUTCOME cannot leave it without its text."""
 
     def plant(root: Path) -> None:
-        path = root / _OWNED_WORKFLOWS[1]
+        path = root / _OWNED_WORKFLOWS[0]
         workflow = yaml.safe_load(path.read_text(encoding="utf-8"))
         records = [
             step
@@ -12271,7 +11854,7 @@ def _entry_records(name: str, expression: str, fails: bool = True, expect: str =
         ]
         assert len(records) == 1, f"the plant {name!r} found {len(records)} record steps"
         records[0].setdefault("env", {})["OUTCOME"] = expression
-        _write(root, _OWNED_WORKFLOWS[1], yaml.safe_dump(workflow, sort_keys=False))
+        _write(root, _OWNED_WORKFLOWS[0], yaml.safe_dump(workflow, sort_keys=False))
 
     return Control(name, plant, fails, expect)
 
@@ -12301,19 +11884,30 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             expect="harness validate --strict runs in no job of the change tier",
         ),
         _plant(
-            "the harness step's validate without --strict",
-            _OWNED_WORKFLOWS[0],
-            _CI_VALIDATE,
-            _CI_VALIDATE.replace(" --strict", ""),
-            expect="no workflow step runs harness validate --strict",
-        ),
-        _plant(
             # Its lint remediation goes with it: the loader holds that job to the change tier.
             "static held to the merge tier only",
             catalogue.CATALOGUE,
             _STATIC_ENTRY,
             _STATIC_ENTRY.replace('"change", ', "").replace("lint_feedback = true\n", ""),
             expect="the whole-tree harness scan runs in no job of the change tier",
+        ),
+        # ci.yml's scan step under a pull-request `if:` left the merge tier with no scan; the
+        # merge tier's scan is static's, so its plant takes static out of that tier.
+        _plants(
+            "static held to the change tier only, so merge scans no tree",
+            catalogue.CATALOGUE,
+            (
+                (_STATIC_ENTRY, _STATIC_ENTRY.replace('"change", "merge"', '"change"')),
+                ('[tier.merge]\njobs = [\n  "static",\n', "[tier.merge]\njobs = [\n"),
+            ),
+            expect="the whole-tree harness scan runs in no job of the merge tier",
+        ),
+        _plant(
+            "`|| true` after the gate aggregate, through a shell",
+            catalogue.CATALOGUE,
+            '  { argv = ["uv", "run", "python", "scripts/gate_report.py"] },\n',
+            '  { argv = ["sh", "-c", "uv run python scripts/gate_report.py || true"] },\n',
+            expect="the gate aggregate runs in no job of the change tier",
         ),
         _plant(
             "static's scan back to the diff, which judges only a change's lines",
@@ -12370,7 +11964,7 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
         ),
         _plant(
             "breadth's scan step with no id, so its leg's entry cannot read it",
-            _OWNED_WORKFLOWS[1],
+            _OWNED_WORKFLOWS[0],
             "        id: scan\n",
             "",
             expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan has"
@@ -12378,26 +11972,22 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
         ),
         _plant(
             "continue-on-error on breadth's scan step",
-            _OWNED_WORKFLOWS[1],
+            _OWNED_WORKFLOWS[0],
             "        id: scan\n",
             "        id: scan\n        continue-on-error: true\n",
             expect="breadth.yml rails-macos: the step that runs the whole-tree harness scan has"
             " continue-on-error",
         ),
         _plant(
-            "ci.yml's scan step run on a pull request only, so merge scans no tree",
+            "breadth's scan step gone from breadth.yml, its entry kept",
             _OWNED_WORKFLOWS[0],
-            _CI_SCAN,
-            _CI_SCAN.replace(
-                "        run:",
-                "        if: ${{ github.event_name == 'pull_request' }}\n        run:",
-            ),
-            expect="ci.yml harness: the step that runs the whole-tree harness scan runs under"
-            " `if:",
+            "        run: uv run python -m harness scan\n",
+            "        run: echo scanned\n",
+            expect="no breadth.yml step runs the whole-tree harness scan",
         ),
         _plant(
             "breadth's scan step gated on more than the carry decision",
-            _OWNED_WORKFLOWS[1],
+            _OWNED_WORKFLOWS[0],
             _BREADTH_SCAN_GATE,
             _BREADTH_SCAN_GATE.replace(
                 "!= 'false' }}", "!= 'false' && github.event_name == 'schedule' }}"
@@ -12407,7 +11997,7 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
         ),
         _plant(
             "breadth's scan step under the carry decision written without ${{ }}, passes",
-            _OWNED_WORKFLOWS[1],
+            _OWNED_WORKFLOWS[0],
             _BREADTH_SCAN_GATE,
             "        id: scan\n        if: steps.decide.outputs.run != 'false'\n",
             fails=False,
@@ -12449,25 +12039,19 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             expect="the security corpus runs in no job of the change tier",
         ),
         _plant(
-            "continue-on-error on the harness validate step",
+            "`|| true` after breadth's scan",
             _OWNED_WORKFLOWS[0],
-            _CI_VALIDATE,
-            _CI_VALIDATE.replace("        run:", "        continue-on-error: true\n        run:"),
-            expect="the step that runs harness validate has continue-on-error",
+            "        run: uv run python -m harness scan\n",
+            "        run: uv run python -m harness scan || true\n",
+            expect="the step that runs the whole-tree harness scan ends in `|| true`",
         ),
         _plant(
-            "`|| true` after the gate aggregate",
+            "continue-on-error on the whole rails-macos job",
             _OWNED_WORKFLOWS[0],
-            "        run: uv run python scripts/gate_report.py\n",
-            "        run: uv run python scripts/gate_report.py || true\n",
-            expect="the step that runs the gate aggregate ends in `|| true`",
-        ),
-        _plant(
-            "continue-on-error on the whole rails-checks job",
-            _OWNED_WORKFLOWS[0],
-            "  rails-checks:\n",
-            "  rails-checks:\n    continue-on-error: true\n",
-            expect="rails-checks: the step that runs the rails census has continue-on-error",
+            "\n  rails-macos:\n",
+            "\n  rails-macos:\n    continue-on-error: true\n",
+            expect="rails-macos: the step that runs the whole-tree harness scan has"
+            " continue-on-error",
         ),
         _plant(
             "the gate aggregate also in a breadth job, a tier that does not list it, passes",
@@ -12707,7 +12291,7 @@ echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
         "main's tools/ci, archived beside the checkout, or no plan": r"""
 judge="$RUNNER_TEMP/judge"
 if ! { rm -rf "$judge" && mkdir -p "$judge" \
-       && git fetch --no-tags --depth=1 origin refs/heads/main \
+       && git fetch --no-tags --depth=1 origin "${JUDGE:-refs/heads/main}" \
        && git archive FETCH_HEAD tools/ci | tar -x -C "$judge"; }; then
   echo "::error title=no plan::main's tools/ci could not be fetched, so nothing is planned and the verdict is red. Re-run the job."
   exit 1
@@ -12805,7 +12389,7 @@ if [ "$GITHUB_EVENT_NAME" = "push" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; t
   if gh api -H "Accept: application/vnd.github.raw" \
        "repos/${GITHUB_REPOSITORY}/contents/tools/ci/tree_tested.py?ref=${BEFORE}" \
        > "$check"; then
-    GITHUB_OUTPUT="$RUNNER_TEMP/answer.txt" python3 "$check" --workflow merge.yml || true
+    GITHUB_OUTPUT="$RUNNER_TEMP/answer.txt" python3 -I "$check" --workflow merge.yml || true
     answer=$(cat "$RUNNER_TEMP/answer.txt" 2>/dev/null || true)
   else
     echo "the previous main commit ${BEFORE} has no tree check, so every job runs" \
@@ -12835,7 +12419,7 @@ python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
 set -u
 judge="$RUNNER_TEMP/verdict.py"
 if ! gh api -H "Accept: application/vnd.github.raw" \
-     "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=main" > "$judge"; then
+     "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=${JUDGE:-main}" > "$judge"; then
   echo "::error title=no verdict::main's tools/ci/verdict.py could not be read, so nothing judged this run. Re-run the job."
   exit 1
 fi
@@ -12843,12 +12427,28 @@ printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
 printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
 printf '%s' "${KEY_PARTNERS:-"{}"}" > "$RUNNER_TEMP/key-partners.json"
 mkdir -p "$RUNNER_TEMP/records"
+proof=""
+if [ -f "$RUNNER_TEMP/superseded.json" ]; then
+  proof="$RUNNER_TEMP/superseded.json"
+fi
 python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
   --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
   --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
   --key-partners "$RUNNER_TEMP/key-partners.json" \
+  ${proof:+--superseded "$proof"} \
   --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
 """,  # noqa: E501
+        "main's superseded.py, over the suite shards a newer push to main replaced": r"""
+set -u
+check="$RUNNER_TEMP/superseded.py"
+if gh api -H "Accept: application/vnd.github.raw" \
+     "repos/${GITHUB_REPOSITORY}/contents/tools/ci/superseded.py?ref=${BEFORE}" > "$check"; then
+  for job in python-suite python-suite-macos; do
+    GITHUB_OUTPUT=/dev/null python3 -I "$check" --workflow merge.yml --job "$job" \
+      --group-prefix merge-suite- --out "$RUNNER_TEMP/superseded.json" || true
+  done
+fi
+""",
     },
 }
 
@@ -12879,6 +12479,7 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
     ),
     _RESULTS_JOB: (
         ("the runner's identity",),
+        ("main's superseded.py, over the suite shards a newer push to main replaced",),
         ("main's verdict.py, over the plan's keys, needs and the run's records",),
     ),
 }
@@ -13189,6 +12790,15 @@ def tier_shape_violations(root: Path) -> list[str]:
             for key, value in want.items():
                 if job.get(key) != value:
                     bad.append(f"{where}: {key} is {job.get(key)!r}, not {value!r}")
+            # A stage job's red is its entry's: nothing in it may conclude green on a failure.
+            if "continue-on-error" in job:
+                bad.append(f"{where} carries continue-on-error, so a red entry's job is green")
+            for step in _trust_steps(job):
+                if "continue-on-error" in step:
+                    bad.append(
+                        f"{where}'s step {step.get('name') or step.get('run')!r} carries"
+                        " continue-on-error, so its red is green"
+                    )
             if (job.get("strategy") or {}).get("fail-fast") is not False:
                 bad.append(
                     f"{where} does not set fail-fast: false, so one red entry cancels the rest"
@@ -13224,8 +12834,9 @@ def tier_shape_violations(root: Path) -> list[str]:
             bad.append(f"{name} has no {_RESULTS_JOB} job")
         else:
             where = f"{name} job {_RESULTS_JOB}"
-            if results.get("if") != "${{ always() }}":
-                bad.append(f"{where} runs {results.get('if')!r}, not always()")
+            # A cancelled run publishes no verdict (#2946); a failed or skipped job is still read.
+            if results.get("if") != "${{ !cancelled() }}":
+                bad.append(f"{where} runs {results.get('if')!r}, not !cancelled()")
             needs = results.get("needs") or []
             needs = [needs] if isinstance(needs, str) else list(needs)
             if set(needs) != set(jobs) - {_RESULTS_JOB}:
@@ -13274,26 +12885,34 @@ _VERDICT_TAIL = '            --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_AT
 def _tier_concurrency_violations(
     name: str, workflow: dict[str, Any], jobs: dict[str, dict[str, Any]]
 ) -> list[str]:
-    """One group per workflow and commit, a run in flight never cancelled, and no job's group of
-    its own: a later dispatch of the commit waits, and never waits on the other tier's run."""
+    """One group per workflow and pull request, or commit for any other run; only a pull
+    request's superseded run cancelled in flight, never a dispatch's or a push's; and no job's
+    group of its own but merge.yml's stage jobs' (decision 9, whose shape the main-push row
+    holds). A later dispatch of the commit waits, and never waits on the other tier's run."""
     bad: list[str] = []
     concurrency = workflow.get("concurrency")
     concurrency = concurrency if isinstance(concurrency, dict) else {"group": concurrency}
-    group = f"{name.removesuffix('.yml')}-${{{{ github.sha }}}}"
+    group = f"{name.removesuffix('.yml')}-{_TIER_RUN_KEY}"
     if concurrency.get("group") != group:
         bad.append(
             f"{name} groups its runs as {concurrency.get('group')!r}, not {group!r}: one group"
-            " per workflow and commit"
+            " per workflow and pull request, or commit"
         )
-    if concurrency.get("cancel-in-progress") is not False:
+    if concurrency.get("cancel-in-progress") != _PR_RUN_CANCELS:
         bad.append(
             f"{name} sets cancel-in-progress {concurrency.get('cancel-in-progress')!r}, not"
-            " false: a run in flight is never cancelled"
+            f" {_PR_RUN_CANCELS!r}: only a pull request's superseded run is cancelled in flight"
         )
     for job_id, job in jobs.items():
-        if "concurrency" in job:
+        staged = name == "merge.yml" and _planned_tier(name, job) is not None
+        if "concurrency" in job and not staged:
             bad.append(f"{name} job {job_id} has a concurrency group of its own")
     return bad
+
+
+#: A tier workflow's run key, and when it cancels a run in flight.
+_TIER_RUN_KEY = "${{ github.event.pull_request.number || github.sha }}"
+_PR_RUN_CANCELS = "${{ github.event_name == 'pull_request' }}"
 
 
 def _tier_partner_violations(
@@ -13424,6 +13043,17 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
         _plant_in_job("one red entry cancelling the rest", _MERGE_YML, "build",
                       "      fail-fast: false\n", "      fail-fast: true\n",
                       expect="does not set fail-fast: false"),
+        _plant_in_job("continue-on-error on a stage job's run-job step", _MERGE_YML, "test",
+                      _RUN_JOB_STEP, _RUN_JOB_STEP + "        continue-on-error: true\n",
+                      expect="merge.yml job test's step"),
+        _plant_in_job("continue-on-error on a whole stage job", _PR_YML, "test",
+                      "    timeout-minutes: ${{ matrix.timeout }}\n",
+                      "    timeout-minutes: ${{ matrix.timeout }}\n    continue-on-error: true\n",
+                      expect="pr.yml job test carries continue-on-error"),
+        _plant_in_job("a stage job's if: without !cancelled()", _MERGE_YML, "test-2",
+                      "    if: ${{ !cancelled() && needs.changes.outputs.test-2 != '' }}\n",
+                      "    if: ${{ needs.changes.outputs.test-2 != '' }}\n",
+                      expect="merge.yml job test-2: if is"),
         _plant_in_job("the record named without the attempt", _PR_YML, "test",
                       "-${{ github.run_id }}-${{ github.run_attempt }}\n",
                       "-${{ github.run_id }}\n", expect="and the verdict reads it only as"),
@@ -13438,8 +13068,14 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
                       "      - name: Upload the entry's record\n",
                       expect="uploads its record only None"),
         _plant("results only when everything passed", _PR_YML,
-               "    needs: [changes, test]\n    if: ${{ always() }}\n",
+               "    needs: [changes, test]\n    if: ${{ !cancelled() }}\n",
                "    needs: [changes, test]\n", expect="pr.yml job results runs None"),
+        _plant("results on a cancelled run", _MERGE_YML,
+               "    needs: [tree-check, changes, shard-plan, build, test, test-2, test-3]\n"
+               "    if: ${{ !cancelled() }}\n",
+               "    needs: [tree-check, changes, shard-plan, build, test, test-2, test-3]\n"
+               "    if: ${{ always() }}\n",
+               expect="merge.yml job results runs '${{ always() }}', not !cancelled()"),
         _plant("results not reading the last stage", _MERGE_YML,
                "    needs: [tree-check, changes, shard-plan, build, test, test-2, test-3]\n",
                "    needs: [tree-check, changes, shard-plan, build, test, test-2]\n",
@@ -13465,16 +13101,26 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
                "        if: ${{ needs.changes.result == 'success' }}\n",
                expect="pr.yml job results holds back the records' download by if"),
         _plant("a run in flight cancelled by a later dispatch", _MERGE_YML,
-               "  cancel-in-progress: false\n", "  cancel-in-progress: true\n",
+               f"  cancel-in-progress: {_PR_RUN_CANCELS}\n", "  cancel-in-progress: true\n",
                expect="merge.yml sets cancel-in-progress True"),
-        _plant("one group for every commit", _PR_YML, "  group: pr-${{ github.sha }}\n",
+        _plant("a pull request's superseded run kept", _PR_YML,
+               f"  cancel-in-progress: {_PR_RUN_CANCELS}\n", "  cancel-in-progress: false\n",
+               expect="pr.yml sets cancel-in-progress False"),
+        _plant("one group for every run", _PR_YML, f"  group: pr-{_TIER_RUN_KEY}\n",
                "  group: pr\n", expect="pr.yml groups its runs as 'pr'"),
-        _plant("pr.yml in merge.yml's group", _PR_YML, "  group: pr-${{ github.sha }}\n",
-               "  group: merge-${{ github.sha }}\n",
-               expect="pr.yml groups its runs as 'merge-${{ github.sha }}'"),
+        _plant("a group per commit, which a pull request's newer push does not share", _PR_YML,
+               f"  group: pr-{_TIER_RUN_KEY}\n", "  group: pr-${{ github.sha }}\n",
+               expect="pr.yml groups its runs as 'pr-${{ github.sha }}'"),
+        _plant("pr.yml in merge.yml's group", _PR_YML, f"  group: pr-{_TIER_RUN_KEY}\n",
+               f"  group: merge-{_TIER_RUN_KEY}\n",
+               expect="pr.yml groups its runs as 'merge-"),
+        _plant_in_job("a merge.yml job other than a stage job with a group of its own", _MERGE_YML,
+                      "results", "    if: ${{ !cancelled() }}\n",
+                      "    if: ${{ !cancelled() }}\n    concurrency:\n      group: verdict\n",
+                      expect="merge.yml job results has a concurrency group of its own"),
         _plant_in_job("a job with a group of its own that cancels", _PR_YML, "results",
-                      "    if: ${{ always() }}\n",
-                      "    if: ${{ always() }}\n    concurrency:\n      group: verdict\n"
+                      "    if: ${{ !cancelled() }}\n",
+                      "    if: ${{ !cancelled() }}\n    concurrency:\n      group: verdict\n"
                       "      cancel-in-progress: true\n",
                       expect="pr.yml job results has a concurrency group of its own"),
         _plant_in_job("the suite's shards not waiting for the shard plan", _MERGE_YML, "test",
@@ -13759,6 +13405,11 @@ MERGE_YML_PUSH_STAGE_RUNS_THE_SECURITY_CORPUS_AND_APPS_CONTRACT = Row(
         _plant("the answer read off a push too", _MERGE_YML, _PUSH_PLAN,
                "${{ needs.tree-check.outputs.tested == 'true' && 'tested' || '' }}",
                expect="merge.yml's plan step reads PUSH_PLAN as"),
+        # A failed or cancelled check answers nothing: only `tested == 'true'` plans a push as
+        # tested, so a check that reads `!= 'false'` would skip the tier on no answer.
+        _plant("a push planned as tested unless the answer is false", _MERGE_YML, _PUSH_PLAN,
+               _PUSH_PLAN.replace("tested == 'true'", "tested != 'false'"),
+               expect="merge.yml's plan step reads PUSH_PLAN as"),
         _plant("changes planning without the answer", _MERGE_YML,
                "    needs: [tree-check]\n    runs-on: ubuntu-24.04\n",
                "    runs-on: ubuntu-24.04\n",
@@ -13781,8 +13432,8 @@ PR_YML_CARRIES_NO_PUSH_STAGE = Row(
     check=pr_push_stage_violations,
     scaffold=_tier_scaffold,
     controls=(
-        _plant("a push trigger", _PR_YML, "on:\n  workflow_dispatch: {}\n",
-               "on:\n  workflow_dispatch: {}\n  push:\n    branches: [main]\n",
+        _plant("a push trigger", _PR_YML, "  workflow_dispatch: {}\n",
+               "  workflow_dispatch: {}\n  push:\n    branches: [main]\n",
                expect="pr.yml runs on push"),
         _plant("a job that runs only on a push", _PR_YML,
                "    if: ${{ !cancelled() && needs.changes.outputs.test != '' }}\n",
@@ -13810,9 +13461,7 @@ PR_YML_CARRIES_NO_PUSH_STAGE = Row(
                "\n  tree-check:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n"
                "    steps:\n      - run: python3 tree_tested.py\n\n  results:\n",
                expect="pr.yml job tree-check is a tree check"),
-        _plant("merge.yml's own push trigger is not pr.yml's", _MERGE_YML,
-               "on:\n  workflow_dispatch: {}\n",
-               "on:\n  workflow_dispatch: {}\n  push:\n    branches: [main]\n", fails=False),
+        Control("merge.yml's own push trigger is not pr.yml's", _nothing, fails=False),
         # A step's inputs and every other expression are read too: a push stage need not sit in
         # a condition or an env.
         _plant_in_job("a checkout of the commit a push replaced", _PR_YML, "test",
@@ -13858,9 +13507,17 @@ def _permission_writes(where: str, value: object) -> list[str]:
     ]
 
 
+#: Each tier workflow's triggers: a pull request's run and a dispatch, and merge.yml's push stage.
+_TIER_TRIGGERS = {
+    "pr.yml": {"pull_request", "workflow_dispatch"},
+    "merge.yml": {"pull_request", "push", "workflow_dispatch"},
+}
+
+
 def tier_trust_violations(root: Path) -> list[str]:
     """Neither tier workflow takes a trusted trigger, holds a write or reads a secret, and each
-    runs on dispatch alone for now."""
+    runs on its own triggers alone: a pull request and a dispatch, and merge.yml a push to main
+    too (#3915)."""
     bad: list[str] = []
     for name, workflow in _tier_workflows(root).items():
         if not workflow:
@@ -13869,11 +13526,9 @@ def tier_trust_violations(root: Path) -> list[str]:
         triggers = set(_triggers(workflow))
         for trigger in sorted(triggers & _TRUSTED_OR_CALLED):
             bad.append(f"{name} runs on {trigger}, a trusted or called run of candidate code")
-        if triggers != {"workflow_dispatch"}:
-            bad.append(
-                f"{name} runs on {sorted(triggers)}: workflow_dispatch alone until ci.yml is"
-                " retired, so no check a pull request reports moves"
-            )
+        want = _TIER_TRIGGERS[name]
+        if triggers != want:
+            bad.append(f"{name} runs on {sorted(triggers)}, not {sorted(want)}")
         if "permissions" not in workflow:
             bad.append(f"{name} declares no permissions, so its token is the repository's default")
         bad += _permission_writes(name, workflow.get("permissions"))
@@ -13891,19 +13546,25 @@ THE_TIER_WORKFLOWS_TAKE_NO_TRUST = Row(
     check=tier_trust_violations,
     scaffold=_tier_scaffold,
     controls=(
-        _plant("pull_request_target", _MERGE_YML, "on:\n  workflow_dispatch: {}\n",
-               "on:\n  workflow_dispatch: {}\n  pull_request_target:\n",
+        _plant("pull_request_target", _MERGE_YML, "  workflow_dispatch: {}\n",
+               "  workflow_dispatch: {}\n  pull_request_target:\n",
                expect="merge.yml runs on pull_request_target"),
-        _plant("workflow_run", _PR_YML, "on:\n  workflow_dispatch: {}\n",
-               'on:\n  workflow_dispatch: {}\n  workflow_run:\n    workflows: ["CI"]\n',
+        _plant("workflow_run", _PR_YML, "  workflow_dispatch: {}\n",
+               '  workflow_dispatch: {}\n  workflow_run:\n    workflows: ["Merge"]\n',
                expect="pr.yml runs on workflow_run"),
-        _plant("a pull_request trigger before ci.yml is retired", _PR_YML,
-               "on:\n  workflow_dispatch: {}\n", "on:\n  workflow_dispatch: {}\n  pull_request:\n",
-               expect="workflow_dispatch alone until ci.yml is retired"),
+        _plant("a push trigger on pr.yml", _PR_YML,
+               "  workflow_dispatch: {}\n",
+               "  workflow_dispatch: {}\n  push:\n    branches: [main]\n",
+               expect="pr.yml runs on ['pull_request', 'push', 'workflow_dispatch'], not"),
+        _plant("merge.yml without its pull request run", _MERGE_YML,
+               "  pull_request: {}\n", "",
+               expect="merge.yml runs on ['push', 'workflow_dispatch'], not"),
+        _plant("a schedule on merge.yml", _MERGE_YML, "  workflow_dispatch: {}\n",
+               "  workflow_dispatch: {}\n  schedule:\n    - cron: '0 3 * * *'\n",
+               expect="merge.yml runs on ['pull_request', 'push', 'schedule',"),
         _plant("a write for the verdict", _MERGE_YML,
-               "    permissions:\n      contents: read   # main's tools/ci/verdict.py",
-               "    permissions:\n      checks: write\n"
-               "      contents: read   # main's tools/ci/verdict.py",
+               "      checks: read     # a cancelled shard's annotations",
+               "      checks: write    # a cancelled shard's annotations",
                expect="merge.yml job results grants checks: write"),
         _plant("write-all on the workflow", _PR_YML, "permissions:\n  contents: read\n",
                "permissions: write-all\n", expect="pr.yml grants 'write-all'"),
@@ -13927,6 +13588,101 @@ THE_TIER_WORKFLOWS_TAKE_NO_TRUST = Row(
     ),
 )  # fmt: skip
 
+#: merge.yml's env line its plan and verdict steps take their judge's ref from: on a push to
+#: main, the commit the push replaced; on any other run nothing, so main's tip. pr.yml, which
+#: has no push stage, leaves it empty, as it does PUSH_PLAN.
+_JUDGE_REF = (
+    "${{ github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    " && github.event.before || '' }}"
+)
+_JUDGE_LINE = f"          JUDGE: {_JUDGE_REF}\n"
+_PR_JUDGE_LINE = '          JUDGE: ""\n'
+#: Each tier's JUDGE: merge.yml's push stage sets it, pr.yml's is empty.
+_JUDGE_OF = {"merge.yml": _JUDGE_REF, "pr.yml": ""}
+_JUDGE_AT_THE_PUSH = "          JUDGE: ${{ github.event_name == 'push' && github.sha || '' }}\n"
+#: What each step reads at JUDGE: the planner's archive, by the branch's full name off a push,
+#: and main's verdict.py.
+_JUDGED = {
+    "plan": 'git fetch --no-tags --depth=1 origin "${JUDGE:-refs/heads/main}"',
+    "verdict": "contents/tools/ci/verdict.py?ref=${JUDGE:-main}",
+}
+
+
+def judge_ref_violations(root: Path) -> list[str]:
+    """A commit never judges its own push. Each tier workflow's plan step archives the planner,
+    and its verdict step reads verdict.py, at JUDGE: in merge.yml, on a push to main the commit
+    the push replaced (main's tip is the pushed commit) and on any other run main itself; in
+    pr.yml always main, never ``github.event.before`` (a pull request's is its previous head)."""
+    bad: list[str] = []
+    for name, workflow in _tier_workflows(root).items():
+        if not workflow:
+            bad.append(f"{_WORKFLOWS}/{name} is missing")
+            continue
+        jobs = _trust_jobs(workflow)
+        steps = {
+            "plan": next(
+                (s for s in _trust_steps(jobs.get(_PLAN_JOB) or {}) if s.get("id") == "plan"), None
+            ),
+            "verdict": next(
+                (
+                    s
+                    for s in _trust_steps(jobs.get(_RESULTS_JOB) or {})
+                    if "--records" in str(s.get("run", ""))
+                ),
+                None,
+            ),
+        }
+        for what, step in steps.items():
+            where = f"{name}'s {what} step"
+            if step is None:
+                bad.append(f"{where} is missing")
+                continue
+            judge = (step.get("env") or {}).get("JUDGE")
+            if judge != _JUDGE_OF.get(name):
+                bad.append(
+                    f"{where} takes its judge's ref from {judge!r}, not the commit a push to main"
+                    " replaced and main on any other run"
+                )
+            if _JUDGED[what] not in " ".join(str(step.get("run", "")).split()):
+                bad.append(f"{where} does not read its judge at JUDGE ({_JUDGED[what]})")
+    return bad
+
+
+A_COMMIT_NEVER_JUDGES_ITS_OWN_PUSH = Row(
+    name="a-commit-never-judges-its-own-push",
+    check=judge_ref_violations,
+    scaffold=_tier_scaffold,
+    controls=(
+        _plant_in_job("the verdict read at the pushed commit", _MERGE_YML, "results",
+                      _JUDGE_LINE, _JUDGE_AT_THE_PUSH,
+                      expect="merge.yml's verdict step takes its judge's ref from"),
+        _plant_in_job("the planner read at the pushed commit", _MERGE_YML, "changes",
+                      _JUDGE_LINE, _JUDGE_AT_THE_PUSH,
+                      expect="merge.yml's plan step takes its judge's ref from"),
+        _plant_in_job("the verdict read at main's tip on a push", _MERGE_YML, "results",
+                      _JUDGE_LINE, "          JUDGE: ${{ '' }}\n",
+                      expect="merge.yml's verdict step takes its judge's ref from"),
+        _plant_in_job("the planner read at main's tip on a push", _MERGE_YML, "changes",
+                      _JUDGE_LINE, "          JUDGE: ${{ '' }}\n",
+                      expect="merge.yml's plan step takes its judge's ref from"),
+        _plant_in_job("the verdict read at before on a pull request", _PR_YML, "results",
+                      _PR_JUDGE_LINE, "          JUDGE: ${{ github.event.before }}\n",
+                      expect="pr.yml's verdict step takes its judge's ref from"),
+        _plant_in_job("the planner read at before on a pull request", _PR_YML, "changes",
+                      _PR_JUDGE_LINE, "          JUDGE: ${{ github.event.before }}\n",
+                      expect="pr.yml's plan step takes its judge's ref from"),
+        _plant("the verdict's copy read at main whatever JUDGE says", _MERGE_YML,
+               "verdict.py?ref=${JUDGE:-main}", "verdict.py?ref=main",
+               expect="merge.yml's verdict step does not read its judge at JUDGE"),
+        _plant("the planner fetched at main whatever JUDGE says", _MERGE_YML,
+               'origin "${JUDGE:-refs/heads/main}"', "origin refs/heads/main",
+               expect="merge.yml's plan step does not read its judge at JUDGE"),
+        _plant("the planner fetched off a push by a name a tag could take", _PR_YML,
+               'origin "${JUDGE:-refs/heads/main}"', 'origin "${JUDGE:-main}"',
+               expect="pr.yml's plan step does not read its judge at JUDGE"),
+    ),
+)  # fmt: skip
+
 ROWS = (
     *ROWS,
     THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS,
@@ -13935,6 +13691,7 @@ ROWS = (
     PR_YML_CARRIES_NO_PUSH_STAGE,
     MERGE_YML_PUSH_STAGE_RUNS_THE_SECURITY_CORPUS_AND_APPS_CONTRACT,
     THE_TIER_WORKFLOWS_TAKE_NO_TRUST,
+    A_COMMIT_NEVER_JUDGES_ITS_OWN_PUSH,
 )
 
 

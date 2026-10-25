@@ -1,15 +1,17 @@
 """``python -m tools.ci rails select --paths ...``: the rails a change can break (#3920).
 
 Each rails leg records what each rail read (``tests/rails_reads.py``) and writes it beside its
-JUnit report as ``rails-reads-<leg>.json``; its job uploads it as the artifact
-``rails-reads-<leg>``. This command reads the newest record of main's push runs and names every
-rail whose recorded reads touch a changed path, one per line, so a lane runs those rails and its
-own tests rather than all of ``tests/rails``.
+JUnit report as ``rails-reads-<leg>.json``. merge.yml's push run uploads each entry's reports as
+the artifact ``reports-<slug>-<attempt>`` (the rails leg's slug is ``rails-<leg>-<legs>``), the
+record at ``reports/rails-reads-<leg>.json`` in it. This command reads the newest record of
+main's push runs and names every rail whose recorded reads touch a changed path, one per line,
+so a lane runs those rails and its own tests rather than all of ``tests/rails``.
 
 **Only main's records.** With no ``--map``, the record comes from the newest push run of main
 (:data:`WORKFLOWS`) made in the last day that holds one. Of that run's artifacts it takes only
-those named for a leg, uploaded by that run, unexpired and within :data:`MAX_ARTIFACT_BYTES`.
-Of each artifact it takes only the one member named for its leg, within
+those named for a leg (each leg's newest attempt), uploaded by that run, unexpired and within
+:data:`MAX_ARTIFACT_BYTES`. Of each artifact it takes only the one member named for its leg,
+within
 :data:`MAX_MEMBER_BYTES`, whose commit is the run's own. A pull request's leg records nothing
 (the recorder arms on a push to main alone), and an artifact of that name from any other run is
 never read. ``--map`` reads files instead, a leg's record or several.
@@ -76,10 +78,12 @@ MAX_AGE = datetime.timedelta(days=1)
 #: holds no record and the next workflow is read.
 WORKFLOWS = workflows.MAIN_PUSH
 
-#: The rails legs (``rails_census.LEGS``), each with its artifact and the member it holds.
+#: The rails legs (``rails_census.LEGS``), each with its artifact, less its attempt, and the
+#: member it holds: at ``reports/`` from the artifact's root, or at the root when the upload's
+#: one folder is ``reports/`` itself.
 LEGS = ("1", "2", "3")
-ARTIFACT = "rails-reads-{leg}"
-MEMBER = "rails-reads-{leg}.json"
+ARTIFACT = "reports-rails-{leg}-" + str(len(LEGS)) + "-"
+MEMBERS = ("reports/rails-reads-{leg}.json", "rails-reads-{leg}.json")
 
 #: The most a record's artifact may weigh as listed, and its member once read.
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
@@ -364,7 +368,7 @@ def _run_refusal(run: Mapping[str, Any], workflow: str) -> str | None:
 
 def _slice(gh: Gh, run: Mapping[str, Any], artifact: Mapping[str, Any], leg: str) -> Record:
     """One leg's record from one of the run's artifacts, held to its run, name and sizes."""
-    name = ARTIFACT.format(leg=leg)
+    name = str(artifact.get("name"))
     if (artifact.get("workflow_run") or {}).get("id") != run["id"]:
         raise RecordError(f"{name} was not uploaded by run {run['id']}")
     if artifact.get("expired"):
@@ -375,9 +379,12 @@ def _slice(gh: Gh, run: Mapping[str, Any], artifact: Mapping[str, Any], leg: str
     data = gh(f"repos/{{owner}}/{{repo}}/actions/artifacts/{artifact['id']}/zip")
     if len(data) > MAX_ARTIFACT_BYTES:
         raise RecordError(f"{name} arrived at {len(data)} bytes, past {MAX_ARTIFACT_BYTES}")
-    member = MEMBER.format(leg=leg)
+    members = [m.format(leg=leg) for m in MEMBERS]
+    member = members[0]
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            held = set(archive.namelist())
+            member = next((m for m in members if m in held), member)
             info = archive.getinfo(member)
             if info.file_size > MAX_MEMBER_BYTES:
                 raise RecordError(f"{name}'s {member} is {info.file_size} bytes")
@@ -395,6 +402,18 @@ def _slice(gh: Gh, run: Mapping[str, Any], artifact: Mapping[str, Any], leg: str
     if record.legs != (leg,):
         raise RecordError(f"{name} records legs {list(record.legs)}, not {leg}")
     return record
+
+
+def _newest(artifacts: Iterable[Mapping[str, Any]], prefix: str) -> Mapping[str, Any] | None:
+    """The artifact named *prefix* and an attempt, of the highest attempt: a rerun's leg replaces
+    the one before it."""
+    found: list[tuple[int, Mapping[str, Any]]] = []
+    for artifact in artifacts:
+        name = str(artifact.get("name", ""))
+        attempt = name[len(prefix) :]
+        if name.startswith(prefix) and attempt.isdigit() and attempt.isascii():
+            found.append((int(attempt), artifact))
+    return max(found, key=lambda pair: pair[0])[1] if found else None
 
 
 def fetch(gh: Gh, now: datetime.datetime) -> tuple[Record | None, list[str]]:
@@ -419,10 +438,9 @@ def fetch(gh: Gh, now: datetime.datetime) -> tuple[Record | None, list[str]]:
             artifacts = _json(
                 gh, f"repos/{{owner}}/{{repo}}/actions/runs/{run['id']}/artifacts?per_page=100"
             )
-            named = {a.get("name"): a for a in artifacts.get("artifacts", [])}
             slices = []
             for leg in LEGS:
-                artifact = named.get(ARTIFACT.format(leg=leg))
+                artifact = _newest(artifacts.get("artifacts", []), ARTIFACT.format(leg=leg))
                 if artifact is None:
                     continue
                 try:

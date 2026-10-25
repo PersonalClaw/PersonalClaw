@@ -13,11 +13,10 @@
 #   attestations, each platform loaded from it and run, and the layout copied as the release
 #   pushes it, to a second layout on the runner that must hold the same index.
 #
-# A workflow of its own because its trigger is a path filter: docker-single-container.yml's
-# filter would have to name the release's workflows, and every change to them would then pay for
-# that workflow's hour-long gateway image build as well. The filter also names the layout reader
-# `layout-smoke` runs, and tests/rails/test_workflow_path_filters_tree.py holds it to every path
-# the jobs read.
+# A workflow of its own because its trigger is a path filter on the release's workflows and the
+# layout reader `layout-smoke` runs, none of which the gateway image's build (the catalogue's
+# `image` entry) reads, so a change to them does not pay for that build as well.
+# tests/rails/test_workflow_path_filters_tree.py holds the filter to every path the jobs read.
 #
 # `pin-smoke` builds a two-line image for both platforms and keeps it in BuildKit's cache: the
 # `RUN` executes once per platform, the arm64 one under the pinned QEMU, inside the pinned BuildKit.
@@ -32,7 +31,9 @@ on:
       - tools/ci/oci_layout.py
   workflow_dispatch:
 
-# Same branch-keyed dedupe as ci.yml; see the two traps documented in its `concurrency` block.
+# Keyed on the head repository and branch rather than on `github.ref` or the head SHA, so a new
+# push to a pull request cancels its older run and a fork's branch of the same name is a group of
+# its own.
 concurrency:
   group: release-image-tooling-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true

@@ -321,8 +321,8 @@ class _Gh:
         if "/actions/runs/" in path and "?" not in path:
             producer = int(path.rsplit("/", 1)[1])
             known = {_producer_of(r) for r in self.histories}
-            # Any other id is some other workflow's run: a pull request's CI run, say.
-            other = dict(COLLECTOR_RUN, path=telemetry.CI_PATH, event="pull_request")
+            # Any other id is some other workflow's run: a pull request's merge.yml run, say.
+            other = dict(COLLECTOR_RUN, path=telemetry.MERGE_PATH, event="pull_request")
             uploaded = dict(COLLECTOR_RUN if producer in known else other)
             return json.dumps(dict(uploaded, **self.producers.get(producer, {}), id=producer))
         if "/actions/artifacts?name=" in path:
@@ -800,11 +800,10 @@ def _listed(gh: _Gh) -> list[str]:
     return [a.split("/workflows/")[1].split("/")[0] for a in gh.asked if "/runs?" in a]
 
 
-def test_a_main_push_leg_reads_merge_yml_s_runs_then_ci_yml_s() -> None:
-    """``main-push`` stands for both shapes, the newer first (#3915): merge.yml's runs are read
-    before ci.yml's, and a merge.yml run with no history (a dispatched one, which the collector
-    does not count) is skipped, so until the flip the plan reads ci.yml's as before."""
-    assert PUSH_LEG.workflows == (workflows.MERGE, workflows.LEGACY) == workflows.MAIN_PUSH
+def test_a_main_push_leg_reads_merge_yml_s_push_runs() -> None:
+    """``main-push`` stands for main's push workflow, merge.yml (#3915), and a merge.yml run with
+    no history (a dispatched one, which the collector does not count) is skipped."""
+    assert PUSH_LEG.workflows == (workflows.MERGE,) == workflows.MAIN_PUSH
     assert LEG.workflows == ("ci.yml",), "a file name stands for itself"
     t = "tests.test_a::t"
     gh = _Gh(
@@ -815,27 +814,18 @@ def test_a_main_push_leg_reads_merge_yml_s_runs_then_ci_yml_s() -> None:
             30: _history(30, ("junit-test-shard-1", t, 4.0)),
         }
     )
-    gh.listings = {workflows.MERGE: [60, 50], workflows.LEGACY: [40, 30]}
+    gh.listings = {workflows.MERGE: [60, 50, 40, 30]}
     durations, said = _record(gh).durations(PUSH_LEG, FILES)
     assert durations == {"tests/test_a.py": 4.0} and "telemetry runs 50, 40, 30" in said, said
-    assert _listed(gh) == [workflows.MERGE, workflows.LEGACY]
-
-
-def test_a_main_push_leg_whose_merge_yml_runs_suffice_never_lists_ci_yml() -> None:
-    t = "tests.test_a::t"
-    gh = _Gh({run: _history(run, ("junit-test-shard-1", t, float(run))) for run in (70, 60, 50)})
-    gh.listings = {workflows.MERGE: [70, 60, 50], workflows.LEGACY: [40]}
-    durations, said = _record(gh).durations(PUSH_LEG, FILES)
-    assert durations == {"tests/test_a.py": 60.0} and "telemetry runs 70, 60, 50" in said, said
     assert _listed(gh) == [workflows.MERGE]
 
 
-def test_a_main_push_leg_with_no_history_names_both_workflows() -> None:
+def test_a_main_push_leg_with_no_history_names_its_workflow() -> None:
     gh = _Gh({60: None, 40: None})
-    gh.listings = {workflows.MERGE: [60], workflows.LEGACY: [40]}
+    gh.listings = {workflows.MERGE: [60, 40]}
     durations, said = _record(gh).durations(PUSH_LEG, FILES)
     assert durations == {}
-    assert "no telemetry history of merge.yml or ci.yml on main" in said, said
+    assert "no telemetry history of merge.yml on main" in said, said
 
 
 def test_the_record_reads_only_attempt_one_the_first_results() -> None:
@@ -875,7 +865,7 @@ def test_a_history_of_that_name_another_run_made_is_never_downloaded(made_by: di
     "producer",
     [
         {"event": "pull_request"},
-        {"path": telemetry.CI_PATH},
+        {"path": f"{telemetry.WORKFLOWS}/pr.yml"},
         {"head_branch": "feature-x"},
         {"head_repository": {"full_name": "someone/fork"}},
     ],

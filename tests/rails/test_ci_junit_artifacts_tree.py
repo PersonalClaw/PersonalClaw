@@ -29,16 +29,12 @@ from tools.ci import catalogue
 _WORKFLOWS = _REPO / ".github" / "workflows"
 
 
-_CI = _WORKFLOWS / "ci.yml"
-
-
 _BREADTH = _WORKFLOWS / "breadth.yml"
 
 
 #: Job ids old enough in each workflow that their absence means the parser broke rather
 #: than that CI changed. The vacuity floor for :func:`jobs`.
 _LONG_STANDING = {
-    "ci.yml": frozenset({"lint", "test-shard", "test", "web", "rails", "harness", "client"}),
     "breadth.yml": frozenset({"coverage-shard", "coverage", "audit", "security", "install-smoke"}),
 }
 
@@ -46,7 +42,7 @@ _LONG_STANDING = {
 @pytest.fixture(scope="module")
 def workflows() -> dict[str, dict[str, str]]:
     parsed = {}
-    for path in (_CI, _BREADTH):
+    for path in (_BREADTH,):
         assert path.is_file(), f"{path} moved — re-point this rail"
         parsed[path.name] = jobs(path.read_text(encoding="utf-8"))
     return parsed
@@ -73,17 +69,7 @@ def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[st
     Named by JOB rather than by count: a new pytest job should extend this list (and pick up
     the rails with it), not silently shrink what they cover.
     """
-    ci = set(_pytest_jobs(workflows["ci.yml"]))
     full = set(_pytest_jobs(workflows["breadth.yml"]))
-    assert ci >= {
-        "lint",
-        "test-shard",
-        "test-macos",
-        "browse-live",
-        "security",
-        "rails",
-        "client",
-    }, sorted(ci)
     assert full >= {
         "ubuntu",
         "macos",
@@ -94,7 +80,7 @@ def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[st
     }, sorted(full)
 
 
-@pytest.mark.parametrize("filename", ["ci.yml", "breadth.yml"])
+@pytest.mark.parametrize("filename", ["breadth.yml"])
 def test_every_pytest_invocation_writes_a_junit_report(
     workflows: dict[str, dict[str, str]], filename: str
 ) -> None:
@@ -109,7 +95,7 @@ def test_every_pytest_invocation_writes_a_junit_report(
                 )
 
 
-@pytest.mark.parametrize("filename", ["ci.yml", "breadth.yml"])
+@pytest.mark.parametrize("filename", ["breadth.yml"])
 def test_every_pytest_job_uploads_its_report_even_when_red(
     workflows: dict[str, dict[str, str]], filename: str
 ) -> None:
@@ -129,14 +115,15 @@ def test_every_pytest_job_uploads_its_report_even_when_red(
             )
 
 
-@pytest.mark.parametrize("filename", ["ci.yml", "breadth.yml"])
+@pytest.mark.parametrize("filename", ["breadth.yml"])
 def test_a_matrix_job_names_its_artifact_per_leg(
     workflows: dict[str, dict[str, str]], filename: str
 ) -> None:
     """Artifact names are unique per run, so N legs sharing one name collapse to one upload.
 
-    ci.yml's ``test-shard`` runs 4 legs and breadth.yml's ``macos`` runs 6; a fixed name
-    would keep whichever finished last, which is reliably not the one that failed.
+    breadth.yml's ``macos`` runs 6 legs; a fixed name would keep whichever finished last,
+    which is reliably not the one that failed. The tier workflows' stage jobs name theirs by
+    entry (below).
     """
     matrixed = {
         job: block
@@ -145,7 +132,7 @@ def test_a_matrix_job_names_its_artifact_per_leg(
     }
     # Vacuity floor, per file: the sharded job is named, not counted, so a `matrix:` indent
     # change reds HERE (parser broke) rather than quietly emptying the rail below.
-    expected = {"ci.yml": "test-shard", "breadth.yml": "macos"}[filename]
+    expected = {"breadth.yml": "macos"}[filename]
     assert expected in matrixed, (
         f"the matrix scan did not find {filename}'s `{expected}` job (found: "
         f"{sorted(matrixed)}) — the parser broke, not the workflow."
@@ -160,58 +147,13 @@ def test_a_matrix_job_names_its_artifact_per_leg(
             )
 
 
-def test_the_real_home_guard_report_is_uploaded_per_shard(
-    workflows: dict[str, dict[str, str]],
-) -> None:
-    """The one red the JUnit report structurally CANNOT explain still reaches an artifact.
-
-    The real-home guard fails the test that touches the real home, which the XML carries. What
-    it cannot pin on a test — a thread that outlived the test that started it, an import during
-    collection — fails the run from ``pytest_sessionfinish`` by assigning ``session.exitstatus``:
-    no testcase fails, so the XML reads ``failures=0`` and the shard surfaces as a bare
-    process-level exit naming nothing. MEASURED on the walk-based rail before it: that
-    signature cost three shifts of guessing on one PR, because the offending paths lived only
-    on STDOUT, where the #2720 truncation class can eat them (#3386).
-
-    The expected path is read from :data:`real_home_guard.REPORT_RELPATH` rather than
-    spelled here, so moving the writer without moving the upload reds this test instead
-    of silently publishing a file that no longer exists.
-    """
-    block = workflows["ci.yml"]["test-shard"]
-    wanted = real_home_guard.REPORT_RELPATH
-    assert wanted.startswith(_REPORT_DIR), (
-        f"the guard report is written to {wanted!r}, outside {_REPORT_DIR!r} — the only "
-        "directory .gitignore covers and CI uploads from."
-    )
-    uploads = [
-        s
-        for s in steps(block)
-        if "actions/upload-artifact" in s and (with_key(s, "path") or "") == wanted
-    ]
-    assert uploads, (
-        f"ci.yml job `test-shard` runs the whole suite but no step uploads {wanted}, so a "
-        "session-level guard red is unattributable from any artifact."
-    )
-    for upload in uploads:
-        condition = key(upload, "if") or "success()"
-        assert re.search(r"\balways\(\)|\bfailure\(\)|!\s*cancelled\(\)", condition), (
-            f"the guard report is uploaded under `if: {condition}`, which skips exactly the "
-            "failing runs it exists for. Use `if: always()`."
-        )
-        name = with_key(upload, "name") or ""
-        assert "${{ matrix." in name, (
-            f"all four shards upload the guard report as {name!r}; without a matrix "
-            "coordinate they collide and only the last leg to finish survives."
-        )
-
-
 # ── The tier workflows' half (#3915) ──────────────────────────────────────────────────────────
 #
 # pr.yml's and merge.yml's stage jobs run the catalogue's steps through run-job and upload what
 # they wrote, one step for every entry. So the rules above hold there as: every catalogue pytest
 # step writes its report under reports/ and its job declares it (run-job then fails a job that
 # wrote none), and every stage job uploads reports/ whatever the entry answered, under the
-# entry's own name. The flip deletes ci.yml and its parameter above; these stay.
+# entry's own name. These took over from ci.yml's parameter above when the flip deleted it.
 
 #: The stage jobs' matrix: a part of the plan's matrix, one entry a leg.
 _STAGE_MATRIX = re.compile(r"\$\{\{\s*fromJSON\(needs\.changes\.outputs\.[\w-]+\)\s*\}\}")

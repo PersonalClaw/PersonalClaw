@@ -1,26 +1,26 @@
 """Was a cancelled suite shard on ``main`` replaced by a newer push's waiting shard?
 
-On a push to ``main`` the suite's shards share one concurrency group per job and shard, with
-``cancel-in-progress: false`` (``.github/workflows/ci.yml``). So during a burst of merges, a newer
+On a push to ``main``, at the run's first attempt, merge.yml's suite shards (``python-suite``
+and ``python-suite-macos``) share one concurrency group per shard across commits,
+``merge-suite-<key>``, with ``cancel-in-progress: false``. So during a burst of merges, a newer
 commit's waiting shard replaces an older commit's shard that has not started yet, and GitHub
-reports the replaced job as cancelled. That commit is not verified on its own (#3915). No
-release gate reads CI results yet: until #3911 lands, the release runbook tags only a commit
-whose own main-push run was green, and #3911 must enforce it.
+reports the replaced job as cancelled. That commit is not verified on its own (#3915).
 
-The ``test`` gate stays red either way. This check only decides which red it names:
-``superseded by <newer commit>``, or ``unproven``. It never turns anything green.
+The ``results`` job's verdict stays red either way. This check only decides which red it names:
+``superseded by <newer commit>``, or ``cancelled``. It never turns anything green.
 
 A cancelled shard is **superseded** only when every one of these holds, read from the API:
 
 1. the run is a push to ``main`` (the full ref, so a tag named ``main`` is not it);
-2. the job is a shard of the job named (``<job> (<n>)``) and was cancelled before any step ran;
+2. the job is a shard of the job named, by its matrix key (``<job> (<n>/<N>)``), and was
+   cancelled before any step ran;
 3. its check run carries exactly GitHub's replacement annotation, ``Canceling since a higher
    priority waiting request for <group> exists``, naming that shard's own group
-   (``<group prefix><n>``). GitHub has written the group both in single quotes and bare (bare on
-   main's run 40113017916), so either is read, and nothing else around it;
+   (``<group prefix><key>``). GitHub has written the group both in single quotes and bare (bare
+   on main's run 40113017916), so either is read, and nothing else around it. merge.yml's groups
+   hold a space and parentheses (``merge-suite-python-suite (2/3)``), so a bare group may too;
 4. a later push run of the same workflow on ``main``, for a commit that descends from this one,
-   has a job of the same name that was not skipped. The earliest such run is the one named;
-5. every cancelled shard of the run was replaced by one and the same commit.
+   has a job of the same name that was not skipped. The earliest such run is the one named.
 
 The group replaces by order of joining, not by commit: an older push's slower run can queue its
 shard after the newest commit's and evict it. That shard has no later descendant, so it reads
@@ -28,14 +28,15 @@ unproven, which fails closed.
 
 Anything else is **unproven**, with its reason: a cancellation by hand, a run that was
 cancelled as a whole, an annotation for another group or another wording, no later descendant,
-an answer this check cannot read. The run is named superseded only when every cancelled shard is
-by one and the same commit (``superseded=<sha>``); otherwise the output is ``superseded=`` and
-the gate says unproven. Off a
-push to ``main`` the word never exists, and the API is not read.
+an answer this check cannot read. ``--out`` writes each superseded shard's key and the newer
+commit as JSON, which the verdict reads (``verdict --superseded``); an unproven shard is not in
+it, so the verdict reads it cancelled. ``superseded=<sha>`` names the one commit when every
+cancelled shard is superseded by it. Off a push to ``main`` the word never exists, and the API
+is not read.
 
 It reads only the first page of each listing (100 jobs, 100 runs): a burst past that is unproven,
-never superseded. Standard library only, with no relative imports, so the gate runs it as
-``python3 -I tools/ci/superseded.py`` with nothing installed.
+never superseded. Standard library only, with no relative imports, so the workflow runs main's
+copy as ``python3 -I superseded.py`` with nothing installed.
 """
 
 from __future__ import annotations
@@ -56,7 +57,7 @@ _SHA = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 #: in single quotes, or bare.
 _REPLACED = re.compile(
     r"Canceling since a higher priority waiting request for "
-    r"(?:'(?P<quoted>[^']+)'|(?P<bare>[^\s']+)) exists"
+    r"(?:'(?P<quoted>[^']+)'|(?P<bare>[^'\n]+)) exists"
 )
 _PER_PAGE = 100
 
@@ -149,8 +150,7 @@ def _judge(
 ) -> tuple[str | None, str]:
     """``(newer commit, why)`` for one cancelled job: the commit is None when it is unproven."""
     name = str(job.get("name", ""))
-    shard = re.fullmatch(re.escape(shard_job) + r" \((\d+)\)", name)
-    if not shard:
+    if not re.fullmatch(re.escape(shard_job) + r" \(\d+/\d+\)", name):
         return None, f"{name!r} is not a shard of {shard_job}"
     if job.get("steps"):
         return None, "it started before it was cancelled, so no waiting job replaced it"
@@ -165,7 +165,7 @@ def _judge(
             groups.append(found.group("quoted") or found.group("bare"))
     if not groups:
         return None, "no replacement annotation: it was cancelled some other way"
-    own = group_prefix + shard.group(1)
+    own = group_prefix + name
     if own not in groups:
         return None, f"its replacement annotation names the group {groups[0]!r}, not {own!r}"
     found_run = _replacer(get, repo=repo, sha=sha, run_id=run_id, workflow=workflow, name=name)
@@ -216,7 +216,7 @@ def decide(
     unproven: dict[str, str] = {}
     for each in jobs:
         name = str(each.get("name", ""))
-        if each.get("conclusion") != "cancelled" or not name.startswith(job):
+        if each.get("conclusion") != "cancelled" or not name.startswith(f"{job} ("):
             continue
         try:
             newer, why = _judge(
@@ -287,7 +287,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--workflow", required=True, help="the workflow file whose runs count")
     parser.add_argument("--job", required=True, help="the matrix job whose shards are judged")
-    parser.add_argument("--group-prefix", required=True, help="the shards' group, less its index")
+    parser.add_argument("--group-prefix", required=True, help="the shards' group, less its key")
+    parser.add_argument(
+        "--out", help="where to add each superseded shard's key and newer commit, as JSON"
+    )
     args = parser.parse_args(argv)
     env = os.environ
     answer = decide(
@@ -311,7 +314,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         if target:
             with open(target, "a", encoding="utf-8") as handle:
                 handle.write(content)
+    if args.out:
+        write_out(answer, args.out)
     return 0
+
+
+def write_out(answer: Answer, path: str) -> None:
+    """Add the answer's superseded shards to the JSON object at *path*, made when it is absent:
+    one file gathers each suite job's answer, and a key already there is never replaced."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            found = json.load(handle)
+    except FileNotFoundError:
+        found = {}
+    if not isinstance(found, dict):
+        raise SystemExit(f"{path} is not a JSON object")
+    for key, newer in answer.superseded.items():
+        found.setdefault(key, newer)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(found, handle, indent=1, sort_keys=True)
 
 
 if __name__ == "__main__":

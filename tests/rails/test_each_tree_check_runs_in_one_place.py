@@ -20,8 +20,7 @@ Two shapes of copy are found here, both read from source and never imported:
   that its job's catalogue command still runs it by name.
 
 Each owner, of a check or of a file the shards leave out, is a job of ``tools/ci/catalogue.toml``,
-the one definition ``ci.yml``'s jobs and the tier workflows' run alike, so no owner names a job of
-one shape only.
+the one definition the tier workflows run, so an owner names a job, never a workflow's step.
 
 :data:`KNOWN_COPIES` and :data:`KNOWN_FILE_COPIES` list the copies that are still there, each
 with the job that owns the check. They only shrink: a copy not on them fails, and so does an
@@ -62,9 +61,9 @@ KNOWN_DOCS_READERS: frozenset[str] = frozenset(
     }
 )
 
-#: The test files a workflow job runs by name while the shards collect them too, until the
-#: shards leave each to its job (``shards.JOB_OWNED``). ``(workflow job, file)``. None is left:
-#: the security corpus, the last, runs in ``ci.yml``'s ``security`` job alone.
+#: The test files a job runs by name while the shards collect them too, until the shards leave
+#: each to its job (``shards.JOB_OWNED``). ``(job, file)``. None is left: the security corpus,
+#: the last, runs in the ``security`` job alone.
 KNOWN_FILE_COPIES: frozenset[tuple[str, str]] = frozenset()
 
 _NO_BROWSER = (
@@ -72,15 +71,15 @@ _NO_BROWSER = (
     "its only run without one, where the live cases skip and the string and structure tests run"
 )
 
-#: Files a workflow job runs by name that the shards keep collecting on purpose, each with why.
-#: ``(workflow job, file): reason``. An exemption whose file is no longer a copy fails, so the
-#: list shrinks with the tree.
+#: Files a job runs by name that the shards keep collecting on purpose, each with why.
+#: ``(job, file): reason``, the job a catalogue id or ``<workflow> <job>``. An exemption whose
+#: file is no longer a copy fails, so the list shrinks with the tree.
 EXEMPT_FILE_COPIES: Mapping[tuple[str, str], str] = {
-    ("ci.yml browse-live", "tests/test_browse_behavioural_proof_is_reachable.py"): _NO_BROWSER,
-    ("ci.yml browse-live", "tests/test_browse_cdp_live.py"): (
+    ("browse-live", "tests/test_browse_behavioural_proof_is_reachable.py"): _NO_BROWSER,
+    ("browse-live", "tests/test_browse_cdp_live.py"): (
         f"{_NO_BROWSER}; it is security-marked, so no leg selects it out"
     ),
-    ("ci.yml browse-live", "tests/test_browse_safety_script.py"): (
+    ("browse-live", "tests/test_browse_safety_script.py"): (
         f"{_NO_BROWSER}; it is security-marked, so no leg selects it out"
     ),
 }
@@ -177,9 +176,22 @@ def file_copies(root: Path, owned: Mapping[str, str] | None = None) -> set[tuple
 
 
 def named_runs(root: Path) -> set[tuple[str, str]]:
-    """``("workflow job", file)`` for each test file a job's pytest step names, outside the
-    shards' own steps: a named folder counts as each ``test_*.py`` under it."""
+    """``(job, file)`` for each test file a job's pytest step names, outside the shards' own
+    steps: a workflow job's as ``<workflow> <job>``, and a catalogue job's, which the tier
+    workflows run through run-job, as its id. A named folder counts as each ``test_*.py`` under
+    it."""
     found: set[tuple[str, str]] = set()
+    if (root / catalogue.CATALOGUE).is_file():
+        for job_id, named in catalogue_runs(catalogue.read(root)):
+            if named.startswith("tests/rails"):
+                continue  # the rails, which the rails job runs and no shard collects
+            target = root / named
+            files = (
+                [p.relative_to(root).as_posix() for p in sorted(target.rglob("test_*.py"))]
+                if target.is_dir()
+                else [named]
+            )
+            found |= {(job_id, rel) for rel in files}
     for workflow in sorted((root / ".github" / "workflows").glob("*.yml")):
         data = yaml.safe_load(workflow.read_text(encoding="utf-8")) or {}
         for job, spec in (data.get("jobs") or {}).items():

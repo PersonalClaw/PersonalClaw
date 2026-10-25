@@ -26,7 +26,7 @@ from website_installer_shared import (
 installer_text = website_installer_shared.installer_text
 
 
-_CI = _ROOT / ".github" / "workflows" / "ci.yml"
+_PR = _ROOT / ".github" / "workflows" / "pr.yml"
 
 
 _BREADTH = _ROOT / ".github" / "workflows" / "breadth.yml"
@@ -34,7 +34,7 @@ _BREADTH = _ROOT / ".github" / "workflows" / "breadth.yml"
 
 #: Job ids long enough in these workflows that their absence means the parser broke rather
 #: than that CI changed. The vacuity floor for :func:`jobs`.
-LONG_STANDING_CI_JOBS = frozenset({"lint", "test", "web", "rails", "harness", "client"})
+LONG_STANDING_PR_JOBS = frozenset({"changes", "test", "results"})
 
 
 LONG_STANDING_BREADTH_JOBS = frozenset({"install-smoke", "audit", "security", "coverage"})
@@ -200,8 +200,7 @@ class TestLiveInstallerLegIsWired:
 
 class TestLintJobChecksTheInstaller:
     """The every-PR half of the linter claim, which cannot skip. Read from the catalogue's
-    ``static`` job, which ci.yml's lint job and the tier workflows' static entry both run
-    (``tests/ci_catalogue_steps.py``)."""
+    ``static`` job, which the tier workflows run (``tests/ci_catalogue_steps.py``)."""
 
     @pytest.fixture(scope="class")
     @classmethod
@@ -251,9 +250,9 @@ class TestParsersAreNotVacuous:
     """Every assertion above is only worth its ability to fail. Drive it and watch."""
 
     def test_jobs_finds_the_real_workflows(self) -> None:
-        ci = set(jobs(_CI.read_text(encoding="utf-8")))
+        pr = set(jobs(_PR.read_text(encoding="utf-8")))
         full = set(jobs(_BREADTH.read_text(encoding="utf-8")))
-        assert LONG_STANDING_CI_JOBS <= ci, f"parser lost ci.yml jobs: {LONG_STANDING_CI_JOBS - ci}"
+        assert LONG_STANDING_PR_JOBS <= pr, f"parser lost pr.yml jobs: {LONG_STANDING_PR_JOBS - pr}"
         assert (
             LONG_STANDING_BREADTH_JOBS <= full
         ), f"parser lost breadth.yml jobs: {LONG_STANDING_BREADTH_JOBS - full}"

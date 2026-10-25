@@ -1,10 +1,9 @@
 # The catalogue of CI's validation jobs, read by tools/ci/catalogue.py.
 #
-# One [[job]] per job. ci.yml still runs its own run: lines (pr.yml and merge.yml, on dispatch
-# only, run each job through run-job), and the CI contract table's row "every catalogue command
-# is the workflow's" holds the two to each other: each step below is a run: line of the ci.yml
-# job it maps to, token for token and in order, and each run: line of that job that validates
-# something is one entry's step. Change a command in both places, in the same commit.
+# One [[job]] per job. pr.yml and merge.yml run each job through run-job, its steps exactly as
+# written here, so a command is changed in this file alone. breadth.yml still runs its own run:
+# lines, and the CI contract table's row "every catalogue command is the workflow's" holds each
+# of its jobs to the entry it maps to, token for token and in order.
 # docs/maintainers/ci.md ("The catalogue") says what each field means and how to add a job.
 #
 # A step is an argv run from the repository root, or from `workdir` under it, with `env` (its
@@ -676,8 +675,8 @@ command = [
 ]
 
 # The web job's tests, its build, and the wheel built with that build: three entries, one job.
-# ci.yml sets VITEST_MAX_WORKERS to the runner's core count, through GITHUB_ENV, before the
-# vitest steps: workers = "auto", and workers_env names the variable the runner sets to it.
+# run-job sets VITEST_MAX_WORKERS to the runner's core count before the vitest steps:
+# workers = "auto", and workers_env names the variable it sets.
 #
 # Each of web-unit and web-build reads the workspaces its steps run in, what their code names
 # outside them (the backend's sources its parity tests read, the design docs and brand files its
@@ -867,7 +866,6 @@ inputs = [
   "scripts/install_git_hooks.sh",
   "scripts/installed_bundled_model_probe.py",
   "tools/docker_single_container_smoke.py",
-  ".github/workflows/docker-single-container.yml",
 ]
 external_inputs = ["package-index"]
 toolchain = []
@@ -892,13 +890,13 @@ command = [
 # - harness/**: repo-inner self-verification infra. src/personalclaw/ imports no `harness` module
 #   (grepped), so it is absent from the gateway the harness boots.
 # - packages/personalclaw-client-py/**: independently versioned/published client, NOT part of the
-#   core uv workspace (ci.yml's `client` job builds it in its own venv) and not imported by
+#   core uv workspace (the `client` job builds it in its own venv) and not imported by
 #   src/personalclaw/.
-# - .github/** except workflows/ci.yml and actions/**: issue templates, dependabot config and the
-#   other workflows cannot change a rendered pixel. ci.yml and the local actions under
-#   .github/actions/ are EXCLUDED from this exemption because they define the `e2e` job itself:
-#   ci.yml writes its steps, and a local action runs its own steps inside the job wherever the job
-#   calls it. Editing either must re-validate the job, or a broken job definition would be waved
+# - .github/** except workflows/ and actions/**: issue templates and dependabot config cannot
+#   change a rendered pixel. The workflows and the local actions under .github/actions/ are
+#   EXCLUDED from this exemption because they define the `e2e` job's run: merge.yml's stage job
+#   runs its steps, and a local action runs its own steps inside the job wherever the job calls
+#   it. Editing either must re-validate the job, or a broken job definition would be waved
 #   through by the very gate it broke.
 # Those exceptions are tools/ci/areas.toml's overrides of every workflow and every local action,
 # which plan the whole tier.
@@ -1020,8 +1018,8 @@ command = [
 # A real browser driven by the browse tool. Its steps run two security-marked modules (the
 # browsed page's safety script, and a denied navigation that never reaches the network), so its
 # result is security evidence; and it is live. Either way it is never reused, and no plan leaves
-# it out: ci.yml runs it as a job of its own that waits on nothing, on every pull request and
-# every push to main.
+# it out: merge.yml runs it on every pull request and every push to main, whatever the tree
+# check answers (every_push).
 [[job]]
 id = "browse-live"
 tiers = ["merge"]
@@ -1042,8 +1040,9 @@ command = [
 
 # What the apps build against. A signature change anywhere in core must regenerate the snapshot
 # under src/personalclaw/sdk/, so a trigger list is sound here where e2e needs default-deny.
-# These are the triggers of the SDK classifier ci.yml ran the job by before the plan, less that
-# classifier's own file. python-suite names every tracked path but the flake, so on any of them
+# These are the triggers of the SDK classifier the job was run by before the plan, less that
+# classifier's own file and the workflow it ran in (any workflow plans the whole tier,
+# tools/ci/areas.toml). python-suite names every tracked path but the flake, so on any of them
 # no unknown-path fallback stands behind these inputs, and they alone decide a plan's
 # apps-contract. tests/rails/test_ci_plan_tree.py holds them to the triggers and plans every
 # tracked path the classifier ran the job on.
@@ -1058,7 +1057,6 @@ tiers = ["merge"]
 inputs = [
   "desktop/",
   "web/",
-  ".github/workflows/ci.yml",
   ".github/actions/",
 ]
 external_inputs = []
@@ -1085,7 +1083,6 @@ inputs = [
   "src/personalclaw/sdk/",
   "scripts/apps_sdk_contract.py",
   "scripts/sdk_signature_snapshot.py",
-  ".github/workflows/ci.yml",
   ".github/actions/",
 ]
 external_inputs = ["apps-partner", "package-index"]

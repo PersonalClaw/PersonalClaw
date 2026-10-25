@@ -7,6 +7,7 @@ hold to.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 
 import source_index
@@ -73,11 +74,25 @@ def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+#: run-job's installs, each the argv it runs for a toolchain word in pr.yml's and merge.yml's
+#: stage jobs and here (tools/ci/jobs.py), read as the lines of a script.
+_RUN_JOB = "tools/ci/jobs.py"
+
+
+def _run_job_installs() -> str:
+    from tools.ci import jobs
+
+    return "\n".join(shlex.join(argv) for argv in jobs.INSTALL_ARGV.values())
+
+
 def _census() -> list[Install]:
     return [
-        install
-        for path in _install_files()
-        for install in _commands(path.relative_to(_ROOT).as_posix(), _text(path))
+        *(
+            install
+            for path in _install_files()
+            for install in _commands(path.relative_to(_ROOT).as_posix(), _text(path))
+        ),
+        *_commands(_RUN_JOB, _run_job_installs()),
     ]
 
 
@@ -124,7 +139,8 @@ def test_the_census_reads_the_installs_that_matter() -> None:
     for path in (
         "deploy/docker/Dockerfile.backend",
         ".github/workflows/release-artifacts.yml",
-        ".github/workflows/ci.yml",
+        ".github/workflows/breadth.yml",
+        _RUN_JOB,
         "deploy/website/install.sh",
     ):
         assert path in by_file, f"the census read no install in {path}"

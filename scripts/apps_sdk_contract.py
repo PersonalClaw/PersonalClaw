@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the first-party apps' SDK contract checks against THIS core. ``ci.yml``'s ``apps-contract``.
+"""Run the first-party apps' SDK contract checks against THIS core: the catalogue's apps-contract.
 
 Core and the apps ship separately, so a core change can break an app with nothing in core's CI
 noticing: #3599 changed ``compress_thread_history``'s parameter type and the Slack app lost every

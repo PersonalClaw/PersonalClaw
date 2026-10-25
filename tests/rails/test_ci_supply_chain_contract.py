@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 from test_ci_contract import (
     _BREADTH,
-    _CI,
+    _MERGE_YML,
     _NGINX,
     _NODE_AMD64,
     _NODE_ARM64,
@@ -37,7 +37,7 @@ from test_ci_contract import (
     table_params,
 )
 
-from tools.ci import supply_chain
+from tools.ci import catalogue, supply_chain
 
 # ── The supply chain (docs/maintainers/ci.md, "Supply chain") ─────────────────────────────────
 #
@@ -66,10 +66,9 @@ _AGENT_LOCK = f"{_AGENT_CLIS}/package-lock.json"
 _AGENT_INSTALL = "RUN npm ci --omit=dev --no-fund --no-audit &&"
 _AGENT_COPY = f"COPY {_AGENT_MANIFEST} {_AGENT_LOCK} ./\n"
 _AGENT_SCHEDULE = "    schedule:\n      interval: weekly\n"
-_DOCKER_SMOKE = ".github/workflows/docker-single-container.yml"
-#: The image smoke's path for everything under deploy/docker/: the Dockerfile and the agent CLIs'
-#: lock among it.
-_SMOKE_PATH = "      - deploy/docker/**\n"
+#: The image entry's input for everything under deploy/docker/: the Dockerfile and the agent
+#: CLIs' lock among it.
+_IMAGE_INPUT = '  "deploy/docker/",\n'
 _AGENT_PINS: dict[str, str] = json.loads((REPO / _AGENT_MANIFEST).read_text(encoding="utf-8"))[
     "dependencies"
 ]
@@ -258,7 +257,7 @@ def _json_set(name: str, rel: str, keys: tuple[str, ...], value: object, **kw: A
 
 
 _LISTED_CHECKOUT = (
-    '\n[[audited_write]]\nworkflow = "ci.yml"\njob = "changes"\n'
+    '\n[[audited_write]]\nworkflow = "merge.yml"\njob = "changes"\n'
     'permission = "persist-credentials"\nsteps = ["actions/checkout"]\nreason = "planted"\n'
 )
 
@@ -1366,8 +1365,8 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
         "setup-floating",
         ("setup-floating",),
         (
-            # ci.yml's jobs set up uv and Node through the setup action, so these plants edit
-            # the action's own steps.
+            # The tier workflows' jobs set up uv and Node through the setup action, so these
+            # plants edit the action's own steps.
             _plant(
                 "setup-node with check-latest",
                 _SETUP_ACTION,
@@ -1556,7 +1555,9 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             ),
             _planted_workflow("a job with no permissions anywhere", "      - run: true\n", top=""),
             _line(
-                "a checkout that keeps its credentials", _CI, "          persist-credentials: false"
+                "a checkout that keeps its credentials",
+                _MERGE_YML,
+                "          persist-credentials: false",
             ),
             _plant(
                 "a workflow env that hands a token to every step",
@@ -1684,7 +1685,7 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
             ),
             _together(
                 "a checkout that keeps its credentials passes once it is an audited write",
-                _line("", _CI, "          persist-credentials: false"),
+                _line("", _MERGE_YML, "          persist-credentials: false"),
                 _append("", _POLICY, _LISTED_CHECKOUT),
                 fails=False,
             ),
@@ -1756,44 +1757,46 @@ SUPPLY_CHAIN_ROWS: tuple[Row, ...] = (
                 '      agent-clis:\n        patterns: ["@openai/*"]\n',
                 expect=f"/{_AGENT_CLIS} does not move every package in one group",
             ),
-            # A Dependabot PR that moves the lock builds and smokes the image that installs it.
+            # A Dependabot PR that moves the lock builds and smokes the image that installs it:
+            # the catalogue's image entry, which the tier workflows plan by its inputs.
             _plant(
-                "the image smoke not run on a pull request that moves the agent CLIs' lock",
-                _DOCKER_SMOKE,
-                f"  pull_request:\n    paths:\n{_SMOKE_PATH}",
-                f"  pull_request:\n    paths:\n      - {_BACKEND}\n",
-                expect=f"{_DOCKER_SMOKE} runs on a pull_request that changes {_BACKEND} but not "
-                f"on one that changes {_AGENT_LOCK}",
+                "the image entry not planned on a change of the agent CLIs' lock",
+                catalogue.CATALOGUE,
+                _IMAGE_INPUT,
+                f'  "{_BACKEND}",\n',
+                expect=f"the catalogue's image runs on a change of {_BACKEND} but not on one of "
+                f"{_AGENT_LOCK}",
             ),
             _plant(
-                "the image smoke not run on a push that moves the agent CLIs' lock",
-                _DOCKER_SMOKE,
-                f"    branches: [main]\n    paths:\n{_SMOKE_PATH}",
-                f"    branches: [main]\n    paths:\n      - {_BACKEND}\n",
-                expect=f"{_DOCKER_SMOKE} runs on a push that changes {_BACKEND} but not on one "
-                f"that changes {_AGENT_LOCK}",
+                "the image entry taking the agent CLIs' lock back out of its inputs",
+                catalogue.CATALOGUE,
+                _IMAGE_INPUT,
+                f'{_IMAGE_INPUT}  ":(exclude){_AGENT_LOCK}",\n',
+                expect=f"but not on one of {_AGENT_LOCK}",
             ),
             _plant(
-                "the image smoke taking the agent CLIs' lock back out of its paths",
-                _DOCKER_SMOKE,
-                _SMOKE_PATH,
-                f"{_SMOKE_PATH}      - '!{_AGENT_LOCK}'\n",
-                expect=f"but not on one that changes {_AGENT_LOCK}",
-            ),
-            _plant(
-                "the image smoke on all of deploy/ but the agent CLIs' lock",
-                _DOCKER_SMOKE,
-                f"  pull_request:\n    paths:\n{_SMOKE_PATH}",
-                f"  pull_request:\n    paths:\n      - deploy/**\n      - '!{_AGENT_CLIS}/**'\n",
-                expect=f"{_DOCKER_SMOKE} runs on a pull_request that changes {_BACKEND} but not "
-                f"on one that changes {_AGENT_LOCK}",
-            ),
-            _plant(
-                "the image smoke listing the agent CLIs' two files passes",
-                _DOCKER_SMOKE,
-                _SMOKE_PATH,
-                f"      - {_BACKEND}\n      - {_AGENT_MANIFEST}\n      - {_AGENT_LOCK}\n",
+                "the image entry listing the agent CLIs' two files passes",
+                catalogue.CATALOGUE,
+                _IMAGE_INPUT,
+                f'  "{_BACKEND}",\n  "{_AGENT_MANIFEST}",\n  "{_AGENT_LOCK}",\n',
                 fails=False,
+            ),
+            # A workflow of its own that builds the image is held the same way.
+            _append(
+                "a workflow run on a pull request that changes the Dockerfile, not the lock",
+                ".github/workflows/image-check.yml",
+                "name: Image check\non:\n  pull_request:\n    paths:\n"
+                f"      - {_BACKEND}\npermissions: {{}}\njobs: {{}}\n",
+                expect=".github/workflows/image-check.yml runs on a pull_request that changes "
+                f"{_BACKEND} but not on one that changes {_AGENT_LOCK}",
+            ),
+            _append(
+                "a workflow on all of deploy/ but the agent CLIs' lock",
+                ".github/workflows/image-check.yml",
+                "name: Image check\non:\n  push:\n    paths:\n      - deploy/**\n"
+                f"      - '!{_AGENT_CLIS}/**'\npermissions: {{}}\njobs: {{}}\n",
+                expect=".github/workflows/image-check.yml runs on a push that changes "
+                f"{_BACKEND} but not on one that changes {_AGENT_LOCK}",
             ),
             _plant(
                 "a base named through an ARG, which Dependabot cannot move",

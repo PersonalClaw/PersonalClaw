@@ -74,11 +74,9 @@ unless the tag is a release tag by `scripts/release_tags.py`, the commit is on `
 (`trust.require_on_main`), its workflows, actions, `tools/ci` and the entry points they run are
 `main`'s tip's (`trust.compare`), no tag of that name exists here or on the remote, and the
 commit's own push run on `main` is green (#3911's gate, `release_tag.main_push_green`). That run
-is read in each workflow a push to `main` runs in, the newer shape first (`workflows.MAIN_PUSH`:
-`merge.yml` once #3915's flip lands, `ci.yml` until then), and the first with a run for the
-commit decides, so a red there is never passed over for the other's green. Its newest run must
-have completed with success: one still going, failed, cancelled, or whose gate read a shard as
-superseded or unproven is refused, naming the run. No `release.yml` run may be unfinished
+is read in `merge.yml` (`workflows.MAIN_PUSH`), and its newest run must have completed with
+success: one still going, failed, cancelled, or whose gate read a shard as superseded or
+unproven is refused, naming the run. No `release.yml` run may be unfinished
 either (`release_tag.no_release_running`: queued, in progress, waiting or any other state before
 it completes), named when one is: every release shares one concurrency group, where GitHub keeps
 one waiting run and a newer one replaces it, so a tag made behind a running release could be left
@@ -174,15 +172,14 @@ A trusted job reads candidate output only as data:
   and 64 bytes of `pr.txt`, and shows at most 60000 characters, so an artifact past those caps
   is cut, never read whole.
 
-`pr-feedback.yml` follows CI and PR (`pr.yml`). CI's `lint` job writes `lint-feedback` itself.
-In PR, the catalogue's one `lint_feedback` job, `static`, has `run-job` keep each command step's
+`pr-feedback.yml` follows PR (`pr.yml`). The catalogue's one `lint_feedback` job, `static`, has
+`run-job` keep each command step's
 output, its first 60000 bytes (`run.OUTPUT_LIMIT`). When a step exits non-zero on a pull
 request's run, `run-job` leaves the step's command and output as `violations.md`, with the pull
 request's number from the run's own event as `pr.txt`, and the stage job uploads them. A
 dispatched run has no pull request, so it leaves none. `run-job` stops a job at its first failed
 step, so a PR run's comment shows the first failing tool's output alone (`black`'s before
-`flake8`'s), where CI's `lint` job runs every tool and shows each one's. The flip deletes
-`ci.yml` and takes CI off the list.
+`flake8`'s): fix it, push, and the next run shows the next one.
 
 ### Definitions: which files judge
 
@@ -427,38 +424,35 @@ candidate could delete one. Running them from main's copy is #3915's.
 `tools/ci/catalogue.toml` lists CI's validation jobs, one `[[job]]` entry each, and
 `tools/ci/catalogue.py` reads it into typed jobs. `python -m tools.ci run-job` and `run` run its
 jobs on a maintainer's machine (see "Local runs"), and `pr.yml` and `merge.yml` run each planned
-job through `run-job` when they are dispatched (see "The tier workflows"); `ci.yml`,
-`breadth.yml` and `docker-single-container.yml` still run their own `run:` lines. The contract
-table's row "every catalogue command is the workflow's" holds each entry to the jobs of those
-workflows it maps to (`image`'s is the single-container workflow's), in
-both directions:
+change and merge job through `run-job` (see "The tier workflows"), so those entries' steps, cap,
+runner, Python and env are the catalogue's own. `breadth.yml` still runs its own `run:` lines.
+The contract table's row "every catalogue command is the workflow's" holds each breadth entry to
+the `breadth.yml` jobs it maps to, in both directions, and every entry to the rest:
 
 - Each step is one of those jobs' `run:` lines, token for token, from the same working directory
-  and with the same step `env`. An entry's steps come in `ci.yml`'s order, and none comes twice.
+  and with the same step `env`. An entry's steps come in `breadth.yml`'s order, and none comes
+  twice.
 - Every `run:` line of a mapped job is one entry's step. The only lines left out are a closed
   list in the row, each named for what it does: the runner's identity, the installs the
-  toolchain names, the shell around a step (its options, and the branch on which base there
-  is), the fetch of that base, a value set through `GITHUB_ENV`, the lint job's wrapper and
-  feedback relay, and breadth's evidence lines (a leg's inputs, the one leg's decision to
+  toolchain names, and breadth's evidence lines (a leg's inputs, the one leg's decision to
   carry, what it ran, its result read back) with the scratch interpreter they run on and the
   coverage shards' gate. A listed line that no mapped job runs any more fails the row too, so
-  the list holds only lines that exist. No line is a step of two entries. An entry mapped to a
-  job in each workflow (`security`) holds each workflow's lines on its own.
+  the list holds only lines that exist. Each breadth job is one entry's at most.
 - An install is toolchain, never a step: `uv sync`, `npm ci`, the Playwright browser install and
   Electron's binary (`sh tools/ci/install_electron.sh`, which `npm ci` does not run) are
   refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`, `chromium`,
-  `electron`) is one its `ci.yml` jobs run. Each entry names every install it needs, so no entry
-  leans on another job's installs.
-- The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps, inside the
-  setup action when the job calls it there), the environment, the JUnit reports and the shard
-  count are the jobs'.
+  `electron`) is one its `breadth.yml` jobs run; `run-job` runs each of a change or merge entry's
+  installs itself (`INSTALL_ARGV`). Each entry names every install it needs, so no entry leans
+  on another job's installs.
+- The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps), the
+  environment and the shard count are its breadth jobs'. Every entry's JUnit reports are the ones
+  its steps write.
 - An entry whose pytest steps name a security-marked module, by its file or by a folder that
   holds one, is `security` posture. The census in `tests/security_census.py` says which modules
   are marked.
 - Each entry's tiers, `security`, `live` and `reuse` are the ones the row's table gives it, so
   changing one takes an edit in both places.
-- Every `ci.yml` and `breadth.yml` job is an entry's or orchestration (`tree-check`, `changes`,
-  `shard-plan`, `test`, `test-macos-gate`; breadth's `freshness` and `report`). An entry with a
+- Every `breadth.yml` job is an entry's or orchestration (`freshness` and `report`). An entry with a
   `script` list (`install-smoke`) holds its job's `sh <script>` steps, one per script, in order:
   `sh <path>` is the one way the supply-chain check reads a script a step runs. Each of those
   scripts is the tree's and opens with `set -eu`, so a command that fails fails the job.
@@ -482,7 +476,8 @@ both directions:
   name, or a change to `web-unit`'s command, the two test scripts or the vitest file set
   fails it.
 - `breadth.yml` names each suite leg and its shard count as literals (`--leg ubuntu --shard
-  ${{ matrix.shard }}/4`), as `ci.yml` does. Its steps that must not install the project first
+  ${{ matrix.shard }}/4`), as the catalogue's suite entries do. Its steps that must not install the
+  project first
   run the uv-managed interpreter of the job's Python, `"$(uv python find "$PY")"`, which the
   catalogue writes `{python}`; `run-job` fills it from `uv python find <python>`. The
   randomized-order leg's seeds are spelled `${{ github.run_number }}1` and `...2`, which the
@@ -492,7 +487,7 @@ The map from entry to job lives in that row.
 
 ### The setup action
 
-`ci.yml`'s jobs, and the stage jobs of `pr.yml` and `merge.yml`, set up their toolchain with one
+The stage jobs of `pr.yml` and `merge.yml` set up their toolchain with one
 composite action, `.github/actions/setup`. It runs setup-uv with the one uv release and the exact
 Python the job names (`python-version`), and setup-node from `.nvmrc` when the job asks for it
 (`node: "true"`, with `node-cache`, `npm` by default). `programs` names the programs of a
@@ -501,15 +496,13 @@ catalogue job's toolchain that `run-job` finds on PATH and does not install
 plan's matrix gives them: every name is checked before anything installs, and any other name
 fails the step with nothing installed (none is read as a pattern); each one PATH lacks is then
 installed from the runner's package manager (`apt-get` on Linux, `brew` on macOS, nothing
-elsewhere); and empty, the default, installs none, so no `ci.yml` call changes. Each job keeps
-the rest itself:
+elsewhere); and empty, the default, installs none. Each job keeps the rest itself:
 
 - the checkout, before the action, because a local action loads only from a checkout;
 - the Runner identity step, first, so a failed checkout still logs the image. The runner
   identity row reads it from the job's own steps and fails one inside a local action;
-- its installs (`uv sync`, `npm ci`), which the catalogue row holds to the toolchain each entry
-  names;
-- its JUnit upload, after its tests: a composite action has no post step.
+- its installs (`uv sync`, `npm ci`), which `run-job` runs from the toolchain each entry names;
+- its reports' upload, after `run-job`: a composite action has no post step.
 
 The toolchain rows (Python, uv, the uv Python preference, Node, npm, the runner identity), the
 catalogue row and the uv-cache rail read a job's steps with each local action it calls read in
@@ -528,11 +521,11 @@ of those rows has a plant inside the action.
 
 A change under `.github/actions/` runs the planned jobs, the browser run's (`e2e-shard`,
 `e2e-stateful`, their merge `e2e` and the UI quality check `ui-quality`), `desktop-smoke` and
-`apps-contract`, as a change to `ci.yml` does: each sets up its toolchain through the action, so it
-defines them too.
+`apps-contract`, as a change to a workflow does: each sets up its toolchain through the action, so
+it defines them too.
 The planner plans the whole tier for it (`tools/ci/areas.toml`). The rails check that every
 local action `apps-contract` calls, and each one that action calls, plans that job, and that
-every one a `ci.yml` job calls plans the whole tier.
+every one a tier workflow's job calls plans the whole tier.
 
 `python -m tools.ci list` prints every job. `python -m tools.ci explain <tier>` says what a tier
 proves and what it does not, and lists each of its jobs' commands. Both read only the catalogue
@@ -580,7 +573,7 @@ holds both, with a plant for each install form.
 
 `workers` is the job's worker count, a whole number or `auto`. Every pytest step's `-n` must equal
 it, and a step that passes `-n` needs it. `workers_env` names the variable through which another
-tool reads it: `web-unit`'s `VITEST_MAX_WORKERS`, which `ci.yml` sets to the runner's core count.
+tool reads it: `web-unit`'s `VITEST_MAX_WORKERS`, which `run-job` sets to the runner's core count.
 A job that sets `workers` passes it through a pytest `-n` or a `workers_env`. `workers_env` may
 not name a variable the runner owns.
 
@@ -674,7 +667,7 @@ posture or tiers to a job that stays. A mark the pull request adds in the change
 entry is its own, not main's, so it allows nothing. An ordinary job leaves in one merge, and a
 new job needs nothing from main.
 
-**In `ci.yml`,** the `changes` job's `catalogue-check` step runs `python -m tools.ci
+**In `merge.yml`,** the `changes` job's `catalogue-check` step runs `python -m tools.ci
 catalogue-check --catalogue <the checkout's> --against <main's>` from the folder the plan step
 archived main's `tools/ci` into, so main's loader and rules read the pull request's catalogue,
 never its own. It exits 0 with no objection, 1 on a refusal or a catalogue either side cannot
@@ -682,20 +675,16 @@ read, and 2 on a usage error; each line it prints starts `catalogue-check:`, so 
 workflow command (a line break in a problem, which can quote the pull request's text, is printed
 escaped). A refusal fails the job, and the merge decision requires that job of the run
 it counts, beside the plan (see "The merge controller's decision"), so a refusal reds the merge
-verdict too. Unlike the plan, the step fails closed: when main's copy, or main's catalogue in
-it, could not be fetched, the job is red. A push to `main` checks nothing, since its catalogue
-is main's own; any other run with no pull request is red. The merge that adds the check, whose
-`main` has neither `catalogue_check.py` nor its verb yet, passes with a warning; a copy of
-main's with one and not the other is red. The planner reads the catalogue against the same
-reference, so a catalogue main refuses plans nothing (exit 2) and the whole tier runs beside
-the red check. `e2e` and `apps-contract` survive the red `changes` job (`!cancelled()`), as they
-survive any other failure of it.
+verdict too. The step fails closed: when main's copy, or main's catalogue in it, is missing, the
+job is red, and any exit but 0 is red. A run of `main` checks nothing, since its catalogue is
+main's own; every other run, a dispatch off `main` included, is checked. The planner reads the
+catalogue against the same reference, so a catalogue main refuses plans nothing, and the verdict
+reads an empty plan, red, beside the red check.
 
 `tests/test_ci_catalogue_check.py` plants each refusal and each allowance.
-`tests/rails/test_ci_plan_step_tree.py` runs the step as written, over this checkout's
-`tools/ci` as main's and over it as a `main` without the check has it, beside a checkout whose
-own copy of the rules accepts everything, and runs the real planner over a catalogue main
-refuses. `tests/test_ci_merge_decision.py` holds the decision red on a refused, skipped,
+`tests/rails/test_ci_tier_workflow_steps_tree.py` runs the step as written, over this checkout's
+`tools/ci` as main's, beside a checkout whose own copy of the rules accepts everything, and runs
+the real planner over a catalogue main refuses. `tests/test_ci_merge_decision.py` holds the decision red on a refused, skipped,
 cancelled or missing check.
 
 The contract table's rows still run in the candidate's own suite (see "The rows that hold it"
@@ -703,11 +692,13 @@ under "Trust boundary"). Running them from main's copy is #3915's.
 
 ### Adding a job
 
-1. Add a `[[job]]` entry with every required field, and its commands copied from the
-   workflow's `run:` lines.
-2. Add its id, its `ci.yml` jobs, its tiers and its posture to the table in the row "every
-   catalogue command is the workflow's". Any `run:` line of its `ci.yml` steps that validates
-   nothing goes in that row's list of such lines, under what it does.
+1. Add a `[[job]]` entry with every required field. A change or merge job is its entry: the tier
+   workflows run it through `run-job`. A breadth job's commands are copied from its
+   `breadth.yml` job's `run:` lines.
+2. Add its id, its `breadth.yml` jobs (none for a change or merge job), its tiers and its posture
+   to the table in the row "every catalogue command is the workflow's". Any `run:` line of its
+   `breadth.yml` steps that validates nothing goes in that row's list of such lines, under what
+   it does.
 3. Run that row and `python -m tools.ci explain <tier>`.
 
 A workflow command changed without its entry, or an entry changed without its workflow, fails
@@ -761,15 +752,13 @@ overrides (`--areas`, beside the catalogue by default):
   beside an include as every path and git 2.55 as none, so an exclude names the paths it skips.
   A test holds the matcher to `git ls-files` over the forms it accepts.
 - **The rails floor** is the median, over a folder of telemetry history (`--history`), of each
-  `merge.yml` or `ci.yml` push run's rails minutes: the slowest of its three legs, `rails (1/3)`
-  to `rails (3/3)` in `merge.yml` (named by matrix key) and `rails (1)` to `rails (3)` in
-  `ci.yml`, or, in `ci.yml` alone, the one `rails` job a run before the legs had. A run with a leg that did not pass, a leg
-  missing (a run of the two halves the rails ran in before is one) or a leg named twice measures
-  nothing, and so does a head it cannot measure from (no job list, minutes that are not a finite
+  `merge.yml` push run's rails minutes: the slowest of its three legs, `rails (1/3)` to
+  `rails (3/3)` (named by matrix key). A run with a leg that did not pass, a leg missing or a leg
+  named twice measures nothing, and so does a head it cannot measure from (no job list, minutes that are not a finite
   positive number); with none it reads
   `{"minutes": null, "runs": 0}`, never a guessed number. On CI it is read with `--repo
   <owner/name>` from `main`'s history instead: the newest three completed `merge.yml` runs on
-  `main`, then `ci.yml`'s, whose history the collector itself uploaded, a cancelled run skipped and a red one
+  `main` whose history the collector itself uploaded, a cancelled run skipped and a red one
   counted when its rails jobs passed, and only a history line naming that run. Each `gh` call
   gets what is left of 60 seconds, so the read ends within them; any failure, running out of
   time included, gives what was read and a warning on stderr. The floor is a report, never a
@@ -829,8 +818,8 @@ each of the five to a census of its reads, with a planted read per form the cens
 dropped entry per list. A docs page none of them reads plans none of them.
 
 Three workflows of their own, no catalogue job, start by a `paths:` filter instead of the plan:
-`nix.yml`, `action-pins.yml` and `release-image-tooling.yml` (`docker-single-container.yml`'s
-filter is the `image` entry's inputs, held by `tests/rails/test_ci_image_tree.py`).
+`nix.yml`, `action-pins.yml` and `release-image-tooling.yml`. The gateway image's build is the
+catalogue's `image` entry, whose inputs `tests/rails/test_ci_image_tree.py` holds.
 `tests/rails/test_workflow_path_filters_tree.py` holds each filter to a census of what its jobs
 read: the workflow's file, each local action a step uses, each path a `run:` step names (each
 Python script followed into what it names), and for a step that runs `nix`, the flake, its lock
@@ -864,8 +853,9 @@ is e2e's to catch: the smoke proves the shell starts, draws and follows a link, 
 It is a fast smoke from the source tree, never a packaged-release test. The browser run's inputs
 are the whole tree less the paths
 that cannot reach it, each exclusion carrying its reason in the catalogue, and its three jobs
-name the same ones. `apps-contract`'s are the triggers of the SDK classifier ci.yml ran it by
-before the plan, less the classifier's own file. `python-suite`'s are every top-level entry but
+name the same ones. `apps-contract`'s are the triggers of the SDK classifier CI ran it by before
+the plan, less the classifier's own file and the workflow file that ran it, since the workflows
+plan the whole tier. `python-suite`'s are every top-level entry but
 `flake.nix` and `flake.lock`. The suite reads every tracked path: its publication-hygiene tests
 list the tracked tree and open each file in it, and suite modules name `docs/`, `web/`,
 `deploy/` and the root files besides. `tests/rails/test_ci_python_suite_inputs_tree.py` holds
@@ -889,29 +879,25 @@ publication-hygiene tests' real-tree runs moving to `tests/rails`. Narrowing ano
 change of its own: its inputs, the reason, and a planted path in `tests/rails/test_ci_plan_tree.py`,
 which also plants a path per override and finds the override's reason in its plan.
 
-**In `ci.yml`,** the `changes` job runs `plan merge --repo <this repository> --outputs` over the
-pull request's files (or, on a push to `main`, the push's), passed NUL-separated so a name with
-a newline in it stays one name. The planner that runs is `main`'s, never the checkout's: the
-step fetches `main`'s tip (on a push, the commit the push replaced), archives its `tools/ci`
-into a folder of its own and runs it there over the checkout's catalogue and overrides, so a
-pull request's catalogue is its input and never its judge. Main's areas file, which that archive
-carries, is passed as `--trusted-areas`: its overrides are added to the checkout's, read against
-main's own catalogue, so the overrides in force are the union of main's and the pull request's.
-A pull request that drops or narrows the workflows', `tools/ci`'s or `deploy/docker`'s override
-still runs the whole tier for them, one that drops a job-adding override still runs that job,
-and one that removes the job itself runs the whole tier for that override's paths. A trusted
-copy that cannot be read plans nothing, so everything runs. With no such commit, or none that
-can be fetched, nothing plans. Main's catalogue is also the reference the checkout's is read
-against, so a catalogue main refuses plans nothing either (see "Main's copy reads a pull
-request's catalogue"); the step after the plan fails the job over it. The `ci:full` label passes
-`--full`; the labels are the event's, so one added later counts from the next push. The step
-publishes only `full` and a list of job ids exactly as the planner prints it; anything else, and no
-answer, becomes `full=true`. The browser run's jobs and `apps-contract` run when `full` is not
-`false` or the list names them, and survive a failed `changes` job (`!cancelled()`), so an answer
-that is missing, malformed or never written runs them. `tests/rails/test_ci_plan_step_tree.py` runs
-the step as written, against planted answers and the real planner. `browse-live` is a job of its own
-that waits on nothing and runs on every pull request and every push, a tested tree's included: a
-security job is never planned out, and its evidence is never reused. Every other job runs as before.
+**In the tier workflows,** the `changes` job plans the workflow's tier over what the commit
+changed against `main`'s tip, passed NUL-separated so a name with a newline in it stays one name
+(see "The tier workflows"). The planner that runs is `main`'s, never the checkout's: the step
+fetches `main`'s tip, archives its `tools/ci` into a folder of its own and runs it there over the
+checkout's catalogue and overrides, so a pull request's catalogue is its input and never its
+judge. Main's areas file, which that archive carries, is passed as `--trusted-areas`: its
+overrides are added to the checkout's, read against main's own catalogue, so the overrides in
+force are the union of main's and the pull request's. A pull request that drops or narrows the
+workflows', `tools/ci`'s or `deploy/docker`'s override still runs the whole tier for them, one
+that drops a job-adding override still runs that job, and one that removes the job itself runs
+the whole tier for that override's paths. A listing of the changed paths that cannot be read,
+or an enumeration that fails, is the empty list, which plans the whole tier. Main's catalogue is
+also the reference the checkout's is read against, so a catalogue main refuses plans nothing
+(see "Main's copy reads a pull request's catalogue"). The step publishes only the keys and the
+stage jobs' matrices, read back first; an answer that is not a plan publishes nothing and fails
+the job, so the verdict is red. `tests/rails/test_ci_tier_workflow_steps_tree.py` runs the step
+as written, against planted answers and the real planner. `browse-live` is in every plan: a
+security job is never planned out, and its evidence is never reused, so a push to `main` whose
+tree a pull-request run tested runs it too (`[tier.merge] every_push`).
 
 To add a rule, prefer a declared input of the job it affects; use an override only for a path
 that is no job's input but changes a job's result, and give it a reason that says how.
@@ -989,31 +975,39 @@ the failed tests within 512 KiB and says how many more there are; the log lists 
 `run <tier>` lists them with its verdict too. The merge controller's `merge-verdict` check run
 reads `needs`, not a run's records, until #3910's controller reads them, so it lists none yet.
 
-On a push to `main` only, `decide_main_push` takes one more input: the planned jobs
-`tools/ci/superseded.py` proved were replaced by a newer push (see "A burst of merges" below).
-Such a cancelled job reads `superseded` instead of `cancelled`, and is still red. `decide`, the
-reading of every candidate, takes no such input.
+On a push to `main` only, `decide_main_push` takes one more input (`--superseded`): the planned
+jobs `tools/ci/superseded.py` proved were replaced by a newer push. Such a job, cancelled or with
+no record (it never started), reads `superseded`, and is still red; so does the stage job it was a
+leg of, which `needs` reads cancelled, when every planned fault is superseded by one commit.
+`decide`, the reading of every candidate, takes no such input, and the verdict refuses it on any
+other run. `merge.yml`'s `results` makes the proof in a step of its own on a push to `main` (see
+"A burst of merges" below). The verdict step, which `pr.yml` runs word for word, passes it when it
+is there.
 
 The `results` job of `pr.yml` and of `merge.yml` calls it, main's copy, with `--records`,
 `--run-id` and `--attempt` (see "The tier workflows"); the default branch's controller will, so a
-candidate and its judge read the same results the same way.
+candidate and its judge read the same results the same way. On a push to `main`, main's tip is the
+pushed commit, so the verdict step reads `verdict.py`, and `changes` archives the planner, at the
+commit the push replaced: `JUDGE`, which merge.yml sets (`github.event.before` on a push to
+`main`, empty on any other run, which reads `main`) and pr.yml, with no push stage, leaves empty,
+as it does `PUSH_PLAN`. The steps' text is the same in both. A commit never judges its own push, as
+`tree-check`'s and the superseded proof's copies are the replaced commit's too. The row
+`a-commit-never-judges-its-own-push` holds it, with a plant per wrong ref: the pushed commit's,
+main's tip on a push, and `before` on a pull request (its previous head).
 `tests/test_ci_verdict.py` holds every red to a row, every refusal to a row naming its reason,
 and a green plan to a control.
 
 ## The tier workflows
 
 `pr.yml` (the change tier's fast feedback) and `merge.yml` (the merge tier's verdict) are the
-candidate workflows of #3915, in one shape: plan, build, test, results. Each runs on
-`workflow_dispatch` alone for now, beside `ci.yml`, which stays the check every pull request and
-push to `main` runs, so no check a pull request reports moves. Dispatching one on a branch times
-a run of its tier on that branch's head without doubling every pull request's cost. Neither
-posts a check of its own: the pull request and push triggers come with the change that retires
-`ci.yml`, and `merge-verdict` is the trusted controller's alone (#3910).
+candidate workflows of #3915, in one shape: plan, build, test, results. Both run on every pull
+request and on `workflow_dispatch`, and `merge.yml` on every push to `main` too. Neither posts a
+check of its own: `merge-verdict` is the trusted controller's alone (#3910).
 
 - **`tree-check`** (`merge.yml`) is the push stage's first question: did a green pull-request run
   of `merge.yml` test this tree. It runs the previous `main` commit's `tools/ci/tree_tested.py`,
-  read from the API at `github.event.before`, over `merge.yml`'s own `pull_request` runs, as
-  `ci.yml`'s `tree-check` asks it of `ci.yml`'s; anything but `tested=true|false` is `false`, and
+  read from the API at `github.event.before`, over `merge.yml`'s own `pull_request` runs;
+  anything but `tested=true|false` is `false`, and
   any event but a push to `main` answers `false` at once. Only `changes` reads the answer, as its
   plan step's `PUSH_PLAN`: a tested push plans `[tier.merge] every_push` alone (`plan --tested`:
   the security corpus, `apps-contract` and `browse-live`, which run on every push whatever the
@@ -1024,8 +1018,8 @@ posts a check of its own: the pull request and push triggers come with the chang
   the apps repository checks out that commit, and `results` names it as the candidate's partner. A
   head that is not one object id fails the job, so the verdict is red. Then it plans the workflow's
   tier (`TIER`: `change` or `merge`) over what the commit changed against `main`'s tip, with
-  `main`'s planner, archived from `main`'s tip into a folder of its own as `ci.yml`'s `changes` runs
-  it, and `plan --outputs --matrix`. Only the keys, each key's partners (`key-partners`, one list
+  `main`'s planner, archived from `main`'s tip into a folder of its own, and
+  `plan --outputs --matrix`. Only the keys, each key's partners (`key-partners`, one list
   per key) and the matrices of the stage jobs the workflow runs (`STAGE_JOBS`) are published, each
   read back as JSON first. An answer that is not a plan the workflow can run publishes nothing and
   fails the job: no answer, a planner that fails, keys missing, empty or given twice, partners by
@@ -1035,14 +1029,13 @@ posts a check of its own: the pull request and push triggers come with the chang
   whose `tools/ci` cannot be fetched. The verdict then reads an empty plan and a failed job: red,
   never a skip. Both workflows plan with the same step text.
 - **Main's catalogue check** is `merge.yml`'s `changes` job's last step (the job
-  `merge_decision.CATALOGUE_CHECK` names), as `ci.yml`'s: main's `catalogue-check` over this
-  run's catalogue. A refusal fails the job, which `results` reads in `needs`, so the merge tier's
+  `merge_decision.CATALOGUE_CHECK` names): main's `catalogue-check` over this run's catalogue. A refusal fails the job, which `results` reads in `needs`, so the merge tier's
   verdict is red. A run of `main` itself checks nothing: its catalogue is main's own.
-- **`shard-plan`** (`merge.yml`) makes the run's one shard plan, as `ci.yml`'s does, for the
-  suite's legs (an entry whose job reads `shard-history`). Each leg names `main-push` for its
-  history (`--leg test-shard:main-push:junit-test-shard-:3`): main's push runs in either shape,
-  `merge.yml`'s newest first and then `ci.yml`'s (`tools/ci/workflows.py`), so the plan is
-  weighed by whichever shape has run, and `merge.yml` spells neither file.
+- **`shard-plan`** (`merge.yml`) makes the run's one shard plan for the suite's legs (an entry
+  whose job reads `shard-history`). Each leg names `main-push` for its history
+  (`--leg test-shard:main-push:junit-test-shard-:3`): `merge.yml`'s push runs to `main`
+  (`tools/ci/workflows.py`). Until those runs have recorded a history every file weighs the
+  same, since the history of the workflow `merge.yml` replaced is not read.
 - **The stage jobs** run the matrix: `build`, `test`, `test-2` and `test-3` in `merge.yml`, and
   `test` alone in `pr.yml`, whose tier's jobs wait for no other job's output. Each is skipped when
   the plan gives it no entry, and runs after the stage before it whatever that stage's result
@@ -1058,7 +1051,8 @@ posts a check of its own: the pull request and push triggers come with the chang
   `lint_feedback` entry's alone; see "How a trusted job reads a candidate"), and `web-build`'s
   dist and each browser leg's blob for the entries that wait on them. Each entry's cap is its job's `timeout_min`, its runner its
   job's `platform`, and one red entry cancels no other.
-- **`results`** runs whatever ran before it (`always()`), after every other job, and judges the
+- **`results`** runs whatever ran before it unless the run was cancelled (`!cancelled()`, so a
+  cancelled run publishes no verdict), after every other job, and judges the
   plan's keys against `toJSON(needs)` and the records the run's entries uploaded, with `main`'s
   `tools/ci/verdict.py`, read from the API and run under `python3 -I`, with the partner head
   `changes` published as the candidate's partner and its partners by key: a planned entry with no
@@ -1068,18 +1062,20 @@ posts a check of its own: the pull request and push triggers come with the chang
   that cannot be read. The verdict is the job's last step and runs unless the run is cancelled
   (`!cancelled()`), so a run whose `changes` published no plan is judged, red, never skipped.
 
-Each workflow's runs of one commit share one concurrency group (`pr-<sha>`, `merge-<sha>`) that
-never cancels a run in flight: a later dispatch of the commit waits, and never waits on the other
-tier's run.
+Each workflow's runs of one pull request share one concurrency group (`pr-<number>`,
+`merge-<number>`), and a newer push to it cancels the older run; a push to `main` and a dispatch
+key on their commit (`merge-<sha>`) and are never cancelled in flight: a later dispatch of the
+commit waits, and never waits on the other tier's run. `merge.yml`'s stage jobs alone have a
+group of their own: on `main`'s first attempt a suite shard's entry shares
+`merge-suite-<key>` with every push's (see "A burst of merges"), and every other entry, and a
+re-run, keys on its pull request or commit.
 
 Records are kept 30 days: the controller and the push replay read them at merge, after the run.
 The issue gave no retention, so 30 is the default until the owner sets one. Reports are kept a
-week and the build three days, as `ci.yml` keeps its own.
+week and the build three days.
 
-What the dispatch-only workflows do not do yet: `merge.yml` repeats the change tier's quick jobs,
-since its verdict is the merge tier's whole plan; and its push stage (the tree check and the push
-plan above) waits for its push trigger, which comes with the change that retires `ci.yml`, with
-the suite's one shared group per shard on `main`.
+`merge.yml` repeats the change tier's quick jobs, since its verdict is the merge tier's whole
+plan.
 
 The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted violations:
 
@@ -1101,7 +1097,8 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   run; `changes` publishes the partner head, every stage job's partner checkout checks it out, and
   the verdict names it, read from that output, as the candidate's partner; `changes` publishes the
   partners by key and the verdict holds every record to them, read from that output; one
-  concurrency group per workflow and commit, never cancelling, and no job's group of its own; no
+  concurrency group per workflow and pull request or commit, cancelling only a pull request's
+  superseded run, and no job's group of its own but `merge.yml`'s stage jobs'; no
   job is `merge-verdict`, by its id, its name or any key the tier's plan can give a stage job; and
   no expensive job (the suite's shards, the browser run, the package, the gateway image) is in
   both tiers' plans, so the expensive tier runs once per candidate.
@@ -1119,7 +1116,8 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   step env, no job or step input (`with:`) and no other expression anywhere in the file that reads
   a push, `main`'s ref, the commit a push replaced or a push event's own fields, and no tree check.
 - "the tier workflows take no trusted trigger and hold no write": no `pull_request_target`,
-  `workflow_run` or `workflow_call`; `workflow_dispatch` alone until `ci.yml` is retired;
+  `workflow_run` or `workflow_call`; each workflow's own triggers exactly (`pr.yml` a pull request
+  and a dispatch, `merge.yml` those and a push to `main`);
   declared permissions, every one `read` or `none`; no secret, in any spelling (`secrets.X`,
   `secrets['X']`, `toJSON(secrets)`, any case).
 
@@ -1131,16 +1129,11 @@ its `${{ matrix.timeout }}`, since the catalogue's loader holds every `timeout_m
 `tests/rails/test_ci_tier_workflow_steps_tree.py` runs the partner step, the plan step, the
 catalogue check and the verdict step as written, against the real planner and planted answers.
 
-**Both shapes, read from one place.** Until `ci.yml` is retired a candidate's checks run in two
-shapes: `ci.yml`'s one run, and `pr.yml`'s and `merge.yml`'s pair. `tools/ci/workflows.py` names
-the three, and a reader that takes its names from there (the telemetry collector, the fetch and
-the rails floor do) reads both. A reader that spells `ci.yml` itself reads one, and nothing once
-`ci.yml` goes. `tests/rails/test_the_candidate_workflows_are_named_in_one_place_tree.py` fails on
-any file under `tools/`, `scripts/`, `src/` or `.github/` that names `ci.yml` in its code, and on a
-`workflow_run` listener of `CI` that follows neither `PR` nor `Merge`, unless
-`tests/rails/baselines/ci-yml-readers.sites.jsonl` lists it with its reason. That list only
-shrinks: against the gate's base a line the base lacks fails, `added` and a reason or not. The
-change that retires `ci.yml` lands with it empty.
+**Named in one place.** `tools/ci/workflows.py` names the two tier workflows, and every reader
+of a candidate's runs (the telemetry collector, the fetch, the shard history and the rails floor)
+takes its names from there. `tests/rails/test_the_candidate_workflows_are_named_in_one_place_tree.py`
+fails on any file under `tools/`, `scripts/`, `src/` or `.github/` that names `ci.yml`, the
+workflow the two replaced, in its code, and on a `workflow_run` listener of `CI`.
 
 ## The pinned browser image
 
@@ -1180,8 +1173,8 @@ diff and commits the intended ones in a pull request that names the change in li
 
 ### The tested tree
 
-`ci.yml` runs on every push to `main`. Its first job, `tree-check`, asks whether a green
-pull-request run already tested the tree the push lands. The answer is yes only when all of
+`merge.yml` runs on every push to `main`. Its first job, `tree-check`, asks whether a green
+pull-request run of `merge.yml` already tested the tree the push lands. The answer is yes only when all of
 these hold:
 
 - exactly one pull request into `main` was merged as the pushed commit;
@@ -1193,26 +1186,25 @@ these hold:
 - those runs were this pull request's into `main`: the first was made after it was opened, and
   its base was never changed. A run names neither its pull request nor its base, and a base
   change starts no run, so a run made for another pull request on the same head, or before a
-  retarget to `main`, may have tested another base and skipped `test-macos`.
+  retarget to `main`, may have tested another base.
 
-Anything else, and any error, is no. Every job outside the always-run set (`tree-check`,
-`changes`, `security`, `browse-live`, and `apps-contract` when the plan names it) waits
-on the answer and runs unless it is exactly `tested=true`. So a push behind its base, a merge
-queue's commit or a direct push runs the whole gate, `test-macos` included.
+Anything else, and any error, is no. `changes` reads the answer: exactly `tested=true` plans
+`[tier.merge] every_push` alone (the security corpus, `apps-contract` and `browse-live`), and
+anything else the whole merge tier. So a push behind its base, a merge queue's commit or a
+direct push runs the whole tier, the macOS suite included.
 
 The check is `tools/ci/tree_tested.py`, and the copy that runs is the previous `main` commit's,
 read from the API at `github.event.before`. It is standard-library Python, run on the image's
-own `python3` with nothing checked out or installed. A pull request that changes the check is
-judged by the copy it replaces, and the merge that adds the check runs the whole gate.
-`docker-single-container.yml` asks the same question about its own runs before it builds.
+own `python3 -I` with nothing checked out or installed. A pull request that changes the check is
+judged by the copy it replaces, and the merge that adds the check runs the whole tier.
 
 ### The gateway image
 
 The catalogue's `image` entry builds the gateway image the release ships and boots it once per
-candidate (#3917), and `docker-single-container.yml` runs the same two lines on a pull request:
-a plain `docker build` of the `runtime` stage that keeps the image's content ID
-(`--iidfile`), then the README smoke on that ID (`--image-id-file`), never a tag. Their inputs are
-one list, every path the Dockerfile copies and the smoke reads, `src/personalclaw/`, `uv.lock`
+candidate (#3917), in two lines: a plain `docker build` of the `runtime` stage that keeps the
+image's content ID (`--iidfile`), then the README smoke on that ID (`--image-id-file`), never a
+tag. The single-container workflow that ran the same two lines on a pull request went with the
+flip (#3915). Its inputs are every path the Dockerfile copies and the smoke reads, `src/personalclaw/`, `uv.lock`
 and `deploy/docker/` among them, so a backend-only change boots the image it ships.
 
 There is no layer cache. #3917 measured buildx with the Actions cache (scope `gateway-runtime`,
@@ -1223,58 +1215,44 @@ workflow gives an image build a cache. `tests/rails/test_ci_image_tree.py` holds
 
 Runs on `main` are grouped by commit and never cancelled, so no merge goes unchecked because
 a later one replaced it. The suite's shards are the one exception (see "A burst of merges"
-below): a commit whose shard was replaced is never read as checked. It reads superseded when
-the API proves it, and unproven otherwise, red either way.
-`ci.yml` runs on a push to `main` only: off `main` its one run is the
-pull request's, and a newer push to the pull request's branch cancels the older run. A branch
-with no pull request gets no `ci.yml` run, and GitHub starts no `pull_request` run while a pull
-request has a merge conflict, so such a branch gets none until the conflict is resolved. It
-cannot merge in that state either.
+below): a commit whose shard was replaced is never read as checked, but red.
+`merge.yml` runs on a push to `main` only: off `main` its one run is the pull request's, and a
+newer push to the pull request cancels the older run. A branch with no pull request gets no run,
+and GitHub starts no `pull_request` run while a pull request has a merge conflict, so such a
+branch gets none until the conflict is resolved. It cannot merge in that state either.
 
 ### A burst of merges
 
-The suite is the exception. On `main`, `test-shard` and `test-macos` each join one group per
-shard that every push's first attempt shares, with `cancel-in-progress: false`. A running shard
-is never cancelled. While it runs, the next shard to join waits, and a later request's waiting
-shard replaces the one before it. So a burst of merges usually runs the suite on its newest
-commit, not once per commit. `tree-check`, the always-run jobs and every other job keep the
-per-commit group.
+The suite is the exception. On `main`'s first attempt, each shard's entry of `python-suite` and
+`python-suite-macos` joins one group, `merge-suite-<key>` (`merge.yml`'s stage jobs'), that every
+push's run shares, with `cancel-in-progress: false`. A running shard is never cancelled. While
+it runs, the next shard to join waits, and a later request's waiting shard replaces the one
+before it. So a burst of merges usually runs the suite on its newest commit, not once per
+commit. Every other entry, and a re-run, keys on its commit.
 
 The group replaces by order of joining, not by commit. An older push whose `tree-check` or
 `shard-plan` runs slower can queue its shard after the newest commit's and evict it. Then the
-newest commit's shard is the one cancelled. No later descendant replaced it, so its gate reads
-`unproven` and fails closed, and that commit stays untested until someone re-runs it. A re-run
-keys on its own commit, so it cannot be evicted again.
+newest commit's shard is the one cancelled, and that commit stays untested until someone
+re-runs it. A re-run keys on its own commit, so it cannot be evicted again.
 
-A commit whose shard was replaced is not verified on its own, and its gate (`test` for
-`test-shard`, `test-macos-gate` for `test-macos`) stays red, with the reason
-`superseded by <newer commit>` when the API proves it and `unproven` otherwise. A skipped check
-would read as passing wherever a check is required, so the gate fails. The badge follows the
-newest run. No release gate reads CI results yet: until #3911 lands, the
-[release runbook](release-runbook.md#tagging) tags only a commit whose own main-push run was
-green, and #3911 must enforce that.
+A commit whose shard was replaced is not verified on its own, and its run's verdict reads it red.
+Before the verdict, `results` runs the previous main commit's `tools/ci/superseded.py` (read at
+`github.event.before`, as `tree-check`'s copy is: on a push, main's tip is the pushed commit),
+under `python3 -I`, for each suite job and its group (`--group-prefix merge-suite-`): a shard
+cancelled before any step, whose check run carries GitHub's replacement annotation for its own
+group, with a later push run of a descendant commit holding a job of its name, is proven
+replaced, and the verdict reads it `superseded by <commit>`. Anything else, an answer the check
+cannot give included, reads `cancelled`. Either way the run is red. The row
+`a-push-to-mains-superseded-proof-is-the-previous-commits` holds that step: the copy, `-I`, a
+push to main alone, the suite jobs and their group, the token, and the file the verdict reads. A skipped check would read as passing wherever a check is
+required, so the verdict fails. The badge follows the newest run. No release gate reads CI
+results yet: until #3911 lands, the [release runbook](release-runbook.md#tagging) tags only a
+commit whose own `merge.yml` push run is green, and #3911 must enforce that.
 
-The gate names that red only when the previous `main` commit's copy of
-`tools/ci/superseded.py`, fetched as `tree-check`'s copy is but run under `python3 -I` (unlike
-`tree-check`'s), proves it from the API:
-
-- the run is a push to `main`;
-- the shard was cancelled before any step ran;
-- its check run carries GitHub's replacement annotation, naming exactly that shard's own group;
-- a later push run of `ci.yml` on `main`, for a commit that descends from this one, has a job of
-  the same name that was not skipped. The earliest such run is the one named;
-- every cancelled shard of the run was replaced by one and the same commit.
-
-Any other cancellation, or an answer the check cannot read, is `unproven`, and red as before.
-On a pull request the word never exists. `verdict.decide_main_push` names it only on a push to
-`main`; every candidate's reading, `verdict.decide`, takes no proof, so a pull request's
-cancelled job is always `cancelled`. A superseded commit is never green.
-
-The row `main-push-runs-and-is-never-cancelled` holds this: each suite job's group names its
-job and shard, is shared by every first-attempt push to `main`, keys a re-run on its own commit,
-and never cancels; no other job has a group of its own; and each gate (`test` and
-`test-macos-gate`) runs the previous commit's check for its own job's group, names both reds and
-never exits 0 on a superseded shard.
+The row `main-push-runs-and-is-never-cancelled` holds this, entry by entry of the merge tier's
+plan: a suite shard's group is shared by every first-attempt push to `main`, one per shard;
+every other entry's, and a re-run's, is its commit's; no stage group cancels; and no job but a
+stage job has a group of its own.
 
 ### Commit provenance
 
@@ -1293,8 +1271,8 @@ places:
   `before..sha`. It is a workflow of its own because each push checks only its own range, so a
   run that never finished would leave its commits unchecked for good. One job with no `needs:`
   cannot be dropped by `tree-check`'s answer or by another job's outcome, and at a few seconds on
-  one runner, grouped by commit and never cancelled, it stays so whatever becomes of `ci.yml`'s
-  main runs (#3915 plans one run per candidate).
+  one runner, grouped by commit and never cancelled, it stays so whatever a tested push lets
+  `merge.yml` skip.
 
 `dco.yml` also runs when a pull request's title is edited, since rule 5 reads the title. Its job
 token reaches one step, which only fetches the commits with `gh api`; the check that parses them
@@ -1339,28 +1317,29 @@ runs from other workflows"), so the job cancels that workflow's run.
 
 Its keys are written for the close, not copied: when a pull request closes because it merged,
 `github.ref` is the branch it merged into and `github.sha` its merge commit (GitHub's "Events
-that trigger workflows", `pull_request`), so `ci.yml`'s own key would name the merge's `main`
-group and its `cancel-in-progress` would read false. A workflow added later that runs on
+that trigger workflows", `pull_request`), so a key read from either would name the merge's
+`main` run. `pr.yml`'s and `merge.yml`'s key on the pull request's number, which the close
+carries too. A workflow added later that runs on
 `pull_request` needs a job here; the contract row below fails until it has one.
 
 ### `test-macos`
 
-Pull requests into `main` run the suite on `macos-26` with Python 3.13, in three shards of whole
-test files planned from macOS's own durations, two xdist workers each and no coverage. With
-`test-shard` on Ubuntu and 3.12, every change that merges has run both operating systems and
-both Pythons. The security corpus is the exception: no shard collects it, so a pull request
+Pull requests into `main` run the suite on `macos-26` with Python 3.13 (`python-suite-macos`, the
+`test-macos` leg of the shard plan), in three shards of whole test files planned from macOS's own
+durations, two xdist workers each and no coverage. With `python-suite` on Ubuntu and 3.12, every
+change that merges has run both operating systems and both Pythons. The security corpus is the exception: no shard collects it, so a pull request
 runs it once, in `security`, on Ubuntu and 3.12, and breadth runs it each night on macOS on
 3.13. The three shards take three of the five macOS runners the account runs at once, and
 breadth's `macos` leg runs one shard at a time (`max-parallel: 1`), so a pull request's run and a
 night's breadth fit the five together; the contract row
 "a-pull-requests-macos-jobs-and-breadths-macos-leg-fit-the-macos-runners" fails a count that does
-not (ci.yml's macOS jobs and the merge tier's macOS shards, each with breadth's). Concurrent pull
+not (the merge tier's macOS shards with breadth's). Concurrent pull
 requests still queue on macOS.
 
 ### The suite's shards
 
 Every suite leg runs in shards of whole test files, planned once per run by
-`python -m tools.ci shards plan` (`tools/ci/shards.py`): in `ci.yml` by the `shard-plan` job,
+`python -m tools.ci shards plan` (`tools/ci/shards.py`): in `merge.yml` by the `shard-plan` job,
 and in `breadth.yml` by `freshness`. The plan is longest-processing-time greedy over per-file
 seconds, heaviest file first into the lightest shard; a file with no record weighs the median.
 `shards check` fails the run when a collectable file is in no shard or in two, so nothing is
@@ -1372,8 +1351,7 @@ records its list's digest as one of its inputs, so a result is carried only onto
 measured. Modules stay whole, so a module-scoped fixture is set up in one shard.
 
 The plan leaves out `tests/rails`, which the `rails` job runs, and each file in `shards.JOB_OWNED`,
-which the catalogue job named beside it runs by name (in `ci.yml`'s shape and the tier workflows'
-alike): `tests/test_website_installer.py`, in `static`; `tests/test_npm_advisory_floors.py`,
+which the catalogue job named beside it runs by name: `tests/test_website_installer.py`, in `static`; `tests/test_npm_advisory_floors.py`,
 in `rails-checks`; and the security corpus (the ten `tests/security` modules,
 `tests/test_supply_chain_scanner.py` and `tests/test_supply_chain_gates.py`), in `security`.
 `shards check` fails a plan that lists one, and a rail
@@ -1452,7 +1430,7 @@ passes `--keep-from-main breadth.yml`, and the newest earlier `main` run's plan 
 every leg it still plans whole: the same test files, in the same number of shards. Any change
 to the set of test files, or no readable earlier plan, plans afresh from the durations. The
 plan is kept for a week, so the next night can read it. Off `main` nothing is reused, so no
-earlier plan is read. `ci.yml` plans afresh on every run: nothing there is carried.
+earlier plan is read. `merge.yml` plans afresh on every run: nothing there is carried.
 
 ### `breadth.yml`
 
@@ -1568,31 +1546,33 @@ of the same commit was red is the release gate's question (#3911), not this work
 
 `tests/rails/test_ci_contract.py` holds each of these with planted violations:
 
-- `ci.yml` runs on every push to `main` and on no other push (no `**` or other branch, no
+- `merge.yml` runs on every push to `main` and on no other push (no `**` or other branch, no
   `branches-ignore`, no bare `push:`, no tag, no negated branch, no path filter) and never
   cancels a `main` run, at the workflow or the job level. The suite's shards are the one
   exception: a running shard is never cancelled, but a newer push's waiting shard replaces an
-  older one's, which the gates name as superseded (see "A burst of merges");
-- `test-macos` runs `test-shard`'s split on macOS under exactly the condition that runs it on
-  pull requests into `main` and on an untested push: the same pytest words but the worker count
-  and the report path, its own shard of its own leg's plan, the same job env and defaults, the same
-  step `if:`, `working-directory`, env and shell, no `exclude`, and no `PYTEST_ADDOPTS` in a
-  step's env or written by a step;
-- every job outside the always-run set waits on `tree-check`;
+  older one's, which reads red (see "A burst of merges");
+- `python-suite-macos` runs `python-suite`'s split in the same tiers, and on every push to
+  `main` exactly when `python-suite` does: the same pytest words but the worker count and the
+  report path, its own shard of its own leg's plan, the same shard count, the same job and step
+  env, the same working directory, and no `PYTEST_ADDOPTS`;
 - `tree-check` runs the previous commit's copy, read-only;
 - no `macos-14` leg anywhere (any size or case, in `runs-on` as a string, a list or a
   `{group, labels}` mapping, an expression's quoted literal, or any value of the matrix it
-  names), and no coverage on a push or pull request: per command, one that names `--cov` or
-  `--cov=…` measures coverage, and nothing else does, because the addopts measure none;
-- every pytest step that runs the suite names its worker count with `-n`: a step that names no
-  path, or names only `tests`, as every shard does. A step that names its own files runs in one
-  process, pytest's default;
+  names, or a catalogue entry's platform), and no coverage on a push or pull request: per
+  command, one that names `--cov` or `--cov=…` measures coverage, and nothing else does, because
+  the addopts measure none; no change- or merge-tier entry passes `--cov`;
+- every pytest step that runs the suite names its worker count with `-n`, in a workflow and in a
+  change- or merge-tier entry: a step that names no path, or names only `tests`, as every shard
+  does. A step that names its own files runs in one process, pytest's default;
 - every suite shard runs its share of its run's one plan: one job plans every leg and checks the
-  plan, and each shard waits on that job, downloads the plan, lists its own leg's shard of N (its
-  matrix size, as the plan names it) and runs pytest over `tests` with that `--shard-list`;
+  plan, and each breadth shard waits on that job, downloads the plan, lists its own leg's shard of
+  N (its matrix size, as the plan names it) and runs pytest over `tests` with that
+  `--shard-list`; each suite entry of the tiers reads the plan (`shard-history`), lists its own
+  leg's shard of its shard count, and `merge.yml`'s plan names its leg with that count;
 - no step that runs the suite keeps pytest's temporary folders under the runner's home: no
   `--basetemp` and no `TMPDIR` under `RUNNER_TEMP`, the workspace, `$HOME` or `~`;
-- no workflow command passes `--no-cov`, which would only undo a default that is not there;
+- no workflow command, and no change- or merge-tier entry's step, passes `--no-cov`, which would
+  only undo a default that is not there;
 - `freshness` first and `report` last;
 - `NON_REUSABLE` matches the jobs, holds every leg that runs security-marked tests (the suite
   included), and no leg in it carries an earlier result;
@@ -1616,7 +1596,6 @@ of the same commit was red is the release gate's question (#3911), not this work
   `PYTEST_` variable reaches it from an `env` or a `run`. Without the guard, or over part of
   the suite (a narrower path, an `--ignore=…`, a `-k`), it would be green on a parse it never
   saw;
-- `docker-single-container.yml` checks the tree before it builds on `main`;
 - every workflow that runs on `pull_request` has its run cancelled when the pull request closes:
   the row evaluates each workflow's group on a pull request's run and the canceller's on its
   close, merged and unmerged, from this repository and from a fork, and holds them equal with
@@ -1698,8 +1677,7 @@ the shard planner and the weekly report read it.
   and writes nothing, as an unreadable report does, since a history with fewer records would read
   as reruns that found less. So a job whose record passes 1 MB (several thousand failed tests:
   `run-job` does not yet hold its record within it, and `verdict --records` refuses the same
-  record) leaves its run with no history. A run that uploaded no record (a `ci.yml` run today)
-  has no record line.
+  record) leaves its run with no history. A run that uploaded no record has no record line.
 - **The environment marker** (schema version 2): `environment_failure` is true when the case
   failed or errored with the exact words `ENVIRONMENT, NOT POLICY` in its failure's message or
   text, the suite's way of naming a red the environment caused rather than the code under test
@@ -1773,13 +1751,13 @@ the run whose summary and `report.json` hold the rest.
 
 `tools/ci/parity.py` (`python -m tools.ci parity --history <history-run-attempt.jsonl>`) reads
 one attempt's history, from the `telemetry-history-<run>-<attempt>` artifact, and compares the
-test node ids `test-shard` ran (its `junit-test-shard-*` reports) with those `test-macos` ran
+test node ids `python-suite` ran (its `junit-test-shard-*` reports) with those `python-suite-macos` ran
 (`junit-test-macos-*`). A skipped case counts as run on its side, since it was collected there.
 It names every id only one side ran and exits 1 when there is one, and exits 0 when the two sets
 are equal. An id one side ran more than once is named but is no difference. It exits 2 on a file
 it can't read: missing, empty, not JSON lines, another schema or a version it does not read, a
 line over 1 MiB or a whole over 256 MiB, or no report of one side (a push whose tree was already
-tested runs no `test-macos`). It reads only the file it is given, and no workflow runs it yet.
+tested runs no `python-suite-macos`). It reads only the file it is given, and no workflow runs it yet.
 
 ### The weekly report
 
@@ -1804,7 +1782,7 @@ and on dispatch, one run at a time and never cancelled:
   32 MiB as listed and as it arrives. These are the checks the shard planner makes
   (`telemetry.collector_run` and `telemetry.upload_refusal`, one copy of each). A history
   archive is kept only when it holds `history-<run>-<attempt>.jsonl` alone, whose run line names
-  that run and attempt, a counted run (a `ci.yml` or `merge.yml` push to main, or a scheduled or
+  that run and attempt, a counted run (a `merge.yml` push to main, or a scheduled or
   dispatched Breadth run on main), and a run its own workflow's listing shows with that attempt. The fetch
   keeps the newest slots archive and every history in the window, one download at a time, in one
   stored archive, `window.zip`, beside `fetch-status.json`, how it was built. Every collector run
@@ -1894,8 +1872,10 @@ runs them beside its own tests rather than all of `tests/rails` (#3920).
 - **The record.** A rails leg of a push to main arms `tests/rails_reads.py`: a JUnit report
   named `junit-rails-<leg>.xml`, with `GITHUB_EVENT_NAME` `push` and `GITHUB_REF`
   `refs/heads/main` (or `PERSONALCLAW_RAILS_READS=1`, for a record made by hand). A pull
-  request's leg records nothing and pays none of its time. It writes `rails-reads-<leg>.json` beside the report, and the leg
-  uploads it as the artifact `rails-reads-<leg>`. It charges each read to the rail module
+  request's leg records nothing and pays none of its time. run-job passes the two variables from
+  the runner on GitHub (`jobs.RUNNER_PASSED`) and never here. It writes `rails-reads-<leg>.json`
+  beside the report, which `merge.yml` uploads with the entry's reports, as
+  `reports-rails-<leg>-3-<attempt>`. It charges each read to the rail module
   running. A read is a walk or file asked of the source index, a repository file opened or
   stat'd (a path not there included), a folder listed, a module looked for and not found, or a
   child started. A helper's cache and a module imported once answer only the first rail. So each
@@ -1947,19 +1927,24 @@ Because the package's hub modules import much of it inside functions, a change t
 modules reaches nearly every test file, and runs the whole suite: the selection is narrow for
 changes to tests, `tools/ci`, `scripts`, docs and the web.
 
-- **CI's commands.** A job's toolchain installs run first, as `ci.yml` runs them, then each step,
-  word for word. A step's environment is built from nothing: what a GitHub runner gives every
-  step (`CI=true`, which the e2e jobs' Playwright config reads for its JSON report, retries and
-  server; never `GITHUB_ACTIONS`, which says the run is on GitHub), then the workflow's
+- **CI's commands.** A job's toolchain installs run first, as the tier workflows run them, then
+  each step, word for word. A step's environment is built from nothing: what a GitHub runner gives
+  every step (`CI=true`, which the e2e jobs' Playwright config reads for its JSON report, retries
+  and server, and on GitHub `GITHUB_EVENT_NAME` and `GITHUB_REF`, which arm the rails legs'
+  record of what each rail read; never `GITHUB_ACTIONS`, which says the run is on GitHub), then
+  the workflow's
   (`UV_PYTHON_PREFERENCE`), then the job's, then the step's; of the caller's it gets only
   `PATH`. `{runner_temp}` is the job's own temporary folder, `{shard}` the shard asked for,
-  `{base}` `--base` or the merge base with `origin/main`, and `{run_number}` the run's
-  `GITHUB_RUN_NUMBER` on GitHub and `0` here, where no numbered run runs, whatever the caller
-  set. The `chromium` install is the browser legs' three steps since #5265
-  (`jobs.install_chromium`): Playwright's build without apt within 5 minutes, a check that
-  Chromium starts within 2, and only when that check fails its system libraries from apt within
-  5 more, named as the apt mirror when they do not finish, then the check again. A hung mirror
-  holds the job for that bound, never its whole limit. Electron's setuid sandbox helper
+  `{base}` `--base`, else on a push to `main` the commit the push replaced (its event's
+  `before`, `jobs.pushed_before`), else the merge base with `origin/main`, and `{run_number}` the
+  run's `GITHUB_RUN_NUMBER` on GitHub and `0` here, where no numbered run runs, whatever the
+  caller set. The `chromium` install
+  takes three steps (#5265, `jobs.install_chromium`): Playwright's build without apt within 5
+  minutes, a check that Chromium starts within 2, and only when that check fails its system
+  libraries from apt within 5 more, named as the apt mirror when they do not finish, then the
+  check again. A hung mirror holds the job for that bound,
+  never its whole limit.
+  Electron's setuid sandbox helper
   (`tools/ci/sandbox_helper.sh`) is made root's 4755 only on a GitHub-hosted Linux runner, which
   a workflow step reads from `GITHUB_ACTIONS` and `RUNNER_ENVIRONMENT` and a step under run-job
   never gets. So run-job reads the runner from its own process environment (`RUNNER_ENVIRONMENT`
@@ -1985,8 +1970,8 @@ changes to tests, `tools/ci`, `scripts`, docs and the web.
   Which test it hung on is in `reports/in-flight-<leg>.txt` beside the job's JUnit report
   (`tests/in_flight.py`): the xdist controller rewrites the tests started and not finished, oldest
   first, every 10 s, so after a hang the oldest is the test. It arms nothing in a worker, and a
-  run that ends leaves it empty. merge.yml keeps it with the entry's `reports/`; ci.yml's suite
-  legs upload it as `in-flight-<shard>`, on a cancel too.
+  run that ends leaves it empty. pr.yml and merge.yml keep it with the entry's `reports/`, on a
+  cancel too.
 - **Its reports.** Each JUnit report the job declares must exist and be newer than the job's
   start, or the job is red: a pytest that died before writing one is red, not green.
 - **One record per job, or per shard.** `verdict.job_record` writes its key, result, head,
@@ -2010,7 +1995,7 @@ changes to tests, `tools/ci`, `scripts`, docs and the web.
   a catalogue `auto` is two workers, in every pytest `-n`, in `workers_env` and in the record:
   the owner's machine rule after a local run took 40 GB on 2026-10-22
   (`jobs.LOCAL_AUTO_WORKERS`). On GitHub `auto` is the runner's CPU count and `workers_env` is
-  as `ci.yml` sets it, so CI's speed and its measured targets are what they were. Admission
+  as `ci.yml` set it, so CI's speed and its measured targets are what they were. Admission
   holds every count, `--workers N`'s too.
 - **`run`** goes in catalogue order, each job after the jobs its `after` names, every shard of
   each, and judges each job's records with `verdict.decide` against the head and the partner
@@ -2288,8 +2273,8 @@ Two rules hold for every seam:
 |---|---|---|
 | Before a commit | `make check`: the change tier, on the working tree as it stands, no record, then the test files the change can break | advice |
 | Before opening or updating a pull request | `make gate`: the merge tier, on the committed tree, one record per job | advice |
-| The pull request | `ci.yml`'s run on the pull request | the gate |
-| A push to `main` | `ci.yml`'s main-push run: `tree-check`, then every job it does not skip | the check of what landed |
+| The pull request | `pr.yml`'s and `merge.yml`'s runs on the pull request | the gate |
+| A push to `main` | `merge.yml`'s push run: `tree-check`, then `every_push` alone on a tested tree, the whole merge tier on any other | the check of what landed |
 | A release | a tag on a `main` commit whose own main-push run is green and whose breadth, started by its rehearsal tag, is green ([release runbook](release-runbook.md#tagging)) | the release |
 
 There is no batch step: each change gets its own pull request and its own verdict. Every change
@@ -2831,14 +2816,14 @@ arrive, and images have no separate security-update path.
   read today's pins from the tree, so a refresh needs no test edit.
 - **The gateway image's agent CLIs:** Dependabot's `npm` ecosystem for
   `deploy/docker/agent-clis/`, weekly, in one group, so the adapters and the CLIs they drive
-  move together. Its PR moves the exact pins and the lock in one change, and
-  `docker-single-container.yml` builds and smokes the image on it: the smoke resolves each of
+  move together. Its PR moves the exact pins and the lock in one change, and the catalogue's
+  `image` entry, whose inputs reach the lock, builds and smokes the image on it: the smoke resolves each of
   the lock's commands in a login shell, and the image build fails on a command whose link does
   not reach an executable. The contract fails a folder under `deploy/docker/` with an npm
   manifest that no Dependabot `npm` entry watches, an entry for one that waits less than seven
   days or moves its packages in anything but one `patterns: ["*"]` group, and a workflow whose
-  `paths:` run it on a change of a Dockerfile but not on a change of a lock that Dockerfile
-  installs.
+  `paths:`, or a catalogue entry whose inputs, run it on a change of a Dockerfile but not on a
+  change of a lock that Dockerfile installs.
 - **Workflow containers, QEMU, BuildKit and buildx:** a reviewed edit, by hand. The release's
   QEMU and buildx steps (`release-artifacts.yml`'s `images` job) are also run by
   `release-image-tooling.yml`'s `pin-smoke` job on every pull request that changes
@@ -2931,9 +2916,7 @@ when a change reaches what it audits: the catalogue's `audit` entry is marked
 code and waivers) rather than holding it in every plan as a live job. A new advisory on a
 dependency no pull request touched therefore surfaces on breadth's nightly red, whose issue the
 leg opens, and the release gate's breadth check holds a release on that red until it is fixed or
-waived. Until the tier workflows run by the plan (#3915), `ci.yml`'s `audit` job, gated on
-`tree-check` like every job a tested tree skips, still runs it on every pull request. The release
-half, refusing an unwaived critical, is #3911's.
+waived. The release half, refusing an unwaived critical, is #3911's.
 
 Waivers are `[[waiver]]` entries in `tools/ci/audit-baseline.toml`, in the form of the
 exceptions below. Not audited here: the apps' and the website's locks, which their own

@@ -1,2 +1,0 @@
-{"site": ".github/workflows/ci-telemetry.yml", "reason": "its collect job's if: is telemetry.collect_condition() word for word (tests/rails/test_ci_telemetry_schedules.py), which names each workflow of workflows.MAIN_PUSH: ci.yml goes from it when the flip drops it from the registry"}
-{"site": "tools/ci/catalogue.toml", "reason": "desktop-smoke's and apps-contract's inputs name .github/workflows/ci.yml, where the two run until the flip, which names merge.yml in its place"}

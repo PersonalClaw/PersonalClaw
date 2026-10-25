@@ -23,12 +23,12 @@ def test_the_slots_collector_reads_every_scheduled_workflow_in_the_tree() -> Non
         if re.search(r"^\s*-?\s*cron:", p.read_text("utf-8"), re.M)
     )
     assert telemetry._scheduled_workflows() == scheduled
-    assert "breadth.yml" in scheduled and "ci.yml" not in scheduled
+    assert "breadth.yml" in scheduled and "merge.yml" not in scheduled
 
 
 def test_its_crons_are_the_ones_the_workflows_name() -> None:
     assert telemetry._crons(telemetry.BREADTH_PATH), "Breadth names a schedule"
-    assert telemetry._crons(telemetry.CI_PATH) == []
+    assert telemetry._crons(telemetry.MERGE_PATH) == []
 
 
 # ── the collector's workflow ──────────────────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ def test_the_collector_follows_every_collected_workflow_by_name() -> None:
         yaml.safe_load((REPO / telemetry.WORKFLOWS / name).read_text("utf-8"))["name"]
         for name in telemetry.COUNTED
     }
-    assert {telemetry.CI_PATH, telemetry.MERGE_PATH, telemetry.BREADTH_PATH} == {
+    assert {telemetry.MERGE_PATH, telemetry.BREADTH_PATH} == {
         f"{telemetry.WORKFLOWS}/{name}" for name in telemetry.COUNTED
     }
     on = _collector()[True]

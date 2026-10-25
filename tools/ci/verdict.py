@@ -78,6 +78,8 @@ from typing import NoReturn
 SUCCESS = "success"
 FAILURE = "failure"
 CANCELLED = "cancelled"
+#: The reason a planned key with no result reads.
+MISSING = "missing"
 SKIPPED = "skipped"
 WORDS = frozenset({SUCCESS, FAILURE, CANCELLED, SKIPPED})
 
@@ -234,7 +236,7 @@ def _planned(
 ) -> tuple[str, str] | None:
     """The fault of one planned key's results, or None when every attempt was green here."""
     if not results:
-        return "missing", "no result for a planned job"
+        return MISSING, "no result for a planned job"
     if run_id is not None and all(r.attempt != 1 for r in results):
         # Every planned entry ran on attempt 1, so its record is attempt 1's: a later attempt's
         # result alone is a rerun filling a record attempt 1 never wrote.
@@ -347,6 +349,8 @@ def decide_main_push(
     *,
     event: str,
     ref: str,
+    run_id: int | None = None,
+    key_partners: Mapping[str, Iterable[str]] | None = None,
 ) -> Verdict:
     """The verdict on a push to ``main``: :func:`decide`, with one more name for a red.
 
@@ -354,12 +358,16 @@ def decide_main_push(
     anything but a push to ``refs/heads/main`` is refused, so a pull request's run, a
     ``pull_request_target`` run on main's ref or a tag named ``main`` can never read a job as
     superseded. ``proven`` maps a planned key to the newer commit whose run replaced it, as
-    ``tools/ci/superseded.py`` proved from the API. A key whose result is ``cancelled`` and that
-    ``proven`` names reads ``superseded`` instead of ``cancelled``. It is still red: #3915 leaves
-    a commit in the middle of a burst unverified on its own. ``superseded_by`` names the newer
-    commit only when every reason is superseded by that one commit. A failed, skipped or missing
-    job keeps its own reason whatever ``proven`` says. A candidate's reading is :func:`decide`,
-    which takes no proof, so a pull request's cancelled job is never superseded.
+    ``tools/ci/superseded.py`` proved from the API. A key whose result is ``cancelled``, or that
+    has none (a replaced job never started, so it left no record), and that ``proven`` names
+    reads ``superseded``. It is still red: #3915 leaves a commit in the middle of a burst
+    unverified on its own. The stage job a replaced shard was a leg of reads ``cancelled`` in
+    ``needs``; it reads ``superseded`` too when every planned key's fault is superseded, by one
+    commit, and keeps ``cancelled`` otherwise. ``superseded_by`` names the newer commit only when
+    every reason is superseded by that one commit. A failed or skipped job, and a missing one
+    ``proven`` does not name, keeps its own reason. A candidate's reading is :func:`decide`,
+    which takes no proof, so a pull request's cancelled job is never superseded. ``run_id`` and
+    ``key_partners`` are :func:`decide`'s.
     """
     if (event, ref) != MAIN_PUSH:
         raise Refused(
@@ -377,22 +385,35 @@ def decide_main_push(
         if newer == pushed.head_sha:
             raise Refused(f"the commit that superseded {key} is the pushed commit")
         checked[key] = newer
-    base = decide(planned, results, pushed)
+    plan = list(planned)
+    base = decide(plan, results, pushed, run_id=run_id, key_partners=key_partners)
     if base.green:
         return base
-    reasons = tuple(
+    reasons = [
         (
             Reason(r.key, SUPERSEDED, f"by {checked[r.key]}")
-            if r.kind == CANCELLED and r.key in checked
+            if r.kind in (CANCELLED, MISSING) and r.key in checked
             else r
         )
         for r in base.reasons
-    )
+    ]
     by = {checked[r.key] for r in reasons if r.kind == SUPERSEDED}
+    if len(by) == 1 and all(r.kind == SUPERSEDED for r in reasons if r.key in plan):
+        # Every planned fault is a leg one commit's push replaced: a stage job that reads
+        # cancelled is those legs' stage, so it is read for what replaced them.
+        newer = next(iter(by))
+        reasons = [
+            (
+                Reason(r.key, SUPERSEDED, f"by {newer}")
+                if r.key not in plan and r.kind == f"unplanned {CANCELLED}"
+                else r
+            )
+            for r in reasons
+        ]
     whole = len(by) == 1 and all(r.kind == SUPERSEDED for r in reasons)
     return Verdict(
         green=False,
-        reasons=reasons,
+        reasons=tuple(reasons),
         superseded_by=by.pop() if whole else "",
         tests=base.tests,
     )
@@ -1028,6 +1049,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--attempt", action=_Once, help="this run's attempt, 1 to 999999 (default 1)"
     )
+    parser.add_argument(
+        "--superseded",
+        action=_Once,
+        help="a JSON object of each cancelled key a newer push replaced and that push's commit, as"
+        " tools/ci/superseded.py proved it (on a push to main only)",
+    )
     try:
         args = parser.parse_args(argv)
         candidate = Identity(args.head, _partners(args.partner))
@@ -1062,7 +1089,22 @@ def main(argv: list[str] | None = None) -> int:
                         "--key-partners must be a mapping of each planned key to its partners"
                     )
                 key_partners = by_key
-        verdict = decide(planned, results, candidate, run_id=run_id, key_partners=key_partners)
+        if args.superseded is None:
+            verdict = decide(planned, results, candidate, run_id=run_id, key_partners=key_partners)
+        else:
+            proven = _json_file(args.superseded, "--superseded")
+            if not isinstance(proven, dict):
+                raise Refused("--superseded must be a mapping of each replaced key to its commit")
+            verdict = decide_main_push(
+                planned,
+                results,
+                candidate,
+                proven,
+                event=os.environ.get("GITHUB_EVENT_NAME", ""),
+                ref=os.environ.get("GITHUB_REF", ""),
+                run_id=run_id,
+                key_partners=key_partners,
+            )
     except Refused as exc:
         reason = _printable(str(exc))
         print(f"verdict: unreadable input: {reason}", file=sys.stderr)
