@@ -193,6 +193,18 @@ def test_each_e2e_exclusion_carries_its_reason_word_for_word() -> None:
 #: (None: no plan leaves it out, because the job declares the whole tree or is a job every plan
 #: holds: the rails, a security job or a live one). python-suite names its inputs, but every plan
 #: holds it as a security job, so its row pins the input through the reason alone.
+#:
+#: The browser run against the pinned image is e2e-stateful or e2e-pinned: #3943's rename lands
+#: in two merges (#4584 step 4), this row first, so it takes the one name the catalogue holds.
+_PINNED_BROWSER = ("e2e-stateful", "e2e-pinned")
+
+
+def _pinned(ids: set[str]) -> list[str]:
+    """The pinned browser run's name among *ids*: a list, so a test can see none or two."""
+    return [n for n in _PINNED_BROWSER if n in ids]
+
+
+_PINNED = _pinned({j.id for j in _CAT.jobs})
 _INPUT_ROWS = {
     "static": ("Makefile", None),
     "rails": ("tests/rails/test_ci_plan_tree.py", None),
@@ -208,7 +220,7 @@ _INPUT_ROWS = {
     "image": ("src/personalclaw/app.py", "docs/vision.md"),
     "e2e": ("web/src/App.tsx", "docs/vision.md"),
     "e2e-shard": ("web/src/App.tsx", "docs/vision.md"),
-    "e2e-stateful": ("web/src/App.tsx", "docs/vision.md"),
+    **{name: ("web/src/App.tsx", "docs/vision.md") for name in _PINNED},
     "ui-quality": ("web/src/App.tsx", "docs/vision.md"),
     "browse-live": ("src/personalclaw/browse/x.py", None),
     "security": ("tests/security/test_x.py", None),
@@ -220,6 +232,26 @@ _INPUT_ROWS = {
 def test_the_rows_name_every_job_of_the_change_and_merge_tiers() -> None:
     planned = {j.id for t in ("change", "merge") for j in _CAT.tier(t)}
     assert set(_INPUT_ROWS) == planned
+
+
+def test_the_catalogue_names_the_pinned_browser_run_once() -> None:
+    assert len(_PINNED) == 1, f"one of {_PINNED_BROWSER}, once: {_PINNED}"
+
+
+@pytest.mark.parametrize(
+    "ids, count",
+    [
+        ({"e2e", "e2e-stateful"}, 1),
+        ({"e2e", "e2e-pinned"}, 1),
+        ({"e2e", "e2e-other"}, 0),
+        ({"e2e-stateful", "e2e-pinned"}, 2),
+    ],
+    ids=["the old name", "the new name", "a third name", "both names"],
+)
+def test_the_pinned_browser_run_is_read_under_either_name_and_only_one(
+    ids: set[str], count: int
+) -> None:
+    assert len(_pinned(ids)) == count
 
 
 @pytest.mark.parametrize("job_id", sorted(_INPUT_ROWS))
