@@ -8,7 +8,7 @@ const { PassThrough } = require("node:stream");
 const asar = require("@electron/asar");
 
 const { CODE_LOOP, SEED_CODE_LOOP, stubScript, writeStubBackend } = require("./smoke/writeStubBackend");
-const { COCKPIT_LINK, DEVTOOLS_SWITCH, MODE_LINK, LOOPBACK_PAGE, literal, MAIN_ERROR, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
+const { COCKPIT_LINK, DEVTOOLS_SWITCH, MODE_LINK, LOOPBACK_PAGE, literal, MAIN_ERROR, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, landingMisses, linkLaunchArgs, pageErrors } = require("./smoke/shellSmoke");
 const { parseDeepLink } = require("../deepLinks");
 const { CONTROLS, PLANTED_MISSING, asarSources, debugSwitchProblems, missingEntries, packArchive, plantedCopy, shellSources } = require("./smoke/packedApp");
 
@@ -33,6 +33,7 @@ describe("the stub backend", () => {
     assert.match(text, /exec '[^']*personalclaw' "\$@"\n$/);
     for (const seed of ["config.json", "triggers.json"]) assert.ok(fs.existsSync(path.join(dir, "gateway-home", seed)), `seeded with ${seed}`);
     assert.match(text, /python3?' -c '/, "the code loop is seeded by the checkout's Python");
+    assert.ok(fs.statSync(path.join(dir, "gateway-home", "workspace", CODE_LOOP.diff)).size > 0, "the file the cockpit link's diff names is in the loop's workspace, so its diff draws");
   });
 
   it("seeds the paused code loop the cockpit link opens, before the gateway starts, and never in the default home", () => {
@@ -129,6 +130,17 @@ describe("a link the smoke hands the app (#3827)", () => {
     const parsed = parseDeepLink(COCKPIT_LINK);
     assert.equal(parsed.ok, true, parsed.reason);
     assert.equal(parsed.hash, `#/code/${CODE_LOOP.id}?pane=changes&diff=${encodeURIComponent(CODE_LOOP.diff)}&task=${CODE_LOOP.task}`);
+  });
+
+  it("holds a cockpit link to landing where it points: the cockpit, its changes pane on the link's file, and its task", () => {
+    const at = `#/code/${CODE_LOOP.id}`;
+    assert.deepEqual(landingMisses(parseDeepLink(COCKPIT_LINK).hash), []);
+    assert.deepEqual(landingMisses(`${at}?task=${CODE_LOOP.task}&diff=src%2Fapp.py&pane=changes`), [], "in any order");
+    assert.deepEqual(landingMisses(`${at}?pane=changes`), [`diff=${CODE_LOOP.diff}`, `task=${CODE_LOOP.task}`]);
+    assert.deepEqual(landingMisses(`${at}?pane=changes&diff=README.md&task=${CODE_LOOP.task}`), [`diff=${CODE_LOOP.diff}`], "another file");
+    assert.deepEqual(landingMisses(`${at}?diff=src%2Fapp.py&task=${CODE_LOOP.task}`), ["pane=changes"], "the files tab");
+    assert.deepEqual(landingMisses(`#/code/0ther000?pane=changes&diff=src%2Fapp.py&task=${CODE_LOOP.task}`), [at], "another cockpit");
+    assert.deepEqual(landingMisses(at), ["pane=changes", `diff=${CODE_LOOP.diff}`, `task=${CODE_LOOP.task}`], "no query at all");
   });
 
   it("opens a new thread by a link that names its task mode, and only shows it", () => {
@@ -294,19 +306,42 @@ describe("the packed app", () => {
     assert.equal(fs.readlinkSync(path.join(copy, "chrome-sandbox")), path.join(app, "chrome-sandbox"));
   });
 
-  it("plants the three link controls in deepLinks.js: one drops every link, one sends the draft it fills, one resumes the cockpit it opens", async () => {
+  it("plants the four link controls in deepLinks.js: one drops every link, one sends the draft it fills, one resumes the cockpit it opens, one opens it short of its diff", async () => {
     const source = fs.readFileSync(path.join(__dirname, "..", "deepLinks.js"), "utf8");
     const app = await unpacked({ "deepLinks.js": source });
-    for (const control of CONTROLS.slice(2, 5)) {
+    for (const control of [...CONTROLS.slice(2, 5), CONTROLS[6]]) {
       const copy = await plantedCopy(app, control.plant);
       const planted = asar.extractFile(path.join(copy, "resources", "app.asar"), "deepLinks.js").toString("utf8");
       assert.notEqual(planted, source, `${control.name}: the plant changed nothing`);
     }
   });
 
+  it("plants a shell that hands a cockpit link on without its diff and task, and every other link as it was", async () => {
+    const source = fs.readFileSync(path.join(__dirname, "..", "deepLinks.js"), "utf8");
+    const app = await unpacked({ "deepLinks.js": source });
+    const copy = await plantedCopy(app, CONTROLS[6].plant);
+    const file = path.join(tmp(), "deepLinks.js");
+    fs.writeFileSync(file, asar.extractFile(path.join(copy, "resources", "app.asar"), "deepLinks.js"));
+    const planted = require(file);
+    const moved = (link) => {
+      const page = { location: { hash: "" } };
+      new Function("window", planted.hashAssignmentScript(parseDeepLink(link).hash))(page);
+      return page.location.hash;
+    };
+    assert.equal(moved(COCKPIT_LINK), `#/code/${CODE_LOOP.id}?pane=changes`);
+    assert.deepEqual(landingMisses(moved(COCKPIT_LINK)), [`diff=${CODE_LOOP.diff}`, `task=${CODE_LOOP.task}`]);
+    for (const link of [SETTINGS_LINK, MODE_LINK, "personalclaw://threads/new?prompt=smoke-draft-1"]) assert.equal(moved(link), parseDeepLink(link).hash, link);
+  });
+
   it("a control is caught only for its own reason", () => {
-    const [missing, preload, dropped, sends, resumes, replays] = CONTROLS;
-    assert.equal(CONTROLS.length, 6);
+    const [missing, preload, dropped, sends, resumes, replays, short] = CONTROLS;
+    assert.equal(CONTROLS.length, 7);
+    const shortOfIt = `${COCKPIT_LINK} opened ${CODE_LOOP.name}'s cockpit but not ${CODE_LOOP.diff}'s diff for ${CODE_LOOP.task}: the address lost diff=${CODE_LOOP.diff}, task=${CODE_LOOP.task} (the page is on #/code/${CODE_LOOP.id}?pane=changes)`;
+    assert.equal(short.reads({ ok: false, reason: shortOfIt, mainOutput: "" }), true);
+    assert.equal(short.reads({ ok: false, reason: `${COCKPIT_LINK} did not open ${CODE_LOOP.name}'s cockpit: the page is on #/chat`, mainOutput: "" }), false);
+    assert.equal(short.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://localhost:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), false);
+    assert.equal(resumes.reads({ ok: false, reason: shortOfIt, mainOutput: "" }), false);
+    assert.equal(replays.reads({ ok: false, reason: shortOfIt, mainOutput: "" }), false);
     assert.equal(replays.reads({ ok: false, reason: "#/chat/new?mode=plan reopened in a new one replayed a write: POST http://localhost:1/api/chat/sessions", mainOutput: "" }), true);
     assert.equal(replays.reads({ ok: false, reason: `the cockpit link acted on the loop: POST http://localhost:1/api/loops/${CODE_LOOP.id}/resume carried it in its address`, mainOutput: "" }), false);
     assert.equal(resumes.reads({ ok: false, reason: "#/chat/new?mode=plan reopened in a new one replayed a write: POST http://localhost:1/api/chat/sessions", mainOutput: "" }), false);
