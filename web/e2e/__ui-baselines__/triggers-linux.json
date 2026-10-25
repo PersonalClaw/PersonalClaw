@@ -2,14 +2,8 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"New trigger\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
@@ -17,14 +11,8 @@
         "input \"Search triggers\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"New trigger\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
@@ -32,14 +20,8 @@
         "input \"Search triggers\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"New trigger\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
@@ -47,14 +29,8 @@
         "input \"Search triggers\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"New trigger\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
@@ -64,22 +40,15 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Automations\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"New trigger\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
@@ -87,14 +56,8 @@
         "input \"Search triggers\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"New trigger\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
@@ -102,14 +65,8 @@
         "input \"Search triggers\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"New trigger\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
@@ -117,14 +74,8 @@
         "input \"Search triggers\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"New trigger\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"List\"",
         "button[role=radio] \"Week\"",
@@ -134,8 +85,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Automations\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

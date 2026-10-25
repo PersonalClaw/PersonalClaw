@@ -2,13 +2,6 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\"",
@@ -16,13 +9,6 @@
         "select \"Marketplace\""
       ],
       "390": [
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\"",
@@ -30,13 +16,6 @@
         "select \"Marketplace\""
       ],
       "412": [
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\"",
@@ -44,12 +23,6 @@
         "select \"Marketplace\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Browse\"",
@@ -66,21 +39,13 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Skills\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\"",
@@ -88,13 +53,6 @@
         "select \"Marketplace\""
       ],
       "390": [
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\"",
@@ -102,13 +60,6 @@
         "select \"Marketplace\""
       ],
       "412": [
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Browse\"",
         "button[role=radio] \"Installed\"",
         "button[role=radio] \"Proposals\"",
@@ -116,12 +67,6 @@
         "select \"Marketplace\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Browse\"",
@@ -138,8 +83,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Skills\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

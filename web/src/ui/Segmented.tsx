@@ -36,7 +36,7 @@ export interface SegOption { key: string; label?: string; tone?: string; icon?: 
  *  status). Inner option height is h-8 to line up with `Button size="sm"` and
  *  search inputs in a header row. `iconOnly` renders square icon buttons (for a
  *  compact view-switch); otherwise icon + label. */
-export function Segmented({ options, value, onChange, iconOnly = false, ariaLabel, disabled = false, size = 'md', collapse }: {
+export function Segmented({ options, value, onChange, iconOnly = false, ariaLabel, disabled = false, size = 'md', collapse, collapsedClassName }: {
   options: SegOption[]
   value: string
   onChange: (k: string) => void
@@ -57,6 +57,9 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
    *    chosen once and hiding options behind a scroll or a menu costs a reader the
    *    alternatives. Still one radiogroup, same arrow-key order. */
   collapse?: 'scroll' | 'menu' | 'wrap'
+  /** Added to the folded pill (`collapse='menu'`), e.g. the compact widths' 44 px hit box
+   *  (`TOUCH_TARGET`). The strip's own options keep their size. */
+  collapsedClassName?: string
 }) {
   const sm = size === 'sm'
   // Claim the enclosing `Field`'s label, the same contract `TextInput` already honours: an explicit
@@ -222,7 +225,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
     <div ref={wrapRef} className="relative min-w-0">
       <div ref={probeRef} aria-hidden className="pointer-events-none invisible absolute -z-10 whitespace-nowrap">{strip}</div>
       {collapsed ? (
-        <CollapsedSegmented options={options} value={value} onChange={onChange} sm={sm} disabled={disabled} ariaLabel={ariaLabel} iconOnly={iconOnly} />
+        <CollapsedSegmented options={options} value={value} onChange={onChange} sm={sm} disabled={disabled} ariaLabel={ariaLabel} iconOnly={iconOnly} className={collapsedClassName} />
       ) : strip}
     </div>
   )
@@ -232,7 +235,7 @@ export function Segmented({ options, value, onChange, iconOnly = false, ariaLabe
  *  active option, opening the full option list in a Popover. Used only below the
  *  fit threshold; the expanded strip (with its liquid layoutId indicator) is the
  *  normal presentation. */
-function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel, iconOnly = false }: {
+function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel, iconOnly = false, className }: {
   options: SegOption[]; value: string; onChange: (k: string) => void
   sm: boolean; disabled: boolean; ariaLabel?: string
   /** Drop the pill's own label + chevron too, leaving just the active option's glyph.
@@ -243,6 +246,7 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
    *  `aria-label` (already set) and the popover still lists every option with its
    *  full label, so nothing becomes unnameable. */
   iconOnly?: boolean
+  className?: string
 }) {
   const active = options.find((o) => o.key === value) ?? options[0]
   const ActiveIcon = active?.icon
@@ -266,7 +270,7 @@ function CollapsedSegmented({ options, value, onChange, sm, disabled, ariaLabel,
           aria-haspopup="listbox"
           title={bare ? `${ariaLabel ? `${ariaLabel}: ` : ''}${active?.label ?? active?.key}` : undefined}
           data-type={sm ? 'caption' : 'body-s'}
-          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${bare ? (sm ? 'size-6 justify-center' : 'size-8 justify-center') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}`}
+          className={`inline-flex items-center gap-1.5 rounded-pill bg-surface-container text-on-surface transition-colors hover:bg-surface-high ${disabled ? 'opacity-50 pointer-events-none' : ''} ${bare ? (sm ? 'size-6 justify-center' : 'size-8 justify-center') : (sm ? 'h-6 px-2.5' : 'h-8 px-m')}${className ? ` ${className}` : ''}`}
           style={fvs(550)}>
           {ActiveIcon && <ActiveIcon size={sm ? 12 : 15} className="shrink-0" />}
           {!bare && <span className="truncate">{active?.label ?? active?.key}</span>}

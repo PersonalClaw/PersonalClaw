@@ -2,10 +2,6 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Run audit-sweep\"",
         "button \"Run best-of-n\"",
         "button \"Run check-work\"",
@@ -39,8 +35,6 @@
         "button \"Run thesis-tracker\"",
         "button \"Run trending-repo-digest\"",
         "button \"Start from template\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -48,10 +42,6 @@
         "input \"Search workflows\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Run audit-sweep\"",
         "button \"Run best-of-n\"",
         "button \"Run check-work\"",
@@ -85,8 +75,6 @@
         "button \"Run thesis-tracker\"",
         "button \"Run trending-repo-digest\"",
         "button \"Start from template\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -94,10 +82,6 @@
         "input \"Search workflows\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Run audit-sweep\"",
         "button \"Run best-of-n\"",
         "button \"Run check-work\"",
@@ -131,8 +115,6 @@
         "button \"Run thesis-tracker\"",
         "button \"Run trending-repo-digest\"",
         "button \"Start from template\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -140,10 +122,6 @@
         "input \"Search workflows\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Run audit-sweep\"",
         "button \"Run best-of-n\"",
         "button \"Run check-work\"",
@@ -177,8 +155,6 @@
         "button \"Run thesis-tracker\"",
         "button \"Run trending-repo-digest\"",
         "button \"Start from template\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -188,18 +164,13 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Workflows\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Run audit-sweep\"",
         "button \"Run best-of-n\"",
         "button \"Run check-work\"",
@@ -233,8 +204,6 @@
         "button \"Run thesis-tracker\"",
         "button \"Run trending-repo-digest\"",
         "button \"Start from template\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -242,10 +211,6 @@
         "input \"Search workflows\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Run audit-sweep\"",
         "button \"Run best-of-n\"",
         "button \"Run check-work\"",
@@ -279,8 +244,6 @@
         "button \"Run thesis-tracker\"",
         "button \"Run trending-repo-digest\"",
         "button \"Start from template\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -288,10 +251,6 @@
         "input \"Search workflows\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Run audit-sweep\"",
         "button \"Run best-of-n\"",
         "button \"Run check-work\"",
@@ -325,8 +284,6 @@
         "button \"Run thesis-tracker\"",
         "button \"Run trending-repo-digest\"",
         "button \"Start from template\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -334,10 +291,6 @@
         "input \"Search workflows\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Run audit-sweep\"",
         "button \"Run best-of-n\"",
         "button \"Run check-work\"",
@@ -371,8 +324,6 @@
         "button \"Run thesis-tracker\"",
         "button \"Run trending-repo-digest\"",
         "button \"Start from template\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Automations\"",
         "button[role=radio] \"Definitions\"",
         "button[role=radio] \"Runs\"",
@@ -382,8 +333,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Workflows\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

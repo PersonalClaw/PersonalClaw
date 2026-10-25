@@ -1,85 +1,27 @@
 {
   "dark": {
     "targets": {
-      "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
-      ],
-      "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
-      ],
-      "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
-      ],
-      "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
-      ]
+      "320": [],
+      "390": [],
+      "412": [],
+      "768": []
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Inbox # unread · # notifications\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
-      "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
-      ],
-      "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
-      ],
-      "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
-      ],
-      "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
-      ]
+      "320": [],
+      "390": [],
+      "412": [],
+      "768": []
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Inbox # unread · # notifications\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

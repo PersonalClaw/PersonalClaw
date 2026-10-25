@@ -2,124 +2,74 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
         "button \"Enable persistent sessions\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "390": [
-        "button \"Choose a model\"",
         "button \"Enable persistent sessions\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "412": [
-        "button \"Choose a model\"",
         "button \"Enable persistent sessions\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "768": [
-        "button \"Choose a model\"",
         "button \"Enable persistent sessions\"",
-        "button \"Expand sidebar\"",
         "button \"New session\"",
         "button \"New terminal session\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "select \"Sandbox for new terminal sessions\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<div#root> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Terminal\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
         "button \"Enable persistent sessions\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "390": [
-        "button \"Choose a model\"",
         "button \"Enable persistent sessions\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "412": [
-        "button \"Choose a model\"",
         "button \"Enable persistent sessions\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
         "button \"New session\"",
         "button \"New terminal session\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "select \"Sandbox for new terminal sessions\""
       ],
       "768": [
-        "button \"Choose a model\"",
         "button \"Enable persistent sessions\"",
-        "button \"Expand sidebar\"",
         "button \"New session\"",
         "button \"New terminal session\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "select \"Sandbox for new terminal sessions\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<div#root> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Terminal\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

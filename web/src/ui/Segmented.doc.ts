@@ -17,6 +17,7 @@ const doc: UiDoc = {
     { name: 'disabled', description: 'Dim + block interaction on the whole group.' },
     { name: 'size', description: "'md' (default) or 'sm' — a compact, low-key strip (shorter, smaller text, muted surface) for inconspicuous secondary controls." },
     { name: 'collapse', description: "Responsive overflow behavior: unset (default) always the inline strip, no measuring; 'scroll' keeps the strip and scrolls it horizontally; 'menu' collapses below the fit threshold to one pill that opens the options in a Popover; 'wrap' lets the options wrap onto further rows inside the container so every one stays visible (a form field in a narrow panel)." },
+    { name: 'collapsedClassName', description: "Extra classes on the folded pill (collapse='menu'), e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) the shell's destination tabs give it. The strip's own options keep their size." },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for Segmented for every mutually-exclusive "pick one of N" choice rather than hand-rolling toggle buttons — the sliding liquid indicator and roving-tabindex keyboard nav come built in and keep every such control identical.' },

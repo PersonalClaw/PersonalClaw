@@ -3,85 +3,60 @@
     "targets": {
       "320": [
         "button \"Browse Skills\"",
-        "button \"Choose a model\"",
         "button \"Dismiss — don't suggest this again\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Chat\"",
         "button \"Open Inbox\"",
         "button \"Open Knowledge\"",
         "button \"Open Loops\"",
         "button \"Open Projects\"",
         "button \"Open Tasks\"",
-        "button \"Open terminal\"",
         "button \"Review Memory\"",
         "button \"Set up a trigger\"",
-        "button \"Start the tour\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Start the tour\""
       ],
       "390": [
         "button \"Browse Skills\"",
-        "button \"Choose a model\"",
         "button \"Dismiss — don't suggest this again\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Chat\"",
         "button \"Open Inbox\"",
         "button \"Open Knowledge\"",
         "button \"Open Loops\"",
         "button \"Open Projects\"",
         "button \"Open Tasks\"",
-        "button \"Open terminal\"",
         "button \"Review Memory\"",
         "button \"Set up a trigger\"",
-        "button \"Start the tour\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Start the tour\""
       ],
       "412": [
         "button \"Browse Skills\"",
-        "button \"Choose a model\"",
         "button \"Dismiss — don't suggest this again\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Chat\"",
         "button \"Open Inbox\"",
         "button \"Open Knowledge\"",
         "button \"Open Loops\"",
         "button \"Open Projects\"",
         "button \"Open Tasks\"",
-        "button \"Open terminal\"",
         "button \"Review Memory\"",
         "button \"Set up a trigger\"",
-        "button \"Start the tour\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Start the tour\""
       ],
       "768": [
         "button \"Browse Skills\"",
-        "button \"Choose a model\"",
         "button \"Dismiss — don't suggest this again\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Chat\"",
         "button \"Open Inbox\"",
         "button \"Open Knowledge\"",
         "button \"Open Loops\"",
         "button \"Open Projects\"",
         "button \"Open Tasks\"",
-        "button \"Open terminal\"",
         "button \"Review Memory\"",
         "button \"Set up a trigger\"",
-        "button \"Start the tour\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Start the tour\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Discover#\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -89,85 +64,60 @@
     "targets": {
       "320": [
         "button \"Browse Skills\"",
-        "button \"Choose a model\"",
         "button \"Dismiss — don't suggest this again\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Chat\"",
         "button \"Open Inbox\"",
         "button \"Open Knowledge\"",
         "button \"Open Loops\"",
         "button \"Open Projects\"",
         "button \"Open Tasks\"",
-        "button \"Open terminal\"",
         "button \"Review Memory\"",
         "button \"Set up a trigger\"",
-        "button \"Start the tour\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Start the tour\""
       ],
       "390": [
         "button \"Browse Skills\"",
-        "button \"Choose a model\"",
         "button \"Dismiss — don't suggest this again\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Chat\"",
         "button \"Open Inbox\"",
         "button \"Open Knowledge\"",
         "button \"Open Loops\"",
         "button \"Open Projects\"",
         "button \"Open Tasks\"",
-        "button \"Open terminal\"",
         "button \"Review Memory\"",
         "button \"Set up a trigger\"",
-        "button \"Start the tour\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Start the tour\""
       ],
       "412": [
         "button \"Browse Skills\"",
-        "button \"Choose a model\"",
         "button \"Dismiss — don't suggest this again\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Chat\"",
         "button \"Open Inbox\"",
         "button \"Open Knowledge\"",
         "button \"Open Loops\"",
         "button \"Open Projects\"",
         "button \"Open Tasks\"",
-        "button \"Open terminal\"",
         "button \"Review Memory\"",
         "button \"Set up a trigger\"",
-        "button \"Start the tour\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Start the tour\""
       ],
       "768": [
         "button \"Browse Skills\"",
-        "button \"Choose a model\"",
         "button \"Dismiss — don't suggest this again\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Chat\"",
         "button \"Open Inbox\"",
         "button \"Open Knowledge\"",
         "button \"Open Loops\"",
         "button \"Open Projects\"",
         "button \"Open Tasks\"",
-        "button \"Open terminal\"",
         "button \"Review Memory\"",
         "button \"Set up a trigger\"",
-        "button \"Start the tour\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Start the tour\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Discover#\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

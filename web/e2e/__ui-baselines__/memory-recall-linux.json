@@ -2,13 +2,6 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Library\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button \"Type a question first\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -17,12 +10,6 @@
         "input \"Question for deep memory recall\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button \"Type a question first\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -36,12 +23,6 @@
         "input \"Question for deep memory recall\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button \"Type a question first\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -55,12 +36,6 @@
         "input \"Question for deep memory recall\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button \"Type a question first\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -84,13 +59,6 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Library\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button \"Type a question first\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
@@ -99,12 +67,6 @@
         "input \"Question for deep memory recall\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button \"Type a question first\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -118,12 +80,6 @@
         "input \"Question for deep memory recall\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button \"Type a question first\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -137,12 +93,6 @@
         "input \"Question for deep memory recall\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button \"Type a question first\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",

@@ -4,6 +4,7 @@ import { Plus, List, LayoutGrid, GitFork, Columns3, MessageSquare, FolderKanban,
 import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PartialNotice } from '../../ui/PartialNotice'
@@ -533,8 +534,10 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
             // Header keeps only structural controls — the view switcher + the primary
             // action, in the 4-tier cluster so they degrade together (view icon+label →
             // icon-only; New task → icon-only → …) instead of clipping on narrow/mobile.
-            // Search / filter / sort live on the page (below).
-            <HeaderActions>
+            // Search / filter / sort live on the page (below). In a project the header also holds
+            // All projects, and below 1024 px the shell's 44 px corners leave it too little room,
+            // so it folds into the `…`, which is a 44 px target there.
+            <HeaderActions overflowClassName={TOUCH_TARGET}>
               <HeaderSegmented ariaLabel="View" value={view} onChange={(v) => setView(v as ViewMode)}
                 options={[{ key: 'list', label: 'List view', icon: List }, { key: 'cards', label: 'Cards view', icon: LayoutGrid }, { key: 'board', label: 'Kanban board', icon: Columns3 }, { key: 'dag', label: 'Dependency graph', icon: GitFork }]} />
               <HeaderControl icon={Plus} label="New task" variant="primary" priority="primary" onClick={onCreate} />

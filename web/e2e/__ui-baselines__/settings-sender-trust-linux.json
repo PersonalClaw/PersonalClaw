@@ -3,44 +3,20 @@
     "targets": {
       "320": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open Apps\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Open Apps\""
       ],
       "390": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open Apps\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Open Apps\""
       ],
       "412": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open Apps\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Open Apps\""
       ],
       "768": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Apps\"",
-        "button \"Open terminal\"",
-        "button \"Settings\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Settings\""
       ]
     },
     "known": {
@@ -54,44 +30,20 @@
     "targets": {
       "320": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open Apps\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Open Apps\""
       ],
       "390": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open Apps\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Open Apps\""
       ],
       "412": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open Apps\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Open Apps\""
       ],
       "768": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open Apps\"",
-        "button \"Open terminal\"",
-        "button \"Settings\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Settings\""
       ]
     },
     "known": {
