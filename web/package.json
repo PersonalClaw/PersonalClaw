@@ -13,7 +13,7 @@
     "audit:consistency": "PC_WRITE_AUDIT=1 vitest run src/design/consistencyAudit.generate.test.ts",
     "docs:feature-map": "PC_WRITE_FEATURE_MAP=1 vitest run src/app/featureMap.test.tsx",
     "design:detect": "node scripts/designDetector.mjs",
-    "ui:ratchet": "vitest run src/design/primitiveAdoption.test.ts",
+    "ui:ratchet": "vitest run src/design/primitiveAdoption.test.ts --outputFile.junit=../reports/junit-ui-quality.xml",
     "generate:schemes": "PC_WRITE_SCHEMES=1 vitest run src/design/schemeSheets.test.ts",
     "test:watch": "vitest",
     "e2e": "playwright test --grep-invert @visual && npm run e2e:ui && npm run e2e:visual",

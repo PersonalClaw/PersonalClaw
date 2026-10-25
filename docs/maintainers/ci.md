@@ -2600,7 +2600,12 @@ budget, and red on a first failure the retry passes.
 - **Vitest:** under CI, `web/vitest.config.ts` adds a JUnit reporter to Vitest's own default
   reporters (the github-actions annotations on a CI runner stay), writing
   `reports/junit-web-unit.xml`, which `web-unit` declares; locally it sets no reporter, so
-  Vitest's defaults stand. When `web-unit`'s `npm run test:web` step exits 1 and nothing else
+  Vitest's defaults stand. Any other job that runs Vitest names its own report on the command
+  line, `reports/junit-<job id>.xml` (`--outputFile.junit`): `ui-quality`'s raw-control ratchet
+  (`npm run ui:ratchet`) writes `reports/junit-ui-quality.xml`. The CI history names a report
+  by its file, so a second job writing `junit-web-unit.xml` had its cases read as `web-unit`'s
+  (`tests/rails/test_ci_junit_artifacts_tree.py`). When `web-unit`'s `npm run test:web` step
+  exits 1 and nothing else
   went wrong, `run-job` reads the failed tests from that report and reruns them once in a new
   process: `npx vitest run --maxWorkers=1` (and `VITEST_MAX_WORKERS=1`) in `web/`, the failed
   tests' files only, filtered to their full names, each whole (`--testNamePattern=^(?:…)$`, the

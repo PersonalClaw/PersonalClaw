@@ -7,6 +7,7 @@ hold to.
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -25,6 +26,7 @@ from ci_junit_artifacts_shared import (
 )
 
 from tools.ci import catalogue
+from tools.ci import jobs as run_jobs
 
 _WORKFLOWS = _REPO / ".github" / "workflows"
 
@@ -195,6 +197,51 @@ def test_every_catalogue_pytest_step_writes_a_junit_report_its_job_declares() ->
                 " run-job never checks the report was written"
             )
     assert steps_seen >= 20, f"read only {steps_seen} catalogue pytest steps: the read broke"
+
+
+def _vitest_steps() -> list[tuple[catalogue.Job, str]]:
+    """Each catalogue step that runs a Vitest script, with its job and the script it runs: the
+    root's or the web workspace's (the root's `npm run <x> --workspace=web` runs the web one's)."""
+    scripts = {
+        where: json.loads((_REPO / where / "package.json").read_text(encoding="utf-8"))["scripts"]
+        for where in (".", "web")
+    }
+    found = []
+    for job in read().jobs:
+        for step in job.command:
+            if tuple(step.argv[:2]) != ("npm", "run") or len(step.argv) < 3:
+                continue
+            script = scripts["web" if step.workdir == "web" else "."].get(step.argv[2], "")
+            if script.startswith("npm run ") and script.endswith(" --workspace=web"):
+                script = scripts["web"].get(script.split()[2], "")
+            if script.startswith("vitest"):
+                found.append((job, script))
+    return found
+
+
+def test_every_catalogue_vitest_step_writes_a_junit_report_named_for_its_job() -> None:
+    """Vitest writes its report under CI (run-job sets ``CI=true``) at the config's
+    ``reports/junit-web-unit.xml``, web-unit's. A second job left there had its cases read as
+    web-unit's: each job's reports/ is uploaded whole, and the CI history names a report by its
+    file (``tools/ci/telemetry.py``). ui-quality's raw-control ratchet was that job, 10 cases. So
+    a job other than web-unit names ``reports/junit-<job id>.xml`` on the command line
+    (``--outputFile.junit``, which Vitest takes over the config's). Its job does not list it in
+    ``junit``: the contract holds that list to the reports a step's own argv names
+    (``tests/rails/test_ci_contract.py``), and the name is in the script the step runs."""
+    found = _vitest_steps()
+    # Vacuity floor: both jobs this is about still run Vitest through a script.
+    assert {"web-unit", "ui-quality"} <= {job.id for job, _ in found}, [j.id for j, _ in found]
+    for job, script in found:
+        if job.id == "web-unit":
+            # Its report is the config's, the one run-job reruns its failed tests from.
+            assert "--outputFile.junit" not in script, script
+            assert job.junit == (run_jobs.VITEST_JUNIT,), job.junit
+            continue
+        report = f"{_REPORT_DIR}junit-{job.id}.xml"
+        assert f"--outputFile.junit=../{report}" in script.split(), (
+            f"{job.id} runs Vitest ({script!r}) without naming its own report: under CI it"
+            f" lands in {run_jobs.VITEST_JUNIT}, and the CI history reads its cases as web-unit's"
+        )
 
 
 @pytest.mark.parametrize("filename", ["pr.yml", "merge.yml"])
