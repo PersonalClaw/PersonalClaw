@@ -23,11 +23,14 @@ export function pressureTone(p: MemoryPressure): string {
  *
  *  Every `_mb` on this wire is MiB (the host probe reads kB and divides by 1024; a sidecar's RSS
  *  is bytes over 1024²), so the captions say GiB and MiB: the unit the model sizes and the
- *  memory reserve beside them are stated in. */
+ *  memory reserve beside them are stated in.
+ *
+ *  The percent is whole, as the bar's `aria-valuenow` is. The probe rounds `used_pct` to one
+ *  decimal, and printed as it came it read `12.5%` on one reading and `12%` on the next. */
 export function pressureDetail(p: MemoryPressure): string {
   if (p.source === 'unavailable' || p.total_mb <= 0) return 'System memory unavailable on this host'
   const gib = (mb: number) => `${(mb / 1024).toFixed(1)} GiB`
-  return `${gib(p.used_mb)} of ${gib(p.total_mb)} in use · ${p.used_pct}%`
+  return `${gib(p.used_mb)} of ${gib(p.total_mb)} in use · ${Math.round(p.used_pct)}%`
 }
 
 /** Resident models, reclaimable ones FIRST, then heaviest.
