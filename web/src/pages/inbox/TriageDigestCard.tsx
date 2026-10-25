@@ -9,6 +9,7 @@ import { TextInput } from '../../ui/forms'
 import { notify } from '../../app/appSdk'
 import { fvs } from '../../design/fontWeight'
 import { TextLink } from '../../ui/TextLink'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 import { Skeleton, LoadingStatus } from '../../ui/ListScaffold'
 
 /** The triage digest card + the Morning-triage pack card.
@@ -133,7 +134,7 @@ export function TriageDigestCard() {
                   <TextInput value={cron} onChange={setCron} placeholder="0 8 * * *" size="sm" mono ariaLabel="Digest schedule (cron)" />
                 </div>
               </label>
-              <Button size="sm" variant="primary" loading={busy === 'install'} onClick={() => install(cron.trim() || undefined)}>
+              <Button size="sm" variant="primary" loading={busy === 'install'} onClick={() => install(cron.trim() || undefined)} className={TOUCH_TARGET}>
                 Install
               </Button>
             </div>
@@ -143,7 +144,7 @@ export function TriageDigestCard() {
                   `link-in-text-block` (serious) fires when it is distinguishable from the surrounding
                   prose by colour alone — measured on #/inbox in CI. The app's standalone links keep
                   `hover:underline` because that rule only applies to a link inside a text block. */}
-              <a href="#/settings/inbox" className="text-primary-emphasis underline">Settings → Inbox</a>.
+              <a href="#/settings/inbox" className={`text-primary-emphasis underline max-lg:inline-flex max-lg:items-center ${TOUCH_TARGET}`}>Settings → Inbox</a>.
             </p>
           </div>
         </div>

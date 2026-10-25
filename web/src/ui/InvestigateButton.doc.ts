@@ -13,6 +13,7 @@ const doc: UiDoc = {
     { name: 'id', type: 'string', required: true, description: 'The entity id within the owning store (e.g. an inbox item id, "loopid:cycle").' },
     { name: 'backLink', type: 'string', required: false, description: "Hash route back to the source surface; overrides the resolver's default (the chat header chip deep-links here)." },
     { name: 'size', type: 'number', required: false, description: 'Hit-area size in px (default 24 — dense row chrome).' },
+    { name: 'className', type: 'string', required: false, description: "Extra classes on the button, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) beside a row's other actions." },
   ],
   bestPractices: [
     { guidance: true, description: 'Drop it on entity ROWS and detail headers — anywhere a user might ask "what is this / why did this happen". Failure rows (cron/loop/subagent failures, Doctor findings) benefit most.' },

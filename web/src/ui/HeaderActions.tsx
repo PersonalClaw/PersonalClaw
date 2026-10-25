@@ -232,7 +232,12 @@ export function railCeiling(
   return Math.max(0, inner - dots - title)
 }
 
-export function HeaderActions({ children, className }: { children: ReactNode; className?: string }) {
+export function HeaderActions({ children, className, overflowClassName }: {
+  children: ReactNode
+  className?: string
+  /** Added to the `…` trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  overflowClassName?: string
+}) {
   const outerRef = useRef<HTMLDivElement>(null)
   // Offscreen probe rows, one per non-overflow tier — their scrollWidth is the
   // cluster's natural width at that density.
@@ -497,11 +502,14 @@ export function HeaderActions({ children, className }: { children: ReactNode; cl
           </div>
           {/* the overflow `…` springs in when the cluster collapses to that tier
               (and out when it re-expands) rather than snapping. It sits OUTSIDE the
-              measured scroll row, so animating it can't feed the ResizeObserver. */}
+              measured scroll row, so animating it can't feed the ResizeObserver. The box
+              only fades: its glyph carries the spring (`HeaderOverflow`), so a trigger given
+              the compact widths' 44 px hit box is 44 px the moment it appears. Scaled as a
+              box, it measured 30.8 px (0.7 of 44) for as long as the spring ran. */}
           <AnimatePresence>
             {overflowActions.length > 0 && (
-              <motion.div key="overflow" initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }} transition={spring.spatialFast}>
-                <HeaderOverflow actions={overflowActions} />
+              <motion.div key="overflow" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={spring.spatialFast}>
+                <HeaderOverflow actions={overflowActions} className={overflowClassName} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -519,14 +527,18 @@ function sameSet(a: Set<number> | null, b: Set<number>): boolean {
 }
 
 /** The internal `…` menu the container owns — the collapsed tail of the cluster. */
-function HeaderOverflow({ actions }: { actions: (OverflowRow & { id: number; rows?: OverflowRow[] })[] }) {
+function HeaderOverflow({ actions, className }: { actions: (OverflowRow & { id: number; rows?: OverflowRow[] })[]; className?: string }) {
   return (
     <Popover align="right" width={220} placement="bottom"
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-label="More actions" title="More actions" aria-expanded={open}
           className={cx('inline-flex items-center justify-center size-10 rounded-pill shrink-0 transition-colors',
-            open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high hover:text-on-surface')}>
-          <MoreHorizontal size={20} />
+            open ? 'bg-surface-high text-on-surface' : 'text-on-surface-var hover:bg-surface-high hover:text-on-surface', className)}>
+          {/* The entrance spring, on the glyph: the trigger has no fill at rest, so it reads as the
+              box's spring did, and the box keeps its size. */}
+          <motion.span className="inline-flex" initial={{ scale: 0.7 }} animate={{ scale: 1 }} exit={{ scale: 0.7 }} transition={spring.spatialFast}>
+            <MoreHorizontal size={20} />
+          </motion.span>
         </button>
       )}>
       {(close) => (
