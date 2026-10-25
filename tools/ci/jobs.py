@@ -160,6 +160,7 @@ PROGRAMS: dict[str, str] = {
     "tmux": "tmux",
     "shellcheck": "shellcheck",
     "dash": "dash",
+    "docker": "docker",
 }
 
 #: The partner checkouts, by external input: where CI checks each out, under the root.
