@@ -373,8 +373,8 @@ env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIM
 junit = ["reports/junit-random-order-1.xml", "reports/junit-random-order-2.xml"]
 command = [
   { argv = ["{python}", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "random-order", "--shard", "{shard}/4", "--out", "{runner_temp}/shard.txt"] },
-  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}1", "--junitxml=reports/junit-random-order-1.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
-  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}2", "--junitxml=reports/junit-random-order-2.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}1", "--basetemp", "/var/tmp/pytest-random-order-{run_number}1", "--junitxml=reports/junit-random-order-1.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
+  { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--random-order-seed", "{run_number}2", "--basetemp", "/var/tmp/pytest-random-order-{run_number}2", "--junitxml=reports/junit-random-order-2.xml", "--shard-ids", "{runner_temp}/ids/shard-ids-random-order-{shard}.txt"] },
 ]
 
 [[job]]

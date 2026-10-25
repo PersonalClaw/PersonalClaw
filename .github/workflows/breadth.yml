@@ -1231,11 +1231,15 @@ jobs:
           esac
           tmux -V
       # Each order is its own step, so the second runs whatever the first did; the shard is red
-      # when either order was.
+      # when either order was. Each has its own basetemp, outside the runner's home: in pytest's
+      # shared one, a nested pytest a test starts in the second order deletes the first order's
+      # whole finished tree at its end (pytest keeps 3 sessions), one unlink at a time through the
+      # real-home guard, which ran the registry-accessor test's child past its 30 s (run
+      # 40199713134, seed 2).
       - name: pytest (random-order shard ${{ matrix.shard }}, first order)
         id: pytest-1
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --random-order-seed ${{ github.run_number }}1 --junitxml=reports/junit-random-order-1.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-random-order-${{ matrix.shard }}.txt"
+        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --random-order-seed ${{ github.run_number }}1 --basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}1" --junitxml=reports/junit-random-order-1.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-random-order-${{ matrix.shard }}.txt"
       # The next order writes its own state-leak report where this one's is.
       - name: the first order's state-leak report, beside its order files
         if: always()
@@ -1247,7 +1251,7 @@ jobs:
       - name: pytest (random-order shard ${{ matrix.shard }}, second order)
         id: pytest-2
         continue-on-error: true
-        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --random-order-seed ${{ github.run_number }}2 --junitxml=reports/junit-random-order-2.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-random-order-${{ matrix.shard }}.txt"
+        run: uv run pytest -n auto --dist worksteal -q tests --shard-list "$RUNNER_TEMP/shard.txt" --random-order-seed ${{ github.run_number }}2 --basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}2" --junitxml=reports/junit-random-order-2.xml --shard-ids "$RUNNER_TEMP/ids/shard-ids-random-order-${{ matrix.shard }}.txt"
       - name: the second order's state-leak report, beside its order files
         if: always()
         run: |
