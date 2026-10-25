@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 
@@ -280,11 +281,20 @@ def test_a_test_that_patches_the_clock_never_moves_the_deadline(tmp_path, monkey
     that busy worker held it, and then left to read: it ends nothing."""
     ended: list[int] = []
     dump = tmp_path / "hard-deadline.txt"
-    watchdog = hard_deadline.Watchdog(dump, end=ended.append)
+    real, patched, read = time.monotonic, threading.Event(), threading.Event()
+
+    def clock() -> float:
+        """The real clock, which says when the watchdog reads it once the test's patch is in."""
+        if patched.is_set() and threading.current_thread().name == "hard-deadline":
+            read.set()
+        return real()
+
+    watchdog = hard_deadline.Watchdog(dump, end=ended.append, clock=clock)
     with watchdog._changed:  # the watchdog reads the deadline only once this is let go
         watchdog.arm("test_planted.py::test_reads_no_clock", 30.0, 30.0)
         monkeypatch.setattr("time.monotonic", lambda: 9e12)
-    time.sleep(0.5)
-    watchdog.disarm()
+        patched.set()
+    assert read.wait(10), "the watchdog never read its deadline"
+    watchdog.disarm()  # takes the watchdog's lock: once it is waiting again, or done ending
     assert ended == [], dump.read_text(encoding="utf-8")[:500]
     assert not dump.exists()
