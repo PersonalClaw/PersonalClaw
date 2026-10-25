@@ -228,7 +228,7 @@ describe('main', () => {
   it('writes the manifest from the probe and rewrites the baselines on an update', async () => {
     expect(await go(['--update', '--', 'e2e/visual.spec.ts'], fake(probed()))).toBe(0)
     expect(JSON.parse(readFileSync(join(web, MANIFEST), 'utf8'))).toEqual(PROBED)
-    expect(calls.at(-1)?.args.slice(-3)).toEqual(['test', 'e2e/visual.spec.ts', '--update-snapshots=all'])
+    expect(calls.at(-1)?.args.slice(-3)).toEqual(['test', 'e2e/visual.spec.ts', '--update-snapshots=changed'])
   })
 
   it('runs playwright on the host against the image\'s browser, served on loopback, and stops it', async () => {

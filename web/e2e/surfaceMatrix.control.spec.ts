@@ -11,6 +11,7 @@ import {
   knownFindings,
   reducedMotionFindings,
   runMatrix,
+  stepVerdict,
 } from './surfaceChecks'
 
 // ── The UI quality check can fail, on every axis, in one run ─────────────────────────────────────
@@ -84,6 +85,7 @@ for (const theme of THEMES) test.describe(`the UI quality check reports every pl
     await page.evaluate(PLANT)
 
     const found = new Map<string, string[]>()
+    const held = new Map<string, boolean>()
     await runMatrix(
       page,
       { where: `#/dashboard (${theme}, planted)`, theme, kind: 'route', route: 'dashboard' },
@@ -95,13 +97,22 @@ for (const theme of THEMES) test.describe(`the UI quality check reports every pl
         known: Object.fromEntries(BASELINED_STEPS.map((s) => [s, []])),
         adopt: false,
       },
-      async (name, findings) => {
+      async (name, findings, baselined) => {
         found.set(name, await findings())
+        held.set(name, baselined)
       },
     )
 
     // Every step ran, and none was skipped on the way.
     expect([...found.keys()]).toEqual([...STEP_NAMES])
+
+    // A refresh rewrites what a step held to a baseline found, and still fails on the three held to
+    // zero: their planted defects fail it as they fail a compare (`stepVerdict`).
+    const zero = [STEPS.detectors, STEPS.motion, STEPS.keyboard]
+    expect([...held].filter(([, b]) => !b).map(([name]) => name)).toEqual(zero)
+    for (const name of zero) expect(stepVerdict(found.get(name) ?? [], false, true), `${name} on a refresh`).toBe('failed')
+    expect(stepVerdict(found.get(STEPS.tree) ?? [], true, true), 'the tree on a refresh').toBe('rewritten')
+    expect(stepVerdict(found.get(STEPS.tree) ?? [], true, false), 'the tree on a compare').toBe('failed')
 
     const under = (step: string, probe: string) =>
       expect((found.get(step) ?? []).join('\n'), `${step} did not report ${probe}`).toContain(probe)

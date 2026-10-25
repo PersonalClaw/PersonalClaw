@@ -86,7 +86,7 @@ First-time setup on a fresh machine/CI: `npx playwright install chromium`.
 
 1. **Before touching a surface**, ensure its baseline exists (`npm run e2e:visual` green).
 2. Make the change.
-3. `npm run e2e` — expect **zero diff**. If a change forces a **real** visual change: implement it, dispatch the Refresh visual baselines workflow (`.github/workflows/visual-baselines.yml`) on the branch, read each diff in its `visual-baselines` artifact, commit the intended ones with the manifest, and **say in the change's description which baselines moved and why, in light and dark**, so review sees it. Never silently keep or revert a visual change.
+3. `npm run e2e` — expect **zero diff**. If a change forces a **real** visual change: implement it, dispatch the Refresh visual baselines workflow (`.github/workflows/visual-baselines.yml`) on the branch, read the files its summary lists as changed and each diff in its `visual-baselines` artifact, commit the intended ones with the manifest, and **say in the change's description which baselines moved and why, in light and dark**, so review sees it. Never silently keep or revert a visual change.
 
 ## Notes
 

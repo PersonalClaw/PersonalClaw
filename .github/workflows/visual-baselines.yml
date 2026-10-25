@@ -10,6 +10,14 @@
 # (e2e/surfaces.spec.ts) writes its accessibility trees and findings, and the visual spec its
 # screenshots, each in an invocation of its own on a fresh home, as both require.
 #
+# It concludes green when it wrote a complete set, and its summary lists each file it changed
+# (e2e/baseline-changes.mjs). A difference from the committed set is what it writes, not a
+# failure. It is red for a real one: a crash, a file it cannot write, a finding no baseline holds
+# (the detectors, reduced motion, keyboard-only), a surface with no output (a route scan that
+# skipped or did not run every step, by e2e/assert-no-route-skips.mjs on the matrix's report, or
+# a surface the visual spec snapshots with no golden, by e2e/visual-coverage.mjs),
+# or a matrix set that does not compare clean when the matrix runs again.
+#
 # Flow: dispatch on the branch whose change moves a surface, download the `visual-baselines`
 # artifact, read each diff, and commit the intended ones with the manifest in a pull request
 # whose body names the change in light and dark (#3811). No bot commits.
@@ -56,11 +64,36 @@ jobs:
         run: python3 scripts/spa_dist_freshness.py stamp
       - name: the UI matrix's baselines, made against the pinned browser
         working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report-matrix.json
         run: node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts
+      - name: every route scan ran, with every step (assert-no-route-skips.mjs)
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/assert-no-route-skips.mjs e2e-report-matrix.json
+      # The set it wrote, compared as a merge leg compares it, on a fresh home: a baseline it did
+      # not write, or one a second run does not reproduce, is red here and not on the next pull
+      # request. It also holds the dark theme to the tree, which is one file for both themes and
+      # written by the light run alone.
+      - name: the UI matrix's set compares clean against the pinned browser
+        working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report-matrix-compare.json
+        run: node e2e/run-pinned.mjs -- e2e/surfaces.spec.ts
       - name: the visual baselines, made against the pinned browser
         if: ${{ !cancelled() }}
         working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: e2e-report-visual.json
         run: node e2e/run-pinned.mjs --update -- e2e/visual.spec.ts
+      - name: a golden for every surface the visual spec snapshots (visual-coverage.mjs)
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/visual-coverage.mjs
+      - name: List the baselines this refresh changed (baseline-changes.mjs)
+        if: ${{ !cancelled() }}
+        working-directory: web
+        run: node e2e/baseline-changes.mjs
       - name: Upload the baselines and their manifest
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

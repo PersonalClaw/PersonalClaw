@@ -7,6 +7,7 @@ export const COMPARED: string[]
 export const PIN_KEYS: string[]
 export const PLATFORM: string
 export const LOOPBACK: RegExp
+export const UPDATE_SNAPSHOTS: string
 
 export class Refusal extends Error {
   status: number
