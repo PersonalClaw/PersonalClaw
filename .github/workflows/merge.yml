@@ -355,7 +355,7 @@ jobs:
           name: web-dist
           path: web/dist
       - name: every browser leg's blob report
-        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-stateful') }}
+        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-pinned') }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: e2e-blob-*
@@ -411,7 +411,7 @@ jobs:
           retention-days: 3
           overwrite: true
       - name: Upload the leg's blob report
-        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-stateful') }}
+        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-pinned') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-blob-${{ matrix.slug }}
@@ -475,7 +475,7 @@ jobs:
           name: web-dist
           path: web/dist
       - name: every browser leg's blob report
-        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-stateful') }}
+        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-pinned') }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: e2e-blob-*
@@ -531,7 +531,7 @@ jobs:
           retention-days: 3
           overwrite: true
       - name: Upload the leg's blob report
-        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-stateful') }}
+        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-pinned') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-blob-${{ matrix.slug }}
@@ -595,7 +595,7 @@ jobs:
           name: web-dist
           path: web/dist
       - name: every browser leg's blob report
-        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-stateful') }}
+        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-pinned') }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: e2e-blob-*
@@ -651,7 +651,7 @@ jobs:
           retention-days: 3
           overwrite: true
       - name: Upload the leg's blob report
-        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-stateful') }}
+        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-pinned') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-blob-${{ matrix.slug }}
@@ -715,7 +715,7 @@ jobs:
           name: web-dist
           path: web/dist
       - name: every browser leg's blob report
-        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-stateful') }}
+        if: ${{ contains(matrix.after, 'e2e-shard') || contains(matrix.after, 'e2e-pinned') }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: e2e-blob-*
@@ -771,7 +771,7 @@ jobs:
           retention-days: 3
           overwrite: true
       - name: Upload the leg's blob report
-        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-stateful') }}
+        if: ${{ always() && (matrix.id == 'e2e-shard' || matrix.id == 'e2e-pinned') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-blob-${{ matrix.slug }}

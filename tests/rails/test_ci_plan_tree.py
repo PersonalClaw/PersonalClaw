@@ -208,7 +208,7 @@ _INPUT_ROWS = {
     "image": ("src/personalclaw/app.py", "docs/vision.md"),
     "e2e": ("web/src/App.tsx", "docs/vision.md"),
     "e2e-shard": ("web/src/App.tsx", "docs/vision.md"),
-    "e2e-stateful": ("web/src/App.tsx", "docs/vision.md"),
+    "e2e-pinned": ("web/src/App.tsx", "docs/vision.md"),
     "ui-quality": ("web/src/App.tsx", "docs/vision.md"),
     "browse-live": ("src/personalclaw/browse/x.py", None),
     "security": ("tests/security/test_x.py", None),

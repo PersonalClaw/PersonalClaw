@@ -12,13 +12,12 @@ This rail closes the gap in the only way that is honest about the constraint:
 * **`pwa.spec.ts` now runs.** It has zero snapshot assertions and serves its own
   build on a private port, so it is platform-neutral. Verified before wiring — 3 passed in
   48s locally — rather than added on the assumption that a spec in the tree works.
-* **`visual.spec.ts` cannot run yet, and the reason is mechanical, not editorial.** Its
-  baselines are made in the pinned Playwright image's browser alone (#3943), and no CI leg
-  serves that browser until merge.yml's `e2e-pinned` leg lands with the merge-queue flip.
+* **`visual.spec.ts` runs too**, in merge.yml's `e2e-pinned` leg, against the pinned
+  Playwright image's browser its baselines are made in (#3943), so `LOCAL_ONLY` is empty.
 
-So the exemption is declared with its reason AND with the condition that retires it: the
-moment a workflow runs the spec, `test_no_exemption_is_also_wired` (in the tree checks) fails
-and tells whoever wired it to drop the exemption. An exemption that cannot expire is how a
+An exemption, when there is one, is declared with its reason AND with the condition that retires
+it: the moment a workflow runs the spec, `test_no_exemption_is_also_wired` (in the tree checks)
+fails and tells whoever wired it to drop the exemption. An exemption that cannot expire is how a
 temporary decision becomes permanent silently.
 
 Not asserted, because it was checked and is not true: `make gates` is invoked by no workflow,

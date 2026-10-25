@@ -8,7 +8,7 @@ import { withStatefulMetadata } from '../../e2e/merge-legs.mjs'
 
 // ── The browser run is two legs and a stateful run, and one report holds all three ─────────────
 //
-// The `e2e-shard` legs each run half of the specs that share a gateway, and `e2e-stateful` runs
+// The `e2e-shard` legs each run half of the specs that share a gateway, and the second leg then runs
 // the stateful set and its seeded second pass. The `e2e` job merges their blob reports into the
 // run's one report and judges it. A leg that left no blob ran nothing anyone can read, and a
 // merged report without the stateful run would pass every check that counts what is in it. So

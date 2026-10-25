@@ -7712,7 +7712,7 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "package": _Mapped((), ("merge",)),
     "e2e": _Mapped((), ("merge",)),
     "e2e-shard": _Mapped((), ("merge",)),
-    "e2e-stateful": _Mapped((), ("merge",)),
+    "e2e-pinned": _Mapped((), ("merge",)),
     "ui-quality": _Mapped((), ("merge",)),
     "desktop-smoke": _Mapped((), ("merge",)),
     "browse-live": _Mapped((), ("merge",), security="security", live=True),
@@ -12253,7 +12253,7 @@ _SHARD_HISTORY = "shard-history"
 #: The expensive tier, which runs once per candidate (#3915): the suite's shards, the browser
 #: run, the package and the gateway image's build and smoke.
 _EXPENSIVE = frozenset(
-    {"python-suite", "python-suite-macos", "e2e", "e2e-shard", "e2e-stateful", "package", "image"}
+    {"python-suite", "python-suite-macos", "e2e", "e2e-shard", "e2e-pinned", "package", "image"}
 )
 
 _RUNNER_IDENTITY_LINE = (

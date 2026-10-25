@@ -39,7 +39,7 @@ jobs = [
   "image",
   "e2e",
   "e2e-shard",
-  "e2e-stateful",
+  "e2e-pinned",
   "ui-quality",
   "browse-live",
   "security",
@@ -918,9 +918,9 @@ cache = ["npm"]
 security = "ordinary"
 timeout_min = 10
 needs_node = true
-after = ["e2e-shard", "e2e-stateful"]
+after = ["e2e-shard", "e2e-pinned"]
 command = [
-  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2", "matrix", "idle", "stateful"], workdir = "web" },
+  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2", "idle", "stateful", "matrix", "visual"], workdir = "web" },
   { argv = ["node", "e2e/assert-no-route-skips.mjs", "e2e-report.json"], workdir = "web" },
   { argv = ["node", "e2e/assert-one-run.mjs", "e2e-report.json"], workdir = "web" },
 ]
@@ -947,19 +947,22 @@ cache = ["npm"]
 security = "ordinary"
 timeout_min = 10
 needs_node = true
-after = ["e2e-shard", "e2e-stateful"]
+after = ["e2e-shard", "e2e-pinned"]
 command = [
-  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2", "matrix", "idle", "stateful"], workdir = "web" },
+  { argv = ["node", "e2e/merge-legs.mjs", "blob-report", "shard-1", "shard-2", "idle", "stateful", "matrix", "visual"], workdir = "web" },
   { argv = ["npm", "run", "ui:ratchet"] },
   { argv = ["npm", "run", "design:detect"] },
   { argv = ["node", "e2e/ui-quality-report.mjs", "e2e-report.json"], workdir = "web" },
 ]
 
 # The browser run itself, in the legs `e2e` merges (#3939): two shards of the specs that share a
-# gateway, and the runs on a gateway and home of their own: the UI quality matrix, the idle-cost
-# probe (each alone, web/e2e/isolation.ts, #3905) and the stateful set. Their inputs are e2e's, so
-# one plan schedules all three jobs. Each run writes its blob report under web/blob-report/<leg>/,
-# so a run of the legs one after another in one checkout keeps every blob for the merge.
+# gateway, each then running on a gateway and home of its own what runs apart (web/e2e/isolation.ts,
+# #3905): shard 1 the idle-cost probe, shard 2 the stateful set and its seeded second pass. A step
+# runs on every shard, so e2e/on-shard.mjs runs each of the two on its own shard alone and passes on
+# the other. The UI quality matrix and the visual rail run against the pinned image's browser in
+# e2e-pinned (#3943). Their inputs are e2e's, so one plan schedules both jobs. Each run writes its
+# blob report under web/blob-report/<leg>/, so a run of the legs one after another in one checkout
+# keeps every blob for the merge.
 [[job]]
 id = "e2e-shard"
 tiers = ["merge"]
@@ -984,10 +987,20 @@ needs_browser = true
 after = ["web-build"]
 command = [
   { argv = ["npx", "playwright", "test", "--project=smoke", "--project=chromium", "--shard={shard}/2", "--grep-invert", "@visual"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/shard-{shard}", PW_STATEFUL_CHAIN = "0" } },
+  { argv = ["node", "e2e/on-shard.mjs", "{shard}", "1", "--", "npx", "playwright", "test", "e2e/idleCost.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report-idle.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/idle" } },
+  { argv = ["node", "e2e/on-shard.mjs", "{shard}", "2", "--", "npx", "playwright", "test", "e2e/staleWrite.spec.ts", "e2e/deployedArtifacts.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report-stateful.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/stateful" } },
 ]
 
+# The UI quality matrix and the visual rail, against the pinned Playwright image's browser
+# (web/e2e/visual-image.json, #3943), the one environment their baselines are made in: the test
+# runner, the harness and the gateway run here as in every leg, and web/e2e/run-pinned.mjs serves
+# the image's browser on 127.0.0.1 after holding the image to the baselines' manifest. Each is an
+# invocation of its own on a fresh home: the matrix and its control alone on the `matrix` home, the
+# matrix first since a red there is the run's red anyway; then the visual rail, which needs a gateway
+# no other spec wrote to. docker is a toolchain program, so a machine without it reports the job as
+# one it cannot run, and `run-pinned` refuses any host that is not linux/amd64.
 [[job]]
-id = "e2e-stateful"
+id = "e2e-pinned"
 tiers = ["merge"]
 inputs = [
   ":(glob)**",
@@ -998,21 +1011,17 @@ inputs = [
   ":(exclude)packages/personalclaw-client-py/",
   ":(exclude).github/",
 ]
-external_inputs = ["browser-download"]
-toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
+external_inputs = []
+toolchain = ["uv-sync", "node", "npm-ci", "docker"]
 cache = ["uv", "npm"]
 security = "ordinary"
 python = "3.12.15"
-timeout_min = 30
+timeout_min = 40
 needs_node = true
-needs_browser = true
 after = ["web-build"]
-# The matrix first: a red matrix is the run's red anyway, and a red stateful set ahead of it would
-# leave the UI quality check no matrix to read.
 command = [
-  { argv = ["npx", "playwright", "test", "e2e/surfaces.spec.ts", "e2e/surfaceMatrix.control.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report-matrix.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/matrix" } },
-  { argv = ["npx", "playwright", "test", "e2e/idleCost.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report-idle.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/idle" } },
-  { argv = ["npx", "playwright", "test", "e2e/staleWrite.spec.ts", "e2e/deployedArtifacts.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/stateful" } },
+  { argv = ["node", "e2e/run-pinned.mjs", "--", "e2e/surfaces.spec.ts", "e2e/surfaceMatrix.control.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report-matrix.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/matrix" } },
+  { argv = ["node", "e2e/run-pinned.mjs", "--", "e2e/visual.spec.ts"], workdir = "web", env = { PLAYWRIGHT_JSON_OUTPUT_NAME = "e2e-report-visual.json", PLAYWRIGHT_BLOB_OUTPUT_DIR = "blob-report/visual" } },
 ]
 
 # A real browser driven by the browse tool. Its steps run two security-marked modules (the

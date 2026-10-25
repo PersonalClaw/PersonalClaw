@@ -23,11 +23,11 @@ import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, axi
 //
 // ── Why this rail lives in vitest and not in the Playwright suite ──
 //
-// Because **no CI job runs `visual.spec.ts`**. The only `playwright test` invocation under
-// `.github/workflows/` is `e2e/a11y.spec.ts`. A missing-baseline check inside the visual suite would
-// therefore be as unexecuted as the suite it guards. This file runs in the `web` job's vitest step,
-// which does run, so the manifest and the goldens cannot drift apart unnoticed again — which is the
-// actual cause of the mess above, not any individual missing file.
+// Because the visual suite runs in one leg alone (`e2e-pinned`, against the pinned image's browser),
+// and only in the merge tier: a missing golden would be found there, after every cheaper job. This
+// file runs in the `web` job's vitest step, on every change, so the manifest and the goldens cannot
+// drift apart unnoticed again — which was the actual cause of the mess above, not any individual
+// missing file.
 //
 // It deliberately checks FILE EXISTENCE only. It cannot and should not compare pixels: that is the
 // visual suite's job, it is platform-qualified, and it needs a browser.

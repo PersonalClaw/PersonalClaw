@@ -90,7 +90,18 @@ SECURITY: tuple[str, ...] = ("ordinary", "security")
 
 #: What a job installs before its steps run.
 TOOLCHAINS = frozenset(
-    {"uv", "uv-sync", "node", "npm-ci", "chromium", "electron", "tmux", "shellcheck", "dash"}
+    {
+        "uv",
+        "uv-sync",
+        "node",
+        "npm-ci",
+        "chromium",
+        "electron",
+        "tmux",
+        "shellcheck",
+        "dash",
+        "docker",
+    }
 )
 
 #: The caches a job restores.
