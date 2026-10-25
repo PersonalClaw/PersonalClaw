@@ -394,6 +394,34 @@ def test_the_real_planner_publishes_its_keys_and_each_stage_jobs_matrix(
     assert "--full" not in (ran.argv or [])
 
 
+def _second_leg_problems(second: list[str]) -> list[str]:
+    """What is wrong with merge.yml's second leg for a web change. The pinned browser run is
+    e2e-stateful or e2e-pinned while #3943's rename lands in two merges (#4584 step 4), this rail
+    first: one of the two, once, beside the package, the shards and the desktop smoke."""
+    pinned = [i for i in second if i in ("e2e-stateful", "e2e-pinned")]
+    bad = [] if len(pinned) == 1 else [f"the pinned browser run is {pinned or 'missing'}"]
+    if set(second) - set(pinned) != {"package", "e2e-shard", "desktop-smoke"}:
+        bad.append(f"the second leg is {sorted(second)}")
+    return bad
+
+
+@pytest.mark.parametrize(
+    "second, says",
+    [
+        (["package", "e2e-shard", "e2e-pinned", "desktop-smoke"], None),
+        (["package", "e2e-shard", "e2e-other", "desktop-smoke"], "is missing"),
+        (["package", "e2e-shard", "e2e-stateful", "e2e-pinned", "desktop-smoke"], "is ["),
+        (["package", "e2e-stateful", "desktop-smoke"], "the second leg is"),
+    ],
+    ids=["the new name", "a third name", "both names", "a leg gone"],
+)
+def test_the_second_leg_takes_the_pinned_run_under_either_name_and_only_one(
+    second: list[str], says: str | None
+) -> None:
+    found = _second_leg_problems(second)
+    assert (found == []) if says is None else any(says in f for f in found), found
+
+
 def test_merge_yml_plans_the_e2e_legs_after_the_build_for_a_web_change(
     tmp_path: Path, judge_tar: Path
 ) -> None:
@@ -404,7 +432,7 @@ def test_merge_yml_plans_the_e2e_legs_after_the_build_for_a_web_change(
         return [e["id"] for e in json.loads(published[name])["include"]]
 
     assert ids("build") == ["web-build"]
-    assert {"package", "e2e-shard", "e2e-stateful", "desktop-smoke"} == set(ids("test-2"))
+    assert _second_leg_problems(ids("test-2")) == []
     assert ids("test-3") == ["e2e", "ui-quality"]
     assert "python-suite" in ids("test") and "web-build" not in ids("test")
 
