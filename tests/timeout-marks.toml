@@ -774,5 +774,5 @@ reason = "the select import graph over the whole tree (about 4,700 modules), par
 
 [[mark]]
 site = "tests/rails/test_main_contract_over_a_head_tree.py::_TREE"
-cap = 240
-reason = "each plant lays out the committed tree as a worktree and runs pytest over it with a few of main's contract rails; 70 to 110 s locally at one worker (2026-10-25)"
+cap = 60
+reason = "each plant lays out the committed tree as a worktree and runs one test of one of main's contract rails over it, before and after its edit; 6 to 20 s alone at a load of 8 to 10, the worktree's checkout most of the spread (2026-10-25)"
