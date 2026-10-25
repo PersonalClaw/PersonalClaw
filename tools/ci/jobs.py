@@ -2193,7 +2193,9 @@ def run_tier(
         if left:
             print(f"pre-push: left to CI (prepush = false): {', '.join(left)}", file=sys.stderr)
         jobs = [j for j in jobs if j.prepush]
-    jobs = ordered(jobs)
+    # The change tier's jobs first, static's lint among them: the catalogue lists the suite
+    # first for merge.yml's caps, and a run here still gives a pull request's quick signal first.
+    jobs = ordered(sorted(jobs, key=lambda j: "change" not in j.tiers))
     now = time.time()
     reuse = (
         None if options.working_tree else _begin_reuse(cat, jobs, host, options, fingerprint, now)

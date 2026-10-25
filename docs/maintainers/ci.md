@@ -1151,11 +1151,12 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   stage jobs caps its entries with `max-parallel` (`test` 10; `build`, `test-2` and `test-3` 4
   each), the most jobs no `needs` orders, counting a stage job's cap and any other job as one, is
   at most 14 (`test` beside one of the others), and the plan lists every suite shard within its
-  stage job's cap, so the cap never holds back the run's longest entries. The cap is
+  stage job's cap, so the cap never holds back the run's longest entries. The catalogue lists
+  the two suite jobs first for that, since a plan lists a stage's entries in catalogue order. The cap is
   `max-parallel` rather than a smaller plan: it changes when entries start, not what the tier
   runs, and needs no change to main's planner. Plants: a stage job with no cap or one written as
   an expression, the test stage at 11, `test-2` at 5, `test-3` beside `test-2`, and the test
-  stage at 9, which leaves a macOS shard waiting.
+  stage at 5, which leaves a macOS shard waiting.
 - "the-tier-workflows-run-their-tiers-matrix-and-judge-its-records": the plan step plans the
   workflow's tier for its stage jobs; the stage jobs are exactly the parts the tier's whole plan
   splits into, each reading its own part after the stage before, with the matrix's runner and cap
@@ -1394,19 +1395,20 @@ carries too. A workflow added later that runs on
 ### `test-macos`
 
 Pull requests into `main` run the suite on `macos-26` with Python 3.13 (`python-suite-macos`, the
-`test-macos` leg of the shard plan), in two shards of whole test files planned from macOS's own
-durations, two xdist workers each (a macOS worker's peak memory holds it there, #3923) and no
-coverage. The macOS leg splits on its own: two shards beside `python-suite`'s three, each
+`test-macos` leg of the shard plan), in three shards of whole test files planned from macOS's own
+durations, two xdist workers each (a macOS runner's memory holds it there: at three workers its
+7 GiB with no swap ran under real pressure, #3923) and no coverage. The macOS leg splits on its
+own: three shards beside `python-suite`'s three, each
 listing its own share of its own leg, and the shard plan holds every file in exactly one shard of
 each. With `python-suite` on Ubuntu and 3.12, every
 change that merges has run both operating systems and both Pythons. The security corpus is the exception: no shard collects it, so a pull request
 runs it once, in `security`, on Ubuntu and 3.12, and breadth runs it each night on macOS on
-3.13. The two shards take two of the five macOS runners the account runs at once, the most one
+3.13. The three shards take three of the five macOS runners the account runs at once, the most one
 merge-tier run may take (#3915), and breadth's `macos` leg runs one shard at a time
 (`max-parallel: 1`), so a pull request's run and a night's breadth fit the five together; the
 contract row "a-pull-requests-macos-jobs-and-breadths-macos-leg-fit-the-macos-runners" fails a
-merge tier that takes more than two, and a count that does not fit (the merge tier's macOS shards
-with breadth's). Concurrent pull
+merge tier that takes more than three, a macOS shard of more than two workers or of `auto`, and a
+count that does not fit (the merge tier's macOS shards with breadth's). Concurrent pull
 requests still queue on macOS.
 
 ### The suite's shards
@@ -2107,7 +2109,9 @@ changes to tests, `tools/ci`, `scripts`, docs and the web.
   (`jobs.LOCAL_AUTO_WORKERS`). On GitHub `auto` is the runner's CPU count and `workers_env` is
   as `ci.yml` set it, so CI's speed and its measured targets are what they were. Admission
   holds every count, `--workers N`'s too.
-- **`run`** goes in catalogue order, each job after the jobs its `after` names, every shard of
+- **`run`** goes in catalogue order, the change tier's jobs first (so `run merge` starts with
+  `static`, though the catalogue lists the suite first for `merge.yml`'s caps), each job after
+  the jobs its `after` names, every shard of
   each, and judges each job's records with `verdict.decide` against the head and the partner
   revisions that job reads. It keeps going after a red unless `--fail-fast` is given, and runs
   nothing more after an interrupted job. `--changed` runs the jobs `tools/ci/plan.py` plans for
