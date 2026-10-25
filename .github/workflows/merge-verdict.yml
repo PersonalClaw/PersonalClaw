@@ -51,7 +51,7 @@ on:
   # conclusion is never read. The job skips every other check run without a runner.
   check_run:
     types: [completed]
-  # Every ten minutes: judge again the open pull requests whose newest verdict is a red that only
+  # Every ten minutes: judge again the open pull requests whose newest verdict is a red that still
   # waits, on CodeQL to finish or to process or on the head's contract run to report, posting
   # only what changed and deleting the contract branch of each head judged. GitHub fires it far
   # less often (7 of 144 in the 24 hours to 2026-10-25 09:47 UTC), so every other run also
@@ -119,7 +119,7 @@ jobs:
           APP_ID: ${{ vars.CONTROLLER_APP_ID }}
         run: |
           set -euo pipefail
-          # Whatever woke it, the run also judges again a few heads whose red only waits: the
+          # Whatever woke it, the run also judges again a few heads whose red still waits: the
           # schedule fires far less often than its cron says.
           if [ -n "$RUN_ID" ]; then
             which=(--run-id "$RUN_ID")
