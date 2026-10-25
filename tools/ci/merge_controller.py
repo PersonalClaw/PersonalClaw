@@ -6,43 +6,45 @@ candidate brings. It reads the API only, by the run's id: never the event's text
 contents or anything of the candidate on disk. Both trees are read from the API, so the
 candidate's files are never fetched or checked out (``trust.compare_trees``).
 
-``decide`` judges the run and writes the check run it would post. The rules, in order, each
-failing closed:
+``decide`` judges the run and writes the check run it would post. The rules, each failing
+closed; a red names every rule the head fails, so one verdict says all it must fix:
 
 1. The run is this repository's ``.github/workflows/merge.yml``, completed, on a ``pull_request``
    or a dispatch. Any other run posts nothing: another workflow named Merge, which a candidate
    can add, a push to ``main`` or a schedule. Only a run of merge.yml itself can bring a verdict.
-2. The head changes no definition (``trust``), compared with ``main``'s tip. A head that does is
-   not judged by its own run, which used its own workflows and ``tools/ci``: that run posts
-   nothing, and starts a run of ``main``'s definitions on the head's tree instead (#4584 step 4),
-   but only from the head's own ``pull_request`` run, completed: that run passed the fork
-   approval gate, so no head's code runs in the base repository without the approval its own run
-   needed. A head with no such run gets no trusted run. Until that run reports, the head has no
-   verdict, which a required check reads as not passed.
-3. The head is not behind ``main``, so the squash commit lands the tree the run tested. This is
-   read before the definitions: a head ``main`` has moved past is red, told to update, and starts
-   no trusted run, since against ``main``'s tip it would read as changing every definition
-   ``main`` changed since.
+2. A head that changes a definition (``trust``), compared with ``main``'s tip, is judged by two
+   things, both green (#4584 step 4): its own run, by every rule here, which shows the change
+   works as written; and ``main``'s CI contract over its definitions, which shows it weakens
+   nothing ``main``'s contract holds CI to, whatever its own copy of the contract says
+   (``tools/ci/contract.py``). The contract is run only from the head's own ``pull_request``
+   run, completed: that run passed the fork approval gate, so no head's code runs in the base
+   repository without the approval its own run needed. Until the contract run reports, the head
+   has no green, which a required check reads as not passed.
+3. The head is not behind ``main``, so the squash commit lands the tree the run tested, and the
+   contract judged the head against the ``main`` it would land on. A head that is behind is
+   red whatever else holds, and its definitions are not compared: against ``main``'s tip, a head
+   ``main`` has moved past would read as changing every definition ``main`` changed since. So no
+   contract runs for it until it updates.
 
-**The trusted run.** ``trusted`` builds one commit through the API with the controller App's
-token: ``main``'s tip as its parent, ``main``'s definitions, and every other path as the head
-has it. It points the branch ``trusted-run/<head>`` at it, and ``dispatch`` runs ``main``'s
-``merge.yml`` there with the job's own token. The commit changes no workflow file against its
-parent, and every workflow's push trigger is ``main``'s alone, so the push starts nothing and
-needs no permission over workflow files. When that run completes, its verdict is the head's,
-posted on the head, only when its commit is still exactly that: a parent on ``main``, the same
-definitions as ``main``'s tip, and the head's every other path. One whose definitions ``main``
-has moved past starts again, if the head still has its own completed run; any other is red.
-Once its verdict is posted, red or green, its branch is deleted, and every completed Merge run
-also sweeps away any trusted-run branch older than a day.
+**The contract run.** ``contract-branch`` points the branch ``contract-run/<head>`` at
+``main``'s tip with the controller App's token, and ``dispatch`` runs ``main``'s
+``contract.yml`` there with the job's own token. So the workflow that runs is ``main``'s, and
+what it writes to the Actions cache is that branch's, never ``main``'s: it runs the head's
+``tools/ci``, which is what it tests. It lays out the head's tree beside its checkout and runs
+``python -m tools.ci contract``. A contract run counts for a head only when it is
+``contract.yml`` dispatched on the head's branch at ``main``'s tip and named for the head, so
+``main``'s workflow ran it on this head against the ``main`` it would land on; one at an older
+tip runs again. Once the head's verdict is posted its branch is deleted, and every completed
+run also sweeps away each contract branch no longer at ``main``'s tip (and, after a day, any
+trusted-run branch the old path left).
 4. The ``results`` job, which judges the run with ``main``'s ``verdict.py``, concluded
    ``success`` on every attempt, by the API's job list. Missing, cancelled, skipped or red on any
    attempt is red: a rerun never turns a red into a green.
 5. The head's dependency review passed (#4585 step 6): the newest ``pull_request_target`` run
    of ``dependency-review.yml`` on the head, main's copy, concluded ``success``. One that has
    not run, is still running or did not pass is red. When a Dependency review run completes, the
-   poster judges its head again from the head's own completed Merge run (or its trusted run), so
-   the two may finish in either order.
+   poster judges its head again from the head's own completed Merge run (and, for a head that
+   changes a definition, its contract run), so they may finish in any order.
 6. CodeQL analysed the head in every language ``main``'s CodeQL analyses name, and the pull
    request brings no alert of its own: the newest run of GitHub's dynamic CodeQL workflow on the
    head finished, with an ``Analyze (<language>)`` job that concluded ``success`` for each of
@@ -58,8 +60,9 @@ also sweeps away any trusted-run branch older than a day.
    so the schedule stays for that gap.
 7. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
    this controller's commit on ``main``, the head and its tree, the runner and the definitions
-   commit, and the digests of the run's ``ci-record-*`` artifacts as the API reports them. A run
-   with no record artifact has no evidence, so no green.
+   commit (``main``'s tip, or the head for a head that changes them, with the contract run that
+   judged them), and the digests of the run's ``ci-record-*`` artifacts as the API reports them.
+   A run with no record artifact has no evidence, so no green.
 
 The verdict is ``success`` or ``failure``, never neutral, and an answer the API would not give is
 ``failure``, named as unread. ``post`` sends the check run with the controller App's token, and
@@ -106,13 +109,20 @@ CODEQL_ANALYSIS = "dynamic/github-code-scanning/codeql:analyze"
 CODEQL_APP_ID = 57789
 _CODEQL_CHECK = "CodeQL"
 _PULL_HEAD = re.compile(r"refs/pull/(?P<number>[1-9][0-9]*)/head")
-#: The branch a trusted run of a head is made on: this prefix, then the head's full id.
+#: main's CI contract over a head's definitions (#4584 step 4): its workflow, by path.
+CONTRACT_WORKFLOW = ".github/workflows/contract.yml"
+#: The branch a head's contract runs on: this prefix, then the head's full id. It points at
+#: main's tip, so the workflow that runs there is main's, and its cache is the branch's.
+CONTRACT_PREFIX = "contract-run/"
+#: What contract.yml's ``run-name`` names each run: the head it judges.
+CONTRACT_TITLE = "Contract {head}"
+#: The old path's trusted-run branches, which the sweep still deletes.
 TRUSTED_PREFIX = "trusted-run/"
 #: A reason that only waits on CodeQL to finish or to process, which a later look may clear.
 WAITING = "waiting: "
 #: The fenced block a red's output text carries when every reason only waits on CodeQL.
 WAITING_FENCE = "merge-verdict-waiting"
-#: A trusted-run branch older than this is swept away, whatever became of its run.
+#: A trusted-run branch the old path left, older than this, is swept away.
 SWEEP_AFTER = datetime.timedelta(days=1)
 #: merge.yml's job that judges the run with main's verdict.py.
 RESULTS_JOB = "results"
@@ -197,8 +207,6 @@ class Run:
     url: str
     #: The branch the run was dispatched on.
     branch: str = ""
-    #: For a trusted run, the head it judges; None for a head's own run.
-    candidate: str | None = None
 
 
 def read_run(get: Get, repo: str, run_id: int) -> Run | str:
@@ -220,13 +228,10 @@ def read_run(get: Get, repo: str, run_id: int) -> Run | str:
     if not isinstance(head, str) or not _SHA.fullmatch(head) or attempt is None or attempt < 1:
         raise Unread(f"run {run_id} names no head or no attempt")
     branch = str(run.get("head_branch") or "")
-    candidate = None
     if run.get("event") == "workflow_dispatch" and branch.startswith(TRUSTED_PREFIX):
-        candidate = branch.removeprefix(TRUSTED_PREFIX)
-        if not _SHA.fullmatch(candidate):
-            return f"run {run_id} is on {branch!r}, which names no head"
+        return f"run {run_id} is a trusted run of the old path, which #4584 step 4 replaced"
     event, url = str(run.get("event")), str(run.get("html_url") or "")
-    return Run(run_id, attempt, head, event, url, branch, candidate)
+    return Run(run_id, attempt, head, event, url, branch)
 
 
 def results_reasons(get: Get, repo: str, run: Run) -> tuple[list[str], list[str]]:
@@ -356,7 +361,7 @@ class Posting:
 @dataclass(frozen=True)
 class Outcome:
     """What a Merge run's completion does: the check run to post, on the head it judges; the
-    head a trusted run is started for, and on which commit of ``main``; and the trusted run's
+    head whose contract run is started, and on which commit of ``main``; and the contract
     branch to delete once its verdict is posted. ``why`` says why nothing is posted."""
 
     posting: Posting | None = None
@@ -382,41 +387,51 @@ def _names(paths: list[str]) -> str:
     return shown + (f" and {len(paths) - 10} more" if len(paths) > 10 else "")
 
 
-def trusted_tree_problem(
-    get: Get,
-    repo: str,
-    commit: str,
-    tree: trust.Tree,
-    base: str,
-    base_tree: trust.Tree,
-    head_tree: trust.Tree,
-) -> tuple[str, bool]:
-    """Why a trusted run's commit is not ``main``'s definitions on the head's tree, or ``""``;
-    and whether making it again would mend it (``main``'s definitions moved past it)."""
-    answer = _read(get, f"/repos/{repo}/git/commits/{commit}")
-    parents = answer.get("parents") if isinstance(answer, Mapping) else None
-    if not isinstance(parents, list) or len(parents) != 1 or not isinstance(parents[0], Mapping):
-        return "its commit has not exactly one parent", False
-    parent = parents[0].get("sha")
-    if not isinstance(parent, str) or not _SHA.fullmatch(parent):
-        raise Unread(f"commit {commit}'s parent names no commit")
-    if behind_by(get, repo, parent, base):
-        return f"its parent {parent} is not on main", False
-    if not trust.compare_trees(base_tree, tree, base=base, head=commit).trusted:
-        return "main's definitions have moved since its commit was made", True
-    definitions = (
-        trust.tree_definitions(base_tree)
-        | trust.tree_definitions(tree)
-        | trust.tree_definitions(head_tree)
+@dataclass(frozen=True)
+class Contract:
+    """A run of main's contract over a head's definitions."""
+
+    id: int
+    url: str
+    status: str
+    conclusion: str | None
+
+
+def contract_run(get: Get, repo: str, head: str, base: str) -> Contract | None:
+    """The newest run of ``contract.yml`` dispatched on the head's contract branch at ``base``,
+    ``main``'s tip, and named for the head, in any state; None when there is none. Only such a
+    run is ``main``'s workflow judging this head against the ``main`` it would land on: a run on
+    the branch dispatched for another head is named for that head, and its job does not run."""
+    branch = CONTRACT_PREFIX + head
+    query = urllib.parse.urlencode(
+        {"branch": branch, "event": "workflow_dispatch", "per_page": _PER_PAGE}
     )
-    differ = sorted(
-        p
-        for p in (set(tree.blobs) | set(head_tree.blobs)) - definitions
-        if tree.blobs.get(p) != head_tree.blobs.get(p)
+    name = CONTRACT_WORKFLOW.rsplit("/", 1)[-1]
+    answer = _read(get, f"/repos/{repo}/actions/workflows/{name}/runs?{query}")
+    runs = answer.get("workflow_runs") if isinstance(answer, Mapping) else None
+    if not isinstance(runs, list):
+        raise Unread(f"{head}'s contract runs are not a list")
+    ours = [
+        r
+        for r in runs
+        if isinstance(r, Mapping)
+        and r.get("path") == CONTRACT_WORKFLOW
+        and r.get("event") == "workflow_dispatch"
+        and r.get("head_branch") == branch
+        and r.get("head_sha") == base
+        and r.get("display_title") == CONTRACT_TITLE.format(head=head)
+        and _int(r.get("id")) is not None
+    ]
+    if not ours:
+        return None
+    newest = max(ours, key=lambda r: int(r["id"]))
+    conclusion = newest.get("conclusion")
+    return Contract(
+        int(newest["id"]),
+        str(newest.get("html_url") or ""),
+        str(newest.get("status")),
+        str(conclusion) if conclusion is not None else None,
     )
-    if differ:
-        return f"its tree is not the head's outside the definitions: {_names(differ)}", False
-    return "", False
 
 
 def dependency_review_reasons(get: Get, repo: str, head: str) -> list[str]:
@@ -585,24 +600,17 @@ def judge_check(get: Get, repo: str, check_id: int, controller_revision: str) ->
 
 
 def rejudge(get: Get, repo: str, head: str, controller_revision: str) -> Outcome:
-    """Judge a head again from its own completed pull_request Merge run, or, for a head that
-    changes a definition, from its trusted run. Nothing is dispatched from here; the head's own
-    Merge run does that."""
+    """Judge a head again from its own completed pull_request Merge run, and for a head that
+    changes a definition, the contract run that run's verdict waits for."""
     own = _latest_merge_run(get, repo, head_sha=head, event="pull_request")
     if own is None:
         return Outcome(why=f"{head} has no completed Merge run of its own to judge yet")
-    outcome = decide(get, repo, own, controller_revision)
-    if outcome.dispatch is None:
-        return outcome
-    trusted = _latest_merge_run(get, repo, branch=TRUSTED_PREFIX + head, event="workflow_dispatch")
-    if trusted is None:
-        return Outcome(why=f"{head} changes a CI definition and its trusted run has not completed")
-    return decide(get, repo, trusted, controller_revision)
+    return decide(get, repo, own, controller_revision)
 
 
 def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome:
     """What a completed run of a workflow the poster follows does: a Merge run is judged; a
-    Dependency review run judges its head again."""
+    Dependency review, CodeQL or contract run judges its head again."""
     run = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
     if not isinstance(run, Mapping):
         raise Unread(f"run {run_id} is not an object")
@@ -612,6 +620,14 @@ def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome
         if run.get("status") != "completed":
             return Outcome(why=f"run {run_id} is {run.get('status')!r}, not completed")
         return decide_review(get, repo, run, controller_revision)
+    if owner == repo and run.get("path") == CONTRACT_WORKFLOW:
+        branch = str(run.get("head_branch") or "")
+        named = branch.removeprefix(CONTRACT_PREFIX)
+        if run.get("status") != "completed" or run.get("event") != "workflow_dispatch":
+            return Outcome(why=f"run {run_id} is not a completed dispatch of the contract")
+        if not branch.startswith(CONTRACT_PREFIX) or not _SHA.fullmatch(named):
+            return Outcome(why=f"run {run_id} is on {branch!r}, which names no head")
+        return rejudge(get, repo, named, controller_revision)
     if owner == repo and str(run.get("path", "")).startswith(CODEQL_WORKFLOW):
         head = run.get("head_sha")
         if run.get("status") != "completed" or not isinstance(head, str):
@@ -751,34 +767,30 @@ def judge_waiting(
     return changed
 
 
-def own_run_completed(get: Get, repo: str, head: str) -> bool:
-    """Whether the head has a completed ``pull_request`` run of merge.yml of its own: the run
-    that passed the fork approval gate, which a trusted run of it waits for."""
-    query = urllib.parse.urlencode(
-        {"head_sha": head, "event": "pull_request", "status": "completed", "per_page": 1}
-    )
-    answer = _read(get, f"/repos/{repo}/actions/workflows/{workflows.MERGE}/runs?{query}")
-    count = _int(answer.get("total_count")) if isinstance(answer, Mapping) else None
-    if count is None:
-        raise Unread(f"{head}'s own runs give no count")
-    return count > 0
-
-
-def stale_branches(get: Get, repo: str, now: datetime.datetime) -> list[str]:
-    """Every trusted-run branch whose commit was made more than :data:`SWEEP_AFTER` ago."""
-    refs = _read(get, f"/repos/{repo}/git/matching-refs/heads/{TRUSTED_PREFIX}")
+def _branches(get: Get, repo: str, prefix: str) -> list[tuple[str, str]]:
+    """Each branch under ``prefix`` that names a head, with the commit it points at."""
+    refs = _read(get, f"/repos/{repo}/git/matching-refs/heads/{prefix}")
     if not isinstance(refs, list):
-        raise Unread("the trusted-run branches are not a list")
-    stale: list[str] = []
+        raise Unread(f"the {prefix} branches are not a list")
+    found: list[tuple[str, str]] = []
     for ref in refs:
         name = ref.get("ref") if isinstance(ref, Mapping) else None
         target = ref.get("object") if isinstance(ref, Mapping) else None
         sha = target.get("sha") if isinstance(target, Mapping) else None
         if not isinstance(name, str) or not isinstance(sha, str) or not _SHA.fullmatch(sha):
-            raise Unread("a trusted-run branch names no commit")
+            raise Unread(f"a {prefix} branch names no commit")
         branch = name.removeprefix("refs/heads/")
-        if not _SHA.fullmatch(branch.removeprefix(TRUSTED_PREFIX)):
-            continue
+        if _SHA.fullmatch(branch.removeprefix(prefix)):
+            found.append((branch, sha))
+    return found
+
+
+def stale_branches(get: Get, repo: str, now: datetime.datetime, base: str) -> list[str]:
+    """Every contract branch that points at a commit other than ``base``, ``main``'s tip (its run
+    no longer counts, and a head judged again gets a new one), and every trusted-run branch the
+    old path left whose commit was made more than :data:`SWEEP_AFTER` ago."""
+    stale = [b for b, sha in _branches(get, repo, CONTRACT_PREFIX) if sha != base]
+    for branch, sha in _branches(get, repo, TRUSTED_PREFIX):
         commit = _read(get, f"/repos/{repo}/git/commits/{sha}")
         made = commit.get("committer") if isinstance(commit, Mapping) else None
         when = made.get("date") if isinstance(made, Mapping) else None
@@ -799,87 +811,88 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
     if isinstance(found, str):
         return Outcome(why=found)
     run = found
-    head = run.candidate or run.head_sha
-    cleanup = run.branch if run.candidate else None
+    head = run.head_sha
+    changed: list[str] = []
+    contract: Contract | None = None
+    # Every reason that holds, so one verdict names all a head must fix.
+    reasons: list[str] = []
     try:
         base = main_tip(get, repo)
-        _, base_tree = api_tree(get, repo, base)
         tree_oid, head_tree = api_tree(get, repo, head)
         behind = behind_by(get, repo, base, head)
-        if behind and run.candidate is None:
-            # Checked before the definitions: against main's tip, a head main has moved past
-            # would read as changing every definition main changed since, and it must update
-            # before any run of it can count.
-            stale = f"the head is {behind} commits behind main: update the branch"
-            return Outcome(posting=_red(run, [stale], head))
-        if run.candidate is None:
-            comparison = trust.compare_trees(base_tree, head_tree, base=base, head=head)
-            if not comparison.trusted:
-                changed = [c.path for c in comparison.changes]
-                if run.event != "pull_request":
-                    return Outcome(
-                        why=(
-                            f"{head} changes {len(changed)} CI definitions, and this is not its "
-                            "own pull_request run, so no trusted run is made from it"
-                        )
-                    )
-                return Outcome(
-                    why=(
-                        f"{head} changes {len(changed)} CI definitions ({_names(changed)}), so "
-                        "its own run is not judged: a run of main's definitions on its tree is "
-                        "started instead"
-                    ),
-                    dispatch=head,
-                    base=base,
-                )
-            judged = "its own Merge run"
+        if behind:
+            # Its definitions are not compared: against main's tip, a head main has moved past
+            # reads as changing every definition main changed since. It updates before any run
+            # of it counts, so no contract runs for it either.
+            reasons.append(f"the head is {behind} commits behind main: update the branch")
         else:
-            _, run_tree = api_tree(get, repo, run.head_sha)
-            problem, again = trusted_tree_problem(
-                get, repo, run.head_sha, run_tree, base, base_tree, head_tree
+            _, base_tree = api_tree(get, repo, base)
+            comparison = trust.compare_trees(base_tree, head_tree, base=base, head=head)
+            changed = [] if comparison.trusted else [c.path for c in comparison.changes]
+        if changed and run.event != "pull_request":
+            return Outcome(
+                why=(
+                    f"{head} changes {len(changed)} CI definitions, and this is not its "
+                    "own pull_request run, so main's contract is not run from it"
+                )
             )
-            if again and not own_run_completed(get, repo, head):
-                return Outcome(
-                    why=(
-                        f"the trusted run of {head} is stale, and the head has no completed "
-                        "pull_request run of its own, so none is made again"
-                    ),
-                    cleanup=cleanup,
-                )
-            if again:
-                return Outcome(
-                    why=f"the trusted run of {head} is stale: {problem}; it is started again",
-                    dispatch=head,
-                    base=base,
-                )
-            if problem:
-                red = _red(run, [f"the trusted run: {problem}"], head)
-                return Outcome(posting=red, cleanup=cleanup)
-            judged = f"a run of main's definitions on its tree (`{run.head_sha}`)"
-        reasons, labels = results_reasons(get, repo, run)
+        failing, labels = results_reasons(get, repo, run)
+        reasons += failing
         reasons += dependency_review_reasons(get, repo, head)
         reasons += codeql_reasons(get, repo, head)
-        if behind:
-            reasons.append(f"the head is {behind} commits behind main: update the branch")
+        if changed:
+            contract = contract_run(get, repo, head, base)
+            if contract is not None and contract.status == "completed":
+                if contract.conclusion != "success":
+                    reasons.append(
+                        "main's CI contract fails on its definitions: contract run "
+                        f"{contract.url or contract.id} is {contract.conclusion!r}"
+                    )
         records = evidence(get, repo, run) if not reasons else {}
         if not reasons and not records:
             reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
     except (Unread, trust.Refused) as exc:
-        return Outcome(posting=_red(run, [f"unread: {exc}"], head), cleanup=cleanup)
+        return Outcome(posting=_red(run, [*reasons, f"unread: {exc}"], head))
+    # A head that changes a definition: its contract run is started once, at main's tip, and its
+    # verdict waits for it. Once that run has reported, its branch goes with the posted verdict.
+    start = head if changed and contract is None else None
+    judged = changed and contract is not None and contract.status == "completed"
+    cleanup = CONTRACT_PREFIX + head if judged else None
     if reasons:
-        return Outcome(posting=_red(run, reasons, head), cleanup=cleanup)
+        return Outcome(posting=_red(run, reasons, head), dispatch=start, base=base, cleanup=cleanup)
+    if changed and not judged:
+        running = "is started" if contract is None else f"is {contract.status!r}"
+        return Outcome(
+            why=(
+                f"{head} changes {len(changed)} CI definitions ({_names(changed)}): its own runs "
+                f"are green, and main's contract over its definitions {running}"
+            ),
+            dispatch=start,
+            base=base,
+        )
+    toolchain = {"runner": ",".join(labels) or "unnamed", "definitions": base}
+    ran = [f"- the definitions that ran are main's at `{base}`"]
+    if changed and contract is not None:
+        toolchain = {**toolchain, "definitions": head, "contract": contract.url or str(contract.id)}
+        ran = [
+            f"- the definitions that ran are its own: it changes {len(changed)} "
+            f"({_names(changed)})",
+            f"- main's CI contract at `{base}` passed over them: contract run "
+            f"{contract.url or contract.id}",
+        ]
     receipt = {
         "controller_revision": controller_revision,
         "head_sha": head,
         "tree_oid": tree_oid,
         "external_revisions": {},
-        "toolchain": {"runner": ",".join(labels) or "unnamed", "definitions": base},
+        "toolchain": toolchain,
         "evidence_digests": records,
     }
     summary = "\n".join(
         [
-            f"Judged by {judged}: every attempt of Merge run {run.url or run.id} was green.",
-            f"- the definitions that ran are main's at `{base}`",
+            f"Judged by its own Merge run: every attempt of Merge run {run.url or run.id} "
+            "was green.",
+            *ran,
             "- the head is up to date with main",
             "- its dependency review passed",
             "- CodeQL analysed every language main has, and found no alert it brings",
@@ -895,7 +908,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
     return Outcome(posting=posting, cleanup=cleanup)
 
 
-# ── The trusted run ───────────────────────────────────────────────────────────────────────────
+# ── The contract run ──────────────────────────────────────────────────────────────────────────
 
 
 def _call(api: Api, method: str, path: str, body: Mapping[str, object] | None, ok: int) -> Any:
@@ -905,78 +918,52 @@ def _call(api: Api, method: str, path: str, body: Mapping[str, object] | None, o
     return answer
 
 
-def _kind(entry: trust.Entry) -> str:
-    return "commit" if entry.mode == "160000" else "blob"
-
-
 def _branch(head: str) -> str:
     if not _SHA.fullmatch(head):
-        raise ValueError(f"a trusted run is made for a full commit id, not {head!r}")
-    return TRUSTED_PREFIX + head
+        raise ValueError(f"a contract run is made for a full commit id, not {head!r}")
+    return CONTRACT_PREFIX + head
 
 
-def make_trusted(get: Get, api: Api, repo: str, head: str, base: str) -> tuple[str, str]:
-    """Build ``main``'s definitions on the head's tree as one commit on ``base``, and point the
-    head's trusted-run branch at it; the commit and the branch."""
+def make_contract_branch(api: Api, repo: str, head: str, base: str) -> str:
+    """Point the head's contract branch at ``base``, ``main``'s tip, making it or moving it; the
+    branch. No commit is made: the branch is ``main``'s tip itself, so every push trigger there is
+    ``main``'s, and none starts on a branch but ``main``."""
     branch = _branch(head)
-    base_oid, base_tree = api_tree(get, repo, base)
-    _, head_tree = api_tree(get, repo, head)
-    definitions = trust.tree_definitions(base_tree) | trust.tree_definitions(head_tree)
-    entries: list[dict[str, object]] = []
-    for path, entry in sorted(head_tree.blobs.items()):
-        if path not in definitions and base_tree.blobs.get(path) != entry:
-            entries.append(
-                {"path": path, "mode": entry.mode, "type": _kind(entry), "sha": entry.oid}
-            )
-    for path, entry in sorted(base_tree.blobs.items()):
-        if path not in definitions and path not in head_tree.blobs:
-            entries.append({"path": path, "mode": entry.mode, "type": _kind(entry), "sha": None})
-    tree = base_oid
-    if entries:
-        made = _call(
-            api, "POST", f"/repos/{repo}/git/trees", {"base_tree": base_oid, "tree": entries}, 201
-        )
-        made_oid = made.get("sha") if isinstance(made, Mapping) else None
-        if not isinstance(made_oid, str) or not _SHA.fullmatch(made_oid):
-            raise RuntimeError(f"the trusted run's tree has no id: {made!r}")
-        tree = made_oid
-    message = (
-        f"main's definitions on {head}\n\nThe tree a trusted run of {head} tests (#3910): "
-        f"main's CI definitions at {base}, and every other path as the head has it. It is "
-        "never merged; the branch is deleted once its verdict is posted.\n"
-    )
-    made = _call(
-        api,
-        "POST",
-        f"/repos/{repo}/git/commits",
-        {"message": message, "tree": tree, "parents": [base]},
-        201,
-    )
-    commit = made.get("sha") if isinstance(made, Mapping) else None
-    if not isinstance(commit, str) or not _SHA.fullmatch(commit):
-        raise RuntimeError(f"the trusted run's commit has no id: {made!r}")
+    if not _SHA.fullmatch(base):
+        raise ValueError(f"--base must be a full commit id: {base}")
     status, _ = api("GET", f"/repos/{repo}/git/ref/heads/{branch}", None)
     if status == 404:
-        ref = {"ref": f"refs/heads/{branch}", "sha": commit}
-        _call(api, "POST", f"/repos/{repo}/git/refs", ref, 201)
+        _call(
+            api,
+            "POST",
+            f"/repos/{repo}/git/refs",
+            {"ref": f"refs/heads/{branch}", "sha": base},
+            201,
+        )
     elif status == 200:
-        moved = {"sha": commit, "force": True}
+        moved = {"sha": base, "force": True}
         _call(api, "PATCH", f"/repos/{repo}/git/refs/heads/{branch}", moved, 200)
     else:
         raise RuntimeError(f"the branch {branch} could not be read ({status})")
-    return commit, branch
+    return branch
 
 
 def dispatch(api: Api, repo: str, branch: str) -> None:
-    """Run ``main``'s merge.yml on the trusted-run branch."""
-    _branch(branch.removeprefix(TRUSTED_PREFIX))
-    path = f"/repos/{repo}/actions/workflows/{workflows.MERGE}/dispatches"
-    _call(api, "POST", path, {"ref": branch}, 204)
+    """Run ``main``'s contract.yml on the head's contract branch, naming the head."""
+    head = branch.removeprefix(CONTRACT_PREFIX)
+    if _branch(head) != branch:
+        raise ValueError(f"{branch} is not a contract branch")
+    name = CONTRACT_WORKFLOW.rsplit("/", 1)[-1]
+    path = f"/repos/{repo}/actions/workflows/{name}/dispatches"
+    _call(api, "POST", path, {"ref": branch, "inputs": {"head": head}}, 204)
 
 
 def delete_branch(api: Api, repo: str, branch: str) -> None:
-    """Delete a judged trusted run's branch; one already gone is fine."""
-    _branch(branch.removeprefix(TRUSTED_PREFIX))
+    """Delete a judged or stale contract branch, or a trusted-run branch the old path left; one
+    already gone is fine."""
+    prefix = next((p for p in (CONTRACT_PREFIX, TRUSTED_PREFIX) if branch.startswith(p)), None)
+    if prefix is None or not _SHA.fullmatch(branch.removeprefix(prefix)):
+        raise ValueError(f"{branch} is not a contract or trusted-run branch of a full commit id")
     status, answer = api("DELETE", f"/repos/{repo}/git/refs/heads/{branch}", None)
     if status not in (204, 404, 422):
         raise RuntimeError(f"DELETE {branch} answered {status}: {answer!r}")
@@ -1083,12 +1070,16 @@ def main(
     one.add_argument("--out", required=True, type=Path)
     two = sub.add_parser("post", help="post the check run with the App's token (GH_TOKEN)")
     two.add_argument("--body", required=True, type=Path)
-    three = sub.add_parser("trusted", help="make a head's trusted-run commit (the App's token)")
-    three.add_argument("--candidate", required=True)
+    three = sub.add_parser(
+        "contract-branch", help="point a head's contract branch at main's tip (the App's token)"
+    )
+    three.add_argument("--head", required=True)
     three.add_argument("--base", required=True)
-    four = sub.add_parser("dispatch", help="run main's merge.yml on a trusted-run branch")
+    four = sub.add_parser("dispatch", help="run main's contract.yml on a contract branch")
     four.add_argument("--branch", required=True)
-    five = sub.add_parser("cleanup", help="delete trusted-run branches (the App's token)")
+    five = sub.add_parser(
+        "cleanup", help="delete contract and trusted-run branches (the App's token)"
+    )
     five.add_argument("--branch", required=True, action="append")
     for each in (one, two, three, four, five):
         each.add_argument("--repo", required=True)
@@ -1118,18 +1109,19 @@ def main(
             print(f"::error title=merge verdict unread::{exc}")
             return 2
         try:
-            sweep = stale_branches(reader, args.repo, datetime.datetime.now(datetime.timezone.utc))
+            now = datetime.datetime.now(datetime.timezone.utc)
+            sweep = stale_branches(reader, args.repo, now, main_tip(reader, args.repo))
         except Unread as exc:
-            print(f"::warning title=no sweep::the trusted-run branches could not be read: {exc}")
+            print(f"::warning title=no sweep::the contract branches could not be read: {exc}")
             sweep = []
-        # Only a Merge run's own outcome starts a trusted run; a sweep never does.
+        # Only one head's own outcome starts a contract run; a sweep never does.
         single = outcomes[0] if len(outcomes) == 1 and not args.waiting else None
         dispatch_head = single.dispatch if single else None
         _output("dispatch", dispatch_head or "")
         _output("base", (single.base if single else None) or "")
         doomed = set(sweep) | {o.cleanup for o in outcomes if o.cleanup}
         if dispatch_head:
-            doomed.discard(TRUSTED_PREFIX + dispatch_head)
+            doomed.discard(CONTRACT_PREFIX + dispatch_head)
         _output("cleanup", " ".join(sorted(doomed)))
         postings = [o.posting for o in outcomes if o.posting is not None]
         for o in outcomes:
@@ -1157,15 +1149,13 @@ def main(
                 check_id = post(args.repo, body, lambda path, b: writer("POST", path, b))
                 said = f"{body['conclusion']} on {body['head_sha']} (check run {check_id})"
                 print(f"posted merge-verdict {said}")
-        elif args.command == "trusted":
-            if not _SHA.fullmatch(args.base):
-                raise ValueError(f"--base must be a full commit id: {args.base}")
-            commit, branch = make_trusted(reader, writer, args.repo, args.candidate, args.base)
-            print(f"main's definitions on {args.candidate}: {commit} on {branch}")
+        elif args.command == "contract-branch":
+            branch = make_contract_branch(writer, args.repo, args.head, args.base)
+            print(f"{branch} points at main's tip {args.base}")
             _output("branch", branch)
         elif args.command == "dispatch":
             dispatch(writer, args.repo, args.branch)
-            print(f"dispatched {workflows.MERGE} on {args.branch}")
+            print(f"dispatched {CONTRACT_WORKFLOW} on {args.branch}")
         else:
             for branch in args.branch:
                 delete_branch(writer, args.repo, branch)

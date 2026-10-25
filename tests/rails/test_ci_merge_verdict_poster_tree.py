@@ -6,11 +6,13 @@ jobs' one condition, which reads the triggering run's event and branch only to s
 the runs that can judge no pull request's head (each case below a planted event), checks out
 only the default branch and keeps no credential. ``post`` reads with its own token
 (``contents`` and ``actions``, read) and mints the controller App's token, with ``checks: write``
-alone, only when there is a verdict to post, and only the step that posts holds it. ``trusted``
-runs after it only when it names a head to judge or a branch to delete, mints the App's token
-with ``contents: write`` alone for the step that makes the trusted run's commit, and dispatches
-with its own token, which holds ``actions: write`` and nothing else that writes. Each rule fails
-on a planted edit.
+alone, only when there is a verdict to post, and only the step that posts holds it. ``contract``
+runs after it only when it names a head whose contract runs or a branch to delete, mints the App's
+token with ``contents: write`` alone for the step that points the head's contract branch at
+main's tip, and dispatches with its own token, which holds ``actions: write`` and nothing else
+that writes. ``contract.yml``, which that dispatch runs, holds no secret and no write token, keeps
+no credential, runs only on the head's own contract branch and names the head only through a
+step's environment (#4584 step 4). Each rule fails on a planted edit.
 """
 
 from __future__ import annotations
@@ -32,9 +34,9 @@ _APP_KEYS = {
     "private-key": "${{ secrets.CONTROLLER_APP_KEY }}",
 }
 _TOKEN_ASKS = {**_APP_KEYS, "permission-checks": "write"}
-_TRUSTED_ASKS = {**_APP_KEYS, "permission-contents": "write"}
+_CONTRACT_ASKS = {**_APP_KEYS, "permission-contents": "write"}
 #: The runs that can judge a pull request's head, and so take a runner: the sweep; a completed
-#: dispatch off main (a trusted run, a dispatch proof), whatever MERGE_VERDICT_LIVE says; and, once
+#: dispatch off main (a contract run, a dispatch proof), whatever MERGE_VERDICT_LIVE says; and, once
 #: the flip sets it 'true', code scanning's CodeQL check and a completed run of a pull request
 #: (its own, its dependency review, or CodeQL's on refs/pull/*). decide checks each again.
 _WAKES = (
@@ -51,7 +53,7 @@ _WAKES = (
     " || (github.event.workflow_run.event == 'dynamic'"
     " && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))))"
 )
-_TRUSTED_IF = (
+_CONTRACT_IF = (
     f"({_WAKES}) && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')"
 )
 #: Each job's condition as the file spells it: a folded block, read out before the candidate check.
@@ -75,26 +77,26 @@ def _checkout_problems(where: str, steps: list[dict]) -> list[str]:
     return found
 
 
-def _trusted_problems(job: dict) -> list[str]:
+def _contract_problems(job: dict) -> list[str]:
     found: list[str] = []
-    if job.get("needs") != "post" or job.get("if") != _TRUSTED_IF:
-        found.append("the trusted job runs other than after post, on a head or a branch it names")
+    if job.get("needs") != "post" or job.get("if") != _CONTRACT_IF:
+        found.append("the contract job runs other than after post, on a head or a branch it names")
     if job.get("environment") != "ci-controller":
-        found.append(f"the trusted job deploys to {job.get('environment')!r}")
+        found.append(f"the contract job deploys to {job.get('environment')!r}")
     if job.get("permissions") != {"contents": "read", "actions": "write"}:
-        found.append(f"the trusted job holds {job.get('permissions')!r}")
+        found.append(f"the contract job holds {job.get('permissions')!r}")
     steps = _steps(job)
-    found += _checkout_problems("the trusted job", steps)
+    found += _checkout_problems("the contract job", steps)
     tokens = [s for s in steps if str(s.get("uses", "")).startswith(_APP_ACTION)]
-    if len(tokens) != 1 or tokens[0].get("with") != _TRUSTED_ASKS:
+    if len(tokens) != 1 or tokens[0].get("with") != _CONTRACT_ASKS:
         found.append(
-            f"the trusted job's App token is asked for as {[t.get('with') for t in tokens]}"
+            f"the contract job's App token is asked for as {[t.get('with') for t in tokens]}"
         )
     if [s for s in steps if "secrets." in str(s)] != tokens:
-        found.append("a step of the trusted job other than its token step reads a secret")
+        found.append("a step of the contract job other than its token step reads a secret")
     holders = [s for s in steps if _APP_TOKEN in str(s)]
-    if len(holders) != 1 or "merge-controller trusted" not in str(holders[0].get("run")):
-        found.append("the App's token reaches a step other than the one that makes the commit")
+    if len(holders) != 1 or "merge-controller contract-branch" not in str(holders[0].get("run")):
+        found.append("the App's token reaches a step other than the one that points the branch")
     sends = [s for s in steps if "merge-controller dispatch" in str(s.get("run"))]
     if len(sends) != 1 or (sends[0].get("env") or {}).get("GH_TOKEN") != "${{ github.token }}":
         found.append("the dispatch is not one step on the job's own token")
@@ -109,7 +111,12 @@ def _problems(text: str) -> list[str]:
     on = data.get("on", data.get(True))
     want = {
         "workflow_run": {
-            "workflows": [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL"],
+            "workflows": [
+                workflows.NAMES[workflows.MERGE],
+                "Dependency review",
+                "CodeQL",
+                "Contract",
+            ],
             "types": ["completed"],
         },
         "check_run": {"types": ["completed"]},
@@ -118,9 +125,9 @@ def _problems(text: str) -> list[str]:
     if on != want:
         found.append(f"runs on {on!r}, not only a completed Merge run")
     jobs = data.get("jobs") or {}
-    if set(jobs) != {"post", "trusted"}:
+    if set(jobs) != {"post", "contract"}:
         return [*found, f"has jobs {sorted(jobs)}"]
-    found += _trusted_problems(jobs["trusted"])
+    found += _contract_problems(jobs["contract"])
     job = jobs["post"]
     if job.get("if") != _WAKES:
         found.append(
@@ -168,7 +175,7 @@ _POST_CHECKOUT = (
     "        with:\n"
     "          persist-credentials: false\n"
 )
-_TRUSTED_CHECKOUT = (
+_CONTRACT_CHECKOUT = (
     "      # Main's tools/ci again, from the default branch, with no credential kept.\n"
     "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
     "        with:\n"
@@ -183,25 +190,28 @@ _DISPATCH_TOKEN = (
 )
 
 
+#: The poster's wake: which workflows' completions it judges.
+_WAKE = (
+    '    workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]\n    types: [completed]\n'
+)
+
+
 @pytest.mark.parametrize(
     "old, new, says",
     [
         (
-            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n',
-            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n'
-            "  pull_request:\n",
+            _WAKE,
+            _WAKE + "  pull_request:\n",
             "runs on",
         ),
         (
-            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n',
-            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n'
-            "  workflow_dispatch: {}\n",
+            _WAKE,
+            _WAKE + "  workflow_dispatch: {}\n",
             "runs on",
         ),
         (
-            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n',
-            '    workflows: ["Merge", "Dependency review", "CodeQL"]\n    types: [completed]\n'
-            "  push:\n",
+            _WAKE,
+            _WAKE + "  push:\n",
             "runs on",
         ),
         (
@@ -210,11 +220,15 @@ _DISPATCH_TOKEN = (
             "runs on",
         ),
         (
-            'workflows: ["Merge", "Dependency review", "CodeQL"]',
+            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]',
             'workflows: ["Merge", "PR"]',
             "runs on",
         ),
-        ('workflows: ["Merge", "Dependency review", "CodeQL"]', 'workflows: ["Merge"]', "runs on"),
+        (
+            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]',
+            'workflows: ["Merge", "Dependency review", "CodeQL"]',
+            "runs on",
+        ),
         (
             "          RUN_ID: ${{ github.event.workflow_run.id }}\n",
             "          RUN_ID: ${{ github.event.workflow_run.id }}\n"
@@ -261,21 +275,21 @@ _DISPATCH_TOKEN = (
             "reaches a step other than the one that posts",
         ),
         ("merge-controller post", "merge-controller decide", "does not post"),
-        ("    needs: post\n", "", "the trusted job runs other than after post"),
+        ("    needs: post\n", "", "the contract job runs other than after post"),
         (
             "      actions: write   #",
             "      actions: write\n      contents: write   #",
-            "the trusted job holds",
+            "the contract job holds",
         ),
         (
-            _TRUSTED_CHECKOUT,
-            _TRUSTED_CHECKOUT.replace("persist-credentials: false", "fetch-depth: 1"),
-            "the trusted job's checkout keeps its credentials",
+            _CONTRACT_CHECKOUT,
+            _CONTRACT_CHECKOUT.replace("persist-credentials: false", "fetch-depth: 1"),
+            "the contract job's checkout keeps its credentials",
         ),
         (
             "          permission-contents: write\n",
             "          permission-contents: write\n          permission-workflows: write\n",
-            "the trusted job's App token is asked for",
+            "the contract job's App token is asked for",
         ),
         (
             _DISPATCH_TOKEN,
@@ -316,9 +330,9 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str], ...] = (
         "head",
     ),  # noqa: E501
     (
-        "a trusted run",
+        "a contract run",
         "workflow_run",
-        {"event": "workflow_dispatch", "head_branch": "trusted-run/ab"},
+        {"event": "workflow_dispatch", "head_branch": "contract-run/ab"},
         "always",
     ),  # noqa: E501
     ("the sweep", "schedule", {}, "always"),
@@ -502,7 +516,7 @@ def test_the_evaluator_reads_the_condition_it_judges() -> None:
             "      && github.event.workflow_run.event == 'workflow_dispatch'\n",
             "      || (vars.MERGE_VERDICT_LIVE == 'true' && github.event_name == 'workflow_run'\n"
             "      && github.event.workflow_run.event == 'workflow_dispatch'\n",
-            "takes no runner for a trusted run with MERGE_VERDICT_LIVE 'false'",
+            "takes no runner for a contract run with MERGE_VERDICT_LIVE 'false'",
         ),
     ],
 )
@@ -528,3 +542,68 @@ def test_a_step_that_names_the_triggering_runs_branch_fails() -> None:
 def test_a_schedule_more_often_than_ten_minutes_fails() -> None:
     text = _WORKFLOW.read_text(encoding="utf-8").replace('"*/10 * * * *"', '"* * * * *"', 1)
     assert any("runs on" in p for p in _problems(text))
+
+
+# ── contract.yml: main's contract over a head's definitions (#4584 step 4) ─────────────────────
+
+_CONTRACT = REPO / ".github" / "workflows" / "contract.yml"
+_CONTRACT_BRANCH_IF = "github.ref == format('refs/heads/contract-run/{0}', inputs.head)"
+#: The name each contract run carries, which merge_controller.contract_run matches to the head.
+_CONTRACT_RUN_NAME = "Contract ${{ inputs.head }}"
+
+
+def _contract_workflow_problems(text: str) -> list[str]:
+    found: list[str] = []
+    data = yaml.safe_load(text)
+    on = data.get("on", data.get(True))
+    if not isinstance(on, dict) or set(on) != {"workflow_dispatch"}:
+        found.append(f"contract.yml runs on {on!r}, not a dispatch alone")
+    elif set((on["workflow_dispatch"] or {}).get("inputs") or {}) != {"head"}:
+        found.append("contract.yml's dispatch takes other inputs than the head")
+    # What it holds (contents: read, no secret, no environment, no cache save) is the contract's
+    # row CONTRACT_RUN_HOLDS_NOTHING; this is its shape, which the poster reads.
+    if data.get("run-name") != _CONTRACT_RUN_NAME:
+        found.append("contract.yml's runs are not named for the head they judge")
+    jobs = data.get("jobs") or {}
+    if set(jobs) != {"contract"}:
+        return [*found, f"contract.yml has jobs {sorted(jobs)}"]
+    job = jobs["contract"]
+    if job.get("if") != _CONTRACT_BRANCH_IF:
+        found.append("contract.yml runs other than on the head's own contract branch")
+    steps = _steps(job)
+    found += _checkout_problems("contract.yml's job", steps)
+    if any("inputs." in str(s.get("run", "")) for s in steps):
+        found.append("contract.yml names the head in a step's script, not through its environment")
+    if not any("python -m tools.ci contract" in str(s.get("run", "")) for s in steps):
+        found.append("contract.yml does not run main's contract")
+    return found
+
+
+def test_the_contract_workflow_keeps_its_shape() -> None:
+    assert _contract_workflow_problems(_CONTRACT.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.parametrize(
+    "old, new, says",
+    [
+        ("  workflow_dispatch:\n", "  push:\n  workflow_dispatch:\n", "not a dispatch alone"),
+        ("run-name: Contract ${{ inputs.head }}\n", "", "not named for the head"),
+        (f"    if: {_CONTRACT_BRANCH_IF}\n", "", "other than on the head's own contract branch"),
+        (
+            'git worktree add --detach "$RUNNER_TEMP/head" "$HEAD_SHA"',
+            'git worktree add --detach "$RUNNER_TEMP/head" "${{ inputs.head }}"',
+            "in a step's script",
+        ),
+        (
+            "          persist-credentials: false\n",
+            "          fetch-depth: 1\n",
+            "keeps its credentials",
+        ),
+        ("python -m tools.ci contract", "python -m tools.ci list", "does not run main's contract"),
+    ],
+)
+def test_a_planted_edit_of_the_contract_workflow_fails(old: str, new: str, says: str) -> None:
+    text = _CONTRACT.read_text(encoding="utf-8")
+    assert text.count(old) == 1, f"the plant's anchor is not once: {old!r}"
+    found = _contract_workflow_problems(text.replace(old, new))
+    assert any(says in p for p in found), found

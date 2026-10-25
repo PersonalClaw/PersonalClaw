@@ -850,7 +850,7 @@ _MAIN_ONLY_ENVIRONMENTS = {
     ("settings-report.yml", "report"): "settings-report",
     ("release-tag.yml", "tag"): "ci-controller",
     ("merge-verdict.yml", "post"): "ci-controller",
-    ("merge-verdict.yml", "trusted"): "ci-controller",
+    ("merge-verdict.yml", "contract"): "ci-controller",
 }
 _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
 #: The main-only jobs that run on another trigger: the merge verdict's poster and its trusted
@@ -859,7 +859,7 @@ _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
 #: candidate's run can name the environment through them either.
 _LISTENER_ONLY = {
     ("merge-verdict.yml", "post"): {"workflow_run", "check_run", "schedule"},
-    ("merge-verdict.yml", "trusted"): {"workflow_run", "check_run", "schedule"},
+    ("merge-verdict.yml", "contract"): {"workflow_run", "check_run", "schedule"},
 }
 #: The one publishing permission a workflow other than release.yml may hold, by workflow and job:
 #: release-push-proof.yml runs release.yml's own image push to a scratch package no release names,
@@ -1508,6 +1508,131 @@ NO_CANDIDATE_JOB_HOLDS_A_WRITE_OR_A_SECRET = Row(
         ),
     ),
 )
+
+#: The workflow that runs main's CI contract over a head's definitions (#4584 step 4). It runs the
+#: head's code, so it holds nothing worth taking and writes nothing another run reads.
+_CONTRACT_YML = "contract.yml"
+#: Actions that save to the Actions cache when their step ends.
+_CACHE_SAVERS = ("actions/cache@", "actions/cache/save@")
+
+
+def _contract_run_holds_nothing(root: Path) -> list[str]:
+    """contract.yml holds ``contents: read`` and nothing else, reads no secret, deploys to no
+    environment and saves nothing to the Actions cache (a restore is fine)."""
+    path = root / _WORKFLOWS / _CONTRACT_YML
+    if not path.is_file():
+        return [f"{_CONTRACT_YML} is missing, so nothing pins what main's contract run holds"]
+    text = path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text) or {}
+    bad: list[str] = []
+    if data.get("permissions") != {"contents": "read"}:
+        bad.append(f"{_CONTRACT_YML} holds {data.get('permissions')!r}, not contents: read alone")
+    if "secrets." in text or "secrets: inherit" in text:
+        bad.append(f"{_CONTRACT_YML} reads a secret")
+    for job_id, job in (data.get("jobs") or {}).items():
+        if not isinstance(job, dict):
+            continue
+        if "permissions" in job:
+            bad.append(f"{_CONTRACT_YML} job {job_id} sets its own permissions")
+        if "environment" in job:
+            bad.append(f"{_CONTRACT_YML} job {job_id} deploys to an environment")
+        for step in job.get("steps") or []:
+            uses = str(step.get("uses", "")) if isinstance(step, dict) else ""
+            given = (step.get("with") or {}) if isinstance(step, dict) else {}
+            if uses.startswith(_CACHE_SAVERS):
+                bad.append(f"{_CONTRACT_YML} job {job_id} saves to the Actions cache ({uses})")
+            elif uses.startswith("astral-sh/setup-uv@") and given.get("enable-cache") is not False:
+                bad.append(f"{_CONTRACT_YML} job {job_id}'s setup-uv saves its cache")
+            elif uses.startswith("actions/setup-node@") and given.get("cache"):
+                bad.append(f"{_CONTRACT_YML} job {job_id}'s setup-node saves its cache")
+            elif uses.startswith("./.github/actions/"):
+                bad.append(f"{_CONTRACT_YML} job {job_id} runs a local action, which may cache")
+    return bad
+
+
+_CONTRACT_SCAFFOLD = (
+    "name: Contract\non:\n  workflow_dispatch:\n    inputs:\n      head:\n"
+    "        required: true\npermissions:\n  contents: read\njobs:\n  contract:\n"
+    "    runs-on: ubuntu-24.04\n    steps:\n"
+    "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
+    "        with:\n          persist-credentials: false\n"
+    "      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0\n"
+    "        with:\n          enable-cache: false\n"
+    "      - run: uv run --no-sync python -m tools.ci contract --main . --head ../head\n"
+)
+
+
+def _contract_scaffold(root: Path) -> None:
+    _write(root, f"{_WORKFLOWS}/{_CONTRACT_YML}", _CONTRACT_SCAFFOLD)
+
+
+_CONTRACT_STEPS = "    steps:\n"
+_UV_NO_CACHE = "        with:\n          enable-cache: false\n"
+
+CONTRACT_RUN_HOLDS_NOTHING = Row(
+    name="main's contract run holds nothing worth taking and saves no cache",
+    check=_contract_run_holds_nothing,
+    scaffold=_contract_scaffold,
+    controls=(
+        Control(
+            "a secret reference fails",
+            _replace(_CONTRACT_YML, "--head ../head\n", "--head ../head ${{ secrets.ANY }}\n"),
+        ),
+        Control(
+            "a write permission fails",
+            _replace(_CONTRACT_YML, "  contents: read\n", "  contents: read\n  checks: write\n"),
+        ),
+        Control(
+            "a job's own permissions fail",
+            _replace(
+                _CONTRACT_YML, _CONTRACT_STEPS, "    permissions: write-all\n" + _CONTRACT_STEPS
+            ),
+        ),
+        Control(
+            "an environment fails",
+            _replace(
+                _CONTRACT_YML, _CONTRACT_STEPS, "    environment: ci-controller\n" + _CONTRACT_STEPS
+            ),
+        ),
+        Control(
+            "a cache save fails",
+            _replace(
+                _CONTRACT_YML,
+                _CONTRACT_STEPS,
+                _CONTRACT_STEPS
+                + "      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4\n"
+                "        with:\n          path: ~/.cache/uv\n          key: uv\n",
+            ),
+        ),
+        Control(
+            "setup-uv with its cache on fails",
+            _replace(_CONTRACT_YML, _UV_NO_CACHE, "        with:\n          enable-cache: true\n"),
+        ),
+        Control(
+            "the setup action, which caches, fails",
+            _replace(
+                _CONTRACT_YML,
+                _CONTRACT_STEPS,
+                _CONTRACT_STEPS + "      - uses: ./.github/actions/setup\n",
+            ),
+        ),
+        Control(
+            "a restore alone passes",
+            _replace(
+                _CONTRACT_YML,
+                _CONTRACT_STEPS,
+                _CONTRACT_STEPS
+                + "      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809"
+                " # v4.2.4\n        with:\n          path: ~/.cache/uv\n          key: uv\n",
+            ),
+            fails=False,
+        ),
+        Control(
+            "the workflow gone fails", lambda root: (root / _WORKFLOWS / _CONTRACT_YML).unlink()
+        ),
+    ),
+)
+
 
 ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
     name="only the release controller holds a publishing permission or a deployment environment",
@@ -5566,6 +5691,7 @@ ROWS: tuple[Row, ...] = (
     PER_TEST_TEMPORARY_FOLDERS,
     NO_TRUSTED_CHECKOUT_OF_CANDIDATE_CODE,
     NO_CANDIDATE_JOB_HOLDS_A_WRITE_OR_A_SECRET,
+    CONTRACT_RUN_HOLDS_NOTHING,
     ONLY_THE_RELEASE_CONTROLLER_PUBLISHES,
     _toolchain_row(
         "every job that runs steps has its own timeout-minutes",
