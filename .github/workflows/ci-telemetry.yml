@@ -4,8 +4,10 @@
 # with the facts only the Actions API knows, then one line per test case of the attempt's junit
 # reports. It counts a push to main's run of Merge and a scheduled or dispatched Breadth run on
 # main, from this repository, and decides that from the run itself before listing any artifact,
-# so a pull request's artifacts are never read. The job's `if:` holds the same rule per workflow
-# and event, so such a run starts no runner at all.
+# so a pull request's run is never collected. The job's `if:` holds the same rule per workflow
+# and event, so such a run starts no runner at all. A tested push runs no suite, so its history
+# also takes the first attempt of the pull request run that tested its tree, by tree-check's
+# rules (tools/ci/tree_tested.py), from this repository and on that pull request's head.
 #
 # A scheduled run that never starts fires no workflow_run, so `slots` runs on its own schedule
 # and writes one line per slot each scheduled workflow was due: the run that answered it, or that
@@ -38,7 +40,9 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read   # the completed run, its jobs and its junit artifacts; the scheduled runs
+  actions: read         # the completed run, its jobs and its junit artifacts; the scheduled runs
+  pull-requests: read   # `commits/{sha}/pulls`: the pull request a tested push merged
+  issues: read          # that pull request's events: whether its base was changed
 
 jobs:
   collect:

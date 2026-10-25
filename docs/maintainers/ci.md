@@ -1676,12 +1676,33 @@ the shard planner and the weekly report read it.
 - **`collect`** runs when a CI, Merge or Breadth run completes. It counts only main's own runs: a
   CI or Merge run of a commit landing on `main`, and Breadth's scheduled or dispatched run on `main`, from this
   repository. It decides that from the run itself before it lists any artifact, and the job's
-  `if:` holds the same rule, so a pull request's run starts no collector and its artifacts are
-  never read. It writes `history-<run>-<attempt>.jsonl`: a first line naming the schema and its
-  version, with the facts only the Actions API knows (queue delay, setup, time to the first
-  failed job, verdict time, runner-minutes, cancelled work, artifact volume, schedule lag, one
-  entry per job), then one line per job record the attempt uploaded, then one line per test case
-  of that attempt's junit reports.
+  `if:` holds the same rule, so a pull request's run starts no collector and is never collected.
+  It writes `history-<run>-<attempt>.jsonl`: a first line naming the schema and its version,
+  with the facts only the Actions API knows (queue delay, setup, time to the first failed job,
+  verdict time, runner-minutes, cancelled work, artifact volume, schedule lag, one entry per
+  job), then one line per job record the attempt uploaded, then one line per test case of that
+  attempt's junit reports.
+- **Where the reports are.** An artifact named `junit-*` is one report, named as the artifact.
+  merge.yml uploads each entry's reports folder as `reports-<slug>-<attempt>`, and each
+  `junit-*.xml` directly in its `reports/` (or at its root) is one report, named as the file:
+  `junit-test-shard-1` either way. Nothing else in it is read. Such an archive is downloaded up to
+  128 MiB, since it holds the entry's Playwright output too, and each report in it is still read
+  up to 8 MiB. A rail (`tests/rails/test_ci_telemetry_schedules.py`) holds every junit upload of
+  a collected workflow to a name the collector reads (`telemetry.REPORT_ARTIFACT_PREFIXES`): the
+  flip renamed merge.yml's to `reports-*`, which the collector did not read, and every shard
+  plan since weighed every file the same.
+- **A tested push's suite.** A push whose tree a green pull request run already tested runs
+  only the always-run jobs. Its history also takes the first attempt of that run, the one
+  `tree-check` names, by the same rules (`tree_tested.decide`, with the pushed commit's parent as
+  the commit it replaced): exactly one pull request into `main` merged as the pushed commit, its
+  head with the pushed tree and holding that parent, its base never changed, and every run on
+  that head green on its first attempt. The run must also be a `merge.yml` pull_request run of
+  this repository, on that head. So a run on an older head, a fork's run, and an unmerged pull
+  request's run are never read. Its test lines carry its own run id, attempt and head, for each
+  report the push did not upload itself, and the run line's `tested_by` names the run, the pull
+  request, the head and the tree. It's null when no such run was found, or its reports could not
+  be read; the job's log says which. The collector reads pull requests and their events for it,
+  as `tree-check` does.
 - **A first result is never replaced.** Each attempt is collected on its own: from that
   attempt's own start, end and conclusion, its own jobs, and only the reports uploaded between
   its start and its end. So attempt 1's file keeps the first result even when it is collected
@@ -1694,13 +1715,14 @@ the shard planner and the weekly report read it.
   and macOS it also records the host's CPU model (`/proc/cpuinfo`'s, or the
   `machdep.cpu.brand_string` sysctl), and the run line's `cpus` maps each report to it (null
   where none was recorded), which the planner weighs seconds by.
-- **Versions.** Version 3 added the run line's `cpus` and nothing else, and version 4 the job
-  record lines and nothing else. The planner, the report and the parity check read versions 1 to
-  4, so a history kept from before reads as one whose reports recorded no CPU model and whose run
-  carried no job records, and they refuse anything newer.
-- **Artifacts are data.** An archive over 8 MiB is never downloaded, a report is read in memory
-  up to 8 MiB, a report that is not UTF-8 or declares a DOCTYPE anywhere is refused, and nothing
-  is extracted or run. A report that cannot be read fails the collection and writes nothing. The
+- **Versions.** Version 3 added the run line's `cpus` and nothing else, version 4 the job
+  record lines and nothing else, and version 5 the run line's `tested_by` and nothing else. The
+  planner, the report and the parity check read versions 1 to 5, so a history kept from before
+  reads as one whose reports recorded no CPU model, whose run carried no job records and that no
+  pull request run's suite filled in, and they refuse anything newer.
+- **Artifacts are data.** An archive over 8 MiB (128 MiB for a `reports-*` one) is never
+  downloaded, a report is read in memory up to 8 MiB, a report that is not UTF-8 or declares a
+  DOCTYPE anywhere is refused, and nothing is extracted or run. A report that cannot be read fails the collection and writes nothing. The
   planner reads a history line by line, each line within 1 MiB and the whole within 256 MiB.
 - **One line bound.** Every reader (the weekly report and its fetch, the planner, the parity
   check) refuses a whole history with a line over 1 MiB, its line break included

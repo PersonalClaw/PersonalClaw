@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import stat
+import subprocess
 import zipfile
 from pathlib import Path
 
@@ -97,8 +98,14 @@ def _job(name: str, start: str, end: str, conclusion: str = "success", **more: o
     return job
 
 
+PUSHED = "a" * 40
+PARENT = "b" * 40
+TREE = "e" * 40
+
+
 class FakeGh:
-    """``gh api`` as the collector calls it."""
+    """``gh api`` as the collector calls it. A push's commit, its parent and its pull requests
+    answer as a push no pull request was merged as, unless a test plants one (``tested``)."""
 
     def __init__(self, run: dict | None = None) -> None:
         self.run = run or _run()
@@ -117,6 +124,13 @@ class FakeGh:
             self._artifact(12, "shard-plan", b"{}", zipped=False),
         ]
         self.asked: list[str] = []
+        self.commits: dict[str, dict] = {PUSHED: _commit(TREE, PARENT)}
+        self.pulls: list[dict] = []
+        self.behind = 0
+        self.head_runs: list[dict] = []
+        self.events: list[dict] = []
+        #: Other runs, by id: the run object, its first attempt, and its artifacts.
+        self.others: dict[int, dict] = {}
 
     def _artifact(
         self,
@@ -149,6 +163,9 @@ class FakeGh:
         self.asked.append(path)
         if path.endswith(f"/actions/runs/{RUN}"):
             return json.dumps(self.run)
+        found = self._tested(path)
+        if found is not None:
+            return found
         if f"/actions/runs/{RUN}/attempts/" in path and "/jobs?" in path:
             return self._page(path, "jobs", self.jobs)
         if f"/actions/runs/{RUN}/attempts/" in path:
@@ -159,11 +176,44 @@ class FakeGh:
             return self._page(path, "artifacts", listed)
         raise AssertionError(f"the collector asked gh for {args}")
 
+    def _tested(self, path: str) -> str | None:
+        """The reads that find the pull request run that tested a push's tree, or None."""
+        if path.startswith("repos/o/r/commits/") and path.endswith("/pulls"):
+            return json.dumps(self.pulls)
+        if path.startswith("repos/o/r/commits/"):
+            sha = path.rsplit("/", 1)[1]
+            if sha not in self.commits:
+                raise subprocess.CalledProcessError(1, ["gh", "api", path], "", "Not Found")
+            return json.dumps(self.commits[sha])
+        if path.startswith("repos/o/r/compare/"):
+            # Only the pushed commit's parent is a base the planted head holds.
+            base = path.split("/compare/")[1].split("...")[0]
+            return json.dumps({"behind_by": self.behind if base == PARENT else 9, "ahead_by": 1})
+        if path.startswith("repos/o/r/actions/workflows/merge.yml/runs?"):
+            return json.dumps({"total_count": len(self.head_runs), "workflow_runs": self.head_runs})
+        if path.startswith("repos/o/r/issues/"):
+            return json.dumps(self.events)
+        for ident, other in self.others.items():
+            base = f"repos/o/r/actions/runs/{ident}"
+            if path == base:
+                return json.dumps(other["run"])
+            if path == f"{base}/attempts/1":
+                return json.dumps(other["attempt"])
+            if path.startswith(f"{base}/artifacts?"):
+                listed = [{k: v for k, v in a.items() if k != "_data"} for a in other["artifacts"]]
+                return self._page(path, "artifacts", listed)
+        return None
+
     def binary(self, *args: str) -> bytes:
         path = next(a for a in args[1:] if not a.startswith("-"))
         self.asked.append(path)
         ident = int(path.split("/artifacts/")[1].split("/")[0])
-        return next(a["_data"] for a in self.artifacts if a["id"] == ident)
+        every = [*self.artifacts, *(a for o in self.others.values() for a in o["artifacts"])]
+        return next(a["_data"] for a in every if a["id"] == ident)
+
+
+def _commit(tree: str, parent: str | None = None) -> dict:
+    return {"commit": {"tree": {"sha": tree}}, "parents": [{"sha": parent}] if parent else []}
 
 
 def _collect(tmp_path: Path, monkeypatch, gh: FakeGh, attempt: int = 1) -> tuple[int, list[dict]]:
@@ -779,7 +829,7 @@ def test_the_run_line_maps_each_report_to_the_cpu_model_it_ran_on(
     gh.artifacts.append(gh._artifact(13, "junit-test-shard-2", _junit(PASSED)))
     _, lines = _collect(tmp_path, monkeypatch, gh)
     head = lines[0]
-    assert head["version"] >= 3 and telemetry.VERSION == 4
+    assert head["version"] >= 3 and telemetry.VERSION == 5
     assert head["cpus"] == {"junit-test-shard-1": "EPYC 7763", "junit-test-shard-2": None}
     assert "cpus" in telemetry.RUN_FIELDS
     for line in lines[1:]:
@@ -802,13 +852,14 @@ def test_a_report_whose_processes_disagree_on_the_cpu_model_writes_nothing(
     assert code == 1 and lines == []
 
 
-def test_the_schema_is_version_four_and_every_reader_accepts_versions_one_to_three() -> None:
-    """Version 3 only added the run line's ``cpus``, and version 4 only the record lines, so a
-    history kept from before either stays readable for as long as it is kept, and nothing newer
-    is guessed at."""
-    assert telemetry.VERSION == 4
-    assert telemetry.READS == frozenset({1, 2, 3, 4})
+def test_the_schema_is_version_five_and_every_reader_accepts_versions_one_to_four() -> None:
+    """Version 3 only added the run line's ``cpus``, version 4 only the record lines, and version
+    5 only the run line's ``tested_by``, so a history kept from before any of them stays readable
+    for as long as it is kept, and nothing newer is guessed at."""
+    assert telemetry.VERSION == 5
+    assert telemetry.READS == frozenset({1, 2, 3, 4, 5})
     assert "cpus" in telemetry.RUN_FIELDS and "records" not in telemetry.RUN_FIELDS
+    assert telemetry.RUN_FIELDS[-1] == "tested_by"
     assert telemetry.RECORD_FIELDS == ("kind", "key", "result", "rerun", "quarantined")
 
 
@@ -911,7 +962,7 @@ def test_each_job_record_is_one_line_after_the_run_line(tmp_path: Path, monkeypa
     code, lines = _collect(tmp_path, monkeypatch, gh)
     assert code == 0
     head = lines[0]
-    assert head["kind"] == "run" and head["version"] == 4 and "records" not in head
+    assert head["kind"] == "run" and head["version"] >= 4 and "records" not in head
     records = _record_lines(lines)
     assert lines[1 : 1 + len(records)] == records
     assert records == [
@@ -1408,3 +1459,312 @@ def test_the_planner_reads_the_shared_checks_and_limit() -> None:
 
     assert shards.MAX_HISTORY_ARCHIVE_BYTES == telemetry.MAX_HISTORY_ARCHIVE_BYTES
     assert telemetry.MAX_HISTORY_ARCHIVE_BYTES == 32 * 1024 * 1024
+
+
+# ── merge.yml's reports archives ──────────────────────────────────────────────────────────────
+#
+# merge.yml uploads each entry's reports folder as ``reports-<slug>-<attempt>``. Each
+# ``junit-*.xml`` in its ``reports/`` (or at its root) is one report, named as the file.
+
+MACOS = '<testcase classname="tests.test_m" name="test_mac" time="4.0"/>'
+
+
+def _reports_archive(gh: FakeGh, ident: int, name: str, members: dict[str, bytes]) -> dict:
+    artifact = gh._artifact(ident, name, b"")
+    data = _zip_members(members)
+    artifact.update(_data=data, size_in_bytes=len(data))
+    return artifact
+
+
+def _suite_archive(gh: FakeGh, ident: int, shard: int = 1) -> dict:
+    return _reports_archive(
+        gh,
+        ident,
+        f"reports-python-suite-{shard}-3-1",
+        {
+            f"reports/junit-test-shard-{shard}.xml": _junit(PASSED),
+            f"reports/in-flight-test-shard-{shard}.txt": b"",
+            "reports/state-leaks.json": b"{}",
+            "reports/coverage.xml": _junit(FAILED),
+            "reports/deeper/junit-not-this.xml": _junit(FAILED),
+        },
+    )
+
+
+def test_a_merge_yml_runs_test_cases_reach_the_history(tmp_path: Path, monkeypatch) -> None:
+    """The shard planner and the weekly report read them by report name, as before the flip."""
+    gh = FakeGh()
+    gh.artifacts = [
+        _suite_archive(gh, 21),
+        _reports_archive(gh, 22, "reports-web-unit-1", {"junit-web-unit.xml": _junit(MACOS)}),
+    ]
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0
+    tests = [line for line in lines if line["kind"] == "test"]
+    assert sorted((t["report"], t["test"]) for t in tests) == [
+        ("junit-test-shard-1", "tests.test_a::test_one"),
+        ("junit-web-unit", "tests.test_m::test_mac"),
+    ]
+    assert lines[0]["cpus"] == {"junit-test-shard-1": None, "junit-web-unit": None}
+
+
+def test_the_planner_reads_a_merge_yml_runs_seconds(tmp_path: Path, monkeypatch) -> None:
+    from tools.ci import shards
+
+    gh = FakeGh()
+    gh.artifacts = [_suite_archive(gh, 21)]
+    _collect(tmp_path, monkeypatch, gh)
+    [written] = (tmp_path / "history").glob("*.jsonl")
+    leg = shards.Leg.parse("test-shard:main-push:junit-test-shard-:3")
+    history = shards.history_seconds(
+        _zip(written.name, written.read_bytes()), leg, ["tests/test_a.py"], run=RUN
+    )
+    assert history.seconds == {(None, None): {"junit-test-shard-1": {"tests/test_a.py": 1.5}}}
+
+
+def test_a_report_in_two_archives_is_read_once_from_the_lower_id(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gh = FakeGh()
+    gh.artifacts = [
+        gh._artifact(30, "junit-test-shard-1", _junit(PASSED, PASSED)),
+        _suite_archive(gh, 21),
+    ]
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    assert sum(1 for line in lines if line["kind"] == "test") == 1
+
+
+@pytest.mark.parametrize(
+    ("size", "read"),
+    [
+        (telemetry.MAX_ARCHIVE_BYTES + 1, True),
+        (telemetry.MAX_REPORTS_ARCHIVE_BYTES + 1, False),
+    ],
+    ids=["past-a-reports-own-bound", "past-a-reports-archives-bound"],
+)
+def test_a_reports_archive_has_a_bound_of_its_own(
+    size: int, read: bool, tmp_path: Path, monkeypatch
+) -> None:
+    """It holds the entry's other output too, Playwright's traces among them."""
+    gh = FakeGh()
+    gh.artifacts = [_suite_archive(gh, 21)]
+    gh.artifacts[0]["size_in_bytes"] = size
+    code, _ = _collect(tmp_path, monkeypatch, gh)
+    assert (code == 0) is read
+    assert any("/artifacts/21/" in a for a in gh.asked) is read
+
+
+# ── a tested push's suite (version 5) ─────────────────────────────────────────────────────────
+#
+# A push whose tree a green pull request run tested runs only the always-run jobs. Its history
+# also takes that run's first attempt: the run tree-check names, by tree-check's own rules, from
+# this repository and on the pull request's head.
+
+HEAD = "c" * 40
+OLD_HEAD = "d" * 40
+OTHER = 600
+
+
+def _tested(gh: FakeGh) -> FakeGh:
+    """Pull request #7 merged as the pushed commit, its head with the pushed tree and holding the
+    parent, and its one merge.yml run, 600, green on its first attempt."""
+    gh.commits[HEAD] = _commit(TREE, PARENT)
+    gh.pulls = [
+        {
+            "number": 7,
+            "merge_commit_sha": PUSHED,
+            "merged_at": "2026-10-18T08:50:00Z",
+            "created_at": "2026-10-18T07:00:00Z",
+            "base": {"ref": "main"},
+            "head": {"sha": HEAD},
+        }
+    ]
+    gh.head_runs = [
+        {
+            "id": OTHER,
+            "run_number": 9,
+            "head_sha": HEAD,
+            "event": "pull_request",
+            "created_at": "2026-10-18T08:00:00Z",
+        }
+    ]
+    first = _attempt("2026-10-18T08:00:00Z", "2026-10-18T08:40:00Z", "success")
+    suite = _reports_archive(
+        gh,
+        61,
+        "reports-python-suite-macos-1-2-1",
+        {"reports/junit-test-macos-1.xml": _junit(_hosted("macOS-26-arm64", "2", "M1"), MACOS)},
+    )
+    suite["created_at"] = "2026-10-18T08:30:00Z"
+    gh.others[OTHER] = {
+        "run": {
+            "id": OTHER,
+            "path": telemetry.MERGE_PATH,
+            "event": "pull_request",
+            "head_sha": HEAD,
+            "head_repository": {"full_name": "o/r"},
+        },
+        "attempt": dict(first, status="completed"),
+        "artifacts": [suite],
+    }
+    return gh
+
+
+def test_a_tested_push_s_history_holds_the_pull_request_run_s_suite(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gh = _tested(FakeGh())
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0
+    head = lines[0]
+    assert head["tested_by"] == {
+        "run_id": OTHER,
+        "attempt": 1,
+        "pull_request": 7,
+        "head_sha": HEAD,
+        "tree": TREE,
+    }
+    mine = [t for t in lines if t["kind"] == "test" and t["run_id"] == RUN]
+    theirs = [t for t in lines if t["kind"] == "test" and t["run_id"] == OTHER]
+    assert {t["report"] for t in mine} == {"junit-test-shard-1"}
+    assert [(t["report"], t["test"], t["attempt"], t["sha"]) for t in theirs] == [
+        ("junit-test-macos-1", "tests.test_a::test_one", 1, HEAD),
+        ("junit-test-macos-1", "tests.test_m::test_mac", 1, HEAD),
+    ]
+    assert theirs[0]["platform"] == "macOS-26-arm64" and theirs[0]["workers"] == 2
+    assert head["cpus"] == {"junit-test-shard-1": None, "junit-test-macos-1": "M1"}
+
+
+def test_the_planner_reads_a_tested_push_s_suite(tmp_path: Path, monkeypatch) -> None:
+    """The macOS leg's seconds, from the pull request run, under the push's own history."""
+    from tools.ci import shards
+
+    _collect(tmp_path, monkeypatch, _tested(FakeGh()))
+    [written] = (tmp_path / "history").glob("*.jsonl")
+    leg = shards.Leg.parse("test-macos:main-push:junit-test-macos-:2")
+    history = shards.history_seconds(
+        _zip(written.name, written.read_bytes()), leg, ["tests/test_m.py"], run=RUN
+    )
+    assert history.seconds == {
+        ("macOS-26-arm64", 2): {"junit-test-macos-1": {"tests/test_m.py": 4.0}}
+    }
+
+
+def _moved(gh: FakeGh) -> None:
+    """The run tested an older head; the pull request's head now has the pushed tree."""
+    gh.head_runs[0]["head_sha"] = OLD_HEAD
+    gh.others[OTHER]["run"]["head_sha"] = OLD_HEAD
+
+
+def _other_tree(gh: FakeGh) -> None:
+    gh.commits[HEAD] = _commit("f" * 40, PARENT)
+
+
+def _older_base(gh: FakeGh) -> None:
+    gh.behind = 1
+
+
+def _fork(gh: FakeGh) -> None:
+    gh.others[OTHER]["run"]["head_repository"] = {"full_name": "someone/fork"}
+
+
+def _unmerged(gh: FakeGh) -> None:
+    gh.pulls[0]["merged_at"] = None
+
+
+def _merged_as_another(gh: FakeGh) -> None:
+    gh.pulls[0]["merge_commit_sha"] = "9" * 40
+
+
+def _red_first(gh: FakeGh) -> None:
+    gh.others[OTHER]["attempt"]["conclusion"] = "failure"
+
+
+def _off_the_head(gh: FakeGh) -> None:
+    """The listing names the run on the head; the run itself says otherwise."""
+    gh.others[OTHER]["run"]["head_sha"] = OLD_HEAD
+
+
+def _another_workflow(gh: FakeGh) -> None:
+    gh.others[OTHER]["run"]["path"] = f"{telemetry.WORKFLOWS}/pr.yml"
+
+
+@pytest.mark.parametrize(
+    ("plant", "reason"),
+    [
+        (_moved, "no merge.yml pull_request run of #7's head"),
+        (_other_tree, "the pushed tree is not #7's head tree"),
+        (_older_base, "commit(s) behind the previous main"),
+        (_fork, f"run {OTHER}'s head is another repository's"),
+        (_unmerged, "no pull request into main was merged as this commit"),
+        (_merged_as_another, "no pull request into main was merged as this commit"),
+        (_red_first, "concluded failure"),
+        (_off_the_head, f"run {OTHER} is not on #7's head"),
+        (_another_workflow, f"run {OTHER} is not a merge.yml pull_request run"),
+    ],
+    ids=[
+        "a-moved-head",
+        "another-tree",
+        "a-head-behind-main",
+        "a-fork-s-run",
+        "an-unmerged-pull-request",
+        "merged-as-another-commit",
+        "a-red-first-attempt",
+        "a-run-off-the-head",
+        "another-workflow-s-run",
+    ],
+)
+def test_a_pull_request_run_that_did_not_test_the_pushed_tree_is_never_read(
+    plant, reason: str, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    gh = _tested(FakeGh())
+    plant(gh)
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and lines[0]["tested_by"] is None
+    assert all(t["run_id"] == RUN for t in lines if t["kind"] == "test")
+    assert not any(f"/runs/{OTHER}/artifacts" in a for a in gh.asked)
+    assert reason in capsys.readouterr().out
+
+
+def test_the_push_s_own_report_wins_over_the_pull_request_run_s(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gh = _tested(FakeGh())
+    shard = _suite_archive(gh, 62)
+    shard["created_at"] = "2026-10-18T08:30:00Z"
+    gh.others[OTHER]["artifacts"].append(shard)
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    by_report = {(t["report"], t["run_id"]) for t in lines if t["kind"] == "test"}
+    assert by_report == {("junit-test-shard-1", RUN), ("junit-test-macos-1", OTHER)}
+
+
+def test_only_the_pull_request_run_s_first_attempt_is_read(tmp_path: Path, monkeypatch) -> None:
+    gh = _tested(FakeGh())
+    later = _reports_archive(
+        gh,
+        63,
+        "reports-python-suite-macos-2-2-1",
+        {"reports/junit-test-macos-2.xml": _junit(MACOS)},
+    )
+    later["created_at"] = "2026-10-18T09:10:00Z"
+    gh.others[OTHER]["artifacts"].append(later)
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    assert "junit-test-macos-2" not in {t["report"] for t in lines if t["kind"] == "test"}
+
+
+def test_a_pull_request_run_whose_reports_cannot_be_read_leaves_the_push_s_own(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    gh = _tested(FakeGh())
+    gh.others[OTHER]["artifacts"][0]["_data"] = b"not a zip"
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and lines[0]["tested_by"] is None
+    assert {t["run_id"] for t in lines if t["kind"] == "test"} == {RUN}
+    assert "the tested pull request run's reports are not read" in capsys.readouterr().out
+
+
+def test_a_breadth_run_looks_for_no_pull_request(tmp_path: Path, monkeypatch) -> None:
+    gh = FakeGh(_run(name="Breadth", path=telemetry.BREADTH_PATH, event="schedule"))
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and lines[0]["tested_by"] is None
+    assert not any("/commits/" in a or "/pulls" in a for a in gh.asked)
