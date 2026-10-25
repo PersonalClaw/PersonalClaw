@@ -207,7 +207,12 @@ class _NoCpu:
     0.2 s, on a CI runner). So a snapshot also takes the CPU time of the threads that have ended,
     which the kernel keeps, and which any thread that ran and ended adds to. When it grows between
     two snapshots, some thread came and went, and nothing is left out: the window is counted in
-    wall time.
+    wall time. A thread that is ending is in neither either: listed, it can no longer be read,
+    and its CPU reaches that count only once the kernel is done with it (up to 2.5 ms after its
+    join, on this machine, under load). So a snapshot that lists a thread it cannot read, or
+    whose kernel thread count is above the threads it read, saw a thread ending (or one starting
+    after the list, which leaves out less too), and a window either end of which did is counted
+    in wall time too.
 
     Where the kernel offers neither count, everything reads 0 and the probe measures wall time."""
 
@@ -260,12 +265,15 @@ class _NoCpu:
                         counts[int(thread)] = int(schedstat.read().split()[1]) / 1e9
                 except (FileNotFoundError, ProcessLookupError):
                     pass  # a thread that ended meanwhile
-            return SimpleNamespace(at=at, ready=0.0, threads=counts, ended=0, done=time.monotonic())
+            return SimpleNamespace(
+                at=at, ready=0.0, threads=counts, ended=0, ending=False, done=time.monotonic()
+            )
         if self.source == "none":
-            return SimpleNamespace(at=at, ready=0.0, threads={}, ended=0, done=at)
+            return SimpleNamespace(at=at, ready=0.0, threads={}, ended=0, ending=False, done=at)
         pid, info, threads = os.getpid(), _ProcThreadInfo(), {}
         listed = self._libsystem.proc_pidinfo(pid, 28, 0, self._ids, ctypes.sizeof(self._ids))
-        for thread in self._ids[: max(0, listed) // 8]:  # PROC_PIDLISTTHREADIDS
+        ids = self._ids[: max(0, listed) // 8]
+        for thread in ids:  # PROC_PIDLISTTHREADIDS
             size = ctypes.sizeof(info)  # PROC_PIDTHREADID64INFO
             if self._libsystem.proc_pidinfo(pid, 15, thread, ctypes.byref(info), size) == size:
                 used = (info.pth_user_time + info.pth_system_time) / 1e9
@@ -279,8 +287,16 @@ class _NoCpu:
         ready = usage.ri_runnable_time - usage.ri_user_time - usage.ri_system_time
         ended = task.pti_total_user + task.pti_total_system
         ended -= task.pti_threads_user + task.pti_threads_system
+        # A thread listed but not read, or one the kernel counts that was not listed, was ending
+        # or starting.
+        ending = len(threads) < len(ids) or task.pti_threadnum > len(threads)
         return SimpleNamespace(
-            at=at, ready=ready * self._seconds, threads=threads, ended=ended, done=time.monotonic()
+            at=at,
+            ready=ready * self._seconds,
+            threads=threads,
+            ended=ended,
+            ending=ending,
+            done=time.monotonic(),
         )
 
     def waited(self, first: SimpleNamespace, then: SimpleNamespace, threads: set[int]) -> float:
@@ -291,8 +307,8 @@ class _NoCpu:
                 for t in threads
                 if t in then.threads
             )
-        if then.ended != first.ended:
-            return 0.0  # a thread came and went between them, and neither snapshot holds it
+        if then.ended != first.ended or first.ending or then.ending:
+            return 0.0  # a thread came and went, or was ending or starting, unread at either end
         between = then.done - first.at
         others = 0.0
         for thread in first.threads.keys() | then.threads.keys():
@@ -1384,6 +1400,41 @@ def test_a_thread_that_came_and_went_is_never_counted_as_the_loops_wait(tmp_path
     )
     says = f"the thread that ended used {seen['share']:.0%} of a CPU ({seen['says']})"
     assert seen["waited"] < 0.05, f"the loop was charged {seen['waited']:.3f}s; {says}"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS's count is the process's alone")
+@pytest.mark.parametrize("ending", ["a thread listed but not read", "one more counted than read"])
+def test_a_thread_ending_at_a_snapshot_has_its_window_counted_in_wall_time(ending):
+    """A thread that is ending is in neither snapshot's list, nor yet in the ended threads' CPU:
+    the measure plant above once had 0.163 s charged to the loop that way, under load. A snapshot
+    that lists a thread it cannot read, or whose kernel thread count is above the threads it
+    read, saw one ending, and a window with such an end leaves nothing out."""
+    no_cpu = _NoCpu()
+    first = no_cpu.snapshot()
+    assert not first.ending, "premise: no thread was ending at the first snapshot"
+    real = no_cpu._libsystem.proc_pidinfo
+    unread = []
+
+    def told(pid, flavor, arg, buf, size):
+        got = real(pid, flavor, arg, buf, size)
+        if ending == "one more counted than read" and flavor == 4:  # PROC_PIDTASKINFO
+            buf._obj.pti_threadnum += 1
+        if ending == "a thread listed but not read" and flavor == 15 and not unread:
+            unread.append(arg)
+            return 0  # the first thread listed can no longer be read
+        return got
+
+    class _Told:
+        def __getattr__(self, name):
+            return told if name == "proc_pidinfo" else getattr(no_cpu._libsystem_real, name)
+
+    no_cpu._libsystem_real, no_cpu._libsystem = no_cpu._libsystem, _Told()
+    then = no_cpu.snapshot()
+    assert then.ending, f"{ending}, and the snapshot did not see a thread ending"
+    # With the process's count grown by more than every thread read can account for, the
+    # window is still counted in wall time.
+    grown = SimpleNamespace(**{**vars(then), "ready": then.ready + 1.0})
+    assert no_cpu.waited(first, grown, {threading.get_native_id()}) == 0.0
 
 
 # ── what the upload's requests read and write on disk, they do off the loop ─────────────────
