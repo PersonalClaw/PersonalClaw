@@ -2,14 +2,7 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Library\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Reload the audit log\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
         "button[role=tab] \"Recall\"",
@@ -17,13 +10,7 @@
         "input \"Filter memory audit log\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Reload the audit log\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
         "button[role=radio] \"Knowledge\"",
@@ -36,13 +23,7 @@
         "input \"Filter memory audit log\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Reload the audit log\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
         "button[role=radio] \"Knowledge\"",
@@ -55,13 +36,7 @@
         "input \"Filter memory audit log\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Reload the audit log\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
         "button[role=radio] \"Knowledge\"",
@@ -84,14 +59,7 @@
   "light": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Library\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Reload the audit log\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=tab] \"Health\"",
         "button[role=tab] \"Inspect\"",
         "button[role=tab] \"Recall\"",
@@ -99,13 +67,7 @@
         "input \"Filter memory audit log\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Reload the audit log\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
         "button[role=radio] \"Knowledge\"",
@@ -118,13 +80,7 @@
         "input \"Filter memory audit log\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Reload the audit log\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
         "button[role=radio] \"Knowledge\"",
@@ -137,13 +93,7 @@
         "input \"Filter memory audit log\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Reload the audit log\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
         "button[role=radio] \"Knowledge\"",

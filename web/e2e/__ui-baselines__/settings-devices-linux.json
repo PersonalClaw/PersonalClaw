@@ -3,48 +3,24 @@
     "targets": {
       "320": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Pair a device\"",
-        "button \"Sign out of this device\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Sign out of this device\""
       ],
       "390": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Pair a device\"",
-        "button \"Sign out of this device\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Sign out of this device\""
       ],
       "412": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Pair a device\"",
-        "button \"Sign out of this device\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Sign out of this device\""
       ],
       "768": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Pair a device\"",
         "button \"Settings\"",
-        "button \"Sign out of this device\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Sign out of this device\""
       ]
     },
     "known": {
@@ -57,48 +33,24 @@
     "targets": {
       "320": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Pair a device\"",
-        "button \"Sign out of this device\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Sign out of this device\""
       ],
       "390": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Pair a device\"",
-        "button \"Sign out of this device\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Sign out of this device\""
       ],
       "412": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Pair a device\"",
-        "button \"Sign out of this device\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Sign out of this device\""
       ],
       "768": [
         "button \"Back to Settings\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Pair a device\"",
         "button \"Settings\"",
-        "button \"Sign out of this device\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Sign out of this device\""
       ]
     },
     "known": {

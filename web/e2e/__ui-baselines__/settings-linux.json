@@ -2,18 +2,12 @@
   "dark": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Min severity: All\"",
         "button \"Min severity: Errors\"",
         "button \"Min severity: Warn+\"",
         "button \"Mode: Auto\"",
         "button \"Mode: Dark\"",
         "button \"Mode: Light\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button \"Widget density: Less\"",
         "button \"Widget density: More\"",
         "button[role=switch] \"Auto-cleanup\"",
@@ -30,18 +24,12 @@
         "select \"Approval mode\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Min severity: All\"",
         "button \"Min severity: Errors\"",
         "button \"Min severity: Warn+\"",
         "button \"Mode: Auto\"",
         "button \"Mode: Dark\"",
         "button \"Mode: Light\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button \"Widget density: Less\"",
         "button \"Widget density: More\"",
         "button[role=switch] \"Auto-cleanup\"",
@@ -58,18 +46,12 @@
         "select \"Approval mode\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Min severity: All\"",
         "button \"Min severity: Errors\"",
         "button \"Min severity: Warn+\"",
         "button \"Mode: Auto\"",
         "button \"Mode: Dark\"",
         "button \"Mode: Light\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button \"Widget density: Less\"",
         "button \"Widget density: More\"",
         "button[role=switch] \"Auto-cleanup\"",
@@ -86,18 +68,12 @@
         "select \"Approval mode\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Min severity: All\"",
         "button \"Min severity: Errors\"",
         "button \"Min severity: Warn+\"",
         "button \"Mode: Auto\"",
         "button \"Mode: Dark\"",
         "button \"Mode: Light\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button \"Widget density: Less\"",
         "button \"Widget density: More\"",
         "button[role=switch] \"Auto-cleanup\"",
@@ -116,26 +92,19 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Settings\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Min severity: All\"",
         "button \"Min severity: Errors\"",
         "button \"Min severity: Warn+\"",
         "button \"Mode: Auto\"",
         "button \"Mode: Dark\"",
         "button \"Mode: Light\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button \"Widget density: Less\"",
         "button \"Widget density: More\"",
         "button[role=switch] \"Auto-cleanup\"",
@@ -152,18 +121,12 @@
         "select \"Approval mode\""
       ],
       "390": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Min severity: All\"",
         "button \"Min severity: Errors\"",
         "button \"Min severity: Warn+\"",
         "button \"Mode: Auto\"",
         "button \"Mode: Dark\"",
         "button \"Mode: Light\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button \"Widget density: Less\"",
         "button \"Widget density: More\"",
         "button[role=switch] \"Auto-cleanup\"",
@@ -180,18 +143,12 @@
         "select \"Approval mode\""
       ],
       "412": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Min severity: All\"",
         "button \"Min severity: Errors\"",
         "button \"Min severity: Warn+\"",
         "button \"Mode: Auto\"",
         "button \"Mode: Dark\"",
         "button \"Mode: Light\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button \"Widget density: Less\"",
         "button \"Widget density: More\"",
         "button[role=switch] \"Auto-cleanup\"",
@@ -208,18 +165,12 @@
         "select \"Approval mode\""
       ],
       "768": [
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Min severity: All\"",
         "button \"Min severity: Errors\"",
         "button \"Min severity: Warn+\"",
         "button \"Mode: Auto\"",
         "button \"Mode: Dark\"",
         "button \"Mode: Light\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button \"Widget density: Less\"",
         "button \"Widget density: More\"",
         "button[role=switch] \"Auto-cleanup\"",
@@ -238,8 +189,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Settings\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

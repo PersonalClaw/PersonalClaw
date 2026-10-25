@@ -3,18 +3,11 @@
     "targets": {
       "320": [
         "button \"Add knowledge\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Knowledge view\"",
-        "button \"Library\"",
         "button \"More actions\"",
-        "button \"Notifications, # unread\"",
         "button \"Open chat\"",
-        "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Conflicts\"",
         "button[role=radio] \"Decisions\"",
         "button[role=radio] \"Graph\"",
@@ -23,16 +16,10 @@
       ],
       "390": [
         "button \"Add knowledge\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
-        "button \"Notifications, # unread\"",
         "button \"Open chat\"",
-        "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"All items\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
@@ -47,16 +34,10 @@
       ],
       "412": [
         "button \"Add knowledge\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
-        "button \"Notifications, # unread\"",
         "button \"Open chat\"",
-        "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"All items\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
@@ -71,15 +52,9 @@
       ],
       "768": [
         "button \"Add knowledge\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open chat\"",
-        "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"All items\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
@@ -95,8 +70,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Knowledge\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -104,18 +78,11 @@
     "targets": {
       "320": [
         "button \"Add knowledge\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Knowledge view\"",
-        "button \"Library\"",
         "button \"More actions\"",
-        "button \"Notifications, # unread\"",
         "button \"Open chat\"",
-        "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Conflicts\"",
         "button[role=radio] \"Decisions\"",
         "button[role=radio] \"Graph\"",
@@ -124,16 +91,10 @@
       ],
       "390": [
         "button \"Add knowledge\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
-        "button \"Notifications, # unread\"",
         "button \"Open chat\"",
-        "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"All items\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
@@ -148,16 +109,10 @@
       ],
       "412": [
         "button \"Add knowledge\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"More actions\"",
-        "button \"Notifications, # unread\"",
         "button \"Open chat\"",
-        "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"All items\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
@@ -172,15 +127,9 @@
       ],
       "768": [
         "button \"Add knowledge\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
-        "button \"Notifications, # unread\"",
         "button \"Open chat\"",
-        "button \"Open terminal\"",
         "button \"Reports\"",
         "button \"Sources\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"All items\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Conflicts\"",
@@ -196,8 +145,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Knowledge\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

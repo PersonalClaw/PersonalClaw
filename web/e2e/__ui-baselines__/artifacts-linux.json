@@ -3,14 +3,7 @@
     "targets": {
       "320": [
         "button \"Browse text files\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
-        "button \"Library\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"All kinds\"",
         "button[role=radio] \"HTML\"",
         "button[role=radio] \"Markdown\"",
@@ -20,13 +13,7 @@
       ],
       "390": [
         "button \"Browse text files\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -41,13 +28,7 @@
       ],
       "412": [
         "button \"Browse text files\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -62,13 +43,7 @@
       ],
       "768": [
         "button \"Browse text files\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Document\"",
@@ -89,8 +64,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Artifacts\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -98,14 +72,7 @@
     "targets": {
       "320": [
         "button \"Browse text files\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
-        "button \"Library\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"All kinds\"",
         "button[role=radio] \"HTML\"",
         "button[role=radio] \"Markdown\"",
@@ -115,13 +82,7 @@
       ],
       "390": [
         "button \"Browse text files\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -136,13 +97,7 @@
       ],
       "412": [
         "button \"Browse text files\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Files\"",
@@ -157,13 +112,7 @@
       ],
       "768": [
         "button \"Browse text files\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"All kinds\"",
         "button[role=radio] \"Artifacts\"",
         "button[role=radio] \"Document\"",
@@ -184,8 +133,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Artifacts\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }

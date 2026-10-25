@@ -4,59 +4,35 @@
       "320": [
         "button \"Back to Settings\"",
         "button \"Choose a file first\"",
-        "button \"Choose a model\"",
         "button \"Choose archive…\"",
-        "button \"Expand sidebar\"",
         "button \"Export everything\"",
         "button \"Export knowledge\"",
-        "button \"Export memory\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Export memory\""
       ],
       "390": [
         "button \"Back to Settings\"",
         "button \"Choose a file first\"",
-        "button \"Choose a model\"",
         "button \"Choose archive…\"",
-        "button \"Expand sidebar\"",
         "button \"Export everything\"",
         "button \"Export knowledge\"",
-        "button \"Export memory\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Export memory\""
       ],
       "412": [
         "button \"Back to Settings\"",
         "button \"Choose a file first\"",
-        "button \"Choose a model\"",
         "button \"Choose archive…\"",
-        "button \"Expand sidebar\"",
         "button \"Export everything\"",
         "button \"Export knowledge\"",
-        "button \"Export memory\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Export memory\""
       ],
       "768": [
         "button \"Back to Settings\"",
         "button \"Choose a file first\"",
-        "button \"Choose a model\"",
         "button \"Choose archive…\"",
-        "button \"Expand sidebar\"",
         "button \"Export everything\"",
         "button \"Export knowledge\"",
         "button \"Export memory\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"Settings\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"Settings\""
       ]
     },
     "known": {
@@ -70,59 +46,35 @@
       "320": [
         "button \"Back to Settings\"",
         "button \"Choose a file first\"",
-        "button \"Choose a model\"",
         "button \"Choose archive…\"",
-        "button \"Expand sidebar\"",
         "button \"Export everything\"",
         "button \"Export knowledge\"",
-        "button \"Export memory\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Export memory\""
       ],
       "390": [
         "button \"Back to Settings\"",
         "button \"Choose a file first\"",
-        "button \"Choose a model\"",
         "button \"Choose archive…\"",
-        "button \"Expand sidebar\"",
         "button \"Export everything\"",
         "button \"Export knowledge\"",
-        "button \"Export memory\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Export memory\""
       ],
       "412": [
         "button \"Back to Settings\"",
         "button \"Choose a file first\"",
-        "button \"Choose a model\"",
         "button \"Choose archive…\"",
-        "button \"Expand sidebar\"",
         "button \"Export everything\"",
         "button \"Export knowledge\"",
-        "button \"Export memory\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Export memory\""
       ],
       "768": [
         "button \"Back to Settings\"",
         "button \"Choose a file first\"",
-        "button \"Choose a model\"",
         "button \"Choose archive…\"",
-        "button \"Expand sidebar\"",
         "button \"Export everything\"",
         "button \"Export knowledge\"",
         "button \"Export memory\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
-        "button \"Settings\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"Settings\""
       ]
     },
     "known": {

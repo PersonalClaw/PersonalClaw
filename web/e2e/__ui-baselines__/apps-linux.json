@@ -3,63 +3,36 @@
     "targets": {
       "320": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"Install from URL\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Open\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
         "input \"Search apps\""
       ],
       "390": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"Install from URL\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Open\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
         "input \"Search apps\""
       ],
       "412": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"Install from URL\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Open\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
         "input \"Search apps\""
       ],
       "768": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"Install from URL\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Open\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",
@@ -74,8 +47,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Apps\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -83,63 +55,36 @@
     "targets": {
       "320": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"Install from URL\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Open\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
         "input \"Search apps\""
       ],
       "390": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"Install from URL\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Open\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
         "input \"Search apps\""
       ],
       "412": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Capabilities\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"Install from URL\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Open\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Library\"",
         "button[role=radio] \"Native\"",
         "input \"Search apps\""
       ],
       "768": [
         "button \"Actions for E#E UI fixture\"",
-        "button \"Choose a model\"",
-        "button \"Expand sidebar\"",
         "button \"Filter & sort\"",
         "button \"Install from URL\"",
-        "button \"Notifications, # unread\"",
-        "button \"Open terminal\"",
         "button \"Open\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\"",
         "button[role=radio] \"Agents\"",
         "button[role=radio] \"Apps\"",
         "button[role=radio] \"Learning\"",
@@ -154,8 +99,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Apps\" clips at #%: #x# in #x#"
+        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
       ]
     }
   }
