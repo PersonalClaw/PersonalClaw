@@ -12,6 +12,7 @@ import sys
 import types
 from pathlib import Path
 
+import hard_deadline
 import in_flight
 import native_omp_guard
 import pycache_guard
@@ -273,6 +274,7 @@ def pytest_runtest_setup(item):  # noqa: ARG001 — hook signature
 
 
 def pytest_addoption(parser):
+    hard_deadline.addoption(parser)
     parser.addoption(
         "--fixture-costs",
         action="store_true",
@@ -299,6 +301,10 @@ def pytest_configure(config):
     # The tests started and not finished, beside the JUnit report, so a hung shard names its test
     # (tests/in_flight.py). The controller's alone; a worker arms nothing.
     in_flight.configure(config)
+    # A test still running at twice its timeout and 30 s more is killed, its stacks beside the
+    # JUnit report and in its crash report (tests/hard_deadline.py): pytest-timeout's one alarm
+    # cannot end a teardown that runs after it.
+    hard_deadline.configure(config)
     # What each rail read, beside a rails leg's JUnit report, for `rails select`
     # (tests/rails_reads.py). Armed by `junit-rails-<leg>.xml` alone.
     rails_reads.configure(config, source_index)
