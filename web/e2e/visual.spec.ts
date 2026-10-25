@@ -36,8 +36,8 @@ import {
 // contain them (the default 30s cannot — `gotoRoute` would spend most of it
 // settling and time out mid-screenshot). Nothing about the comparison is
 // loosened: `maxDiffPixelRatio` stays at the config's 0.01. The cost is
-// wall-clock on a suite no CI job runs, which is the cheapest thing in the
-// budget to spend.
+// wall-clock in a leg of its own (e2e-pinned), which is the cheapest thing in
+// the budget to spend.
 //
 // 🕐 EVERY NUMBER HERE IS A BUDGET, NEVER A TOLERANCE — how long a PRECONDITION
 // may take to be satisfied, not how much difference the comparison accepts. The

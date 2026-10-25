@@ -76,8 +76,8 @@ export function fullScreenOf(route: string): string {
  *  both. The a11y/walkthrough sweeps are ~130 tests each and read the accessibility tree,
  *  which does not care whether a card's count arrived — for them the defaults keep the whole
  *  `gotoRoute` inside Playwright's 30s per-test budget. `visual.spec.ts` is the opposite
- *  trade: it compares PIXELS, so one late arrival is a failed golden, and it is 40 tests
- *  that no CI job runs. It buys longer stages and raises its own test timeout to match.
+ *  trade: it compares PIXELS, so one late arrival is a failed golden, and it runs on its own,
+ *  in the e2e-pinned leg. It buys longer stages and raises its own test timeout to match.
  *
  *  These are emphatically NOT tolerances: `maxDiffPixelRatio` is untouched. They give the
  *  settle more time to reach a resting state, rather than accepting more pixels of drift. */

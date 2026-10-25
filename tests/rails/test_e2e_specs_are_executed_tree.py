@@ -113,15 +113,23 @@ def project_runs(project: str, config: str | None = None) -> frozenset[str]:
     return frozenset(s for s in picked if project in allowed.get(modes.get(s, ""), ()))
 
 
+#: What starts a run line: Playwright's own, and the pinned image's runner
+#: (`web/e2e/run-pinned.mjs`, #3943), which runs `playwright test` with the arguments after its
+#: `--`. Its `--update` form (the refresh workflow's) regenerates baselines and judges nothing, so
+#: it is not one.
+_RUN_MARKERS = ("playwright test", "e2e/run-pinned.mjs -- ")
+
+
 def names_spec(text: str, spec: str, tags: set[str] | None = None) -> bool:
-    """Whether `text` runs `spec` on a `playwright test` RUN line.
+    """Whether `text` runs `spec` on a `playwright test` RUN line, or a `run-pinned.mjs --` one.
 
     Two forms count. A line that names the spec. Or a line that names NO spec, which runs the
     whole `testDir`, so it runs `spec` unless its `--grep-invert` drops a tag the spec declares
     (`tags`, read from the spec when not given). Either way, a line that names a `--project`
     runs only what the projects it names run (`project_runs`). That is how each `e2e-shard` leg
     runs its half of every shared spec but the visual rail, and none of the stateful set, which
-    `e2e-stateful`'s line names.
+    the second leg's own line names; `e2e-pinned`'s `run-pinned.mjs` lines name the matrix and the
+    visual rail.
 
     Matched against the run line, not the whole file: specs are mentioned in workflow comments,
     and a substring search would have called a spec "executed" on the strength of prose
@@ -136,9 +144,10 @@ def names_spec(text: str, spec: str, tags: set[str] | None = None) -> bool:
     declared = _tags(spec) if tags is None else tags
     for line in text.splitlines():
         stripped = line.strip().lstrip("-").strip()
-        if stripped.startswith("#") or "playwright test" not in stripped:
+        marker = next((m for m in _RUN_MARKERS if m in stripped), None)
+        if stripped.startswith("#") or marker is None:
             continue
-        command = stripped.split("playwright test", 1)[1]
+        command = stripped.split(marker, 1)[1]
         projects = [p.strip("'\"") for p in _PROJECT_ARG.findall(command)]
         if projects and not any(spec in project_runs(p) for p in projects):
             continue  # none of the projects it names runs the spec
@@ -215,9 +224,21 @@ def test_a_whole_directory_run_counts_except_for_what_its_grep_invert_drops():
     assert not names_spec(
         other, "ghost.spec.ts", tags=set()
     ), "a named run ran a spec it never named"
-    # And the real tree: visual.spec.ts declares the tag the job drops, so it stays exempt.
+    # And the real tree: visual.spec.ts declares the tag the shard legs drop, and runs instead in
+    # e2e-pinned, against the pinned image's browser (#3943).
     assert "@visual" in _tags("visual.spec.ts"), "visual.spec.ts no longer declares @visual"
-    assert not _run_by_ci("visual.spec.ts")
+    shard_only = "        run: npx playwright test --project=chromium --grep-invert @visual\n"
+    assert not names_spec(shard_only, "visual.spec.ts")
+    assert _run_by_ci("visual.spec.ts")
+
+
+def test_the_pinned_runner_is_a_run_line_and_its_refresh_is_not():
+    """`run-pinned.mjs --` runs `playwright test` with what follows; its `--update` form makes
+    baselines and judges nothing, so a dispatch refresh never counts as the spec's CI run."""
+    pinned = "        run: node e2e/run-pinned.mjs -- e2e/visual.spec.ts\n"
+    assert names_spec(pinned, "visual.spec.ts")
+    refresh = "        run: node e2e/run-pinned.mjs --update -- e2e/visual.spec.ts\n"
+    assert not names_spec(refresh, "visual.spec.ts")
 
 
 def test_a_project_filtered_line_runs_only_what_its_projects_run():
@@ -290,10 +311,20 @@ _SHARD = re.compile(r"--shard[ =](\{shard\}|\d+)/(\d+)")
 _PLAYWRIGHT = ("npx", "playwright", "test")
 
 
+#: The runners a step may start Playwright through: the pinned image's (#3943), and a shard leg's
+#: guard that runs its command on one shard alone (`web/e2e/on-shard.mjs`).
+_PINNED = ("node", "e2e/run-pinned.mjs", "--")
+_ON_SHARD = ("node", "e2e/on-shard.mjs")
+
+
 def _browser_steps(cat: Catalogue):
+    """Each step that runs `playwright test`, directly or through one of the runners above."""
     for job in cat.jobs:
         for step in job.command:
-            if step.argv[:3] == _PLAYWRIGHT:
+            argv = tuple(step.argv)
+            if argv[:2] == _ON_SHARD and "--" in argv:
+                argv = argv[argv.index("--") + 1 :]
+            if argv[:3] == _PLAYWRIGHT or argv[:3] == _PINNED:
                 yield job, step
 
 
@@ -369,7 +400,10 @@ def test_the_merge_reads_every_leg_the_browser_steps_write():
     assert written >= {
         "blob-report/shard-1",
         "blob-report/shard-2",
+        "blob-report/idle",
         "blob-report/stateful",
+        "blob-report/matrix",
+        "blob-report/visual",
     }, written
     assert merged_folders(cat) == written
     assert {"e2e", "ui-quality"} <= set(merges(cat)), sorted(merges(cat))
@@ -410,7 +444,7 @@ def browser_legs(cat: Catalogue) -> list[str]:
 
 def test_each_merge_runs_after_every_leg():
     cat = read()
-    assert browser_legs(cat) == ["e2e-shard", "e2e-stateful"], browser_legs(cat)
+    assert browser_legs(cat) == ["e2e-pinned", "e2e-shard"], browser_legs(cat)
     for merging in sorted(merges(cat)):
         assert set(cat.job(merging).after) >= set(browser_legs(cat)), (
             f"{merging} merges the legs' reports but does not run after"
@@ -420,5 +454,5 @@ def test_each_merge_runs_after_every_leg():
 
 def test_a_merge_that_does_not_wait_on_a_leg_is_named():
     cat = read()
-    early = _with_job(cat, "e2e", after=("e2e-stateful",))
+    early = _with_job(cat, "e2e", after=("e2e-pinned",))
     assert not set(early.job("e2e").after) >= set(browser_legs(early))

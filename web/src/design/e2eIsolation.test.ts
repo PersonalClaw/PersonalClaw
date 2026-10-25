@@ -266,7 +266,7 @@ describe('the real projects run the stateful passes one after another', () => {
   }
 
   /** One run of the stand-ins, and the run check's verdict on its report. `only` is CI's
-   *  `e2e-stateful` job: the stateful specs named, so the passes chain by dependencies. */
+   *  second `e2e-shard` leg's own run: the stateful specs named, so the passes chain by dependencies. */
   function run(only: boolean, plant = false) {
     const config = harness()
     const ran = spawnSync('npx', ['playwright', 'test', '-c', config, ...(only ? ['staleWrite.spec.ts', 'deployedArtifacts.spec.ts'] : [])], {

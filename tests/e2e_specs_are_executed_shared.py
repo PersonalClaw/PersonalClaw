@@ -23,15 +23,7 @@ _E2E = _ROOT / "web" / "e2e"
 #: Specs deliberately NOT run in CI, each with the mechanical reason. A spec absent from
 #: both this map and the workflows fails the sweep — "we'll wire it later" has to be a
 #: sentence someone typed, not a file nobody noticed.
-LOCAL_ONLY: dict[str, str] = {
-    "visual.spec.ts": (
-        "Its baselines are made in the pinned Playwright image's browser alone "
-        "(`web/e2e/visual-image.json`, #3943), and no CI leg serves that browser yet: merge.yml's "
-        "`e2e-pinned` leg, which compares them through `web/e2e/run-pinned.mjs`, lands with the "
-        "merge-queue flip. `test_no_exemption_is_also_wired` fails the moment a workflow runs "
-        "this spec while it is still listed here."
-    ),
-}
+LOCAL_ONLY: dict[str, str] = {}
 
 
 def _specs() -> list[str]:
