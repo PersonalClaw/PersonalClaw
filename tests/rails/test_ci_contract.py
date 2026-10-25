@@ -2068,8 +2068,6 @@ def macos_leg_violations(tree: Tree) -> list[str]:
     pushed = [j in (cat.every_push or ()) for j in (_SUITE_MACOS, _SUITE)]
     if pushed[0] != pushed[1]:
         bad.append(f"{_SUITE_MACOS} and {_SUITE} differ in whether every push to main runs them")
-    if macos.shards != ubuntu.shards:
-        bad.append(f"{_SUITE_MACOS} splits into {macos.shards}, {_SUITE} into {ubuntu.shards}")
     for job in (macos, ubuntu):
         listing = _suite_step(job, "shards")
         want = ["--leg", _SUITE_LEGS[job.id], "--shard", f"{{shard}}/{job.shards}"]
@@ -2381,6 +2379,9 @@ def macos_suite_first_violations(tree: Tree) -> list[str]:
 #: The macOS runners the account runs at once: a pull request's macOS shards and breadth's macOS
 #: leg, which a night's run and a day's pull request can hold together, share them (#3915).
 _MACOS_RUNNERS = 5
+#: The macOS runners one merge-tier run may hold of them (#3915), so concurrent pull requests
+#: share the ceiling rather than one taking it.
+_MERGE_MACOS = 2
 
 
 def _macos_at_once(job: dict[str, Any]) -> int:
@@ -2401,14 +2402,20 @@ def _macos_at_once(job: dict[str, Any]) -> int:
 
 
 def macos_budget_violations(tree: Tree) -> list[str]:
-    """A pull request's macOS jobs and breadth's macOS suite leg, at once, fit the account's
-    macOS runners: the merge tier's macOS shards, which merge.yml runs, as the catalogue gives
-    them. The legs that wait for breadth's macOS suite run after it, never beside it
+    """A merge-tier run holds at most :data:`_MERGE_MACOS` macOS runners, and a pull request's
+    macOS jobs and breadth's macOS suite leg, at once, fit the account's macOS runners: the
+    merge tier's macOS shards, which merge.yml runs, as the catalogue gives them. The legs that
+    wait for breadth's macOS suite run after it, never beside it
     (:data:`_AFTER_THE_MACOS_SUITE`), so they are not counted."""
     breadth = _macos_at_once(_breadth_jobs(tree).get("macos") or {})
     cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
     merge = sum(j.shards for j in cat.tier("merge") if j.platform.startswith("macos"))
     bad: list[str] = []
+    if merge > _MERGE_MACOS:
+        bad.append(
+            f"the merge tier's run holds {merge} macOS runners, more than the {_MERGE_MACOS} one"
+            " run may take"
+        )
     if merge + breadth > _MACOS_RUNNERS:
         bad.append(
             f"the merge tier's run holds {merge} macOS runners and breadth's macos leg"
@@ -3516,7 +3523,7 @@ _SETUP_ACTION = ".github/actions/setup/action.yml"
 
 
 #: python-suite-macos's two steps as the catalogue spells them.
-_SUITE_MACOS_LEG = '"--leg", "test-macos", "--shard", "{shard}/3"'
+_SUITE_MACOS_LEG = '"--leg", "test-macos", "--shard", "{shard}/2"'
 _SUITE_MACOS_PYTEST = (
     '"-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt",'
     ' "--junitxml=reports/junit-test-macos-{shard}.xml"'
@@ -4309,7 +4316,7 @@ ROWS: tuple[Row, ...] = (
                 " || github.ref == 'refs/heads/main' && github.run_attempt == '1' &&"
                 " matrix.id == 'python-suite-macos' && 'suite'",
                 "",
-                expect="python-suite-macos (1/3)'s group on main is per commit",
+                expect="python-suite-macos (1/2)'s group on main is per commit",
             ),
             _plant_in_job(
                 "a suite group that does not name its shard",
@@ -4324,8 +4331,8 @@ ROWS: tuple[Row, ...] = (
                 _MERGE_YML,
                 "test",
                 "}}-${{ matrix.key }}\n",
-                "}}-${{ matrix.shard }}\n",
-                expect="python-suite-macos (1/3) and python-suite (1/3) share the group",
+                "}}-suite\n",
+                expect="and python-suite (1/3) share the group 'merge-suite-suite' on main",
             ),
             _plant_in_job(
                 "every entry in the shared group on main",
@@ -4367,14 +4374,15 @@ ROWS: tuple[Row, ...] = (
                 'platform = "ubuntu-24.04"\npython = "3.13.16"\ntimeout_min = 50\n',
                 expect="python-suite-macos: platform is ubuntu-24.04, but the merge tier's",
             ),
-            _plants(
-                "a shard count other than python-suite's",
+            # Each leg lists its own shard of its own plan, so the two may split differently:
+            # the shard plan holds every file in exactly one shard of each.
+            Control("the macOS suite in fewer shards than the suite passes", _nothing, fails=False),
+            _plant(
+                "the macOS suite listing a shard count other than its own",
                 catalogue.CATALOGUE,
-                (
-                    ("workers = 2\nshards = 3\n", "workers = 2\nshards = 2\n"),
-                    (_SUITE_MACOS_LEG, _SUITE_MACOS_LEG.replace("/3", "/2")),
-                ),
-                expect="python-suite-macos splits into 2, python-suite into 3",
+                _SUITE_MACOS_LEG,
+                _SUITE_MACOS_LEG.replace("/2", "/3"),
+                expect="python-suite-macos does not list its own shard",
             ),
             _plant(
                 "a -k only the macOS suite has",
@@ -4448,7 +4456,7 @@ ROWS: tuple[Row, ...] = (
                 "every macOS shard lists shard 1",
                 catalogue.CATALOGUE,
                 _SUITE_MACOS_LEG,
-                _SUITE_MACOS_LEG.replace("{shard}/3", "1/3"),
+                _SUITE_MACOS_LEG.replace("{shard}/2", "1/2"),
                 expect="python-suite-macos does not list its own shard",
             ),
             _plant(
@@ -4468,9 +4476,9 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "PYTEST_ADDOPTS in the macOS suite's job env",
                 catalogue.CATALOGUE,
-                'shards = 3\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
+                'shards = 2\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
                 ' PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }\njunit = ["reports/junit-test-macos',
-                'shards = 3\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
+                'shards = 2\nenv = { PERSONALCLAW_SKIP_APP_BACKENDS = "1",'
                 ' PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1", PYTEST_ADDOPTS = "-k vector" }\n'
                 'junit = ["reports/junit-test-macos',
                 expect="python-suite-macos's environment differs",
@@ -4820,32 +4828,39 @@ ROWS: tuple[Row, ...] = (
         macos_budget_violations,
         (
             _plant(
-                "breadth's macos leg two at a time beside three shards fits: 5 of 5",
-                _BREADTH,
-                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
-                '      max-parallel: 2\n      matrix:\n        python: ["3.12.15"]\n',
-                fails=False,
-            ),
-            _plant(
-                "breadth's macos leg three at a time beside three shards",
+                "breadth's macos leg three at a time beside two shards fits: 5 of 5",
                 _BREADTH,
                 '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
                 '      max-parallel: 3\n      matrix:\n        python: ["3.12.15"]\n',
-                expect="breadth's macos leg 3 at once: 6",
+                fails=False,
+            ),
+            _plant(
+                "breadth's macos leg four at a time beside two shards",
+                _BREADTH,
+                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
+                '      max-parallel: 4\n      matrix:\n        python: ["3.12.15"]\n',
+                expect="breadth's macos leg 4 at once: 6",
+            ),
+            _plant(
+                "the merge tier's macOS suite back in three shards",
+                catalogue.CATALOGUE,
+                "timeout_min = 50\nworkers = 2\nshards = 2\n",
+                "timeout_min = 50\nworkers = 2\nshards = 3\n",
+                expect="the merge tier's run holds 3 macOS runners, more than the 2 one run may",
             ),
             _plant(
                 "the merge tier's macOS suite in five shards",
                 catalogue.CATALOGUE,
-                "timeout_min = 50\nworkers = 2\nshards = 3\n",
+                "timeout_min = 50\nworkers = 2\nshards = 2\n",
                 "timeout_min = 50\nworkers = 2\nshards = 5\n",
-                expect="the merge tier's run holds 5 macOS runners",
+                expect="the merge tier's run holds 5 macOS runners and breadth's macos leg",
             ),
             _plant(
                 "a second macOS entry in the merge tier, the browser legs' two shards",
                 catalogue.CATALOGUE,
                 'id = "e2e-shard"\ntiers = ["merge"]\n',
                 'id = "e2e-shard"\ntiers = ["merge"]\nplatform = "macos-26"\n',
-                expect="the merge tier's run holds 5 macOS runners",
+                expect="the merge tier's run holds 4 macOS runners, more than the 2 one run may",
             ),
             _plant(
                 "breadth's macos leg uncapped: six shards at once",
@@ -5693,7 +5708,7 @@ ROWS: tuple[Row, ...] = (
             _plant(
                 "the plan leaving a suite entry's leg out",
                 _MERGE_YML,
-                "          --leg test-macos:main-push:junit-test-macos-:3\n",
+                "          --leg test-macos:main-push:junit-test-macos-:2\n",
                 "",
                 expect="merge.yml's plan names test-macos None",
             ),
@@ -12407,7 +12422,7 @@ printf '%s\n' "$answer" >> "$GITHUB_OUTPUT"
     _SHARD_PLAN_JOB: {
         "the runner's identity": _RUNNER_IDENTITY_LINE,
         "one shard plan for the run, from main's push runs in either shape": r"""
-python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --leg test-shard:main-push:junit-test-shard-:3 --leg test-macos:main-push:junit-test-macos-:3 --out "$RUNNER_TEMP/shard-plan/plan.json"
+python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --leg test-shard:main-push:junit-test-shard-:3 --leg test-macos:main-push:junit-test-macos-:2 --out "$RUNNER_TEMP/shard-plan/plan.json"
 """,  # noqa: E501
         "every file in exactly one shard of each leg": r"""
 python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"

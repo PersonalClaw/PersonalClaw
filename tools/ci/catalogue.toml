@@ -208,6 +208,8 @@ command = [
   { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-shard-{shard}.xml"] },
 ]
 
+# The suite on macOS in two shards: a merge-tier run holds 2 macOS runners of the account's 5
+# (#3915). Each shard runs two workers, held there by a macOS worker's peak memory (#3923).
 [[job]]
 id = "python-suite-macos"
 tiers = ["merge"]
@@ -220,11 +222,11 @@ platform = "macos-26"
 python = "3.13.16"
 timeout_min = 50
 workers = 2
-shards = 3
+shards = 2
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-test-macos-{shard}.xml"]
 command = [
-  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-macos", "--shard", "{shard}/3", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-macos", "--shard", "{shard}/2", "--out", "{runner_temp}/shard.txt"] },
   { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-macos-{shard}.xml"] },
 ]
 

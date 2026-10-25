@@ -1329,15 +1329,19 @@ carries too. A workflow added later that runs on
 ### `test-macos`
 
 Pull requests into `main` run the suite on `macos-26` with Python 3.13 (`python-suite-macos`, the
-`test-macos` leg of the shard plan), in three shards of whole test files planned from macOS's own
-durations, two xdist workers each and no coverage. With `python-suite` on Ubuntu and 3.12, every
+`test-macos` leg of the shard plan), in two shards of whole test files planned from macOS's own
+durations, two xdist workers each (a macOS worker's peak memory holds it there, #3923) and no
+coverage. The macOS leg splits on its own: two shards beside `python-suite`'s three, each
+listing its own share of its own leg, and the shard plan holds every file in exactly one shard of
+each. With `python-suite` on Ubuntu and 3.12, every
 change that merges has run both operating systems and both Pythons. The security corpus is the exception: no shard collects it, so a pull request
 runs it once, in `security`, on Ubuntu and 3.12, and breadth runs it each night on macOS on
-3.13. The three shards take three of the five macOS runners the account runs at once, and
-breadth's `macos` leg runs one shard at a time (`max-parallel: 1`), so a pull request's run and a
-night's breadth fit the five together; the contract row
-"a-pull-requests-macos-jobs-and-breadths-macos-leg-fit-the-macos-runners" fails a count that does
-not (the merge tier's macOS shards with breadth's). Concurrent pull
+3.13. The two shards take two of the five macOS runners the account runs at once, the most one
+merge-tier run may take (#3915), and breadth's `macos` leg runs one shard at a time
+(`max-parallel: 1`), so a pull request's run and a night's breadth fit the five together; the
+contract row "a-pull-requests-macos-jobs-and-breadths-macos-leg-fit-the-macos-runners" fails a
+merge tier that takes more than two, and a count that does not fit (the merge tier's macOS shards
+with breadth's). Concurrent pull
 requests still queue on macOS.
 
 ### The suite's shards
