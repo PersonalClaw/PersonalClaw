@@ -31,7 +31,9 @@ export function loopKindMeta(kind: string | undefined): LoopKindMeta {
  *  steps, outputs and decisions live; a code loop in the Code section; every other kind in the loop
  *  cockpit. Keyed by the BODY (`run_id`), never by the kind — which kinds are run-backed grows. A
  *  `#/loops/<id>` link to a run-backed loop still lands, one redirect later (`LoopsSection`). */
-export function loopRoute(loop: { id: string; kind?: string; run_id?: string }): string {
+export function loopRoute(loop: { id: string; kind?: string; run_id?: string; broken?: string }): string {
   if (loop.run_id) return `workflows/runs/${loop.run_id}`
+  // A row the store can't open has no cockpit: its list, where it says why and can be deleted.
+  if (loop.broken) return loop.kind === 'code' ? 'code/history' : 'loops/history'
   return loop.kind === 'code' ? `code/${loop.id}` : `loops/${loop.id}`
 }

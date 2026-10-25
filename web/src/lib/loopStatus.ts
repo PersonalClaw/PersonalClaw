@@ -249,8 +249,16 @@ export const RUN_LOOP_ACTION_SOURCE_STATUSES: Readonly<Record<LoopAction, Readon
   stop: new Set(['ready', 'running', 'paused', 'needs_input']),
 }
 
+/** A row the store can't open (`Loop.broken`) takes no action from any status: it is listed so it
+ *  can be deleted, and nothing starts, pauses, resumes or stops it. */
+const NO_SOURCE: ReadonlySet<string> = new Set()
+const BROKEN_LOOP_ACTION_SOURCE_STATUSES: Readonly<Record<LoopAction, ReadonlySet<string>>> = {
+  start: NO_SOURCE, pause: NO_SOURCE, resume: NO_SOURCE, stop: NO_SOURCE,
+}
+
 /** The action map for THIS loop's backing — what every surface that lists both kinds of loop asks
  *  before rendering a Start/Pause/Resume/Stop. */
-export function loopActionSources(loop: { run_id?: string }): Readonly<Record<LoopAction, ReadonlySet<string>>> {
+export function loopActionSources(loop: { run_id?: string; broken?: string }): Readonly<Record<LoopAction, ReadonlySet<string>>> {
+  if (loop.broken) return BROKEN_LOOP_ACTION_SOURCE_STATUSES
   return loop.run_id ? RUN_LOOP_ACTION_SOURCE_STATUSES : LOOP_ACTION_SOURCE_STATUSES
 }
