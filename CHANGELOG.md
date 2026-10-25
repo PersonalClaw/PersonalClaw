@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-25
+
+Every release now ships a Mac dmg for Intel beside the Apple-silicon one, and `personalclaw doctor --crypto` checks the cryptography library an install carries. The Nix flake catches up from 0.2.2, with the image-library and certificate fixes it had missed. Memory search no longer matches a word in the folder a memory is kept in, every stop ends within 10 seconds, and the new-chat composer stays in its place. On a phone or a tablet, the controls around every page and the Inbox's own are 44 px targets. Behind them, nothing in a release is published before the owner approves the build it was given, and a release is tagged only on a commit whose own run and breadth run are green. No upgrade step is needed.
+
 ### Added
 
 - **Every release ships a Mac dmg for Intel beside the Apple-silicon one: `PersonalClaw-<version>-x64.dmg`, built and started on an Intel runner, with its own Intel backend. cryptography publishes no Intel-Mac build since 49.0.0, so the Intel backend carries one CI compiles from the locked source, statically linked to the runner's OpenSSL (3.6.3 at this writing; each release's build record names its own).**
@@ -19,6 +23,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The Nix flake installs 0.2.7. It had stayed on 0.2.2, so a Nix install missed the five releases since, among them Pillow 13, which fixes the JPEG decoder's heap overflow and eight other image advisories, and the certifi bundle that drops the root certificates whose intermediate keys were compromised. Both are built from the files 0.2.7's lock pins, as `uv sync --locked` installs them.**
 - **CI is two workflows, each running the catalogue's jobs as its plan names them: `PR`, a pull request's fast feedback, and `Merge`, its merge verdict, which also checks every push to `main` and runs only the security corpus, the SDK contract and the browse proof when a pull request's run already tested the pushed tree. The one `CI` workflow and its checks are gone; a pull request's checks are its plan's entries, each named by its catalogue job.**
+- **`/api/healthz` answers from its last reading of whose gateway it is, so only its first answer waits on the disk. `root_ok` still turns false within about a second of the folder a gateway serves its code from being removed.**
 
 ### Fixed
 
@@ -30,15 +35,31 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Memory search finds what a memory says and its file's own name, not where its file is: a word in your home folder's path (a folder named for a person, a project or a tool) no longer matches every memory, and a memory is still found by its name (`preferences`, `projects`, a history file's day). An index made before this is rebuilt from the memory files the first time it is opened.**
 - **The waiting list's ring no longer puts an error in the gateway's log when it cannot be sent. When something waiting on you is asked or answered, open pages are told a moment later, from a timer. A failed send there went into the gateway's event loop, where the ring's other failures are dropped quietly. Now it is dropped the same way, and open pages still see the change on their next poll.**
 - **Switching off, updating or uninstalling an app no longer pauses the gateway while it looks for a task the app left running. It used to collect and read every object the gateway held, which took about a second in a large gateway; it now reads only the tasks that are still scheduled.**
+- **Scanning an upload, a Knowledge write or an artifact no longer pauses the gateway on macOS: the scan's child is started without copying the gateway. In a large gateway on a busy Mac, that copy used to hold every other request for 30 to 90 ms each time.**
 - **Settings › Models' memory reading says a whole percent, as its bar does. It read `12.5%` on one reading and `12%` on the next, so the line changed width as the number moved.**
 - **`make check` and `make gate` call a run incomplete, never red, when every job that did not pass is one this machine cannot run, and name each with its reason; the last line is `incomplete: N jobs could not run here`, and the exit stays 2. On Linux, a job that runs Electron cannot run here while the kernel withholds the user namespaces Chromium's sandbox needs (Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns = 1`), and its reason names the `sysctl` that lifts it.**
 - **On a phone or a tablet, the controls around every page are 44 px targets: the sidebar tab, Open terminal, Notifications, the theme button, the model chip and System status. From 1024 px up they keep their size. Below 768 px, Open terminal and the theme button are in one More menu (⋮) in the top-right corner, so a chat's header still fits on one line. A page title no longer loses the top and bottom of its letters at 200% text zoom.**
+- **On a phone or a tablet, the Inbox's own controls are 44 px targets too: Mark all read and Clear all, each note's Investigate in chat, Mark read and Delete, Capture a note, Inbox settings, Restart sources, the triage digest's Install, Add a message source, Filter & sort and More actions. From 1024 px up they keep their size.**
 
 ### For maintainers
 
 - **Nothing in a release is published before the owner approves it, and an approval holds only for the build it was given: a release whose artifacts are built again publishes nothing until it is approved again.**
 - **The pre-push hook runs the change tier's jobs from the CI catalogue, as CI runs them, on the working tree: today `static` (lint, types, the asset licences, the installer's checks), in about two minutes. A change-tier job that runs a test suite says `prepush = false` and is left to CI. The hook no longer runs the clean-install and render-smoke chain for pushes to `main`, release branches and tags; CI's `e2e-shard` runs the render smoke on every pull request.**
+- **Two releases never publish at once, and a release that runs again compares what it built with its record before it writes anything, and writes nothing it did not build.**
+- **A release tag needs its commit's breadth green: every gating leg green on that commit, and each red advisory leg owned by an open issue.**
+- **The gateway image a release pushes is the one it smoked, and every merge run builds and boots the gateway image it would ship.**
+- **The dependency audit runs on every change to a lock or a manifest, and every night; a new advisory turns the nightly breadth run red, and the release gate holds a release on it until it is fixed or waived.**
+- **CI plans more of its jobs from the paths they read, so fewer run on a change that cannot reach them, and a workflow's own path filter reaches every path its jobs read.**
+- **`make check` runs the suite's test files a change can break, nearest first, after the change tier's jobs, and `python -m tools.ci rails select` names the rails a change can break from what each rail read on `main`.**
+- **A test that takes over 30 seconds fails unless its own mark says why.**
+- **The UI's visual baselines are made in one pinned browser image, for every axis they cover.**
+- **The desktop smoke opens the packed app's `personalclaw://` links, a code cockpit's on its diff and task included, and reopens each copied address in the same window and in a new one; anything that acts or writes fails it.**
 - **Breadth's nightly report finds every leg's issue with one search. When GitHub refuses it, the report fails once, in gh's own words: no green is recorded red for it, and no issue is opened, updated or closed. Since 2026-10-19 its one search per leg had been refused partway down the legs, so the last few legs' greens were recorded red and no leg's issue moved.**
+- **A pull request that changes CI is judged by its own runs and by main's CI contract over its definitions, run on a branch of its own. A verdict that waits on anything is a waiting red, and every poster run judges it again until nothing waits.**
+- **A merge-tier run holds at most three macOS runners and 14 jobs at once, the macOS suite in three shards of two workers, started before the rest.**
+- **The CI history holds every `Merge` run's test cases, a tested push's suite from its pull request's run, and both entries' cases from a junit report two entries write. ui-quality's Vitest run writes its own report, not web-unit's.**
+- **A test past its hard deadline is killed and named with every thread's stack, and the deadline keeps its own clock, so a test that patches time moves no deadline.**
+- **The setup action checks for `docker` where a job names it, and never installs it.**
 
 ## [0.2.7] — 2026-10-23
 
