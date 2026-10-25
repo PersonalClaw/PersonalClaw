@@ -993,7 +993,7 @@ def _seen(probe: _Probe) -> SimpleNamespace:
     )
 
 
-def _crowded(child: str, home, *args: str, hold: float = 20) -> dict:
+def _crowded(child: str, home, *args: str, hold: float) -> dict:
     """Runs ``child`` on the scratch ``home`` once it is up, with every CPU taken by a process of
     its own for at most ``hold`` seconds, and returns the one line of JSON it prints."""
     child_process = subprocess.Popen(
@@ -1026,6 +1026,45 @@ def _crowded(child: str, home, *args: str, hold: float = 20) -> dict:
     return json.loads(out)
 
 
+#: How many times a test below sets up its crowd before it takes its premise as unmet.
+_TRIES = 3
+
+#: How long the busy processes hold every CPU for a try. On macOS a process in the background band
+#: beside them is at times given no turn at all until they let go: on a CI runner the loop once had
+#: no turn for 17.2 s, and the block it was to make came after, once the CPUs were free (#5499); the
+#: starved-step test below once took 23.31 s while they held for 20 s. There they hold a few times
+#: what a crowded try takes (under 2 s on a CI runner), so a try that stalls ends soon and the next
+#: one starts. Linux, at nice 19, is given turns, only slowly (a try took up to 12 s on a CI
+#: runner).
+_HOLD = 5 if sys.platform == "darwin" else 20
+
+
+def _until_crowded(
+    tmp_path, child: str, *, args=lambda where: (), premise, holds, measure, measured
+) -> dict:
+    """Runs ``child`` crowded (:func:`_crowded`) up to :data:`_TRIES` times, each try in a folder
+    of its own, until ``holds`` says its ``premise`` held, and returns that try's line. A premise
+    unmet every time fails on Linux, where nice 19 makes it hold each time, and skips on macOS,
+    whose background band does not always (:data:`_HOLD`), naming the ``measure`` each try
+    ``measured``."""
+    measures = []
+    for n in range(_TRIES):
+        where = tmp_path / f"try-{n}"
+        where.mkdir()
+        seen = _crowded(child, where / "home", *args(where), hold=_HOLD)
+        assert seen["status"] == 200, f"premise: the request answered; {seen['says']}"
+        measures.append(measured(seen))
+        if holds(seen):
+            return seen
+    unmet = (
+        f"premise: {premise}, in none of {_TRIES} tries ({measure}: {', '.join(measures)});"
+        f" the last: {seen['says']}"
+    )
+    if sys.platform == "darwin":
+        pytest.skip(unmet)
+    pytest.fail(unmet)
+
+
 def test_a_step_the_runner_gives_no_cpu_does_not_fail_the_probe(tmp_path):
     """🔴 Red before (a step's wall time was the measure): a request whose steps wait on nothing
     and each use at most 0.05 s of CPU, run at the lowest priority while every CPU is taken, had a
@@ -1033,11 +1072,19 @@ def test_a_step_the_runner_gives_no_cpu_does_not_fail_the_probe(tmp_path):
     long. The loaded runner took that time, not anything the step waited on, so the probe leaves
     it out and counts the step for the CPU time it used. No health check is asked, so no other
     thread runs beside it: on macOS a thread that does could have spent that time ready, and the
-    step would be counted in wall time (the test below)."""
+    step would be counted in wall time (the test below).
+
+    The crowd is set up again (:func:`_until_crowded`) until the runner held a step: on macOS a
+    try that stalls until the busy processes let go runs its steps on free CPUs."""
     assert _NoCpu().source != "none", "premise: this kernel counts the time ready with no CPU"
-    seen = _crowded(_STARVED_CHILD, tmp_path / "home")
-    assert seen["status"] == 200, f"premise: the starved request answered; {seen['says']}"
-    assert seen["worst_step_wall"] >= _BOUND, f"premise: the runner held a step; {seen['says']}"
+    seen = _until_crowded(
+        tmp_path,
+        _STARVED_CHILD,
+        premise="the runner held a step",
+        holds=lambda seen: seen["worst_step_wall"] >= _BOUND,
+        measure="the longest step in wall time",
+        measured=lambda seen: f"{seen['worst_step_wall']:.3f}s",
+    )
     assert seen["worst_step"] < _BOUND, f"a step the runner took was counted; {seen['says']}"
 
 
@@ -1143,48 +1190,25 @@ _BESIDE_A_READY_THREAD_CHILD = (
 )
 
 
-#: How many times the test below sets up its crowd for the thread beside to wait for a CPU.
-_TRIES = 3
-
-#: How long the busy processes hold every CPU for the test below. On macOS a process in the
-#: background band beside them is at times given no turn at all until they let go: on a CI runner
-#: the loop once had no turn for 17.2 s, so the health check waited 20.05 s, and the block came
-#: after, once the thread beside had a CPU to itself. There they hold a few times what a crowded
-#: try takes (under 2 s on a CI runner), so a try that stalls ends soon and the next one starts.
-#: Linux, at nice 19, is given turns, only slowly (a try took up to 12 s on a CI runner).
-_BESIDE_HOLD = 5 if sys.platform == "darwin" else 20
-
-
 def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_path):
     """The vacuity arm for the time left out: the time a thread beside the loop spends waiting
     for a CPU is not the loop's. A blocking read on the loop for 0.2 s, made while a health check
     is under way, at the lowest priority while every CPU is taken, beside a thread that hashes
     and so waits for a CPU most of that time, is a step over the bound and an answer over it.
 
-    The crowd is set up again, up to :data:`_TRIES` times, until the thread beside waited for a
-    CPU during the block. On Linux nice 19 makes it so each time, and a premise unmet every time
-    fails. macOS's background band does not always (:data:`_BESIDE_HOLD`), and there the test
-    skips, naming the share each try measured."""
-    shares = []
-    for n in range(_TRIES):
-        where = tmp_path / f"try-{n}"
-        where.mkdir()
-        seen = _crowded(_BESIDE_A_READY_THREAD_CHILD, where / "home", str(where), hold=_BESIDE_HOLD)
-        says = (
-            f"the thread beside used {seen['share']:.0%} of a CPU during the block; {seen['says']}"
-        )
-        assert seen["status"] == 200, f"premise: the planted request answered; {says}"
-        shares.append(f"{seen['share']:.0%}")
-        if seen["share"] < 0.5:
-            break
-    else:
-        unmet = (
-            f"premise: the thread beside waited for a CPU, in none of {_TRIES} tries: it used"
-            f" {', '.join(shares)} of a CPU during the block; the last: {seen['says']}"
-        )
-        if sys.platform == "darwin":
-            pytest.skip(unmet)
-        pytest.fail(unmet)
+    The crowd is set up again (:func:`_until_crowded`) until the thread beside waited for a CPU
+    during the block: on a CI runner a try that stalled made its block after the busy processes
+    let go, when the thread beside had a CPU to itself."""
+    seen = _until_crowded(
+        tmp_path,
+        _BESIDE_A_READY_THREAD_CHILD,
+        args=lambda where: (str(where),),
+        premise="the thread beside waited for a CPU during the block",
+        holds=lambda seen: seen["share"] < 0.5,
+        measure="the share of a CPU the thread beside used",
+        measured=lambda seen: f"{seen['share']:.0%}",
+    )
+    says = f"the thread beside used {seen['share']:.0%} of a CPU during the block; {seen['says']}"
     assert seen["worst_step"] >= _BOUND, f"the step missed the block; {says}"
     assert seen["slowest_answer"] >= _BOUND, f"the answer missed the block; {says}"
 
