@@ -400,6 +400,12 @@ class _Probe:
         return run
 
     async def during(self, work):
+        if self.asking:
+            # The first health check reads the home and the serving root, and waits on the disk
+            # for them, by design (handlers_system._Identity): asked before the work, so the
+            # answers timed are the gateway's every-time answers.
+            first = await self.client.get("/api/healthz")
+            await first.read()
         self.no_cpu.open()
         try:
             with patch.object(
@@ -1220,8 +1226,11 @@ class _HeldHealthCheck:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def arm(self) -> None:
+        from personalclaw.dashboard import handlers_system
+
         self._loop = asyncio.get_running_loop()
         self._armed.set()
+        handlers_system._IDENTITY.forget()  # so the next health check reads, as the first does
 
     def identity(self, real):
         def call(*args, **kwargs):

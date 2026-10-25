@@ -103,8 +103,9 @@ async def api_healthz(request: web.Request) -> web.Response:
       another, every CLI command before it sends the home's secret) recomputes it and compares.
       The path itself is never sent; see ``home_gateway.home_id``.
     * ``root_ok`` — does the directory this code is being served FROM still exist on disk.
-      ``false`` is the zombie: a live process serving code from a removed checkout. Computed
-      live on every call, because becoming false is the whole event worth catching.
+      ``false`` is the zombie: a live process serving code from a removed checkout. Live within
+      about a second (:data:`ROOT_TTL_S`), because becoming false is the whole event worth
+      catching, and a probe that polls sees it by its next poll.
 
     ``status`` stays ``"ok"`` and the code stays 200 when ``root_ok`` is false, on purpose. A
     deleted serving root is a *provenance* fault, not an inability to serve, and this route is
@@ -112,9 +113,10 @@ async def api_healthz(request: web.Request) -> web.Response:
     including during the window when ``pip install --upgrade`` replaces the package directory
     under a running process. Callers that care assert on ``root_ok``.
 
-    Both are read from the disk, so in a worker thread (:func:`_identity`).
+    Both are read from the disk, so in a worker thread, and the answer is given from the last
+    reading (:class:`_Identity`): it waits on the disk only the first time.
     """
-    home_id, root_ok = await asyncio.to_thread(_identity)
+    home_id, root_ok = await _IDENTITY.answer()
     return web.json_response(
         {
             "status": "ok",
@@ -129,8 +131,7 @@ async def api_healthz(request: web.Request) -> web.Response:
 def _identity() -> tuple[str | None, bool]:
     """The health check's ``home_id`` and ``root_ok``. Resolving the home and the serving root
     walks the file system and waits on the disk: on the event loop, on a busy disk, it stopped
-    every other request for 0.13 s, so :func:`api_healthz` calls this in a worker thread."""
-    root = _serving_root()
+    every other request for 0.13 s, so it is read in a worker thread (:class:`_Identity`)."""
     try:
         # The one resolver, so the fingerprint is of the home the rest of the process actually
         # uses, and the one fingerprint, the one every command compares with before it sends this
@@ -138,7 +139,119 @@ def _identity() -> tuple[str | None, bool]:
         home_id = home_gateway.home_id(config_loader.config_dir())
     except (OSError, RuntimeError):  # pragma: no cover — an unresolvable home must not 500 here
         home_id = None
-    return home_id, bool(root is not None and root.exists())
+    return home_id, _root_ok()
+
+
+def _root_ok() -> bool:
+    root = _serving_root()
+    try:
+        return bool(root is not None and root.exists())
+    except OSError:  # unreadable is not there, as an unknowable root is
+        return False
+
+
+#: How old the reading of the serving root may be before a health check starts a fresh one.
+ROOT_TTL_S = 1.0
+
+
+class _Identity:
+    """The health check's ``home_id`` and ``root_ok``, kept, so an answer never waits on the disk
+    after the first.
+
+    Even in a worker thread, the read held the answer: on a machine busy with an upload, a check
+    waited 0.12 s on the read and on the worker handing it back to the event loop, while the loop
+    itself turned every 18 ms (the upload tests' probe, macOS CI). Now:
+
+    - ``home_id`` is read once for each home named (:func:`_home_named_by`): it is the
+      fingerprint of that home, so it changes only when what names it does.
+    - ``root_ok`` is answered from the last reading. A reading older than :data:`ROOT_TTL_S` also
+      starts one fresh read in a worker thread, the one in flight shared by every check that
+      comes meanwhile, so a removed checkout reads ``false`` within about a second, or by the next
+      check after that.
+    - The first check, a new home, or a new way of finding the root (:func:`_serving_root`, which
+      only a test swaps) reads both now, in a worker thread, and answers with them.
+    """
+
+    def __init__(self) -> None:
+        #: What names the home (:func:`_home_named_by`) as it was read, and its ``home_id``.
+        self._home: tuple[object, str | None] | None = None
+        #: The way the root was found, when it was read, and ``root_ok``.
+        self._root: tuple[object, float, bool] | None = None
+        #: The one read in flight: the first read, or a fresh read of the root. Held until it is
+        #: done (:meth:`_read_done`).
+        self._reading: asyncio.Task | None = None
+
+    def forget(self) -> None:
+        """Read both again at the next check, as at the first."""
+        self._home = self._root = None
+
+    async def answer(self) -> tuple[str | None, bool]:
+        home = _home_named_by()
+        # A read already in flight may be the root's alone: once it is done, read both.
+        while self._unread(home):
+            await self._join(self._read_both(home))
+        assert self._home is not None and self._root is not None
+        if time.monotonic() - self._root[1] > ROOT_TTL_S:
+            self._join(self._read_root())  # not awaited: this check answers from the last reading
+        return self._home[1], self._root[2]
+
+    def _unread(self, home: object) -> bool:
+        return (
+            self._home is None
+            or self._home[0] != home
+            or self._root is None
+            or self._root[0] is not _serving_root
+        )
+
+    def _join(self, read) -> asyncio.Task:
+        """The read in flight on this loop, or *read*, started, when there is none."""
+        reading = self._reading
+        if (
+            reading is None
+            or reading.done()
+            or reading.get_loop() is not asyncio.get_running_loop()
+        ):
+            reading = self._reading = asyncio.get_running_loop().create_task(read)
+            reading.add_done_callback(self._read_done)
+        else:
+            read.close()
+        return reading
+
+    def _read_done(self, reading: asyncio.Task) -> None:
+        """Lets a read go once it is done, and takes its error. Until then this holds it: asyncio
+        holds a task only weakly, and no check awaits a fresh read of the root."""
+        if self._reading is reading:
+            self._reading = None
+        if not reading.cancelled() and (error := reading.exception()) is not None:
+            logger.warning("the health check's read failed: %r", error)
+
+    async def _read_both(self, home: object) -> None:
+        finder = _serving_root
+        home_id, root_ok = await asyncio.to_thread(_identity)
+        self._home = (home, home_id)
+        self._root = (finder, time.monotonic(), root_ok)
+
+    async def _read_root(self) -> None:
+        finder = _serving_root
+        root_ok = await asyncio.to_thread(_root_ok)
+        self._root = (finder, time.monotonic(), root_ok)
+
+
+def _home_named_by() -> object:
+    """What names the home, as the loader reads it and without the disk: ``PERSONALCLAW_HOME`` as
+    written (``home_override``), the default home (``default_config_dir``) and the resolvers
+    :func:`_identity` reaches (``config_loader.config_dir``, and the ``resolve_config_dir`` it
+    asks, which the suite's own fixture and some tests swap). The home's ``home_id`` changes only
+    when one of these does."""
+    return (
+        config_loader.home_override(),
+        config_loader.default_config_dir(),
+        config_loader.config_dir,
+        config_loader.resolve_config_dir,
+    )
+
+
+_IDENTITY = _Identity()
 
 
 def _safe_surfaces_flag() -> bool:
