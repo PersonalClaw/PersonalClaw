@@ -2,15 +2,20 @@
 
 Each row holds one rule of tools/ci/supply_chain.py over the whole tree, through the policy's
 exceptions in tools/ci/supply-chain.toml, with planted violations that must fail it and plants
-that must pass. The table's types, plant helpers and runner are
-tests/rails/test_ci_contract.py's, so a row here is held the same way as a row there.
+that must pass. The table's types and plant helpers are tests/rails/test_ci_contract.py's, and
+a row here is held as run_row holds a row there, with each control planted in one scaffold and
+put back rather than in a copy of it (:func:`_run_supply_row`).
 """
 
 from __future__ import annotations
 
 import datetime
+import functools
 import json
+import os
 import tomllib
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +38,6 @@ from test_ci_contract import (
     _plant,
     _plants,
     _write,
-    run_row,
     table_params,
 )
 
@@ -112,19 +116,105 @@ def _days(n: int) -> str:
     return (datetime.date.today() + datetime.timedelta(days=n)).isoformat()
 
 
+@functools.cache
+def _repo_tree() -> dict[str, str]:
+    """The files the supply-chain check reads in the repository, read once for every row."""
+    return supply_chain.read_tree(REPO)
+
+
 def _copy_supply_chain_files(root: Path) -> None:
-    for rel, text in supply_chain.read_tree(REPO).items():
+    for rel, text in _repo_tree().items():
         _write(root, rel, text)
 
 
-def _supply_row(name: str, rules: tuple[str, ...], controls: tuple[Control, ...]) -> Row:
+@dataclass(frozen=True)
+class _SupplyRow(Row):
+    #: The row's check of a tree already read: ``check`` is this over the tree at a root.
+    check_tree: Callable[[supply_chain.Tree], list[str]] | None = None
+
+
+def _supply_row(name: str, rules: tuple[str, ...], controls: tuple[Control, ...]) -> _SupplyRow:
     """A row over *rules*, or over every rule and the exceptions when *rules* is empty."""
 
-    def check(root: Path) -> list[str]:
-        found = supply_chain.check(supply_chain.read_tree(root), rules=rules)
+    def check_tree(tree: supply_chain.Tree) -> list[str]:
+        found = supply_chain.check(tree, rules=rules)
         return [str(v) for v in found if not rules or v.rule in rules]
 
-    return Row(name=name, check=check, scaffold=_copy_supply_chain_files, controls=controls)
+    def check(root: Path) -> list[str]:
+        return check_tree(supply_chain.read_tree(root))
+
+    return _SupplyRow(
+        name=name,
+        check=check,
+        scaffold=_copy_supply_chain_files,
+        controls=controls,
+        check_tree=check_tree,
+    )
+
+
+def _files(root: Path) -> dict[str, bytes]:
+    """Every file under *root*, by its path relative to *root*, with its bytes."""
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def _put_back(root: Path, scaffold: dict[str, bytes]) -> None:
+    """*root* as its *scaffold* was, after a control's plant: each file the plant changed or
+    removed written back, each file and folder it added removed. It compares every file, not the
+    tree the check reads: a plant can take a file out of that tree (a script's shebang)."""
+    folders = {parent.as_posix() for rel in scaffold for parent in Path(rel).parents}
+    for folder, _dirs, files in os.walk(root, topdown=False):
+        here = Path(folder)
+        for name in files:
+            rel = (here / name).relative_to(root).as_posix()
+            if rel not in scaffold:
+                (here / name).unlink()
+            elif (here / name).read_bytes() != scaffold[rel]:
+                (here / name).write_bytes(scaffold[rel])
+        if here.relative_to(root).as_posix() not in folders:
+            here.rmdir()
+    for rel, data in scaffold.items():
+        if not (root / rel).is_file():
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_bytes(data)
+
+
+def _run_supply_row(
+    row: _SupplyRow, subtests, tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
+    """``run_row``'s body for a supply-chain row, on one tree: the scaffold is written once, and
+    each control is planted in it, checked, and put back (:func:`_put_back`).
+
+    run_row copies the scaffold for each control, and those copies were most of a row's time:
+    68 files a copy, 101 copies in ``run-install``. The check still reads the planted tree for
+    each control, as there."""
+    check_tree = row.check_tree
+    assert check_tree is not None
+    root = tmp_path / "scaffold"
+    with subtests.test("the scaffold satisfies the check"):
+        row.scaffold(root)
+        scaffold = _files(root)
+        assert check_tree(supply_chain.read_tree(root)) == []
+    for control in row.controls:
+        with subtests.test(control.name):
+            try:
+                control.plant(root)
+                found = check_tree(supply_chain.read_tree(root))
+            finally:
+                _put_back(root, scaffold)
+            if control.fails:
+                assert found, f"the planted violation went unseen: {control.name}"
+                assert any(control.expect in v for v in found), "\n".join(found)
+            else:
+                assert found == [], "\n".join(found)
+    with subtests.test("the tree"):
+        violations = check_tree(_repo_tree())
+        assert violations == [], "\n".join(violations)
+    if row.on_tree is not None:
+        row.on_tree(request)
 
 
 def _together(name: str, *controls: Control, fails: bool = True, expect: str = "") -> Control:
@@ -2158,8 +2248,33 @@ ROW_TIMEOUTS = {
 }
 
 
+def test_a_plant_is_put_back_whatever_it_changed(tmp_path: Path) -> None:
+    """Every control of a row is planted in the one scaffold, so each plant must be undone before
+    the next: a file changed, a file removed, a folder removed, a file added, a folder added."""
+    root = tmp_path / "scaffold"
+    for rel in ("a/changed.yml", "a/removed.sh", "b/only.txt", "kept.json"):
+        _write(root, rel, f"{rel}\n")
+    scaffold = _files(root)
+    _write(root, "a/changed.yml", "planted\n")
+    (root / "a/removed.sh").unlink()
+    (root / "b/only.txt").unlink()
+    (root / "b").rmdir()
+    _write(root, "a/added.yml", "planted\n")
+    _write(root, "new/folder/added.sh", "planted\n")
+    _put_back(root, scaffold)
+    assert _files(root) == scaffold
+    assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == [
+        "a",
+        "a/changed.yml",
+        "a/removed.sh",
+        "b",
+        "b/only.txt",
+        "kept.json",
+    ]
+
+
 @pytest.mark.parametrize("row", table_params(SUPPLY_CHAIN_ROWS, ROW_TIMEOUTS))
 def test_the_supply_chain_holds_and_each_check_can_fail(
-    row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest
+    row: _SupplyRow, subtests, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
-    run_row(row, subtests, tmp_path, request)
+    _run_supply_row(row, subtests, tmp_path, request)
