@@ -37,10 +37,12 @@ export interface FilterSectionDef {
  *  This replaces the older pattern of lining up a filter Segmented + a sort
  *  <select> + a scope dropdown across the header — collapsing N competing widgets
  *  into one, consistent across every page. */
-export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
+export function FilterMenu({ sections, label = 'Filter', align = 'right', className }: {
   sections: FilterSectionDef[]
   label?: string
   align?: 'left' | 'right'
+  /** Added to the trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  className?: string
 }) {
   const activeCount = useMemo(
     () => sections.reduce((n, s) => n + (s.value !== s.defaultKey ? 1 : 0), 0),
@@ -60,7 +62,7 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right' }: {
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-label="Filter & sort" title="Filter & sort" aria-expanded={open}
           data-type="body-s"
-          className={`relative inline-flex items-center gap-1.5 h-10 rounded-pill px-4 transition-colors ${activeCount > 0 || open ? '' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}`}
+          className={`relative inline-flex items-center gap-1.5 h-10 rounded-pill px-4 transition-colors ${activeCount > 0 || open ? '' : 'bg-surface-container text-on-surface-var hover:bg-surface-high'}${className ? ` ${className}` : ''}`}
           style={activeCount > 0 || open ? accentChip : undefined}>
           <SlidersHorizontal size={14} />
           <span className="hidden sm:inline">{label}</span>

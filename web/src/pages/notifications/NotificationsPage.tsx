@@ -5,6 +5,7 @@ import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { InvestigateButton } from '../../ui/InvestigateButton'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { SidePanel } from '../../ui/SidePanel'
@@ -193,9 +194,9 @@ export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: P
           right={items && items.length > 0 ? (
             // Direct header actions (the header is otherwise empty now that the
             // filter lives on the page); each collapses to an icon when tight.
-            <HeaderActions>
-              {unread > 0 && <HeaderControl icon={CheckCheck} label="Mark all read" priority="primary" onClick={ackAll} />}
-              <HeaderControl icon={Trash2} label="Clear all" danger priority="low" onClick={clearAll} />
+            <HeaderActions overflowClassName={TOUCH_TARGET}>
+              {unread > 0 && <HeaderControl icon={CheckCheck} label="Mark all read" priority="primary" onClick={ackAll} className={TOUCH_TARGET} />}
+              <HeaderControl icon={Trash2} label="Clear all" danger priority="low" onClick={clearAll} className={TOUCH_TARGET} />
             </HeaderActions>
           ) : undefined}
         />
@@ -204,7 +205,7 @@ export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: P
       // to the Inbox's items.
       controls={(inboxFilters || items === undefined || items.length > 0)
         ? <ListControls results={{ count: (filtered ?? []).length, noun: 'notifications', active: filter !== 'all' }}>
-            <FilterMenu sections={inboxFilters ? [inboxFilters, filterSection] : [filterSection]} label="Show" />
+            <FilterMenu sections={inboxFilters ? [inboxFilters, filterSection] : [filterSection]} label="Show" className={TOUCH_TARGET} />
           </ListControls>
         : undefined}
       panel={open && (
@@ -383,11 +384,11 @@ function Row({ n, now, onOpen, onAck, onUnack, onDelete }: { n: NotificationItem
             an identity. The row shows title + the body's first line, and so does the name — capped,
             because the other half of this change fixed a tile named by 695 characters of its body. */}
         <InvestigateButton kind="notification" id={n.ts} backLink={`#/${notificationsAddress()}`} size={34}
-          label={`Investigate in chat: ${subject}`} />
+          label={`Investigate in chat: ${subject}`} className={TOUCH_TARGET} />
         {n.acked
-          ? <IconButton icon={Undo2} label={`Mark unread: ${subject}`} title="Mark unread" size={34} onClick={onUnack} />
-          : <IconButton icon={Check} label={`Mark read: ${subject}`} title="Mark read" size={34} onClick={onAck} />}
-        <IconButton icon={X} label={`Delete: ${subject}`} title="Delete" size={34} tone="danger" onClick={onDelete} />
+          ? <IconButton icon={Undo2} label={`Mark unread: ${subject}`} title="Mark unread" size={34} onClick={onUnack} className={TOUCH_TARGET} />
+          : <IconButton icon={Check} label={`Mark read: ${subject}`} title="Mark read" size={34} onClick={onAck} className={TOUCH_TARGET} />}
+        <IconButton icon={X} label={`Delete: ${subject}`} title="Delete" size={34} tone="danger" onClick={onDelete} className={TOUCH_TARGET} />
       </div>
     </motion.div>
     </ContextMenu>
