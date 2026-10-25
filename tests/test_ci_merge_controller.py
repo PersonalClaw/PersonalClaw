@@ -334,13 +334,14 @@ def test_a_head_waiting_on_codeql_and_its_contract_names_both_in_its_fence() -> 
     assert found.output["text"] == f"```{mc.WAITING_FENCE}\ncodeql\ncontract\n```\n"
 
 
-def test_a_definition_head_red_for_another_reason_is_not_marked_waiting() -> None:
+def test_a_definition_head_red_for_another_reason_waits_until_its_contract_reports() -> None:
     api = _changes(FakeApi())
     api.jobs(1, ("results", "completed", "failure"))
     _contract(api, {"status": "in_progress", "conclusion": None})
     found = mc.decide(api, REPO, RUN, CONTROLLER).posting
     assert found is not None and "waiting: main's CI contract" in found.output["summary"]
-    assert mc.WAITING_FENCE not in found.output.get("text", ""), "a sweep has nothing to clear"
+    assert found.output["title"] == "Red: attempt 1's `results` is 'failure'"
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\ncontract\n```\n"
 
 
 def test_a_definition_head_whose_contract_passed_is_green_and_names_it() -> None:
@@ -969,13 +970,20 @@ def test_an_analysis_of_another_commit_is_still_processing() -> None:
     assert "results are still processing" in _red(api).output["summary"]
 
 
-def test_a_red_with_any_reason_but_waiting_is_not_marked_waiting() -> None:
+def test_a_red_for_another_reason_that_also_waits_on_codeql_is_marked_waiting() -> None:
     api = FakeApi()
     api.codeql(HEAD, status="in_progress")
     api.jobs(1, ("results", "completed", "failure"))
     found = _red(api)
     assert "is 'in_progress', not finished" in found.output["summary"]
-    assert mc.WAITING_FENCE not in found.output.get("text", "")
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\ncodeql\n```\n"
+
+
+def test_a_red_with_nothing_pending_is_not_marked_waiting() -> None:
+    api = FakeApi()
+    api.jobs(1, ("results", "completed", "failure"))
+    found = _red(api)
+    assert mc.WAITING_FENCE not in found.output.get("text", ""), "a sweep has nothing to clear"
 
 
 APP = 5444147
@@ -1314,3 +1322,95 @@ def test_a_poster_run_whose_one_read_gives_no_answer_judges_no_waiting_head() ->
     query, _ = _asked(OSError("GraphQL answered 502"))
     assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query, limit=3) == []
     assert api.calls == [], "only the schedule's sweep reads every head"
+
+
+# ── A red for another reason is judged again until nothing waits (#4584 step 4) ───────────────
+
+
+@pytest.mark.parametrize(
+    "done, says",
+    [
+        ({}, None),
+        (
+            {"conclusion": "failure"},
+            "main's CI contract fails on its definitions: contract run "
+            f"https://github.com/{REPO}/actions/runs/4242 is 'failure'",
+        ),
+    ],
+    ids=["contract passed", "contract failed"],
+)
+def test_a_red_head_whose_contract_reports_gets_its_final_reasons_and_its_branch_goes(
+    tmp_path: Path, monkeypatch: Any, done: Mapping[str, Any], says: str | None
+) -> None:
+    """#5528's case: red for its own run, and waiting on its contract. Once the contract reports,
+    an unrelated poster run posts the final red, which no longer says it waits and names the
+    contract's failure when there is one, and the contract branch is deleted."""
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    api = _changes(FakeApi())
+    api.jobs(1, ("results", "completed", "failure"))
+    _contract(api)
+    first = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert first.posting is not None and first.dispatch == HEAD
+    _merge_runs(api, OWN_MERGE, [RUN])
+    _posted(api, _verdict(first.posting, 1))
+    _contract(api, done)
+    _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: MAIN})
+    _refs(api, mc.TRUSTED_PREFIX, {})
+    other = 777
+    run = api.answers[f"/repos/{REPO}/actions/runs/{RUN}"]
+    api.answers[f"/repos/{REPO}/actions/runs/{other}"] = {
+        **run,
+        "id": other,
+        "path": f"{WF}something-else.yml",
+    }
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", first.posting.output["text"])])))
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--run-id", str(other), "--controller-app-id", str(APP)]
+    argv += ["--controller-revision", CONTROLLER, "--out", str(out)]
+    assert mc.main(argv, get=api, query=query) == 0
+    [posted] = json.loads(out.read_text())
+    assert (posted["head_sha"], posted["conclusion"]) == (HEAD, "failure")
+    summary = posted["output"]["summary"]
+    assert "attempt 1's `results` is 'failure'" in summary
+    assert "waiting:" not in summary, "nothing it waited on is still said to be pending"
+    assert mc.WAITING_FENCE not in (posted["output"].get("text") or ""), "and it is judged no more"
+    if says is not None:
+        assert says in summary
+    lines = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
+    assert lines["post"] == "true" and lines["cleanup"] == CONTRACT_BRANCH
+
+
+def test_a_red_with_nothing_pending_is_never_judged_again() -> None:
+    api = FakeApi()
+    _merge_runs(api, OWN_MERGE, [RUN])
+    api.jobs(1, ("results", "completed", "failure"))
+    red = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert red is not None and mc.WAITING_FENCE not in red.output.get("text", "")
+    _posted(api, _verdict(red, 1))
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", red.output.get("text", ""))])))
+    assert mc.waiting_heads(query, REPO, APP) == []
+    api.calls.clear()
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query) == []
+    assert VERDICTS not in api.calls, "the one read names no head to read again"
+
+
+def test_an_unchanged_waiting_red_is_judged_to_the_same_bytes_and_not_posted_again() -> None:
+    """The sweep posts only what changed, so the same state must give the same verdict, byte for
+    byte: nothing in it may be a time, or follow the order the API happens to list things in."""
+    api = _changes(FakeApi())
+    api.jobs(1, ("results", "completed", "failure"))
+    api.codeql(HEAD, processed=("actions",))
+    _contract(api, {"status": "in_progress", "conclusion": None})
+    _merge_runs(api, OWN_MERGE, [RUN])
+    first = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert first is not None and mc.WAITING_FENCE in first.output["text"]
+    assert "results are still processing" in first.output["summary"]
+    # The same state, listed in another order.
+    for path, answer in list(api.answers.items()):
+        if "/code-scanning/" in path and isinstance(answer, list):
+            api.answers[path] = list(reversed(answer))
+    again = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert again is not None and json.dumps(again.body()) == json.dumps(first.body())
+    _posted(api, _verdict(first, 1))
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER) == [], "nothing changed, nothing posted"

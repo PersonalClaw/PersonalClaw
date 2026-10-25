@@ -54,12 +54,14 @@ trusted-run branch the old path left).
    ref (a job's success means its results were uploaded, not yet read); and no alert is open on
    that ref that is not open on ``main``. The ``CodeQL`` summary check is never read for its
    conclusion: GitHub computes it when the first language's analysis uploads, so it reads
-   ``neutral`` on most pull requests. A red whose only reasons are CodeQL still running or still
-   processing is marked waiting, and the poster judges such heads again: every ten minutes, for
-   the open pull requests whose newest verdict is a waiting red, posting only what changed; and
-   when GitHub's CodeQL workflow or its summary check completes. The workflow's wake fires (proved
-   on main), but at the run's completion, which can come before its last upload is processed,
-   so the schedule stays for that gap.
+   ``neutral`` on most pull requests. A red with a reason that waits (CodeQL still running or
+   still processing, or the head's contract run not reported) is marked waiting, whatever its
+   other reasons, and the poster judges such heads again until nothing waits, so no red says it
+   waits on what has finished: by the sweep of the open pull requests whose newest verdict is a
+   waiting red (on its schedule, and a few heads on every other run), posting only what changed;
+   and when GitHub's CodeQL workflow or its summary check completes. The workflow's wake fires
+   (proved on main), but at the run's completion, which can come before its last upload is
+   processed, so the sweep stays for that gap.
 7. A green carries the receipt ``verify-check-run`` reads (``merge_verdict.render_output``):
    this controller's commit on ``main``, the head and its tree, the runner and the definitions
    commit (``main``'s tip, or the head for a head that changes them, with the contract run that
@@ -120,12 +122,12 @@ CONTRACT_PREFIX = "contract-run/"
 CONTRACT_TITLE = "Contract {head}"
 #: The old path's trusted-run branches, which the sweep still deletes.
 TRUSTED_PREFIX = "trusted-run/"
-#: A reason that only waits, on CodeQL to finish or to process or on the head's contract run to
-#: report, which a later look may clear.
+#: A reason that waits, on CodeQL to finish or to process or on the head's contract run to
+#: report, which a later look clears.
 WAITING = "waiting: "
 #: The waiting reason of a head whose contract run has not reported.
 WAITING_CONTRACT = f"{WAITING}main's CI contract over its definitions "
-#: The fenced block a red's output text carries when every reason only waits.
+#: The fenced block a red's output text carries while any of its reasons waits.
 WAITING_FENCE = "merge-verdict-waiting"
 #: A trusted-run branch the old path left, older than this, is swept away.
 SWEEP_AFTER = datetime.timedelta(days=1)
@@ -382,9 +384,12 @@ def _red(run: Run, reasons: list[str], head: str) -> Posting:
         + [f"From Merge run {run.url or run.id}, attempt {run.attempt}.", "", ADVISORY]
     )
     output = {"title": f"Red: {reasons[0]}"[:255], "summary": summary}
-    if all(r.startswith(WAITING) for r in reasons):
-        # What it waits on, one per line: the sweep reads only the fence.
-        waits = ["contract" if r.startswith(WAITING_CONTRACT) else "codeql" for r in reasons]
+    waiting = [r for r in reasons if r.startswith(WAITING)]
+    if waiting:
+        # What it waits on, one per line: the sweep reads only the fence. A red for another
+        # reason too is marked as well, so that once the wait ends its reasons are read again:
+        # the fence goes with the last wait, so no head is judged again for ever.
+        waits = ["contract" if r.startswith(WAITING_CONTRACT) else "codeql" for r in waiting]
         output["text"] = f"```{WAITING_FENCE}\n" + "\n".join(sorted(set(waits))) + "\n```\n"
     return Posting(head, "failure", output, run.url, f"{run.id}/{run.attempt}")
 
@@ -713,7 +718,7 @@ query($owner: String!, $name: String!, $app: Int!) {
 
 def waiting_heads(query: Query, repo: str, app: int) -> list[str] | None:
     """The heads of the open pull requests into main whose newest merge verdict of the App's is a
-    red that only waits (on CodeQL or on its contract run), the oldest such verdict first, from
+    red that still waits (on CodeQL or on its contract run), the oldest such verdict first, from
     one GraphQL read. None when that read gives no answer this reads, or more pull requests than
     a sweep looks at: the sweep then reads each head itself."""
     owner, name = repo.split("/", 1)
@@ -752,7 +757,7 @@ def judge_waiting(
     skip: frozenset[str] = frozenset(),
 ) -> list[Outcome]:
     """Every open pull request into main whose newest merge verdict, the controller App's, is a
-    red that only waits (on CodeQL, or on its contract run, whose completion wakes nothing): judge
+    red that still waits (on CodeQL, or on its contract run, whose completion wakes nothing): judge
     its head again, and keep only what changed. A head whose contract run has reported comes back
     with its verdict and its contract branch to delete.
 
@@ -770,7 +775,7 @@ def judge_waiting(
             return []
         waiting = [h for h in waiting if h not in skip][:limit]
     if waiting is not None and not waiting:
-        print("no open pull request's merge verdict only waits: nothing to judge again")
+        print("no open pull request's merge verdict still waits: nothing to judge again")
         return []
     if query is not None and waiting is None:
         print("the one read of the open heads gave no answer: reading each head")
@@ -789,10 +794,12 @@ def judge_waiting(
         outcome = rejudge(get, repo, sha, controller_revision)
         output = newest.get("output")
         was: Mapping[str, Any] = output if isinstance(output, Mapping) else {}
+        # The summary too: a head red for another reason keeps its title when its wait ends.
         same = outcome.posting is not None and (
             outcome.posting.conclusion,
             outcome.posting.output.get("title"),
-        ) == (newest.get("conclusion"), was.get("title"))
+            outcome.posting.output.get("summary"),
+        ) == (newest.get("conclusion"), was.get("title"), was.get("summary"))
         if outcome.posting is not None and not same:
             changed.append(outcome)
     return changed
@@ -1095,7 +1102,7 @@ def main(
     which.add_argument("--run-id", type=int, help="a completed run of Merge or Dependency review")
     which.add_argument("--check-run-id", type=int, help="a completed CodeQL check run")
     which.add_argument(
-        "--waiting", action="store_true", help="judge again every open head whose red only waits"
+        "--waiting", action="store_true", help="judge again every open head whose red still waits"
     )
     one.add_argument(
         "--controller-app-id",
@@ -1153,7 +1160,7 @@ def main(
         # Only one head's own outcome starts a contract run; a sweep never does.
         single = outcomes[0] if len(outcomes) == 1 and not args.waiting else None
         if single is not None and args.controller_app_id:
-            # Whatever woke this run, a few heads whose red only waits are judged again too: the
+            # Whatever woke this run, a few heads whose red still waits are judged again too: the
             # schedule fires far less often than it says, and a contract run wakes nothing.
             mine = frozenset({single.posting.head_sha} if single.posting else set())
             graph = query if query is not None else None if get else github_graphql(token)

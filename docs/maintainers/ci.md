@@ -360,25 +360,29 @@ verdict says all it must fix:
   request that planted one `js/code-injection` showed exactly that alert there and not on
   `main`, with all three analyses green. The `CodeQL` summary check is never read for its
   conclusion: GitHub computes it when the first language's analysis uploads, so it reads
-  `neutral` on most pull requests. A red whose only reasons wait on CodeQL (not run, still running,
-  still processing) or on its contract run is marked waiting in its output, and such heads are
-  judged again: when GitHub's CodeQL workflow completes (followed by name, matched by its run's
-  path), when the summary check completes (`check_run`, which starts a runner only for code
-  scanning's CodeQL check), and by the sweep, for open pull requests whose newest verdict is a
-  waiting red, posting only a verdict that changed. The sweep runs every ten minutes by its cron,
-  but GitHub fires that schedule far less often: 7 times of 144 in the 24 hours to 09:47 UTC on
-  2026-10-25, 110 to 283 minutes apart. So every poster run, whatever woke it, also judges again the
-  three heads whose waiting verdict is oldest (`WAITING_PER_RUN`), past its own head and only when
-  the one GraphQL read answers. Heads under review wake the poster all the time, so a waiting head
-  is picked up within minutes of any activity. The CodeQL workflow's wake is proved: the completion
-  of main's CodeQL run 40071173659 started poster run 40072081053. The sweep stays all the same, for
-  one gap: that wake fires when the run completes, right after its last language uploads, and a head
-  judged before that upload is processed waits with nothing left to wake it, since the summary check
-  fired at the first upload. The sweep closes that gap, and it is the only wake for a head whose
-  contract run has reported. Its first read is one GraphQL query of every open pull request's head
-  and the App's verdicts on it: when none waits, the sweep ends there; otherwise only the heads that
-  wait are read again, through the REST reads that stay the gate, and a query that gives no answer
-  leaves the sweep reading every head.
+  `neutral` on most pull requests. A red with a reason that waits on CodeQL (not run, still running,
+  still processing) or on its contract run is marked waiting in its output, whatever its other
+  reasons, and such heads are judged again until nothing waits, so a red never says it waits on
+  something that has finished: a head red for another reason gets its final reasons, the contract's
+  result among them, and its contract branch is deleted. The mark goes with the last wait, so no
+  head is judged again for ever. Such heads are judged again: when GitHub's CodeQL workflow
+  completes (followed by name, matched by its run's path), when the summary check completes
+  (`check_run`, which starts a runner only for code scanning's CodeQL check), and by the sweep, for
+  open pull requests whose newest verdict is a waiting red, posting only a verdict that changed. The
+  sweep runs every ten minutes by its cron, but GitHub fires that schedule far less often: 7 times
+  of 144 in the 24 hours to 09:47 UTC on 2026-10-25, 110 to 283 minutes apart. So every poster run,
+  whatever woke it, also judges again the three heads whose waiting verdict is oldest
+  (`WAITING_PER_RUN`), past its own head and only when the one GraphQL read answers. Heads under
+  review wake the poster all the time, so a waiting head is picked up within minutes of any
+  activity. The CodeQL workflow's wake is proved: the completion of main's CodeQL run 40071173659
+  started poster run 40072081053. The sweep stays all the same, for one gap: that wake fires when
+  the run completes, right after its last language uploads, and a head judged before that upload is
+  processed waits with nothing left to wake it, since the summary check fired at the first upload.
+  The sweep closes that gap, and it is the only wake for a head whose contract run has reported. Its
+  first read is one GraphQL query of every open pull request's head and the App's verdicts on it:
+  when none waits, the sweep ends there; otherwise only the heads that wait are read again, through
+  the REST reads that stay the gate, and a query that gives no answer leaves the sweep reading every
+  head.
 - **What takes a runner:** both jobs' one condition starts one only for what can judge a pull
   request's head. The schedule and a completed dispatch off `main` (a contract run, a dispatch
   proof) always do. A pull request's wakes, code scanning's CodeQL check and a completed run of
