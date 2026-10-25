@@ -151,6 +151,17 @@ describe('below 768 px the right corner folds the terminal and the theme into on
     expect(toggle).toHaveBeenCalledTimes(1)
   })
 
+  it("draws a vertical ⋮, so it is not taken for the page's own `…` beside it", () => {
+    // At 390 px the corner's More sits next to a chat's More actions (`…`): two of one glyph that
+    // open two different menus. Their names already tell them apart; the glyph does too now.
+    windowOf(390)
+    render(<ShellCornerRight terminalOpen={false} onToggleTerminal={() => {}} navigate={() => {}} />)
+    const glyph = screen.getByRole('button', { name: 'More' }).querySelector('svg')
+    const cls = glyph?.getAttribute('class') ?? ''
+    expect(cls, cls).toMatch(/\blucide-(ellipsis-vertical|more-vertical)\b/)
+    expect(cls, cls).not.toMatch(/\blucide-(ellipsis|more-horizontal)\b(?!-)/)
+  })
+
   it('names the terminal Hide terminal while it is open', async () => {
     windowOf(412)
     render(<ShellCornerRight terminalOpen onToggleTerminal={() => {}} navigate={() => {}} />)
