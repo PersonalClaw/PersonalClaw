@@ -60,9 +60,11 @@ describe.each([
 
   it('truncates its title with an ellipsis and keeps a gap before the controls', () => {
     const slot = leftSlot(contentAligned)
-    // `truncate` = overflow-hidden + text-overflow:ellipsis + nowrap. Without it the text is
-    // cut mid-glyph at best, and paints through the slot at worst.
-    expect(slot.className).toMatch(/\[&_\[data-type\]\]:truncate/)
+    // One line, clipped at the slot's edge with an ellipsis. Without it the text is cut mid-glyph
+    // at best, and paints through the slot at worst.
+    expect(slot.className).toMatch(/\[&_\[data-type\]\]:overflow-x-clip/)
+    expect(slot.className).toMatch(/\[&_\[data-type\]\]:text-ellipsis/)
+    expect(slot.className).toMatch(/\[&_\[data-type\]\]:whitespace-nowrap/)
     // A title flush against the control row reads as broken rather than truncated; measured
     // gapToControls: 0 on all six members before this.
     expect(slot.className).toMatch(/\[&_\[data-type\]\]:pr-s/)
@@ -74,6 +76,19 @@ describe.each([
     // re-establishes `min-width: auto` and the text overflows again despite `truncate`.
     expect(slot.className).toMatch(/\[&_div\]:min-w-0/)
     expect(slot.className).toMatch(/\[&_\[data-type\]\]:min-w-0/)
+  })
+
+  it('clips its title across only, so a tall glyph is never cut at the top or bottom', () => {
+    // The title font's glyph box is about 1.25 em and title-l's line is 1.2 em. Under `truncate`,
+    // whose overflow is hidden on both axes, the UI matrix measured the title 50 px tall in a
+    // 48 px box at 200% text zoom (#/inbox, #/knowledge and about 30 other rows). `overflow-x:
+    // clip` leaves `overflow-y` visible: `hidden` on one axis would turn the other's `visible`
+    // into `auto`, and clip it again.
+    const slot = leftSlot(contentAligned)
+    const onTitle = slot.className.split(/\s+/).filter((c) => c.startsWith('[&_[data-type]]:')).map((c) => c.slice('[&_[data-type]]:'.length))
+    expect(onTitle).not.toContain('truncate')
+    expect(onTitle.filter((c) => /^overflow-(hidden|clip|auto|scroll)$|^overflow-y-/.test(c)), onTitle.join(' ')).toEqual([])
+    expect(onTitle).toContain('overflow-x-clip')
   })
 
   it('does NOT clip the slot itself (that would hide control rows, not truncate text)', () => {

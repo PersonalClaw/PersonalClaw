@@ -8,6 +8,7 @@ const doc: UiDoc = {
     'The shell-corner notification control: a bell with an unread counter that opens a shade of the few most-recent notifications. Each can be marked read / dismissed in place or opened (jumps to the full feed, deep-linked to the item); the footer opens the full feed, the Notifications filter of the Inbox. Self-refreshes via a visibility-aware poll plus live WS updates.',
   props: [
     { name: 'navigate', description: 'Router navigation function. Opening a notification calls navigate(`inbox?filter=notifications&open=<ts>`); the footer calls navigate(`inbox?filter=notifications`), the Notifications filter of the Inbox.' },
+    { name: 'className', description: "Extra classes on the bell trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) the shell gives it." },
   ],
   bestPractices: [
     { guidance: true, description: 'Wire navigate to the app router so opening a notification deep-links to `inbox?filter=notifications&open=<ts>` and the footer routes to the full feed, the Notifications filter of the Inbox.' },

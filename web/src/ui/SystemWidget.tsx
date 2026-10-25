@@ -21,7 +21,10 @@ import { connectionWords, useGatewayConnection } from '../app/gatewayConnection'
  *    and auth merged in), opening up from the status line. Click outside to close. Reads
  *    /api/system while the card is open, and /api/auth-status.
  *  Deliberately omits Ollama-specific status (vendor leakage). */
-export function SystemWidget() {
+export function SystemWidget({ className }: {
+  /** Added to the trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  className?: string
+} = {}) {
   const connection = useGatewayConnection()
   const { state: status, check } = connection
   const [sys, setSys] = useState<SystemInfo | null>(null)
@@ -74,7 +77,7 @@ export function SystemWidget() {
     <div ref={ref} className="relative flex min-w-0 items-center">
       <button ref={triggerRef} type="button" onClick={openCard}
         aria-label={`System status — ${statusLabel}`} title={statusLabel}
-        className="flex h-6 min-w-6 items-center gap-s rounded-pill px-1.5 transition-colors hover:bg-surface-high"
+        className={`flex h-6 min-w-6 items-center gap-s rounded-pill px-1.5 transition-colors hover:bg-surface-high${className ? ` ${className}` : ''}`}
         style={open ? { background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' } : undefined}>
         <span className="size-2 shrink-0 rounded-full" style={{ background: dotColor }} />
         {/* Quiet while connected: the dot alone. Otherwise the state in words, which the control's

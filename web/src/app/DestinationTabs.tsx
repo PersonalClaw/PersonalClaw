@@ -1,6 +1,7 @@
 import { Suspense, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Segmented } from '../ui/Segmented'
+import { TOUCH_TARGET } from '../ui/Toggle'
 import { CornersClearedAbove, TopBar } from '../ui/TopBar'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
@@ -13,6 +14,12 @@ export interface DestinationTab<Id extends string = string> {
   /** The tab's address, after `#/`. */
   readonly address: string
 }
+
+/** The folded pill's 44 px floor below 1024 px. TopBar gives every `[data-type]` in its left slot
+ *  `min-width: 0` (its title rule), from a descendant selector that outranks a plain class, and the
+ *  pill carries a `data-type`. So the width half is marked important here, or the pill stays
+ *  32 px wide inside a 44 px floor. */
+const PILL_TARGET = `${TOUCH_TARGET} max-lg:min-w-11!`
 
 /** A destination's tab strip over the page its address names (Capabilities, #3817; Library,
  *  #3815).
@@ -28,7 +35,8 @@ export interface DestinationTab<Id extends string = string> {
  *  destination for where you were before it.
  *
  *  Below the width the labels need, the strip folds into one pill naming the tab, which opens the
- *  others (`Segmented`'s `collapse="menu"`), icon-only on a phone. */
+ *  others (`Segmented`'s `collapse="menu"`), icon-only on a phone. Below 1024 px that pill is a
+ *  44 px target (`TOUCH_TARGET`), as the shell's corner controls are. */
 export function DestinationTabs({ name, tabs, tab, navigate, fallback, children }: Pick<RouteProps, 'navigate'> & {
   /** The destination's name, which names the strip. */
   name: string
@@ -49,7 +57,7 @@ export function DestinationTabs({ name, tabs, tab, navigate, fallback, children 
   return (
     <div className="flex h-full flex-col">
       <TopBar keepCornerPadding left={
-        <Segmented ariaLabel={name} collapse="menu" iconOnly={isMobile} value={tab} onChange={choose}
+        <Segmented ariaLabel={name} collapse="menu" collapsedClassName={PILL_TARGET} iconOnly={isMobile} value={tab} onChange={choose}
           options={tabs.map(({ id, label, icon }) => ({ key: id, label, icon }))} />
       } />
       <div className="min-h-0 flex-1">

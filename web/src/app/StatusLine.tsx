@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { SystemWidget } from '../ui/SystemWidget'
+import { TOUCH_TARGET } from '../ui/Toggle'
 import { WidgetBoundary } from './ErrorBoundary'
 import { useGatewayConnection } from './gatewayConnection'
 import { useIsMobile } from './useIsMobile'
@@ -15,18 +16,21 @@ import { useIsMobile } from './useIsMobile'
  *  Focus mode (`focusMode`) hides it with the sidebar and the side pane, so the work keeps the
  *  window, on every width; while the gateway isn't answering it shows anyway, since that is the one
  *  thing the shell must never hide. Connecting is not lost, so a load in focus mode never flashes
- *  it. A lost connection that lasts escalates to `DisconnectedBanner`, over the page. */
+ *  it. A lost connection that lasts escalates to `DisconnectedBanner`, over the page.
+ *
+ *  Below 1024 px the connection control is a 44 px target (`TOUCH_TARGET`), so the line is 44 px
+ *  tall there to hold it. */
 export function StatusLine({ right, focusMode = false }: { right?: ReactNode; focusMode?: boolean }) {
   const isMobile = useIsMobile()
   const { state } = useGatewayConnection()
   if (focusMode && state !== 'disconnected') return null
   return (
     <footer aria-label="Status" data-type="caption"
-      className="flex h-6 shrink-0 items-center gap-m border-t border-outline-variant/40 px-s text-on-surface-low"
+      className="flex h-6 max-lg:h-11 shrink-0 items-center gap-m border-t border-outline-variant/40 px-s text-on-surface-low"
       style={{ background: 'var(--color-canvas)' }}>
       {/* In its own boundary, as it was in the corner: a throw leaves a glyph and Retry here, and
           the page above keeps working. */}
-      <WidgetBoundary what="the system status" compact><SystemWidget /></WidgetBoundary>
+      <WidgetBoundary what="the system status" compact><SystemWidget className={TOUCH_TARGET} /></WidgetBoundary>
       {!isMobile && right ? <div className="ml-auto flex min-w-0 items-center gap-m">{right}</div> : null}
     </footer>
   )

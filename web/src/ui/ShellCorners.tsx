@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { PanelLeftClose, PanelLeftOpen, SquareTerminal } from 'lucide-react'
+import { MoreHorizontal, PanelLeftClose, PanelLeftOpen, SquareTerminal } from 'lucide-react'
 import { spring } from '../design/motion'
-import { ThemeControl } from './TopBar'
+import { ThemeControl, useThemeCycle } from './TopBar'
+import { MenuRow, Popover } from './Popover'
 import { WidthPill } from './WidthPill'
 import { NotificationBell } from './NotificationBell'
 import { NeedsYouBadge } from './NeedsYouBadge'
@@ -11,6 +12,7 @@ import { useIsMobile } from '../app/useIsMobile'
 import { WidgetBoundary } from '../app/ErrorBoundary'
 import { accentChip } from '../design/accent'
 import { bindingLabel } from '../app/keymap'
+import { TOUCH_TARGET } from './Toggle'
 
 /** The app shell's two persistent CORNER regions — not a full header row, just
  *  the two corners that carry native shell controls, floating above page content:
@@ -45,7 +47,7 @@ export function ShellCornerLeft({ collapsed, onToggle, focusMode = false }: {
     <div ref={ref} className="absolute left-0 top-0 z-30 py-2">
       <button type="button" onClick={onToggle} data-rail-toggle=""
         aria-label={label} title={`${label} (${key})`}
-        className="grid h-9 w-8 place-items-center rounded-r-lg border border-l-0 border-outline-variant/40 bg-surface-low/80 text-on-surface-low backdrop-blur-sm transition-colors hover:bg-surface-low hover:text-on-surface">
+        className={`grid h-9 w-8 place-items-center rounded-r-lg border border-l-0 border-outline-variant/40 bg-surface-low/80 text-on-surface-low backdrop-blur-sm transition-colors hover:bg-surface-low hover:text-on-surface ${TOUCH_TARGET}`}>
         {/* the collapse/expand glyph morphs (spring scale+fade key-swap) as the
             rail toggles, so the pull-tab reflects the state change with life */}
         <AnimatePresence mode="wait" initial={false}>
@@ -58,9 +60,54 @@ export function ShellCornerLeft({ collapsed, onToggle, focusMode = false }: {
   )
 }
 
+/** Below this width the right corner folds Open terminal and Theme into one More (`CornerMore`),
+ *  and its three 44 px targets (`TOUCH_TARGET`) sit edge to edge with no padding around them
+ *  (`max-md:`, the same 768 px). Four targets made the corner 201 px wide at 390 and three with
+ *  their gaps 153, and a started chat's header stacked below the corners at 390 (116 px, not 56);
+ *  at 133 it is one row at 390 and 412. From 768 px up the corner is as it was. */
+const FOLD_QUERY = '(max-width: 767px)'
+
+function useFoldsTheCorner(): boolean {
+  const [folds, setFolds] = useState(() => typeof window !== 'undefined' && window.matchMedia(FOLD_QUERY).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(FOLD_QUERY)
+    const onChange = () => setFolds(mq.matches)
+    mq.addEventListener('change', onChange)
+    onChange()
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return folds
+}
+
+/** The phone corner's More: Open terminal (with its shortcut) and Theme, in the corner's order and
+ *  by the names their buttons have, as rows of one menu. */
+function CornerMore({ terminalOpen, onToggleTerminal }: { terminalOpen: boolean; onToggleTerminal: () => void }) {
+  const theme = useThemeCycle()
+  const ThemeIcon = theme.icon
+  return (
+    <Popover align="right" width={260} placement="bottom" portal
+      trigger={(open, toggle) => (
+        <button type="button" onClick={toggle} aria-label="More" title="More: the terminal and the theme" aria-expanded={open}
+          className={`grid size-7 place-items-center rounded-pill transition-colors ${TOUCH_TARGET}`}
+          style={open || terminalOpen ? accentChip : { color: 'var(--color-on-surface-low)' }}>
+          <MoreHorizontal size={16} />
+        </button>
+      )}>
+      {(close) => (
+        <div className="flex flex-col gap-0.5">
+          <MenuRow icon={<SquareTerminal size={16} />} label={terminalOpen ? 'Hide terminal' : 'Open terminal'} nameIsLabel
+            hint={bindingLabel('drawer')} selected={terminalOpen} onClick={() => { onToggleTerminal(); close() }} />
+          <MenuRow icon={<ThemeIcon size={16} />} label={theme.label} nameIsLabel onClick={() => { theme.cycle(); close() }} />
+        </div>
+      )}
+    </Popover>
+  )
+}
+
 /** Right corner — the screen's top-right. Terminal-drawer toggle + content-width + what waits on
- *  you + notifications + theme as native shell controls, above any page chrome. Publishes
- *  width to `--shell-corner-r`. */
+ *  you + notifications + theme as native shell controls, above any page chrome. Below 768 px the
+ *  terminal and the theme fold into one More (`CornerMore`). Publishes width to
+ *  `--shell-corner-r`. */
 export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: { terminalOpen: boolean; onToggleTerminal: () => void; navigate: (path: string) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   useShellCornerWidth(ref, '--shell-corner-r')
@@ -68,21 +115,26 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
   // On mobile the content-width preset is force-ignored (always full width), so
   // the width control has nothing to do — drop it from the corner cluster.
   const isMobile = useIsMobile()
+  const folds = useFoldsTheCorner()
   return (
     // Flush to the screen's top-right corner: the control cluster sits tight to
     // the top + right edges, rounded only on the inner (bottom-left) corner so it
     // reads as connected to the screen edges rather than floating.
     <div ref={ref} className="absolute right-0 top-0 z-30 flex items-center">
-      <div className="flex items-center gap-1 rounded-bl-xl border border-r-0 border-t-0 border-outline-variant/40 bg-surface-low/80 px-1.5 py-1.5 backdrop-blur-sm">
-        <button type="button" onClick={onToggleTerminal}
-          aria-label={terminalOpen ? 'Hide terminal' : 'Open terminal'}
-          title={`${terminalOpen ? 'Hide terminal' : 'Open terminal'} (${bindingLabel('drawer')})`}
-          className="grid size-7 place-items-center rounded-pill transition-colors"
-          style={terminalOpen
-            ? accentChip
-            : { color: 'var(--color-on-surface-low)' }}>
-          <SquareTerminal size={16} />
-        </button>
+      <div data-shell-corner-cluster className="flex items-center gap-1 max-md:gap-0 rounded-bl-xl border border-r-0 border-t-0 border-outline-variant/40 bg-surface-low/80 px-1.5 max-md:px-0 py-1.5 max-md:py-0 backdrop-blur-sm">
+        {folds ? (
+          <WidgetBoundary what="the terminal and theme menu" compact><CornerMore terminalOpen={terminalOpen} onToggleTerminal={onToggleTerminal} /></WidgetBoundary>
+        ) : (
+          <button type="button" onClick={onToggleTerminal}
+            aria-label={terminalOpen ? 'Hide terminal' : 'Open terminal'}
+            title={`${terminalOpen ? 'Hide terminal' : 'Open terminal'} (${bindingLabel('drawer')})`}
+            className={`grid size-7 place-items-center rounded-pill transition-colors ${TOUCH_TARGET}`}
+            style={terminalOpen
+              ? accentChip
+              : { color: 'var(--color-on-surface-low)' }}>
+            <SquareTerminal size={16} />
+          </button>
+        )}
         {/* Each control renders inside its own boundary: one that throws leaves a glyph and Retry
             in its slot, and its neighbours and the rest of the app keep working. With none, the
             System status popover throwing on one poll unmounted the whole app. */}
@@ -92,13 +144,13 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
             <WidgetBoundary what="the content width control" compact><WidthPill /></WidgetBoundary>
           </>
         )}
-        <WidgetBoundary what="what waits on you" compact><NeedsYouBadge navigate={navigate} /></WidgetBoundary>
-        <WidgetBoundary what="notifications" compact><NotificationBell navigate={navigate} /></WidgetBoundary>
-        <WidgetBoundary what="the theme control" compact><ThemeControl /></WidgetBoundary>
+        <WidgetBoundary what="what waits on you" compact><NeedsYouBadge navigate={navigate} className={TOUCH_TARGET} /></WidgetBoundary>
+        <WidgetBoundary what="notifications" compact><NotificationBell navigate={navigate} className={TOUCH_TARGET} /></WidgetBoundary>
+        {!folds && <WidgetBoundary what="the theme control" compact><ThemeControl className={TOUCH_TARGET} /></WidgetBoundary>}
         {/* No-model degraded-mode chip — self-polling;
             renders nothing unless a model-dependent surface is on its LLM-free floor. The gateway
             connection is the status line's (`app/StatusLine`). */}
-        <WidgetBoundary what="the model status" compact><DegradedChip /></WidgetBoundary>
+        <WidgetBoundary what="the model status" compact><DegradedChip className={TOUCH_TARGET} /></WidgetBoundary>
       </div>
     </div>
   )
