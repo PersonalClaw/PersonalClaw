@@ -1529,31 +1529,34 @@ tag's push, which is how a release measures its commit ([the release tags](#the-
   on that leg's runner and Python, and `shard-union`, which holds each gating leg's shards to it,
   each test id once, and `shard-union-canary`, the canary's, advisory as the canary is (see "The
   suite's shards").
-- **`report`** runs last, whatever the legs concluded. It writes the record (canonical JSON)
-  as the artifact `breadth-evidence-<sha256>`, kept 90 days, and puts the digest in the
-  summary. It keeps one issue per red leg, titled `breadth: <leg> is red`, and reads only what
-  the workflow's own bot wrote on it (its search names the bot as author, and a full or
-  incomplete page is unreadable). Each red adds its inputs to the issue. A green on inputs that
-  differ from every red's closes it. A green on any red's inputs is a flake: it is added to the
-  issue, does not close it, and the record keeps the leg red. A rerun of the run produces one,
-  whatever the clock says, because it keeps the run's night. So does a later night of the
-  security corpus, the canary or the randomized-order leg while none of their recorded inputs
-  has changed: they stay red until a change of input, or until the issue is closed by hand. The
-  randomized-order leg's seeds are no input (its entries keep them beside their inputs), so a
-  green on the next night's seeds keeps its issue open. The installer smoke and the
+- **`report`** runs last, whatever the legs concluded. It writes the record (canonical JSON) as
+  the artifact `breadth-evidence-<sha256>`, kept 90 days, and puts the digest in the summary. It
+  keeps one issue per red leg, titled `breadth: <leg> is red`, and reads only what the workflow's
+  own bot wrote on it. One search, every page of it, finds all the bot's open `breadth: ` issues,
+  and the report matches them to legs by exact title; GitHub calling the results incomplete, or
+  pages that hold fewer issues than it counted, is unreadable. Each red adds its inputs to the
+  issue. A green on inputs that differ from every red's closes it. A green on any red's inputs is
+  a flake: it is added to the issue, does not close it, and the record keeps the leg red. A rerun
+  of the run produces one, whatever the clock says, because it keeps the run's night. So does a
+  later night of the security corpus, the canary or the randomized-order leg while none of their
+  recorded inputs has changed: they stay red until a change of input, or until the issue is closed
+  by hand. The randomized-order leg's seeds are no input (its entries keep them beside their
+  inputs), so a green on the next night's seeds keeps its issue open. The installer smoke and the
   audit record the night as an input, because their outside state moves daily, so for them the
   next scheduled night is a changed input. It holds `issues: write` and writes issues only on
   `main`.
 - **A shard that writes no entry is red,** never absent. Its runner was lost, or it failed
   before it recorded anything. It ran on no inputs, so its red never hides the inputs an
   earlier red ran on, and no later run carries it: the next run looks past it to the shard's
-  last measured result. A leg whose issue cannot be read has its greens recorded red, marked
-  `unsettled`, which no later run carries; a red it measured stays a red and opens the issue.
-  The record is still written. The issues step tries every leg, and fails at the end naming
-  each one it could not write.
+  last measured result.
+- **When the issues cannot be read,** the report says so once, with gh's own error, and fails.
+  No leg is red for it: every green keeps its green, marked `unsettled`, which no later run
+  carries, and a red it measured stays a red. The record is still written, and no issue is
+  opened, updated or closed. The issues step tries every leg, and fails at the end naming each
+  one it could not write.
 
 A record satisfies a release alone only when it holds every shard, none of them carried, and
-all of them green.
+all of them green and measured.
 
 ### Off `main`, nothing is reused
 

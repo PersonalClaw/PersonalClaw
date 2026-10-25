@@ -220,7 +220,7 @@ def carried(earlier: Mapping[str, Any], run_id: int, record_digest: str) -> dict
 
 def satisfies_release_alone(record: Mapping[str, Any]) -> bool:
     """A record satisfies a release alone only when every expected shard ran in it, and every
-    one is green. A record that lacks a shard does not.
+    one is green and measured (:func:`measured`). A record that lacks a shard does not.
 
     A reused leg's result belongs to the record it names, which the release gate follows.
     """
@@ -228,15 +228,22 @@ def satisfies_release_alone(record: Mapping[str, Any]) -> bool:
     if not isinstance(legs, Mapping) or not legs or not expected_keys() <= set(legs):
         return False
     return all(
-        isinstance(leg, Mapping) and not leg.get("reused_from") and leg.get("result") == GREEN
+        isinstance(leg, Mapping)
+        and not leg.get("reused_from")
+        and leg.get("result") == GREEN
+        and measured(leg)
         for leg in legs.values()
     )
+
+
+#: How every leg's issue title begins, so one search finds them all.
+TITLE_PREFIX = "breadth: "
 
 
 def issue_title(leg_id: str) -> str:
     """The exact title ``report`` finds a leg's issue by. No label: one that does not exist
     makes creating the issue fail."""
-    return f"breadth: {leg_id} is red"
+    return f"{TITLE_PREFIX}{leg_id} is red"
 
 
 @dataclass(frozen=True)
@@ -566,9 +573,10 @@ def settle_record(
     red's very inputs, is recorded red on every shard that ran, marked ``flake``.
 
     A leg in ``unsettled`` is one whose issue could not be read, so whether a green is a flake
-    is not known: each green shard that ran is recorded red, marked ``unsettled``. That entry
-    measured nothing, so no later run carries it: the next run looks past it to the shard's
-    last measured result. A red it measured stays a plain red, and opens or updates the issue.
+    is not known: each green shard that ran keeps its green, marked ``unsettled``. A lookup
+    never makes a green red. That entry is not measured, so no later run carries it: the next
+    run looks past it to the shard's last measured result. A red it measured stays a plain red,
+    and opens or updates the issue.
     """
     legs: dict[str, dict[str, dict[str, Any]]] = {}
     for key, entry in entries.items():
@@ -589,8 +597,7 @@ def settle_record(
             action = "open" if ran_red else "none"
             for entry in shards.values():
                 if not entry.get("reused_from") and entry.get("result") == GREEN:
-                    entry["result"], entry["unsettled"] = RED, True
-            red = tuple(sorted(shards))
+                    entry["unsettled"] = True
         else:
             settled = settle(RED if red else GREEN, inputs, open_red.get(leg))
             action = settled.action
@@ -629,6 +636,11 @@ def open_red_inputs(text: str) -> frozenset[str] | None:
     return frozenset(found) if found else None
 
 
+class IssuesUnread(Exception):
+    """The bot's leg issues could not be read, so whether a green is a fix or a flake is known
+    for no leg. It is said once, for the whole run, never leg by leg."""
+
+
 class Unwritten(Exception):
     """Some legs' issues could not be written. ``done`` is what was; ``failed`` names the rest."""
 
@@ -640,8 +652,9 @@ class Unwritten(Exception):
 def apply(actions: list[Action], issues: Issues, *, run_url: str, record_digest: str) -> list[str]:
     """Open, update or close each leg's issue. Returns what was done, one line a leg.
 
-    A leg whose issue cannot be read or written does not stop the legs after it: each is tried,
-    and :class:`Unwritten` is raised at the end, naming every leg that failed.
+    A leg whose issue cannot be written does not stop the legs after it: each is tried, and
+    :class:`Unwritten` is raised at the end, naming every leg that failed. When the issues
+    cannot be read (:class:`IssuesUnread`), no leg is tried, and the one error says why.
     """
     done: list[str] = []
     failed: list[str] = []
@@ -650,6 +663,8 @@ def apply(actions: list[Action], issues: Issues, *, run_url: str, record_digest:
             continue
         try:
             _apply_one(a, issues, run_url=run_url, record_digest=record_digest)
+        except IssuesUnread as exc:
+            raise Unwritten(done, [f"no leg's issue was written: {exc}"]) from exc
         except (
             Exception
         ) as exc:  # noqa: BLE001 - any leg's failure is reported, none stops the rest
@@ -688,10 +703,18 @@ def _apply_one(a: Action, issues: Issues, *, run_url: str, record_digest: str) -
 # ── the command line ───────────────────────────────────────────────────────────────────────────
 
 
+class GhError(subprocess.CalledProcessError):
+    """``gh`` exited non-zero. Its stderr is part of the message, so the log says why."""
+
+    def __str__(self) -> str:
+        said = " ".join(str(self.stderr or "").split())[-500:]
+        return f"{super().__str__()} gh said: {said}" if said else super().__str__()
+
+
 def _gh(*args: str) -> str:
-    done = subprocess.run(
-        ["gh", *args], capture_output=True, text=True, errors="replace", check=True
-    )
+    done = subprocess.run(["gh", *args], capture_output=True, text=True, errors="replace")
+    if done.returncode != 0:
+        raise GhError(done.returncode, ["gh", *args], done.stdout, done.stderr)
     return done.stdout
 
 
@@ -750,41 +773,73 @@ def _by_bot(user: object) -> bool:
     return isinstance(user, Mapping) and user.get("login") == BOT and user.get("type") == "Bot"
 
 
-#: The one search page ``find`` reads. A full page fails closed: an issue past it is unseen.
+#: The size of each page of the one search :meth:`GhIssues.read` makes.
 SEARCH_PAGE = 100
 
 
 class GhIssues:
     def __init__(self, repo: str) -> None:
         self.repo = repo
+        self._open: dict[str, tuple[int, str]] | None = None
+
+    def read(self) -> dict[str, tuple[int, str]]:
+        """Every open issue of the bot's titled as a leg's, by exact title: its number and the
+        bot's text. One search, every page of it, then each such issue's comments, read once.
+        Of two with one title, the older is the leg's.
+
+        Raises :class:`IssuesUnread`, carrying gh's own words, when any of it cannot be read,
+        GitHub says the results are incomplete, or the pages hold fewer issues than it counted.
+        """
+        if self._open is not None:
+            return self._open
+        query = urllib.parse.quote(
+            f'repo:{self.repo} is:issue is:open author:app/github-actions in:title "breadth:"'
+        )
+        try:
+            raw = _gh(
+                "api", "--paginate", "--slurp", f"search/issues?q={query}&per_page={SEARCH_PAGE}"
+            )
+            pages = json.loads(raw or "[]")
+            if (
+                not isinstance(pages, list)
+                or not pages
+                or not all(isinstance(p, dict) for p in pages)
+            ):
+                raise ValueError("the search answered no page")
+            if any(page.get("incomplete_results") is not False for page in pages):
+                raise ValueError("GitHub says the search's results are incomplete")
+            items = [item for page in pages for item in page.get("items") or []]
+            if pages[0].get("total_count") != len(items):
+                raise ValueError(
+                    f"the search's pages hold {len(items)} of the "
+                    f"{pages[0].get('total_count')} issues it counted"
+                )
+            found: dict[str, tuple[int, str]] = {}
+            for issue in sorted(items, key=lambda item: int(item["number"])):
+                title = issue.get("title")
+                if not isinstance(title, str) or not title.startswith(TITLE_PREFIX):
+                    continue
+                if title in found or not _by_bot(issue.get("user")):
+                    continue
+                number = int(issue["number"])
+                raw = _gh(
+                    "api",
+                    "--paginate",
+                    "--slurp",
+                    f"repos/{self.repo}/issues/{number}/comments?per_page=100",
+                )
+                comments = [c for page in json.loads(raw or "[]") for c in page]
+                text = bot_text(issue, comments)
+                if text is not None:
+                    found[title] = (number, text)
+        except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError) as exc:
+            raise IssuesUnread(f"the bot's leg issues could not be read: {exc}") from exc
+        self._open = found
+        return found
 
     def find(self, title: str) -> tuple[int, str] | None:
-        """The bot's open issue titled ``title``. Raises ValueError when the search's one page
-        may not hold every match: a full page, or GitHub saying its results are incomplete."""
-        query = urllib.parse.quote(
-            f'repo:{self.repo} is:issue is:open author:app/github-actions in:title "{title}"'
-        )
-        page = json.loads(_gh("api", f"search/issues?q={query}&per_page={SEARCH_PAGE}") or "{}")
-        items = page.get("items") if isinstance(page, dict) else None
-        if not isinstance(items, list) or page.get("incomplete_results") is not False:
-            raise ValueError(f"the search for {title!r} is not one complete answer")
-        if len(items) >= SEARCH_PAGE:
-            raise ValueError(f"the search for {title!r} filled its page, so an issue may be unseen")
-        for issue in items:
-            if issue.get("title") != title or not _by_bot(issue.get("user")):
-                continue
-            number = int(issue["number"])
-            raw = _gh(
-                "api",
-                "--paginate",
-                "--slurp",
-                f"repos/{self.repo}/issues/{number}/comments?per_page=100",
-            )
-            comments = [c for page in json.loads(raw or "[]") for c in page]
-            text = bot_text(issue, comments)
-            if text is not None:
-                return number, text
-        return None
+        """The bot's open issue titled ``title``, from :meth:`read`'s one search."""
+        return self.read().get(title)
 
     def create(self, title: str, body: str) -> None:
         _gh("issue", "create", "-R", self.repo, "--title", title, "--body", body)
@@ -991,25 +1046,27 @@ def main(argv: list[str] | None = None) -> int:
             _summary(f"Attempt {args.attempt}: earlier records of attempts {named or 'none'}.")
         issues = GhIssues(args.repo)
         open_red: dict[str, frozenset[str] | None] = {}
-        unread: set[str] = set()
+        unread: IssuesUnread | None = None
+        all_legs = frozenset(leg_of(k) for k in entries)
         # Off main no issue is written, and main's issues say nothing of what this dispatch
         # measured: none is read, so the record is what the dispatch measured.
-        for leg in sorted({leg_of(k) for k in entries}) if on_main else ():
+        if on_main:
             try:
-                found_issue = issues.find(issue_title(leg))
-            except (subprocess.CalledProcessError, OSError, ValueError, KeyError) as exc:
-                # Whether a green is a flake is not known: its greens are recorded red, marked
-                # `unsettled`, which no later run carries; a red it measured stays a red.
-                unread.add(leg)
-                _summary(f"`{leg}`: its issue could not be read ({exc}), so it is recorded red.")
-                continue
-            open_red[leg] = open_red_inputs(found_issue[1]) if found_issue else None
+                issues.read()
+            except IssuesUnread as exc:
+                # Whether a green is a flake is known for no leg: every green keeps its green,
+                # marked `unsettled`, which no later run carries; a red it measured stays a red.
+                unread = exc
+            else:
+                for leg in sorted(all_legs):
+                    found_issue = issues.find(issue_title(leg))
+                    open_red[leg] = open_red_inputs(found_issue[1]) if found_issue else None
         record, actions = settle_record(
             entries,
             open_red,
             run_id=args.run_id,
             tree=args.tree,
-            unsettled=frozenset(unread),
+            unsettled=all_legs if unread is not None else frozenset(),
             attempt=args.attempt,
         )
         data = canonical(record)
@@ -1027,6 +1084,15 @@ def main(argv: list[str] | None = None) -> int:
             + "\n".join(lines)
         )
         _output(f"digest={record_digest}")
+        if unread is not None:
+            # The record is kept (its upload runs whatever this step concluded), and this step
+            # fails once, for the whole run: no leg is red for it, and no issue is touched.
+            _summary(
+                f"### breadth issues unread\n\n{unread}. The record keeps what each shard "
+                "measured, with every green marked `unsettled` so no later run carries it, and "
+                "no leg's issue is opened, updated or closed."
+            )
+            return 1
     elif args.command == "issues":
         acts = [
             Action(**{**a, "red": tuple(a["red"]), "seeds": tuple(a.get("seeds", ()))})
