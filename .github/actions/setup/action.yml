@@ -59,12 +59,15 @@ runs:
             tmux) ;;
             shellcheck) ;;
             dash) ;;
-            *) echo "the setup action installs tmux, shellcheck and dash, not $tool" >&2; exit 1 ;;
+            docker) ;;
+            *) echo "the setup action installs tmux, shellcheck and dash, and checks docker, not $tool" >&2; exit 1 ;;
           esac
         done
         updated=""
         for tool in $PROGRAMS; do
           if command -v "$tool" >/dev/null 2>&1; then continue; fi
+          # docker is the runner image's (e2e-pinned's pinned browser, #3943): never installed here.
+          if [ "$tool" = docker ]; then echo "this runner image has no docker" >&2; exit 1; fi
           case "$RUNNER_OS" in
             Linux)
               if [ -z "$updated" ]; then sudo apt-get update -qq; updated=yes; fi

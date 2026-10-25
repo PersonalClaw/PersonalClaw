@@ -1339,25 +1339,36 @@ def test_the_programs_step_is_off_by_default_so_no_other_call_changes() -> None:
                     assert given is None, (path.name, job_id)
 
 
+#: The programs the setup action installs when the path lacks one; docker it only checks for.
+_INSTALLED = [p for p in planner.SETUP_PROGRAMS if p != "docker"]
+
+
 @pytest.mark.parametrize(
     ("runner_os", "want"),
     [
         (
             "Linux",
             ["apt-get update -qq"]
-            + [f"apt-get install -y --no-install-recommends {p}" for p in planner.SETUP_PROGRAMS],
+            + [f"apt-get install -y --no-install-recommends {p}" for p in _INSTALLED],
         ),
-        ("macOS", [f"brew install {p}" for p in planner.SETUP_PROGRAMS]),
+        ("macOS", [f"brew install {p}" for p in _INSTALLED]),
     ],
 )
 def test_each_listed_program_the_path_lacks_comes_from_the_runners_package_manager(
     tmp_path: Path, runner_os: str, want: list[str]
 ) -> None:
-    rc, installs, log = _run_programs(
-        tmp_path, " ".join(planner.SETUP_PROGRAMS), runner_os=runner_os
-    )
+    rc, installs, log = _run_programs(tmp_path, " ".join(_INSTALLED), runner_os=runner_os)
     assert rc == 0, log
     assert installs == want
+
+
+def test_docker_is_the_runner_images_and_is_checked_never_installed(tmp_path: Path) -> None:
+    assert "docker" in planner.SETUP_PROGRAMS
+    rc, installs, log = _run_programs(tmp_path, "tmux docker", present=("tmux", "docker"))
+    assert (rc, installs) == (0, []), log
+    rc, installs, log = _run_programs(tmp_path / "none", "docker")
+    assert rc != 0 and installs == [], log
+    assert "this runner image has no docker" in log, log
 
 
 def test_a_program_on_path_is_not_installed(tmp_path: Path) -> None:
@@ -1392,7 +1403,7 @@ def test_a_name_outside_the_list_fails_before_any_install(tmp_path: Path, progra
     rc, installs, log = _run_programs(tmp_path, programs)
     assert rc != 0, log
     assert installs == [], f"installed before the refusal: {installs}"
-    assert "the setup action installs tmux, shellcheck and dash, not" in log, log
+    assert "the setup action installs tmux, shellcheck and dash, and checks docker, not" in log, log
 
 
 def test_a_runner_with_no_known_installer_installs_nothing(tmp_path: Path) -> None:
