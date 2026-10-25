@@ -1392,13 +1392,24 @@ _ENDED_THREAD_CHILD = (
 )
 
 
+@pytest.mark.skipif(
+    sys.platform != "darwin",
+    reason="macOS's count is the process's: elsewhere each thread's count is its own (Linux's "
+    "schedstat), so a thread that came and went is never in the loop's, and the stand-in's own "
+    "wait for a CPU, after the start and after the join, is rightly the loop's",
+)
 def test_a_thread_that_came_and_went_is_never_counted_as_the_loops_wait(tmp_path):
     """🔴 Red before, on macOS: a thread that started and ended between two snapshots was in
     neither list, so its time ready to run was left in the process's count and charged to the
     loop thread. The crowded plant's read has one, its writer, and on a CI runner a health check's
     answer beside the block left out 0.295 s of that thread's wait as the loop's. Here the thread
     that stands for the loop is blocked the whole time, waiting for the spinning thread to end,
-    so none of the wait between the two snapshots is its own."""
+    so none of the wait between the two snapshots is its own.
+
+    macOS alone: on Linux each thread's count is its own, and the stand-in is not quite blocked
+    the whole time. Woken from the thread's start and from its join, it waits for a CPU at the
+    lowest priority under the crowd, and Linux counts that wait, rightly, as its own: main's push
+    run 40218103397 charged it 0.115 s, the thread beside at 1% of a CPU."""
     seen = _until_crowded(
         tmp_path,
         _ENDED_THREAD_CHILD,
