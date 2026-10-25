@@ -194,8 +194,19 @@ export interface Measured {
   known: Record<string, string[]>
 }
 
-/** Runs one step. `findings` is the step's measurement; the caller decides what a finding does. */
-export type Step = (name: string, findings: () => Promise<string[]>) => Promise<void>
+/** Runs one step. `findings` is the step's measurement; the caller decides what a finding does.
+ *  `baselined` says what the step is held to: a committed baseline (the tree, the 44 px targets
+ *  and `BASELINED_STEPS`), or zero findings (the detectors, reduced motion and keyboard-only). */
+export type Step = (name: string, findings: () => Promise<string[]>, baselined: boolean) => Promise<void>
+
+/** What one step's findings do. A finding fails the step, except on a refresh (`--update-snapshots`)
+ *  of a step held to a baseline: the refresh writes that baseline from what it measured, so the
+ *  finding is the change it wrote, read by a reviewer in the artifact's diff, not a failure. A step
+ *  held to zero fails on a refresh too, since no baseline can absorb its finding. */
+export function stepVerdict(found: string[], baselined: boolean, rewriting: boolean): 'clean' | 'rewritten' | 'failed' {
+  if (found.length === 0) return 'clean'
+  return baselined && rewriting ? 'rewritten' : 'failed'
+}
 
 // ── In-page helpers, installed once per visit ─────────────────────────────────────────────────────
 
@@ -807,7 +818,7 @@ export async function runMatrix(page: Page, ctx: SurfaceContext, baselines: Base
       const raw = await measure()
       measured.known[name] = [...new Set(raw.map(findingKey))].sort()
       return knownFindings(raw, baselines.known[name], baselines.adopt)
-    })
+    }, true)
   await hideToasts(page)
   // A panel that is still loading its data is a state the gateway's timing decides, not the
   // surface: wait for the visible "Loading…" placeholders to go (up to 5 s) before any step reads
@@ -816,18 +827,18 @@ export async function runMatrix(page: Page, ctx: SurfaceContext, baselines: Base
     .waitForFunction(() => !document.body.innerText.includes('Loading…'), null, { timeout: 5_000 })
     .catch(() => {})
   await baselined(STEPS.axe, () => axeFindings(page, ctx.route))
-  await step(STEPS.detectors, () => detectorFindings(page))
+  await step(STEPS.detectors, () => detectorFindings(page), false)
   await step(STEPS.tree, async () => {
     measured.tree = await accessibilityTree(page)
     return treeFindings(measured.tree, baselines.tree, baselines.adopt)
-  })
-  await step(STEPS.motion, () => reducedMotionFindings(page, { theme: ctx.theme, emulate: true }))
+  }, true)
+  await step(STEPS.motion, () => reducedMotionFindings(page, { theme: ctx.theme, emulate: true }), false)
   await baselined(STEPS.zoom, () => zoomFindings(page))
   let walk: { stops: Stop[]; capped: boolean } = { stops: [], capped: false }
   await step(STEPS.keyboard, async () => {
     walk = await tabWalk(page)
     return keyboardFindings(walk, ctx)
-  })
+  }, false)
   await baselined(STEPS.order, async () => focusOrderFindings(walk))
   await baselined(STEPS.contrast, async () => contrastFindings(walk))
   // Close whatever the walk opened (a mode pill opens on focus) before anything is measured again.
@@ -842,7 +853,7 @@ export async function runMatrix(page: Page, ctx: SurfaceContext, baselines: Base
       await step(targetStep(w), async () => {
         measured.targets[String(w)] = await smallTargets(page)
         return targetFindings(measured.targets[String(w)], baselines.targets[String(w)], baselines.adopt)
-      })
+      }, true)
     }
   }
   return measured

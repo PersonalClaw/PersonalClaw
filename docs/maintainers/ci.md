@@ -1164,7 +1164,10 @@ build, the WebGL renderer, and the fonts as a count and one sha256), and:
 - a compare run fails when the probe differs from `web/e2e/visual-environment.json`, the manifest
   committed with the baselines, or when there is none, before any baseline is read, and passes
   `--update-snapshots=none`, so a missing baseline fails rather than being written;
-- an update run (`--update`) writes the manifest from the probe and rewrites the suite's baselines.
+- an update run (`--update`) writes the manifest from the probe and passes
+  `--update-snapshots=changed`: it rewrites a golden that fails the compare and writes a missing
+  one, and leaves one inside the tolerance as committed (`all` rewrote every golden whose bytes
+  moved, 37 of them on one refresh that no compare would have failed).
 
 Any other host is refused for now: automated contributors run it through CI alone.
 `.github/workflows/visual-baselines.yml` ("Refresh visual baselines") is the update path. On
@@ -1172,6 +1175,26 @@ dispatch it sets the checkout up as a browser leg does, runs the UI matrix and t
 each with `--update` in an invocation of its own, and uploads the manifest and the `-linux` sets
 as the `visual-baselines` artifact. It commits nothing and holds no write token; a lane reads each
 diff and commits the intended ones in a pull request that names the change in light and dark.
+
+A refresh is green when it wrote a complete set, and its job summary lists each file it added,
+changed or deleted (`web/e2e/baseline-changes.mjs`, from `git status` over the sets and the
+manifest). In the matrix, a step held to a baseline (the tree, the 44 px targets, axe, zoom, focus
+order, contrast and overflow) does not fail on what differs from the committed one: that
+difference is what the run writes (`stepVerdict`, `web/e2e/surfaceChecks.ts`). It is red for a
+real failure:
+
+- a crash, or a file it cannot write;
+- a finding in a step held to zero (the detectors, reduced motion, keyboard-only), which no
+  baseline can absorb;
+- a surface with no output: a route scan that skipped or ran fewer steps than the matrix has
+  (`assert-no-route-skips.mjs` on the matrix's report), or a surface the visual spec snapshots
+  with no golden (`web/e2e/visual-coverage.mjs`, which `visualBaselineCoverage.test.ts` reads too);
+- a matrix set that does not compare clean when the matrix runs again right after, as a merge
+  leg compares it: a baseline it did not write, one a second run does not reproduce, or a dark
+  tree that differs from the light one (one file holds both, and the light run writes it).
+
+`tests/rails/test_visual_baselines_refresh_tree.py` holds the workflow to those checks, and
+`web/e2e/surfaceMatrix.control.spec.ts` holds which steps a refresh may rewrite.
 
 ## A push to main, and the nightly breadth
 

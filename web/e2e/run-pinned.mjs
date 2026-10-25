@@ -21,7 +21,10 @@
 // (e2e/visual-environment.json) records, or when there is no manifest, so a pixel diff is never
 // the first sign that the environment moved; it passes `--update-snapshots=none`, so a missing
 // baseline fails rather than being written. An update run writes the manifest from the probe and
-// passes `--update-snapshots=all`. None of the caller's variables enter the image.
+// passes `--update-snapshots=changed` (UPDATE_SNAPSHOTS): it rewrites a golden that fails the
+// compare and writes a missing one, and leaves one inside the tolerance as committed. `all` rewrote
+// every golden whose bytes moved at all, so each refresh churned dozens of shots no compare would
+// fail. None of the caller's variables enter the image.
 // web/src/design/pinnedRun.test.ts plants each refusal through main() with fake processes.
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -43,6 +46,9 @@ const IMAGE = /^mcr\.microsoft\.com\/playwright@sha256:[0-9a-f]{64}$/
 const DIGEST = /^sha256:[0-9a-f]{64}$/
 /** The image's browser server, as it announces itself: loopback, nowhere else. */
 export const LOOPBACK = /^ws:\/\/127\.0\.0\.1:\d+\/$/
+
+/** What an update run passes playwright: rewrite what fails the compare, write what is missing. */
+export const UPDATE_SNAPSHOTS = '--update-snapshots=changed'
 const SERVER_START_MS = 60_000
 const SERVER_STOP_MS = 15_000
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
@@ -286,7 +292,7 @@ export async function main(argv = [], options = {}) {
       if (!LOOPBACK.test(server.endpoint)) throw new Refusal(`the pinned browser server listens on ${server.endpoint}, not on 127.0.0.1`)
       log(`pinned browser: ${server.endpoint}`)
       const env = { ...hostEnv, PW_TEST_CONNECT_WS_ENDPOINT: server.endpoint }
-      suite = await run(execPath, [cli(), 'test', ...passed, update ? '--update-snapshots=all' : '--update-snapshots=none'], { env, cwd: web })
+      suite = await run(execPath, [cli(), 'test', ...passed, update ? UPDATE_SNAPSHOTS : '--update-snapshots=none'], { env, cwd: web })
     } finally {
       await server.stop()
     }

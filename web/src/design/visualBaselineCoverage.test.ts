@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { readdirSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
-import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, axisShots } from '../../e2e/routes'
+import { CAPTURED_PLATFORMS, GOLDENS as BASELINES, byPlatform, expectedKeys } from '../../e2e/visual-coverage.mjs'
 
 // ── Every surface the visual gate snapshots must HAVE a committed baseline ───────────────────
 //
@@ -32,46 +31,9 @@ import { ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, axi
 // It deliberately checks FILE EXISTENCE only. It cannot and should not compare pixels: that is the
 // visual suite's job, it is platform-qualified, and it needs a browser.
 
-const BASELINES = join(process.cwd(), 'e2e', '__screenshots__', 'visual.spec.ts')
-
-/** The `{platform}` suffixes this repo commits goldens for, as a CLOSED set.
- *
- *  Linux only, and only as the pinned image's browser renders it (#3943): every golden is made by
- *  the Refresh visual baselines workflow against `e2e/visual-image.json`'s image, which is
- *  linux/amd64, so a golden with another suffix was made somewhere else. `web/.gitignore` keeps a
- *  local run's own set out of `git add`, and `tests/rails/test_pinned_playwright_image_tree.py`
- *  fails one committed anyway, for the trees and the findings too. Adding a platform here is
- *  adding a second environment, which #3943 retired. */
-const CAPTURED_PLATFORMS = ['linux'] as const
-
-/** `<id|route>-<theme>` for every route, and each of the agent orb's state shots, each
- *  reduced-motion shot and each axis shot by its key — the `arg` half of playwright's
- *  `snapshotPathTemplate`. */
-function expectedKeys(): string[] {
-  const keys: string[] = []
-  for (const theme of THEMES) {
-    for (const { route, id } of [...ROUTES, ...VIEW_ROUTES]) {
-      keys.push(`${id ?? route}-${theme}`)
-    }
-  }
-  for (const { key } of ORB_STATE_SHOTS) keys.push(key)
-  for (const { key } of REDUCED_MOTION_SHOTS) keys.push(key)
-  for (const { key } of axisShots()) keys.push(key)
-  return keys
-}
-
-/** Committed goldens grouped by the `{platform}` suffix playwright appends. */
-function byPlatform(): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>()
-  for (const name of readdirSync(BASELINES)) {
-    const m = /^(.+)-([a-z0-9]+)\.png$/.exec(name)
-    if (!m) continue
-    const [, key, platform] = m
-    if (!out.has(platform)) out.set(platform, new Set())
-    out.get(platform)!.add(key)
-  }
-  return out
-}
+// The manifest's surfaces, the closed set of platforms and the goldens by platform are read through
+// `e2e/visual-coverage.mjs`, which the Refresh visual baselines workflow runs after its visual
+// update, so this rail and the refresh hold the goldens to the same list.
 
 // ── There is no allowance list, and that is the point ────────────────────────────────────────
 // This rail used to carry an `UNCAPTURED` allowance list of eight manifest surfaces with no golden
