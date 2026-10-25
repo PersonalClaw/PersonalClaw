@@ -11,7 +11,7 @@
  * `check` lists the asar against `build.files` and exits 1 naming any entry it lacks, or any file
  * in it that carries a remote-debugging switch: the smoke's DevTools pipe is the harness's alone,
  * and the app never opens a debugging port or pipe of its own. `controls`
- * runs the smoke on six planted copies, which must each fail for their own reason:
+ * runs the smoke on seven planted copies, which must each fail for their own reason:
  *
  *   - the asar without a module `main.js` requires, which must fail at launch naming it: what only
  *     the packed app shows (`packaging.test.js` reads the source, not the asar);
@@ -23,7 +23,9 @@
  *   - a shell whose link delivery resumes the loop a cockpit's link opens: a cockpit link that
  *     acts;
  *   - a preload that, on every page a cockpit's or a task mode's address loads, sends a write: an
- *     address that replays something when it is reopened.
+ *     address that replays something when it is reopened;
+ *   - a shell whose link delivery drops a cockpit link's diff and task: a link that opens the
+ *     cockpit short of where it points.
  */
 
 const fs = require("node:fs");
@@ -119,6 +121,9 @@ const PLANTED_REPLAY = [
   "});\n",
 ].join(" ");
 
+/** What the short control's hash delivery returns: the link's hash less its `diff` and `task`. */
+const PLANTED_SHORT = 'return `window.location.hash = ${JSON.stringify(hash.replace(/&(diff|task)=[^&]*/g, ""))};`;';
+
 /** The executable and the asar of the app unpacked at *dir* (electron-builder's `linux-unpacked`). */
 function packed(dir) {
   const name = PKG.build.linux?.executableName || PKG.name;
@@ -213,6 +218,11 @@ const CONTROLS = [
     plant: (tree) => fs.appendFileSync(path.join(tree, "preload.js"), PLANTED_REPLAY),
     reads: (r) => /reopened in .* replayed a write/.test(r.reason || ""),
   },
+  {
+    name: "a shell whose link delivery opens a cockpit short of its diff and task",
+    plant: (tree) => rewrite(tree, "deepLinks.js", "return `window.location.hash = ${JSON.stringify(hash)};`;", PLANTED_SHORT),
+    reads: (r) => /opened .*'s cockpit but not .*'s diff for .*: the address lost diff=/.test(r.reason || ""),
+  },
 ];
 
 async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = {}) {
@@ -231,7 +241,7 @@ async function runControls(dir, { gatewayPidFile, log = () => {}, timeoutMs } = 
   return results;
 }
 
-module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_REPLAY, PLANTED_RESUME, PLANTED_SEND, asarSources, debugSwitchProblems, missingEntries, packArchive, packed, plantedCopy, runControls, shellSources };
+module.exports = { CONTROLS, DEBUG_SWITCH, PLANTED_MISSING, PLANTED_REPLAY, PLANTED_RESUME, PLANTED_SEND, PLANTED_SHORT, asarSources, debugSwitchProblems, missingEntries, packArchive, packed, plantedCopy, runControls, shellSources };
 
 if (require.main === module) {
   const [cmd, dir, ...rest] = process.argv.slice(2);

@@ -23,9 +23,10 @@
  *     request's body or non-GET address and no WebSocket frame carries it. Reloading the address
  *     the link left, and the same link again, bring back the same draft and still send nothing.
  *     `personalclaw://code/<id>?pane=changes&diff=<file>&task=<task>` opens the cockpit of the
- *     paused code loop the stub backend seeds (`CODE_LOOP`), and acts on neither: nothing that
- *     leaves the page carries the loop's id or the task's. `personalclaw://threads/new?mode=plan`
- *     opens a new thread in Plan (#4894) and writes nothing;
+ *     paused code loop the stub backend seeds (`CODE_LOOP`) where it points: the address keeps the
+ *     link's pane, file and task, and the center draws that file's diff, then and 2 s later. It
+ *     acts on neither: nothing that leaves the page carries the loop's id or the task's.
+ *     `personalclaw://threads/new?mode=plan` opens a new thread in Plan (#4894) and writes nothing;
  *   - a copied address brings back the same state, the cockpit's review (#4941) and the thread's
  *     task mode, in the same window (a reload) and in a new one (a new document at that address
  *     in the same signed-in session, its session storage cleared, by way of about:blank), and
@@ -69,6 +70,17 @@ const MODE_LINK = "personalclaw://threads/new?mode=plan";
 const COCKPIT_LINK = `personalclaw://code/${CODE_LOOP.id}?pane=changes&diff=${encodeURIComponent(CODE_LOOP.diff)}&task=${CODE_LOOP.task}`;
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** What a cockpit's address *hash* lacks of where `COCKPIT_LINK` points: the cockpit, then each of
+ *  the link's keys whose value it lost. */
+function landingMisses(hash) {
+  const cockpit = `#/code/${CODE_LOOP.id}`;
+  const at = hash.indexOf("?");
+  const got = new URLSearchParams(at < 0 ? "" : hash.slice(at + 1));
+  const misses = (at < 0 ? hash : hash.slice(0, at)) === cockpit ? [] : [cockpit];
+  for (const [key, value] of new URLSearchParams(COCKPIT_LINK.split("?")[1])) if (got.get(key) !== value) misses.push(`${key}=${value}`);
+  return misses;
+}
 
 /** What JSON's quoting leaves raw that could end a script or a line, each as its escape. */
 const UNSAFE = { "<": "\\u003C", ">": "\\u003E", "/": "\\u002F", "\\": "\\\\", "\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t", "\0": "\\0", "\u2028": "\\u2028", "\u2029": "\\u2029" };
@@ -361,20 +373,31 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, fi
     if ((await hash()) !== address || text.split(draft).length !== 2) return fail(`the same link again left ${await hash()} with ${JSON.stringify(text)}, not the one draft on ${address}`);
     step("reloading the address and the same link again brought back the same draft, and sent nothing");
 
-    // A cockpit's link opens the seeded loop's cockpit, and acts on neither the loop nor the task.
+    // A cockpit's link opens the seeded loop's cockpit where it points, its changes pane on the
+    // link's file with that file's diff drawn (the review pane's header names it over its
+    // comparison) and the task in the address, and acts on neither the loop nor the task.
     const acted = async () => [...(await leftThePage(CODE_LOOP.id)), ...(await leftThePage(CODE_LOOP.task))];
     const named = `[...document.querySelectorAll("button")].some((b) => b.textContent.trim() === ${literal(CODE_LOOP.name)})`;
-    const drawn = async () => (await hash()).startsWith(`#/code/${CODE_LOOP.id}?`) && (await evaluate(named));
+    const diffDrawn = `[...document.querySelectorAll("span.font-mono")].some((s) => s.textContent === ${literal(CODE_LOOP.diff)} && (s.nextElementSibling?.textContent ?? "").startsWith("\u00B7"))`;
+    const inCockpit = async () => (await hash()).startsWith(`#/code/${CODE_LOOP.id}?`) && (await evaluate(named));
+    const drawn = async () => (await inCockpit()) && landingMisses(await hash()).length === 0 && (await evaluate(diffDrawn));
+    const shortOfIt = async () => {
+      const now = await hash();
+      const lost = landingMisses(now);
+      const why = lost.length ? `the address lost ${lost.join(", ")}` : `the center draws no diff of ${CODE_LOOP.diff}`;
+      return `${COCKPIT_LINK} opened ${CODE_LOOP.name}'s cockpit but not ${CODE_LOOP.diff}'s diff for ${CODE_LOOP.task}: ${why} (the page is on ${now})`;
+    };
     await hand(COCKPIT_LINK);
     const reached = await until("the cockpit", async () => (await drawn()) || (await acted()).length > 0);
     let done = await acted();
     if (done.length) return fail(`the cockpit link acted on the loop: ${done.join("; ")}`);
-    if (!reached) return fail(`${COCKPIT_LINK} did not open ${CODE_LOOP.name}'s cockpit: the page is on ${await hash()}`);
+    if (!reached) return fail((await inCockpit()) ? await shortOfIt() : `${COCKPIT_LINK} did not open ${CODE_LOOP.name}'s cockpit: the page is on ${await hash()}`);
     const at = await hash();
     await wait(2000);
     done = await acted();
     if (done.length) return fail(`the cockpit link acted on the loop: ${done.join("; ")}`);
-    step(`${COCKPIT_LINK} opened ${at}, ${CODE_LOOP.name}'s cockpit, and acted on nothing`);
+    if (!(await drawn())) return fail(await shortOfIt());
+    step(`${COCKPIT_LINK} opened ${at}, ${CODE_LOOP.name}'s cockpit on ${CODE_LOOP.diff}'s diff, and acted on nothing`);
 
     // A copied address brings back the same state, in the same window and in a new one, and replays
     // nothing (#4894's task mode, #4941's cockpit review). The same window reloads the address. A new
@@ -469,7 +492,7 @@ function cliOptions(argv) {
   };
 }
 
-module.exports = { COCKPIT_LINK, COMPOSER, DEVTOOLS_SWITCH, MODE_LINK, literal, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
+module.exports = { COCKPIT_LINK, COMPOSER, DEVTOOLS_SWITCH, MODE_LINK, literal, LOOPBACK_PAGE, MAIN_ERROR, NO_ROUTE_LINK, SETTINGS_LINK, carriedOut, cliOptions, devtoolsPipe, landingMisses, linkLaunchArgs, needsDisplay, pageErrors, smoke, stopGateway };
 
 if (require.main === module) {
   const { executable, ...options } = cliOptions(process.argv.slice(2));

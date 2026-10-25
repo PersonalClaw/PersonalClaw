@@ -20,7 +20,8 @@
  * Before the gateway starts, the script seeds one paused code loop (`CODE_LOOP`) through the
  * checkout's own loop store, so the gateway names a cockpit the smoke's `personalclaw://code/<id>`
  * link can open (#3827): no model, no worker, and nothing runs it. The seed refuses the default
- * home, `~/.personalclaw`, before it writes anything.
+ * home, `~/.personalclaw`, before it writes anything. The file the link's diff names is written new
+ * in the loop's workspace, so the cockpit has that file's diff to draw.
  */
 
 const fs = require("node:fs");
@@ -83,6 +84,9 @@ function writeStubBackend(smokeDir, { repo = REPO, backendDir = BACKEND_DIR } = 
   const home = path.join(smokeDir, "gateway-home");
   const workspace = path.join(home, "workspace");
   fs.mkdirSync(workspace, { recursive: true });
+  const changed = path.join(workspace, CODE_LOOP.diff);
+  fs.mkdirSync(path.dirname(changed), { recursive: true });
+  fs.writeFileSync(changed, 'print("opened by a link")\n');
   for (const name of ["config.json", "triggers.json"]) fs.copyFileSync(path.join(SEED, name), path.join(home, name));
   if (!fs.existsSync(SCRIPTED)) throw new Error(`the scripted provider's script is missing: ${SCRIPTED}`);
   fs.mkdirSync(backendDir, { recursive: true });
