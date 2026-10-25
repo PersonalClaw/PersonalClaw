@@ -930,12 +930,13 @@ def _starved_app() -> web.Application:
     return app
 
 
-#: A process that takes a CPU and holds it, for at most 20 s, once it has said so.
+#: A process that takes a CPU and holds it, for at most the seconds it is given, once it has said
+#: so.
 _BUSY = textwrap.dedent("""
     import sys, time
     sys.stdout.write("b")
     sys.stdout.flush()
-    end = time.monotonic() + 20
+    end = time.monotonic() + float(sys.argv[1])
     while time.monotonic() < end:
         pass
     """)
@@ -992,9 +993,9 @@ def _seen(probe: _Probe) -> SimpleNamespace:
     )
 
 
-def _crowded(child: str, home, *args: str) -> dict:
+def _crowded(child: str, home, *args: str, hold: float = 20) -> dict:
     """Runs ``child`` on the scratch ``home`` once it is up, with every CPU taken by a process of
-    its own, and returns the one line of JSON it prints."""
+    its own for at most ``hold`` seconds, and returns the one line of JSON it prints."""
     child_process = subprocess.Popen(
         [sys.executable, "-c", child, os.path.dirname(__file__), *args],
         stdin=subprocess.PIPE,
@@ -1007,7 +1008,9 @@ def _crowded(child: str, home, *args: str) -> dict:
     try:
         assert child_process.stdout.readline() == "ready\n", "the child never set up its gateway"
         for _ in range(os.cpu_count() or 2):
-            busy.append(subprocess.Popen([sys.executable, "-c", _BUSY], stdout=subprocess.PIPE))
+            busy.append(
+                subprocess.Popen([sys.executable, "-c", _BUSY, str(hold)], stdout=subprocess.PIPE)
+            )
         for one in busy:
             assert one.stdout.read(1) == b"b", "a busy process never started"
         child_process.stdin.write("go\n")
@@ -1140,15 +1143,48 @@ _BESIDE_A_READY_THREAD_CHILD = (
 )
 
 
+#: How many times the test below sets up its crowd for the thread beside to wait for a CPU.
+_TRIES = 3
+
+#: How long the busy processes hold every CPU for the test below. On macOS a process in the
+#: background band beside them is at times given no turn at all until they let go: on a CI runner
+#: the loop once had no turn for 17.2 s, so the health check waited 20.05 s, and the block came
+#: after, once the thread beside had a CPU to itself. There they hold a few times what a crowded
+#: try takes (under 2 s on a CI runner), so a try that stalls ends soon and the next one starts.
+#: Linux, at nice 19, is given turns, only slowly (a try took up to 12 s on a CI runner).
+_BESIDE_HOLD = 5 if sys.platform == "darwin" else 20
+
+
 def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_path):
     """The vacuity arm for the time left out: the time a thread beside the loop spends waiting
     for a CPU is not the loop's. A blocking read on the loop for 0.2 s, made while a health check
     is under way, at the lowest priority while every CPU is taken, beside a thread that hashes
-    and so waits for a CPU most of that time, is a step over the bound and an answer over it."""
-    seen = _crowded(_BESIDE_A_READY_THREAD_CHILD, tmp_path / "home", str(tmp_path))
-    says = f"the thread beside used {seen['share']:.0%} of a CPU during the block; {seen['says']}"
-    assert seen["status"] == 200, f"premise: the planted request answered; {says}"
-    assert seen["share"] < 0.5, f"premise: the thread beside waited for a CPU; {says}"
+    and so waits for a CPU most of that time, is a step over the bound and an answer over it.
+
+    The crowd is set up again, up to :data:`_TRIES` times, until the thread beside waited for a
+    CPU during the block. On Linux nice 19 makes it so each time, and a premise unmet every time
+    fails. macOS's background band does not always (:data:`_BESIDE_HOLD`), and there the test
+    skips, naming the share each try measured."""
+    shares = []
+    for n in range(_TRIES):
+        where = tmp_path / f"try-{n}"
+        where.mkdir()
+        seen = _crowded(_BESIDE_A_READY_THREAD_CHILD, where / "home", str(where), hold=_BESIDE_HOLD)
+        says = (
+            f"the thread beside used {seen['share']:.0%} of a CPU during the block; {seen['says']}"
+        )
+        assert seen["status"] == 200, f"premise: the planted request answered; {says}"
+        shares.append(f"{seen['share']:.0%}")
+        if seen["share"] < 0.5:
+            break
+    else:
+        unmet = (
+            f"premise: the thread beside waited for a CPU, in none of {_TRIES} tries: it used"
+            f" {', '.join(shares)} of a CPU during the block; the last: {seen['says']}"
+        )
+        if sys.platform == "darwin":
+            pytest.skip(unmet)
+        pytest.fail(unmet)
     assert seen["worst_step"] >= _BOUND, f"the step missed the block; {says}"
     assert seen["slowest_answer"] >= _BOUND, f"the answer missed the block; {says}"
 
