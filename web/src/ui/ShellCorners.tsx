@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { MoreHorizontal, PanelLeftClose, PanelLeftOpen, SquareTerminal } from 'lucide-react'
+import { MoreVertical, PanelLeftClose, PanelLeftOpen, SquareTerminal } from 'lucide-react'
 import { spring } from '../design/motion'
 import { ThemeControl, useThemeCycle } from './TopBar'
 import { MenuRow, Popover } from './Popover'
@@ -80,7 +80,9 @@ function useFoldsTheCorner(): boolean {
 }
 
 /** The phone corner's More: Open terminal (with its shortcut) and Theme, in the corner's order and
- *  by the names their buttons have, as rows of one menu. */
+ *  by the names their buttons have, as rows of one menu. Its glyph is a vertical ⋮: at 390 px it
+ *  sits beside a page's own More actions (`…`, `HeaderActions`), and two of one glyph opening two
+ *  different menus read as one control. */
 function CornerMore({ terminalOpen, onToggleTerminal }: { terminalOpen: boolean; onToggleTerminal: () => void }) {
   const theme = useThemeCycle()
   const ThemeIcon = theme.icon
@@ -90,7 +92,7 @@ function CornerMore({ terminalOpen, onToggleTerminal }: { terminalOpen: boolean;
         <button type="button" onClick={toggle} aria-label="More" title="More: the terminal and the theme" aria-expanded={open}
           className={`grid size-7 place-items-center rounded-pill transition-colors ${TOUCH_TARGET}`}
           style={open || terminalOpen ? accentChip : { color: 'var(--color-on-surface-low)' }}>
-          <MoreHorizontal size={16} />
+          <MoreVertical size={16} />
         </button>
       )}>
       {(close) => (
