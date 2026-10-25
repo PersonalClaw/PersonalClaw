@@ -10,6 +10,7 @@ import { ListControls } from '../../ui/ListControls'
 import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { useQueryParam, useQueryFlag, type RouteProps } from '../../app/useQueryState'
 import { useChatSocket, type WsMessage } from '../../lib/useChatSocket'
@@ -414,21 +415,21 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
                   )}
                 </Popover>
               )}
-              <HeaderActions>
+              <HeaderActions overflowClassName={TOUCH_TARGET}>
                 {/* Gated on `open_count`, the same set the sweep reaches. Gating on the old
                     PENDING-only count made the only bulk control VANISH once every row had been
                     read, while the queue was still full (issue 493). */}
                 {(status?.open_count ?? 0) > 0 && (
-                  <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} />
+                  <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} className={TOUCH_TARGET} />
                 )}
-                <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} />
+                <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} className={TOUCH_TARGET} />
                 {/* `priority="primary"` so writing a note survives into the
                     icon-only and overflow tiers — it is the one action on this page that
                     CREATES something, and the cluster sheds `low` first. Placed after the
                     destructive control and before the panel opener, per HeaderActions'
                     ordering tenet. */}
-                <HeaderControl icon={StickyNote} label="Capture a note" priority="primary" onClick={() => setCaptureOpen(true)} />
-                <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} />
+                <HeaderControl icon={StickyNote} label="Capture a note" priority="primary" onClick={() => setCaptureOpen(true)} className={TOUCH_TARGET} />
+                <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} className={TOUCH_TARGET} />
               </HeaderActions>
             </div>
           }
@@ -443,7 +444,7 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
           // did anything. The announcement is for a query the USER made.
           results={{ count: (filtered ?? []).length, noun: 'items', active: narrowed }}
           stale={itemsStale}>
-          <FilterMenu sections={filterSections} label="Show" />
+          <FilterMenu sections={filterSections} label="Show" className={TOUCH_TARGET} />
         </ListControls>
       }
       panel={
@@ -653,7 +654,7 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
                 ? 'Messages, questions and notifications from your agents land here for triage — they post directly, so nothing needs connecting first. Add a filesystem or Slack source to collect from outside too.'
                 : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'}
             action={neverReceived && !narrowed && !pollConnected
-              ? { label: 'Add a message source', onClick: () => navigate('settings/inbox'), icon: SettingsIcon }
+              ? { label: 'Add a message source', onClick: () => navigate('settings/inbox'), icon: SettingsIcon, className: TOUCH_TARGET }
               : undefined} />
         ) : (
           // Uncapped client-side — `filtered` is a pure filter over everything

@@ -12,6 +12,7 @@ const docs: UiDoc[] = [
     props: [
       { name: 'children', description: 'The header controls (HeaderControl / HeaderMenu / HeaderSegmented / HeaderModePill / Button), rendered left→right in DOM order.' },
       { name: 'className', description: 'Extra classes on the cluster container (tokens only).' },
+      { name: 'overflowClassName', description: "Extra classes on the `…` trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) where the page's header controls carry it." },
     ],
     bestPractices: [
       { guidance: true, description: 'ORDERING TENET: a control that opens a side panel (SidePanel/detail/inspector rail) is the RIGHTMOST child, always.' },

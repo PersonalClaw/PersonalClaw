@@ -12,6 +12,7 @@ const doc: UiDoc = {
     { name: 'sections', description: 'The titled single-select groups ({ title, value, defaultKey, options, onChange }). Each section owns its selection; a value !== defaultKey counts toward the badge and shows an inline Clear.' },
     { name: 'label', description: "Trigger text beside the sliders icon (default 'Filter'); hidden below the sm breakpoint, leaving the icon + badge." },
     { name: 'align', description: "Which trigger edge the popover aligns to, 'left' or 'right' (default 'right' for a right-of-header control)." },
+    { name: 'className', description: "Extra classes on the trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) where a page's controls carry it." },
   ],
   bestPractices: [
     { guidance: true, description: 'Reach for FilterMenu for all list criteria instead of scattering a filter Segmented, a sort <select>, and a scope dropdown across the header — one pill, one active-count badge, consistent everywhere.' },

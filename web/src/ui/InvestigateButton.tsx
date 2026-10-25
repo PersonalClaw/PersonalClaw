@@ -7,7 +7,7 @@ import { investigate } from '../lib/investigate'
  *  row drops in with just `{kind, id}`. Opens a chat pre-loaded with the entity's
  *  server-composed context, in read-only `ask` mode. No surface builds its own
  *  "chat about this" wiring — this is it. */
-export function InvestigateButton({ kind, id, backLink, size = 24, label }: {
+export function InvestigateButton({ kind, id, backLink, size = 24, label, className }: {
   kind: string
   id: string
   /** Name override for a per-row instance: "Investigate in chat" alone repeats once per row (83
@@ -15,6 +15,8 @@ export function InvestigateButton({ kind, id, backLink, size = 24, label }: {
   label?: string
   backLink?: string
   size?: number
+  /** Passed to the button, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  className?: string
 }) {
   const [busy, setBusy] = useState(false)
   return (
@@ -23,7 +25,7 @@ export function InvestigateButton({ kind, id, backLink, size = 24, label }: {
       // surfaces (inbox, loops ×2, notifications, schedule, audit, doctor, memory, tasks). Every
       // one of them used to dim this button to 40% not-allowed and announce `aria-disabled` for
       // the length of the round trip — "unavailable" for an action that was working.
-      size={size} iconSize={Math.max(12, Math.round(size * 0.55))} loading={busy}
+      size={size} iconSize={Math.max(12, Math.round(size * 0.55))} loading={busy} className={className}
       onClick={(e) => {
         e.stopPropagation()
         setBusy(true)
