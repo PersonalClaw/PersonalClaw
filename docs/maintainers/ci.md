@@ -2013,6 +2013,24 @@ changes to tests, `tools/ci`, `scripts`, docs and the web.
   in full (no prefix stands in for an option), or a job env naming a variable the runner owns,
   which the loader refuses too. An account whose entry in the user database names no absolute
   home runs no job here either, and exits 2 before any step.
+- **Incomplete, never green.** A run short only of jobs this machine cannot run, each with its
+  cause, ends `### Verdict: incomplete`, naming each job and why, and its last line is
+  `incomplete: N jobs could not run here` (exit 2). A job that is not green for any other
+  reason (red, not run for `--fail-fast`, an interruption or memory, or run with no record)
+  keeps the verdict red, and red wins over both.
+- **Electron's sandbox.** Off GitHub, a job whose toolchain names `electron` cannot run on a
+  Linux host whose kernel withholds the user namespaces Chromium's sandbox needs: Ubuntu 24.04's
+  `kernel.apparmor_restrict_unprivileged_userns = 1` (`tools/ci/sandbox_host.py`). Electron then
+  needs its setuid helper, `chrome-sandbox`, root's with mode 4755, and the job's own `npm ci`
+  and electron-builder build make a new one each run that is not. The cause names the commands
+  that lift the rule, `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` and a line
+  in `/etc/sysctl.d/` to keep it, and the `chown` and `chmod` for the helper only as the way to
+  run Electron by hand. On GitHub the rule is never read: the runner gives the helper root's
+  4755 (`tools/ci/sandbox_helper.sh`), and the job runs as it always did.
+  `PCLAW_USERNS_RULE_FILE` is a test seam, not a setting: it names a file the check reads in the
+  kernel's place, so a test that runs `run-job` in a process of its own can plant a host. A
+  planted `0` only lets a job run; on a host that withholds the namespaces it then fails red as
+  before, never green.
 - **`--working-tree`** (both verbs) runs on the checkout as it stands, uncommitted changes
   included, so a check before a commit can pass. The steps, their environment, the time limit
   and the JUnit check are the same; no record is written, since the steps ran on no commit, and
