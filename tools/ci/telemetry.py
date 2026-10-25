@@ -9,7 +9,8 @@ run completes, from main's own code, and writes ``history-<run>-<attempt>.jsonl`
   cancelled work, artifact volume, schedule lag) and one entry per job;
 - then one line per job record the attempt uploaded (version 4), by key;
 - every other line is one test case of that attempt's junit reports: its id, its first result,
-  its seconds, the report it came from.
+  its seconds, the report it came from. On a tested push, the pull request run that tested the
+  pushed tree adds its own (below).
 
 Every line is within ``MAX_LINE_BYTES``, its line break included, the bound each reader (the
 weekly report and its fetch, the shard planner, the parity check) holds a history line to and
@@ -17,8 +18,28 @@ refuses a whole history past: a line that would pass it fails the collection and
 
 **Which runs count.** A push to ``main``, of ``merge.yml`` (``workflows.MAIN_PUSH``), and a
 scheduled or dispatched Breadth run on ``main``, all from this repository. That is decided from
-the run itself, before any artifact is listed or downloaded, so a pull request's artifacts are
-never read at all.
+the run itself, before any artifact is listed or downloaded, so a pull request's run is never
+collected. Its artifacts are read only as a tested push's suite, below.
+
+**Where the reports are.** An artifact named ``junit-*`` is one report, named as the artifact.
+merge.yml uploads each entry's reports folder as ``reports-<slug>-<attempt>``: each
+``junit-*.xml`` directly in its ``reports/`` (or at its root, when ``reports/`` was the upload's
+one folder) is one report, named as the file without ``.xml``, so ``junit-test-shard-1`` either
+way. Nothing else in such an archive is read. Every upload of a junit report in a collected
+workflow is named with one of :data:`REPORT_ARTIFACT_PREFIXES`, which a rail holds.
+
+**A tested push's suite** (version 5). A push to main whose tree a green pull request run
+already tested runs only the always-run jobs, so its own reports hold no suite. The collector
+then also reads that run's first attempt, the one ``tree-check`` names: the same rules
+(``tools/ci/tree_tested.py``'s ``decide``, with the pushed commit's parent as the commit it
+replaced) find exactly one pull request into main merged as the pushed commit, whose head has
+the pushed tree and holds that parent, and whose runs on that head all passed on their first
+attempt. The run must also be a ``merge.yml`` pull_request run of this repository on that head:
+a run on an older head, a fork's, or an unmerged pull request's is never read. That run ran the
+pushed tree's own code, as the push would have. Its reports add test lines carrying its own run
+id, attempt and head, for each report the push did not upload itself, and the run line's
+``tested_by`` names it (null when no such run was found, or its reports could not be read, which
+the job's log names). Version 5 adds ``tested_by`` and changes nothing else.
 
 **A first result is never replaced.** Each attempt is collected on its own, from that attempt's
 own facts (``attempts/<n>``: its start, its end, its conclusion), its own jobs, and only the
@@ -95,13 +116,14 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from . import verdict, workflows
+from . import tree_tested, verdict, workflows
 
 SCHEMA = "personalclaw-ci-telemetry"
-VERSION = 4
-#: The versions a reader takes: this one; version 3, whose run line lacks ``records``; version 2,
-#: which lacks ``cpus`` too; and version 1, whose test lines also lack ``environment_failure``.
-READS = frozenset({1, 2, 3, VERSION})
+VERSION = 5
+#: The versions a reader takes: this one; version 4, whose run line lacks ``tested_by``; version
+#: 3, which lacks ``records`` too; version 2, which lacks ``cpus`` too; and version 1, whose test
+#: lines also lack ``environment_failure``.
+READS = frozenset({1, 2, 3, 4, VERSION})
 
 #: The run line's fields, after ``kind``, ``schema`` and ``version``.
 RUN_FIELDS = (
@@ -125,6 +147,7 @@ RUN_FIELDS = (
     "cache_hits",
     "jobs",
     "cpus",
+    "tested_by",
 )
 
 #: A record line's fields, exactly: one line per job record the attempt uploaded (version 4).
@@ -172,7 +195,12 @@ COUNTED = {
     "breadth.yml": frozenset({"schedule", "workflow_dispatch"}),
 }
 
+#: An artifact that is one junit report, named as the report.
 REPORT_PREFIX = "junit-"
+#: merge.yml's archive of one entry's reports folder, ``reports-<slug>-<attempt>``.
+REPORTS_PREFIX = "reports-"
+#: Every name an artifact the collector reads reports from starts with.
+REPORT_ARTIFACT_PREFIXES = (REPORT_PREFIX, REPORTS_PREFIX)
 #: The artifact ``ci-telemetry.yml`` uploads each attempt's history as; the shard planner reads it.
 HISTORY_ARTIFACT = "telemetry-history-{run}-{attempt}"
 #: The artifact its ``slots`` job uploads, by the collector run that wrote it.
@@ -189,6 +217,10 @@ MAX_HISTORY_ARCHIVE_BYTES = 32 * 1024 * 1024
 MAX_WINDOW_MEMBERS = 2000
 MAX_WINDOW_BYTES = 6 * 1024 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
+#: A ``reports-*`` archive larger than this is never downloaded. It holds the entry's other output
+#: too (an e2e shard's Playwright report and traces measured 7.4 MB on a green run), and each
+#: report in it is still read within :data:`MAX_JUNIT_BYTES`.
+MAX_REPORTS_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_JUNIT_BYTES = 8 * 1024 * 1024
 #: The most one history line holds, its line break included. Every reader refuses a history with
 #: a longer line whole, so the collector writes none: a test line is a few hundred bytes, a run
@@ -483,6 +515,25 @@ def _rerun_result(name: str, test: str, first: str, case: ET.Element) -> str | N
     return word
 
 
+def junit_members(name: str, archive: bytes) -> list[str]:
+    """The reports a ``reports-*`` archive holds: each ``junit-*.xml`` file directly in its
+    ``reports/``, or at its root. Nothing else in it is read."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
+            infos = zipped.infolist()
+    except zipfile.BadZipFile:
+        raise CollectError(f"{name}: not a zip archive") from None
+    found = []
+    for info in infos:
+        folder, _, base = info.filename.rpartition("/")
+        mode = (info.external_attr >> 16) & 0o170000
+        if folder not in ("", "reports") or info.is_dir() or mode == 0o120000:
+            continue
+        if base.startswith(REPORT_PREFIX) and base.endswith(".xml"):
+            found.append(info.filename)
+    return sorted(found)
+
+
 def report_cases(name: str, archive: bytes) -> tuple[list[Case], str | None, int | None]:
     """Each test case of one junit archive, and the platform and worker count the suite recorded
     in it (``tests/run_facts.py``), or None for a report that records none."""
@@ -491,13 +542,18 @@ def report_cases(name: str, archive: bytes) -> tuple[list[Case], str | None, int
 
 
 def report_facts(
-    name: str, archive: bytes
+    name: str, archive: bytes, member: str | None = None
 ) -> tuple[list[Case], str | None, int | None, str | None]:
-    """:func:`report_cases`, and the CPU model the report's processes recorded, or None."""
+    """:func:`report_cases`, and the CPU model the report's processes recorded, or None. With
+    ``member``, that one file of the archive is the report, and nothing else in it is read."""
     try:
         with zipfile.ZipFile(io.BytesIO(archive)) as zipped:
             members = [
-                m for m in zipped.infolist() if not m.is_dir() and m.filename.endswith(".xml")
+                m
+                for m in zipped.infolist()
+                if not m.is_dir()
+                and m.filename.endswith(".xml")
+                and (member is None or m.filename == member)
             ]
             if not members:
                 raise CollectError(f"{name}: the archive holds no junit report")
@@ -505,8 +561,8 @@ def report_facts(
             facts: set[tuple[str | None, str | None]] = set()
             models: set[str] = set()
             budget = MAX_JUNIT_BYTES
-            for member in members:
-                with zipped.open(member) as fh:
+            for info in members:
+                with zipped.open(info) as fh:
                     data = fh.read(budget + 1)
                 budget -= len(data)
                 if budget < 0:
@@ -648,6 +704,147 @@ def _job_entry(job: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _uploads(
+    text: Callable[..., str], base: str, this: Mapping[str, Any], attempt: int, run_id: int
+) -> list[Mapping[str, Any]]:
+    """The artifacts the attempt ``this`` of the run at ``base`` uploaded: only those made between
+    its start and its end, since one made before it started is an earlier attempt's and one made
+    after it ended a later attempt's."""
+    since, until = _at(this.get("run_started_at")), _at(this.get("updated_at"))
+    if since is None or until is None:
+        raise CollectError(f"attempt {attempt} of run {run_id} has no start or no end")
+    artifacts = []
+    for a in _listed(text, f"{base}/artifacts", "artifacts", "the artifacts"):
+        made = _at(a.get("created_at"))
+        if a.get("expired") or made is None:
+            continue
+        if since <= made <= until:
+            artifacts.append(a)
+    return artifacts
+
+
+def _download(
+    binary: Callable[..., bytes], repo: str, artifact: Mapping[str, Any], limit: int
+) -> bytes:
+    name = str(artifact.get("name", ""))
+    if int(artifact.get("size_in_bytes") or 0) > limit:
+        raise CollectError(f"{name}: the archive passes {limit} bytes")
+    data = binary("api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip")
+    if len(data) > limit:
+        raise CollectError(f"{name}: the archive passes {limit} bytes")
+    return data
+
+
+def _test_lines(
+    binary: Callable[..., bytes],
+    repo: str,
+    artifacts: Sequence[Mapping[str, Any]],
+    *,
+    run_id: int,
+    attempt: int,
+    workflow: str,
+    sha: object,
+    skip: frozenset[str] = frozenset(),
+) -> tuple[list[dict[str, Any]], dict[str, str | None]]:
+    """One line per test case of every report the artifacts hold, and each report's CPU model.
+    Two reports with one name are read once, from the lower artifact id, and a report named in
+    ``skip`` is not read."""
+    found: dict[str, tuple[bytes, str | None, str]] = {}
+    for artifact in sorted(artifacts, key=lambda a: int(a["id"])):
+        name = str(artifact.get("name", ""))
+        if name.startswith(REPORT_PREFIX):
+            if name not in found and name not in skip:
+                found[name] = (_download(binary, repo, artifact, MAX_ARCHIVE_BYTES), None, name)
+        elif name.startswith(REPORTS_PREFIX):
+            data = _download(binary, repo, artifact, MAX_REPORTS_ARCHIVE_BYTES)
+            for file in junit_members(name, data):
+                report = file.rpartition("/")[2][: -len(".xml")]
+                if report not in found and report not in skip:
+                    found[report] = (data, file, f"{name}'s {file}")
+    tests: list[dict[str, Any]] = []
+    cpus: dict[str, str | None] = {}
+    for report, (archive, member, where) in sorted(found.items()):
+        cases, platform, workers, cpus[report] = report_facts(where, archive, member)
+        for test, seconds, result, host, rerun, environment in cases:
+            tests.append(
+                {
+                    "kind": "test",
+                    "run_id": run_id,
+                    "attempt": attempt,
+                    "workflow": workflow,
+                    "sha": sha,
+                    "report": report,
+                    "runner": host,
+                    "test": test,
+                    "seconds": seconds,
+                    "first_result": result,
+                    "rerun_result": rerun,
+                    "environment_failure": environment,
+                    "quarantined": None,
+                    "platform": platform,
+                    "workers": workers,
+                    "worker": None,
+                    "position": None,
+                }
+            )
+    return tests, cpus
+
+
+def _api(text: Callable[..., str]) -> tree_tested.Get:
+    """``tree_tested``'s reader, through ``gh``: an answer it cannot read is ``Unanswered``."""
+
+    def get(path: str) -> Any:
+        try:
+            return json.loads(text("api", path.lstrip("/")))
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:
+            raise tree_tested.Unanswered(f"GET {path}: {exc}") from None
+
+    return get
+
+
+def _tested_run(
+    text: Callable[..., str], repo: str, run: Mapping[str, Any]
+) -> tuple[Mapping[str, Any], tree_tested.Verdict] | str:
+    """The pull request run that tested a push's tree, with ``tree_tested``'s answer for the
+    push, or why there is none. The push's commit replaced its parent: main takes one squashed
+    commit a push, and a head that holds the parent holds anything older too."""
+    get = _api(text)
+    sha = str(run.get("head_sha") or "")
+    try:
+        commit = get(f"/repos/{repo}/commits/{sha}")
+        parents = commit.get("parents") if isinstance(commit, Mapping) else None
+        first = parents[0] if isinstance(parents, list) and parents else None
+        parent = first.get("sha") if isinstance(first, Mapping) else None
+        if not isinstance(parent, str):
+            return f"commit {sha[:12]} names no parent"
+    except tree_tested.Unanswered as exc:
+        return str(exc)
+    answer = tree_tested.decide(
+        get,
+        event="push",
+        ref=tree_tested.MAIN,
+        repo=repo,
+        sha=sha,
+        before=parent,
+        workflow=workflows.MERGE,
+    )
+    if not answer.tested or answer.run is None:
+        return answer.reason
+    try:
+        other = get(f"/repos/{repo}/actions/runs/{answer.run}")
+    except tree_tested.Unanswered as exc:
+        return str(exc)
+    if not isinstance(other, Mapping) or not isinstance(other.get("id"), int):
+        return f"run {answer.run} is not a run"
+    if other.get("path") != MERGE_PATH or other.get("event") != "pull_request":
+        return f"run {answer.run} is not a {workflows.MERGE} pull_request run"
+    if (other.get("head_repository") or {}).get("full_name") != repo:
+        return f"run {answer.run}'s head is another repository's"
+    if other.get("head_sha") != answer.head:
+        return f"run {answer.run} is not on #{answer.pull_request}'s head"
+    return other, answer
+
+
 def collect(
     repo: str,
     run_id: int,
@@ -672,65 +869,61 @@ def collect(
         for j in _listed(text, f"{base}/attempts/{attempt}/jobs", "jobs", "the jobs")
         if j.get("run_attempt", attempt) == attempt
     ]
-    # Only this attempt's uploads: an artifact made before the attempt started is an earlier
-    # attempt's, and one made after it ended is a later attempt's.
-    since, until = _at(started), _at(ended)
-    if since is None or until is None:
-        raise CollectError(f"attempt {attempt} of run {run_id} has no start or no end")
-    artifacts = []
-    for a in _listed(text, f"{base}/artifacts", "artifacts", "the artifacts"):
-        made = _at(a.get("created_at"))
-        if a.get("expired") or made is None:
-            continue
-        if since <= made <= until:
-            artifacts.append(a)
-    reports: dict[str, Mapping[str, Any]] = {}
+    artifacts = _uploads(text, base, this, attempt, run_id)
     uploaded: dict[str, Mapping[str, Any]] = {}
     for artifact in sorted(artifacts, key=lambda a: int(a["id"])):
         name = str(artifact.get("name", ""))
-        if name.startswith(REPORT_PREFIX) and name not in reports:
-            reports[name] = artifact
         if name.startswith(RECORD_PREFIX) and name not in uploaded:
             uploaded[name] = artifact
     records: list[dict[str, Any]] = []
     for name, artifact in sorted(uploaded.items()):
-        if int(artifact.get("size_in_bytes") or 0) > MAX_RECORD_ARCHIVE_BYTES:
-            raise CollectError(f"{name}: the archive passes {MAX_RECORD_ARCHIVE_BYTES} bytes")
-        data = binary("api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip")
-        if len(data) > MAX_RECORD_ARCHIVE_BYTES:
-            raise CollectError(f"{name}: the archive passes {MAX_RECORD_ARCHIVE_BYTES} bytes")
+        data = _download(binary, repo, artifact, MAX_RECORD_ARCHIVE_BYTES)
         records.append(record_line(name, data, run_id, attempt))
-    tests: list[dict[str, Any]] = []
-    cpus: dict[str, str | None] = {}
-    for name, artifact in sorted(reports.items()):
-        if int(artifact.get("size_in_bytes") or 0) > MAX_ARCHIVE_BYTES:
-            raise CollectError(f"{name}: the archive passes {MAX_ARCHIVE_BYTES} bytes")
-        data = binary("api", f"repos/{repo}/actions/artifacts/{artifact['id']}/zip")
-        if len(data) > MAX_ARCHIVE_BYTES:
-            raise CollectError(f"{name}: the archive passes {MAX_ARCHIVE_BYTES} bytes")
-        cases, platform, workers, cpus[name] = report_facts(name, data)
-        for test, seconds, result, host, rerun, environment in cases:
-            tests.append(
-                {
-                    "kind": "test",
-                    "run_id": run_id,
-                    "attempt": attempt,
-                    "workflow": workflow,
-                    "sha": run.get("head_sha"),
-                    "report": name,
-                    "runner": host,
-                    "test": test,
-                    "seconds": seconds,
-                    "first_result": result,
-                    "rerun_result": rerun,
-                    "environment_failure": environment,
-                    "quarantined": None,
-                    "platform": platform,
-                    "workers": workers,
-                    "worker": None,
-                    "position": None,
+    tests, cpus = _test_lines(
+        binary,
+        repo,
+        artifacts,
+        run_id=run_id,
+        attempt=attempt,
+        workflow=workflow,
+        sha=run.get("head_sha"),
+    )
+    tested_by = None
+    if workflow == workflows.MERGE and run.get("event") == "push":
+        found = _tested_run(text, repo, run)
+        if isinstance(found, str):
+            print(f"no pull request run's reports are read for this push: {found}")
+        else:
+            other, answer = found
+            other_id = int(other["id"])
+            other_base = f"repos/{repo}/actions/runs/{other_id}"
+            try:
+                first = _json(text("api", f"{other_base}/attempts/1"), "its first attempt")
+                more, more_cpus = _test_lines(
+                    binary,
+                    repo,
+                    _uploads(text, other_base, first, 1, other_id),
+                    run_id=other_id,
+                    attempt=1,
+                    workflow=workflow,
+                    sha=answer.head,
+                    skip=frozenset(cpus),
+                )
+            except CollectError as err:
+                print(
+                    "::warning title=the tested pull request run's reports are not read::"
+                    f"run {other_id}: {err}"
+                )
+            else:
+                tests += more
+                cpus.update(more_cpus)
+                tested_by = {
+                    "run_id": other_id,
+                    "attempt": 1,
+                    "pull_request": answer.pull_request,
+                    "head_sha": answer.head,
+                    "tree": answer.tree,
                 }
-            )
     starts = [t for j in jobs if (t := _at(j.get("started_at"))) is not None]
     failed_ends = [
         _seconds(started, j.get("completed_at")) for j in jobs if j.get("conclusion") == "failure"
@@ -766,6 +959,7 @@ def collect(
         "cache_hits": None,
         "jobs": [_job_entry(j) for j in jobs],
         "cpus": cpus,
+        "tested_by": tested_by,
     }
     return [head, *sorted(records, key=lambda r: str(r["key"])), *tests]
 
