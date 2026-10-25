@@ -12,9 +12,10 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
-import sys
 import time
 from pathlib import Path
+
+import nested_pytest
 
 TESTS = Path(__file__).resolve().parent
 
@@ -61,7 +62,14 @@ def _pytest(project: Path) -> subprocess.Popen[bytes]:
         "PYTHONPATH": os.pathsep.join([str(TESTS), os.environ.get("PYTHONPATH", "")]),
     }
     env.pop("PYTEST_ADDOPTS", None)
-    argv = [sys.executable, "-m", "pytest", "-n", "2", "-p", "no:cacheprovider", "-q"]
+    argv = [
+        *nested_pytest.argv(project),
+        "-n",
+        "2",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+    ]
     argv += ["--junitxml=reports/junit-plant.xml", "test_suite.py"]
     return subprocess.Popen(
         argv,

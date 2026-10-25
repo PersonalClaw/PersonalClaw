@@ -18,6 +18,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+import nested_pytest
 import pytest
 import rails_reads
 
@@ -191,9 +192,7 @@ def _run_planted(root: Path, workers: str, **given: str) -> subprocess.Completed
     env.update(RAILS_READS_HOME=str(_HERE), **given)
     return subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *nested_pytest.argv(root),
             "-q",
             "-p",
             "no:cacheprovider",

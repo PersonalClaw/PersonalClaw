@@ -23,6 +23,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 from personalclaw.net.git import git_argv, git_env
@@ -375,7 +376,14 @@ def test_a_core_whose_git_would_name_the_machines_helper_stops_the_run(tmp_path)
     env = {**os.environ, "PYTHONPATH": path}
     env.pop("PYTEST_CURRENT_TEST", None)
     one = f"{Path(__file__)}::test_the_guard_the_apps_suite_installs_is_the_same_one"
-    run = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", "0"]
+    run = [
+        *nested_pytest.argv(tmp_path),
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "-n",
+        "0",
+    ]
 
     ran = subprocess.run(
         [*run, "--no-cov", "--color=no", one],

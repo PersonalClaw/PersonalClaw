@@ -22,7 +22,6 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import textwrap
 from pathlib import Path
@@ -30,6 +29,7 @@ from pathlib import Path
 import conftest
 import container_runtime
 import git_helper_guard
+import nested_pytest
 import pytest
 
 _TESTS_DIR = Path(__file__).resolve().parent
@@ -104,9 +104,9 @@ def test_a_stand_in_under_a_named_basetemp_outside_the_temporary_folders_is_the_
         env["STAND_IN_UNDER_HOME"] = os.path.join(git_helper_guard.REAL_HOME, never)
         env["STAND_IN_IN_REPOSITORY"] = str(_TESTS_DIR.parent / never)
         proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "-o", "addopts=", "-p", "no:cacheprovider"]
-            + ["-p", "conftest", "-q", "--color=no", "--basetemp", str(top / "basetemp")]
-            + ["test_stand_ins.py"],
+            # The helper's basetemp, under `top`: outside the temporary folders, as the test needs.
+            [*nested_pytest.argv(top), "-o", "addopts=", "-p", "no:cacheprovider"]
+            + ["-p", "conftest", "-q", "--color=no", "test_stand_ins.py"],
             cwd=tmp_path,
             env=env,
             capture_output=True,

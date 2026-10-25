@@ -23,10 +23,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import textwrap
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 _TESTS_DIR = Path(__file__).resolve().parent
@@ -99,7 +99,14 @@ def _run(tmp_path: Path, tests: str, workers: str) -> dict:
         os.pathsep
     )
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "-n", workers],
+        [
+            *nested_pytest.argv(tmp_path),
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            "-n",
+            workers,
+        ],
         cwd=tmp_path,
         env=env,
         capture_output=True,

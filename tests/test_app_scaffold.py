@@ -38,6 +38,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import nested_pytest
 import pytest
 from table_rows import row
 
@@ -459,7 +460,13 @@ def test_generated_tests_pass(tmp_path: Path) -> None:
     env["PYTHONPATH"] = SRC_ROOT
     env["PERSONALCLAW_HOME"] = str(tmp_path / "home")
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", str(app), "-q", "-p", "no:cacheprovider"],
+        [
+            *nested_pytest.argv(tmp_path),
+            str(app),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -543,7 +550,13 @@ def test_the_generated_kit_call_fails_on_a_non_conformant_provider(tmp_path: Pat
     env["PYTHONPATH"] = SRC_ROOT
     env["PERSONALCLAW_HOME"] = str(tmp_path / "home")
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", str(app), "-q", "-p", "no:cacheprovider"],
+        [
+            *nested_pytest.argv(tmp_path),
+            str(app),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -573,7 +586,15 @@ def test_the_generated_suite_surfaces_the_vendor_seam_advisories(tmp_path: Path)
     env["PYTHONPATH"] = SRC_ROOT
     env["PERSONALCLAW_HOME"] = str(tmp_path / "home")
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", str(app), "-q", "-p", "no:cacheprovider", "-W", "always"],
+        [
+            *nested_pytest.argv(tmp_path),
+            str(app),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-W",
+            "always",
+        ],
         cwd=tmp_path,
         env=env,
         capture_output=True,

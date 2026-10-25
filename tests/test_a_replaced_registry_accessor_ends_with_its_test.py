@@ -34,6 +34,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 _TESTS_DIR = Path(__file__).resolve().parent
@@ -109,7 +110,7 @@ def _pytest_session(
     # session three or more behind it (pytest keeps 3), the run's own earlier session included,
     # one unlink at a time through the real-home guard (breadth run 40199713134, seed 2).
     command += ["-o", "addopts=", "-p", "no:cacheprovider", "-p", "conftest", "-q", "--color=no"]
-    command += ["--basetemp", str(folder / "basetemp")]
+    command.append(nested_pytest.basetemp(folder))
     try:
         return subprocess.run(
             [*command, *files], cwd=folder, env=env, capture_output=True, text=True, timeout=limit

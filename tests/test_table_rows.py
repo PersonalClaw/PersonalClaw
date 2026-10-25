@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import textwrap
 from pathlib import Path
+
+import nested_pytest
 
 TESTS = Path(__file__).resolve().parent
 
@@ -42,7 +43,13 @@ def _run(tmp_path: Path) -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
     env["PYTHONPATH"] = os.pathsep.join(p for p in (str(TESTS), env.get("PYTHONPATH", "")) if p)
     ran = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:randomly"]
+        [
+            *nested_pytest.argv(tmp_path),
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
+        ]
         + ["-rA", "--color=no", "-n", "0", "test_planted_table.py"],
         cwd=tmp_path,
         env=env,

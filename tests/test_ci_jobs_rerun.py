@@ -20,6 +20,7 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 from tools.ci import jobs, run, verdict
@@ -101,7 +102,14 @@ def _suite(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def _job(*paths: str, **kw) -> Job:
-    argv = (PY, "-m", "pytest", "-p", "no:cacheprovider", "-q", *paths, f"--junitxml={REPORT}")
+    argv = (
+        *nested_pytest.argv(".", python=PY),
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        *paths,
+        f"--junitxml={REPORT}",
+    )
     fields = dict(
         id="suite",
         tiers=("change",),
@@ -194,7 +202,15 @@ def test_a_test_that_fails_then_passes_is_a_flake_and_the_job_stays_red(tmp_path
 
 def test_a_test_that_fails_twice_is_a_repeated_failure_and_the_job_stays_red(tmp_path):
     root, log, _ = _suite(tmp_path)
-    argv = (PY, "-m", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests/test_broken.py")
+    argv = (
+        *nested_pytest.argv(".", python=PY),
+        "-n",
+        "2",
+        "--dist",
+        "worksteal",
+        "-q",
+        "tests/test_broken.py",
+    )
     outcome = _run(root, _job(command=(Step((*argv, f"--junitxml={REPORT}")),)), tmp_path)
     assert outcome.code == run.RED, outcome.reasons
     record = _record(outcome)
@@ -470,7 +486,13 @@ def test_a_rerun_result_telemetry_cannot_believe_fails_the_collection(case, why)
 def test_the_rerun_keeps_the_steps_time_budget(tmp_path):
     """The same per-test budget as the first attempt: the step's own --timeout goes with it."""
     root, _, _ = _suite(tmp_path)
-    argv = (PY, "-m", "pytest", "-p", "no:cacheprovider", "--timeout=45", "-q")
+    argv = (
+        *nested_pytest.argv(".", python=PY),
+        "-p",
+        "no:cacheprovider",
+        "--timeout=45",
+        "-q",
+    )
     job = _job(command=(Step((*argv, "tests/test_flaky.py", f"--junitxml={REPORT}")),))
     record = _record(_run(root, job, tmp_path))
     assert "--timeout=45" in record["rerun"]["argv"], record["rerun"]["argv"]
@@ -616,7 +638,13 @@ def test_the_rerun_is_stopped_at_the_end_of_the_jobs_time(tmp_path, capsys):
         },
         "a test that hangs on its rerun",
     )
-    argv = (PY, "-m", "pytest", "-p", "no:cacheprovider", "--timeout=25", "-q")
+    argv = (
+        *nested_pytest.argv(".", python=PY),
+        "-p",
+        "no:cacheprovider",
+        "--timeout=25",
+        "-q",
+    )
     job = _job(command=(Step((*argv, "tests/test_hangs.py", f"--junitxml={REPORT}")),))
     began = time.monotonic()
     outcome = _run(root, job, tmp_path, jobs.Options(deadline_s=12, grace=0.5))
@@ -644,7 +672,11 @@ def test_no_rerun_starts_once_the_jobs_time_is_spent(tmp_path):
         ' name="test_fails_then_passes"><failure message="x"/></testcase></testsuite></testsuites>'
     )
     rerun, reasons, stopped = jobs.diagnose(
-        [PY, "-m", "pytest", "tests/test_flaky.py", f"--junitxml={REPORT}"],
+        [
+            *nested_pytest.argv(".", python=PY),
+            "tests/test_flaky.py",
+            f"--junitxml={REPORT}",
+        ],
         cwd=root,
         env={},
         host=_host(root),
@@ -686,7 +718,13 @@ def test_a_test_stopped_by_its_own_per_test_timeout_is_a_failed_test_and_is_reru
         },
         "a test that runs past its per-test timeout once",
     )
-    argv = (PY, "-m", "pytest", "-p", "no:cacheprovider", "--timeout=2", "-q")
+    argv = (
+        *nested_pytest.argv(".", python=PY),
+        "-p",
+        "no:cacheprovider",
+        "--timeout=2",
+        "-q",
+    )
     job = _job(command=(Step((*argv, "tests/test_slow.py", f"--junitxml={REPORT}")),))
     outcome = _run(root, job, tmp_path)
     assert outcome.code == run.RED, outcome.reasons
@@ -1032,7 +1070,7 @@ def _diagnose(root: Path, tmp_path: Path, paths: Sequence[str], cases: str) -> t
         f'<?xml version="1.0"?><testsuites><testsuite>{cases}</testsuite></testsuites>'
     )
     return jobs.diagnose(
-        [PY, "-m", "pytest", *paths, f"--junitxml={REPORT}"],
+        [*nested_pytest.argv(".", python=PY), *paths, f"--junitxml={REPORT}"],
         cwd=root,
         env={},
         host=_host(root),
@@ -1123,7 +1161,14 @@ def test_a_step_that_ran_no_workers_is_rerun_with_no_worker_option(tmp_path):
     """A step that names no worker count ran in one process already, and its pytest may have no
     xdist (the client package's has none): the rerun names no ``-n`` that pytest would refuse."""
     root, log, _ = _suite(tmp_path)
-    argv = (PY, "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:xdist", "-q")
+    argv = (
+        *nested_pytest.argv(".", python=PY),
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        "no:xdist",
+        "-q",
+    )
     job = _job(command=(Step((*argv, "tests/test_flaky.py", f"--junitxml={REPORT}")),))
     record = _record(_run(root, job, tmp_path))
     assert _by_test(record)[FLAKY]["rerun_result"] == "flake", record["rerun"]
@@ -1339,7 +1384,13 @@ def test_a_test_that_times_out_twice_is_a_repeated_failure(tmp_path):
         },
         "a test that always outruns its per-test budget",
     )
-    argv = (PY, "-m", "pytest", "-p", "no:cacheprovider", "--timeout=2", "-q")
+    argv = (
+        *nested_pytest.argv(".", python=PY),
+        "-p",
+        "no:cacheprovider",
+        "--timeout=2",
+        "-q",
+    )
     job = _job(command=(Step((*argv, "tests/test_hang.py", f"--junitxml={REPORT}")),))
     began = time.monotonic()
     outcome = _run(root, job, tmp_path, jobs.Options(deadline_s=20, grace=0.5))

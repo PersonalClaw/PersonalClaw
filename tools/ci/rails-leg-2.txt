@@ -149,3 +149,4 @@ tests/rails/test_workflows_stage_completion_tree.py
 tests/rails/test_workflows_validator_supervisor_tree.py
 tests/rails/test_write_door_scalar_typing_tree.py
 tests/rails/test_ws_broadcast_gate_tree.py
+tests/rails/test_a_nested_pytest_keeps_a_basetemp_of_its_own_tree.py

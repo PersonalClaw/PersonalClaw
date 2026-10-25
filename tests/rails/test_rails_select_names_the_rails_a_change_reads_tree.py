@@ -20,8 +20,8 @@ import datetime
 import json
 import os
 import subprocess
-import sys
 
+import nested_pytest
 import pytest
 import rails_reads
 import source_index
@@ -54,9 +54,7 @@ def recorded(tmp_path_factory) -> rails_select.Record:
     env[rails_reads.FORCE] = "1"  # a record made here, on any run
     done = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *nested_pytest.argv(out),
             "-q",
             "-n",
             "0",

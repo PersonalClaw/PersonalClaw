@@ -14,6 +14,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import nested_pytest
 import pytest
 import run_facts
 
@@ -43,7 +44,14 @@ def _run(tmp_path: Path, *args: str) -> list[dict[str, str]]:
     body = "".join(f"def test_{i}():\n    pass\n\n\n" for i in range(6))
     (tests / "test_some.py").write_text(body, encoding="utf-8")
     done = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts="]
+        [
+            *nested_pytest.argv(tmp_path),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-o",
+            "addopts=",
+        ]
         + ["tests", "--junitxml=junit.xml", *args],
         cwd=tmp_path,
         capture_output=True,

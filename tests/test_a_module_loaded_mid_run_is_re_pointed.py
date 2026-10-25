@@ -46,9 +46,10 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import textwrap
 from pathlib import Path
+
+import nested_pytest
 
 _TESTS_DIR = Path(__file__).resolve().parent
 
@@ -236,9 +237,7 @@ def test_each_way_a_module_arrives_mid_run_is_re_pointed(tmp_path: Path) -> None
     # This suite's own conftest, as a plugin, over one file, in order, on one process.
     proc = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *nested_pytest.argv(tmp_path),
             "-o",
             "addopts=",
             "-p",

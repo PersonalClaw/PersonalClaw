@@ -13,10 +13,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import textwrap
 from pathlib import Path
 
+import nested_pytest
 import pytest
 import random_order
 
@@ -94,9 +94,7 @@ def _pytest(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
     return subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *nested_pytest.argv(tmp_path),
             "-o",
             "addopts=",
             "-p",

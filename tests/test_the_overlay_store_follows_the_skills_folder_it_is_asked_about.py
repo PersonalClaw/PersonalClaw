@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,16 +41,14 @@ def test_the_overlay_folder_is_the_loaders_skills_folder_when_it_is_asked(tmp_pa
 
 
 @pytest.mark.timeout(60)
-def test_a_test_that_moved_the_skills_folder_leaves_the_next_ones_overlays_alone():
+def test_a_test_that_moved_the_skills_folder_leaves_the_next_ones_overlays_alone(tmp_path):
     """🔴 Red before: the leaking test and then the proposal-cycle file, in a process of their own,
     the overlay store first imported by the leaking test. Seven of the file's tests had their
     proposal refused by a refinement an earlier one had accepted."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
     proc = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *nested_pytest.argv(tmp_path),
             "-o",
             "addopts=",
             "-p",
