@@ -8,12 +8,15 @@ at 1 s so it comes in seconds: twice the test's timeout, and 1 s.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 
+import hard_deadline
 import pytest
 
 TESTS = Path(__file__).resolve().parent
@@ -100,7 +103,9 @@ def test_a_teardown_that_never_ends_is_killed_and_named_with_its_stacks(tmp_path
         "crashed while running 'test_planted.py::test_leaves_a_task_that_ignores_its_cancel'" in out
     )
     assert "hard deadline: test_planted.py::test_leaves_a_task_that_ignores_its_cancel" in out
-    assert "twice its timeout of 1s and 1s" in out, out[-3000:]
+    assert "past its deadline of 3s (twice its timeout of 1s, and 1s)" in out, out[-3000:]
+    measured = re.search(r"was still running ([0-9.]+)s after it started", out)
+    assert measured and float(measured.group(1)) >= 3.0, "the time it ran is measured, past 3 s"
     # The stacks: the loop's thread in the runner's close, and the task that would not end.
     assert "_cancel_all_tasks" in out and "stubborn_waiter" in out, out[-3000:]
     assert "stubborn_waiter" in report and "hard deadline" in report
@@ -159,9 +164,9 @@ def test_a_test_that_ends_is_left_alone(tmp_path):
         (
             "@pytest.mark.timeout(1)",
             ("--timeout=4",),
-            "still running 3s after it started, twice its timeout of 1s",
+            "past its deadline of 3s (twice its timeout of 1s, and 1s)",
         ),
-        ("", ("--timeout=2",), "still running 5s after it started, twice its timeout of 2s"),
+        ("", ("--timeout=2",), "past its deadline of 5s (twice its timeout of 2s, and 1s)"),
     ],
     ids=["its own mark", "the run's timeout"],
 )
@@ -195,3 +200,101 @@ def test_the_deadline_is_twice_the_tests_own_timeout_and_the_grace(tmp_path, mar
     assert says in out, out[-3000:]
     assert "in never_ends" in out, "the stack names the teardown it was in"
     assert took < 60, took
+
+
+def test_a_fixture_that_never_ends_is_killed_and_named(tmp_path):
+    """A hang in a fixture's setup, past the alarm (it takes the alarm's Failed and waits again),
+    is the test's own work, so its worker is ended at the deadline and the stack names the
+    fixture."""
+    ran, _, took = _run(
+        tmp_path,
+        """
+        import threading
+
+        import pytest
+
+
+        @pytest.fixture
+        def stubborn_setup():
+            while True:
+                try:
+                    threading.Event().wait()
+                except BaseException:  # the alarm's Failed, taken and waited out again
+                    continue
+            yield
+
+
+        def test_whose_fixture_never_ends(stubborn_setup):
+            pass
+        """,
+        "-n",
+        "1",
+        "--timeout=1",
+    )
+    out = ran.stdout + ran.stderr
+    assert "crashed while running 'test_planted.py::test_whose_fixture_never_ends'" in out
+    assert "past its deadline of 3s (twice its timeout of 1s, and 1s)" in out, out[-3000:]
+    assert "in stubborn_setup" in out, "the stack names the fixture it was in"
+    assert took < 60, took
+
+
+def test_a_test_that_sets_the_clock_back_still_has_its_hang_caught(tmp_path):
+    """The opposite patch: a test that sets ``time.monotonic`` to 0.0 for the rest of its run,
+    and whose teardown never ends, is still ended at its deadline. A watchdog that read the
+    patched clock would find the deadline still to come, for good."""
+    ran, _, took = _run(
+        tmp_path,
+        """
+        import threading
+        import time
+
+        import pytest
+
+
+        @pytest.fixture
+        def never_ends():
+            yield
+            threading.Event().wait()
+
+
+        def test_that_sets_the_clock_back(monkeypatch, never_ends):
+            monkeypatch.setattr("time.monotonic", lambda: 0.0)  # undone after never_ends ends
+            time.sleep(30)  # the alarm ends the call here
+        """,
+        "-n",
+        "1",
+        "--timeout=1",
+    )
+    out = ran.stdout + ran.stderr
+    crashed = "crashed while running 'test_planted.py::test_that_sets_the_clock_back'"
+    assert crashed in out, out[-3000:]
+    assert "past its deadline of 3s (twice its timeout of 1s, and 1s)" in out
+    assert "in never_ends" in out
+    assert took < 60, took
+
+
+def test_a_test_that_patches_the_clock_never_moves_the_deadline(tmp_path, monkeypatch):
+    """Merge run 40189449012 ended a worker running ``test_evaluate_reads_no_clock``, which sets
+    ``time.monotonic`` to 9e12 for its call: the watchdog read that clock, woken by the test's
+    start only once the test had set it, and took the test for one 9e12 s past its deadline.
+    The watchdog's clock is its own. Here it is held from reading until the clock is patched, as
+    that busy worker held it, and then left to read: it ends nothing."""
+    ended: list[int] = []
+    dump = tmp_path / "hard-deadline.txt"
+    real, patched, read = time.monotonic, threading.Event(), threading.Event()
+
+    def clock() -> float:
+        """The real clock, which says when the watchdog reads it once the test's patch is in."""
+        if patched.is_set() and threading.current_thread().name == "hard-deadline":
+            read.set()
+        return real()
+
+    watchdog = hard_deadline.Watchdog(dump, end=ended.append, clock=clock)
+    with watchdog._changed:  # the watchdog reads the deadline only once this is let go
+        watchdog.arm("test_planted.py::test_reads_no_clock", 30.0, 30.0)
+        monkeypatch.setattr("time.monotonic", lambda: 9e12)
+        patched.set()
+    assert read.wait(10), "the watchdog never read its deadline"
+    watchdog.disarm()  # takes the watchdog's lock: once it is waiting again, or done ending
+    assert ended == [], dump.read_text(encoding="utf-8")[:500]
+    assert not dump.exists()

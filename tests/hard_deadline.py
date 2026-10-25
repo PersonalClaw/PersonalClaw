@@ -16,6 +16,12 @@ to the report (:meth:`Controller.pytest_handlecrashitem`), so the stacks reach t
 the JUnit report, and xdist replaces the worker. A test the alarm already ended is never passed
 or skipped here: a hang becomes a failure that names it.
 
+The watchdog keeps its own clock, the real ``time.monotonic`` as it was when the watchdog was
+made, before any test ran. Tests patch ``time.monotonic`` (``test_evaluate_reads_no_clock`` sets
+it to 9e12, and others to an expiry far ahead), and a watchdog that read the patched one took a
+fast test for one past its deadline: Merge run 40189449012 ended a worker that way, as it sent
+that test's report.
+
 The watchdog holds the GIL to read the stacks (``sys._current_frames``), never faulthandler's
 dump: that writes them from its own thread without the GIL, while execnet's threads run, and it
 crashed xdist workers that were not hung (#5255, reverted in 7ead7cebf). A process blocked in
@@ -112,17 +118,22 @@ def stacks() -> str:
 class Watchdog:
     """One thread that waits for the test in flight's deadline, and ends the process past it."""
 
-    def __init__(self, path: Path, *, end=os._exit) -> None:
+    def __init__(self, path: Path, *, end=os._exit, clock=time.monotonic) -> None:
         self.path = path
         self._end = end
-        self._armed: tuple[str, float, float, float] | None = None  # nodeid, at, timeout, grace
+        #: Its own reference to the clock, so a test that patches ``time.monotonic`` moves no
+        #: deadline (the module docstring).
+        self._clock = clock
+        #: The test in flight: its nodeid, start, deadline, timeout and grace.
+        self._armed: tuple[str, float, float, float, float] | None = None
         self._changed = threading.Condition()
         self._thread = threading.Thread(target=self._wait, name="hard-deadline", daemon=True)
         self._thread.start()
 
     def arm(self, nodeid: str, timeout: float, grace: float) -> None:
         with self._changed:
-            self._armed = (nodeid, time.monotonic() + timeout * 2 + grace, timeout, grace)
+            began = self._clock()
+            self._armed = (nodeid, began, began + timeout * 2 + grace, timeout, grace)
             self._changed.notify()
 
     def disarm(self) -> None:
@@ -136,18 +147,19 @@ class Watchdog:
                 if self._armed is None:
                     self._changed.wait()
                     continue
-                nodeid, deadline, timeout, grace = self._armed
-                left = deadline - time.monotonic()
+                nodeid, began, deadline, timeout, grace = self._armed
+                left = deadline - self._clock()
                 if left > 0:
                     self._changed.wait(left)
                     continue
-                self._fire(nodeid, timeout, grace)
+                self._armed = None
+                self._fire(nodeid, self._clock() - began, timeout, grace)
 
-    def _fire(self, nodeid: str, timeout: float, grace: float) -> None:
+    def _fire(self, nodeid: str, ran: float, timeout: float, grace: float) -> None:
         text = (
-            f"hard deadline: {nodeid} was still running {timeout * 2 + grace:g}s after it started,"
-            f" twice its timeout of {timeout:g}s and {grace:g}s, so its process (pid"
-            f" {os.getpid()}) was ended.\n\n{stacks()}"
+            f"hard deadline: {nodeid} was still running {ran:.1f}s after it started, past its"
+            f" deadline of {timeout * 2 + grace:g}s (twice its timeout of {timeout:g}s, and"
+            f" {grace:g}s), so its process (pid {os.getpid()}) was ended.\n\n{stacks()}"
         )
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
