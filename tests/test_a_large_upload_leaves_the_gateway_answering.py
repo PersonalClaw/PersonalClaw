@@ -29,6 +29,8 @@ import ctypes
 import gc
 import json
 import os
+import select
+import socket
 import subprocess
 import sys
 import tempfile
@@ -803,9 +805,11 @@ def _block_by_writing(tmp_path) -> None:
     drainer.join()
 
 
-def _block_by_reading(tmp_path) -> None:
+def _block_by_reading(tmp_path, late: float = 0.0) -> float:
     """A read that waits, as a read from a busy disk does, using no CPU meanwhile: from a pipe
-    whose writer writes only after :data:`_PLANTED`."""
+    whose writer writes only after :data:`_PLANTED`. *late* holds the reader back between opening
+    its end and reading, as a thread kept that long from a CPU is. It returns how long the read
+    itself waited."""
     fifo = tmp_path / "slow-read"
     os.mkfifo(fifo)
 
@@ -817,8 +821,36 @@ def _block_by_reading(tmp_path) -> None:
     feeder = threading.Thread(target=feed)
     feeder.start()
     with open(fifo, "rb") as reader:
+        if late:
+            time.sleep(late)
+        began = time.monotonic()
         assert len(reader.read(4096)) == 4096
+        waited = time.monotonic() - began
     feeder.join()
+    return waited
+
+
+def _block_by_waiting_to_read(_tmp_path, late: float = 0.0) -> float:
+    """A read that waits, as one from a peer that sends nothing does, using no CPU meanwhile: a
+    wait on a socket for something to read, for :data:`_PLANTED`. The kernel times it from the
+    call's own start (select's timeout is relative), so all of it is spent waiting, however long
+    the thread waited for a CPU before the call, or *late* held it back. :func:`_block_by_reading`'s
+    read is not: its writer's delay runs from when both ends of the pipe are open, so a thread
+    kept from a CPU that long after opening its end finds the data already there, and never
+    blocks. It returns how long the wait took."""
+    ours, theirs = socket.socketpair()
+    with ours, theirs:
+        if late:
+            time.sleep(late)
+        began = time.monotonic()
+        readable, _, _ = select.select([ours], [], [], _PLANTED)
+        waited = time.monotonic() - began
+    assert not readable, "the peer that sends nothing sent something"
+    return waited
+
+
+#: The block the crowded plant makes (:func:`_blocked_while_answering_app`).
+_CROWDED_BLOCK = _block_by_waiting_to_read
 
 
 _PLANTED_BLOCKS = {
@@ -1192,7 +1224,7 @@ def _blocked_while_answering_app(held: _HeldHealthCheck, where) -> web.Applicati
             held.arm()
             await held.under_way.wait()
             began = time.monotonic()
-            _block_by_reading(where)  # on the loop, while that health check waits on it
+            _CROWDED_BLOCK(where)  # on the loop, while that health check waits on it
             held.blocked = (began, time.monotonic())
         return web.json_response({"ok": True})
 
@@ -1202,7 +1234,7 @@ def _blocked_while_answering_app(held: _HeldHealthCheck, where) -> web.Applicati
     return app
 
 
-#: The probe over a blocking read on the loop, made while a health check is under way, beside a
+#: The probe over a wait to read on the loop, made while a health check is under way, beside a
 #: thread that hashes as an upload's worker does and so is ready to run whenever it is not.
 _BESIDE_A_READY_THREAD_CHILD = (
     textwrap.dedent("""
@@ -1260,13 +1292,19 @@ _BESIDE_A_READY_THREAD_CHILD = (
 
 def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_path):
     """The vacuity arm for the time left out: the time a thread beside the loop spends waiting
-    for a CPU is not the loop's. A blocking read on the loop for 0.2 s, made while a health check
+    for a CPU is not the loop's. A wait to read on the loop for 0.2 s, made while a health check
     is under way, at the lowest priority while every CPU is taken, beside a thread that hashes
     and so waits for a CPU most of that time, is a step over the bound and an answer over it.
 
     The crowd is set up again (:func:`_until_crowded`) until the thread beside waited for a CPU
     during the block: on a CI runner a try that stalled made its block after the busy processes
-    let go, when the thread beside had a CPU to itself."""
+    let go, when the thread beside had a CPU to itself.
+
+    The wait is timed from its own call (:func:`_block_by_waiting_to_read`), not a read from
+    :func:`_block_by_reading`'s pipe. On Linux CI (run 40181486016) that read's writer waited
+    out its 0.2 s while the loop, at the lowest priority, waited for a CPU, so the read found its
+    data there and never blocked: no step was charged more than 0.054 s, from a longest step of
+    0.507 s in wall time, the rest the loop's own wait for a CPU."""
     seen = _until_crowded(
         tmp_path,
         _BESIDE_A_READY_THREAD_CHILD,
@@ -1279,6 +1317,20 @@ def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_
     says = f"the thread beside used {seen['share']:.0%} of a CPU during the block; {seen['says']}"
     assert seen["worst_step"] >= _BOUND, f"the step missed the block; {says}"
     assert seen["slowest_answer"] >= _BOUND, f"the answer missed the block; {says}"
+
+
+@pytest.mark.parametrize("late", [0.0, 1.5 * _PLANTED], ids=["on time", "late"])
+def test_the_crowded_plants_read_waits_all_its_time_however_late_the_loop_comes_to_it(
+    tmp_path, late
+):
+    """On Linux CI (run 40181486016) the crowded plant read from :func:`_block_by_reading`'s pipe,
+    whose writer's delay runs from when both ends are open. The loop, at the lowest priority
+    under the crowd, waited for a CPU past that delay, found the data there and never blocked, so
+    the probe rightly charged it none of the block. Its wait now runs from its own call: a
+    reader held back past the delay, as that loop was, still waits all of it."""
+    waited = _CROWDED_BLOCK(tmp_path, late=late)
+    says = f"the read waited {waited:.3f}s of {_PLANTED}s, {late:g}s late"
+    assert waited >= _PLANTED * 0.95, says
 
 
 #: Between two snapshots, at the lowest priority while every CPU is taken: a thread that spins for
