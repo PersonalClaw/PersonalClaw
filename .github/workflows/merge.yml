@@ -285,7 +285,7 @@ jobs:
         run: >-
           python3 -m tools.ci shards plan --repo "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID"
           --leg test-shard:main-push:junit-test-shard-:3
-          --leg test-macos:main-push:junit-test-macos-:3
+          --leg test-macos:main-push:junit-test-macos-:2
           --out "$RUNNER_TEMP/shard-plan/plan.json"
       - name: every collectable file is in exactly one shard of each leg
         run: python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
@@ -317,6 +317,7 @@ jobs:
       cancel-in-progress: false
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.changes.outputs.build) }}
     steps:
       - name: Runner identity
@@ -422,6 +423,10 @@ jobs:
 
   test:
     # ── Every other entry of stage 1, beside `build` ────────────────────────────────────────
+    # A merge-tier run holds at most 14 jobs at once (#3915), so concurrent pull requests share
+    # the account's runners: `test` starts 10 entries at a time, and `build`, `test-2` and
+    # `test-3`, which never run beside each other, 4 each. The plan lists the suite shards within
+    # the first 10, so the cap never holds back the run's critical path.
     name: ${{ matrix.key }}
     needs: [changes, shard-plan]
     if: ${{ !cancelled() && needs.changes.outputs.test != '' }}
@@ -437,6 +442,7 @@ jobs:
       cancel-in-progress: false
     strategy:
       fail-fast: false
+      max-parallel: 10
       matrix: ${{ fromJSON(needs.changes.outputs.test) }}
     steps:
       - name: Runner identity
@@ -557,6 +563,7 @@ jobs:
       cancel-in-progress: false
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.changes.outputs.test-2) }}
     steps:
       - name: Runner identity
@@ -677,6 +684,7 @@ jobs:
       cancel-in-progress: false
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix: ${{ fromJSON(needs.changes.outputs.test-3) }}
     steps:
       - name: Runner identity
