@@ -43,7 +43,12 @@ a quarantine entry waives a known failure.
 against the head and the partner revisions that job reads. A tier with no job is input it cannot
 run. A job for another platform family, in a container, or needing a toolchain or partner
 checkout this machine lacks, cannot run here: it is named, and the run is PARTIAL, never green.
-After an interrupted job nothing more runs. ``--changed`` runs the jobs
+So, off GitHub, is an ``electron`` job on a host whose kernel withholds the user namespaces
+Chromium's sandbox needs (:mod:`tools.ci.sandbox_host`), named with the commands that lift the
+rule. A run short only of jobs this host cannot run is incomplete: its summary says
+``### Verdict: incomplete`` with each one's cause, and its last line ``incomplete: N jobs could
+not run here``. Any other job that is not green, a red one or one that left no record, keeps the
+verdict red. After an interrupted job nothing more runs. ``--changed`` runs the jobs
 :func:`tools.ci.plan.plan` plans for the diff from the base.
 
 Exit codes are :mod:`tools.ci.run`'s: 0 every planned job ran here and passed; 1 a job ran and
@@ -100,7 +105,17 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import admission, capabilities, catalogue, plan, run, shards, verdict, verdict_store
+from . import (
+    admission,
+    capabilities,
+    catalogue,
+    plan,
+    run,
+    sandbox_host,
+    shards,
+    verdict,
+    verdict_store,
+)
 from .catalogue import Catalogue, Job, Step
 
 #: What a GitHub-hosted runner gives every step that a step run here gets too: ``CI``, which the
@@ -191,6 +206,9 @@ class Host:
     #: The memory a tier run admits each job by (tools/ci/admission.py): this machine's off
     #: GitHub, where a runner holds one job; ``None`` starts every job at once.
     memory: admission.Memory | None = field(default=None, compare=False)
+    #: Why this host cannot run an Electron job's sandbox, given the root, or ``None`` when it
+    #: can (tools/ci/sandbox_host.py): read off GitHub only. ``None`` here reads nothing.
+    sandbox: Callable[[Path], str | None] | None = field(default=None, compare=False)
 
     @classmethod
     def this(cls, root: Path) -> Host:
@@ -202,6 +220,7 @@ class Host:
             path=os.environ.get("PATH", os.defpath),
             on_github=on_github,
             memory=None if on_github else admission.Memory.this(),
+            sandbox=None if on_github else sandbox_host.problem,
         )
 
 
@@ -247,6 +266,8 @@ class Outcome:
     #: The peak memory of the largest process of any of its steps, in MB, of the steps that
     #: ended on their own (``run.Result.peak_mb``).
     peak_mb: int | None = None
+    #: Not run: this host cannot run the job (:func:`cannot_run_here`), and its reasons say why.
+    not_here: bool = False
 
 
 # ── what a job needs, and whether it can run here ────────────────────────────────────────────
@@ -267,7 +288,9 @@ def cannot_run_here(job: Job, host: Host, *, working_tree: bool = False) -> list
     A job of another platform family cannot run here, except in a working-tree run
     (``working_tree``), which writes no record, so its result can never stand as evidence.
     A container, a toolchain program missing from PATH and a missing partner checkout are
-    reasons in either mode."""
+    reasons in either mode, and off GitHub so is a host whose kernel withholds the user
+    namespaces an ``electron`` job's sandbox needs (``host.sandbox``). On GitHub that is never
+    read: the runner gives the sandbox helper root's 4755 (``tools/ci/sandbox_helper.sh``)."""
     why: list[str] = []
     if off_its_platform(job, host) and not working_tree:
         why.append(f"it runs on {job.platform}, and this machine runs {host.family or 'neither'}*")
@@ -281,6 +304,10 @@ def cannot_run_here(job: Job, host: Host, *, working_tree: bool = False) -> list
         where = PARTNERS.get(name)
         if where and not (host.root / where / ".git").exists():
             why.append(f"it reads {name}, and there is no checkout at {where}")
+    if "electron" in job.toolchain and not host.on_github and host.sandbox is not None:
+        withheld = host.sandbox(host.root)
+        if withheld:
+            why.append(withheld)
     return why
 
 
@@ -1470,7 +1497,8 @@ def run_one(
     _owned_env(job)
     why = cannot_run_here(job, host, working_tree=options.working_tree)
     if why:
-        return Outcome(key, run.PARTIAL, [f"cannot run here: {w}" for w in why], ran=False)
+        said = [f"cannot run here: {w}" for w in why]
+        return Outcome(key, run.PARTIAL, said, ran=False, not_here=True)
     if options.workers is not None and host.on_github:
         raise Unreadable("--workers is a local override; on GitHub the catalogue's count runs")
     if options.working_tree and host.on_github:
@@ -2066,10 +2094,15 @@ def _write_receipt(work: Path, reuse: _Reuse, scratch: Path | None, *, kept: boo
 
 
 def _summary(judged: verdict.Verdict, outcomes: Sequence[Outcome]) -> str:
-    """The run's verdict as Markdown: :func:`verdict.summary`'s, except that a green run with a
-    reused job says it is green on reuse and names each one. A reused job did not run on this
-    candidate: it stands on a recorded clean pass of the same tree and inputs."""
+    """The run's verdict as Markdown: :func:`verdict.summary`'s, except that a run short only of
+    jobs this host could not run is incomplete (:func:`could_not_run`), naming each one's cause,
+    and a green run with a reused job says it is green on reuse and names each one. A reused job
+    did not run on this candidate: it stands on a recorded clean pass of the same tree and
+    inputs."""
     reused = [o.key for o in outcomes if o.reused]
+    short = [] if judged.green else could_not_run(outcomes, judged)
+    if short:
+        return _incomplete(short, judged)
     if not judged.green or not reused:
         return verdict.summary(judged)
     listed = verdict.tests_summary(judged.tests)
@@ -2236,7 +2269,7 @@ def run_tier(
         _write_receipt(work, reuse, scratch, kept=options.keep_scratch)
     if options.working_tree:
         # No job left a record, so nothing is judged: the run says what its steps did.
-        unjudged = verdict.Reason("", "working tree", "no record was written, so none is judged")
+        unjudged = verdict.Reason("", WORKING_TREE, "no record was written, so none is judged")
         return _tier_code(outcomes), outcomes, verdict.Verdict(green=False, reasons=(unjudged,))
     records = [o.record.read_text(encoding="utf-8") for o in outcomes if o.record is not None]
     results = verdict.from_job_records(records)
@@ -2270,6 +2303,58 @@ def _peaks_path(host: Host) -> Path | None:
         return verdict_store.Store.for_repo(host.root).root.parent / admission.PEAKS_FILE
     except verdict_store.Refused:
         return None
+
+
+#: The kind of the one reason a working-tree run's verdict gives: a note that nothing was
+#: judged, not a fault of any job.
+WORKING_TREE = "working tree"
+
+
+def could_not_run(outcomes: Sequence[Outcome], judged: verdict.Verdict) -> list[Outcome]:
+    """The jobs this host could not run, when they are the whole of why the run is not green, each
+    with the cause :func:`cannot_run_here` named; empty otherwise. A job that is not green for any
+    other reason (red, not run for ``--fail-fast``, an interruption or memory, or run with no
+    record), or a reason the plan or reuse gave, leaves the run's own verdict, red over this."""
+    here = [o for o in outcomes if o.not_here]
+    if not here or not all(o.reasons for o in here):
+        return []
+    if any(o.code != run.OK for o in outcomes if not o.not_here):
+        return []
+    keys = {o.key for o in here}
+    faults = [r for r in judged.reasons if r.kind != WORKING_TREE]
+    if any(r.key not in keys or r.kind != "missing" for r in faults):
+        return []
+    return here
+
+
+def _jobs(n: int) -> str:
+    return f"{n} job" if n == 1 else f"{n} jobs"
+
+
+def _incomplete(short: Sequence[Outcome], judged: verdict.Verdict) -> str:
+    """The summary of a run short only of the jobs in *short*, which this host could not run."""
+    prefix = "cannot run here: "
+    lines = [
+        "### Verdict: incomplete",
+        "",
+        f"{_jobs(len(short))} could not run here, so this run is no verdict on"
+        f" {'it' if len(short) == 1 else 'them'}, and never green. Every other planned job"
+        " passed.",
+        "",
+    ]
+    for o in short:
+        causes = [r.removeprefix(prefix) for r in o.reasons if r.startswith(prefix)]
+        lines.append(f"- `{o.key}`: {'; '.join(causes)}")
+    return "\n".join(lines) + "\n" + verdict.tests_summary(judged.tests)
+
+
+def _last_line(code: int, outcomes: Sequence[Outcome], judged: verdict.Verdict) -> str:
+    """The run's last line: ``incomplete: N jobs could not run here`` for a partial run short only
+    of jobs this host could not run, else its exit's word."""
+    short = [] if code != run.PARTIAL else could_not_run(outcomes, judged)
+    if short:
+        return f"incomplete: {_jobs(len(short))} could not run here"
+    return {run.OK: "ok", run.RED: "red", run.PARTIAL: "partial"}[code]
 
 
 def _tier_code(outcomes: Sequence[Outcome], *, unproven: bool = False) -> int:
@@ -2500,5 +2585,5 @@ def run_main(argv: list[str]) -> int:
         print("working tree: no record was written, so this run is no evidence for a commit")
     else:
         print(_summary(judged, outcomes), end="")
-    print({run.OK: "ok", run.RED: "red", run.PARTIAL: "partial"}[code])
+    print(_last_line(code, outcomes, judged))
     return code

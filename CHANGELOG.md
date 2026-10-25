@@ -31,6 +31,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The waiting list's ring no longer puts an error in the gateway's log when it cannot be sent. When something waiting on you is asked or answered, open pages are told a moment later, from a timer. A failed send there went into the gateway's event loop, where the ring's other failures are dropped quietly. Now it is dropped the same way, and open pages still see the change on their next poll.**
 - **Switching off, updating or uninstalling an app no longer pauses the gateway while it looks for a task the app left running. It used to collect and read every object the gateway held, which took about a second in a large gateway; it now reads only the tasks that are still scheduled.**
 - **Settings › Models' memory reading says a whole percent, as its bar does. It read `12.5%` on one reading and `12%` on the next, so the line changed width as the number moved.**
+- **`make check` and `make gate` call a run incomplete, never red, when every job that did not pass is one this machine cannot run, and name each with its reason; the last line is `incomplete: N jobs could not run here`, and the exit stays 2. On Linux, a job that runs Electron cannot run here while the kernel withholds the user namespaces Chromium's sandbox needs (Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns = 1`), and its reason names the `sysctl` that lifts it.**
 
 ### For maintainers
 

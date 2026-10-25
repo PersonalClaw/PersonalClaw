@@ -258,6 +258,11 @@ def _planted_web_checkout(tmp_path: Path, monkeypatch) -> tuple[Path, Path]:
         stub.write_text(f'#!/bin/sh\necho "{name} $*" >> "{asked}"\n{writes}exit 0\n')
         stub.chmod(0o755)
     monkeypatch.setenv("PATH", f"{stubs}:{os.environ['PATH']}")
+    # A host that lets Chromium sandbox itself, whatever this one's kernel says: web-unit runs
+    # Electron, and a Linux runner's AppArmor rule would keep it from running here at all.
+    rule = tmp_path / "apparmor_restrict_unprivileged_userns"
+    rule.write_text("0\n")
+    monkeypatch.setenv("PCLAW_USERNS_RULE_FILE", str(rule))
     monkeypatch.setattr(cli, "_repo_root", lambda: root)
     return root, asked
 
