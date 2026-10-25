@@ -6927,6 +6927,8 @@ export interface GoalLoop {
   kind?: string
   /** Carried through from `Loop.run_id` by `loopToGoalLoop`'s spread — see there. */
   run_id?: string
+  /** Carried through from `Loop.broken`: a row the store can't open, and why. */
+  broken?: string
   /** Carried through from `Loop.work_dir` — where the worker's own files land. */
   work_dir?: string
   goal_type: GoalType; intake_rigor: string
@@ -7256,6 +7258,10 @@ export interface LoopSpend {
 }
 export interface Loop {
   id: string; kind: LoopKind; name: string; task: string; summary?: string
+  /** Present on a row the store can't open (an id it never makes, which a seed or an old write left):
+   *  why, in the words the lists show. Such a row is `failed`, opens nowhere, and its Delete removes
+   *  that row alone (`store.delete_broken`). */
+  broken?: string
   /** Present when the loop is a WORKFLOW RUN (a ported kind — `general` — runs on the
    *  workflows engine and has no loops-table row), absent on a loops-table loop. `GET /api/loops`
    *  lists both, so this is how a surface tells which cockpit opens the loop (`lib/loopKind:

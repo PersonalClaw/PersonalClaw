@@ -77,7 +77,7 @@ export interface ProjectThreads {
 /** The chat list's fields the join reads. */
 export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned' | 'attention'>
 /** The loop list's fields the join reads. */
-export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at' | 'last_cycle_at'>>
+export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at' | 'last_cycle_at' | 'broken'>>
 
 export interface ThreadSources {
   sessions: ThreadChat[]

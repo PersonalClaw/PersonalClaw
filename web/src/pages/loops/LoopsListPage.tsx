@@ -246,7 +246,8 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
                 // latest on this loop"; with no finding to report and no name of its own, it has
                 // nothing to add, and filler is worse than a shorter row.
                 const title = c.name || c.goal
-                const goalEarnsItsLine = hasDistinctName(c.name, c.goal)
+                // A row the store can't open says why on that line instead (`c.broken`, below).
+                const goalEarnsItsLine = !c.broken && hasDistinctName(c.name, c.goal)
                 // Right-click / long-press → the SAME actions the row's click/hover
                 // buttons already fire (peek-open, pause/resume/stop, delete), via the
                 // shared ContextMenu primitive. Zero-arg onSelect → the (e,id) handlers
@@ -263,8 +264,10 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
                 // different route with its own terminal-only rule), so it keeps its own condition
                 // rather than borrowing an unrelated action's set.
                 const can = loopActionSources(c)
+                // A row the store can't open (`c.broken`) opens nowhere: it says why, and Delete is all
+                // it offers, which removes that row alone.
                 const menuItems: ContextMenuItem[] = [
-                  { icon: <ExternalLink size={15} />, label: 'Open', onSelect: () => setPeekId(c.id) },
+                  ...(c.broken ? [] : [{ icon: <ExternalLink size={15} />, label: 'Open', onSelect: () => setPeekId(c.id) }]),
                   ...(can.pause.has(c.status) ? [{ icon: <Pause size={15} />, label: 'Pause', onSelect: () => act(undefined, c.id, 'pause') }] : []),
                   ...(can.resume.has(c.status) ? [{ icon: <Play size={15} />, label: 'Resume', onSelect: () => act(undefined, c.id, 'resume') }] : []),
                   ...(can.stop.has(c.status) ? [{ icon: <Square size={15} />, label: 'Stop', onSelect: () => act(undefined, c.id, 'stop') }] : []),
@@ -274,7 +277,7 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
                   <ContextMenu key={c.id} items={menuItems}>
                   <motion.div
                     variants={fadeEnter} initial="initial" animate="animate"
-                    onClick={() => setPeekId(c.id)}
+                    onClick={c.broken ? undefined : () => setPeekId(c.id)}
                     // 🔴 THIS ROW WAS A FOCUSABLE THAT DID NOTHING — the worse half of the tasks-list
                     // defect. `whileHover`/`whileTap` made Motion add its own `tabindex="0"`, so the
                     // keyboard DID land here (measured: a 2px outline on a `div` with no role), and
@@ -285,7 +288,7 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
                     tabIndex={-1}
                     className={`group relative flex items-center gap-l rounded-lg px-l py-l text-left cursor-pointer transition-colors overflow-hidden has-[>button:focus-visible]:ring-2 has-[>button:focus-visible]:ring-inset has-[>button:focus-visible]:ring-primary ${peekId === c.id ? 'bg-surface-high ring-1 ring-primary' : 'bg-surface-container hover:bg-surface-high'}`}
                   >
-                    <RowHitTarget label={rowSubject([title])} />
+                    {!c.broken && <RowHitTarget label={rowSubject([title])} />}
                     {/* running: faint left glow accent */}
                     {running && !c.held && <span className="absolute left-0 top-0 bottom-0 w-[3px]" style={{ background: 'var(--color-ok)' }} />}
                     <span className="shrink-0 inline-flex items-center justify-center size-10 rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-primary) 16%, transparent)' }}>
@@ -306,8 +309,9 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
                           const label = k === 'design' ? 'design' : k === 'general' ? 'loop' : (GOAL_GLYPH[c.goal_type] ?? c.goal_type)
                           const title = k === 'design' ? 'design loop' : k === 'general' ? 'general loop' : `${c.goal_type} goal`
                           return <span data-type="caption" className="shrink-0 rounded-pill px-1.5 h-4 inline-flex items-center uppercase tracking-wide bg-surface-high text-on-surface-low" title={title}>{label}</span> })()}
-                        <span data-type="caption" className="shrink-0 text-on-surface-low">· {loopStatusLabel(dispStatus)}{(running || c.status === 'paused') && (c.max_cycles === 0 ? ` · ongoing · cycle ${shownCycleNo}` : ` · cycle ${shownCycleNo}/${c.max_cycles}`)}</span>
+                        <span data-type="caption" className="shrink-0 text-on-surface-low">· {c.broken ? "Can't be opened" : loopStatusLabel(dispStatus)}{(running || c.status === 'paused') && (c.max_cycles === 0 ? ` · ongoing · cycle ${shownCycleNo}` : ` · cycle ${shownCycleNo}/${c.max_cycles}`)}</span>
                       </div>
+                      {c.broken && <p data-type="body-s" className="mt-1 text-on-surface-var">{c.broken}</p>}
                       {(latestText || goalEarnsItsLine) && (
                         <p data-type="body-s" className="mt-1 text-on-surface-low truncate">
                           {latestText ? <span className="text-on-surface-var">↳ {latestText}</span> : c.goal}

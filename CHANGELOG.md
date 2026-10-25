@@ -21,6 +21,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A loop whose id PersonalClaw never makes (one a test seed wrote into a home) is listed as one that can't be opened, with the reason, and its Delete removes that row alone. It used to list like any loop, open as not found, and refuse its own Delete with "Invalid loop id". Nothing opens, runs or resumes such a row.**
 - **Stopping `personalclaw update` with an interrupt (Ctrl-C, or a signal from a service manager) no longer leaves its installer running.**
 - **PersonalClaw finishes a scheduled backup step it is running before it stops, and every stop ends within 10 seconds under Docker, launchd and systemd. The backup step gets up to 3 seconds, and a stop now gives up on anything still stopping after 7 seconds instead of 10. The step used to keep running on its own after the rest had stopped, and under Docker a stop that took its whole time was killed before it exited.**
 - **On a new chat, the message composer takes its place at once. It used to spring into the middle of the page whenever the page around it moved: Chat opened from the Loops page, a suggestion strip landed, or the column settled while the page loaded. It still flies down into its place under the conversation when the chat starts.**

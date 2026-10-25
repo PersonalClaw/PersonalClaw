@@ -1112,6 +1112,10 @@ async def _run_backed_delete(request: web.Request, run: Any) -> web.Response:
 async def api_loop_delete(request: web.Request) -> web.Response:
     cid = request.match_info["id"]
     if not loop_files.valid_loop_id(cid):
+        # A row the listing shows as broken (`store.list_broken`) is deleted by its exact id, and
+        # only that row: it has no worker, sessions or folder to tear down.
+        if store.delete_broken(cid):
+            return web.json_response({"ok": True, "broken": True})
         return web.json_response({"error": "Invalid loop id"}, status=400)
     if store.get(cid) is None:
         run = _run_backed(cid)

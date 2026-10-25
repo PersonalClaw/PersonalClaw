@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -361,12 +362,92 @@ def get(loop_id: str) -> Loop | None:
 
 
 def list_all() -> list[Loop]:
+    """Every loop the store can open, newest first. A row whose id it can't open is
+    :func:`list_broken`'s: nothing that walks this list opens, runs or resumes it."""
     conn = _connect()
     try:
         rows = conn.execute("SELECT * FROM loops ORDER BY created_at DESC").fetchall()
-        return [_row_to_loop(r) for r in rows]
+        return [_row_to_loop(r) for r in rows if files.valid_loop_id(r["id"])]
     finally:
         conn.close()
+
+
+#: Why a row :func:`list_broken` names can't be opened, in the words the lists show it with.
+BROKEN_ID_REASON = (
+    "Its id isn't one PersonalClaw makes, so it can't be opened or run. "
+    "Delete removes this row only."
+)
+
+
+@dataclass(frozen=True)
+class BrokenRow:
+    """A loops row whose id the store can't open (:func:`files.valid_loop_id`): one a seed or
+    an old write left in the table. It is listed with its reason and deleted by its exact id
+    (:func:`delete_broken`), and never opened, run or resumed."""
+
+    id: str
+    name: str
+    kind: str
+    project_id: str
+    created_at: float
+    row: dict[str, Any]
+    reason: str = BROKEN_ID_REASON
+
+
+def list_broken(project_id: str = "") -> list[BrokenRow]:
+    """The rows :func:`list_all` leaves out, newest first, optionally under *project_id*."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM loops ORDER BY created_at DESC").fetchall()
+    finally:
+        conn.close()
+    out: list[BrokenRow] = []
+    for r in rows:
+        row = dict(r)
+        loop_id = str(row.get("id") or "")
+        if files.valid_loop_id(loop_id):
+            continue
+        if project_id and project_id not in (row.get("project_id"), row.get("tasks_project_id")):
+            continue
+        out.append(
+            BrokenRow(
+                id=loop_id,
+                name=str(row.get("name") or ""),
+                kind=str(row.get("kind") or ""),
+                project_id=str(row.get("project_id") or ""),
+                created_at=_epoch(row.get("created_at")),
+                row=row,
+            )
+        )
+    return out
+
+
+def _epoch(value: Any) -> float:
+    """A row's ``created_at`` as the listing sorts it: a number, ``0.0`` when it holds none."""
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def delete_broken(loop_id: str) -> bool:
+    """Delete the one row whose id is exactly *loop_id*, when it is a row :func:`list_broken`
+    names. Touches no file: a bad id names no folder of the store's, and a path-shaped one must
+    never reach the disk. An id the store can open is refused here; :func:`delete` and its
+    teardown are for that."""
+    if not loop_id or files.valid_loop_id(loop_id):
+        return False
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM loops WHERE id = ?", (loop_id,))
+        conn.commit()
+        deleted = cur.rowcount > 0
+    finally:
+        conn.close()
+    if deleted:
+        logger.info("loops: deleted the broken row %r", loop_id)
+        _announce()
+    return deleted
 
 
 def list_for_project(project_id: str) -> list[Loop]:
@@ -386,7 +467,7 @@ def list_for_project(project_id: str) -> list[Loop]:
             "ORDER BY created_at DESC",
             (project_id, project_id),
         ).fetchall()
-        return [_row_to_loop(r) for r in rows]
+        return [_row_to_loop(r) for r in rows if files.valid_loop_id(r["id"])]
     finally:
         conn.close()
 
@@ -1053,7 +1134,36 @@ def list_redacted(project_id: str = "", kind: str = "") -> list[dict]:
         if loop.status == LoopStatus.NEEDS_INPUT.value:
             d["pending_question"] = files.pending_question(loop.id)
         out.append(d)
+    broken = [_broken_row(b) for b in list_broken(project_id)]
+    broken = [b for b in broken if not kind or b.get("kind") == kind]
+    if broken:
+        out = sorted([*out, *broken], key=lambda r: _epoch(r.get("created_at")), reverse=True)
     return out
+
+
+def _broken_row(b: BrokenRow) -> dict:
+    """A :func:`list_broken` row as the list view shows it: named, with its reason (``broken``),
+    and ``failed``, so no surface counts it as work that runs and the lists offer Delete for it.
+    Reads no file: a bad id names no folder of the store's."""
+    try:
+        d = _redact_loop(_row_to_loop(b.row).to_dict())
+    except Exception:
+        d = _redact_loop(
+            {"id": b.id, "name": b.name, "kind": b.kind, "project_id": b.project_id, "task": ""}
+        )
+    d.update(
+        id=b.id,
+        status=LoopStatus.FAILED.value,
+        broken=b.reason,
+        findings=[],
+        last_cycle_at=None,
+        revision="",
+        held=None,
+        created_at=b.created_at,
+    )
+    d["total_cycles"] = len(d["findings"])
+    d["phase_tracked"] = _phase_tracked(b.kind)
+    return d
 
 
 def set_kind_config_key(loop_id: str, key: str, value: Any) -> None:

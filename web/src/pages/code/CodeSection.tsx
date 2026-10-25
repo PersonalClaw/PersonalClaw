@@ -272,6 +272,15 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
 
   async function del(p: Loop) {
     setActionErr(null)
+    // A row the store can't open has no workspace, branches or kept work of its own: its Delete
+    // removes that row alone, and the dialog says only that.
+    if (p.broken) {
+      if (!(await confirmDelete('project', p.name, { body: p.broken }))) return
+      try { await api.deleteULoop(p.id) }
+      catch (e) { setActionErr(`Couldn't delete that project: ${(e as Error).message || 'unknown error'}`) }
+      load()
+      return
+    }
     // Through the shared delete ritual: confirmDelete composes the identical
     // title/danger/label, so hand-rolling confirm() here was drift, not a design choice.
     // The custom body stays — it carries the destruction warning `confirmDelete` has no room for.
@@ -392,13 +401,13 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
                 // Enter/Space open the row only when the ROW has focus: one pressed on a control
                 // inside it (Stop, Delete, needs workspace) is that control's, and it used to be
                 // swallowed here (`preventDefault`) and open the project instead.
-                <div key={p.id} role="button" tabIndex={0} onClick={() => onOpen(p.id)}
-                  onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(p.id) } }}
+                <div key={p.id} role={p.broken ? undefined : 'button'} tabIndex={p.broken ? undefined : 0} onClick={p.broken ? undefined : () => onOpen(p.id)}
+                  onKeyDown={p.broken ? undefined : (e) => { if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(p.id) } }}
                   className="group flex cursor-pointer items-center gap-3 rounded-xl border border-outline-variant/50 bg-surface-container/60 px-4 py-3 text-left transition-colors hover:bg-surface-high">
                   <Code2 size={16} className="shrink-0 text-on-surface-low" />
                   <div className="min-w-0 flex-1">
                     <div data-type="body-m" className="truncate text-on-surface">{p.name}</div>
-                    <div data-type="caption" className="truncate text-on-surface-low">{sdlcStageLabel(entryStage(p))} · {projectKind(p)}{progress(p) ? ` · ${progress(p)}` : ''}</div>
+                    <div data-type="caption" className="truncate text-on-surface-low">{p.broken ?? `${sdlcStageLabel(entryStage(p))} · ${projectKind(p)}${progress(p) ? ` · ${progress(p)}` : ''}`}</div>
                   </div>
                   {/* A brownfield project that's pre-launch with no workspace can't start
                       until one is chosen — flag it on the row AND let the user fix it
