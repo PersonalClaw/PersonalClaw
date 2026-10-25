@@ -2,12 +2,13 @@
 workers.
 
 A run of its own, in a folder of its own, with only the report's plugin: two fixtures that spend
-3 ms and 5 ms per setup, and a fixture that asks for both from its own code
+3 ms and 5 ms of CPU per setup, and a fixture that asks for both from its own code
 (``request.getfixturevalue``), so both are set up inside the dependent's own setup, one after the
 other. Each sleeper must show its own time, the dependent about none of it, and each test's total
 the two sleepers' times added together, not twice that, because the time spent setting up a
-fixture inside another is charged to it alone. The total is compared with what the sleepers
-measured in the same run, so a slow machine slows both sides.
+fixture inside another is charged to it alone. That sum is judged in CPU time, which is what was
+planted: a loaded machine adds to each setup's wall time whatever it waited for a core, unevenly,
+so the wall medians no longer add up.
 Run once without workers and once with two, which also proves the controller merges every
 worker's measurements into the one file.
 
@@ -30,11 +31,11 @@ import pytest
 
 _TESTS_DIR = Path(__file__).resolve().parent
 
-#: How far each test's setup total may sit from the two sleepers' medians added together. Thirty
-#: correct runs on a machine with a load average of 15-33 put it 0.04-0.90 ms above that sum;
-#: the nearest wrong attribution (a nested frame read without being popped, or popped from the
-#: wrong end) puts it about 3.1 ms above. 2 ms is over twice the worst correct gap, and a
-#: millisecond short of the nearest wrong one.
+#: How far each test's setup total may sit from the two sleepers' medians added together, in CPU
+#: time. Sixty correct runs, half of them beside 18 busy loops on 18 cores, put it 0.05-0.16 ms
+#: above that sum; the nearest wrong attribution (a nested frame read without being popped, or
+#: popped from the wrong end) puts it about 3 ms above, a sleeper's time counted again. In wall
+#: time the same gap reached 2.8 ms on a loaded macOS runner with nothing wrong.
 _MARGIN_MS = 2.0
 
 _CONFTEST = """
@@ -52,10 +53,12 @@ import pytest
 
 
 def _spend(seconds):
-    # A busy wait, not time.sleep: a sleep is only a lower bound, and a machine that coalesces
-    # timers sleeps far longer than asked (measured: 38.6 ms for a 5 ms sleep).
-    end = time.perf_counter() + seconds
-    while time.perf_counter() < end:
+    # A busy wait on this thread's CPU clock, not time.sleep or the wall clock: a sleep is only a
+    # lower bound (measured: 38.6 ms for a 5 ms sleep where timers coalesce), and a wall-clock
+    # wait on a loaded machine is descheduled for part of its time. What is planted is CPU, which
+    # a busy machine does not stretch.
+    end = time.thread_time() + seconds
+    while time.thread_time() < end:
         pass
 
 
@@ -113,25 +116,34 @@ def test_a_planted_5ms_fixture_reports_about_5ms(tmp_path: Path, workers: str) -
     assert report["tests"] == 12
     assert report["workers"] == int(workers)
     rows = {row["fixture"].rsplit("::", 1)[1]: row["setup"] for row in report["fixtures"]}
+    # Each fixture's own time on both clocks, the CPU clock held to what was planted. Charged with
+    # the other's 3 ms or 5 ms, either sleeper would read about 8 ms of CPU, and the dependent 3 ms
+    # or more on either clock.
     short = rows["short_sleeper"]
     assert short["calls"] == 12
-    assert 2.7 <= short["median_ms"] <= 15, short
+    assert 2.9 <= short["cpu_median_ms"] <= 4.5, short
+    assert short["cpu_median_ms"] <= short["median_ms"] <= 15, short
     sleeper = rows["sleeper"]
     assert sleeper["calls"] == 12
-    assert 4.5 <= sleeper["median_ms"] <= 25, sleeper
+    assert 4.9 <= sleeper["cpu_median_ms"] <= 6.5, sleeper
+    assert sleeper["cpu_median_ms"] <= sleeper["median_ms"] <= 25, sleeper
     depends = rows["depends_on_the_sleeper"]
     assert depends["calls"] == 12
     assert depends["median_ms"] < 1, depends
-    # Each test's total against what the two sleepers measured in this same run, not against a
-    # fixed number: on a loaded machine every setup runs slower, and a fixed bound failed there
-    # with nothing wrong. Counted once, the total is the sleepers' time plus a little of its own
-    # (the dependent, pytest's parametrize fixture, the hook itself). Counted twice, it is about
-    # double the sleepers' time, and a frame left on the stack or taken from the wrong end adds
-    # about the short sleeper's 3 ms again.
-    sleepers = short["median_ms"] + sleeper["median_ms"]
-    total = report["per_test"]["setup"]["median_ms"]
-    assert abs(total - sleepers) <= _MARGIN_MS, (total, sleepers, report["per_test"]["setup"])
-    assert total < 1.5 * sleepers, (total, sleepers, report["per_test"]["setup"])
+    assert depends["cpu_median_ms"] < 1, depends
+    # Each test's total against what the two sleepers measured in this same run. Counted once, the
+    # total is the sleepers' time plus a little of its own (the dependent, pytest's parametrize
+    # fixture, the hook itself). Counted twice, it is about double the sleepers' time, and a frame
+    # left on the stack or taken from the wrong end adds about the short sleeper's 3 ms again.
+    # That 3 ms is told from a correct total in CPU time: in wall time each setup waits for a core
+    # by a different amount, so the total's median and the sleepers' medians drift apart by as
+    # much with nothing wrong. Counting twice shows on both clocks.
+    per_test = report["per_test"]["setup"]
+    sleepers = short["cpu_median_ms"] + sleeper["cpu_median_ms"]
+    total = per_test["cpu_median_ms"]
+    assert abs(total - sleepers) <= _MARGIN_MS, (total, sleepers, per_test)
+    assert total < 1.5 * sleepers, (total, sleepers, per_test)
+    assert per_test["median_ms"] < 1.5 * (short["median_ms"] + sleeper["median_ms"]), per_test
 
 
 #: Teardowns planted for the teardown half: a dependency that spends 5 ms of CPU after its yield,
