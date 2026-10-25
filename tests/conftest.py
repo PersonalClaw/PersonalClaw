@@ -1352,6 +1352,38 @@ def _put_back_the_registry_accessor() -> None:
         module.get_default_registry = real
 
 
+def _put_back_the_action_services_accessor() -> None:
+    """Every module of ours that binds ``get_action_services`` binds the real one again.
+
+    ``personalclaw.action_providers.services`` defines the only function of that name, so in our
+    other modules any other value there is a replacement a test left behind. Many tests replace it
+    by its path (``monkeypatch.setattr("personalclaw.action_providers.services.
+    get_action_services", lambda: SimpleNamespace(workflows=...))``), and undoing that restores
+    only the services module's name: a provider first imported while it was replaced
+    (``from personalclaw.action_providers.services import get_action_services``) kept the
+    lambda. Measured: ``test_workflows_versions.py``'s trigger-fired run was the first on its
+    worker to import ``notify_provider``, and every later notify on that worker reached that
+    test's namespace ("'types.SimpleNamespace' object has no attribute 'state'", random-order/3
+    on 2026-10-23), or another test's state instead of its own (random-order/4, seed 82, run
+    40199713134). The real one is read from the services module at each setup, after the last
+    test's patches were undone, so a services module imported afresh is followed.
+    """
+    services = sys.modules.get("personalclaw.action_providers.services")
+    real = getattr(services, "get_action_services", None)
+    if real is None or getattr(real, "__module__", None) != services.__name__:
+        return
+    holders = _LOADED_MODULES.holding(
+        "action services accessor", ("get_action_services",), _OUR_MODULES
+    )
+    for _name, module in holders:
+        if module is services:
+            continue
+        bound = module.__dict__.get("get_action_services")
+        if bound is None or bound is real:
+            continue
+        module.get_action_services = real
+
+
 #: Where an app bundle's modules live in ``sys.modules``: ``_pclaw_app_<app>__<module>``
 #: (``apps.native_contract.namespaced_module_name``).
 _APP_MODULE_PREFIX = "_pclaw_app_"
@@ -1504,10 +1536,12 @@ def _reset_action_services() -> object:
     them behind, so the next test in the worker found a dead gateway's state, where its own chat is
     not held, and its agent's call was refused as one for a chat whose mode cannot be read.
     Cleared rather than restored, as the channel registry is: outside a live gateway nothing is
-    wired, and a test that needs services wires its own.
+    wired, and a test that needs services wires its own. And every test starts with the real
+    accessor in every module of ours that binds it (``_put_back_the_action_services_accessor``).
     """
     from personalclaw.action_providers import services
 
+    _put_back_the_action_services_accessor()
     services._services = None
     yield
     services._services = None
