@@ -2747,9 +2747,13 @@ def _flag_values(step: dict[str, Any], flag: str) -> list[str]:
 def random_order_violations(tree: Tree) -> list[str]:
     """The randomized-order leg runs its shard in two orders, each its own step, seeded the
     run's number with 1 and with 2 (so a rerun repeats them, and no two runs share one), the
-    second whatever the first concluded. Its entry keeps exactly those seeds, in that order,
-    beside its inputs and never among them. It uploads its order files, leak reports and file
-    list, whatever it concluded, after every step that writes them."""
+    second whatever the first concluded, each in a basetemp of its own under ``/var/tmp``, outside
+    the runner's home. In pytest's shared one, a nested pytest the second order's tests start
+    deletes the first order's whole finished tree at its end (pytest keeps 3 sessions), one unlink
+    at a time through the real-home guard, and that ran a test's child past the suite's timeout
+    (run 40199713134). Its entry keeps exactly those seeds, in that order, beside its inputs and
+    never among them. It uploads its order files, leak reports and file list, whatever it
+    concluded, after every step that writes them."""
     job = _breadth_jobs(tree).get("random-order")
     if job is None:
         return ["breadth.yml has no random-order job"]
@@ -2767,6 +2771,14 @@ def random_order_violations(tree: Tree) -> list[str]:
         bad.append(
             f"{where} seeds its orders {seeds}, not one step each seeded"
             f" {', '.join(_RANDOM_ORDER_SEEDS)} in turn"
+        )
+    temps = [_flag_values(s, "--basetemp") for _, s in orders]
+    if any(len(t) != 1 or not t[0].startswith("/var/tmp/") for t in temps) or len(
+        {t[0] for t in temps if t}
+    ) != len(temps):
+        bad.append(
+            f"{where} runs its orders in basetemps {temps}, not each in one of its own under"
+            " /var/tmp, so a nested pytest in the second deletes the first's finished tree"
         )
     for i, step in orders:
         condition = str(step.get("if", "")).strip()
@@ -6502,6 +6514,7 @@ _RANDOM_ORDER_UPLOAD = (
 )
 _SECOND_ORDER = "      - name: pytest (random-order shard ${{ matrix.shard }}, second order)\n"
 _RANDOM_ORDER_SEEDED = "breadth.yml:random-order seeds its orders"
+_RANDOM_ORDER_BASETEMP = "breadth.yml:random-order runs its orders in basetemps"
 
 RANDOM_ORDER_RUNS_TWO_SEEDED_ORDERS = _toolchain_row(
     "breadth-random-order-runs-two-seeded-orders-and-keeps-them",
@@ -6541,6 +6554,20 @@ RANDOM_ORDER_RUNS_TWO_SEEDED_ORDERS = _toolchain_row(
             "--random-order-seed ${{ github.run_number }}2",
             "--random-order-seed ${{ github.run_number }}2 --random-order-seed 5",
             expect=_RANDOM_ORDER_SEEDED,
+        ),
+        _plant(
+            "the first order in pytest's shared basetemp",
+            _BREADTH,
+            ' --basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}1"',
+            "",
+            expect=_RANDOM_ORDER_BASETEMP,
+        ),
+        _plant(
+            "both orders in one basetemp",
+            _BREADTH,
+            '--basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}2"',
+            '--basetemp "/var/tmp/pytest-random-order-${{ github.run_number }}1"',
+            expect=_RANDOM_ORDER_BASETEMP,
         ),
         _plant(
             "the entry keeping other seeds than the orders'",
