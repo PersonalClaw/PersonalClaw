@@ -288,16 +288,20 @@ def _changes(api: FakeApi, path: str = "tools/ci/verdict.py", text: str = "x = 1
         (f"{WF}merge-verdict.yml", "name: Merge verdict\n"),
     ],
 )
-def test_a_heads_green_run_that_changes_a_definition_starts_its_contract_and_posts_nothing(
+def test_a_heads_green_run_that_changes_a_definition_starts_its_contract_and_waits_on_it(
     path: str, text: str
 ) -> None:
     api = _changes(FakeApi(), path, text)
     _contract(api)
     outcome = mc.decide(api, REPO, RUN, CONTROLLER)
-    assert outcome.posting is None, "its own green run is not the verdict on its own"
+    waiting = outcome.posting
+    assert waiting is not None, "a head that waits on its contract is a waiting red"
+    assert waiting.conclusion == "failure", "its own green run is not the verdict on its own"
+    assert waiting.output["title"] == (
+        "Red: waiting: main's CI contract over its definitions is started"
+    )
+    assert waiting.output["text"] == f"```{mc.WAITING_FENCE}\ncontract\n```\n"
     assert (outcome.dispatch, outcome.base, outcome.cleanup) == (HEAD, MAIN, None)
-    assert "changes 1 CI definitions" in outcome.why and f"`{path}`" in outcome.why
-    assert "main's contract over its definitions is started" in outcome.why
 
 
 def test_a_definition_head_that_is_red_anyway_posts_red_and_still_starts_its_contract() -> None:
@@ -313,8 +317,30 @@ def test_a_definition_head_whose_contract_still_runs_waits_and_starts_none_again
     api = _changes(FakeApi())
     _contract(api, {"status": "in_progress", "conclusion": None})
     outcome = mc.decide(api, REPO, RUN, CONTROLLER)
-    assert outcome.posting is None and outcome.dispatch is None
-    assert "is 'in_progress'" in outcome.why
+    assert outcome.posting is not None and outcome.dispatch is None
+    assert outcome.posting.output["title"] == (
+        "Red: waiting: main's CI contract over its definitions is 'in_progress': contract run "
+        f"https://github.com/{REPO}/actions/runs/4242"
+    )
+    assert f"```{mc.WAITING_FENCE}" in outcome.posting.output["text"]
+
+
+def test_a_head_waiting_on_codeql_and_its_contract_names_both_in_its_fence() -> None:
+    api = _changes(FakeApi())
+    api.codeql(HEAD, status="in_progress")
+    _contract(api, {"status": "in_progress", "conclusion": None})
+    found = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert found is not None
+    assert found.output["text"] == f"```{mc.WAITING_FENCE}\ncodeql\ncontract\n```\n"
+
+
+def test_a_definition_head_red_for_another_reason_is_not_marked_waiting() -> None:
+    api = _changes(FakeApi())
+    api.jobs(1, ("results", "completed", "failure"))
+    _contract(api, {"status": "in_progress", "conclusion": None})
+    found = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert found is not None and "waiting: main's CI contract" in found.output["summary"]
+    assert mc.WAITING_FENCE not in found.output.get("text", ""), "a sweep has nothing to clear"
 
 
 def test_a_definition_head_whose_contract_passed_is_green_and_names_it() -> None:
@@ -369,7 +395,8 @@ def test_a_contract_run_that_is_not_mains_on_this_head_counts_for_nothing(
     api = _changes(FakeApi())
     _contract(api, fields)
     outcome = mc.decide(api, REPO, RUN, CONTROLLER)
-    assert outcome.posting is None and (outcome.dispatch, outcome.base) == (HEAD, MAIN)
+    assert outcome.posting is not None and (outcome.dispatch, outcome.base) == (HEAD, MAIN)
+    assert outcome.posting.output["title"].endswith("over its definitions is started")
 
 
 def test_a_definition_heads_dispatched_run_starts_no_contract() -> None:
@@ -796,7 +823,8 @@ def test_a_review_of_a_head_that_changes_ci_reads_its_contract_run() -> None:
     _merge_runs(api, OWN_MERGE, [RUN])
     _contract(api, {"status": "in_progress", "conclusion": None})
     waiting = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
-    assert waiting.posting is None and waiting.dispatch is None and "'in_progress'" in waiting.why
+    assert waiting.posting is not None and waiting.dispatch is None
+    assert "is 'in_progress'" in waiting.posting.output["title"]
     _contract(api, {})
     judged = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
     assert judged.posting is not None and judged.posting.head_sha == HEAD
@@ -1157,6 +1185,40 @@ def test_the_codeql_workflow_finishing_judges_its_head_again() -> None:
     assert outcome.posting is not None and outcome.posting.conclusion == "success"
 
 
+@pytest.mark.parametrize(
+    "done, conclusion", [({}, "success"), ({"conclusion": "failure"}, "failure")]
+)
+def test_a_contract_run_that_reports_is_posted_by_the_sweep_and_its_branch_goes(
+    tmp_path: Path, monkeypatch: Any, done: Mapping[str, Any], conclusion: str
+) -> None:
+    """#5524's case: a contract run, dispatched with the job's token, completes and wakes
+    nothing. The schedule's sweep finds the head's waiting red, posts its verdict and names the
+    contract branch to delete."""
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    api = _changes(FakeApi())
+    _contract(api)
+    first = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert first.posting is not None and first.dispatch == HEAD, "posted waiting, contract started"
+    _merge_runs(api, OWN_MERGE, [RUN])
+    _posted(api, _verdict(first.posting, 1))
+    _contract(api, {"status": "in_progress", "conclusion": None})
+    [running] = mc.judge_waiting(api, REPO, APP, CONTROLLER)
+    assert running.posting is not None and running.cleanup is None
+    _posted(api, _verdict(running.posting, 2))
+    _contract(api, done)
+    _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: MAIN})
+    _refs(api, mc.TRUSTED_PREFIX, {})
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--waiting", "--controller-app-id", str(APP)]
+    assert mc.main([*argv, "--controller-revision", CONTROLLER, "--out", str(out)], get=api) == 0
+    [posted] = json.loads(out.read_text())
+    assert (posted["head_sha"], posted["conclusion"]) == (HEAD, conclusion)
+    lines = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
+    assert lines["post"] == "true" and lines["cleanup"] == CONTRACT_BRANCH
+    assert lines["dispatch"] == "", "a sweep starts no contract run"
+
+
 def test_decide_waiting_writes_every_changed_verdict(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.setenv("GITHUB_OUTPUT", str(tmp_path / "outputs"))
     api = FakeApi()
@@ -1174,3 +1236,81 @@ def test_decide_waiting_writes_every_changed_verdict(tmp_path: Path, monkeypatch
     assert [b["conclusion"] for b in json.loads(out.read_text())] == ["success"]
     lines = (tmp_path / "outputs").read_text()
     assert "post=true" in lines and "dispatch=\n" in lines
+
+
+# ── Every poster run judges a few waiting heads again (#4584 step 4) ───────────────────────────
+
+
+def _verdicts_of(head: str) -> str:
+    return VERDICTS.replace(HEAD, head)
+
+
+@pytest.mark.parametrize(
+    "done, conclusion", [({}, "success"), ({"conclusion": "failure"}, "failure")]
+)
+def test_a_contract_that_reports_is_posted_by_the_next_unrelated_poster_run(
+    tmp_path: Path, monkeypatch: Any, done: Mapping[str, Any], conclusion: str
+) -> None:
+    """No schedule and no wake from the contract run: a poster run woken by another workflow's
+    completion judges the waiting head again, posts its verdict and deletes its branch."""
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    api = _changes(FakeApi())
+    _contract(api)
+    first = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert first is not None and mc.WAITING_FENCE in first.output["text"]
+    _merge_runs(api, OWN_MERGE, [RUN])
+    _posted(api, _verdict(first, 1))
+    _contract(api, done)
+    _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: MAIN})
+    _refs(api, mc.TRUSTED_PREFIX, {})
+    other = 777
+    run = api.answers[f"/repos/{REPO}/actions/runs/{RUN}"]
+    api.answers[f"/repos/{REPO}/actions/runs/{other}"] = {
+        **run,
+        "id": other,
+        "path": f"{WF}something-else.yml",
+    }
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", first.output["text"])])))
+    out = tmp_path / "v.json"
+    argv = ["decide", "--repo", REPO, "--run-id", str(other), "--controller-app-id", str(APP)]
+    argv += ["--controller-revision", CONTROLLER, "--out", str(out)]
+    assert mc.main(argv, get=api, query=query) == 0
+    [posted] = json.loads(out.read_text())
+    assert (posted["head_sha"], posted["conclusion"]) == (HEAD, conclusion)
+    lines = dict(line.split("=", 1) for line in outputs.read_text().splitlines())
+    assert lines["post"] == "true" and lines["cleanup"] == CONTRACT_BRANCH
+    assert lines["dispatch"] == "", "the other run's outcome starts nothing, the sweep neither"
+
+
+def test_a_poster_run_judges_at_most_a_few_waiting_heads_the_oldest_first() -> None:
+    heads = {"d" * 40: 1, "b" * 40: 2, "a" * 40: 5, "c" * 40: 9}
+    api = FakeApi()
+    api.answers[PULLS] = [{"number": n, "head": {"sha": h}} for n, h in enumerate(heads)]
+    for head in heads:
+        api.answers[_verdicts_of(head)] = {"total_count": 0, "check_runs": []}
+    graph = _graph(*[(h, [(i, "FAILURE", _WAITS)]) for h, i in heads.items()])
+    query, _ = _asked(graph)
+    api.calls.clear()
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query, limit=2) == []
+    read = [h for h in heads if _verdicts_of(h) in api.calls]
+    assert sorted(read) == ["b" * 40, "d" * 40], "the two oldest waiting verdicts, no more"
+
+
+def test_a_poster_run_does_not_judge_its_own_head_twice() -> None:
+    api = FakeApi()
+    api.answers[PULLS] = [{"number": 12, "head": {"sha": HEAD}}]
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", _WAITS)])))
+    api.calls.clear()
+    assert (
+        mc.judge_waiting(api, REPO, APP, CONTROLLER, query, limit=3, skip=frozenset({HEAD})) == []
+    )
+    assert VERDICTS not in api.calls
+
+
+def test_a_poster_run_whose_one_read_gives_no_answer_judges_no_waiting_head() -> None:
+    api = FakeApi()
+    api.calls.clear()
+    query, _ = _asked(OSError("GraphQL answered 502"))
+    assert mc.judge_waiting(api, REPO, APP, CONTROLLER, query, limit=3) == []
+    assert api.calls == [], "only the schedule's sweep reads every head"
