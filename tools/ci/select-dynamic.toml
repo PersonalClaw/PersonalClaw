@@ -210,6 +210,12 @@ prefix = "personalclaw.action_providers"
 why = "imports a name it builds under personalclaw.action_providers"
 
 [[site]]
+file = "tests/test_a_replaced_services_accessor_ends_with_its_test.py"
+call = "importlib.import_module(name)"
+outside = true
+why = "imports a module the test wrote, under a name it chose"
+
+[[site]]
 file = "tests/test_a_request_boolean_is_a_json_boolean.py"
 call = "importlib.import_module(module)"
 named = true
