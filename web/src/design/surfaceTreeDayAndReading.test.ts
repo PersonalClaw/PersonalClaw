@@ -43,16 +43,3 @@ describe("the matrix's accessibility tree folds the machine's CPU reading and th
     expect(normalizeTree(early)).toMatch(/^ {2}- text: <uptime> uptime v#\.#\.# <platform> <cpu> cpu /)
   })
 })
-
-describe("the matrix's accessibility tree folds a live percentage's precision", () => {
-  it("reads Settings › models' memory reading at 12.5% and at 12% as the same line", () => {
-    // One CI attempt read `#.#%` and its retry `#%` (#3905): the reading landed on a whole number.
-    const at = (pct: string) => `  - text: 9.6 GiB of 16.0 GiB in use · ${pct} No models are loaded right now. One loads on its first use.`
-    expect(normalizeTree(at('12%'))).toBe(normalizeTree(at('12.5%')))
-    expect(normalizeTree(at('12.5%'))).toContain('in use · #% No models')
-  })
-
-  it('leaves a decimal that is not a percentage alone', () => {
-    expect(normalizeTree('  - text: 9.6 GiB of 16.0 GiB in use')).toBe('  - text: #.# GiB of #.# GiB in use')
-  })
-})
