@@ -25,8 +25,11 @@ collected. Its artifacts are read only as a tested push's suite, below.
 merge.yml uploads each entry's reports folder as ``reports-<slug>-<attempt>``: each
 ``junit-*.xml`` directly in its ``reports/`` (or at its root, when ``reports/`` was the upload's
 one folder) is one report, named as the file without ``.xml``, so ``junit-test-shard-1`` either
-way. Nothing else in such an archive is read. Every upload of a junit report in a collected
-workflow is named with one of :data:`REPORT_ARTIFACT_PREFIXES`, which a rail holds.
+way. Nothing else in such an archive is read. Two entries can write one file (ui-quality's vitest
+wrote ``junit-web-unit.xml`` until #5529): a report two differently named artifacts hold is read
+from each, named ``<report>@<artifact>``, so neither hides the other. Every upload of a junit report
+in a collected workflow is named with one of :data:`REPORT_ARTIFACT_PREFIXES`, which a rail
+holds.
 
 **A tested push's suite** (version 5). A push to main whose tree a green pull request run
 already tested runs only the always-run jobs, so its own reports hold no suite. The collector
@@ -747,20 +750,29 @@ def _test_lines(
     skip: frozenset[str] = frozenset(),
 ) -> tuple[list[dict[str, Any]], dict[str, str | None]]:
     """One line per test case of every report the artifacts hold, and each report's CPU model.
-    Two reports with one name are read once, from the lower artifact id, and a report named in
-    ``skip`` is not read."""
-    found: dict[str, tuple[bytes, str | None, str]] = {}
+    An artifact uploaded twice under one name is read once, from the lower id. A report two
+    differently named artifacts hold (two entries that write one file) is read from each, named
+    ``<report>@<artifact>``, so neither hides the other. A report named in ``skip`` is not read."""
+    read: dict[tuple[str, str | None], tuple[str, bytes, str | None, str]] = {}
     for artifact in sorted(artifacts, key=lambda a: int(a["id"])):
         name = str(artifact.get("name", ""))
         if name.startswith(REPORT_PREFIX):
-            if name not in found and name not in skip:
-                found[name] = (_download(binary, repo, artifact, MAX_ARCHIVE_BYTES), None, name)
+            if (name, None) not in read and name not in skip:
+                data = _download(binary, repo, artifact, MAX_ARCHIVE_BYTES)
+                read[(name, None)] = (name, data, None, name)
         elif name.startswith(REPORTS_PREFIX):
             data = _download(binary, repo, artifact, MAX_REPORTS_ARCHIVE_BYTES)
             for file in junit_members(name, data):
                 report = file.rpartition("/")[2][: -len(".xml")]
-                if report not in found and report not in skip:
-                    found[report] = (data, file, f"{name}'s {file}")
+                if (name, file) not in read and report not in skip:
+                    read[(name, file)] = (report, data, file, f"{name}'s {file}")
+    holders: dict[str, list[str]] = {}
+    for (name, _file), (report, *_rest) in read.items():
+        holders.setdefault(report, []).append(name)
+    found: dict[str, tuple[bytes, str | None, str]] = {}
+    for (name, _file), (report, data, member, where) in read.items():
+        named = report if len(holders[report]) == 1 else f"{report}@{name}"
+        found[named] = (data, member, where)
     tests: list[dict[str, Any]] = []
     cpus: dict[str, str | None] = {}
     for report, (archive, member, where) in sorted(found.items()):
@@ -907,7 +919,7 @@ def collect(
                     attempt=1,
                     workflow=workflow,
                     sha=answer.head,
-                    skip=frozenset(cpus),
+                    skip=frozenset(report.split("@", 1)[0] for report in cpus),
                 )
             except CollectError as err:
                 print(

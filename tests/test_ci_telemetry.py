@@ -1522,16 +1522,39 @@ def test_the_planner_reads_a_merge_yml_runs_seconds(tmp_path: Path, monkeypatch)
     assert history.seconds == {(None, None): {"junit-test-shard-1": {"tests/test_a.py": 1.5}}}
 
 
-def test_a_report_in_two_archives_is_read_once_from_the_lower_id(
+def test_a_reports_archive_uploaded_twice_under_one_name_is_read_once(
     tmp_path: Path, monkeypatch
 ) -> None:
     gh = FakeGh()
+    gh.artifacts = [_suite_archive(gh, 21), _suite_archive(gh, 23)]
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    assert [t["report"] for t in lines if t["kind"] == "test"] == ["junit-test-shard-1"]
+
+
+def test_a_report_two_entries_write_is_read_from_each(tmp_path: Path, monkeypatch) -> None:
+    """ui-quality's vitest wrote junit-web-unit.xml too (until #5529), in its own archive, which
+    had the lower id: read once, its 10 cases hid web-unit's 15,640. Each is read, named by its
+    archive."""
+    gh = FakeGh()
     gh.artifacts = [
-        gh._artifact(30, "junit-test-shard-1", _junit(PASSED, PASSED)),
-        _suite_archive(gh, 21),
+        _reports_archive(
+            gh, 21, "reports-ui-quality-1", {"reports/junit-web-unit.xml": _junit(MACOS)}
+        ),
+        _reports_archive(
+            gh, 22, "reports-web-unit-1", {"reports/junit-web-unit.xml": _junit(PASSED, FAILED)}
+        ),
+        _suite_archive(gh, 23),
     ]
     _, lines = _collect(tmp_path, monkeypatch, gh)
-    assert sum(1 for line in lines if line["kind"] == "test") == 1
+    reports = sorted({t["report"] for t in lines if t["kind"] == "test"})
+    assert reports == [
+        "junit-test-shard-1",
+        "junit-web-unit@reports-ui-quality-1",
+        "junit-web-unit@reports-web-unit-1",
+    ]
+    tests = [t for t in lines if t["kind"] == "test"]
+    assert sum(1 for t in tests if t["report"] == "junit-web-unit@reports-web-unit-1") == 2
+    assert set(lines[0]["cpus"]) == set(reports)
 
 
 @pytest.mark.parametrize(
@@ -1724,6 +1747,50 @@ def test_a_pull_request_run_that_did_not_test_the_pushed_tree_is_never_read(
     assert all(t["run_id"] == RUN for t in lines if t["kind"] == "test")
     assert not any(f"/runs/{OTHER}/artifacts" in a for a in gh.asked)
     assert reason in capsys.readouterr().out
+
+
+def test_every_report_name_the_collector_writes_is_ascii(tmp_path: Path, monkeypatch) -> None:
+    """A report name goes into shells, URLs and greps: the separator a collision adds is the
+    ASCII ``@``, and nothing else in a name is anything but ASCII."""
+    gh = _tested(FakeGh())
+    gh.artifacts = [
+        gh._artifact(20, "junit-test-shard-2", _junit(PASSED)),
+        _reports_archive(
+            gh, 21, "reports-ui-quality-1", {"reports/junit-web-unit.xml": _junit(MACOS)}
+        ),
+        _reports_archive(
+            gh, 22, "reports-web-unit-1", {"reports/junit-web-unit.xml": _junit(PASSED)}
+        ),
+    ]
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    names = {t["report"] for t in lines if t["kind"] == "test"} | set(lines[0]["cpus"])
+    assert "junit-web-unit@reports-web-unit-1" in names and "junit-test-macos-1" in names
+    assert all(name.isascii() for name in names), sorted(n for n in names if not n.isascii())
+
+
+def test_a_report_the_push_holds_twice_still_wins_over_the_pull_request_run_s(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gh = _tested(FakeGh())
+    gh.artifacts = [
+        _reports_archive(
+            gh, 21, "reports-ui-quality-1", {"reports/junit-web-unit.xml": _junit(MACOS)}
+        ),
+        _reports_archive(
+            gh, 22, "reports-web-unit-1", {"reports/junit-web-unit.xml": _junit(PASSED)}
+        ),
+    ]
+    theirs = _reports_archive(
+        gh, 64, "reports-web-unit-1", {"reports/junit-web-unit.xml": _junit(PASSED, FAILED)}
+    )
+    theirs["created_at"] = "2026-10-18T08:30:00Z"
+    gh.others[OTHER]["artifacts"].append(theirs)
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    assert not any(
+        t["report"].startswith("junit-web-unit") and t["run_id"] == OTHER
+        for t in lines
+        if t["kind"] == "test"
+    )
 
 
 def test_the_push_s_own_report_wins_over_the_pull_request_run_s(

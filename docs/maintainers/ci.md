@@ -1703,7 +1703,10 @@ the shard planner and the weekly report read it.
 - **Where the reports are.** An artifact named `junit-*` is one report, named as the artifact.
   merge.yml uploads each entry's reports folder as `reports-<slug>-<attempt>`, and each
   `junit-*.xml` directly in its `reports/` (or at its root) is one report, named as the file:
-  `junit-test-shard-1` either way. Nothing else in it is read. Such an archive is downloaded up to
+  `junit-test-shard-1` either way. Nothing else in it is read. Two entries can write one file
+  (ui-quality's vitest wrote `junit-web-unit.xml` until #5529), so a report two differently named
+  artifacts hold is read from each, named `<report>@<artifact>`, and neither hides the other. An
+  artifact uploaded twice under one name is read once, from the lower id. Such an archive is downloaded up to
   128 MiB, since it holds the entry's Playwright output too, and each report in it is still read
   up to 8 MiB. A rail (`tests/rails/test_ci_telemetry_schedules.py`) holds every junit upload of
   a collected workflow to a name the collector reads (`telemetry.REPORT_ARTIFACT_PREFIXES`): the
