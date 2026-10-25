@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from tools.ci import catalogue
+from tools.ci import catalogue, jobs
 
 _BASE = """
 [tier.merge]
@@ -302,16 +302,18 @@ def test_a_step_env_naming_a_runner_variable_is_refused(name: str) -> None:
     assert any(f"command step 1 env name {name!r} is the runner's" in p for p in _problems(text))
 
 
-def test_an_env_naming_run_jobs_own_marker_is_refused() -> None:
+@pytest.mark.parametrize("name", [jobs.SANDBOX_HELPER_ENV, jobs.JOB_PYTHON_ENV])
+def test_an_env_naming_what_run_job_gives_is_refused(name: str) -> None:
     """The sandbox helper's marker comes from run-job's own reading of the runner
     (tools/ci/jobs.py SANDBOX_HELPER_ENV); an entry that set it would claim a GitHub-hosted
-    runner wherever it ran."""
-    [name] = sorted(catalogue.RUN_JOB_SETS)
-    job = _edit("timeout_min = 10\n", f'timeout_min = 10\nenv = {{ {name} = "github-hosted" }}\n')
+    runner wherever it ran. The job's Python is its venv's (JOB_PYTHON_ENV); an entry that set
+    it would run the job's commands on another."""
+    assert set(catalogue.RUN_JOB_SETS) == {jobs.SANDBOX_HELPER_ENV, jobs.JOB_PYTHON_ENV}
+    job = _edit("timeout_min = 10\n", f'timeout_min = 10\nenv = {{ {name} = "x" }}\n')
     assert any(f"env name {name!r} is run-job's" in p for p in _problems(job)), _problems(job)
     step = _edit(
         '"pytest", "tests/rails"] }]',
-        f'"pytest", "tests/rails"], env = {{ {name} = "github-hosted" }} }}]',
+        f'"pytest", "tests/rails"], env = {{ {name} = "x" }} }}]',
     )
     assert any(f"command step 1 env name {name!r} is run-job's" in p for p in _problems(step))
 

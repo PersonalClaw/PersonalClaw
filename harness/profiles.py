@@ -14,6 +14,7 @@ touched-area → required-test mapping); a profile with no ``{tests}`` slot igno
 
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,10 @@ def resolve_python(repo_root: Path | None = None) -> str:
 
     Resolution, most specific first:
 
+    0. ``PERSONALCLAW_PY`` when it is set, as ``exemplars/resolve_py.sh`` takes it: how a
+       caller names the interpreter outright. ``tools.ci run-job`` gives every step its job's
+       own venv's (``tools/ci/jobs.py`` ``JOB_PYTHON_ENV``), so in a checkout with a ``.venv``
+       of its own, the job's commands still run on the job's Python, not the contributor's;
     1. this tree's own ``.venv/bin/python`` when it exists — the documented dev setup,
        and the interpreter that definitely carries the dev extras;
     2. :data:`sys.executable` — whatever is running the harness. In a worktree, in CI, or
@@ -42,6 +47,9 @@ def resolve_python(repo_root: Path | None = None) -> str:
     ``repo_root`` is injectable so both branches are testable; it defaults to the tree
     this module lives in (never the cwd).
     """
+    named = os.environ.get("PERSONALCLAW_PY")
+    if named:
+        return named
     root = repo_root if repo_root is not None else Path(__file__).resolve().parent.parent
     venv_py = root / ".venv" / "bin" / "python"
     if venv_py.is_file():
