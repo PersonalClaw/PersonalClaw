@@ -1742,6 +1742,24 @@ def test_jobs_run_after_the_jobs_their_after_names():
     assert [j.id for j in jobs.ordered([first, second])] == ["first", "second"]
 
 
+def test_a_merge_tier_run_here_runs_the_change_tiers_jobs_first(repo, tmp_path):
+    # The catalogue lists the suite first, for merge.yml's caps; a run here still gives a pull
+    # request's quick signal first, and still runs a job after the jobs its after names.
+    suite = _job("suite", "pass", tiers=("merge",))
+    static = _job("static", "pass", tiers=("change", "merge"))
+    later = _job("later", "pass", tiers=("change", "merge"), after=("suite",))
+    e2e = _job("e2e", "pass", tiers=("merge",))
+    code, outcomes, judged = jobs.run_tier(
+        Catalogue((suite, static, later, e2e)),
+        "merge",
+        _host(repo),
+        jobs.Options(),
+        tmp_path / "work",
+    )
+    assert code == run.OK and judged.green
+    assert [o.key for o in outcomes] == ["static", "suite", "later", "e2e"]
+
+
 def test_an_after_cycle_is_refused():
     a, b = _job("a", "pass", after=("b",)), _job("b", "pass", after=("a",))
     with pytest.raises(jobs.Unreadable, match="cycle"):
