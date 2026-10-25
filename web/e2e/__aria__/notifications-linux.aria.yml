@@ -25,17 +25,30 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - heading "Inbox # unread · # notification" [level=#]
+  - heading "Inbox # unread · # notifications" [level=#]
   - button "Mark all read"
   - button "Clear all"
   - button "Filter & sort": Show #
   - status
   - text: Today
-  - button "Backup restore drill passed — personalclaw-snapshot-#…"
-  - text: Backup restore drill passed <when>
-  - paragraph: "personalclaw-snapshot-#T#Z.tar.gz: # database(s) verified"
-  - 'button "Investigate in chat: Backup restore drill passed — personalclaw-snapshot-#…"'
-  - 'button "Mark read: Backup restore drill passed — personalclaw-snapshot-#…"'
-  - 'button "Delete: Backup restore drill passed — personalclaw-snapshot-#…"'
+  - button "Weekly backup finished"
+  - text: Weekly backup finished <when>
+  - paragraph: Weekly backup finished.
+  - 'button "Investigate in chat: Weekly backup finished"'
+  - 'button "Mark read: Weekly backup finished"'
+  - 'button "Delete: Weekly backup finished"'
+  - button "Morning briefing is ready"
+  - text: Morning briefing is ready <when>
+  - paragraph: Morning briefing is ready.
+  - 'button "Investigate in chat: Morning briefing is ready"'
+  - 'button "Mark unread: Morning briefing is ready"'
+  - 'button "Delete: Morning briefing is ready"'
+  - text: Yesterday
+  - button "Inbox digest sent"
+  - text: Inbox digest sent <when>
+  - paragraph: Inbox digest sent.
+  - 'button "Investigate in chat: Inbox digest sent"'
+  - 'button "Mark unread: Inbox digest sent"'
+  - 'button "Delete: Inbox digest sent"'
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

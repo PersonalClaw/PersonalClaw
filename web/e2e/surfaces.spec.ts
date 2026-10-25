@@ -59,6 +59,11 @@ const FIXED_CLOCK: Record<string, string> = {
   // row says how long ago it changed. A zoned noon, so the same notes fall on the same days in any
   // zone a runner has.
   'inbox?filter=notifications': '2026-11-02T12:00:00Z',
+  // The same page by its own route. It listed the live feed under the browser's real clock: the
+  // note the gateway raises at boot fell under Today, and a run that crossed midnight UTC read it
+  // under Yesterday (#3905, fd971285's run). It now reads the fixed feed under this clock, as the
+  // filter does.
+  notifications: '2026-11-02T12:00:00Z',
   'projects/p-0a1b2c3d?tab=tasks': '2026-11-02T12:00:00Z',
   // What waits on you says how long each item has waited.
   'mission-control': '2026-11-02T12:00:00Z',
@@ -370,6 +375,13 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
     // `src/app/notificationsAreAFilterOfTheInbox.test.tsx`.
     json: FIXED_NOTIFICATIONS,
     why: 'the shared home\'s feed is whatever other specs raised before this row loaded',
+  }],
+  notifications: [{
+    url: /\/api\/notifications(\?.*)?$/,
+    // The filter's fixed feed, for the page's own route: the live feed's day groups moved with the
+    // real clock (see FIXED_CLOCK).
+    json: FIXED_NOTIFICATIONS,
+    why: "the live feed's notes fall under Today or Yesterday by the real clock, and a run crosses midnight",
   }],
   'projects/p-0a1b2c3d?tab=tasks': [{
     url: /\/api\/projects(\?.*)?$/,
