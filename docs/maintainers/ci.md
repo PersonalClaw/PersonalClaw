@@ -1963,11 +1963,13 @@ shadow mode, and the recall study.
 rails a change of those paths can break, one per line (`--why` adds the reason for each). A lane
 runs them beside its own tests rather than all of `tests/rails` (#3920).
 
-- **The record.** A rails leg of a push to main arms `tests/rails_reads.py`: a JUnit report
-  named `junit-rails-<leg>.xml`, with `GITHUB_EVENT_NAME` `push` and `GITHUB_REF`
-  `refs/heads/main` (or `PERSONALCLAW_RAILS_READS=1`, for a record made by hand). A pull
-  request's leg records nothing and pays none of its time. run-job passes the two variables from
-  the runner on GitHub (`jobs.RUNNER_PASSED`) and never here. It writes `rails-reads-<leg>.json`
+- **The record.** A rails leg of a push to main or of a pull request's run arms
+  `tests/rails_reads.py`: a JUnit report named `junit-rails-<leg>.xml`, with
+  `GITHUB_EVENT_NAME` `push` and `GITHUB_REF` `refs/heads/main`, or `pull_request` and
+  `refs/pull/<number>/merge` (or `PERSONALCLAW_RAILS_READS=1`, for a record made by hand). Since
+  the flip a tested push runs no rails, so a main commit's record is most often its pull
+  request's. Any other run's leg records nothing. run-job passes the two variables from the
+  runner on GitHub (`jobs.RUNNER_PASSED`) and never here. It writes `rails-reads-<leg>.json`
   beside the report, which `merge.yml` uploads with the entry's reports, as
   `reports-rails-<leg>-3-<attempt>`. It charges each read to the rail module
   running. A read is a walk or file asked of the source index, a repository file opened or
@@ -1984,15 +1986,22 @@ runs them beside its own tests rather than all of `tests/rails` (#3920).
   harness imports is no part of it: conftest's registry fences import some two hundred, and each
   selects only the rails that read it. An import-time break in one fails the change's own tests,
   which load the same harness.
-- **Only main's record.** With no `--map`, the command reads the newest push run of main made in
-  the last day that holds a record. It takes only the run's own artifacts, by name and size, and
-  only a member recorded on the run's own commit. `--map <file>` reads record files instead.
+- **Only main's record.** With no `--map`, the command walks main's first-parent commits of the
+  last day, newest first, and reads the first with a record. A commit's push run is read first,
+  and only a member recorded on the run's own commit. Else it reads the pull request merged into
+  main as that commit, from this repository: its newest `merge.yml` run of the last day, of its
+  branch, made after it was opened and before it merged. The run's own head must have the
+  commit's tree, never the pull request's head now, which may have moved since the run. Each
+  member must be recorded on a commit with that tree: the merge the run tested, which has the
+  commit's tree only when the head held the base it merged onto. The record then counts as the
+  main commit's. It takes only a run's own artifacts, by name and size. `--map <file>` reads
+  record files instead.
 - **What selects a rail:** a changed path it read; for a path added or removed since the record's
   commit, a listing of its folder (or the nearest folder that commit held); and, for every rail,
   a path the harness reads (its own files, never a package module).
 - **What is always selected:** `tests/rails/test_ci_contract.py`, a rail that starts a child
   (nothing a child reads is recorded), a rail the record does not hold or left unrecorded, and
-  every rail when there is no record or it is older than a day.
+  every rail when no commit of the last day has a record or it is older than a day.
 
 ## Local runs
 

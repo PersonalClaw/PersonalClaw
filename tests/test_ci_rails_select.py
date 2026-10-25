@@ -195,6 +195,16 @@ def test_a_record_out_of_shape_is_refused(change: dict[str, Any], message: str) 
 
 # ── fetching main's record ──────────────────────────────────────────────────────────────────
 
+#: Main's tree at COMMIT, a pull request's head with that tree, the merge its run tested, and a
+#: tree that is not main's.
+MAIN_TREE = "e" * 40
+HEAD = "c" * 40
+MERGE_REF = "d" * 40
+OTHER_TREE = "f" * 40
+PUSH_RUNS = "repos/{owner}/{repo}/actions/workflows/merge.yml/runs?branch=main&event=push"
+PR_RUNS = "repos/{owner}/{repo}/actions/workflows/merge.yml/runs?event=pull_request"
+NO_PULL = f"commit {COMMIT[:12]}: 0 pull requests were merged as it, not 1"
+
 
 def _zip(name: str, data: object) -> bytes:
     buffer = io.BytesIO()
@@ -216,6 +226,36 @@ def _run(run_id: int, **given: Any) -> dict[str, Any]:
         "head_repository": {"full_name": "o/r"},
     }
     return {**run, **given}
+
+
+def _pr_run(run_id: int, **given: Any) -> dict[str, Any]:
+    pr = {
+        "event": "pull_request",
+        "head_branch": "topic",
+        "head_sha": HEAD,
+        "created_at": "2026-10-24T10:00:00Z",
+    }
+    return _run(run_id, **{**pr, **given})
+
+
+def _pull(**given: Any) -> dict[str, Any]:
+    return {
+        "number": 5,
+        "merge_commit_sha": COMMIT,
+        "merged_at": "2026-10-24T11:30:00Z",
+        "created_at": "2026-10-24T08:00:00Z",
+        "base": {"ref": "main", "repo": {"full_name": "o/r"}},
+        "head": {"ref": "topic", "sha": HEAD, "repo": {"full_name": "o/r"}},
+        **given,
+    }
+
+
+def _commit(sha: str, tree: str, parent: str | None = None) -> dict[str, Any]:
+    return {
+        "sha": sha,
+        "commit": {"tree": {"sha": tree}},
+        "parents": [{"sha": parent}] if parent else [],
+    }
 
 
 def _artifact(art_id: int, leg: str, run_id: int, attempt: int = 1, **given: Any) -> dict[str, Any]:
@@ -243,17 +283,37 @@ class _Gh:
 
 
 def _gh(
-    runs: list[dict[str, Any]], artifacts: dict[int, list[dict[str, Any]]], zips: dict[int, bytes]
+    runs: list[dict[str, Any]],
+    artifacts: dict[int, list[dict[str, Any]]],
+    zips: dict[int, bytes],
+    *,
+    commits: list[dict[str, Any]] | None = None,
+    pulls: list[dict[str, Any]] | None = None,
+    pr_runs: list[dict[str, Any]] | None = None,
+    trees: dict[str, str] | None = None,
 ) -> _Gh:
+    """A ``gh`` that answers main's push runs, main's commits (COMMIT alone unless given), each
+    commit's pull requests (none unless given), the pull request's runs, commits' trees, and the
+    runs' artifacts."""
     (workflow,) = rails_select.WORKFLOWS
+    assert workflow == rails_select.PR_WORKFLOW == "merge.yml"
+    listed = [_commit(COMMIT, MAIN_TREE)] if commits is None else commits
     answers = {
-        f"repos/{{owner}}/{{repo}}/actions/workflows/{workflow}/runs": json.dumps(
-            {"workflow_runs": runs}
-        ).encode(),
+        PUSH_RUNS: json.dumps({"workflow_runs": runs}).encode(),
+        PR_RUNS: json.dumps({"workflow_runs": pr_runs or []}).encode(),
+        "repos/{owner}/{repo}/commits?sha=main": json.dumps(listed).encode(),
     }
-    for run_id, listed in artifacts.items():
+    for each in listed:
+        answers[f"repos/{{owner}}/{{repo}}/commits/{each['sha']}/pulls"] = json.dumps(
+            pulls or []
+        ).encode()
+    for sha, tree in (trees or {}).items():
+        answers[f"repos/{{owner}}/{{repo}}/git/commits/{sha}"] = json.dumps(
+            {"sha": sha, "tree": {"sha": tree}}
+        ).encode()
+    for run_id, held in artifacts.items():
         answers[f"repos/{{owner}}/{{repo}}/actions/runs/{run_id}/artifacts"] = json.dumps(
-            {"artifacts": listed}
+            {"artifacts": held}
         ).encode()
     for art_id, data in zips.items():
         answers[f"repos/{{owner}}/{{repo}}/actions/artifacts/{art_id}/zip"] = data
@@ -315,7 +375,8 @@ def test_an_artifact_not_the_runs_own_record_is_refused(
     )
     record, notes = rails_select.fetch(gh, NOW)
     assert record is None
-    assert len(notes) == 1 and refusal in notes[0], notes
+    assert len(notes) == 2 and refusal in notes[0], notes
+    assert notes[1] == NO_PULL
 
 
 def test_a_leg_s_newest_attempt_is_read_and_its_record_may_sit_at_the_artifact_s_root() -> None:
@@ -333,12 +394,191 @@ def test_a_leg_s_newest_attempt_is_read_and_its_record_may_sit_at_the_artifact_s
     assert not any("/artifacts/70/" in asked for asked in gh.asked)
 
 
-def test_only_runs_of_the_last_day_are_asked_for() -> None:
-    gh = _gh([], {}, {})
+def test_only_runs_and_commits_of_the_last_day_are_asked_for() -> None:
+    gh = _gh([], {}, {}, commits=[])
     record, notes = rails_select.fetch(gh, NOW)
     assert record is None and notes == []
     assert gh.asked == [
-        f"repos/{{owner}}/{{repo}}/actions/workflows/{workflow}/runs"
-        "?branch=main&event=push&per_page=50&created=%3E%3D2026-10-23T12:00:00Z"
-        for workflow in rails_select.WORKFLOWS
+        *(
+            f"repos/{{owner}}/{{repo}}/actions/workflows/{workflow}/runs"
+            "?branch=main&event=push&per_page=50&created=%3E%3D2026-10-23T12:00:00Z"
+            for workflow in rails_select.WORKFLOWS
+        ),
+        "repos/{owner}/{repo}/commits?sha=main&since=2026-10-23T12:00:00Z&per_page=100",
     ]
+
+
+# ── a merged pull request's record ──────────────────────────────────────────────────────────
+
+
+def _merged_gh(
+    *,
+    pull: dict[str, Any] | None = None,
+    pr_runs: list[dict[str, Any]] | None = None,
+    trees: dict[str, str] | None = None,
+    data: dict[str, Any] | None = None,
+    runs: list[dict[str, Any]] | None = None,
+) -> _Gh:
+    """Main at COMMIT with no push record, merged from pull request #5, whose run 20 tested the
+    merge MERGE_REF of head HEAD, both with main's tree."""
+    record = data if data is not None else _record({A: _reads(files=["src/pkg/a.py"])})
+    return _gh(
+        runs or [],
+        {20: [_artifact(200, "1", 20)], 7: [_artifact(70, "1", 7)]},
+        {
+            200: _zip("reports/rails-reads-1.json", {**record, "commit": MERGE_REF}),
+            70: _zip("reports/rails-reads-1.json", _record({B: _reads(files=["src/pkg/b.py"])})),
+        },
+        pulls=[pull or _pull()],
+        pr_runs=pr_runs if pr_runs is not None else [_pr_run(20)],
+        trees=trees if trees is not None else {HEAD: MAIN_TREE, MERGE_REF: MAIN_TREE},
+    )
+
+
+def test_a_commit_no_push_run_recorded_is_read_from_its_merged_pull_request_s_run() -> None:
+    """Since the flip a tested push runs no rails: the merged pull request's merge-tier run,
+    whose head and merge both have the commit's tree, is the record, as the main commit's."""
+    gh = _merged_gh()
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is not None, notes
+    assert record.source == "run 20 of merge.yml, pull request #5, legs 1"
+    assert record.commit == COMMIT
+    assert set(record.rails) == {A}
+    assert notes == []
+    asked = gh.asked
+    assert "repos/{owner}/{repo}/commits/" + COMMIT + "/pulls" in asked
+    assert any(
+        a.startswith(PR_RUNS + "&branch=topic&per_page=50&created=%3E%3D2026-10-23T12:00:00Z")
+        for a in asked
+    )
+
+
+def test_no_record_selects_every_rail() -> None:
+    """No push run and no merged pull request's run holds one: nothing is read, and every rail
+    runs."""
+    gh = _merged_gh(pr_runs=[])
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is None and notes == []
+    chosen = rails_select.select(
+        ["docs/one.md"],
+        RAILS,
+        record,
+        now=NOW,
+        tree=None,
+        exists=lambda p: True,
+        why_none="no commit of main in the last day has a record",
+    )
+    assert set(chosen) == set(RAILS)
+    assert chosen[A] == "no commit of main in the last day has a record"
+
+
+def test_a_pull_request_run_whose_tested_tree_is_not_the_commit_s_is_never_read() -> None:
+    """The head has the commit's tree, but the run tested it merged onto an older base: the merge
+    it recorded on has another tree."""
+    gh = _merged_gh(trees={HEAD: MAIN_TREE, MERGE_REF: OTHER_TREE})
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is None
+    assert notes == [
+        f"run 20: reports-rails-1-3-1 was recorded on {MERGE_REF[:12]}, whose tree is not"
+        f" {COMMIT[:12]}'s"
+    ]
+
+
+@pytest.mark.parametrize(
+    "pull",
+    [
+        _pull(merge_commit_sha="b" * 40),
+        _pull(base={"ref": "release", "repo": {"full_name": "o/r"}}),
+    ],
+    ids=["merged-as-another-commit", "merged-into-another-branch"],
+)
+def test_a_pull_request_not_merged_into_main_as_the_commit_is_never_read(
+    pull: dict[str, Any],
+) -> None:
+    gh = _merged_gh(pull=pull)
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is None and notes == [NO_PULL]
+    assert not any(a.startswith(PR_RUNS) for a in gh.asked)
+
+
+@pytest.mark.parametrize(
+    ("run", "refusal"),
+    [
+        (_pr_run(20, head_branch="other-topic"), "not pull request #5's"),
+        (_pr_run(20, created_at="2026-10-24T07:00:00Z"), "not pull request #5's"),
+        (_pr_run(20, created_at="2026-10-24T11:45:00Z"), "not pull request #5's"),
+        (_pr_run(20, head_repository={"full_name": "fork/r"}), "its head is another repository's"),
+        (_pr_run(20, path="workflows/pr.yml"), "not a run of merge.yml"),
+    ],
+    ids=[
+        "another-branch",
+        "made-before-it-opened",
+        "made-after-it-merged",
+        "a-fork-s-run",
+        "the-change-tier-s-run",
+    ],
+)
+def test_an_unmerged_pull_request_s_run_is_never_read(run: dict[str, Any], refusal: str) -> None:
+    """A run with the commit's tree that is not the merged pull request's own: another branch's,
+    one made outside the pull request's life, a fork's, or another workflow's."""
+    gh = _merged_gh(pr_runs=[run])
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is None
+    assert notes == [f"run 20: {refusal}"]
+    assert not any("/runs/20/artifacts" in a for a in gh.asked)
+
+
+def test_an_unmerged_pull_request_is_never_read() -> None:
+    gh = _merged_gh(pull=_pull(merged_at=None))
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is None and notes == [NO_PULL]
+
+
+def test_a_commit_s_push_record_wins_over_its_pull_request_s() -> None:
+    gh = _merged_gh(runs=[_run(7)])
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is not None and record.source == "run 7 of merge.yml, legs 1"
+    assert set(record.rails) == {B}
+    assert not any(a.endswith("/pulls") or a.startswith(PR_RUNS) for a in gh.asked)
+
+
+def test_a_pull_request_run_whose_head_moved_after_it_is_read_only_by_its_own_tested_tree() -> None:
+    """Run 21 tested an older head, OLD, whose tree is not main's. The pull request's head now is
+    HEAD, with main's tree, but the run is judged by its own head: refused. Run 20, on HEAD, is
+    read."""
+    old = "9" * 40
+    gh = _merged_gh(
+        pr_runs=[_pr_run(21, head_sha=old, created_at="2026-10-24T10:30:00Z"), _pr_run(20)],
+        trees={old: OTHER_TREE, HEAD: MAIN_TREE, MERGE_REF: MAIN_TREE},
+    )
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is not None and record.source.startswith("run 20 of merge.yml")
+    assert notes == [f"run 21: its head {old[:12]} does not have {COMMIT[:12]}'s tree"]
+    assert not any("/runs/21/artifacts" in a for a in gh.asked)
+    # Alone, the moved run is never read, though the pull request's head has main's tree.
+    alone = _merged_gh(
+        pr_runs=[_pr_run(21, head_sha=old, created_at="2026-10-24T10:30:00Z")],
+        trees={old: OTHER_TREE, HEAD: MAIN_TREE, MERGE_REF: MAIN_TREE},
+    )
+    assert rails_select.fetch(alone, NOW)[0] is None
+    assert f"repos/{{owner}}/{{repo}}/git/commits/{HEAD}" not in alone.asked
+
+
+def test_the_walk_follows_main_s_first_parents_newest_first() -> None:
+    """The tip has no record, so its first parent's push run is read. A commit off the
+    first-parent line, listed between them, is never asked about."""
+    tip, side = "1" * 40, "2" * 40
+    gh = _gh(
+        [_run(7)],
+        {7: [_artifact(70, "1", 7)]},
+        {70: _zip("reports/rails-reads-1.json", _record({A: _reads()}))},
+        commits=[
+            _commit(tip, OTHER_TREE, parent=COMMIT),
+            _commit(side, OTHER_TREE, parent=COMMIT),
+            _commit(COMMIT, MAIN_TREE),
+        ],
+    )
+    record, notes = rails_select.fetch(gh, NOW)
+    assert record is not None and record.commit == COMMIT, notes
+    assert notes == [f"commit {tip[:12]}: 0 pull requests were merged as it, not 1"]
+    assert not any(side in a for a in gh.asked)

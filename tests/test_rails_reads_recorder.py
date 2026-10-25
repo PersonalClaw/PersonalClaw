@@ -225,19 +225,39 @@ def recorded(request, tmp_path_factory) -> tuple[Path, dict[str, Any]]:
     return root, record
 
 
+def test_a_pull_request_s_run_records(tmp_path) -> None:
+    """Since the flip a tested push runs no rails, so a merged pull request's run is the record
+    of its main commit: a pull request's leg records as a push to main's does."""
+    _plant(tmp_path)
+    done = _run_planted(
+        tmp_path, "0", GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/12/merge"
+    )
+    assert done.returncode == 1, done.stdout + done.stderr
+    record = json.loads((tmp_path / "reports" / "rails-reads-p.json").read_text(encoding="utf-8"))
+    assert record["legs"] == ["p"] and record["rails"], record
+
+
 @pytest.mark.parametrize(
     "given",
     [
-        {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REF": "refs/pull/1/merge"},
+        {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REF": "refs/pull/1/head"},
+        {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_REF": "refs/heads/main"},
         {"GITHUB_EVENT_NAME": "push", "GITHUB_REF": "refs/heads/a-branch"},
         {"GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main"},
         {},
     ],
-    ids=["pull-request", "push-to-a-branch", "dispatch-on-main", "off-github"],
+    ids=[
+        "pull-request-head",
+        "pull-request-on-a-branch-ref",
+        "push-to-a-branch",
+        "dispatch-on-main",
+        "off-github",
+    ],
 )
-def test_only_a_push_to_main_records(tmp_path, given) -> None:
+def test_only_a_push_to_main_or_a_pull_request_s_merge_records(tmp_path, given) -> None:
     """A leg of any other run writes no record and pays none of the recorder's time: only main's
-    push runs' records are read. :data:`rails_reads.FORCE` arms one made by hand."""
+    push runs' and pull requests' merge runs' records are read. :data:`rails_reads.FORCE` arms
+    one made by hand."""
     _plant(tmp_path)
     done = _run_planted(tmp_path, "0", **given)
     assert done.returncode == 1, done.stdout + done.stderr

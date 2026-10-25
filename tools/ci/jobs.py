@@ -125,9 +125,9 @@ from .catalogue import Catalogue, Job, Step
 RUNNER_ENV: dict[str, str] = {"CI": "true"}
 
 #: The runner's variables a step gets on GitHub, as GitHub gives them to every step: the event and
-#: the full ref, which say whether the run is a push to main, the one run whose rails legs record
-#: what each rail read (tests/rails_reads.py). Off GitHub none is passed, so a local run records
-#: nothing, and ``GITHUB_ACTIONS``, which says the run is on GitHub, never is.
+#: the full ref, which say whether the run is a push to main or a pull request's, the runs whose
+#: rails legs record what each rail read (tests/rails_reads.py). Off GitHub none is passed, so a
+#: local run records nothing, and ``GITHUB_ACTIONS``, which says the run is on GitHub, never is.
 RUNNER_PASSED = ("GITHUB_EVENT_NAME", "GITHUB_REF")
 
 #: The env the tier workflows give every job, at their top level. A test holds it to theirs.

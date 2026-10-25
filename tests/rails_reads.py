@@ -2,11 +2,14 @@
 
 A lane runs the rails its change can break: ``python -m tools.ci rails select --paths ...``
 (``tools/ci/rails_select.py``) names every rail whose recorded reads touch a changed path. This
-plugin records those reads, in a rails leg of a push to main alone: a JUnit report named
-``junit-rails-<leg>.xml``, as each rails leg writes, with ``GITHUB_EVENT_NAME`` ``push`` and
-``GITHUB_REF`` ``refs/heads/main`` (or :data:`FORCE` set, for a record made by hand). It writes
-``rails-reads-<leg>.json`` beside the report. The selector reads only main's push runs' records,
-so a pull request's leg records nothing and pays none of the recorder's time.
+plugin records those reads in a rails leg (a JUnit report named ``junit-rails-<leg>.xml``, as
+each rails leg writes) of a push to main or of a pull request's run: ``GITHUB_EVENT_NAME``
+``push`` with ``GITHUB_REF`` ``refs/heads/main``, or ``pull_request`` with
+``refs/pull/<number>/merge`` (or :data:`FORCE` set, for a record made by hand). It writes
+``rails-reads-<leg>.json`` beside the report. Since the flip a tested push runs no rails, so the
+record of main's newest commit is most often its pull request's run. The selector reads a pull
+request's record only once that pull request was merged as a main commit whose tree the run
+tested, and every other run's leg records nothing.
 
 **A read.** Each event below counts in a process that runs tests. It is charged to the rail module
 then running (its collection, or one of its tests' setup, call or teardown). When no rail module
@@ -62,6 +65,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -120,13 +124,14 @@ def _facts() -> Facts:
 
 
 def armed(environ: Mapping[str, str] = os.environ) -> bool:
-    """Whether this run records: a push to main's, whose record the selector reads, or one
-    :data:`FORCE` arms."""
+    """Whether this run records: a push to main's or a pull request's, the two whose records the
+    selector reads, or one :data:`FORCE` arms."""
     if environ.get(FORCE) == "1":
         return True
-    return environ.get("GITHUB_EVENT_NAME") == "push" and environ.get("GITHUB_REF") == (
-        "refs/heads/main"
-    )
+    event, ref = environ.get("GITHUB_EVENT_NAME"), environ.get("GITHUB_REF", "")
+    if event == "push":
+        return ref == "refs/heads/main"
+    return event == "pull_request" and re.fullmatch(r"refs/pull/[0-9]+/merge", ref) is not None
 
 
 def report_path(config: pytest.Config) -> tuple[Path, str] | None:
@@ -792,8 +797,9 @@ class Plugin:
 
 def configure(config: pytest.Config, source_index: ModuleType) -> None:
     """Register the plugin in a rails leg's run (one that writes ``junit-rails-<leg>.xml``) of a
-    push to main (:func:`armed`), recording in each process that runs tests: an xdist worker, or
-    the one process without workers. The controller only gathers and writes."""
+    push to main or a pull request (:func:`armed`), recording in each process that runs tests:
+    an xdist worker, or the one process without workers. The controller only gathers and
+    writes."""
     found = report_path(config)
     if found is None or not armed():
         return
