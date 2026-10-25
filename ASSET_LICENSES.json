@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "about": "The images on this branch: captures of PersonalClaw's own UI for pull request descriptions. Not merged into main; main's ASSET_LICENSES.json does not list them.",
+  "groups": [
+    {
+      "id": "pr-images-shell-corner-vertical-more",
+      "source": "Playwright captures of this repository's own UI against the e2e harness's fixture data, for the pull request that draws the phone corner's More as a vertical ellipsis",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "shell-corner-vertical-more/corner-more-open-390.png",
+        "shell-corner-vertical-more/started-chat-360.png",
+        "shell-corner-vertical-more/started-chat-390.png"
+      ]
+    }
+  ]
+}
