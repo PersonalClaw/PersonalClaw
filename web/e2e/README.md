@@ -87,6 +87,7 @@ First-time setup on a fresh machine/CI: `npx playwright install chromium`.
 1. **Before touching a surface**, ensure its baseline exists (`npm run e2e:visual` green).
 2. Make the change.
 3. `npm run e2e` — expect **zero diff**. If a change forces a **real** visual change: implement it, dispatch the Refresh visual baselines workflow (`.github/workflows/visual-baselines.yml`) on the branch, read the files its summary lists as changed and each diff in its `visual-baselines` artifact, commit the intended ones with the manifest, and **say in the change's description which baselines moved and why, in light and dark**, so review sees it. Never silently keep or revert a visual change.
+4. A surface that draws something the run does not decide (the day, the run's own counts and readings, a probe's timing, a caret) is pinned before its shot, never absorbed by the tolerance: a route in `fixedClock.ts`'s `FIXED_CLOCK` loads under its instant (the UI matrix reads the same table), a read in `visual.spec.ts`'s `VISUAL_STUBS` answers with fixed values from `stubbedReads.ts` and must answer by the shot, a read in `ANSWERED` is waited for, and under forced colours a focused text field is blurred. The spec's "each pin holds" tests plant each.
 
 ## Notes
 

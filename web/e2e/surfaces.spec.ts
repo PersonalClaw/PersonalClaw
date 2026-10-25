@@ -6,7 +6,8 @@ import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, SUBSTATE_ROUTES, 
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
 import { BASELINED_STEPS, runMatrix, stepVerdict, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
-import { STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
+import { LEARNING_WEEK, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
+import { FIXED_CLOCK } from './fixedClock'
 
 // ── The UI quality check: every surface, once per theme, every check ────────────────────────────
 //
@@ -53,27 +54,6 @@ const baselinePath = (id: string) => join(BASELINE_DIR, `${id}-${process.platfor
 type BaselineFile = Record<string, { targets: Record<string, string[]>; known: Record<string, string[]> }>
 
 export const SURFACES = [...ROUTES, ...SETTINGS_ROUTES, ...VIEW_ROUTES, ...NON_NAV_ROUTES, ...SUBSTATE_ROUTES]
-
-/** Surfaces loaded under a fixed clock, and the instant. The week grid draws the week of the
- *  browser's today, and which hour cells hold a fire (and so are controls) moves with the clock;
- *  a fixed instant makes it the same week, and the same cells, on every run. */
-const FIXED_CLOCK: Record<string, string> = {
-  'triggers?view=week': '2026-11-02T09:00:00',
-  // The feed groups its notes under Today, Yesterday and Earlier in the browser's zone, and a task
-  // row says how long ago it changed. A zoned noon, so the same notes fall on the same days in any
-  // zone a runner has.
-  'inbox?filter=notifications': '2026-11-02T12:00:00Z',
-  // The same page by its own route. It listed the live feed under the browser's real clock: the
-  // note the gateway raises at boot fell under Today, and a run that crossed midnight UTC read it
-  // under Yesterday (#3905, fd971285's run). It now reads the fixed feed under this clock, as the
-  // filter does.
-  notifications: '2026-11-02T12:00:00Z',
-  'projects/p-0a1b2c3d?tab=tasks': '2026-11-02T12:00:00Z',
-  // What waits on you says how long each item has waited.
-  'mission-control': '2026-11-02T12:00:00Z',
-  companion: '2026-11-02T12:00:00Z',
-  'companion?approval=ap-0a1b2c3d': '2026-11-02T12:00:00Z',
-}
 
 /** The one project the Tasks view row opens, with three of its tasks; the run's home has none. */
 const FIXED_PROJECT = { id: 'p-0a1b2c3d', name: 'Garden', status: 'active', task_list_count: 0, created_at: '2026-10-01T09:00:00+00:00', updated_at: '2026-11-01T09:00:00+00:00' }
@@ -217,6 +197,9 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
   // The Store's catalogue, a snapshot: the live one is the registry's, which another repository
   // edits (`STORE_CATALOGUE`).
   'apps?view=store': [STORE_CATALOGUE],
+  // The capture week, moved to end on the day Learning's clock reads (`FIXED_CLOCK`): the gateway
+  // buckets it by its own date, so the page and its clock name the same days in both specs.
+  learning: [LEARNING_WEEK],
   // The chat the Session Map row opens. The run's home holds no chat long enough for a map, and
   // one driven through real turns would differ by the scripted provider's timing. The rail's
   // behaviour is held by `src/pages/chat/SessionMapRail*.test.tsx`.
