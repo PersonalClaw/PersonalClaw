@@ -19,8 +19,8 @@
         "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"System status \u2014 Gateway connected\"",
+        "button \"Theme: dark \u2014 switch to light\""
       ],
       "390": [
         "button \"Choose a model\"",
@@ -39,8 +39,8 @@
         "button \"Mark unread: Morning briefing is ready\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"System status \u2014 Gateway connected\"",
+        "button \"Theme: dark \u2014 switch to light\""
       ],
       "412": [
         "button \"Choose a model\"",
@@ -59,8 +59,8 @@
         "button \"Mark unread: Morning briefing is ready\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"System status \u2014 Gateway connected\"",
+        "button \"Theme: dark \u2014 switch to light\""
       ],
       "768": [
         "button \"Choose a model\"",
@@ -79,14 +79,14 @@
         "button \"Mark unread: Morning briefing is ready\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: dark — switch to light\""
+        "button \"System status \u2014 Gateway connected\"",
+        "button \"Theme: dark \u2014 switch to light\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Inbox # unread · # notifications\" clips at #%: #x# in #x#"
+        "<h#> \"Inbox # unread \u00b7 # notifications\" clips at #%: #x# in #x#"
       ]
     }
   },
@@ -110,8 +110,8 @@
         "button \"More actions\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"System status \u2014 Gateway connected\"",
+        "button \"Theme: light \u2014 switch to system\""
       ],
       "390": [
         "button \"Choose a model\"",
@@ -130,8 +130,8 @@
         "button \"Mark unread: Morning briefing is ready\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"System status \u2014 Gateway connected\"",
+        "button \"Theme: light \u2014 switch to system\""
       ],
       "412": [
         "button \"Choose a model\"",
@@ -150,8 +150,8 @@
         "button \"Mark unread: Morning briefing is ready\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"System status \u2014 Gateway connected\"",
+        "button \"Theme: light \u2014 switch to system\""
       ],
       "768": [
         "button \"Choose a model\"",
@@ -170,14 +170,17 @@
         "button \"Mark unread: Morning briefing is ready\"",
         "button \"Notifications, # unread\"",
         "button \"Open terminal\"",
-        "button \"System status — Gateway connected\"",
-        "button \"Theme: light — switch to system\""
+        "button \"System status \u2014 Gateway connected\"",
+        "button \"Theme: light \u2014 switch to system\""
       ]
     },
     "known": {
       "200% text zoom": [
         "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
-        "<h#> \"Inbox # unread · # notifications\" clips at #%: #x# in #x#"
+        "<h#> \"Inbox # unread \u00b7 # notifications\" clips at #%: #x# in #x#"
+      ],
+      "rendered contrast": [
+        "a planted finding no surface has"
       ]
     }
   }

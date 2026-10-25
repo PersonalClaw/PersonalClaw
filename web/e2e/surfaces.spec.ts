@@ -515,6 +515,23 @@ function writeBaselines(id: string, theme: Theme, measured: Measured, info: Test
 }
 
 async function checkSurface(page: Page, info: TestInfo, ctx: SurfaceContext, id: string): Promise<void> {
+  // Scratch plants (#3943), never merged.
+  if (process.env.PLANT === 'crash') throw new Error('planted crash')
+  if (process.env.PLANT === 'mouse-only') {
+    await page.evaluate(() => {
+      const host = document.createElement('div')
+      host.style.cssText = 'position:absolute;left:0;top:0;z-index:2147483647;width:300px;background:#ffffff;color:#000000'
+      host.innerHTML = '<div style="cursor:pointer;width:120px;height:48px">probe-mouse-only</div>'
+      document.body.prepend(host)
+    })
+  }
+  if (process.env.PLANT === 'dark-heading' && ctx.theme === 'dark') {
+    await page.evaluate(() => {
+      const h = document.createElement('h2')
+      h.textContent = 'probe-dark-only'
+      document.body.prepend(h)
+    })
+  }
   const baselines = readBaselines(id, ctx.theme, info)
   const rewriting = updating(info)
   const report: string[] = []
@@ -542,6 +559,7 @@ for (const theme of THEMES) {
 
     for (const { route, id, label } of SURFACES) {
       test(`${label} (#/${route})`, async ({ page }, info) => {
+        test.skip(process.env.PLANT === 'skip', 'planted skip')
         await seedTheme(page, theme)
         if (FIXED_CLOCK[route]) await page.clock.setFixedTime(new Date(FIXED_CLOCK[route]))
         for (const stub of STUBBED_READS[route] ?? []) {

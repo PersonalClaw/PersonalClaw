@@ -25,6 +25,7 @@ name: Refresh visual baselines
 
 on:
   workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: read
@@ -106,3 +107,120 @@ jobs:
             web/e2e/__ui-baselines__/*-linux.json
           if-no-files-found: error
           retention-days: 7
+
+  # Scratch only (#3943), never merged: each case a refresh must be red for, planted on one
+  # surface, each step green only when its plant made the refresh fail for that reason.
+  plants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Runner identity
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up the toolchain
+        uses: ./.github/actions/setup
+        with:
+          python-version: "3.12.15"
+          node: "true"
+      - name: Install (locked)
+        run: uv sync --locked --extra dev
+      - name: npm ci (root)
+        run: npm ci
+      - name: build (vite)
+        run: npm run build
+      - name: stamp the build (scripts/spa_dist_freshness.py)
+        run: python3 scripts/spa_dist_freshness.py stamp
+      - name: "control: a rewrite on one surface is green"
+        working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: plant-control.json
+        run: node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts -g "Notifications \(#/notifications\)"
+      - name: "plant: a crash is red"
+        if: ${{ !cancelled() }}
+        working-directory: web
+        env:
+          PLANT: crash
+          PLAYWRIGHT_JSON_OUTPUT_NAME: plant-crash.json
+        run: |
+          set +e
+          node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts -g "Notifications \(#/notifications\)" > plant.log 2>&1
+          rc=$?
+          tail -60 plant.log
+          echo "exit $rc"
+          test "$rc" -ne 0 && grep -q "planted crash" plant.log
+      - name: "plant: a set it cannot write is red"
+        if: ${{ !cancelled() }}
+        working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: plant-unwritable.json
+        run: |
+          set +e
+          chmod -R a-w e2e/__aria__ e2e/__ui-baselines__
+          node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts -g "Notifications \(#/notifications\)" > plant.log 2>&1
+          rc=$?
+          chmod -R u+w e2e/__aria__ e2e/__ui-baselines__
+          tail -60 plant.log
+          echo "exit $rc"
+          test "$rc" -ne 0 && grep -q "EACCES" plant.log
+      - name: "plant: a finding in a step held to zero is red"
+        if: ${{ !cancelled() }}
+        working-directory: web
+        env:
+          PLANT: mouse-only
+          PLAYWRIGHT_JSON_OUTPUT_NAME: plant-mouse-only.json
+        run: |
+          set +e
+          node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts -g "Notifications \(#/notifications\)" > plant.log 2>&1
+          rc=$?
+          tail -60 plant.log
+          echo "exit $rc"
+          test "$rc" -ne 0 && grep -q "non-axe detectors on #/notifications" plant.log && grep -q "probe-mouse-only" plant.log
+      - name: "plant: a route scan that skipped is red"
+        if: ${{ !cancelled() }}
+        working-directory: web
+        env:
+          PLANT: skip
+          PLAYWRIGHT_JSON_OUTPUT_NAME: plant-skip.json
+        run: |
+          set +e
+          node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts -g "Notifications \(#/notifications\)" > plant.log 2>&1
+          echo "matrix exit $?"
+          node e2e/assert-no-route-skips.mjs plant-skip.json > check.log 2>&1
+          rc=$?
+          cat check.log
+          echo "exit $rc"
+          test "$rc" -ne 0 && grep -q "were SKIPPED, not scanned" check.log
+      - name: "plant: a surface the visual spec snapshots with no golden is red"
+        if: ${{ !cancelled() }}
+        working-directory: web
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: plant-visual.json
+        run: |
+          set +e
+          rm e2e/__screenshots__/visual.spec.ts/dashboard-light-linux.png
+          node e2e/run-pinned.mjs --update -- e2e/visual.spec.ts -g "Terminal \(full page\) \(#/terminal\)" > plant.log 2>&1
+          echo "visual exit $?"
+          node e2e/visual-coverage.mjs > check.log 2>&1
+          rc=$?
+          tail -40 check.log
+          echo "exit $rc"
+          test "$rc" -ne 0 && grep -q "dashboard-light" check.log
+      - name: "plant: a dark tree that differs from the light one is red at the compare"
+        if: ${{ !cancelled() }}
+        working-directory: web
+        env:
+          PLANT: dark-heading
+          PLAYWRIGHT_JSON_OUTPUT_NAME: plant-dark.json
+        run: |
+          set +e
+          node e2e/run-pinned.mjs --update -- e2e/surfaces.spec.ts -g "Notifications \(#/notifications\)" > update.log 2>&1
+          up=$?
+          tail -20 update.log
+          echo "update exit $up"
+          node e2e/run-pinned.mjs -- e2e/surfaces.spec.ts -g "Notifications \(#/notifications\)" > plant.log 2>&1
+          rc=$?
+          tail -60 plant.log
+          echo "compare exit $rc"
+          test "$up" -eq 0 && test "$rc" -ne 0 && grep -q "accessibility tree on #/notifications (dark)" plant.log && grep -qF 'probe-<theme>-only' plant.log
