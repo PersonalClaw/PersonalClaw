@@ -1,9 +1,10 @@
 // ── The browser run's legs, merged into the run's one report ────────────────────────────────────
 //
 // `node e2e/merge-legs.mjs <blob root> <leg>...`, from web/. The run is split over CI jobs: each
-// `e2e-shard` leg runs half of the specs that share a gateway, and `e2e-stateful` runs the specs
-// that run alone, each home on its own (`matrix`, `idle`), then the stateful set and its seeded
-// second pass. Each run leaves one blob report in `<blob root>/<leg>/`. This merges
+// `e2e-shard` leg runs half of the specs that share a gateway, then one run on a home of its own
+// (the `idle` home on one leg, the stateful set and its seeded second pass on the other), and
+// `e2e-pinned` runs the `matrix` home and the visual rail against the pinned image's browser.
+// Each run leaves one blob report in `<blob root>/<leg>/`. This merges
 // them into `e2e-report.json` and `playwright-report/`, the report every later check reads.
 //
 // 🔑 A LEG WITH NO BLOB IS A RED, NOT A SMALLER REPORT. A leg that failed to install, to boot or to

@@ -1,8 +1,8 @@
 // ── The merged browser report is one whole run — asserted, not assumed ──────────────────────────
 //
 // `node e2e/assert-one-run.mjs e2e-report.json`, from web/, after `merge-legs.mjs`. The run is two
-// `e2e-shard` legs and the `e2e-stateful` job's runs (the stateful set, and each home a spec runs
-// alone on), merged. Each leg's own run enforced its isolation
+// `e2e-shard` legs (each with a run of its own: the idle home on one, the stateful set on the
+// other) and `e2e-pinned`'s runs (the matrix home, and the visual rail), merged. Each leg's own run enforced its isolation
 // modes (`isolationReporter.ts`), but no leg saw the others, and a merge is only as whole as what
 // was handed to it. This holds the merged report to one run:
 //

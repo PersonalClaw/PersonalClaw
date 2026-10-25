@@ -241,7 +241,7 @@ def test_the_real_merge_tier_puts_each_job_after_the_jobs_whose_output_it_uses()
     # web-build's dist is what package and the e2e legs read, and e2e and the UI quality check
     # each merge the legs' blobs.
     assert stage["web-build"] == 1
-    assert {stage["package"], stage["e2e-shard"], stage["e2e-stateful"]} == {2}
+    assert {stage["package"], stage["e2e-shard"], stage["e2e-pinned"]} == {2}
     assert {stage["e2e"], stage["ui-quality"]} == {3}
 
 
@@ -389,7 +389,7 @@ def test_the_real_tiers_split_into_their_workflows_stage_jobs() -> None:
     }
     assert list(merge) == ["build", "test", "test-2", "test-3"]
     assert merge["build"] == ["web-build"]
-    assert merge["test-2"] == ["package", "e2e-shard", "e2e-shard", "e2e-stateful", "desktop-smoke"]
+    assert merge["test-2"] == ["package", "e2e-shard", "e2e-shard", "e2e-pinned", "desktop-smoke"]
     assert merge["test-3"] == ["e2e", "ui-quality"]
     change = planner.stage_jobs({"include": _real_entries("change")})
     assert list(change) == ["test"]

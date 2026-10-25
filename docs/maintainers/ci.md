@@ -579,7 +579,7 @@ cannot read fails the row. A setup step inside the action counts at the index of
 of those rows has a plant inside the action.
 
 A change under `.github/actions/` runs the planned jobs, the browser run's (`e2e-shard`,
-`e2e-stateful`, their merge `e2e` and the UI quality check `ui-quality`), `desktop-smoke` and
+`e2e-pinned`, their merge `e2e` and the UI quality check `ui-quality`), `desktop-smoke` and
 `apps-contract`, as a change to a workflow does: each sets up its toolchain through the action, so
 it defines them too.
 The planner plans the whole tier for it (`tools/ci/areas.toml`). The rails check that every
@@ -1233,6 +1233,16 @@ build, the WebGL renderer, and the fonts as a count and one sha256), and:
 - an update run (`--update`) writes the manifest from the probe and rewrites the suite's baselines.
 
 Any other host is refused for now: automated contributors run it through CI alone.
+
+The compare path is merge.yml's `e2e-pinned` leg: the UI matrix and its control on the `matrix`
+home, then the visual rail, each an invocation of its own through `run-pinned.mjs`, their blobs
+merged with the shard legs' by `e2e` and `ui-quality`. `docker` is a toolchain program of the
+entry (the setup action checks the runner image has it and never installs it), so `run merge` and
+`make gate` name the job as one this machine cannot run, rather than failing it. Each shard leg
+runs its share of the shared specs and then one run on a home of its own, through
+`web/e2e/on-shard.mjs` (a step runs on every shard, so it runs its command on one alone): the
+idle-cost probe on shard 1, the stateful set and its second pass on shard 2. `e2e-stateful` is
+gone, and `visual.spec.ts` is no longer local-only.
 `.github/workflows/visual-baselines.yml` ("Refresh visual baselines") is the update path. On
 dispatch it sets the checkout up as a browser leg does, runs the UI matrix and the visual spec
 each with `--update` in an invocation of its own, and uploads the manifest and the `-linux` sets

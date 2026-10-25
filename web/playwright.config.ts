@@ -213,7 +213,7 @@ const GATEWAY_COMMAND = [
 // reads the report's timings and reds a pass that started early.
 //
 // 🪤 TWO SHAPES, ONE ORDER. Playwright allows each only where the other cannot be used.
-//   · A run whose file filter names only the stateful specs (CI's `e2e-stateful` job) chains them
+//   · A run whose file filter names only the stateful specs (CI's second `e2e-shard` leg) chains them
 //     with dependencies: `stateful` on `setup`, `stateful-again-1` on `stateful`, and
 //     `stateful-again-2` on `stateful-again-1`. A red pass skips the passes after it, and the
 //     isolation reporter fails the run, naming each test that did not run.

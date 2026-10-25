@@ -54,7 +54,7 @@ Every test in the report carries an `isolation` annotation (its mode and why), e
 
 ### On CI: two shards and the runs on homes of their own, merged
 
-CI splits the browser run over three jobs. Each **`e2e-shard`** leg runs half of `smoke` and `chromium` (`--shard=N/2`, with `PW_STATEFUL_CHAIN=0`, so no stateful project). **`e2e-stateful`** makes three runs, each on a gateway and home of its own: the `matrix` home, the `idle` home, and the two stateful specs named, so it runs `setup`, the first pass and the seeded second pass. Each run leaves one blob report (`shard-1`, `shard-2`, `matrix`, `idle`, `stateful`). The **`e2e`** job merges them and judges the merged report as one run:
+CI splits the browser run over three jobs. Each **`e2e-shard`** leg runs half of `smoke` and `chromium` (`--shard=N/2`, with `PW_STATEFUL_CHAIN=0`, so no stateful project), then one run on a gateway and home of its own, through `e2e/on-shard.mjs`: shard 1 the `idle` home, shard 2 the two stateful specs named, so it runs `setup`, the first pass and the seeded second pass. **`e2e-pinned`** makes two runs against the pinned image's browser (`e2e/run-pinned.mjs`, #3943): the `matrix` home, then the visual rail. Each run leaves one blob report (`shard-1`, `shard-2`, `idle`, `stateful`, `matrix`, `visual`). The **`e2e`** job merges them and judges the merged report as one run:
 
 - `merge-legs.mjs` refuses to merge when a leg left no blob (or two), naming the leg: a leg that never ran or never finished is a red, not a smaller report. It writes the seed and order the second pass ran in over the metadata, which Playwright's merge takes from one blob.
 - `assert-no-route-skips.mjs`, as before.
