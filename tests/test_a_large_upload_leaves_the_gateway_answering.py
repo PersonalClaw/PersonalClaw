@@ -311,10 +311,19 @@ class _Probe:
         def run(handle):
             if threading.get_ident() != loop_thread:
                 return real(handle)
-            no_cpu = probe.no_cpu
-            own = no_cpu.loop_waited()
-            first = no_cpu.snapshot() if own is None else None
-            began, cpu = time.monotonic(), time.thread_time()
+            try:
+                no_cpu = probe.no_cpu
+                own = no_cpu.loop_waited()
+                first = no_cpu.snapshot() if own is None else None
+                began, cpu = time.monotonic(), time.thread_time()
+            except BaseException:
+                # An exception raised in the probe's own work, as a timeout's alarm is wherever
+                # it lands, must not drop the loop's callback: the loop has already taken it off
+                # its queue. A task whose wakeup is dropped is never woken again, not even to be
+                # cancelled, and the loop's close then waits for it forever (a test teardown hung
+                # for two hours, on a task waiting on a future already done).
+                real(handle)
+                raise
             try:
                 return real(handle)
             finally:
@@ -887,6 +896,29 @@ async def test_a_process_stopped_while_the_loop_is_idle_does_not_fail_the_probe(
     assert stop.stopped, "premise: the process was stopped"
     assert probe.worst_gap >= _STOPPED, f"premise: the tick counted the stop; {probe.says()}"
     assert probe.worst_step < _BOUND, f"the stop was counted as a step; {probe.says()}"
+
+
+def test_an_exception_in_the_probes_own_work_still_runs_the_loops_callback():
+    """🔴 Red before: the probe runs each of the loop's callbacks through its own code, and a
+    timeout's alarm raises wherever it lands. Landing in the probe's work before the callback, it
+    dropped the callback the loop had already taken off its queue, so the task that callback was to
+    wake was never woken. Cancelled at the teardown, a task like that never ends (its waiter is
+    already done), and the loop's close waited for it until the run was killed. The exception still
+    goes on, after the callback has run."""
+
+    class Alarm(BaseException):
+        pass
+
+    def landing() -> float | None:
+        raise Alarm
+
+    probe = _Probe(client=None, asking=False)
+    probe.no_cpu.loop_waited = landing
+    ran: list[str] = []
+    run = probe._timed(threading.get_ident(), ran.append)
+    with pytest.raises(Alarm):
+        run("the loop's callback")
+    assert ran == ["the loop's callback"]
 
 
 #: The starved request below runs this many steps, each until it has run this long in wall time or
