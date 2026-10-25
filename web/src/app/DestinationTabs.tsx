@@ -1,6 +1,7 @@
 import { Suspense, type ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { Segmented } from '../ui/Segmented'
+import { TOUCH_TARGET } from '../ui/Toggle'
 import { CornersClearedAbove, TopBar } from '../ui/TopBar'
 import { useIsMobile } from './useIsMobile'
 import type { RouteProps } from './useQueryState'
@@ -28,7 +29,8 @@ export interface DestinationTab<Id extends string = string> {
  *  destination for where you were before it.
  *
  *  Below the width the labels need, the strip folds into one pill naming the tab, which opens the
- *  others (`Segmented`'s `collapse="menu"`), icon-only on a phone. */
+ *  others (`Segmented`'s `collapse="menu"`), icon-only on a phone. Below 1024 px that pill is a
+ *  44 px target (`TOUCH_TARGET`), as the shell's corner controls are. */
 export function DestinationTabs({ name, tabs, tab, navigate, fallback, children }: Pick<RouteProps, 'navigate'> & {
   /** The destination's name, which names the strip. */
   name: string
@@ -49,7 +51,7 @@ export function DestinationTabs({ name, tabs, tab, navigate, fallback, children 
   return (
     <div className="flex h-full flex-col">
       <TopBar keepCornerPadding left={
-        <Segmented ariaLabel={name} collapse="menu" iconOnly={isMobile} value={tab} onChange={choose}
+        <Segmented ariaLabel={name} collapse="menu" collapsedClassName={TOUCH_TARGET} iconOnly={isMobile} value={tab} onChange={choose}
           options={tabs.map(({ id, label, icon }) => ({ key: id, label, icon }))} />
       } />
       <div className="min-h-0 flex-1">

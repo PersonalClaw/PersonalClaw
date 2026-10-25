@@ -31,8 +31,11 @@ function useRightPanelOpen(): boolean {
  *
  *  Fixing it at the slot that OWNS the contract beats adding `truncate` to 42 call sites
  *  that would each drift again:
- *   · `truncate` on the title gives it `overflow-hidden` + `text-overflow: ellipsis` +
- *     `nowrap`, so it stops at the slot edge with an ellipsis rather than a cut mid-glyph.
+ *   · the title clips across (`overflow-x: clip`) with `text-overflow: ellipsis` and `nowrap`, so
+ *     it stops at the slot edge with an ellipsis rather than a cut mid-glyph. Across only: the
+ *     title font's glyph box is about 1.25 em in title-l's 1.2 em line, and `truncate`'s
+ *     overflow hidden on both axes cut its top and bottom at 200% text zoom (50 px in 48). An
+ *     `overflow-x: hidden` would not do: it turns `overflow-y: visible` into `auto`.
  *     Scoped by `[data-type]` so it hits the page title, not sibling chips/buttons. Matched
  *     as a DESCENDANT, not a direct child: three of the six wrap the title one level deeper
  *     (`learning`/`workflows` in a `<div>`) or make it a flex container whose own child
@@ -56,7 +59,7 @@ const TITLE_TRUNCATES = [
   // every ancestor between the slot and the title must allow shrinking, else the innermost
   // flex box keeps `min-width: auto` and the text still overflows.
   '[&_div]:min-w-0',
-  '[&_[data-type]]:min-w-0 [&_[data-type]]:truncate [&_[data-type]]:pr-s',
+  '[&_[data-type]]:min-w-0 [&_[data-type]]:overflow-x-clip [&_[data-type]]:text-ellipsis [&_[data-type]]:whitespace-nowrap [&_[data-type]]:pr-s',
 ].join(' ')
 
 /** How a `HeaderActions` cluster inside this bar moves the bar's row below the shell corners.
@@ -175,10 +178,13 @@ export function TopBar({ left, right, below, keepCornerPadding = false, contentA
 
 /** Cycles dark → light → system (follow OS). Icon reflects the chosen
  *  preference; tooltip names the next state. Rendered in the shell corner. */
-export function ThemeControl() {
+export function ThemeControl({ className }: {
+  /** Added to the button, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  className?: string
+} = {}) {
   const { preference, setPreference } = useMode()
   const next = preference === 'dark' ? 'light' : preference === 'light' ? 'auto' : 'dark'
   const icon = preference === 'dark' ? Moon : preference === 'light' ? Sun : Monitor
   const label = preference === 'auto' ? 'Theme: follow system' : preference === 'dark' ? 'Theme: dark' : 'Theme: light'
-  return <IconButton icon={icon} label={`${label} — switch to ${next === 'auto' ? 'system' : next}`} size={36} onClick={() => setPreference(next)} />
+  return <IconButton icon={icon} label={`${label} — switch to ${next === 'auto' ? 'system' : next}`} size={36} className={className} onClick={() => setPreference(next)} />
 }

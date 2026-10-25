@@ -32,8 +32,10 @@ const docs: UiDoc[] = [
     name: 'ThemeControl',
     keywords: ['theme', 'dark', 'light', 'system', 'toggle', 'appearance', 'mode', 'shell'],
     description:
-      'Cycles the theme dark → light → system (follow OS). The icon reflects the chosen preference (Moon / Sun / Monitor) and the tooltip names the next state. Rendered in the shell corner cluster; takes no props (reads/writes the theme store).',
-    props: [],
+      'Cycles the theme dark → light → system (follow OS). The icon reflects the chosen preference (Moon / Sun / Monitor) and the tooltip names the next state. Rendered in the shell corner cluster; reads and writes the theme store, so its only prop is a class.',
+    props: [
+      { name: 'className', description: "Extra classes on the button, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) the shell gives it." },
+    ],
     bestPractices: [
       { guidance: true, description: 'Reach for ThemeControl in the shell corner cluster rather than building a bespoke theme toggle — it owns the dark→light→system cycle and the theme store.' },
       { guidance: false, description: "Do not duplicate it per page — it's shell chrome, mounted once in ShellCornerRight." },

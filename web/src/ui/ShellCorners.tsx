@@ -11,6 +11,7 @@ import { useIsMobile } from '../app/useIsMobile'
 import { WidgetBoundary } from '../app/ErrorBoundary'
 import { accentChip } from '../design/accent'
 import { bindingLabel } from '../app/keymap'
+import { TOUCH_TARGET } from './Toggle'
 
 /** The app shell's two persistent CORNER regions — not a full header row, just
  *  the two corners that carry native shell controls, floating above page content:
@@ -45,7 +46,7 @@ export function ShellCornerLeft({ collapsed, onToggle, focusMode = false }: {
     <div ref={ref} className="absolute left-0 top-0 z-30 py-2">
       <button type="button" onClick={onToggle} data-rail-toggle=""
         aria-label={label} title={`${label} (${key})`}
-        className="grid h-9 w-8 place-items-center rounded-r-lg border border-l-0 border-outline-variant/40 bg-surface-low/80 text-on-surface-low backdrop-blur-sm transition-colors hover:bg-surface-low hover:text-on-surface">
+        className={`grid h-9 w-8 place-items-center rounded-r-lg border border-l-0 border-outline-variant/40 bg-surface-low/80 text-on-surface-low backdrop-blur-sm transition-colors hover:bg-surface-low hover:text-on-surface ${TOUCH_TARGET}`}>
         {/* the collapse/expand glyph morphs (spring scale+fade key-swap) as the
             rail toggles, so the pull-tab reflects the state change with life */}
         <AnimatePresence mode="wait" initial={false}>
@@ -77,7 +78,7 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
         <button type="button" onClick={onToggleTerminal}
           aria-label={terminalOpen ? 'Hide terminal' : 'Open terminal'}
           title={`${terminalOpen ? 'Hide terminal' : 'Open terminal'} (${bindingLabel('drawer')})`}
-          className="grid size-7 place-items-center rounded-pill transition-colors"
+          className={`grid size-7 place-items-center rounded-pill transition-colors ${TOUCH_TARGET}`}
           style={terminalOpen
             ? accentChip
             : { color: 'var(--color-on-surface-low)' }}>
@@ -92,13 +93,13 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
             <WidgetBoundary what="the content width control" compact><WidthPill /></WidgetBoundary>
           </>
         )}
-        <WidgetBoundary what="what waits on you" compact><NeedsYouBadge navigate={navigate} /></WidgetBoundary>
-        <WidgetBoundary what="notifications" compact><NotificationBell navigate={navigate} /></WidgetBoundary>
-        <WidgetBoundary what="the theme control" compact><ThemeControl /></WidgetBoundary>
+        <WidgetBoundary what="what waits on you" compact><NeedsYouBadge navigate={navigate} className={TOUCH_TARGET} /></WidgetBoundary>
+        <WidgetBoundary what="notifications" compact><NotificationBell navigate={navigate} className={TOUCH_TARGET} /></WidgetBoundary>
+        <WidgetBoundary what="the theme control" compact><ThemeControl className={TOUCH_TARGET} /></WidgetBoundary>
         {/* No-model degraded-mode chip — self-polling;
             renders nothing unless a model-dependent surface is on its LLM-free floor. The gateway
             connection is the status line's (`app/StatusLine`). */}
-        <WidgetBoundary what="the model status" compact><DegradedChip /></WidgetBoundary>
+        <WidgetBoundary what="the model status" compact><DegradedChip className={TOUCH_TARGET} /></WidgetBoundary>
       </div>
     </div>
   )

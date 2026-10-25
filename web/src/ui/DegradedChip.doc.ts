@@ -7,9 +7,11 @@ const doc: UiDoc = {
   keywords: ['degraded', 'no-model', 'offline', 'fallback', 'floor', 'resilience', 'model', 'shell'],
   description:
     "A compact shell-corner chip shown only when a model-dependent surface is running on its no-model FLOOR (e.g. search degraded to keyword ranking, inbox classify paused). Collapsed it is a warn-toned pill with the degraded count / worst surface; click it for a popover carrying one TextLink to Settings → Models, then each degraded surface with the model binding it is missing, its deterministic floor statement, and its pending-enrichment backlog. Takes no props; self-polls GET /api/resilience/degraded and renders nothing when every surface has a model.",
-  props: [],
+  props: [
+    { name: 'className', description: "Extra classes on the chip, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) the shell gives it." },
+  ],
   bestPractices: [
-    { guidance: true, description: 'Mount it once in the shell corner cluster (ShellCornerRight) — it self-polls via useVisiblePoll, so do not feed it props or wrap it in another poller (it is a shell sibling of IncidentBanner / SystemWidget, NOT a DashboardLive consumer — that provider only wraps the dashboard page).' },
+    { guidance: true, description: 'Mount it once in the shell corner cluster (ShellCornerRight) — it self-polls via useVisiblePoll, so do not feed it data or wrap it in another poller (it is a shell sibling of IncidentBanner / SystemWidget, NOT a DashboardLive consumer — that provider only wraps the dashboard page).' },
     { guidance: true, description: 'Keep it warn-toned, never error: a degraded surface is doing less honestly, not broken — reserve error styling for a real outage (IncidentBanner / SystemWidget).' },
     { guidance: false, description: 'Do not surface it as a blocking banner — degraded mode never error-walls; the chip is a quiet, dismissible-by-navigation affordance.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — route tone through the warn design tokens.' },

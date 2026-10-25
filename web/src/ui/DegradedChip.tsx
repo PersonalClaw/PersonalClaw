@@ -34,7 +34,10 @@ function useCaseLabel(uc: string): string {
  *  slow cadence (the state changes rarely — a provider comes/goes); it does NOT use
  *  DashboardLive, which only wraps the dashboard page, not the shell. Renders nothing when every surface has a model. Click to
  *  expand a popover listing each degraded surface, its floor, and its backlog. */
-export function DegradedChip() {
+export function DegradedChip({ className }: {
+  /** Added to the chip, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  className?: string
+} = {}) {
   const [surfaces, setSurfaces] = useState<DegradedSurface[] | null>(null)
   /** The chat instance's last MEASURED connection (the report reads it from the gateway's cache,
    *  never probing). A surface's `available` only says a model RESOLVES — no network call — so a
@@ -164,7 +167,7 @@ export function DegradedChip() {
     <div className="relative">
       <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)}
         data-type="caption"
-        className={`flex min-h-6 items-center gap-1.5 rounded-pill py-1 transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}`}
+        className={`flex min-h-6 items-center gap-1.5 rounded-pill py-1 transition-colors hover:brightness-110 ${isMobile ? 'px-1.5' : 'px-2.5'}${className ? ` ${className}` : ''}`}
         // 16%, like every other warn-toned chip in the app (ToolInspector's "needs approval",
         // bento's warn tile). This chip was the ONLY 20% site, and that extra 4% is what put
         // warn ink on a warn-hued tint under AA: axe measured it FAILING at 20% and PASSING at

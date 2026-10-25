@@ -9,7 +9,11 @@ import { useNeedsYou } from '../lib/useNeedsYou'
  *  is a claim nobody needs to read (`web/REDESIGN.md` §3, rule 3). And since its absence says
  *  nothing waits, a count not known is never absent: before the first read lands, and after a read
  *  that failed, the badge keeps a muted dash where the number would sit. */
-export function NeedsYouBadge({ navigate }: { navigate: (path: string) => void }) {
+export function NeedsYouBadge({ navigate, className }: {
+  navigate: (path: string) => void
+  /** Added to the badge, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  className?: string
+}) {
   const { rows, data, error } = useNeedsYou()
   const unknown = !data
   const n = rows.length
@@ -19,7 +23,7 @@ export function NeedsYouBadge({ navigate }: { navigate: (path: string) => void }
   return (
     <button type="button" onClick={() => navigate('dashboard')}
       aria-label={`${label} — open Home`} title={label}
-      className="relative grid size-7 place-items-center rounded-pill transition-colors"
+      className={`relative grid size-7 place-items-center rounded-pill transition-colors${className ? ` ${className}` : ''}`}
       style={{ color: 'var(--color-on-surface-low)' }}>
       <Hand size={16} aria-hidden />
       {unknown ? (

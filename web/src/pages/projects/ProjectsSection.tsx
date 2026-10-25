@@ -10,6 +10,7 @@ import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { TOUCH_TARGET } from '../../ui/Toggle'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ListControls } from '../../ui/ListControls'
@@ -1456,7 +1457,9 @@ function Shell({ title, titleNode, onBack, actions, scroll = true, panel, childr
         // project is the destination at that URL, so it carries the h1. `titleNode` (the rename editor)
         // keeps its own input — an editable title is not a heading.
         left={titleNode ?? <div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><PageTitle>{title}</PageTitle></div>}
-        right={<div className="flex items-center gap-1.5">{actions}<HeaderActions><HeaderControl icon={ListChecks} label="All projects" onClick={onBack} priority="primary" /></HeaderActions></div>} />
+        // Where the shell's 44 px corners leave the band no room for All projects (768 px), it folds
+        // into the `…`, which is a 44 px target there too.
+        right={<div className="flex items-center gap-1.5">{actions}<HeaderActions overflowClassName={TOUCH_TARGET}><HeaderControl icon={ListChecks} label="All projects" onClick={onBack} priority="primary" /></HeaderActions></div>} />
       <div className="flex min-h-0 flex-1">
         {/* Detail hub fills height (scroll=false); list/loading states scroll. */}
         <div className={`min-w-0 flex-1 ${scroll ? 'overflow-y-auto' : 'overflow-hidden'}`}>{children}</div>

@@ -23,7 +23,11 @@ const MAX_SHADE = 5
  *  in place (deleted, not "dismissed" — see the row's own note; the entry leaves
  *  disk), opened (jumps to the full feed, deep-linked to the item), and the footer
  *  opens the full feed. The full feed is the Inbox's Notifications filter (#3818). */
-export function NotificationBell({ navigate }: { navigate: (path: string) => void }) {
+export function NotificationBell({ navigate, className }: {
+  navigate: (path: string) => void
+  /** Added to the bell, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  className?: string
+}) {
   const [items, setItems] = useState<NotificationItem[] | null>(null)
   const [open, setOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -112,7 +116,7 @@ export function NotificationBell({ navigate }: { navigate: (path: string) => voi
         aria-expanded={open}
         aria-label={unknown ? `Notifications, ${UNKNOWN_READING}` : unread > 0 ? `Notifications, ${unread} unread` : 'Notifications'}
         title={unknown ? UNKNOWN_READING : unread > 0 ? `${unread} unread notification${unread === 1 ? '' : 's'}` : 'Notifications'}
-        className="relative grid size-7 place-items-center rounded-pill transition-colors"
+        className={`relative grid size-7 place-items-center rounded-pill transition-colors${className ? ` ${className}` : ''}`}
         style={open
           ? accentChip
           : { color: 'var(--color-on-surface-low)' }}>
