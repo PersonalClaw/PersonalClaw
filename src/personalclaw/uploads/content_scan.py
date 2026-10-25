@@ -44,6 +44,18 @@ for nothing). So the gateway reads the window in a worker thread, starts the sca
 (``uploads.scan_child``, which imports the scanner and nothing else of the package, since every
 scan waits for its start), hands it the window on stdin, and reads one JSON line back.
 
+How it starts. The child is spawned, never forked. ``asyncio`` starts a child with
+``subprocess.Popen`` on the event loop, and Popen forks the whole gateway unless it can use
+``posix_spawn``: on macOS only when it is asked for no new session and need not close
+descriptors itself (``close_fds=False``). A fork holds the interpreter lock, from any thread,
+while the kernel copies the gateway's memory map, which grows with the gateway: beside a 1 ms
+tick in a 1.2 GB process on a loaded Mac it held the loop 32-90 ms, against 3 ms spawned, and a
+loaded CI runner's took 0.127 s, every request waiting meanwhile. (On Linux the fork is a
+``vfork``, which lets go of the lock.) So Popen is asked for neither. The gateway names on the
+child's command line the descriptors it would inherit (:func:`inherited_fds`: every one Python
+opens is closed across ``exec``, PEP 446, but a C library's may not be), and the child's first
+step takes a session of its own and closes exactly those (``scan_child.first_step``).
+
 What it answers. Refused content raises :class:`ContentRefused` 422 ``upload_content_refused``,
 the scanner's refusal. A window that cannot be read, a child that cannot start, does not answer
 within :data:`SCAN_DEADLINE_SECS`, or ends without an answer (the scanner raised on the content
@@ -61,7 +73,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.uploads.scan_child import SCAN_WINDOW, WHOLE_FILE_BYTES
+from personalclaw.uploads.scan_child import SCAN_WINDOW, WHOLE_FILE_BYTES, close_args
 from personalclaw.uploads.store import UploadError
 
 if TYPE_CHECKING:
@@ -206,6 +218,34 @@ def scan_argv() -> list[str]:
     return python_child_argv(CHILD_MODULE)
 
 
+def inherited_fds() -> list[int]:
+    """The descriptors above 2 a child started now would inherit: the open ones without
+    close-on-exec, as this process lists them (``/proc/self/fd``, ``/dev/fd``)."""
+    import fcntl
+
+    for folder in ("/proc/self/fd", "/dev/fd"):
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            continue
+        inherited = []
+        for name in names:
+            fd = int(name)
+            try:
+                if fd > 2 and not fcntl.fcntl(fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC:
+                    inherited.append(fd)
+            except OSError:
+                continue  # the listing's own descriptor, closed by now
+        return sorted(inherited)
+    return []
+
+
+def start_argv() -> list[str]:
+    """The child's command as the gateway starts it: :func:`scan_argv`, naming the descriptors
+    it inherits for its first step to close."""
+    return [*scan_argv(), *close_args(inherited_fds())]
+
+
 async def scan_upload(upload: Path | bytes, category: str, *, surface: str) -> None:
     """Scan an upload before anything is made from it: the file stored at *upload*, or its bytes.
 
@@ -298,13 +338,15 @@ async def _ask_child(window: bytes) -> dict[str, Any] | None:
     )
     try:
         proc = await asyncio.create_subprocess_exec(
-            *scan_argv(),
+            *start_argv(),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
-            # Its own process group, so a kill reaches anything it started.
-            start_new_session=True,
+            # Spawned, never forked: no session asked for and no descriptors closed here. The
+            # child's first step takes its session and closes what it inherited ("How it
+            # starts"); a kill before that step reaches the child alone (kill_timed_out).
+            close_fds=False,
         )
     except OSError as exc:
         logger.warning("The upload content scan could not start: %s", exc)

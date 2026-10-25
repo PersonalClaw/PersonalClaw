@@ -92,15 +92,19 @@ class TestTheEntryRunsOnlyDeclaredModules:
 
 
 def _frozen_entry(
-    tmp_path: Path, *args: str, env: dict[str, str] | None = None, stdin: str = ""
+    tmp_path: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+    stdin: str = "",
+    prelude: str = "",
 ) -> subprocess.CompletedProcess[str]:
     """Run the package's entry script as the frozen bundle runs it: as ``__main__``, in a process
     that reads as frozen, with ``sys.executable`` first on its command line and *args* after it,
-    and *stdin* on its standard input. A scratch home, and the shim's own environment otherwise,
-    so nothing reaches the real one."""
+    and *stdin* on its standard input, after the code *prelude*. A scratch home, and the shim's
+    own environment otherwise, so nothing reaches the real one."""
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
-    code = (
+    code = prelude + (
         "import runpy, sys\n"
         "sys.frozen = True\n"
         "sys.argv = [sys.executable, *sys.argv[1:]]\n"
@@ -110,6 +114,8 @@ def _frozen_entry(
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": str(home),
         "PERSONALCLAW_HOME": str(home / ".personalclaw"),
+        # The package this test imports, where a path names it, and not another install's.
+        **({"PYTHONPATH": os.environ["PYTHONPATH"]} if "PYTHONPATH" in os.environ else {}),
         **(env or {}),
     }
     return subprocess.run(
@@ -148,6 +154,47 @@ def test_the_frozen_entry_runs_the_content_scan_child_like_python_dash_m(tmp_pat
         stdin="Shopping list for Saturday: eggs, flour, apples.\n",
     )
     assert (done.returncode, done.stdout) == (0, '{"dangerous": false}\n'), done.stderr
+
+
+#: Records, in the child, each ``os.setsid`` and each ``os.close`` above 2, and writes them on
+#: its stderr as it ends.
+_STEPS_RECORDED = (
+    "import atexit, os, sys\n"
+    "steps = []\n"
+    "real_close, real_setsid = os.close, os.setsid\n"
+    "def close(fd):\n"
+    "    if fd > 2:\n"
+    "        steps.append(['close', fd])\n"
+    "    return real_close(fd)\n"
+    "def setsid():\n"
+    "    steps.append(['setsid'])\n"
+    "    return real_setsid()\n"
+    "os.close, os.setsid = close, setsid\n"
+    "atexit.register(lambda: sys.stderr.write('STEPS ' + repr(steps) + '\\n'))\n"
+)
+
+
+def test_the_frozen_entry_hands_the_scan_child_exactly_the_descriptors_it_names(tmp_path):
+    """The gateway starts the scan's child naming the descriptors it inherits
+    (``content_scan.start_argv``: ``<bundle> -m personalclaw.uploads.scan_child --close-fds
+    5,9``). The bundle's entry takes the ``-m <module>`` pair off, so the child's first step gets
+    exactly the descriptors named. Were the pair left on, the step would refuse its arguments, and
+    every upload in the desktop app would come back unchecked."""
+    from personalclaw import _frozen_child
+    from personalclaw.uploads import content_scan, scan_child
+
+    assert content_scan.CHILD_MODULE in _frozen_child.CHILD_MODULES
+    done = _frozen_entry(
+        tmp_path,
+        "-m",
+        content_scan.CHILD_MODULE,
+        *scan_child.close_args([5, 9]),
+        stdin="Shopping list for Saturday: eggs, flour, apples.\n",
+        prelude=_STEPS_RECORDED,
+    )
+    assert (done.returncode, done.stdout) == (0, '{"dangerous": false}\n'), done.stderr
+    (steps,) = [line for line in done.stderr.splitlines() if line.startswith("STEPS ")]
+    assert steps == "STEPS [['setsid'], ['close', 5], ['close', 9]]", steps
 
 
 def test_what_the_shim_runs_gets_the_environment_it_was_given(tmp_path):
