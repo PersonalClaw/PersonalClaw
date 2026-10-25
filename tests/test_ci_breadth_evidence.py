@@ -176,13 +176,15 @@ def test_a_missing_red_shard_does_not_close_the_open_issue() -> None:
     assert next(a for a in actions if a.leg == "macos-26-3.12").action == "update"
 
 
-def test_a_leg_whose_issue_cannot_be_read_is_recorded_red_and_touches_no_issue() -> None:
+def test_a_leg_whose_issue_cannot_be_read_keeps_its_greens_and_touches_no_issue() -> None:
     entries = {"macos-26-3.12/1": _leg(), "macos-26-3.12/2": _leg()}
     record, actions = be.settle_record(
         entries, {}, run_id=9, tree="d" * 40, unsettled=frozenset({"macos-26-3.12"})
     )
-    assert {e["result"] for e in record["legs"].values()} == {be.RED}
-    assert actions[0].action == "none"
+    assert {e["result"] for e in record["legs"].values()} == {be.GREEN}, "a lookup reds no green"
+    assert all(e["unsettled"] is True for e in record["legs"].values())
+    assert not any(be.measured(e) for e in record["legs"].values()), "so none is carried"
+    assert actions[0].action == "none" and actions[0].red == ()
 
 
 def test_a_red_then_a_green_on_changed_inputs_closes_the_issue() -> None:
@@ -379,8 +381,13 @@ class _Gh:
         self.runs: dict[str, list[int]] = {}
         self.records: dict[int, dict[str, bytes]] = {}
         self.branches: list[str] = []
-        self.unreadable = False
-        self.page: dict | None = None
+        #: The search fails, and gh says this on its stderr.
+        self.unreadable = ""
+        #: The search's pages as GitHub answers them, in place of the open issues'.
+        self.pages: list[dict] | None = None
+        #: How many issues each page of the search holds.
+        self.page_size = 100
+        self.comment_reads: list[int] = []
         #: The REST listing's order is not set: newest first is one it may use.
         self.newest_first = False
         self.listings: list[tuple[str, ...]] = []
@@ -412,13 +419,20 @@ class _Gh:
             return ""
         path = next(a for a in args[1:] if not a.startswith("-"))
         if path.startswith("search/issues"):
+            assert "--paginate" in args and "--slurp" in args, "every page of the search is read"
             self.queries.append(urllib.parse.unquote(path))
             if self.unreadable:
-                raise subprocess.CalledProcessError(1, ["gh", *args])
-            if self.page is not None:
-                return be.json.dumps(self.page)
+                raise be.GhError(1, ["gh", *args], "", self.unreadable)
+            if self.pages is not None:
+                return be.json.dumps(self.pages)
             items = [i for i in self.issues if i["state"] == "open"]
-            return be.json.dumps({"incomplete_results": False, "items": items})
+            chunks = [items[n : n + self.page_size] for n in range(0, len(items), self.page_size)]
+            return be.json.dumps(
+                [
+                    {"total_count": len(items), "incomplete_results": False, "items": chunk}
+                    for chunk in chunks or [[]]
+                ]
+            )
         if path.endswith("/artifacts?per_page=100"):
             self.listings.append(args)
             listed = [
@@ -435,6 +449,7 @@ class _Gh:
             return "\n".join(f"{a}\t{c}\t{n}" for a, c, n in jobs)
         if "/comments?" in path:
             number = int(path.split("/issues/")[1].split("/")[0])
+            self.comment_reads.append(number)
             return be.json.dumps([self.comments.get(number, [])])
         if "/breadth.yml/runs?" in path:
             branch = urllib.parse.unquote(path.split("branch=")[1].split("&")[0])
@@ -443,7 +458,16 @@ class _Gh:
         raise AssertionError(f"the commands asked gh for {args}")
 
 
-def _night(tmp_path, monkeypatch, gh: _Gh, entries: dict, run_id: int, *, issues: bool = True):
+def _night(
+    tmp_path,
+    monkeypatch,
+    gh: _Gh,
+    entries: dict,
+    run_id: int,
+    *,
+    issues: bool = True,
+    report_code: int = 0,
+):
     """One run's ``report``, then its ``issues`` step, as breadth.yml runs them on main."""
     monkeypatch.setattr(be, "_gh", gh)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
@@ -458,7 +482,7 @@ def _night(tmp_path, monkeypatch, gh: _Gh, entries: dict, run_id: int, *, issues
     argv = ["report", "--repo", "o/r", "--legs", str(night / "legs"), "--run-id", str(run_id)]
     assert (
         be.main([*argv, "--tree", "d" * 40, "--record", str(record), "--actions", str(actions)])
-        == 0
+        == report_code
     )
     if issues:
         url = f"https://example.com/r/{run_id}"
@@ -516,18 +540,30 @@ def test_a_red_on_unknown_inputs_never_hides_the_inputs_an_earlier_red_ran_on(
     assert record["legs"]["install-smoke/1"]["result"] == be.RED
 
 
-def test_an_unreadable_issue_records_its_greens_red_but_no_later_run_carries_them(
-    tmp_path, monkeypatch
+#: What gh says when GitHub refuses the search: the words the report's error must carry.
+_REFUSED = "gh: API rate limit exceeded for installation ID 1. (HTTP 403)"
+
+
+def test_an_unreadable_search_fails_the_report_once_and_reds_no_green(
+    tmp_path, monkeypatch, capsys
 ) -> None:
     gh = _Gh()
-    gh.unreadable = True
+    gh.unreadable = _REFUSED
     tonight = _all_green(**{"macos-26-3.12/2": _leg(be.RED)})
-    record, done = _night(tmp_path, monkeypatch, gh, tonight, 1, issues=False)
+    record, done = _night(tmp_path, monkeypatch, gh, tonight, 1, issues=False, report_code=1)
+    said = capsys.readouterr().out
+    assert said.count("### breadth issues unread") == 1, "one error for the whole run"
+    assert _REFUSED in said, "the error carries gh's own words"
+    assert "is recorded red" not in said, "no leg is named red for the lookup"
+    assert len(gh.queries) == 1
     green, red = record["legs"]["macos-26-3.12/1"], record["legs"]["macos-26-3.12/2"]
-    assert green["result"] == be.RED and green["unsettled"] is True
+    assert green["result"] == be.GREEN and green["unsettled"] is True
     assert red["result"] == be.RED and not red.get("unsettled"), "a measured red stays a red"
-    assert done["macos-26-3.12"] == "open", "a measured red opens its issue"
+    measured_green = {k for k, e in tonight.items() if e["result"] == be.GREEN}
+    assert {k for k, e in record["legs"].items() if e["result"] == be.GREEN} == measured_green
+    assert done["macos-26-3.12"] == "open", "a measured red would open its issue"
     assert done["ubuntu-24.04-3.13"] == "none"
+    assert gh.issues == [], "no issue is opened, updated or closed"
     # Carrying, on the one leg that may carry: an unsettled green runs again, a measured red is
     # carried red.
     assert record["legs"]["rails-macos-26-3.12/1"]["unsettled"] is True
@@ -537,12 +573,72 @@ def test_an_unreadable_issue_records_its_greens_red_but_no_later_run_carries_the
         be.decide("rails-macos-26-3.12/1", INPUTS, found) is None
     ), "an unsettled green runs again"
     red_night = _all_green(**{"rails-macos-26-3.12/1": _leg(be.RED)})
-    record, _ = _night(tmp_path, monkeypatch, gh, red_night, 2, issues=False)
+    record, _ = _night(tmp_path, monkeypatch, gh, red_night, 2, issues=False, report_code=1)
     assert not record["legs"]["rails-macos-26-3.12/1"].get("unsettled")
     name, data = _stored(record)
     found, _ = be.previous(_Source({2: {name: data}}))
     carried = be.decide("rails-macos-26-3.12/1", INPUTS, found)
     assert carried is not None and carried["result"] == be.RED
+
+
+def test_an_unsettled_green_never_satisfies_a_release() -> None:
+    record, _ = be.settle_record(
+        _all_green(), {}, run_id=9, tree="d" * 40, unsettled=frozenset({"audit"})
+    )
+    assert record["legs"]["audit/1"]["result"] == be.GREEN
+    assert not be.satisfies_release_alone(record), "a green no one could settle is not evidence"
+    record, _ = be.settle_record(_all_green(), {}, run_id=9, tree="d" * 40)
+    assert be.satisfies_release_alone(record)
+
+
+def test_every_legs_issue_is_found_by_one_search(tmp_path, monkeypatch) -> None:
+    """Twenty-odd legs, one ``search/issues`` call a step, and only the bot's issues' comments."""
+    gh = _Gh()
+    gh.page_size = 2  # the open issues span several pages
+    red_legs = ["audit", "canary", "coverage", "macos-26-3.12", "ubuntu-24.04-3.13"]
+    for leg in red_legs:
+        gh.open_issue(be.issue_title(leg), f"{be.MARKER}{'0' * 64}\n")
+    someone = gh.open_issue(be.issue_title("security"), "", user=_SOMEONE)
+    tonight = _all_green(**{f"{leg}/1": _leg(be.RED) for leg in red_legs})
+    assert len({be.leg_of(k) for k in tonight}) >= 20
+    _, done = _night(tmp_path, monkeypatch, gh, tonight, 1)
+    assert len(gh.queries) == 2, "one search for the report and one for the issues step"
+    assert "author:app/github-actions" in gh.queries[0]
+    assert {done[leg] for leg in red_legs} == {"update"}, "each red leg found its own issue"
+    assert someone not in gh.comment_reads, "only the bot's issues are read"
+    assert len(gh.comment_reads) == 2 * len(red_legs), "each bot issue's comments once a step"
+    assert [i["number"] for i in gh.issues if i["state"] == "open"] == [1, 2, 3, 4, 5, 6]
+
+
+def test_a_leg_whose_issue_is_closed_or_missing_is_treated_as_before(tmp_path, monkeypatch) -> None:
+    gh = _Gh()
+    closed = gh.open_issue(be.issue_title("audit"), f"{be.MARKER}{'0' * 64}\n")
+    gh.issues[closed - 1]["state"] = "closed"
+    gh.open_issue(be.issue_title("canary"), "", user=_SOMEONE)
+    tonight = _all_green(**{"audit/1": _leg(be.RED), "canary/1": _leg(be.RED)})
+    _, done = _night(tmp_path, monkeypatch, gh, tonight, 1)
+    assert done["audit"] == "open" and done["canary"] == "open" and done["security"] == "none"
+    opened = [i for i in gh.issues if i["user"] == _BOT and i["state"] == "open"]
+    assert sorted(i["title"] for i in opened) == [
+        be.issue_title("audit"),
+        be.issue_title("canary"),
+    ], "a closed issue and someone else's are no leg's: the bot opens its own"
+    fixed = {key: _leg(tree="e" * 40) for key in be.expected_keys()}
+    record, done = _night(tmp_path, monkeypatch, gh, fixed, 2)
+    assert done["audit"] == "close" and done["canary"] == "close"
+    assert record["legs"]["audit/1"]["result"] == be.GREEN
+
+
+def test_a_failed_gh_call_names_what_gh_said(monkeypatch) -> None:
+    def refused(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, "", f"{_REFUSED}\n")
+
+    monkeypatch.setattr(be.subprocess, "run", refused)
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        be._gh("api", "search/issues?q=x")
+    assert _REFUSED in str(raised.value)
+    with pytest.raises(be.IssuesUnread, match="HTTP 403"):
+        be.GhIssues("o/r").read()
 
 
 @pytest.mark.parametrize(
@@ -565,7 +661,7 @@ def test_a_runs_night_is_its_scheduled_slot_never_its_attempts_clock(
     assert out.read_text(encoding="utf-8").splitlines() == [f"night={night}"]
 
 
-def test_find_asks_only_for_the_bots_issues_and_refuses_a_page_it_cannot_trust(
+def test_read_asks_once_for_the_bots_issues_and_refuses_pages_it_cannot_trust(
     monkeypatch,
 ) -> None:
     gh = _Gh()
@@ -573,17 +669,24 @@ def test_find_asks_only_for_the_bots_issues_and_refuses_a_page_it_cannot_trust(
     title = be.issue_title("macos-26-3.12")
     gh.open_issue(title, f"{be.MARKER}{'0' * 64}\n", user=_SOMEONE)
     number = gh.open_issue(title, f"{be.MARKER}{'1' * 64}\n")
+    later = gh.open_issue(title, f"{be.MARKER}{'3' * 64}\n")
     gh.comments[number].append({"user": _SOMEONE, "body": f"{be.MARKER}{'2' * 64}\n"})
-    found = be.GhIssues("o/r").find(title)
-    assert found is not None and found[0] == number
+    issues = be.GhIssues("o/r")
+    found = issues.find(title)
+    assert found is not None and found[0] == number, "the bot's older issue is the leg's"
+    assert later != number
     assert be.open_red_inputs(found[1]) == frozenset({"1" * 64})
+    assert issues.find(be.issue_title("audit")) is None
+    assert len(gh.queries) == 1, "one search, however many legs ask"
     assert "author:app/github-actions" in gh.queries[-1]
-    gh.page = {"incomplete_results": True, "items": []}
-    with pytest.raises(ValueError, match="complete"):
-        be.GhIssues("o/r").find(title)
-    gh.page = {"incomplete_results": False, "items": [{"title": "x"}] * be.SEARCH_PAGE}
-    with pytest.raises(ValueError, match="page"):
-        be.GhIssues("o/r").find(title)
+    for pages, why in [
+        ([{"total_count": 0, "incomplete_results": True, "items": []}], "incomplete"),
+        ([{"total_count": 3, "incomplete_results": False, "items": [{"title": "x"}]}], "1 of"),
+        ([], "no page"),
+    ]:
+        gh.pages = pages
+        with pytest.raises(be.IssuesUnread, match=why):
+            be.GhIssues("o/r").read()
 
 
 # ── the issues step, which runs on main ─────────────────────────────────────────────────────────
@@ -600,8 +703,7 @@ def test_a_failed_issue_does_not_stop_the_legs_after_it_and_fails_the_step(
     calls: list[str] = []
 
     def flaky(*args: str) -> str:
-        path = args[1] if len(args) > 1 else ""
-        if path.startswith("search/issues") and "audit" in urllib.parse.unquote(path):
+        if args[:2] == ("issue", "create") and "audit" in args[args.index("--title") + 1]:
             calls.append("audit")
             raise subprocess.CalledProcessError(1, ["gh", *args])
         return gh(*args)
@@ -620,11 +722,33 @@ def test_a_failed_issue_does_not_stop_the_legs_after_it_and_fails_the_step(
     assert [i["title"] for i in gh.issues] == [be.issue_title("canary")]
 
 
+def test_an_unreadable_search_writes_no_issue_and_fails_the_step_once(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    gh = _Gh()
+    gh.unreadable = _REFUSED
+    monkeypatch.setattr(be, "_gh", gh)
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    actions = [
+        be.Action(leg, "open", "1" * 64, (f"{leg}/1",), False)
+        for leg in ("audit", "canary", "coverage")
+    ]
+    path = tmp_path / "actions.json"
+    path.write_text(be.json.dumps([a.__dict__ for a in actions]), encoding="utf-8")
+    argv = ["issues", "--repo", "o/r", "--actions", str(path), "--run-url", "https://example.com"]
+    assert be.main([*argv, "--digest", "a" * 64]) == 1
+    said = capsys.readouterr().out
+    failed = [line for line in said.splitlines() if line.startswith("- ")]
+    assert len(failed) == 1 and _REFUSED in failed[0], "one line, in gh's words"
+    assert len(gh.queries) == 1 and gh.issues == []
+
+
 def test_apply_opens_the_issue_of_an_unsettled_legs_measured_red() -> None:
     entries = {"macos-26-3.12/1": _leg(), "macos-26-3.12/2": _leg(be.RED)}
     _, actions = be.settle_record(
         entries, {}, run_id=9, tree="d" * 40, unsettled=frozenset({"macos-26-3.12"})
     )
+    assert actions[0].red == ("macos-26-3.12/2",), "only the shard that measured red"
     issues = _Issues()
     done = be.apply(actions, issues, run_url="https://example.com/r/9", record_digest="a" * 64)
     assert done == ["macos-26-3.12: open"]
