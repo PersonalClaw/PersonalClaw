@@ -470,10 +470,10 @@ def test_a_pass_with_a_local_worker_count_is_not_reused_by_a_run_with_the_catalo
         _, _, _, receipt = _tier(repo, tmp_path, job, n=12)
         assert _calls(log) == ["1", "2"]
         assert _decisions(receipt) == {"web-unit": "run"}
-    with subtests.test("auto is this machine's count"):
+    with subtests.test("auto is two here, the owner's machine rule"):
         job = _program("web-unit", "pass", workers="auto", workers_env="SEEN_WORKERS")
         _, _, _, receipt = _tier(repo, tmp_path, job, n=21)
-        assert receipt["jobs"][0]["inputs"]["declared"]["workers"] == str(os.cpu_count() or 1)
+        assert receipt["jobs"][0]["inputs"]["declared"]["workers"] == str(jobs.LOCAL_AUTO_WORKERS)
 
 
 def test_a_tree_job_that_reads_base_is_not_reused_for_another_base(repo, tmp_path):

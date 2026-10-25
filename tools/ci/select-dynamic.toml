@@ -1,0 +1,534 @@
+# The imports `python -m tools.ci select` cannot read (#3945 item 9): every call outside
+# tests/rails whose module or file is not a literal the parser can fold. Each site is one of:
+#
+#   prefix = "a.b"   it may import any module under a.b, so its module is selected on any
+#                    change there;
+#   named = true     it loads a module or a file its module already imports or names in a
+#                    literal, so the graph's edges already reach it;
+#   outside = true   it loads only code outside this repository: a third-party package, an app
+#                    in the apps repository, a file the test wrote.
+#
+# An unlisted site selects the whole suite, and tests/rails/test_select_dynamic_imports_tree.py
+# fails until it is listed. `call` is the call as `ast.unparse` writes it.
+
+[[site]]
+file = "scripts/sdk_signature_snapshot.py"
+call = "importlib.import_module(name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "scripts/sdk_signature_snapshot.py"
+call = "pkgutil.iter_modules(sdk.__path__)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "scripts/sdk_surface_closure.py"
+call = "importlib.import_module(f'personalclaw.sdk.{mi.name}')"
+prefix = "personalclaw.sdk"
+why = "imports a name it builds under personalclaw.sdk"
+
+[[site]]
+file = "scripts/sdk_surface_closure.py"
+call = "pkgutil.iter_modules(sdk.__path__)"
+prefix = "personalclaw.sdk"
+why = "lists the SDK package's modules"
+
+[[site]]
+file = "scripts/verify_wheel.py"
+call = "importlib.util.spec_from_file_location('_distribution_package_manifest', manifest_path)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "scripts/verify_wheel.py"
+call = "importlib.util.spec_from_file_location('_installed_bundled_model_probe', _BUNDLED_MODEL_PROBE)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "src/personalclaw/_app_python_child.py"
+call = "runpy.run_path(script, run_name='__main__')"
+outside = true
+why = "runs an installed app's script"
+
+[[site]]
+file = "src/personalclaw/_frozen_child.py"
+call = "runpy.run_module(module, run_name='__main__', alter_sys=True)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/_sdk_deps.py"
+call = "importlib.import_module(module)"
+outside = true
+why = "imports an optional third-party SDK"
+
+[[site]]
+file = "src/personalclaw/agents/native/tools.py"
+call = "importlib.import_module(self._module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/apps/app_manager.py"
+call = "importlib.import_module(module_path)"
+prefix = "personalclaw"
+why = "imports an app manifest's provider, which must be under personalclaw."
+
+[[site]]
+file = "src/personalclaw/apps/native_contract.py"
+call = "importlib.util.spec_from_file_location(unique_name, file_path)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/cli_app_new.py"
+call = "importlib.import_module(contract.sdk_module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/cli_app_new.py"
+call = "importlib.import_module(f'personalclaw.sdk.{mod_name}')"
+prefix = "personalclaw.sdk"
+why = "imports a name it builds under personalclaw.sdk"
+
+[[site]]
+file = "src/personalclaw/cli_app_new.py"
+call = "importlib.import_module(kit.sdk_module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/computer_use/driver_host.py"
+call = "importlib.import_module(name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/documents/registry.py"
+call = "__import__(f'personalclaw.documents.writers.{module}')"
+prefix = "personalclaw.documents.writers"
+why = "imports a name it builds under personalclaw.documents.writers"
+
+[[site]]
+file = "src/personalclaw/evals/gate.py"
+call = "importlib.import_module(module_name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/knowledge/readers.py"
+call = "importlib.import_module(name)"
+outside = true
+why = "imports an optional third-party library"
+
+[[site]]
+file = "src/personalclaw/local_models/_sidecar_child.py"
+call = "importlib.util.spec_from_file_location('_personalclaw_sidecar_worker', path)"
+outside = true
+why = "loads an app's own worker file from its app folder"
+
+[[site]]
+file = "src/personalclaw/mcp_core.py"
+call = "importlib.import_module(mod_path)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/mcp_core.py"
+call = "importlib.import_module(mod_path)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "src/personalclaw/providers/loader.py"
+call = "importlib.import_module(module_path)"
+prefix = "personalclaw"
+why = "imports an app's provider module by its dotted path"
+
+[[site]]
+file = "src/personalclaw/triggers/disposition.py"
+call = "importlib.import_module(row.module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/action_provider_chokepoints_shared.py"
+call = "importlib.import_module(module_name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/backend_bundle_manifest_shared.py"
+call = "importlib.util.spec_from_file_location('backend_bundle_manifest', _MANIFEST_FILE)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/by_name_load_census_shared.py"
+call = "importlib.util.spec_from_file_location('backend_bundle_manifest', _REPO / 'scripts' / 'backend_bundle_manifest.py')"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/release_pipeline_compares_versions_shared.py"
+call = "importlib.util.spec_from_file_location('_release_version', SCRIPT)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/security/test_app_signature.py"
+call = "importlib.util.spec_from_file_location('sh3_sign_app', REPO_ROOT / 'scripts' / 'sign_app.py')"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_a_declared_read_asks_nobody.py"
+call = "importlib.import_module(module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_a_declared_read_asks_nobody.py"
+call = "importlib.import_module(module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_a_model_is_offered_for_what_it_does.py"
+call = "importlib.util.spec_from_file_location('pc_test_ollama_offered_for', NATIVE_DIR / 'ollama-models' / 'provider.py')"
+prefix = "personalclaw.apps.native"
+why = "loads a native app's provider.py from NATIVE_DIR"
+
+[[site]]
+file = "tests/test_a_project_run_reads_its_own_secret.py"
+call = "importlib.import_module('personalclaw.action_providers.' + provider_name.replace('-', '_') + '_provider')"
+prefix = "personalclaw.action_providers"
+why = "imports a name it builds under personalclaw.action_providers"
+
+[[site]]
+file = "tests/test_a_request_boolean_is_a_json_boolean.py"
+call = "importlib.import_module(module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_a_tool_takes_the_arguments_it_teaches.py"
+call = "importlib.import_module(f'personalclaw.{info.name}')"
+prefix = "personalclaw"
+why = "imports a name it builds under personalclaw"
+
+[[site]]
+file = "tests/test_a_tool_takes_the_arguments_it_teaches.py"
+call = "pkgutil.iter_modules(personalclaw.__path__)"
+prefix = "personalclaw"
+why = "lists the package's modules"
+
+[[site]]
+file = "tests/test_acp_bundles.py"
+call = "importlib.util.spec_from_file_location(uniq, path)"
+outside = true
+why = "loads an agent app's provider.py from the apps repository beside this one"
+
+[[site]]
+file = "tests/test_acp_parity_residual_render.py"
+call = "importlib.util.spec_from_file_location('_acp_parity_renderer', path)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_active_home_is_the_only_home.py"
+call = "importlib.import_module(module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_an_embedding_adapter_follows_its_app_and_its_instance.py"
+call = "importlib.util.spec_from_file_location(MODULE, root / 'provider.py')"
+outside = true
+why = "loads a provider.py the test writes"
+
+[[site]]
+file = "tests/test_an_mcp_start_is_never_cut_off_part_way.py"
+call = "importlib.import_module(_module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_app_catalog.py"
+call = "importlib.import_module(f'personalclaw.sdk.{name}')"
+prefix = "personalclaw.sdk"
+why = "imports a name it builds under personalclaw.sdk"
+
+[[site]]
+file = "tests/test_app_python_packages.py"
+call = "importlib.import_module(module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_app_scaffold.py"
+call = "importlib.import_module(contract.sdk_module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_app_scaffold.py"
+call = "importlib.util.spec_from_file_location('scaffold_app_cli', app / 'app_cli.py')"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_baseline_denylist_integrity.py"
+call = "importlib.util.spec_from_file_location('backend_bundle_manifest', REPO_ROOT / 'scripts' / 'backend_bundle_manifest.py')"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_browse_safety_script.py"
+call = "importlib.util.spec_from_file_location('_ba2_isolated_safety_script', module_path)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_bundled_model_gate.py"
+call = "importlib.util.spec_from_file_location(name, path)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_ci_tree_tested.py"
+call = "importlib.util.spec_from_file_location('_tree_tested_alone', tt.__file__)"
+named = true
+why = "loads tools/ci/tree_tested.py, which it imports, a second time by its file"
+
+[[site]]
+file = "tests/test_computer_use_stale_index.py"
+call = "importlib.util.spec_from_file_location(f\"_harness_{filename.replace('.', '_')}\", path)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_denied_call_knows_its_trigger.py"
+call = "importlib.import_module(f'personalclaw.action_providers.{module}')"
+prefix = "personalclaw.action_providers"
+why = "imports a name it builds under personalclaw.action_providers"
+
+[[site]]
+file = "tests/test_evals_learning_bench.py"
+call = "importlib.util.spec_from_file_location('_learning_benchmark_under_test', RUNNER)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_every_kind_of_work_says_its_phase.py"
+call = "importlib.import_module(PHASE_PRODUCERS['chat'])"
+prefix = "personalclaw"
+why = "imports each phase producer work_phase names"
+
+[[site]]
+file = "tests/test_every_kind_of_work_says_its_phase.py"
+call = "importlib.import_module(module)"
+prefix = "personalclaw"
+why = "imports each phase producer work_phase names"
+
+[[site]]
+file = "tests/test_images_reach_the_model.py"
+call = "importlib.util.spec_from_file_location('pc_test_ollama_catalog', NATIVE_DIR / 'ollama-models' / 'provider.py')"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_images_reach_the_model.py"
+call = "importlib.util.spec_from_file_location('pc_test_ollama_translate', NATIVE_DIR / 'ollama-models' / 'provider.py')"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_inert_surface_baseline.py"
+call = "importlib.import_module(f'personalclaw.sdk.{mod_name}')"
+prefix = "personalclaw.sdk"
+why = "imports a name it builds under personalclaw.sdk"
+
+[[site]]
+file = "tests/test_knowledge.py"
+call = "importlib.import_module(module_name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_local_model_detect.py"
+call = "importlib.util.spec_from_file_location('pc_test_ollama_proposal', NATIVE_DIR / 'ollama-models' / 'provider.py')"
+prefix = "personalclaw.apps.native"
+why = "loads a native app's provider.py from NATIVE_DIR"
+
+[[site]]
+file = "tests/test_local_model_refresh_invariants.py"
+call = "importlib.import_module(mod_path)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_native_tool_categories.py"
+call = "importlib.import_module(m)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_native_tool_categories.py"
+call = "importlib.import_module(mod_path)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_native_tool_categories.py"
+call = "importlib.import_module(mod_path)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_nix_channel.py"
+call = "importlib.util.spec_from_file_location(f'_{name}', path)"
+prefix = "scripts"
+why = "loads a script by its computed name"
+
+[[site]]
+file = "tests/test_proposals_contract.py"
+call = "__import__(patch[0], fromlist=['x'])"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_provider_config_secrets.py"
+call = "importlib.import_module(module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_python_children_in_the_desktop_app.py"
+call = "importlib.util.spec_from_file_location('backend_bundle_manifest', _REPO / 'scripts' / 'backend_bundle_manifest.py')"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_release_pipeline_compares_versions.py"
+call = "importlib.util.spec_from_file_location('_verify_wheel', REPO / 'scripts' / 'verify_wheel.py')"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_release_tag_semantics.py"
+call = "importlib.util.spec_from_file_location('_release_tags', SCRIPT)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_research_class_tool_census.py"
+call = "importlib.import_module(f'personalclaw.{mod_name}')"
+prefix = "personalclaw"
+why = "imports a name it builds under personalclaw"
+
+[[site]]
+file = "tests/test_rooms_api.py"
+call = "importlib.import_module(name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_sdk_loud_breaks.py"
+call = "importlib.util.spec_from_file_location('_demo_handler', app / 'handler.py')"
+outside = true
+why = "loads a handler.py the test writes"
+
+[[site]]
+file = "tests/test_sdk_registration_takeback_census.py"
+call = "importlib.import_module(module_path)"
+prefix = "personalclaw"
+why = "imports each registration the census names"
+
+[[site]]
+file = "tests/test_sdk_registration_takeback_census.py"
+call = "importlib.import_module(owner_path)"
+prefix = "personalclaw"
+why = "imports each registration the census names"
+
+[[site]]
+file = "tests/test_sdk_registration_takeback_census.py"
+call = "importlib.import_module(sig['module'])"
+prefix = "personalclaw"
+why = "imports each registration the census names"
+
+[[site]]
+file = "tests/test_secret_file_blocklist_rail.py"
+call = "importlib.import_module(mod_name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_server_route_handlers_exist.py"
+call = "importlib.import_module(_ALIAS_TO_MODULE[alias])"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_session_workspace_reads_do_not_create.py"
+call = "importlib.import_module(module_name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_system_singleton_convergence.py"
+call = "importlib.import_module(f'personalclaw.action_providers.{module}')"
+prefix = "personalclaw.action_providers"
+why = "imports a name it builds under personalclaw.action_providers"
+
+[[site]]
+file = "tests/test_trigger_runs_are_named_by_their_trigger.py"
+call = "importlib.import_module(f'personalclaw.action_providers.{provider}')"
+prefix = "personalclaw.action_providers"
+why = "imports a name it builds under personalclaw.action_providers"
+
+[[site]]
+file = "tests/test_triggers_chain.py"
+call = "importlib.import_module(module_name)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_triggers_status_vocabulary.py"
+call = "importlib.import_module(module)"
+named = true
+why = "imports a module from the table of names it keeps"
+
+[[site]]
+file = "tests/test_verify_wheel_contract.py"
+call = "importlib.util.spec_from_file_location('_verify_wheel_under_test', _VERIFY_WHEEL)"
+named = true
+why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_web_extract_tool.py"
+call = "importlib.util.spec_from_file_location(uniq, app_dir / 'provider.py')"
+outside = true
+why = "loads the web-tools app's provider.py from the apps repository beside this one"
+
+[[site]]
+file = "tests/test_web_fetch.py"
+call = "importlib.util.spec_from_file_location(uniq, app_dir / 'provider.py')"
+outside = true
+why = "loads the web-tools app's provider.py from the apps repository beside this one"
+
+[[site]]
+file = "tests/test_web_render.py"
+call = "importlib.util.spec_from_file_location(uniq, app_dir / 'provider.py')"
+outside = true
+why = "loads the web-tools app's provider.py from the apps repository beside this one"
+
+[[site]]
+file = "tools/ci/release_tag.py"
+call = "importlib.util.spec_from_file_location('_release_tags', path)"
+named = true
+why = "loads a file it names by its path"

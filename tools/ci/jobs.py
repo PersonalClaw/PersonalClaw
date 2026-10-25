@@ -381,21 +381,44 @@ def _workers(job: Job, options: Options) -> str | None:
     return str(options.workers)
 
 
-def _worker_count(job: Job, options: Options) -> str | None:
+#: What a catalogue job's ``workers = "auto"`` is off GitHub, in ``run``, ``make check`` and
+#: ``make gate``: two, the owner's machine rule after a local run took 40 GB on 2026-10-22. On
+#: GitHub ``auto`` is the runner's CPU count, so CI's speed and its measured targets stay as
+#: they are. A local ``--workers N`` still sets any count, and admission still holds it.
+LOCAL_AUTO_WORKERS = 2
+
+
+def _local_workers(job: Job, options: Options, host: Host) -> int | None:
+    """The worker count a run here sets in place of the catalogue's: ``--workers``, or
+    :data:`LOCAL_AUTO_WORKERS` for ``auto`` off GitHub; ``None`` when the catalogue's stands."""
+    if options.workers is not None:
+        return options.workers
+    if job.workers == "auto" and not host.on_github:
+        return LOCAL_AUTO_WORKERS
+    return None
+
+
+def _worker_count(job: Job, options: Options, host: Host) -> str | None:
     """The worker count the job's steps get: the local ``--workers`` or the catalogue's, with
-    ``auto`` read as this machine's CPU count."""
+    ``auto`` read as the runner's CPU count on GitHub and :data:`LOCAL_AUTO_WORKERS` here."""
     workers = _workers(job, options)
-    return str(os.cpu_count() or 1) if workers == "auto" else workers
+    if workers != "auto":
+        return workers
+    return str(os.cpu_count() or 1) if host.on_github else str(LOCAL_AUTO_WORKERS)
 
 
-def _step_argv(step: Step, job: Job, values: Mapping[str, str], options: Options) -> list[str]:
-    """The step's argv as it runs here: its placeholders filled, and a local ``--workers`` in
-    each worker count it passes pytest, in each spelling :func:`catalogue.pytest_workers` reads
-    (``-n N``, ``-nN``, ``--numprocesses N``, ``--numprocesses=N``)."""
+def _step_argv(
+    step: Step, job: Job, values: Mapping[str, str], options: Options, host: Host
+) -> list[str]:
+    """The step's argv as it runs here: its placeholders filled, and in each worker count it
+    passes pytest, in each spelling :func:`catalogue.pytest_workers` reads (``-n N``, ``-nN``,
+    ``--numprocesses N``, ``--numprocesses=N``), a local ``--workers``, or off GitHub
+    :data:`LOCAL_AUTO_WORKERS` for the catalogue's ``auto``."""
     argv = [_render(a, values) for a in step.argv]
-    if options.workers is None or "pytest" not in argv:
+    workers = _local_workers(job, options, host)
+    if workers is None or "pytest" not in argv:
         return argv
-    count, local = str(job.workers), str(options.workers)
+    count, local = str(job.workers), str(workers)
     for i in range(argv.index("pytest") + 1, len(argv)):
         if argv[i] in ("-n", "--numprocesses") and argv[i + 1 : i + 2] == [count]:
             argv[i + 1] = local
@@ -405,7 +428,9 @@ def _step_argv(step: Step, job: Job, values: Mapping[str, str], options: Options
             argv[i] = f"-n{local}"
     # The record says the local count, so no step may run another.
     if any(n != local for n in catalogue.pytest_workers(Step(tuple(argv)))):
-        raise Unreadable(f"{job.id}: --workers cannot set every pytest -n of {shlex.join(argv)}")
+        raise Unreadable(
+            f"{job.id}: {local} workers cannot set every pytest -n of {shlex.join(argv)}"
+        )
     return argv
 
 
@@ -462,7 +487,7 @@ def _base_env(job: Job, host: Host, options: Options) -> dict[str, str]:
     workflow's, the caches (:func:`_cache_env`), and the worker count when the job names a
     variable for it (``workers_env``)."""
     env = {**RUNNER_ENV, **WORKFLOW_ENV, **_cache_env(job, host)}
-    count = _worker_count(job, options)
+    count = _worker_count(job, options, host)
     if job.workers_env and count is not None:
         env[job.workers_env] = count
     return env
@@ -1447,7 +1472,7 @@ def run_one(
     first_command = len(planned) + 1
     for step in job.command:
         env = {name: _render(value, values) for name, value in {**job.env, **step.env}.items()}
-        argv = _step_argv(step, job, values, options)
+        argv = _step_argv(step, job, values, options, host)
         planned.append((argv, step.workdir, {**env, **_helper_env(argv, host)}))
 
     total = (
@@ -1638,7 +1663,7 @@ def run_one(
     # which no push replays.
     toolchain: dict[str, str] | None
     try:
-        toolchain = _toolchain(job, host, _as_written(job, options), {})
+        toolchain = _toolchain(job, host, _as_written(job, options, host), {})
     except (capabilities.Refused, Unreadable):
         toolchain = None
     text = verdict.job_record(
@@ -1651,7 +1676,7 @@ def run_one(
         rerun=rerun,
         quarantined=quarantined,
         plan=plan,
-        workers=options.workers,
+        workers=_local_workers(job, options, host),
         runner=runner_of(job, host),
         toolchain=toolchain,
     )
@@ -1698,13 +1723,15 @@ def _identity(program: str, host: Host, seen: dict[str, str]) -> str:
     return seen[found]
 
 
-def _as_written(job: Job, options: Options) -> list[tuple[str, Sequence[str]]]:
+def _as_written(job: Job, options: Options, host: Host) -> list[tuple[str, Sequence[str]]]:
     """Each install and step of *job* with the folder it runs in, its placeholders unfilled
     (:data:`_AS_WRITTEN`), as a key and a record's toolchain read them."""
     steps: list[tuple[str, Sequence[str]]] = [
         ("", INSTALL_ARGV[tool]) for tool in job.toolchain if tool in INSTALL_ARGV
     ]
-    steps += [(step.workdir, _step_argv(step, job, _AS_WRITTEN, options)) for step in job.command]
+    steps += [
+        (step.workdir, _step_argv(step, job, _AS_WRITTEN, options, host)) for step in job.command
+    ]
     return steps
 
 
@@ -1803,12 +1830,12 @@ def _key_inputs(
     and the commit ``{base}`` names when a step diffs from it. Locks, the toolchain and each
     step's own program, the platform, the container and the host's capabilities complete it."""
     seen = {} if seen is None else seen
-    steps = _as_written(job, options)
+    steps = _as_written(job, options, host)
     locks = {
         rel: _sha256((host.root / rel).read_bytes()) for rel in LOCKS if (host.root / rel).is_file()
     }
     declared = {f"env:{name}": value for name, value in job.env.items()}
-    workers = _worker_count(job, options)
+    workers = _worker_count(job, options, host)
     if workers is not None:
         declared["workers"] = workers
     if any("base" in step.placeholders() for step in job.command):
@@ -2136,7 +2163,7 @@ def run_tier(
                     job, host, working_tree=options.working_tree
                 ):
                     need, how = admission.need_mb(
-                        workers=max(1, int(_worker_count(job, options) or 1)),
+                        workers=max(1, int(_worker_count(job, options, host) or 1)),
                         peak_mb=peaks.get(job.id),
                         declared_gb=job.mem_gb,
                     )

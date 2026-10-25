@@ -1925,6 +1925,25 @@ every job of a tier (`tools/ci/jobs.py`). `make check` is `run change --working-
 `make gate` is `run merge`. A run reuses a job's recorded pass by the rules under "Verdict
 reuse", and starts each job once the host has the memory it needs (seam 1, under "The seams").
 
+The change tier holds no Python suite, so `make check` then runs
+`python -m tools.ci select --base origin/main --working-tree --run` (`tools/ci/select.py`): the
+suite's test files the change can break, nearest first, read from an import graph over `src/`,
+`tests/`, `tools/ci/`, `harness/` and `scripts/` with function-level imports and conftest fixtures
+in it. A conftest, the harness conftest loads, `pyproject.toml`, `uv.lock`, the catalogue, a module
+that does not parse or a dynamic import `tools/ci/select-dynamic.toml` does not list selects the
+whole suite; the modules that carry the `security` marker and the whole-tree reader are always in
+it, and `tests/rails` never is (the change tier's `rails` job runs it). Past 800 files it runs the
+whole suite, the reachable files first. Before a whole-suite run it prints why and how long to
+expect: from this machine's own timed runs (`.local/select/runs.json`), or from CI's shard time
+before there are any. It runs with `python-suite`'s workers (`auto` read as two, as every local run reads
+it) and environment through the same memory admission, and with two workers where the host's
+memory cannot be read. A pull request's
+`python-suite` still runs every file. `tests/rails/test_select_tree.py` holds the dynamic-import
+list to the tree, and holds the selection to the coverage selection map where the clone has one.
+Because the package's hub modules import much of it inside functions, a change to most package
+modules reaches nearly every test file, and runs the whole suite: the selection is narrow for
+changes to tests, `tools/ci`, `scripts`, docs and the web.
+
 - **CI's commands.** A job's toolchain installs run first, as `ci.yml` runs them, then each step,
   word for word. A step's environment is built from nothing: what a GitHub runner gives every
   step (`CI=true`, which the e2e jobs' Playwright config reads for its JSON report, retries and
@@ -1984,7 +2003,12 @@ reuse", and starts each job once the host has the memory it needs (seam 1, under
   sharded job run here plans its shards with equal weights, since `shards plan` reads CI's
   telemetry through the API; its record says `plan: offline`, and on GitHub that path is never
   taken. `--workers N` replaces the catalogue's count, is written in the record, and is refused
-  when `GITHUB_ACTIONS` is set.
+  when `GITHUB_ACTIONS` is set. Off GitHub (`run`, `make check`, `make gate`, and `select --run`)
+  a catalogue `auto` is two workers, in every pytest `-n`, in `workers_env` and in the record:
+  the owner's machine rule after a local run took 40 GB on 2026-10-22
+  (`jobs.LOCAL_AUTO_WORKERS`). On GitHub `auto` is the runner's CPU count and `workers_env` is
+  as `ci.yml` sets it, so CI's speed and its measured targets are what they were. Admission
+  holds every count, `--workers N`'s too.
 - **`run`** goes in catalogue order, each job after the jobs its `after` names, every shard of
   each, and judges each job's records with `verdict.decide` against the head and the partner
   revisions that job reads. It keeps going after a red unless `--fail-fast` is given, and runs
@@ -2110,7 +2134,7 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
   toolchain program and each program an install or step starts from the job's `PATH` or by an
   absolute path (its path and the sha256 of its bytes; nothing is started), the Python it asks
   for, the OS, the architecture, its container, its env, the worker count its steps get (`auto`
-  read as this machine's CPU count), and the host's capabilities, read with the environment each
+  read as two here, as above), and the host's capabilities, read with the environment each
   step gets and a home that is none of the user's. A capability the steps read differently is
   keyed once per step, as `step <n>: <name>`.
 - **To force a fresh run,** pass `--no-reuse`: every job runs, no recorded pass is read, and each
@@ -2259,7 +2283,7 @@ Two rules hold for every seam:
 
 | Step | What runs | Counts as |
 |---|---|---|
-| Before a commit | `make check`: the change tier, on the working tree as it stands, no record | advice |
+| Before a commit | `make check`: the change tier, on the working tree as it stands, no record, then the test files the change can break | advice |
 | Before opening or updating a pull request | `make gate`: the merge tier, on the committed tree, one record per job | advice |
 | The pull request | `ci.yml`'s run on the pull request | the gate |
 | A push to `main` | `ci.yml`'s main-push run: `tree-check`, then every job it does not skip | the check of what landed |

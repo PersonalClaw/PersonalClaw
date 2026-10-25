@@ -923,12 +923,30 @@ def test_workers_env_carries_the_jobs_worker_count(repo, tmp_path):
     assert out.read_text() == "3"
 
 
-def test_workers_env_carries_this_machines_core_count_for_auto(repo, tmp_path):
-    out = tmp_path / "count"
-    program = f"import os; open({str(out)!r}, 'w').write(os.environ['TOOL_WORKERS'])"
-    job = _job("we", program, workers="auto", workers_env="TOOL_WORKERS")
-    assert _run(repo, job, tmp_path).code == run.OK
-    assert out.read_text() == str(os.cpu_count() or 1)
+def test_a_local_run_reads_auto_as_two_workers_in_pytest_its_env_and_its_record(repo, tmp_path):
+    # The owner's machine rule after a local run took 40 GB on 2026-10-22 (jobs.LOCAL_AUTO_WORKERS).
+    out = tmp_path / "argv"
+    program = (
+        f"import json, os, sys; json.dump([sys.argv[1:], os.environ['TOOL_WORKERS']], "
+        f"open({str(out)!r}, 'w'))"
+    )
+    step = Step((PY, "-c", program, "pytest", "-n", "auto", "-q"))
+    job = _job("we", steps=(step,), workers="auto", workers_env="TOOL_WORKERS")
+    outcome = _run(repo, job, tmp_path)
+    assert outcome.code == run.OK, outcome.reasons
+    assert json.loads(out.read_text()) == [["pytest", "-n", "2", "-q"], "2"]
+    assert _record(outcome)["workers"] == 2
+
+
+def test_a_github_run_reads_auto_as_the_runners_cpu_count_and_leaves_pytest_n_auto(repo):
+    step = Step(("pytest", "-n", "auto", "-q"))
+    job = _job("we", steps=(step,), workers="auto", workers_env="TOOL_WORKERS")
+    github, here = _host(repo, on_github=True), _host(repo, on_github=False)
+    options = jobs.Options()
+    assert jobs._worker_count(job, options, github) == str(os.cpu_count() or 1)
+    assert jobs._step_argv(step, job, {}, options, github) == ["pytest", "-n", "auto", "-q"]
+    assert jobs._worker_count(job, options, here) == str(jobs.LOCAL_AUTO_WORKERS)
+    assert jobs._step_argv(step, job, {}, options, here) == ["pytest", "-n", "2", "-q"]
 
 
 def test_a_sharded_job_run_locally_uses_the_offline_plan_and_says_so(repo, tmp_path):
