@@ -384,6 +384,11 @@ async def test_a_scan_past_its_deadline_ends_the_childs_grandchildren(
 #: :data:`_RESIDENT_MB`. Spawned it took 0.5-1.3 ms on a loaded Mac; forked, 20-36 ms: a 3x margin
 #: and more, both ways.
 _START_CPU_BOUND = 0.005
+#: How many of the five starts may run past :data:`_START_CPU_BOUND`. A fork puts every start past
+#: it (the plant's premise); a runner's virtual CPU can put one there: run 40396158081 read one
+#: spawned start at 9.4 ms and the next four at 0.7-1.1 ms. Off a runner, 150 starts read 1.15 ms
+#: at most, the first 0.1 ms over the rest, with no import or page fault of its own.
+_STARTS_PAST_THE_BOUND = 1
 #: The resident size of the planted gateway: one a macOS runner holds beside its test workers.
 _RESIDENT_MB = 512
 
@@ -437,6 +442,24 @@ def _starts_in_a_large_gateway(way: str, home) -> list[float]:
     return json.loads(done.stdout)
 
 
+def _held_its_loop(starts: list[float]) -> bool:
+    """Whether the starts held the gateway's loop: more of them past the bound than the runner
+    accounts for."""
+    return sum(cpu >= _START_CPU_BOUND for cpu in starts) > _STARTS_PAST_THE_BOUND
+
+
+@pytest.mark.parametrize(
+    ("starts", "held"),
+    [
+        pytest.param([0.0094, 0.0010, 0.0007, 0.0011, 0.0011], False, id="one-past-it"),
+        pytest.param([0.0094, 0.0010, 0.0062, 0.0011, 0.0011], True, id="planted-two-past-it"),
+        pytest.param([0.0201, 0.0360, 0.0250, 0.0220, 0.0300], True, id="planted-forked"),
+    ],
+)
+def test_one_start_past_the_bound_is_the_runner_and_two_hold_the_loop(starts, held):
+    assert _held_its_loop(starts) is held
+
+
 @pytest.mark.skipif(
     sys.platform != "darwin",
     reason="Linux's fork of a child is a vfork, which lets go of the interpreter lock",
@@ -448,9 +471,10 @@ def test_a_large_gateway_starts_the_scan_child_without_holding_its_loop(tmp_path
 
     shown = [round(cpu * 1000, 1) for cpu in starts]
     if not old:
-        assert max(starts) < _START_CPU_BOUND, (
-            f"a start of the scan's child took the loop thread {shown} ms of CPU in a "
-            f"{_RESIDENT_MB} MB gateway; spawned, it takes about 1 ms "
+        assert not _held_its_loop(starts), (
+            f"starts of the scan's child took the loop thread {shown} ms of CPU in a "
+            f"{_RESIDENT_MB} MB gateway, more than {_STARTS_PAST_THE_BOUND} of them past "
+            f"{_START_CPU_BOUND * 1000:.0f} ms; spawned, it takes about 1 ms "
             "(content_scan, 'How it starts')"
         )
     else:
@@ -458,3 +482,4 @@ def test_a_large_gateway_starts_the_scan_child_without_holding_its_loop(tmp_path
             f"premise: a fork of a {_RESIDENT_MB} MB gateway takes the loop thread more than "
             f"{_START_CPU_BOUND * 1000:.0f} ms of CPU; it took {shown} ms"
         )
+        assert _held_its_loop(starts), f"the check passed forked starts of {shown} ms"
