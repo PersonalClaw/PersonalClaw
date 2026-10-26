@@ -357,3 +357,5 @@ permanent boundaries we expect to still be true at 1.0.
 
 If something on this page has gone stale against the code, that is a bug worth filing —
 the code is the authority, and a wrong limitations page is worse than none.
+
+<!-- Scratch for #3910's merge refusals, second head. Its pull request closes unmerged. -->
