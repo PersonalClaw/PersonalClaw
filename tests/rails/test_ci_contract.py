@@ -2123,8 +2123,66 @@ def _runs(job: dict[str, Any]) -> str:
     return "\n".join(str(step.get("run", "")) for step in job.get("steps") or [])
 
 
-#: merge.yml's run group: a pull request's run keys on its number, every other run on its commit.
-_MERGE_RUN_GROUP = "merge-${{ github.event.pull_request.number || github.sha }}"
+#: A tier run for a Dependabot head: its pull request's author is Dependabot, which no fork's
+#: branch name can borrow.
+_DEPENDABOT_RUN = "github.event.pull_request.user.login == 'dependabot[bot]'"
+
+
+def _dependabot_tier_concurrency(prefix: str) -> dict[str, str]:
+    """The tier concurrency that puts every Dependabot head's runs, ``pr.yml``'s and
+    ``merge.yml``'s alike, in one group, ``dependabot-heads``: one at a time, waiting their turn,
+    none cancelled. Any other run keys, and cancels, as it does without it."""
+    when = _DEPENDABOT_RUN
+    return {
+        "group": f"${{{{ {when} && 'dependabot' || '{prefix}' }}}}-${{{{ {when} && 'heads'"
+        " || github.event.pull_request.number || github.sha }}",
+        "cancel-in-progress": "${{ github.event_name == 'pull_request' &&"
+        " github.event.pull_request.user.login != 'dependabot[bot]' }}",
+        "queue": f"${{{{ {when} && 'max' || 'single' }}}}",
+    }
+
+
+def _tier_concurrency_line(rel: str, key: str, value: str) -> Callable[[Path], None]:
+    """*rel*'s workflow-level ``concurrency`` *key* set to *value*, wherever the tree spells it
+    (a key it lacks is added, an empty *value* removes it), so a plant reads a tree in either
+    tier shape."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        block = re.search(r"^concurrency:\n((?:  .*\n)+)", text, re.M)
+        assert block, f"no workflow-level concurrency in {rel}"
+        lines = block.group(1)
+        line = re.search(rf"^  {re.escape(key)}:.*\n", lines, re.M)
+        set_to = f"  {key}: {value}\n" if value else ""
+        lines = lines.replace(line.group(0), set_to, 1) if line else lines + set_to
+        _write(root, rel, text[: block.start(1)] + lines + text[block.end(1) :])
+
+    return plant
+
+
+def _tier_concurrency(*rels: str, dependabot: bool) -> Callable[[Path], None]:
+    """Each tier workflow of *rels* in the shape that queues every Dependabot head's runs in one
+    group, or in the shape without it."""
+
+    def plant(root: Path) -> None:
+        for rel in rels:
+            prefix = Path(rel).stem
+            shape = (
+                _dependabot_tier_concurrency(prefix)
+                if dependabot
+                else {"group": f"{prefix}-{_TIER_RUN_KEY}", "cancel-in-progress": _PR_RUN_CANCELS}
+            )
+            for key in ("group", "cancel-in-progress", "queue"):
+                _tier_concurrency_line(rel, key, shape.get(key, ""))(root)
+
+    return plant
+
+
+def _plant_tier(name: str, rel: str, key: str, value: str, expect: str = "") -> Control:
+    """A violation planted by setting one workflow-level ``concurrency`` key, in either shape."""
+    return Control(name, _tier_concurrency_line(rel, key, value), True, expect)
+
+
 #: The catalogue entries whose shards share one group per shard on main's first attempt
 #: (decision 9): a newer push's waiting shard replaces an older one that has not started, so a
 #: burst of merges runs the suite on its newest commit, and the older run reads that shard red. A
@@ -4563,19 +4621,24 @@ ROWS: tuple[Row, ...] = (
                 "    branches: [release]\n",
                 expect="leaves main",
             ),
-            _plant(
+            _plant_tier(
                 "cancel-in-progress: true on main",
                 _MERGE_YML,
-                "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
-                "  cancel-in-progress: true\n",
+                "cancel-in-progress",
+                "true",
                 expect="a run on main can be cancelled",
             ),
-            _plant(
+            _plant_tier(
                 "a main run grouped by branch, not by commit",
                 _MERGE_YML,
-                "  group: " + _MERGE_RUN_GROUP + "\n",
-                "  group: merge-${{ github.event.pull_request.number || github.ref }}\n",
+                "group",
+                "merge-${{ github.event.pull_request.number || github.ref }}",
                 expect="a run on main is not grouped by its own commit",
+            ),
+            Control(
+                "every Dependabot head's runs queued in one group, which a push to main is not in",
+                _tier_concurrency(_MERGE_YML, dependabot=True),
+                fails=False,
             ),
             _plant(
                 "a job-level concurrency group outside the stage jobs",
@@ -14060,16 +14123,32 @@ def _tier_concurrency_violations(
     bad: list[str] = []
     concurrency = workflow.get("concurrency")
     concurrency = concurrency if isinstance(concurrency, dict) else {"group": concurrency}
-    group = f"{name.removesuffix('.yml')}-{_TIER_RUN_KEY}"
-    if concurrency.get("group") != group:
+    prefix = name.removesuffix(".yml")
+    # Either shape, until the change that queues Dependabot's heads lands (two merges, #4584).
+    shapes = (
+        {"group": f"{prefix}-{_TIER_RUN_KEY}", "cancel-in-progress": _PR_RUN_CANCELS},
+        _dependabot_tier_concurrency(prefix),
+    )
+    group = concurrency.get("group")
+    shape = next((s for s in shapes if s["group"] == group), None)
+    if shape is None:
         bad.append(
-            f"{name} groups its runs as {concurrency.get('group')!r}, not {group!r}: one group"
-            " per workflow and pull request, or commit"
+            f"{name} groups its runs as {group!r}, not {shapes[0]['group']!r}: one group per"
+            f" workflow and pull request, or commit (or {shapes[1]['group']!r}, every Dependabot"
+            " head's runs in one)"
         )
-    if concurrency.get("cancel-in-progress") != _PR_RUN_CANCELS:
+        shape = shapes[0]
+    if concurrency.get("cancel-in-progress") != shape["cancel-in-progress"]:
         bad.append(
             f"{name} sets cancel-in-progress {concurrency.get('cancel-in-progress')!r}, not"
-            f" {_PR_RUN_CANCELS!r}: only a pull request's superseded run is cancelled in flight"
+            f" {shape['cancel-in-progress']!r}: only a pull request's superseded run is cancelled"
+            " in flight, and never a Dependabot head's run, which waits in a group it shares"
+        )
+    if concurrency.get("queue") != shape.get("queue"):
+        bad.append(
+            f"{name} sets queue {concurrency.get('queue')!r}, not {shape.get('queue')!r}: GitHub"
+            " refuses `max` beside cancel-in-progress, and at `single` a Dependabot head's waiting"
+            " run is replaced by the next one, so cancelled"
         )
     for job_id, job in jobs.items():
         staged = name == "merge.yml" and _planned_tier(name, job) is not None
@@ -14312,20 +14391,37 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
                "      - name: every entry's record\n"
                "        if: ${{ needs.changes.result == 'success' }}\n",
                expect="pr.yml job results holds back the records' download by if"),
-        _plant("a run in flight cancelled by a later dispatch", _MERGE_YML,
-               f"  cancel-in-progress: {_PR_RUN_CANCELS}\n", "  cancel-in-progress: true\n",
-               expect="merge.yml sets cancel-in-progress True"),
-        _plant("a pull request's superseded run kept", _PR_YML,
-               f"  cancel-in-progress: {_PR_RUN_CANCELS}\n", "  cancel-in-progress: false\n",
-               expect="pr.yml sets cancel-in-progress False"),
-        _plant("one group for every run", _PR_YML, f"  group: pr-{_TIER_RUN_KEY}\n",
-               "  group: pr\n", expect="pr.yml groups its runs as 'pr'"),
-        _plant("a group per commit, which a pull request's newer push does not share", _PR_YML,
-               f"  group: pr-{_TIER_RUN_KEY}\n", "  group: pr-${{ github.sha }}\n",
-               expect="pr.yml groups its runs as 'pr-${{ github.sha }}'"),
-        _plant("pr.yml in merge.yml's group", _PR_YML, f"  group: pr-{_TIER_RUN_KEY}\n",
-               f"  group: merge-{_TIER_RUN_KEY}\n",
-               expect="pr.yml groups its runs as 'merge-"),
+        _plant_tier("a run in flight cancelled by a later dispatch", _MERGE_YML,
+                    "cancel-in-progress", "true", expect="merge.yml sets cancel-in-progress True"),
+        _plant_tier("a pull request's superseded run kept", _PR_YML, "cancel-in-progress",
+                    "false", expect="pr.yml sets cancel-in-progress False"),
+        _plant_tier("one group for every run", _PR_YML, "group", "pr",
+                    expect="pr.yml groups its runs as 'pr'"),
+        _plant_tier("a group per commit, which a pull request's newer push does not share",
+                    _PR_YML, "group", "pr-${{ github.sha }}",
+                    expect="pr.yml groups its runs as 'pr-${{ github.sha }}'"),
+        _plant_tier("pr.yml in merge.yml's group", _PR_YML, "group", f"merge-{_TIER_RUN_KEY}",
+                    expect="pr.yml groups its runs as 'merge-"),
+        Control("every Dependabot head's runs in one queued group",
+                _tier_concurrency(_PR_YML, _MERGE_YML, dependabot=True), fails=False),
+        Control("each tier keying its own runs, Dependabot's too",
+                _tier_concurrency(_PR_YML, _MERGE_YML, dependabot=False), fails=False),
+        Control("a Dependabot head's waiting run replaced by the next one",
+                _both(_tier_concurrency(_PR_YML, dependabot=True),
+                      _tier_concurrency_line(_PR_YML, "queue", "")),
+                expect="pr.yml sets queue None"),
+        Control("a Dependabot head's run cancelled in flight",
+                _both(_tier_concurrency(_MERGE_YML, dependabot=True),
+                      _tier_concurrency_line(_MERGE_YML, "cancel-in-progress", _PR_RUN_CANCELS)),
+                expect="merge.yml sets cancel-in-progress"),
+        Control("queue max beside cancel-in-progress, which GitHub refuses",
+                _both(_tier_concurrency(_MERGE_YML, dependabot=False),
+                      _tier_concurrency_line(_MERGE_YML, "queue", "max")),
+                expect="merge.yml sets queue 'max'"),
+        Control("one tier in Dependabot's group keyed for every pull request",
+                _both(_tier_concurrency(_PR_YML, dependabot=True),
+                      _tier_concurrency_line(_PR_YML, "group", "dependabot-heads")),
+                expect="pr.yml groups its runs as 'dependabot-heads'"),
         _plant_in_job("a merge.yml job other than a stage job with a group of its own", _MERGE_YML,
                       "results", "    if: ${{ !cancelled() }}\n",
                       "    if: ${{ !cancelled() }}\n    concurrency:\n      group: verdict\n",

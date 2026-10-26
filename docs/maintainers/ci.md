@@ -1287,7 +1287,9 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   the verdict names it, read from that output, as the candidate's partner; `changes` publishes the
   partners by key and the verdict holds every record to them, read from that output; one
   concurrency group per workflow and pull request or commit, cancelling only a pull request's
-  superseded run, and no job's group of its own but `merge.yml`'s stage jobs'; no
+  superseded run (the row also takes the shape that puts every Dependabot head's runs of both
+  tiers in one group, queued and never cancelled, until that change lands), and no job's group
+  of its own but `merge.yml`'s stage jobs'; no
   job is `merge-verdict`, by its id, its name or any key the tier's plan can give a stage job; and
   no expensive job (the suite's shards, the browser run, the package, the gateway image) is in
   both tiers' plans, so the expensive tier runs once per candidate.
