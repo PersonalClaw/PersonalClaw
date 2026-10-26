@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -291,6 +292,8 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
+    # First: a named basetemp is checked before anything uses it.
+    _a_basetemp_the_run_names_is_a_tests_own(config)
     shard_list.configure(config)
     random_order.configure(config)
     # Where this process ran (platform, xdist workers), for the telemetry record (#3948).
@@ -322,6 +325,57 @@ def pytest_configure(config):
     # folder PERSONALCLAW_TEST_DOWNLOADS names (`tool_homes.downloads`).
     grammars = tool_homes.downloads(config, tool_homes.GRAMMARS)
     _PUT_THE_PROGRAMS_BACK.append(tool_homes.for_collection(tool_homes.BASE, grammars))
+
+
+def _within(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _what_a_basetemp_would_hold(root: str) -> str:
+    """Why *root*, a resolved ``--basetemp``, may not be counted a test's own: it is the
+    filesystem's root, or in or above the machine's home (from the user database) or this
+    repository. ``""`` when it holds nothing but what tests make there."""
+    if root == os.sep:
+        return "is the filesystem's root"
+    for name, place in (
+        ("the machine's home", git_helper_guard.REAL_HOME),
+        ("this repository", os.path.realpath(_INVOKING_REPO_ROOT)),
+    ):
+        if _within(root, place):
+            return f"is in {name} ({place})"
+        if _within(place, root):
+            return f"holds {name} ({place})"
+    return ""
+
+
+def _a_basetemp_the_run_names_is_a_tests_own(config) -> None:
+    """A ``--basetemp`` the run names holds every test's ``tmp_path``, so the docker and git guards
+    count what a test writes there as the test's own, as they count the temporary folders pytest's
+    own basetemp is in. Breadth's random-order orders each name one under ``/var/tmp``; with only
+    the temporary folders counted, a stand-in docker or a credential helper a test wrote there read
+    as the machine's own and was refused (run 40246653348). In a worker it is the worker's own.
+
+    One in pytest's own temporary folders, as every xdist worker's is, they own already. Any other
+    that is the filesystem's root, or in or above the machine's home or this repository, would
+    make them the tests' own too: the session ends here, before anything uses it (pytest empties a
+    named basetemp the first time it is used)."""
+    named = config.getoption("basetemp")
+    if not named:
+        return
+    root = os.path.realpath(named)
+    # In pytest's own temporary folders (an xdist worker's is one), the guards own it already:
+    # nothing to add, and nothing to refuse, wherever TMPDIR is (run-job's is under the runner's
+    # home).
+    if any(_within(root, os.path.realpath(t)) for t in (tempfile.gettempdir(), "/tmp")):
+        return
+    held = _what_a_basetemp_would_hold(root)
+    if held:
+        raise pytest.UsageError(
+            f"--basetemp {named} {held}: the suite's guards would count it as a test's own, so "
+            "name one outside it (a folder under /tmp or /var/tmp)"
+        )
+    for guard in (container_runtime.GUARD, git_helper_guard.GUARD):
+        guard.own = tuple(sorted({*guard.own, root}))
 
 
 def pytest_ignore_collect(collection_path, config):
