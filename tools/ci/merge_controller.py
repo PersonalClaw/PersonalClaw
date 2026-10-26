@@ -1,4 +1,4 @@
-"""``python -m tools.ci merge-controller``: the merge verdict's poster, advisory for now (#3910).
+"""``python -m tools.ci merge-controller``: the merge verdict's poster (#3910).
 
 ``.github/workflows/merge-verdict.yml`` runs this when a Merge run (``merge.yml``) completes.
 GitHub runs that listener from the default branch, so this is ``main``'s copy whatever the
@@ -72,9 +72,10 @@ The verdict is ``success`` or ``failure``, never neutral, and an answer the API 
 ``failure``, named as unread. ``post`` sends the check run with the controller App's token, and
 refuses a body that is not one completed ``merge-verdict`` check run.
 
-It is not a required check yet: ``main-protect`` names it only once #3915's flip is live and
-posted verdicts have matched their pull requests' real results. Standard library only. See
-docs/maintainers/ci.md, "The merge controller's poster".
+It is a required check: ``main-protect`` requires ``merge-verdict`` from the controller App, on
+a head up to date with ``main``, since 2026-10-25 22:55Z (#3910 piece 5), so the verdict says
+nothing of being advisory. Standard library only. See docs/maintainers/ci.md, "The merge
+controller's poster".
 """
 
 from __future__ import annotations
@@ -135,12 +136,6 @@ SWEEP_AFTER = datetime.timedelta(days=1)
 RESULTS_JOB = "results"
 #: The artifacts each planned entry uploads: its record, the evidence a green names.
 RECORD_PREFIX = "ci-record-"
-#: Where the verdict says it is advisory, until main-protect requires it.
-ADVISORY = (
-    "Advisory: `merge-verdict` is not a required check yet (#3910). It becomes one once #3915's "
-    "flip is live and posted verdicts have matched their pull requests' real results."
-)
-
 API = "https://api.github.com"
 _PER_PAGE = 100
 _MAX_PAGES = 30
@@ -381,7 +376,7 @@ class Outcome:
 def _red(run: Run, reasons: list[str], head: str) -> Posting:
     summary = "\n".join(
         ["This head's merge verdict is red:", "", *[f"- {r}" for r in reasons], ""]
-        + [f"From Merge run {run.url or run.id}, attempt {run.attempt}.", "", ADVISORY]
+        + [f"From Merge run {run.url or run.id}, attempt {run.attempt}."]
     )
     output = {"title": f"Red: {reasons[0]}"[:255], "summary": summary}
     waiting = [r for r in reasons if r.startswith(WAITING)]
@@ -935,8 +930,6 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             "- its dependency review passed",
             "- CodeQL analysed every language main has, and found no alert it brings",
             f"- {len(records)} job records, their digests in the receipt below",
-            "",
-            ADVISORY,
         ]
     )
     output = merge_verdict.render_output(

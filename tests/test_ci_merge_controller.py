@@ -218,6 +218,23 @@ def test_a_green_run_posts_success_with_the_receipt_the_reader_takes() -> None:
     assert receipt.toolchain == {"runner": "ubuntu-24.04", "definitions": MAIN}
 
 
+@pytest.mark.parametrize("state", ["green", "red", "waiting"])
+def test_the_verdict_says_nothing_of_being_advisory(state: str) -> None:
+    # main-protect requires merge-verdict since 2026-10-25 22:55Z (#3910 piece 5).
+    api = FakeApi()
+    if state == "red":
+        api.jobs(1, ("results", "completed", "failure"))
+    if state == "waiting":
+        api.codeql(HEAD, pull_alerts=(), processed=("actions",))
+    found = _decide(api)
+    assert isinstance(found, mc.Posting)
+    assert found.conclusion == ("success" if state == "green" else "failure")
+    said = "\n".join(found.output.get(key, "") for key in ("title", "summary", "text")).lower()
+    for stale in ("advisory", "not a required check", "#3915"):
+        assert stale not in said, (stale, found.output["summary"])
+    assert not hasattr(mc, "ADVISORY")
+
+
 @pytest.mark.parametrize("conclusion", ["failure", "cancelled", "skipped", "neutral", None])
 def test_a_results_job_that_did_not_pass_posts_failure(conclusion: str | None) -> None:
     api = FakeApi()
