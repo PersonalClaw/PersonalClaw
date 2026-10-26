@@ -422,9 +422,10 @@ and only the step that posts holds it. The `contract` job, in the same environme
 `post` refuses a body that is not one completed `merge-verdict` check run, or a green without its
 receipt.
 
-It is advisory: `main-protect` does not require `merge-verdict` yet. It will once #3915's flip is
-live and three pull requests' posted verdicts have matched their real results (#3910's plan,
-piece 5). `tests/test_ci_merge_controller.py` drives the rules against a fake API, and
+It is required: `main-protect` requires `merge-verdict` from the controller App, strict (the head
+up to date with `main`), since 2026-10-25 22:55Z (#3910 piece 5), after posted verdicts matched
+their pull requests' real results under #4584 step 4. The verdict's text says nothing of being
+advisory. `tests/test_ci_merge_controller.py` drives the rules against a fake API, and
 `tests/rails/test_ci_merge_verdict_poster_tree.py` holds the workflow's shape.
 
 ### Reachability
@@ -3110,7 +3111,7 @@ checkout: `actions/dependency-review-action` reads the pull request's base and h
 the event and asks the dependency-graph API to compare them, and it fails on a dependency the
 pull request adds, or moves to, with a known vulnerability. It is not a required check; with
 CodeQL's default setup, which lives in the repository settings out of a candidate's reach, it
-becomes an input of the one required `merge-verdict` (#3910). The apps and the website run the
+is an input of the one required `merge-verdict` (#3910). The apps and the website run the
 same workflow.
 
 ### Nothing throws an exit status away unseen

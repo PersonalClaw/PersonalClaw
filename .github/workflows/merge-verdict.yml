@@ -34,9 +34,9 @@
 # deploy to. The reads use this job's own token, which holds `contents: read` and
 # `actions: read`.
 #
-# ADVISORY. `merge-verdict` is not a required check yet: main-protect names it only once #3915's
-# flip is live and posted verdicts have matched their pull requests' real results (#3910's plan,
-# piece 5). See docs/maintainers/ci.md, "The merge controller's poster".
+# REQUIRED. main-protect requires `merge-verdict` from the controller App, on a head up to date
+# with main, since 2026-10-25 22:55Z (#3910 piece 5). See docs/maintainers/ci.md, "The merge
+# controller's poster".
 name: Merge verdict
 
 on:
