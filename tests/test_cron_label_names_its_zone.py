@@ -106,3 +106,39 @@ def test_the_label_and_the_armed_fire_agree_on_the_hour() -> None:
         f"label {label!r} must name the hour the fire is armed for ({fired_hour}:00) in the zone "
         "resolve_zone answers with — that agreement is what #445 lacked"
     )
+
+
+@pytest.mark.parametrize(
+    ("now", "zone"),
+    [
+        # New York's clocks go back on 2026-11-01 and forward on 2027-03-14.
+        pytest.param((2026, 10, 29, 12), "EDT", id="the Thursday before autumn's change"),
+        pytest.param((2026, 11, 2, 15), "EST", id="the Monday after autumn's change"),
+        pytest.param((2027, 3, 11, 15), "EST", id="the Thursday before spring's change"),
+        pytest.param((2027, 3, 15, 15), "EDT", id="the Monday after spring's change"),
+    ],
+)
+def test_the_label_names_the_zone_at_its_next_fire_after_the_now_it_is_given(
+    now: tuple[int, ...], zone: str
+) -> None:
+    """A caller's `now` decides the next fire the zone is named at, not the clock's own time: a
+    label shown beside a next run read at `now` names the zone in force at that run."""
+    from datetime import datetime, timezone
+
+    at = datetime(*now, tzinfo=timezone.utc).timestamp()
+    label = format_schedule(_cron("0 9 * * 5"), tz_name="America/New_York", now=at)
+    m = _ZONE_AFTER_MERIDIEM.search(label)
+    assert m and m.group(1) == zone, label
+    assert label.startswith("At 9:00 AM"), label
+
+
+def test_a_one_shot_says_today_on_the_day_of_the_now_it_is_given() -> None:
+    """The `at` branch's "today" is the day of the caller's `now`, not of the clock's."""
+    from datetime import datetime, timezone
+
+    fire = datetime(2026, 11, 2, 15, 30, tzinfo=timezone.utc).timestamp()
+    one_shot = ScheduleDefinition(kind="at", at_ts=fire)
+    same_day = format_schedule(one_shot, tz_name="America/New_York", now=fire - 3600)
+    days_before = format_schedule(one_shot, tz_name="America/New_York", now=fire - 3 * 86400)
+    assert same_day == "at 10:30 AM EST", same_day
+    assert days_before == "at 10:30 AM EST, Nov 2", days_before

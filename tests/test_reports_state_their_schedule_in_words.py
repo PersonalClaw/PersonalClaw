@@ -9,7 +9,9 @@ trigger row its schedule becomes (`report_schedules.shown`), with its zone and i
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -42,6 +44,36 @@ def test_a_reports_schedule_is_said_in_words_with_its_zone_and_its_next_run():
     assert datetime.fromisoformat(shown["next_run_at"]) == datetime(
         2026, 10, 5, 12, 0, tzinfo=timezone.utc
     )
+
+
+def _at(*when: int) -> float:
+    return datetime(*when, tzinfo=timezone.utc).timestamp()
+
+
+@pytest.mark.parametrize(
+    ("now", "next_run", "zone"),
+    [
+        pytest.param(A_THURSDAY, (2026, 10, 5, 12), "EDT", id="a Thursday in October: EDT"),
+        # 2026-10-26 12:30Z, just after that Monday's 08:00 EDT run: the next is after the clocks
+        # go back on Nov 1. Read at the clock's own time, the words named that zone beside an
+        # EDT next run (#5583's python-suite, 2026-10-26).
+        pytest.param(_at(2026, 10, 26, 12, 30), (2026, 11, 2, 13), "EST", id="the Monday it moves"),
+        pytest.param(_at(2026, 11, 5, 12), (2026, 11, 9, 13), "EST", id="a Thursday in November"),
+        pytest.param(_at(2027, 3, 4, 12), (2027, 3, 8, 13), "EST", id="before the spring change"),
+        pytest.param(_at(2027, 3, 11, 12), (2027, 3, 15, 12), "EDT", id="after the spring change"),
+    ],
+)
+def test_the_words_name_the_zone_at_the_next_run_they_stand_beside(
+    now: float, next_run: tuple[int, ...], zone: str
+) -> None:
+    """The words and the next run are read at one `now`, so the zone the words name is the one in
+    force at that run, on either side of a change of the clocks, whatever the date it runs on."""
+    shown = rs.shown(_defn(), now=now)
+    at = datetime.fromisoformat(shown["next_run_at"])
+    assert at == datetime(*next_run, tzinfo=timezone.utc), shown
+    assert at.astimezone(ZoneInfo("America/Toronto")).tzname() == zone
+    said = re.match(r"At 8:00 AM ([A-Z]{3}), only on Monday", shown["words"])
+    assert said and said.group(1) == zone, shown
 
 
 def test_a_paused_report_has_no_next_run():

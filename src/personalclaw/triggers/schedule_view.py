@@ -339,8 +339,9 @@ def _next_run_ts(trigger: Any, *, now: float) -> float | None:
     return computed if computed > 0 else None
 
 
-def describe_cadence(trigger: Any) -> str:
-    """The human cadence string for a list row ("At 9:00 AM EDT", "every 300s", "at 01:00 AM …").
+def describe_cadence(trigger: Any, *, now: float | None = None) -> str:
+    """The human cadence string for a list row ("At 9:00 AM EDT", "every 300s", "at 01:00 AM …"),
+    read at `now` (the clock's when None), as `format_schedule` reads it.
 
     🔴 DELEGATES to the shipped `schedule.format_schedule` rather than formatting here.
     Measured: a hand-rolled version produced `0 9 * * * (America/New_York)` where the live API
@@ -371,7 +372,7 @@ def describe_cadence(trigger: Any) -> str:
             return _describe_adaptive(spec)
         else:
             return kind or "unknown"
-        return format_schedule(definition, tz_name=tz)
+        return format_schedule(definition, tz_name=tz, now=now)
     except Exception:  # noqa: BLE001 - a describable row must never fail a whole list render
         logger.debug(
             "could not describe cadence for %s", getattr(trigger, "id", "?"), exc_info=True

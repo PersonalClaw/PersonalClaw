@@ -361,7 +361,7 @@ def validate_cron_expr(expr: str) -> bool:
 # ── Service ──
 
 
-def _humanize_cron(expr: str, tz_name: str = "") -> str:
+def _humanize_cron(expr: str, tz_name: str = "", *, now: float | None = None) -> str:
     """Convert a 5-field cron expression to human-readable string with timezone.
 
     🔴 THE ZONE IS RESOLVED, NOT REQUIRED (#445). This gated the whole timezone-aware branch on
@@ -384,6 +384,12 @@ def _humanize_cron(expr: str, tz_name: str = "") -> str:
     The `%Z` suffix the branch already appends is what makes the disclosure legible: the label now
     names the zone it is stated in, so a viewer in another zone reads a difference rather than a
     contradiction.
+
+    The zone's abbreviation is the one at the next fire after `now` (the clock's when it is
+    None). A caller that shows a next run beside the words passes the `now` it computed that run
+    from, so both name one instant: read with the clock's own time, a Monday 08:00 Toronto report
+    shown for a run on a Thursday in October said "EST" beside an EDT next run once the next real
+    Monday fell after the clocks went back.
     """
     if get_description is None:
         return expr
@@ -404,12 +410,12 @@ def _humanize_cron(expr: str, tz_name: str = "") -> str:
             tz = resolve_zone(tz_name)
             # The next fire on the zone's wall clock, as the scheduler arms it, so a description
             # read across a change of the clocks names the hour it will really run at.
-            now = time.time()
-            next_local = datetime.fromtimestamp(next_cron_fire(expr, now, tz), tz)
+            at = time.time() if now is None else float(now)
+            next_local = datetime.fromtimestamp(next_cron_fire(expr, at, tz), tz)
             local_time = next_local.strftime("%-I:%M %p %Z")
             # cron_descriptor states the expression's own hour; find it to replace it.
             next_as_utc = datetime.fromtimestamp(
-                next_cron_fire(expr, now, timezone.utc), timezone.utc
+                next_cron_fire(expr, at, timezone.utc), timezone.utc
             )
             utc_time = next_as_utc.strftime("%-I:%M %p")
             utc_time_padded = next_as_utc.strftime("%I:%M %p")
@@ -426,13 +432,16 @@ def _humanize_cron(expr: str, tz_name: str = "") -> str:
     return desc
 
 
-def format_schedule(schedule: ScheduleDefinition, tz_name: str = "") -> str:
-    """Human-readable schedule description."""
+def format_schedule(
+    schedule: ScheduleDefinition, tz_name: str = "", *, now: float | None = None
+) -> str:
+    """Human-readable schedule description, read at `now` (epoch seconds; the clock's when None):
+    a cron's zone is named at its next fire after it, a one-shot's "today" is its day."""
     # No config read and no `astimezone()` branch any more: `resolve_zone` already walks
     # explicit → config → machine → UTC, and having a display path resolve the zone its own
     # way is how a schedule came to be *shown* in one zone and *fired* in another (#2520).
     if schedule.kind == "cron" and schedule.cron_expr:
-        return _humanize_cron(schedule.cron_expr, tz_name)
+        return _humanize_cron(schedule.cron_expr, tz_name, now=now)
     if schedule.kind == "every" and schedule.every_secs:
         secs = schedule.every_secs
         if secs >= 3600:
@@ -440,9 +449,9 @@ def format_schedule(schedule: ScheduleDefinition, tz_name: str = "") -> str:
         return f"every {secs}s"
     if schedule.kind == "at" and schedule.at_ts:
         tz = resolve_zone(tz_name)
-        now = datetime.now(tz)
+        today = datetime.fromtimestamp(time.time() if now is None else float(now), tz)
         dt = datetime.fromtimestamp(schedule.at_ts, tz)
-        if dt.date() == now.date():
+        if dt.date() == today.date():
             return f"at {dt:%I:%M %p %Z}"
         return f"at {dt:%I:%M %p %Z}, {dt:%b %-d}"
     return schedule.kind
