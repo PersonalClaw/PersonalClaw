@@ -23,6 +23,7 @@ const {
   registerNativeNotificationIpc,
 } = require("./nativeNotifications");
 const { shutdownGateway } = require("./gatewayShutdown");
+const { quitWithin } = require("./quitSequence");
 const { makeSystemBrowser, navigationGuard, registerSystemBrowserIpc, windowOpenHandler } = require("./systemBrowser");
 const { buildGatewayEnv } = require("./gatewayEnv");
 const {
@@ -109,7 +110,8 @@ const { TAB_BAR_HEIGHT, makeWindowChrome } = require("./windowChrome");
 /** How often the menu bar reads its count of what waits on you and what is running, while the
  *  doorbell's socket is down (connected, it reads on each ring instead). */
 const PRESENCE_REFRESH_MS = 5000;
-/** How long quit waits for the gateway to stop before escalating. */
+/** How long a stop of the gateway waits for it before escalating, outside the quit: the quit's
+ *  stop has the grace its deadline leaves (`quitSequence.js`). */
 const GATEWAY_GRACE_MS = 8000;
 
 // Set app name for macOS menu bar and dock
@@ -120,6 +122,9 @@ let mainWindow = null;
 let buddy = null;
 let buddyPresence = null;
 let gatewayProcess = null;
+/** The pid of the gateway this shell started, while it runs: it leads its own group, which the
+ *  shell's exit takes down if a quit did not (see the `exit` handler below). */
+let liveGatewayGroup = null;
 let isQuitting = false;
 /** How the latest start of the gateway failed (`startGateway`'s `err.exit`), until one succeeds. */
 let startFailure = null;
@@ -226,6 +231,7 @@ function startGateway() {
     );
     // This start's own process, which its exit is about (`gatewayProcess` moves on to the next).
     const child = gatewayProcess;
+    liveGatewayGroup = child.pid ?? null;
 
     let settled = false;
     let stdoutBuf = "";
@@ -278,6 +284,7 @@ function startGateway() {
     });
     gatewayProcess.on("exit", (code, signal) => {
       console.log(`Gateway exited with code ${code}`);
+      if (liveGatewayGroup === child.pid) liveGatewayGroup = null;
       const held = gatewayProcess === child;
       if (held) gatewayProcess = null;
       const exit = { code, signal, lastLine: lastLine.get() };
@@ -310,13 +317,14 @@ function startGateway() {
  * (measured — a child survived with `ppid=1`). The spawn now gives the gateway its own
  * process group so this signal can reach the whole tree.
  */
-async function stopGateway() {
+async function stopGateway({ graceMs = GATEWAY_GRACE_MS, killGraceMs } = {}) {
   const child = gatewayProcess;
   if (!child) return { outcome: "none" };
   gatewayProcess = null;
   const result = await shutdownGateway({
     child,
-    graceMs: GATEWAY_GRACE_MS,
+    graceMs,
+    ...(killGraceMs === undefined ? {} : { killGraceMs }),
     // We spawned it `detached: true`, so it leads its own group and the signal can
     // reach the subprocesses IT started. `shutdownGateway` re-verifies that against
     // the OS and degrades to a single-pid signal if this ever stops being true.
@@ -396,10 +404,10 @@ async function adoptLocalGateway(ready) {
  * a restart both carry on whatever the gateway answers. The request carries only that session's
  * own cookie, so it is the session ending itself (`/api/auth/logout`).
  */
-async function signOutLocalSession(held) {
+async function signOutLocalSession(held, timeoutMs) {
   if (!held || !localGatewayUrl) return false;
   const { path: route, headers } = signOutRequest(held, Number(new URL(localGatewayUrl).port));
-  const res = await postGateway(route, {}, headers, { signedIn: false });
+  const res = await postGateway(route, {}, headers, { signedIn: false, timeoutMs });
   return Boolean(res && res.revoked);
 }
 
@@ -591,7 +599,7 @@ function readLocalSecret() {
  * header; `signedIn: false` leaves it off, for the one request that must present only the
  * session it ends (`signOutLocalSession`). `method` is POST but for a write the gateway takes as a
  * PATCH (`PATCH /api/config/personalclaw`, the menu bar's Show Buddy). */
-function postGateway(pathname, body, headers = {}, { signedIn = true, method = "POST" } = {}) {
+function postGateway(pathname, body, headers = {}, { signedIn = true, method = "POST", timeoutMs = 5000 } = {}) {
   return new Promise((resolve) => {
     if (!localGatewayUrl) return resolve(null);
     try {
@@ -613,7 +621,7 @@ function postGateway(pathname, body, headers = {}, { signedIn = true, method = "
         port: url.port,
         path: url.pathname,
         method,
-        timeout: 5000,
+        timeout: timeoutMs,
         headers: {
           "Content-Type": "application/json",
           "Content-Length": payload.length,
@@ -684,11 +692,11 @@ async function pushCapabilityState() {
 
 /** Tell the gateway the shell is going away, so a still-open tab stops claiming
  * the desktop can do anything. Best-effort: resolves whatever the gateway answers. */
-function unregisterFromGateway() {
+function unregisterFromGateway(timeoutMs) {
   if (!shellToken) return Promise.resolve(null);
   const token = shellToken;
   shellToken = null;
-  return postGateway("/api/desktop/unregister", {}, { "X-Shell-Token": token });
+  return postGateway("/api/desktop/unregister", {}, { "X-Shell-Token": token }, { timeoutMs });
 }
 
 function checkBackend(healthUrl) {
@@ -2100,21 +2108,44 @@ app.on("before-quit", (event) => {
     if (!win.isDestroyed()) win.hide();
   }
 
-  unregisterFromGateway()
-    // End this start's sign-in while its gateway can still be asked to, so quitting leaves no
-    // live owner session behind in Settings → Devices that nothing holds.
-    .then(async () => {
-      const held = localSignIn ? await localSignIn.release() : null;
-      if (held) await signOutLocalSession(held);
-    })
-    .catch((err) => console.warn(`desktop: sign-out on quit failed: ${err.message}`))
-    .then(() => stopGateway())
+  // The whole quit has one deadline, whatever started it (`quitSequence.js`): a SIGTERM's quit is
+  // followed by a SIGKILL that never reaches the gateway's own group. The asks go together, each
+  // held to its share; then the gateway is stopped at once, with the grace that is left.
+  quitWithin({
+    asks: [
+      (ms) => unregisterFromGateway(ms),
+      // End this start's sign-in while its gateway can still be asked to, so quitting leaves no
+      // live owner session behind in Settings → Devices that nothing holds.
+      async (ms) => {
+        try {
+          const held = localSignIn ? await localSignIn.release() : null;
+          if (held) await signOutLocalSession(held, ms);
+        } catch (err) {
+          console.warn(`desktop: sign-out on quit failed: ${err.message}`);
+        }
+      },
+    ],
+    stop: (budget) => stopGateway(budget),
+  })
     .catch((err) => console.warn(`gateway shutdown failed: ${err.message}`))
     .finally(() => {
       trayPresence.destroy();
       shutdownComplete = true;
       app.quit();
     });
+});
+
+// A shell that exits without its quit having stopped the gateway (`app.exit`, a quit cut short)
+// takes the gateway's group with it: that group is the gateway's own, so nothing else would end
+// it. Synchronous, as an `exit` handler must be. A SIGKILLed shell runs nothing, which is why the
+// quit itself is held to a deadline.
+process.on("exit", () => {
+  if (!liveGatewayGroup) return;
+  try {
+    process.kill(-liveGatewayGroup, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
 });
 
 app.on("window-all-closed", () => {

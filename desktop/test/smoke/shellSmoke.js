@@ -49,7 +49,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, execFileSync } = require("node:child_process");
 
 const { CODE_LOOP } = require("./writeStubBackend");
 
@@ -462,9 +462,12 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, fi
     // 4. Nothing threw on the way.
     return await settle();
   } finally {
+    const quitFrom = Date.now();
+    let killed = false;
     if (!exited) {
       for (const [sig, tries] of [["SIGTERM", 40], ["SIGKILL", 20]]) {
         if (exited) break;
+        killed = sig === "SIGKILL";
         try {
           process.kill(-app.pid, sig);
         } catch {
@@ -473,10 +476,52 @@ async function smoke(executable, { app: appDir = null, gatewayPidFile = null, fi
         for (let i = 0; i < tries && !exited; i++) await wait(250);
       }
     }
+    // A quit that needed SIGKILL, or left a process running from the app, says what was there
+    // before the scratch (and the gateway's log in it) is gone. It prints; it decides nothing.
+    const left = survivorsOf(path.dirname(path.dirname(executable)));
+    if (killed || left.length) {
+      console.log(`shell-smoke: the quit took ${Date.now() - quitFrom} ms${killed ? ", and needed SIGKILL" : ""}`);
+      console.log(`--- still running from the app ---\n${left.join("\n") || "(none)"}`);
+      for (const log of logsUnder(scratch)) {
+        const lines = fs.readFileSync(log, "utf8").split("\n");
+        console.log(`--- ${log}, last 200 of ${lines.length} lines ---\n${lines.slice(-200).join("\n")}`);
+      }
+      console.log(`--- the app's output, last part ---\n${output.slice(-20000)}`);
+    }
     if (gatewayPidFile) await stopGateway(gatewayPidFile);
     if (xvfb) xvfb.stop();
     fs.rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/** The `ps` lines (pid, ppid, pgid, elapsed, command) of the processes running from *root*. */
+function survivorsOf(root) {
+  try {
+    const listed = execFileSync("ps", ["-axo", "pid,ppid,pgid,etime,command"], { encoding: "utf8" });
+    return listed.split("\n").filter((line) => line.includes(`${root}${path.sep}`));
+  } catch (error) {
+    return [`(ps failed: ${error.message})`];
+  }
+}
+
+/** Every `.log` file under *dir*, the gateway's among them. */
+function logsUnder(dir) {
+  const found = [];
+  const walk = (at) => {
+    let entries = [];
+    try {
+      entries = fs.readdirSync(at, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".log")) found.push(full);
+    }
+  };
+  walk(dir);
+  return found;
 }
 
 /** The command line's options: `<executable>` first, then the flags the usage line names. */

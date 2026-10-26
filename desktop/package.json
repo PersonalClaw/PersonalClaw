@@ -67,6 +67,7 @@
       "nativeNotifications.js",
       "systemBrowser.js",
       "gatewayShutdown.js",
+      "quitSequence.js",
       "gatewayEnv.js",
       "gatewayLost.js",
       "localSignIn.js",
