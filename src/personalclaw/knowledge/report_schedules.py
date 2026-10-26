@@ -294,7 +294,8 @@ def shown(defn: ReportDefinition, *, now: float = 0.0) -> dict[str, Any]:
     if trigger is None:
         return {"words": "", "timezone": "", "next_run_at": "", "restore_hold": ""}
     return {
-        "words": describe_cadence(trigger),
+        # Read at the `now` the next run is armed from, so the words name the zone at that run.
+        "words": describe_cadence(trigger, now=now or None),
         "timezone": str(trigger.spec.get("timezone") or ""),
         "next_run_at": str(trigger.next_fire_at or "") if trigger.enabled else "",
         "restore_hold": "" if trigger.enabled else str(trigger.restore_hold or ""),

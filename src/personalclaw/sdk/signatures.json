@@ -3920,7 +3920,8 @@
  "personalclaw.sdk.channel.describe_cadence": {
   "kind": "function",
   "params": [
-   {"annotation": "Any", "kind": "positional_or_keyword", "name": "trigger"}
+   {"annotation": "Any", "kind": "positional_or_keyword", "name": "trigger"},
+   {"annotation": "float | None", "default": "None", "kind": "keyword_only", "name": "now"}
   ],
   "returns": "str"
  },
@@ -3968,7 +3969,8 @@
   "kind": "function",
   "params": [
    {"annotation": "ScheduleDefinition", "kind": "positional_or_keyword", "name": "schedule"},
-   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "tz_name"}
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "tz_name"},
+   {"annotation": "float | None", "default": "None", "kind": "keyword_only", "name": "now"}
   ],
   "returns": "str"
  },
