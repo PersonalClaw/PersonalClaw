@@ -28,6 +28,7 @@ import copy
 import json
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.workflows import journal as J
@@ -37,6 +38,14 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import InstanceState, Node, NodeKind, RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
 
 #: The gate kinds whose passing is a CHECK the engine decides, not a person's approval.
 CHECKS = ("judge", "expression", "verify_command", "verify_script", "ladder")
@@ -111,7 +120,7 @@ async def _run(
         WorkflowRun(id="", workflow_name=spec["name"], mode="background", inputs=dict(inputs or {}))
     )
     store.write_spec(run.id, spec)
-    c = RunController(run, spec, services=services or _services())
+    c = live_runs.started(RunController(run, spec, services=services or _services()))
     await c.start()
     await _until(lambda: c.run.is_terminal, what=f"the run to end (it is {c.run.status.value})")
     return c

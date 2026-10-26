@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 from collections import Counter
 
+import live_runs
 import pytest
 
 from personalclaw.approval_answer import YOU
@@ -33,6 +34,13 @@ from personalclaw.workflows.native_defs import register_native_provider
 from personalclaw.workflows.watchdog import WorkflowWatchdog
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -116,7 +124,7 @@ LIFECYCLE_GATED_SPEC = {
 
 
 def _controller(run: WorkflowRun, spec: dict, **kw) -> RunController:
-    return RunController(run, spec, services=EngineServices(**kw))
+    return live_runs.started(RunController(run, spec, services=EngineServices(**kw)))
 
 
 async def _launched(spec: dict, **kw) -> tuple[WorkflowRun, WorkflowWatchdog, RunController]:

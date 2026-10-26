@@ -21,6 +21,7 @@ import copy
 import json
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.workflows import service, store
@@ -28,6 +29,13 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -82,7 +90,7 @@ async def _paused() -> RunController:
     spec = _spec()
     run = store.create(WorkflowRun(id="", workflow_name="nightly-tidy", mode="background"))
     store.write_spec(run.id, spec)
-    c = RunController(run, copy.deepcopy(spec), services=EngineServices())
+    c = live_runs.started(RunController(run, copy.deepcopy(spec), services=EngineServices()))
     store.request_pause(run.id)
     await c.start()
     await _until(lambda: c.run.status == RunStatus.PAUSED, what="the run to pause")

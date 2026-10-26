@@ -27,6 +27,7 @@ import asyncio
 import copy
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.approval_answer import YOU
@@ -39,6 +40,14 @@ from personalclaw.workflows.models import Node, NodeKind, RunStatus, WorkflowRun
 from personalclaw.workflows.validator import GATE_TEXT_KEYS, GATE_TEXT_READ
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
 
 #: The words each gate kind is shown or graded by, as the validator reads them to warn an author
 #: (`validator.GATE_TEXT_READ`, keyed here by the kind a spec spells).
@@ -144,7 +153,7 @@ async def _start(spec: dict[str, Any], *, inputs: dict[str, Any] | None = None) 
         WorkflowRun(id="", workflow_name=spec["name"], mode="background", inputs=dict(inputs or {}))
     )
     store.write_spec(run.id, spec)
-    c = RunController(run, spec, services=EngineServices())
+    c = live_runs.started(RunController(run, spec, services=EngineServices()))
     await c.start()
     return c
 

@@ -11,7 +11,9 @@ from __future__ import annotations
 import asyncio
 import time
 
+import live_runs
 import pytest
+import pytest_asyncio
 
 from personalclaw.approval_answer import YOU
 from personalclaw.workflows import controller as controller_mod
@@ -21,6 +23,13 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _stopped_runs():
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +82,7 @@ async def _parked_on_a_live_loop(started: dict[str, float] | None = None) -> Run
 
     run = store.create(WorkflowRun(id="", workflow_name="gated"))
     store.write_spec(run.id, _SPEC)
-    c = RunController(run, _SPEC, services=EngineServices(publish=publish))
+    c = live_runs.started(RunController(run, _SPEC, services=EngineServices(publish=publish)))
     await c.start()
     await _until(
         lambda: c.run.status == RunStatus.NEEDS_INPUT and HI.list_continuations(run.id),
@@ -124,7 +133,7 @@ class _Supervisor:
 async def _waiting_on_a_live_loop() -> RunController:
     run = store.create(WorkflowRun(id="", workflow_name="waits"))
     store.write_spec(run.id, _WAITS)
-    c = RunController(run, _WAITS, services=EngineServices())
+    c = live_runs.started(RunController(run, _WAITS, services=EngineServices()))
     await c.start()
     await _until(lambda: _state(c, "root.children[0]") == InstanceState.WAITING, within=10)
     # Let the loop settle into its tick-long wait, so the action below lands mid-wait.
@@ -178,7 +187,7 @@ async def test_a_blocking_start_returns_the_ask_as_soon_as_its_run_parks() -> No
 
     run = store.create(WorkflowRun(id="", workflow_name="gated"))
     store.write_spec(run.id, _SPEC)
-    c = RunController(run, _SPEC, services=EngineServices(publish=publish))
+    c = live_runs.started(RunController(run, _SPEC, services=EngineServices(publish=publish)))
     try:
         assert await c.wait_for_terminal(timeout=20) == RunStatus.NEEDS_INPUT
         returned = time.monotonic()

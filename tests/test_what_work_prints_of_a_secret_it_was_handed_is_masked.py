@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import live_runs
 import pytest
+import pytest_asyncio
 
 from personalclaw.action_providers.base import ActionResult
 from personalclaw.config import credentials as cred
@@ -48,6 +50,13 @@ SHORT = "kqZw"
 REFERENCE = "{{secret:" + NAME + "}}"
 SHORT_REFERENCE = "{{secret:" + SHORT_NAME + "}}"
 MASK = "[REDACTED: credential]"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _stopped_runs():
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -388,7 +397,7 @@ class _Supervisor:
         from personalclaw.workflows.verify import run_verify_block
 
         services = EngineServices(supervisor=self, verify=run_verify_block)
-        controller = RunController(run, spec, services=services, depth=depth)
+        controller = live_runs.started(RunController(run, spec, services=services, depth=depth))
         self.controllers.append(controller)
         await controller.start()
         return controller

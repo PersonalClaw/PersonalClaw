@@ -24,6 +24,7 @@ import asyncio
 import copy
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.approval_answer import YOU
@@ -35,6 +36,14 @@ from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
 from personalclaw.workflows.watchdog import WorkflowWatchdog
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
 
 GATE = "root.children[1]"
 
@@ -125,7 +134,7 @@ async def _parked(spec: dict[str, Any], *, state: Any = None) -> RunController:
     spec = copy.deepcopy(spec)
     run = store.create(WorkflowRun(id="", workflow_name=spec["name"]))
     store.write_spec(run.id, spec)
-    c = RunController(run, spec, services=EngineServices(attention_state=state))
+    c = live_runs.started(RunController(run, spec, services=EngineServices(attention_state=state)))
     assert await c.run_to_completion(timeout=20) == RunStatus.NEEDS_INPUT
     assert c.instances[GATE].state == InstanceState.WAITING
     return c
@@ -177,7 +186,7 @@ async def test_the_rewind_route_applies_it_to_a_run_the_supervisor_holds_parked(
     run = store.create(WorkflowRun(id="", workflow_name=spec["name"]))
     store.write_spec(run.id, spec)
     sup = WorkflowWatchdog(state=None, services=EngineServices())
-    c = await sup.launch(run, copy.deepcopy(spec))
+    c = live_runs.started(await sup.launch(run, copy.deepcopy(spec)))
     assert await c.wait_for_terminal(timeout=10) == RunStatus.NEEDS_INPUT
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
 

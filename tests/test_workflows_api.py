@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import json
 
+import live_runs
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -34,6 +35,13 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -105,7 +113,7 @@ class _Sup:
         return self.controllers.get(run_id)
 
     async def launch(self, run, spec, *, depth: int = 0):
-        c = RunController(run, spec, services=EngineServices())
+        c = live_runs.started(RunController(run, spec, services=EngineServices()))
         self.controllers[run.id] = c
         self.launched.append(run.id)
         await c.start()

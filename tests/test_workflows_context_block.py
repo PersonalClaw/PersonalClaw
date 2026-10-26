@@ -19,6 +19,7 @@ The load-bearing claims:
 
 from __future__ import annotations
 
+import live_runs
 import pytest
 
 from personalclaw.workflows import context_block as CB
@@ -27,6 +28,13 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -308,7 +316,7 @@ class TestBlockingMode:
         async def fake(prompt, *, use_case="background", output_type=None):
             return "ok"
 
-        c = RunController(run, SPEC, services=EngineServices(completion=fake))
+        c = live_runs.started(RunController(run, SPEC, services=EngineServices(completion=fake)))
         assert await c.wait_for_terminal(timeout=20) == RunStatus.COMPLETE
 
     async def test_it_returns_on_needs_input_rather_than_deadlocking(self) -> None:
@@ -324,7 +332,7 @@ class TestBlockingMode:
         }
         run = store.create(WorkflowRun(id="", workflow_name="gated"))
         store.write_spec(run.id, spec)
-        c = RunController(run, spec, services=EngineServices())
+        c = live_runs.started(RunController(run, spec, services=EngineServices()))
         status = await c.wait_for_terminal(timeout=20)
         assert status == RunStatus.NEEDS_INPUT
 
@@ -338,7 +346,7 @@ class TestBlockingMode:
             return "ok"
 
         run = _run(RunStatus.DRAFT)
-        c = RunController(run, SPEC, services=EngineServices(completion=slow))
+        c = live_runs.started(RunController(run, SPEC, services=EngineServices(completion=slow)))
         status = await c.wait_for_terminal(timeout=20, progress_every=0.2, on_progress=ticks.append)
         assert status == RunStatus.COMPLETE
         assert ticks, "expected at least one progress tick during a slow run"
@@ -355,7 +363,7 @@ class TestBlockingMode:
             raise RuntimeError("observer exploded")
 
         run = _run(RunStatus.DRAFT)
-        c = RunController(run, SPEC, services=EngineServices(completion=slow))
+        c = live_runs.started(RunController(run, SPEC, services=EngineServices(completion=slow)))
         status = await c.wait_for_terminal(timeout=20, progress_every=0.2, on_progress=boom)
         assert status == RunStatus.COMPLETE
 
@@ -410,7 +418,7 @@ class TestBlockingMode:
                 return self.c.get(run_id)
 
             async def launch(self, run, spec, *, depth: int = 0):
-                ctl = RunController(run, spec, services=EngineServices())
+                ctl = live_runs.started(RunController(run, spec, services=EngineServices()))
                 self.c[run.id] = ctl
                 await ctl.start()
                 return ctl

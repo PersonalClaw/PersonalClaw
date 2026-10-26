@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.approval_answer import YOU
@@ -146,7 +147,9 @@ def test_pause_stops_the_running_stage_and_resume_redispatches_it() -> None:
     """
     run, spec = _new_run()
     fake = _HeldSubagents()
-    controller = RunController(run, spec, services=EngineServices(subagents=fake))
+    controller = live_runs.started(
+        RunController(run, spec, services=EngineServices(subagents=fake))
+    )
     sup = _Supervisor(controller)
 
     async def _go() -> None:
@@ -169,7 +172,7 @@ def test_pause_stops_the_running_stage_and_resume_redispatches_it() -> None:
         status = await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
         assert status in (RunStatus.COMPLETE, RunStatus.ESCALATED), status
 
-    asyncio.run(_go())
+    live_runs.run(_go())
 
 
 def test_a_paused_run_is_not_readopted_by_the_watchdog() -> None:
@@ -203,7 +206,9 @@ def test_cancel_stops_a_dispatched_stage() -> None:
     stage, so the subagent was never cancelled — `fake.cancelled` stays empty."""
     run, spec = _new_run()
     fake = _HeldSubagents()
-    controller = RunController(run, spec, services=EngineServices(subagents=fake))
+    controller = live_runs.started(
+        RunController(run, spec, services=EngineServices(subagents=fake))
+    )
     sup = _Supervisor(controller)
 
     async def _go() -> None:
@@ -213,7 +218,7 @@ def test_cancel_stops_a_dispatched_stage() -> None:
         await _until(lambda: store.get(run.id).status == RunStatus.CANCELLED)
         assert fake.cancelled == ["sub1"], fake.cancelled
 
-    asyncio.run(_go())
+    live_runs.run(_go())
 
 
 def test_cancelling_a_paused_run_is_applied() -> None:
@@ -221,7 +226,9 @@ def test_cancelling_a_paused_run_is_applied() -> None:
     else the run stays paused forever with a cancel on disk that nothing reads."""
     run, spec = _new_run()
     fake = _HeldSubagents()
-    controller = RunController(run, spec, services=EngineServices(subagents=fake))
+    controller = live_runs.started(
+        RunController(run, spec, services=EngineServices(subagents=fake))
+    )
     sup = _Supervisor(controller)
 
     async def _go() -> None:
@@ -233,7 +240,7 @@ def test_cancelling_a_paused_run_is_applied() -> None:
         await _until(lambda: store.get(run.id).status == RunStatus.CANCELLED)
         assert not store.pause_requested(run.id), "an ended run kept its pause intent"
 
-    asyncio.run(_go())
+    live_runs.run(_go())
 
 
 def test_a_draft_cannot_be_paused() -> None:

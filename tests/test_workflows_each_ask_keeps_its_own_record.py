@@ -24,6 +24,7 @@ import copy
 import json
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.action_providers.base import ActionContext, ActionResult
@@ -36,6 +37,14 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
 
 STEP = "root.children[0]"
 
@@ -129,14 +138,16 @@ def _controller(
     if run is None:
         run = store.create(WorkflowRun(id="", workflow_name=spec["name"], mode="background"))
         store.write_spec(run.id, copy.deepcopy(spec))
-    return RunController(
-        run,
-        copy.deepcopy(spec),
-        services=EngineServices(
-            clock=clock or _Clock(),
-            get_provider=(lambda name: provider) if provider is not None else None,
-            attention_state=state,
-        ),
+    return live_runs.started(
+        RunController(
+            run,
+            copy.deepcopy(spec),
+            services=EngineServices(
+                clock=clock or _Clock(),
+                get_provider=(lambda name: provider) if provider is not None else None,
+                attention_state=state,
+            ),
+        )
     )
 
 

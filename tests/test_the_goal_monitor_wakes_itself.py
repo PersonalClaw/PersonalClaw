@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import live_runs
 import pytest
 
 from personalclaw.llm.events import EVENT_TOOL_CALL
@@ -300,7 +301,7 @@ async def test_the_monitor_wakes_on_the_trigger_it_armed_and_watches_until_the_g
     wstore.write_spec(run.id, spec)
     watchdog = WorkflowWatchdog(None, EngineServices(subagents=manager, cwd=""))
     _attach(monkeypatch, watchdog)
-    controller = await watchdog.launch(run, spec)
+    controller = live_runs.started(await watchdog.launch(run, spec))
 
     # The baseline check ran, armed the first wake, and the run parked on its event gate.
     assert await controller.wait_for_terminal(timeout=30) == RunStatus.NEEDS_INPUT
@@ -343,6 +344,13 @@ async def test_the_monitor_wakes_on_the_trigger_it_armed_and_watches_until_the_g
     assert wstore.get(run.id).status == RunStatus.COMPLETE
     # Every scripted turn was served, each to the stage it was written for.
     assert model.turn_index == len(SCRIPT["turns"])
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture

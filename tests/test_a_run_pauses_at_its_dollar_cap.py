@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw import approval_answer
@@ -27,6 +28,13 @@ from personalclaw.workflows.models import InstanceState, RunBudget, RunStatus, W
 from personalclaw.workflows.step_usage import subagent_usage
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -96,7 +104,9 @@ def _spec(steps: int, name: str = "three-calls") -> dict[str, Any]:
 def _controller(spec: dict[str, Any], provider: Any, **run_kw: Any) -> RunController:
     run = store.create(WorkflowRun(id="", workflow_name=spec["name"], **run_kw))
     store.write_spec(run.id, spec)
-    return RunController(run, spec, services=EngineServices(get_provider=lambda name: provider))
+    return live_runs.started(
+        RunController(run, spec, services=EngineServices(get_provider=lambda name: provider))
+    )
 
 
 class _Supervisor:

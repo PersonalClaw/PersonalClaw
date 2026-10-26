@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import live_runs
 import pytest
 import workflows_controller_shared
 
@@ -45,6 +46,13 @@ from personalclaw.workflows.tick import Limits
 _isolated_home = workflows_controller_shared._isolated_home
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -197,7 +205,7 @@ class TestResumeCache:
     async def _run_once(self, spec, fn, run=None):
         run = run or _make_run(spec)
         run.status = RunStatus.RUNNING
-        c = RunController(run, spec, services=EngineServices(completion=fn))
+        c = live_runs.started(RunController(run, spec, services=EngineServices(completion=fn)))
         for inst in c.instances.values():
             inst.state = InstanceState.PENDING  # re-schedule everything
         await c.run_to_completion(timeout=20)
@@ -505,7 +513,7 @@ class TestWaitAndGates:
             "root": {"kind": "gate", "id": "g", "config": {"kind": "approval", "prompt": "ok?"}},
         }
         run = _make_run(spec)
-        c = RunController(run, spec, services=EngineServices())
+        c = live_runs.started(RunController(run, spec, services=EngineServices()))
         # The gate waits the owner's approval window, so its loop stays alive to time it out:
         # wait for the run to surface the ask, not for a loop that will not end on its own.
         try:
@@ -523,7 +531,7 @@ class TestWaitAndGates:
             "root": {"kind": "wait", "id": "w", "config": {"duration_secs": 300}},
         }
         run = _make_run(spec)
-        c = RunController(run, spec, services=EngineServices())
+        c = live_runs.started(RunController(run, spec, services=EngineServices()))
         await c.start()
         for _ in range(40):
             await asyncio.sleep(0.1)
@@ -536,7 +544,7 @@ class TestWaitAndGates:
         assert on_disk.wake_at > 0, "the deadline was not persisted"
 
         # A fresh controller (a restarted gateway) must still know when to wake it.
-        c2 = RunController(store.get(run.id), spec, services=EngineServices())
+        c2 = live_runs.started(RunController(store.get(run.id), spec, services=EngineServices()))
         assert c2._next_wake_delay() is not None
 
     async def test_a_woken_wait_persists_its_output(self) -> None:
@@ -594,7 +602,7 @@ class TestCancellation:
             },
         }
         run = _make_run(spec)
-        c = RunController(run, spec, services=EngineServices(completion=slow))
+        c = live_runs.started(RunController(run, spec, services=EngineServices(completion=slow)))
         await c.start()
         await asyncio.sleep(0.2)
         # As `service.cancel_run` does: the sticky intent, then a wake so the live loop reads it.
@@ -620,7 +628,7 @@ class TestCancellation:
 
         spec = {"name": "s", "root": {"kind": "infer", "id": "i", "config": {"prompt": "p"}}}
         run = _make_run(spec)
-        c = RunController(run, spec, services=EngineServices(completion=slow))
+        c = live_runs.started(RunController(run, spec, services=EngineServices(completion=slow)))
         await c.start()
         await asyncio.sleep(0.2)
         await c.stop()
@@ -1492,7 +1500,9 @@ class TestStaleProcessAdoption:
         deciding the outcome.
         """
         run = _make_run(SEQ_SPEC, status=RunStatus.RUNNING, started_at=_stamp())
-        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        c = live_runs.started(
+            RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        )
 
         async def stale_import(*a, **k):
             raise ImportError(
@@ -1514,7 +1524,9 @@ class TestStaleProcessAdoption:
         """The guard must not become a blanket swallow: a controller crash that IS about the
         run still terminally fails it, or a broken run waits forever looking busy."""
         run = _make_run(SEQ_SPEC)
-        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        c = live_runs.started(
+            RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        )
 
         async def boom(*a, **k):
             raise RuntimeError("the tick loop is genuinely broken")
@@ -1531,7 +1543,9 @@ class TestStaleProcessAdoption:
         Treating every ImportError as stale would convert real failures into runs that never
         finish — the discriminator is whose module is missing."""
         run = _make_run(SEQ_SPEC)
-        c = RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        c = live_runs.started(
+            RunController(run, SEQ_SPEC, services=EngineServices(completion=_echo()))
+        )
 
         async def missing_dep(*a, **k):
             raise ModuleNotFoundError("No module named 'some_scraper_lib'", name="some_scraper_lib")

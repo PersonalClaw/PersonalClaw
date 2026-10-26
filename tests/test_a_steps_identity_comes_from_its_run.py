@@ -25,6 +25,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.action_providers.artifact_inspect_provider import ArtifactInspectActionProvider
@@ -46,6 +47,14 @@ from personalclaw.workflows.models import (
 from personalclaw.workflows.validator import validate_spec
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
 
 #: The step's identity as a template might write it, naming somewhere else for every key.
 ELSEWHERE: dict[str, str] = {
@@ -559,7 +568,9 @@ async def test_a_steps_question_is_the_question_of_the_step_that_asked_it() -> N
     }
     run = store.create(WorkflowRun(id="", workflow_name=spec["name"]))
     store.write_spec(run.id, spec)
-    controller = RunController(run, spec, services=EngineServices(get_provider=asking.getter))
+    controller = live_runs.started(
+        RunController(run, spec, services=EngineServices(get_provider=asking.getter))
+    )
     await controller.start()
 
     status = await controller.wait_for_terminal(timeout=30)

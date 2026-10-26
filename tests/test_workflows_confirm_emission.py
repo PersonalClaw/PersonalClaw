@@ -24,6 +24,7 @@ than deriving one again (`test_workflows_each_ask_keeps_its_own_record` drives t
 
 import asyncio
 
+import live_runs
 import pytest
 
 from personalclaw.approval_answer import YOU
@@ -72,7 +73,9 @@ async def _park_on_gate(gate_config: dict, run_id: str = "r-1"):
 
     run = WorkflowRun(id=run_id, workflow_name="t")
     wstore.create(run)
-    controller = RunController(run, _spec(gate_config), services=EngineServices())
+    controller = live_runs.started(
+        RunController(run, _spec(gate_config), services=EngineServices())
+    )
     await controller.start()
     for _ in range(80):
         await asyncio.sleep(0.05)
@@ -98,7 +101,7 @@ def test_a_parked_gate_EMITS_a_pending_confirmation():
     async def go():
         await _park_on_gate(APPROVAL)
 
-    asyncio.run(go())
+    live_runs.run(go())
     rows = _rows(CONFIRMATION_PENDING)
     assert len(rows) == 1
     assert rows[0]["node_id"] == "approve"
@@ -117,7 +120,7 @@ def test_a_RE_POLL_does_not_emit_a_second_pending_row():
         gate_answers.ensure_continuation(controller, conts[0].instance_path)
         return before, len(_rows(CONFIRMATION_PENDING))
 
-    before, after = asyncio.run(go())
+    before, after = live_runs.run(go())
     assert (before, after) == (1, 1)
 
 
@@ -125,7 +128,7 @@ def test_the_pending_row_classifies_an_ORDINARY_approval():
     async def go():
         await _park_on_gate(APPROVAL)
 
-    asyncio.run(go())
+    live_runs.run(go())
     assert _rows(CONFIRMATION_PENDING)[0]["confirmation_kind"] == ConfirmationType.APPROVAL.value
 
 
@@ -137,7 +140,7 @@ def test_a_DESTRUCTIVE_gate_is_a_different_confirmation_TYPE():
     async def go():
         await _park_on_gate({**APPROVAL, "risk_category": "destructive"})
 
-    asyncio.run(go())
+    live_runs.run(go())
     assert (
         _rows(CONFIRMATION_PENDING)[0]["confirmation_kind"]
         == ConfirmationType.DESTRUCTIVE_CONFIRM.value
@@ -173,7 +176,7 @@ def test_answering_a_gate_emits_a_PAIRED_resolution():
         controller, conts = await _park_on_gate(APPROVAL)
         controller.resume(conts[0].token, True, by=YOU)
 
-    asyncio.run(go())
+    live_runs.run(go())
     pending = _rows(CONFIRMATION_PENDING)[0]
     resolved = _rows(CONFIRMATION_RESOLVED)[0]
     assert resolved["confirmation_id"] == pending["confirmation_id"]
@@ -186,7 +189,7 @@ def test_an_APPROVAL_records_the_verb_the_boolean_and_the_RESOLVER():
         controller, conts = await _park_on_gate(APPROVAL)
         controller.resume(conts[0].token, True, by=YOU)
 
-    asyncio.run(go())
+    live_runs.run(go())
     row = _rows(CONFIRMATION_RESOLVED)[0]
     assert row["verb"] == "approve"
     assert row["approved"] is True
@@ -201,7 +204,7 @@ def test_a_DENIAL_records_reject_and_false():
         controller, conts = await _park_on_gate(APPROVAL)
         controller.resume(conts[0].token, False, by=YOU)
 
-    asyncio.run(go())
+    live_runs.run(go())
     row = _rows(CONFIRMATION_RESOLVED)[0]
     assert row["verb"] == "reject"
     assert row["approved"] is False
@@ -216,7 +219,7 @@ def test_a_resolution_on_a_channel_names_the_channel():
         controller, conts = await _park_on_gate(APPROVAL)
         controller.resume(conts[0].token, True, by=on_channel("telegram"))
 
-    asyncio.run(go())
+    live_runs.run(go())
     assert _rows(CONFIRMATION_RESOLVED)[0]["resolved_by"] == "channel:telegram"
 
 
@@ -230,7 +233,7 @@ def test_a_LOST_race_emits_NO_resolution():
         second = controller.resume(conts[0].token, True, by=YOU)
         return first, second
 
-    first, second = asyncio.run(go())
+    first, second = live_runs.run(go())
     assert first.get("ok") is True
     assert second.get("ok") is False
     assert len(_rows(CONFIRMATION_RESOLVED)) == 1
@@ -240,7 +243,7 @@ def test_an_unanswered_gate_has_pending_but_NO_resolution():
     async def go():
         await _park_on_gate(APPROVAL)
 
-    asyncio.run(go())
+    live_runs.run(go())
     assert _rows(CONFIRMATION_PENDING)
     assert _rows(CONFIRMATION_RESOLVED) == []
 
@@ -259,7 +262,7 @@ def test_a_parked_gate_OPENS_an_escalation_OUTCOME():
     async def go():
         await _park_on_gate(APPROVAL)
 
-    asyncio.run(go())
+    live_runs.run(go())
     (question,) = outcomes.open_questions(ledger("r-1"))
     assert question.producer == outcomes.PRODUCER_ESCALATION
     # ledger-sourced: the ground truth is an event this run writes itself, so it grades on a box
@@ -283,7 +286,7 @@ def test_a_RE_POLL_does_not_open_a_SECOND_escalation_outcome():
         gate_answers.ensure_continuation(controller, conts[0].instance_path)
         return ledger("r-1")
 
-    assert len(outcomes.open_questions(asyncio.run(go()))) == 1
+    assert len(outcomes.open_questions(live_runs.run(go()))) == 1
 
 
 def test_ANSWERING_the_gate_MEASURES_the_escalation_outcome():
@@ -296,7 +299,7 @@ def test_ANSWERING_the_gate_MEASURES_the_escalation_outcome():
         controller.resume(conts[0].token, True, by=YOU)
         return ledger("r-1")
 
-    events = asyncio.run(go())
+    events = live_runs.run(go())
     (question,) = outcomes.open_questions(events)
     assert outcomes.measure_from_events(question, events) == 1.0
 
@@ -311,7 +314,7 @@ def test_a_DENIED_gate_measures_as_a_LOST_bet_not_an_unreadable_one():
         controller.resume(conts[0].token, False, by=YOU)
         return ledger("r-1")
 
-    events = asyncio.run(go())
+    events = live_runs.run(go())
     (question,) = outcomes.open_questions(events)
     measured = outcomes.measure_from_events(question, events)
     assert measured == 0.0
@@ -365,7 +368,7 @@ def test_the_resolution_cites_the_id_the_ask_was_minted_with():
         controller.resume(conts[0].token, True, by=YOU)
         return minted
 
-    minted = asyncio.run(go())
+    minted = live_runs.run(go())
     assert minted == _rows(CONFIRMATION_PENDING)[0]["confirmation_id"]
     assert _rows(CONFIRMATION_RESOLVED)[0]["confirmation_id"] == minted
 
@@ -397,10 +400,12 @@ def test_the_pending_event_also_reaches_the_LIVE_stream():
         published: list = []
         run = WorkflowRun(id="r-1", workflow_name="t")
         wstore.create(run)
-        controller = RunController(
-            run,
-            _spec(APPROVAL),
-            services=EngineServices(publish=lambda e, b: published.append((e, b))),
+        controller = live_runs.started(
+            RunController(
+                run,
+                _spec(APPROVAL),
+                services=EngineServices(publish=lambda e, b: published.append((e, b))),
+            )
         )
         await controller.start()
         for _ in range(80):
@@ -409,7 +414,7 @@ def test_the_pending_event_also_reaches_the_LIVE_stream():
                 break
         return [e for e, _b in published]
 
-    events = asyncio.run(go())
+    events = live_runs.run(go())
     assert "workflow_confirmation_pending" in events
 
 
@@ -425,10 +430,12 @@ def test_the_needs_input_event_is_STILL_emitted():
         published: list = []
         run = WorkflowRun(id="r-1", workflow_name="t")
         wstore.create(run)
-        controller = RunController(
-            run,
-            _spec(APPROVAL),
-            services=EngineServices(publish=lambda e, b: published.append((e, b))),
+        controller = live_runs.started(
+            RunController(
+                run,
+                _spec(APPROVAL),
+                services=EngineServices(publish=lambda e, b: published.append((e, b))),
+            )
         )
         await controller.start()
         for _ in range(80):
@@ -437,5 +444,5 @@ def test_the_needs_input_event_is_STILL_emitted():
                 break
         return [e for e, _b in published]
 
-    events = asyncio.run(go())
+    events = live_runs.run(go())
     assert "workflow_needs_input" in events

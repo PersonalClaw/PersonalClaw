@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 
+import live_runs
 import pytest
 
 from personalclaw import mcp_workflows as T
@@ -28,6 +29,13 @@ from personalclaw.workflows import service, store
 from personalclaw.workflows.models import RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -163,7 +171,7 @@ class _FakeSupervisor:
         async def fake(prompt, *, use_case="background", output_type=None):
             return "ok"
 
-        c = RunController(run, spec, services=EngineServices(completion=fake))
+        c = live_runs.started(RunController(run, spec, services=EngineServices(completion=fake)))
         self.controllers[run.id] = c
         self.launched.append(run.id)
         await c.start()
