@@ -43,6 +43,11 @@ env:
   UV_PYTHON_PREFERENCE: only-managed
 
 jobs:
+  merge-verdict:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: echo green
   changes:
     # ── The plan ────────────────────────────────────────────────────────────────────────────
     # The changed paths are what this commit changed against main's tip. The planner and its
