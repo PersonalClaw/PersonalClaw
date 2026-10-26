@@ -178,7 +178,15 @@ const GATEWAY_COMMAND = [
   // app-authored surface clean while never having loaded a line of app code.
   '[ -f "$D/apps/e2e-ui-fixture/installed.json" ] && [ -f "$D/apps/e2e-ui-fixture/ui/index.mjs" ] '
     + '|| { echo "PERSONALCLAW_E2E_FATAL: app-UI fixture did not install into $D/apps (cwd $PWD)" >&2; exit 1; }',
-  'PC="../.venv/bin/personalclaw"; [ -x "$PC" ] || PC=personalclaw',
+  // The gateway runs from the job's own venv when run-job names it (PERSONALCLAW_PY, the venv's
+  // interpreter: tools/ci/jobs.py JOB_PYTHON_ENV), and a venv with no `personalclaw` beside it is
+  // refused. Only without it, as a contributor runs the browser specs by hand, from this
+  // checkout's `.venv`, then PATH. A local run's venv is in its work folder, so a new checkout has
+  // no `.venv`, and the bare `personalclaw` was not found either (exit 127, gate proof
+  // 40143285105); a checkout with a `.venv` of its own would have run that, not the job's.
+  'if [ -n "${PERSONALCLAW_PY:-}" ]; then PC="$(dirname "$PERSONALCLAW_PY")/personalclaw"; '
+    + '[ -x "$PC" ] || { echo "PERSONALCLAW_E2E_FATAL: PERSONALCLAW_PY is $PERSONALCLAW_PY, and its venv has no personalclaw at $PC" >&2; exit 1; }; '
+    + 'else PC="../.venv/bin/personalclaw"; [ -x "$PC" ] || PC=personalclaw; fi',
   // Pin the gateway to THIS tree's source. Without it a worktree run boots whatever
   // `personalclaw` is on PATH — the editable install from the MAIN checkout — so the
   // gate silently tests code that is not the code under test. The first

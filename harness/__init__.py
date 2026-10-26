@@ -18,7 +18,8 @@ machine-checked institutional knowledge:
 - ``harness.named_home`` — the one way a committed dev tool names the home it acts on and
   finds that home's gateway; no home named, or the default one, is refused.
 
-The CLI runs on the repo venv (``.venv/bin/python`` at the repo root) when there is one,
+The CLI runs on ``PERSONALCLAW_PY`` when it is set (``tools.ci run-job`` sets it to the job's
+own venv's), then on the repo venv (``.venv/bin/python`` at the repo root) when there is one,
 and otherwise on whatever interpreter invoked it — a git worktree has no ``.venv`` of its
 own, so ``harness.profiles.resolve_python`` decides once for every profile command. See
 ``harness/README.md`` for layout and ``AGENTS.md`` §"Mechanical gotchas" at the repo root

@@ -36,14 +36,16 @@ def test_the_interpreter_is_absolute_and_launchable_from_any_cwd() -> None:
     assert Path(HARNESS_PY).is_file()
 
 
-def test_the_interpreter_prefers_this_trees_venv_then_the_running_process(
-    tmp_path: Path,
+def test_the_interpreter_prefers_the_named_one_then_this_trees_venv_then_the_running_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Both branches of the resolution, so neither can rot unnoticed."""
+    """Every branch of the resolution, so none can rot unnoticed."""
     import sys
 
     from harness.profiles import resolve_python
 
+    # Nothing named: run-job names one for every job's step, so this one is taken out.
+    monkeypatch.delenv("PERSONALCLAW_PY", raising=False)
     # No .venv in the root (the worktree case) → the interpreter already running.
     assert resolve_python(tmp_path) == sys.executable
 
@@ -51,6 +53,11 @@ def test_the_interpreter_prefers_this_trees_venv_then_the_running_process(
     venv_py.parent.mkdir(parents=True)
     venv_py.write_text("#!/bin/sh\n")
     assert resolve_python(tmp_path) == str(venv_py)
+
+    # A named interpreter (run-job's, the job's own venv's) wins over a .venv of the tree's own.
+    named = str(tmp_path / "jobs-venv" / "bin" / "python")
+    monkeypatch.setenv("PERSONALCLAW_PY", named)
+    assert resolve_python(tmp_path) == named
 
 
 def test_shipped_specs_validate_shape() -> None:

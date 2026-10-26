@@ -476,6 +476,26 @@ def test_a_callers_own_cache_folders_are_never_a_local_steps(repo, tmp_path, mon
     assert Path(seen["UV_PROJECT_ENVIRONMENT"]).is_relative_to(cache)
 
 
+def test_a_steps_python_is_its_jobs_own_venvs_in_both_run_modes(repo, tmp_path, monkeypatch):
+    """PERSONALCLAW_PY is the job's venv's interpreter, which the harness and the browser runs'
+    gateway take over a checkout's .venv: the work folder's venv locally, the checkout's .venv
+    (uv's own) on GitHub. A caller's own value never reaches a step."""
+    monkeypatch.setenv("PERSONALCLAW_PY", str(tmp_path / "callers" / "python"))
+    seen = _seen_env(repo, tmp_path, _host(repo))
+    venv = Path(seen["UV_PROJECT_ENVIRONMENT"])
+    assert seen[jobs.JOB_PYTHON_ENV] == str(venv / "bin" / "python")
+    monkeypatch.setenv("UV_PYTHON", "3.12.15")
+    on_github = jobs._cache_env(
+        _job("pinned", toolchain=("uv-sync",), python="3.12.15"), _host(repo, on_github=True)
+    )
+    assert on_github[jobs.JOB_PYTHON_ENV] == str(repo / ".venv" / "bin" / "python")
+    # A job that sets up no venv is given no Python, and the caller's does not reach it either.
+    out = tmp_path / "plain.json"
+    outcome = _run(repo, _job("plain", _dump_env(out)), tmp_path)
+    assert outcome.code == run.OK, outcome.reasons
+    assert jobs.JOB_PYTHON_ENV not in json.loads(out.read_text())
+
+
 def test_on_github_the_caches_are_the_setup_actions_own_folders(repo, tmp_path, monkeypatch):
     """setup-uv sets its cache and Python folders, and setup-node caches the runner's own
     ~/.npm: a step that writes elsewhere leaves setup-uv's cache empty, and its post step red."""

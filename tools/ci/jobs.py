@@ -154,6 +154,16 @@ SANDBOX_HELPER_HOSTED = "github-hosted"
 #: A step that runs the helper itself, as desktop-smoke does on the packed app.
 SANDBOX_HELPER_STEP: tuple[str, ...] = ("sh", "tools/ci/sandbox_helper.sh")
 
+#: The job's own Python, which run-job gives every step of a job that sets up a venv
+#: (:func:`_cache_env`): that venv's interpreter, wherever uv puts it in this run mode. The
+#: harness's smoke scripts (``harness/exemplars/resolve_py.sh``), its profiles
+#: (``harness/profiles.py``) and the browser runs' gateway (``web/playwright.config.ts``) each take
+#: it over a checkout's ``.venv``. A local run's venv is in the work folder, so a new checkout has
+#: no ``.venv``: gate proof 40143285105's exemplar smokes found no Python there, and its gateway
+#: command was not found. A checkout that has one has the contributor's own, which is not the
+#: job's. No catalogue entry may set it (``catalogue.RUN_JOB_SETS``).
+JOB_PYTHON_ENV = "PERSONALCLAW_PY"
+
 #: The `chromium` install's bounds and commands beside :data:`INSTALL_ARGV`'s (#5265,
 #: :func:`install_chromium`): Playwright's build without apt, a check that it starts, and its
 #: system libraries from apt only when that check fails. A hung apt mirror then holds the job for a
@@ -517,7 +527,10 @@ def _cache_env(job: Job, host: Host) -> dict[str, str]:
     there (run 40053059413's exemplar smokes found none in the work folder's). setup-uv
     fails its post step on a cache folder nothing wrote to, which every uv job of a run made with
     the work folder's did (merge.yml run 40053059413). A folder the runner names none for is the
-    work folder's, as here, and so are Playwright's browsers, which no setup action caches."""
+    work folder's, as here, and so are Playwright's browsers, which no setup action caches.
+
+    In both, the venv's own interpreter is the job's Python, given as ``PERSONALCLAW_PY``
+    (:data:`JOB_PYTHON_ENV`), so nothing a step runs looks for it in a checkout's ``.venv``."""
     cache = host.root / WORK / "cache"
     runner = os.environ if host.on_github else {}
     env: dict[str, str] = {}
@@ -529,6 +542,8 @@ def _cache_env(job: Job, host: Host) -> dict[str, str]:
         if not host.on_github:
             env["UV_PROJECT_ENVIRONMENT"] = str(cache / f"venv-{job.python or 'default'}")
             env["UV_VENV_CLEAR"] = "1"
+        venv = Path(env.get("UV_PROJECT_ENVIRONMENT") or host.root / ".venv")
+        env[JOB_PYTHON_ENV] = str(venv / "bin" / "python")
         if job.python and job.python != "image":
             # The job's own Python is the contract: a runner that set up another is refused,
             # never followed, so a record cannot name one Python and have run another.

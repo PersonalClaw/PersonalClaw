@@ -550,10 +550,11 @@ def _value_faults(value: str) -> Iterator[str]:
             )
 
 
-#: What ``run-job`` alone gives a step, from its own reading of the runner: the marker that says
+#: What ``run-job`` alone gives a step: from its own reading of the runner, the marker that says
 #: it runs on a GitHub-hosted Linux runner, given only to the commands that run Electron's setuid
-#: sandbox helper (``tools/ci/jobs.py`` ``SANDBOX_HELPER_ENV``). No entry may set it.
-RUN_JOB_SETS = frozenset({"PCLAW_SANDBOX_HELPER_HOST"})
+#: sandbox helper (``tools/ci/jobs.py`` ``SANDBOX_HELPER_ENV``); and the job's own Python, its
+#: venv's interpreter (``JOB_PYTHON_ENV``). No entry may set either.
+RUN_JOB_SETS = frozenset({"PCLAW_SANDBOX_HELPER_HOST", "PERSONALCLAW_PY"})
 
 
 def _env(fields: _Fields, where: str, raw: object) -> Env:
@@ -569,9 +570,7 @@ def _env(fields: _Fields, where: str, raw: object) -> Env:
         elif run.runner_owns(name):
             fields.fault(where, f"name {name!r} is the runner's: a job may not set it")
         elif name in RUN_JOB_SETS:
-            fields.fault(
-                where, f"name {name!r} is run-job's, from the runner: a job may not set it"
-            )
+            fields.fault(where, f"name {name!r} is run-job's: a job may not set it")
         for fault in _value_faults(value):
             fields.fault(f"{where} {name}", fault)
     return Env(raw)
