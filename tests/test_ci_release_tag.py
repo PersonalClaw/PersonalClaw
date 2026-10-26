@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.ci import breadth_evidence, release_tag, trust
+from tools.ci import breadth_evidence, merge_verdict, release_tag, trust
 
 #: Shaped as the real parser is: postponed annotations and a frozen dataclass, which only load
 #: when the module is registered while it runs.
@@ -192,6 +192,13 @@ def test_a_refused_ref_is_reported() -> None:
         release_tag.create("owner/project", "v1.2.3", COMMIT, post)
 
 
+def _green_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The controller's verdict on the commit's tree is green (its own tests are below)."""
+    monkeypatch.setattr(
+        release_tag, "controller_green", lambda repository, commit, get, *, repo: "PR #1"
+    )
+
+
 def _green_breadth(monkeypatch: pytest.MonkeyPatch) -> None:
     """The commit's breadth is green (its own tests are below)."""
     monkeypatch.setattr(
@@ -207,6 +214,7 @@ def _green_runs(monkeypatch: pytest.MonkeyPatch, commit: str) -> None:
     monkeypatch.setattr(release_tag, "github_get", lambda token: green)
     monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
     _green_breadth(monkeypatch)
+    _green_verdict(monkeypatch)
 
 
 def test_main_refuses_to_create_without_the_controllers_token(
@@ -419,6 +427,7 @@ def test_main_reads_the_gate_before_it_creates_and_a_red_run_creates_nothing(
     post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/v1.2.3"}))
     monkeypatch.setattr(release_tag, "github_post", lambda token: post)
     _green_breadth(monkeypatch)
+    _green_verdict(monkeypatch)
     red = FakeGet(merge_yml=[_run("merge.yml", sha=commit, conclusion="failure")])
     tokens: list[str] = []
     monkeypatch.setattr(release_tag, "github_get", lambda token: tokens.append(token) or red)
@@ -507,6 +516,7 @@ def test_main_creates_no_tag_while_a_release_runs(
     )
     monkeypatch.setattr(release_tag, "github_get", lambda token: running)
     _green_breadth(monkeypatch)
+    _green_verdict(monkeypatch)
     monkeypatch.setenv("GH_TOKEN", "an-app-token")
     monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
     argv = ["--tag", "v1.2.3", "--commit", commit, "--repo", str(planted["repo"])]
@@ -915,6 +925,7 @@ def test_main_reads_breadth_before_it_creates_a_release_tag_and_a_rehearsal_read
 
     monkeypatch.setattr(release_tag, "github_get", lambda token: answers)
     monkeypatch.setattr(release_tag, "github_download", lambda token: breadth.download)
+    _green_verdict(monkeypatch)
     monkeypatch.setenv("GH_TOKEN", "an-app-token")
     monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
     argv = ["--tag", "v1.2.3", "--commit", commit, "--repo", str(planted["repo"])]
@@ -1039,3 +1050,223 @@ def test_a_dispatch_on_a_rehearsal_tag_re_measures_only_an_excused_red(
     alone = BreadthApi(planted)
     alone.run(70, _record(70, alone.tree), event="workflow_dispatch")
     assert "re-measure" in _breadth_refusal(planted, alone)
+
+
+# ── the merge controller's green verdict on the tagged tree (#3911) ──────────────────────────
+#
+# A squash lands a pull request's head tree on main as a new commit, and the controller judged
+# that head, not the commit. So the gate finds the one pull request that landed the commit, reads
+# the verdict on its head through merge_verdict.verify, and holds the receipt's tree to the
+# commit's own tree, read from the checkout.
+
+HEAD = "f" * 40
+APP = 5444147
+PR = 4321
+
+
+def _pull(**overrides: object) -> dict[str, object]:
+    pull: dict[str, object] = {
+        "number": PR,
+        "state": "closed",
+        "merged_at": "2026-10-24T12:00:00Z",
+        "merge_commit_sha": None,  # filled in with the commit
+        "head": {"sha": HEAD},
+        "base": {"ref": "main", "repo": {"full_name": REPOSITORY}},
+    }
+    pull.update(overrides)
+    return pull
+
+
+def _verdict_run(
+    run_id: int,
+    receipt: dict[str, object],
+    *,
+    app: int = APP,
+    conclusion: str | None = "success",
+    status: str = "completed",
+) -> dict[str, object]:
+    return {
+        "id": run_id,
+        "name": merge_verdict.CHECK_NAME,
+        "head_sha": HEAD,
+        "status": status,
+        "conclusion": conclusion,
+        "app": {"id": app, "slug": "personalclaw-ci-controller"},
+        "output": {"title": "green", "summary": "", "text": merge_verdict.receipt_block(receipt)},
+    }
+
+
+class VerdictApi:
+    """The answers merge_verdict reads, by path; a path it does not plant is a 404."""
+
+    def __init__(
+        self,
+        planted: dict[str, object],
+        *,
+        pulls: list[dict[str, object]] | None = None,
+        runs: list[dict[str, object]] | None = None,
+        head_tree: str | None = None,
+        required: list[dict[str, object]] | None = None,
+        fail: str = "",
+    ) -> None:
+        repo = planted["repo"]
+        assert isinstance(repo, Path)
+        self.commit = str(planted["readme"])
+        self.tree = _git(repo, "rev-parse", f"{self.commit}^{{tree}}")
+        self.receipt: dict[str, object] = {
+            "controller_revision": str(planted["first"]),
+            "head_sha": HEAD,
+            "tree_oid": self.tree,
+            "external_revisions": {},
+            "toolchain": {"python": "3.13.16", "uv": "0.13.1"},
+            "evidence_digests": {"ci-record-lint": "sha256:" + "b" * 64},
+        }
+        listed = runs if runs is not None else [_verdict_run(90, self.receipt)]
+        checks = [{"context": "merge-verdict", "integration_id": APP}]
+        self.answers: dict[str, object] = {
+            f"/repos/{REPOSITORY}/commits/{self.commit}/pulls?per_page=100": (
+                pulls if pulls is not None else [_pull(merge_commit_sha=self.commit)]
+            ),
+            f"/repos/{REPOSITORY}/rules/branches/main?per_page=100": [
+                {
+                    "type": "required_status_checks",
+                    "parameters": {
+                        "required_status_checks": required if required is not None else checks
+                    },
+                }
+            ],
+            f"/repos/{REPOSITORY}/commits/{HEAD}": {
+                "commit": {"tree": {"sha": head_tree or self.tree}}
+            },
+            f"/repos/{REPOSITORY}/commits/{HEAD}/check-runs?check_name=merge-verdict&filter=all"
+            "&per_page=100&page=1": {"total_count": len(listed), "check_runs": listed},
+        }
+        self.fail = fail
+        self.paths: list[str] = []
+
+    def __call__(self, path: str) -> object:
+        self.paths.append(path)
+        if self.fail and self.fail in path:
+            raise OSError("HTTP Error 502: Bad Gateway")
+        if path not in self.answers:
+            raise OSError(f"HTTP Error 404: Not Found ({path})")
+        return self.answers[path]
+
+
+def _verdict(planted: dict[str, object], api: VerdictApi) -> str:
+    repo = planted["repo"]
+    assert isinstance(repo, Path)
+    return release_tag.controller_green(REPOSITORY, api.commit, api, repo=repo)
+
+
+def _verdict_refusal(planted: dict[str, object], api: VerdictApi) -> str:
+    with pytest.raises(trust.Refused) as refused:
+        _verdict(planted, api)
+    return str(refused.value)
+
+
+def test_a_commit_whose_pull_requests_head_the_controller_judged_green_may_be_tagged(
+    planted: dict[str, object],
+) -> None:
+    api = VerdictApi(planted)
+    said = _verdict(planted, api)
+    assert f"#{PR}" in said and HEAD in said and "check run 90" in said, said
+    assert api.paths[0] == f"/repos/{REPOSITORY}/commits/{api.commit}/pulls?per_page=100"
+
+
+def test_a_commit_no_pull_request_landed_is_refused(planted: dict[str, object]) -> None:
+    commit = str(planted["readme"])
+    for pulls in (
+        [],
+        # Open, or merged as another commit, or into another branch or repository: not this one.
+        [_pull(merged_at=None, merge_commit_sha=commit)],
+        [_pull(merge_commit_sha="c" * 40)],
+        [_pull(merge_commit_sha=commit, base={"ref": "side", "repo": {"full_name": REPOSITORY}})],
+        [_pull(merge_commit_sha=commit, base={"ref": "main", "repo": {"full_name": "a/fork"}})],
+    ):
+        said = _verdict_refusal(planted, VerdictApi(planted, pulls=pulls))
+        assert "no pull request landed" in said and commit in said, said
+
+
+def test_a_commit_two_pull_requests_claim_is_refused(planted: dict[str, object]) -> None:
+    commit = str(planted["readme"])
+    two = [_pull(merge_commit_sha=commit), _pull(number=PR + 1, merge_commit_sha=commit)]
+    assert "more than one" in _verdict_refusal(planted, VerdictApi(planted, pulls=two))
+
+
+def test_a_red_verdict_behind_an_older_green_is_refused(planted: dict[str, object]) -> None:
+    receipt = VerdictApi(planted).receipt
+    runs = [_verdict_run(91, receipt, conclusion="failure"), _verdict_run(90, receipt)]
+    said = _verdict_refusal(planted, VerdictApi(planted, runs=runs))
+    assert "91" in said and "failure" in said and f"#{PR}" in said, said
+    pending = [
+        _verdict_run(90, receipt),
+        _verdict_run(92, receipt, status="in_progress", conclusion=None),
+    ]
+    assert "in_progress" in _verdict_refusal(planted, VerdictApi(planted, runs=pending))
+
+
+def test_a_green_from_another_poster_is_refused(planted: dict[str, object]) -> None:
+    receipt = VerdictApi(planted).receipt
+    said = _verdict_refusal(
+        planted, VerdictApi(planted, runs=[_verdict_run(90, receipt, app=15368)])
+    )
+    assert "no merge-verdict check run by App" in said, said
+
+
+def test_a_green_on_another_tree_than_the_commits_is_refused_naming_both(
+    planted: dict[str, object],
+) -> None:
+    """The head's tree, as the receipt and the API agree on it, is not what main holds: the pull
+    request landed with a tree the controller never judged."""
+    other = "d" * 40
+    receipt = {**VerdictApi(planted).receipt, "tree_oid": other}
+    api = VerdictApi(planted, runs=[_verdict_run(90, receipt)], head_tree=other)
+    said = _verdict_refusal(planted, api)
+    assert other in said and api.tree in said, said
+
+
+def test_no_verdict_counts_until_mains_rule_requires_it(planted: dict[str, object]) -> None:
+    """main-protect names the App that is believed; until it requires merge-verdict, none is."""
+    said = _verdict_refusal(planted, VerdictApi(planted, required=[]))
+    assert "no required merge-verdict check" in said, said
+
+
+@pytest.mark.parametrize("part", ["/pulls", "/rules/", f"/commits/{HEAD}", "/check-runs"])
+def test_an_answer_the_verdict_gate_cannot_read_is_refused_not_passed(
+    planted: dict[str, object], part: str
+) -> None:
+    assert "cannot read" in _verdict_refusal(planted, VerdictApi(planted, fail=part))
+
+
+def test_main_reads_the_verdict_before_it_creates_and_a_red_one_creates_nothing(
+    planted: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The plant: a commit whose push run is green, and whose verdict is red."""
+    commit = str(planted["readme"])
+    post = FakePost((201, {"sha": TAG_OBJECT}), (201, {"ref": "refs/tags/v1.2.3"}))
+    monkeypatch.setattr(release_tag, "github_post", lambda token: post)
+    _green_breadth(monkeypatch)
+    runs = FakeGet(merge_yml=[_run("merge.yml", sha=commit)])
+    red = VerdictApi(
+        planted, runs=[_verdict_run(90, VerdictApi(planted).receipt, conclusion="failure")]
+    )
+
+    def answers(api: VerdictApi) -> object:
+        return lambda path: runs(path) if "/actions/workflows/" in path else api(path)
+
+    monkeypatch.setattr(release_tag, "github_get", lambda token: answers(red))
+    monkeypatch.setenv("GH_TOKEN", "an-app-token")
+    monkeypatch.setenv("RUNS_TOKEN", "the-jobs-token")
+    argv = ["--tag", "v1.2.3", "--commit", commit, "--repo", str(planted["repo"])]
+    for more in (["--create"], ["--create", "--rehearsal"]):
+        assert release_tag.main([*argv, "--repository", REPOSITORY, *more]) == 1
+        assert "failure" in capsys.readouterr().out
+    assert post.calls == []
+    monkeypatch.setattr(release_tag, "github_get", lambda token: answers(VerdictApi(planted)))
+    assert release_tag.main([*argv, "--repository", REPOSITORY, "--create"]) == 0
+    out = capsys.readouterr().out
+    assert f"the controller's verdict on its tree is green: #{PR}" in out, out
+    assert len(post.calls) == 2
