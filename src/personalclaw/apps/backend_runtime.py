@@ -532,9 +532,11 @@ class BackendSupervisor:
         needle = str(entry)
         pids: list[tuple[int, int]] = []
         try:
-            out = os.popen(
+            # Closing the pipe waits for ``ps``, so no child outlives the lookup.
+            with os.popen(  # noqa: S605 — static command
                 "ps -Awwo pid=,ppid=,command= 2>/dev/null"
-            ).read()  # noqa: S605 — static command
+            ) as ps:
+                out = ps.read()
         except Exception:  # noqa: BLE001 — never let the probe break the caller
             return pids
         for line in out.splitlines():
