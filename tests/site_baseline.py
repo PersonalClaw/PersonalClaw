@@ -60,12 +60,15 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Any
+
+import nested_pytest
 
 #: The repository's root. This module sits beside the suite, not in ``tests/rails``, so that both
 #: its own tests in the suite and the rails that hold the real tree can import it.
@@ -555,9 +558,10 @@ def main(argv: list[str] | None = None) -> int:
         rails = list(dict.fromkeys(str(line.fields.get("rail")) for line in lines))
         rails.append(REGISTRY_RAIL)
     env = {**os.environ, PRUNE_VARIABLE: "1"}
-    return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", *rails], cwd=root, env=env
-    ).returncode
+    # A basetemp of its own, so the run never cleans other pytest sessions' trees (nested_pytest).
+    with tempfile.TemporaryDirectory(prefix="site-baseline-") as scratch:
+        argv = [*nested_pytest.argv(scratch), "-q", *rails]
+        return subprocess.run(argv, cwd=root, env=env).returncode
 
 
 if __name__ == "__main__":

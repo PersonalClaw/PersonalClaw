@@ -19,11 +19,11 @@ from __future__ import annotations
 import ast
 import datetime
 import subprocess
-import sys
 import types
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import nested_pytest
 import pytest
 import quarantine
 import security_census
@@ -434,9 +434,7 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     env = {"PATH": "/usr/bin:/bin", "FAIL_THE_UNLISTED": "1" if fail_unlisted else "0"}
     command = [
-        sys.executable,
-        "-m",
-        "pytest",
+        *nested_pytest.argv(root),
         "-q",
         "-rA",
         "-o",

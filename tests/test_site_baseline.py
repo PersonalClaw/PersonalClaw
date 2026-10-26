@@ -598,5 +598,5 @@ def test_prune_runs_every_registered_rail_in_prune_mode(
     assert site_baseline.main(["--prune", "--root", str(repo)]) == 0
     [(argv, prune)] = ran
     assert prune == "1"
-    assert argv[1:4] == ["-m", "pytest", "-q"]
-    assert argv[4:] == [RAIL, site_baseline.REGISTRY_RAIL]
+    assert argv[1:3] == ["-m", "pytest"] and argv[3].startswith("--basetemp="), argv
+    assert argv[4:] == ["-q", RAIL, site_baseline.REGISTRY_RAIL]

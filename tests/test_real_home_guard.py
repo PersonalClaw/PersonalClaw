@@ -19,6 +19,7 @@ import threading
 import types
 from pathlib import Path
 
+import nested_pytest
 import pytest
 import real_home_guard
 from real_home_guard import Guard, RealHomeAccessError
@@ -460,7 +461,14 @@ def _inner_session(
         os.pathsep
     )
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--color=no", "-p", "no:cacheprovider", str(work)],
+        [
+            *nested_pytest.argv(tmp_path),
+            "-q",
+            "--color=no",
+            "-p",
+            "no:cacheprovider",
+            str(work),
+        ],
         cwd=work,
         env=env,
         capture_output=True,
@@ -995,7 +1003,14 @@ def test_end_to_end_a_scratch_HOME_does_not_retarget_the_guard(tmp_path) -> None
         os.pathsep
     )
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--color=no", "-p", "no:cacheprovider", str(work)],
+        [
+            *nested_pytest.argv(tmp_path),
+            "-q",
+            "--color=no",
+            "-p",
+            "no:cacheprovider",
+            str(work),
+        ],
         cwd=work,
         env=env,
         capture_output=True,

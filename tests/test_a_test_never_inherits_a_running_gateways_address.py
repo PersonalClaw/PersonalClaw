@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import env_guard
+import nested_pytest
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,14 +36,21 @@ def test_no_test_starts_with_a_running_gateways_address() -> None:
 
 
 @pytest.mark.timeout(50)
-def test_a_run_started_from_a_gateways_shell_does_not_inherit_its_address() -> None:
+def test_a_run_started_from_a_gateways_shell_does_not_inherit_its_address(tmp_path) -> None:
     """The rail in place: a run of the test above, started with every kind of gateway variable
     set, still finds none of them."""
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
     env.update(_PLANTED)
     one = f"{Path(__file__)}::test_no_test_starts_with_a_running_gateways_address"
     ran = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", "0"]
+        [
+            *nested_pytest.argv(tmp_path),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-n",
+            "0",
+        ]
         + ["--no-cov", "--color=no", one],
         cwd=ROOT,
         env=env,

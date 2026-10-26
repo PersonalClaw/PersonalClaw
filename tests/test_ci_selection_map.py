@@ -20,6 +20,7 @@ import tomllib
 from pathlib import Path
 
 import coverage
+import nested_pytest
 import pytest
 from coverage import sqldata
 
@@ -246,7 +247,14 @@ def _covered(root: Path, workers: str) -> dict[str, set[str]]:
     """Run the scratch suite under coverage with per-test contexts: the contexts of each file
     that recorded a line (coverage also lists a source file no one imported, with none)."""
     done = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-n", workers]
+        [
+            *nested_pytest.argv(root),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-n",
+            workers,
+        ]
         + ["--cov=pkg", "--cov-context=test", "--cov-report=", "tests"],
         cwd=root,
         env=_scratch_env(root),

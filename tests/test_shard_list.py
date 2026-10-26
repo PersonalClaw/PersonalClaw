@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import subprocess
-import sys
 from pathlib import Path
+
+import nested_pytest
 
 TESTS = Path(__file__).resolve().parent
 
@@ -56,7 +57,13 @@ def _collect(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     """`tests` is named, as the workflow names it: a conftest's option registers only when its
     folder is on the command line."""
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
+        [
+            *nested_pytest.argv(root),
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ]
         + ["-o", "addopts=", "tests", *args],
         cwd=root,
         capture_output=True,
@@ -106,7 +113,14 @@ def _run(
     import os
 
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts="]
+        [
+            *nested_pytest.argv(root),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-o",
+            "addopts=",
+        ]
         + ["tests", *args],
         cwd=root,
         capture_output=True,

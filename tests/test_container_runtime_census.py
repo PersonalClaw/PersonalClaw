@@ -29,6 +29,7 @@ from types import SimpleNamespace
 from xml.etree import ElementTree
 
 import container_runtime
+import nested_pytest
 import pytest
 
 TESTS = Path(__file__).resolve().parent
@@ -426,7 +427,13 @@ def test_the_tests_that_drive_a_runtime_skip_without_the_opt_in(tmp_path):
     )
     report = tmp_path / "report.xml"
     done = subprocess.run(
-        [sys.executable, "-m", "pytest", "-n0", "-q", "--no-cov", "--color=no"]
+        [
+            *nested_pytest.argv(tmp_path),
+            "-n0",
+            "-q",
+            "--no-cov",
+            "--color=no",
+        ]
         + [f"--junitxml={report}", *_GATED],
         cwd=TESTS.parent,
         env=env,

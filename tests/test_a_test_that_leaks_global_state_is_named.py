@@ -23,6 +23,7 @@ import threading
 import time
 from pathlib import Path
 
+import nested_pytest
 import pytest
 import state_leak_guard as slg
 
@@ -121,9 +122,7 @@ def _pytest(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
     return subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *nested_pytest.argv(tmp_path),
             "-o",
             "addopts=",
             "-p",

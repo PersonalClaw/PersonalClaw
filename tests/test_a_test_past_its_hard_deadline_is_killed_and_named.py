@@ -10,13 +10,13 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import sys
 import textwrap
 import threading
 import time
 from pathlib import Path
 
 import hard_deadline
+import nested_pytest
 import pytest
 
 TESTS = Path(__file__).resolve().parent
@@ -47,9 +47,7 @@ def _run(tmp_path: Path, tests: str, *args: str) -> tuple[subprocess.CompletedPr
     began = time.monotonic()
     ran = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *nested_pytest.argv(tmp_path),
             "-p",
             "no:cacheprovider",
             "-q",

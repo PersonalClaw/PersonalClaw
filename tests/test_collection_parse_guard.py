@@ -23,6 +23,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 TESTS = Path(__file__).resolve().parent
@@ -116,7 +117,12 @@ def _collect(root: Path, *, workers: str = "0") -> subprocess.CompletedProcess[s
     # A cold store, as on a CI runner: Hypothesis's scan then parses the planted file itself.
     env["HYPOTHESIS_STORAGE_DIRECTORY"] = str(root / ".hypothesis-store")
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-qq", f"-n{workers}"]
+        [
+            *nested_pytest.argv(root),
+            "--collect-only",
+            "-qq",
+            f"-n{workers}",
+        ]
         + ["-p", "no:cacheprovider"]
         + ["-p", "collection_parse_guard", "tests"],
         cwd=root,

@@ -8,9 +8,9 @@ network is not one, and a module with tests of both kinds is mixed and gets spli
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 from tools.ci import rails_census, shards
@@ -423,7 +423,13 @@ def pytest_collection_finish(session):
 
 def _collected(root: Path, *args: str) -> set[str]:
     done = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
+        [
+            *nested_pytest.argv(root),
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+        ]
         + ["-o", "addopts=", "tests/rails", *args],
         cwd=root,
         capture_output=True,

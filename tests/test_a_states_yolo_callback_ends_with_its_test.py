@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import textwrap
 from pathlib import Path
+
+import nested_pytest
 
 _TESTS_DIR = Path(__file__).resolve().parent
 
@@ -63,9 +64,7 @@ def test_the_test_after_a_state_was_made_runs_none_of_its_yolo_callbacks(tmp_pat
     # This suite's own conftest, as a plugin, over the two files in this order and on one process.
     proc = subprocess.run(
         [
-            sys.executable,
-            "-m",
-            "pytest",
+            *nested_pytest.argv(tmp_path),
             "-o",
             "addopts=",
             "-p",

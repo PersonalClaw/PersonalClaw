@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import nested_pytest
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
@@ -34,6 +35,7 @@ def test_conftest_refuses_a_package_imported_from_another_worktree(tmp_path: Pat
     env["PYTHONPATH"] = os.pathsep.join((str(_REPO / "src"), str(invoking / "tests")))
     env["PERSONALCLAW_HOME"] = str(tmp_path / "home")
     pytest_args = [
+        nested_pytest.basetemp(tmp_path),
         "-n0",
         "--no-cov",
         "--collect-only",

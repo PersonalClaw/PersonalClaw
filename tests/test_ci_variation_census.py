@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 import textwrap
 import time
 from pathlib import Path
 
+import nested_pytest
 import pytest
 import table_rows
 
@@ -93,7 +93,14 @@ _LISTED = [
 def _pytest(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:randomly", *args],
+        [
+            *nested_pytest.argv(root),
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:randomly",
+            *args,
+        ],
         cwd=root,
         env=env,
         capture_output=True,

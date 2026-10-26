@@ -15,10 +15,10 @@ import ast
 import gc
 import os
 import subprocess
-import sys
 import types
 from pathlib import Path
 
+import nested_pytest
 import pytest
 import source_index
 from rails_repo import REPO
@@ -192,7 +192,13 @@ def _run_with_one_second_limit(tmp_path: Path, registered: bool) -> subprocess.C
     _write(tmp_path, "test_rail.py", _A_RAIL)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "COV_"))}
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "--timeout=1"],
+        [
+            *nested_pytest.argv(tmp_path),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "--timeout=1",
+        ],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -249,7 +255,13 @@ def test_collecting_the_copy_rail_parses_nothing_from_test_code(tmp_path):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "COV_"))}
     env["PYTHONPATH"] = os.pathsep.join([str(tmp_path), env.get("PYTHONPATH", "")])
     done = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-qq", "--no-cov", "-n0"]
+        [
+            *nested_pytest.argv(tmp_path),
+            "--collect-only",
+            "-qq",
+            "--no-cov",
+            "-n0",
+        ]
         + [
             "-p",
             "count_parses",
