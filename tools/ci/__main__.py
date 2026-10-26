@@ -61,6 +61,12 @@ def _replay(argv: list[str]) -> int:
     return main_replay.main(argv)
 
 
+def _replay_shadow(argv: list[str]) -> int:
+    from . import main_replay
+
+    return main_replay.shadow_main(argv)
+
+
 def _verify_check_run(argv: list[str]) -> int:
     # Imported when called: the other commands, which every CI run starts, load neither the
     # verifier nor tools/ci/trust.py.
@@ -88,6 +94,7 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "release-tag": _release_tag,
     "release-targets": release_targets.main,
     "replay": _replay,
+    "replay-shadow": _replay_shadow,
     "report": report.main,
     "run": jobs.run_main,
     "run-job": jobs.run_job_main,

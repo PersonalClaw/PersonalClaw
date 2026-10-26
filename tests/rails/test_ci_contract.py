@@ -13037,15 +13037,10 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
     for job, steps in _TIER_STEPS.items()
 }
 #: The listed steps a tier workflow may run or leave out, by job: each is held to its listed lines
-#: when it runs. A step a row names lands in two merges (#4584 step 4): these rows first, then the
-#: workflow. merge.yml's push replay in shadow (#3919 (b1)) is one.
+#: when it runs. A step a row names lands in two merges (#4584 step 4): these rows first, with
+#: the step here, then the workflow, which takes it out of here. None waits today.
 _TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {
-    _PLAN_JOB: frozenset(
-        {
-            ("the push's replay, in shadow, beside the tree check (merge.yml's)",),
-            ("the pull request's changed paths, for the flake rule",),
-        }
-    ),
+    _PLAN_JOB: frozenset({("the pull request's changed paths, for the flake rule",)}),
     _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT}),
 }
 #: Listed steps of which each tier workflow's job runs exactly one: its results job's verdict,
@@ -13194,8 +13189,7 @@ _KEYS_LINE = """          printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"\n
 _PARTNER_PUBLISH = '          echo "apps-partner=$apps" | tee -a "$GITHUB_OUTPUT"\n'
 _RUN_JOB_STEP = f"        run: {_RUN_JOB_LINE}\n"
 
-#: merge.yml's push replay in shadow (#3919 (b1)), as its step reads: an optional step of the
-#: changes job, which a tier workflow may run, only as listed, or leave out.
+#: merge.yml's push replay in shadow (#3919 (b1)), as its step reads in the changes job.
 _REPLAY_SHADOW_STEP = """      - name: the push's replay, in shadow, beside the tree check
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
@@ -13216,7 +13210,6 @@ _REPLAY_SHADOW_STEP = """      - name: the push's replay, in shadow, beside the 
             echo "::warning title=replay shadow::the push's replay did not answer (exit $rc), so this push has no shadow decisions. Nothing else changes."
           fi
 """  # noqa: E501
-_CATALOGUE_CHECK_STEP = "      - name: main's tools/ci checks this run's catalogue\n"
 
 
 def _tier_run(block: str) -> str:
@@ -13310,13 +13303,13 @@ THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
                       "      - run: uv sync --locked --extra dev\n"
                       "      - name: Upload the entry's record\n",
                       expect="pr.yml job test is a stage job and runs"),
-        _plant("merge.yml's changes running the push's replay in shadow, as listed, passes",
-               _MERGE_YML, _CATALOGUE_CHECK_STEP, _REPLAY_SHADOW_STEP + _CATALOGUE_CHECK_STEP,
-               fails=False),
+        _plant("the push's replay in shadow left out of merge.yml's changes",
+               _MERGE_YML, _REPLAY_SHADOW_STEP, "",
+               expect="beside the tree check (merge.yml's)\" for the changes job, and no tier"
+               " workflow's changes runs it"),
         _plant("the push's replay in shadow with a line of its own",
-               _MERGE_YML, _CATALOGUE_CHECK_STEP,
-               _REPLAY_SHADOW_STEP.replace("rc=0\n", "rc=0\n          rm -rf ~\n", 1)
-               + _CATALOGUE_CHECK_STEP,
+               _MERGE_YML, _REPLAY_SHADOW_STEP,
+               _REPLAY_SHADOW_STEP.replace("rc=0\n", "rc=0\n          rm -rf ~\n", 1),
                expect="merge.yml job changes runs 'rm -rf ~'"),
         Control("a listed line no job runs any more: the catalogue check removed",
                 _cut(_MERGE_YML, "      - name: main's tools/ci checks this run's catalogue\n",

@@ -2456,14 +2456,15 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
 ### A push to main's replay
 
 `tools/ci/main_replay.py` holds what a push to `main` may replay from its pull request's run
-(#3919), one job at a time, where `tools/ci/tree_tested.py` answers for the whole run. Nothing
-calls it yet: `merge.yml`'s push stage will, once #3915's flip gives that workflow its push
-trigger and #3910's controller App posts the merge verdict. `decide` replays nothing unless the
-head's merge verdict counts, so calling it before then would run the whole merge tier on every
-tested push.
+(#3919), one job at a time, where `tools/ci/tree_tested.py` answers for the whole run. The push
+runs it in shadow (below): it decides, and nothing it decides changes what the push runs.
 
-`python -m tools.ci replay --plan <ids.json> --controller-revision <sha> --receipt <file>
-[--image LABEL=IMAGE ...] [--toolchain NAME=VERSION ...]` is the push stage's call. It reads the
+`python -m tools.ci replay (--plan <ids.json> | --tier <tier>) --controller-revision <sha>
+--receipt <file> [--root <main>] [--git-dir <history>] [--image LABEL=IMAGE ...]
+[--toolchain NAME=VERSION ...] [--beside-tested true|false]` is the push stage's call. `--tier`
+plans every job of that tier of main's catalogue (`--root`); `--git-dir` is a repository holding
+main's history, where the merge verdict's controller revision is held to main, `--root` when it
+names none. It reads the
 run's own environment (`GITHUB_EVENT_NAME`, `GITHUB_REF`, `GITHUB_REPOSITORY`, `GITHUB_SHA`, and
 `BEFORE`, the commit the push replaced), with `GH_TOKEN` for the API. It takes the planned job ids
 from `main`'s catalogue, and the image each runner label runs now as the push read it. It reads
@@ -2522,6 +2523,24 @@ workflow's triggers are. A guard the row cannot evaluate fails it, never reads a
   and the sha256 of the plan, of attempt 1's job list and of each replayed verdict file), the
   source run, the images the push compared, and each job's decision, why, and the image a
   replayed pass ran on.
+
+**The shadow (#3919 (b1)).** On every push to `main`, `merge.yml`'s `changes` job runs `replay`
+from main's own `tools/ci` (the copy its plan step fetched), over the whole merge tier, with the
+image its own ubuntu-24.04 label runs and `--beside-tested` set to the tree check's answer. A
+history of main's commits alone (`git fetch --filter=tree:0`, into a bare repository of its own)
+holds the controller revision to main. It prints and summarizes each job's decision beside what
+the push did (`main_replay.tally`):
+- on a tested push, which runs `[tier.merge] every_push` and carries every other job, each
+  carried key the replay would run instead, with why;
+- on an untested push, which runs every job, each key the replay would have carried.
+It uploads the receipt as `replay-receipt`. The step never fails the job: a replay that cannot
+answer is a warning, and the push stands on the tree check's answer either way. No macOS image
+is named yet, so a macOS key always reads as run. Two of the shadow's pushes, chosen when no
+pull request is in flight, also run the whole tier live: `python -m tools.ci replay-shadow
+--receipt <the push's receipt> --records <the live run's records>` (`main_replay.shadow`) reads
+each key the receipt replayed against its live record. The push skips nothing until both live
+checks agree and the decisions show no replay of a job whose inputs moved (#3919's amendment of
+2026-10-26).
 
 `tests/test_ci_main_replay.py` plants the API answers and the verdict files, each written by
 `verdict.job_record`, and the quarantined one by `run-job` itself.
