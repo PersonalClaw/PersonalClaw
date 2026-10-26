@@ -16,10 +16,12 @@ Its rules:
   GitHub's `require_extra_approval_for_unattributed_changes` is off, as nothing in classic
   protection asked for it.
 - `required_linear_history`, `non_fast_forward` (no force push) and `deletion`.
+- `required_status_checks`: the one required check, `merge-verdict`, bound to the merge
+  controller's App (the one `release-tag-creation` names), on a branch up to date with `main`.
+  Live since 2026-10-25 22:55 UTC (#3910).
 
-#3910 adds the one required check, `merge-verdict`, bound to the merge controller's App, with
-branches up to date. Classic branch protection is gone; `tests/rails/test_ci_rulesets_tree.py`
-holds the file to these rules and to its empty bypass list.
+Classic branch protection is gone; `tests/rails/test_ci_rulesets_tree.py` holds the file to these
+rules and to its empty bypass list.
 
 **Apply or change it** (the maintainer, with an admin login), from the repository's root:
 

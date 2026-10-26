@@ -4,8 +4,10 @@ Every file is one ruleset in the ruleset API's request shape, named as its file 
 bypass actor. ``main-protect`` holds ``main`` and only ``main``, is active, and carries the rules
 that keep every change on the pull-request path for everyone: a pull request with every
 conversation resolved and stale reviews dismissed, merged without a merge commit, linear history,
-no force push and no deletion. The weekly settings report compares the live rulesets with these
-files; this rail keeps the files themselves from losing a rule.
+no force push and no deletion, and one required check, ``merge-verdict``, bound to the controller
+App that ``release-tag-creation`` names, on a branch up to date with ``main`` (#3910). The weekly
+settings report compares the live rulesets with these files; this rail keeps the files themselves
+from losing a rule.
 
 ``release-tags`` refuses moving and deleting a release tag, with no bypass actor.
 ``release-tag-creation`` refuses creating one, and is the one ruleset with a bypass actor: exactly
@@ -33,9 +35,13 @@ _MAIN = "main-protect"
 _TAGS, _CREATION = "release-tags", "release-tag-creation"
 _TAG_REF = {"include": ["refs/tags/v*"], "exclude": []}
 _TAG_RULES = {"update", "deletion", "non_fast_forward"}
-_MAIN_RULES = {"deletion", "non_fast_forward", "required_linear_history", "pull_request"}
-#: Rules #3910 adds to main-protect beside these; any other type is a change this rail must name.
-_LATER_RULES = {"required_status_checks"}
+_MAIN_RULES = {
+    "deletion",
+    "non_fast_forward",
+    "required_linear_history",
+    "pull_request",
+    "required_status_checks",
+}
 
 
 def _rulesets(where: Path = _DIR) -> dict[str, dict[str, Any]]:
@@ -123,7 +129,7 @@ def _problems(
     missing = _MAIN_RULES - set(rules)
     if missing:
         found.append(f"{_MAIN} lacks {sorted(missing)}")
-    extra = set(rules) - _MAIN_RULES - _LATER_RULES
+    extra = set(rules) - _MAIN_RULES
     if extra:
         found.append(f"{_MAIN} has unnamed rules {sorted(extra)}")
     pr = rules.get("pull_request") or {}
@@ -134,6 +140,17 @@ def _problems(
     methods = pr.get("allowed_merge_methods")
     if methods != ["squash"]:
         found.append(f"{_MAIN} allows merge methods {methods!r}, not squash alone")
+    checks = rules.get("required_status_checks") or {}
+    if checks.get("strict_required_status_checks_policy") is not True:
+        found.append(f"{_MAIN} lets a branch behind main merge")
+    every = {**(pending if pending is not None else _rulesets(_PENDING)), **rulesets}
+    actors = (every.get(_CREATION) or {}).get("bypass_actors") or [{}]
+    app = actors[0].get("actor_id") if isinstance(actors[0], dict) else None
+    required = checks.get("required_status_checks")
+    if required != [{"context": "merge-verdict", "integration_id": app}] or not _real_id(app):
+        found.append(
+            f"{_MAIN} requires {required!r}, not merge-verdict from the controller's App ({app!r})"
+        )
     return found
 
 
@@ -155,6 +172,13 @@ def _drop_rule(kind: str) -> Callable[[dict[str, Any]], None]:
 def _pr(key: str, value: object) -> Callable[[dict[str, Any]], None]:
     def plant(data: dict[str, Any]) -> None:
         _rule(data, "pull_request")["parameters"][key] = value
+
+    return plant
+
+
+def _checks(key: str, value: object) -> Callable[[dict[str, Any]], None]:
+    def plant(data: dict[str, Any]) -> None:
+        _rule(data, "required_status_checks")["parameters"][key] = value
 
     return plant
 
@@ -193,6 +217,23 @@ def _pr(key: str, value: object) -> Callable[[dict[str, Any]], None]:
         (_pr("allowed_merge_methods", ["rebase"]), "merge methods"),
         (_pr("allowed_merge_methods", []), "merge methods"),
         (lambda d: d.update(name="main"), "names the ruleset 'main'"),
+        (_drop_rule("required_status_checks"), "lacks ['required_status_checks']"),
+        (_checks("strict_required_status_checks_policy", False), "behind main"),
+        (_checks("required_status_checks", []), "not merge-verdict from the controller's App"),
+        (
+            _checks("required_status_checks", [{"context": "merge-verdict"}]),
+            "not merge-verdict from the controller's App",
+        ),
+        (
+            _checks(
+                "required_status_checks", [{"context": "merge-verdict", "integration_id": 15368}]
+            ),
+            "not merge-verdict from the controller's App",
+        ),
+        (
+            _checks("required_status_checks", [{"context": "results", "integration_id": 5444147}]),
+            "not merge-verdict from the controller's App",
+        ),
     ],
 )
 def test_a_planted_edit_of_main_protect_fails(
@@ -202,21 +243,6 @@ def test_a_planted_edit_of_main_protect_fails(
     plant(rulesets[_MAIN])
     found = _problems(rulesets)
     assert any(says in p for p in found), found
-
-
-def test_squash_only_and_a_required_check_still_pass() -> None:
-    rulesets = copy.deepcopy(_rulesets())
-    _pr("allowed_merge_methods", ["squash"])(rulesets[_MAIN])
-    rulesets[_MAIN]["rules"].append(
-        {
-            "type": "required_status_checks",
-            "parameters": {
-                "strict_required_status_checks_policy": True,
-                "required_status_checks": [{"context": "merge-verdict", "integration_id": 1}],
-            },
-        }
-    )
-    assert _problems(rulesets) == []
 
 
 def test_a_missing_main_protect_fails() -> None:
@@ -324,6 +350,7 @@ def test_the_creation_ruleset_may_wait_with_no_app_id_but_not_go_live_without_on
     applied, pending = _both()
     _to_pending(applied, pending)
     _actor(applied, pending)["actor_id"] = None
-    assert _problems(applied, pending) == []
+    # main-protect's required check names the App, so only the tag rulesets are judged here.
+    assert _tag_problems(applied, pending) == []
     applied[_CREATION] = pending.pop(_CREATION)
     assert any("applied with no App id" in p for p in _problems(applied, pending))
