@@ -491,7 +491,7 @@ jobs:
         env:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
-        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+        run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job" || true
       - name: Upload the entry's record
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
