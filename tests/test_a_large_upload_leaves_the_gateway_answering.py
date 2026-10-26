@@ -255,7 +255,10 @@ class _NoCpu:
     def snapshot(self) -> SimpleNamespace:
         """Every thread's count (Linux), or every thread's CPU time and run state with the
         process's count (macOS), and the time it was taken: before the reads, for the first of
-        two snapshots, so that what lies between two of them is never shorter than it was."""
+        two snapshots, so that what lies between two of them is never shorter than it was. And
+        ``ready_at``, read just before the call that reads the process's count, with no other call
+        to the kernel between: a window timed from one ``ready_at`` to another holds each wait for
+        a CPU the count does (:class:`_Window`)."""
         at = time.monotonic()
         if self.source.startswith("Linux"):
             counts = {}
@@ -265,11 +268,14 @@ class _NoCpu:
                         counts[int(thread)] = int(schedstat.read().split()[1]) / 1e9
                 except (FileNotFoundError, ProcessLookupError):
                     pass  # a thread that ended meanwhile
+            done = time.monotonic()
             return SimpleNamespace(
-                at=at, ready=0.0, threads=counts, ended=0, ending=False, done=time.monotonic()
+                at=at, ready_at=done, ready=0.0, threads=counts, ended=0, ending=False, done=done
             )
         if self.source == "none":
-            return SimpleNamespace(at=at, ready=0.0, threads={}, ended=0, ending=False, done=at)
+            return SimpleNamespace(
+                at=at, ready_at=at, ready=0.0, threads={}, ended=0, ending=False, done=at
+            )
         pid, info, threads = os.getpid(), _ProcThreadInfo(), {}
         listed = self._libsystem.proc_pidinfo(pid, 28, 0, self._ids, ctypes.sizeof(self._ids))
         ids = self._ids[: max(0, listed) // 8]
@@ -279,6 +285,7 @@ class _NoCpu:
                 used = (info.pth_user_time + info.pth_system_time) / 1e9
                 threads[thread] = (used, info.pth_run_state)
         usage, task = _RusageInfoV4(), _ProcTaskInfo()
+        ready_at = time.monotonic()  # the commpage's clock: no call to the kernel
         if self._libsystem.proc_pid_rusage(pid, 4, ctypes.byref(usage)) != 0:
             raise OSError(ctypes.get_errno(), "proc_pid_rusage")
         size = ctypes.sizeof(task)  # PROC_PIDTASKINFO
@@ -292,6 +299,7 @@ class _NoCpu:
         ending = len(threads) < len(ids) or task.pti_threadnum > len(threads)
         return SimpleNamespace(
             at=at,
+            ready_at=ready_at,
             ready=ready * self._seconds,
             threads=threads,
             ended=ended,
@@ -320,6 +328,58 @@ class _NoCpu:
             used = now[0] - was[0] if was and now else 0.0
             others += max(0.0, between - used)
         return max(0.0, then.ready - first.ready - others)
+
+
+class _Window:
+    """One stretch of the loop thread's time, a step or a health check's answer: its wall time, its
+    CPU time, and the time the loop thread spent in it ready to run with no CPU (:class:`_NoCpu`).
+
+    Each end of the wall time is read beside the read of the time ready, with no call to the kernel
+    between them. A wait for a CPU that falls due lands where the thread comes back from the kernel,
+    and the probe's own reads are such calls (the CPU clock, Linux's count, each of macOS's
+    snapshot's): placed so, a wait at one of them is inside both the wall time and the time ready,
+    or outside both. Breadth's Linux runner (run 40259756916, and 40181486016 before) had the CPU
+    clock's call between the wall time's end and the count, and the count's own call between the
+    count and the wall time's start: it left 0.225 s out of a step's 0.313 s that held a 0.2 s
+    wait to read, which can hold none, and counted the step 0.088 s. Read the other way round, with
+    the counts inside the wall time and those calls too, every wait at them was counted in the step,
+    and a step the runner took was counted over the bound (0.324 s of 0.510 s, on a loaded Mac)."""
+
+    def __init__(self, no_cpu: "_NoCpu", threads: set[int]) -> None:
+        self.no_cpu, self.threads = no_cpu, threads
+        # The CPU clock first: its call is outside the window.
+        self.cpu = time.thread_time()
+        # Then the wall time and, beside it, the time ready: Linux's count (a wait at its own call
+        # is after both, so inside the window and in the count), or macOS's first snapshot, timed
+        # from just before its call that reads the count.
+        self.began = time.monotonic()
+        self.own = no_cpu.loop_waited()
+        self.first = None
+        if self.own is None:
+            self.first = no_cpu.snapshot()
+            self.began = self.first.ready_at
+
+    def end(self, *, counted_from: float = 0.0) -> tuple[float, float, float]:
+        """The window's wall time, its CPU time and the time ready left out of it. On macOS that
+        is read only for a window of *counted_from* or longer (a shorter one is wall time)."""
+        waited = 0.0
+        if self.own is not None:
+            # The wall time ends, then Linux's count is read beside it: a wait at the count's own
+            # call is after both, so outside the window and outside the count.
+            ended = time.monotonic()
+            now = self.no_cpu.loop_waited()
+            # The step that ends :meth:`_Probe.during` closes the file before it ends: it is
+            # counted in wall time.
+            waited = max(0.0, now - self.own) if now is not None else 0.0
+        elif time.monotonic() - self.began >= counted_from:
+            # macOS's second snapshot: the window ends just before its call that reads the count.
+            then = self.no_cpu.snapshot()
+            ended = then.ready_at
+            waited = self.no_cpu.waited(self.first, then, self.threads)
+        else:
+            ended = time.monotonic()
+        # The CPU clock last: its call is outside the window.
+        return ended - self.began, time.thread_time() - self.cpu, waited
 
 
 class _Probe:
@@ -366,10 +426,8 @@ class _Probe:
             if threading.get_ident() != loop_thread:
                 return real(handle)
             try:
-                no_cpu = probe.no_cpu
-                own = no_cpu.loop_waited()
-                first = no_cpu.snapshot() if own is None else None
-                began, cpu = time.monotonic(), time.thread_time()
+                # The step's window: its reads of the time ready inside its wall time (_Window).
+                window = _Window(probe.no_cpu, {threading.get_native_id()})
             except BaseException:
                 # An exception raised in the probe's own work, as a timeout's alarm is wherever
                 # it lands, must not drop the loop's callback: the loop has already taken it off
@@ -381,15 +439,7 @@ class _Probe:
             try:
                 return real(handle)
             finally:
-                wall = time.monotonic() - began
-                cpu = time.thread_time() - cpu
-                waited, now = 0.0, no_cpu.loop_waited()
-                if own is not None:
-                    # The step that ends :meth:`during` closes the file before it ends: it is
-                    # counted in wall time.
-                    waited = max(0.0, now - own) if now is not None else 0.0
-                elif wall >= _COUNTED:
-                    waited = no_cpu.waited(first, no_cpu.snapshot(), {threading.get_native_id()})
+                wall, cpu, waited = window.end(counted_from=_COUNTED)
                 took = max(wall - waited, cpu)
                 probe.worst_step_wall = max(probe.worst_step_wall, wall)
                 probe.waited_for_a_cpu += waited
@@ -417,6 +467,16 @@ class _Probe:
         finally:
             self.no_cpu.close()
 
+    async def _timed_answer(self, answer) -> None:
+        """One health check's answer, *answer* awaited, counted as :meth:`during` counts each: in
+        a window whose reads of the time ready lie inside its wall time (:class:`_Window`), less
+        the loop thread's own time ready, never less than its CPU time."""
+        window = _Window(self.no_cpu, {threading.get_native_id()})
+        await answer()
+        wall, cpu, waited = window.end()
+        self.slowest_answer = max(self.slowest_answer, wall - waited, cpu)
+        self.slowest_answer_wall = max(self.slowest_answer_wall, wall)
+
     async def _during(self, work):
         stop = asyncio.Event()
         started = finished = 0.0
@@ -429,22 +489,14 @@ class _Probe:
                 self.worst_gap = max(self.worst_gap, now - last)
                 last = now
 
+        async def healthz() -> None:
+            r = await self.client.get("/api/healthz")
+            await r.read()
+            assert r.status == 200
+
         async def ask() -> None:
-            loop = {threading.get_native_id()}
             while not stop.is_set():
-                own = self.no_cpu.loop_waited()
-                first = self.no_cpu.snapshot() if own is None else None
-                asked, cpu = time.monotonic(), time.thread_time()
-                r = await self.client.get("/api/healthz")
-                await r.read()
-                assert r.status == 200
-                now, cpu = time.monotonic(), time.thread_time() - cpu
-                if own is not None:
-                    waited = max(0.0, self.no_cpu.loop_waited() - own)
-                else:
-                    waited = self.no_cpu.waited(first, self.no_cpu.snapshot(), loop)
-                self.slowest_answer = max(self.slowest_answer, now - asked - waited, cpu)
-                self.slowest_answer_wall = max(self.slowest_answer_wall, now - asked)
+                await self._timed_answer(healthz)
                 if started and not finished:
                     self.answered_during += 1
                 await asyncio.sleep(0.01)
@@ -986,6 +1038,235 @@ async def test_a_process_stopped_while_the_loop_is_idle_does_not_fail_the_probe(
     assert stop.stopped, "premise: the process was stopped"
     assert probe.worst_gap >= _STOPPED, f"premise: the tick counted the stop; {probe.says()}"
     assert probe.worst_step < _BOUND, f"the stop was counted as a step; {probe.says()}"
+
+
+#: The step breadth's Linux runner counted short (run 40259756916): a 0.2 s wait to read, the
+#: time it then waited for a CPU once woken, and one wait for a CPU more, at an edge of the step.
+_WOKEN_AND_READY, _AT_AN_EDGE = 0.113, 0.112
+
+
+class _AStepsReads:
+    """The clocks and the loop thread's time ready with no CPU, as one step's reads see them.
+
+    Its callback holds a wait of *block*, asleep and so never ready, then *ready* waiting for a
+    CPU, and uses 1 ms of CPU. A wait for a CPU of :data:`_AT_AN_EDGE` falls due where the thread
+    comes back from the kernel: at each of the probe's calls before the callback (``edge="start"``),
+    at each after it (``"end"``), or at every one (``"every"``). The wall clock is the
+    vDSO's or the commpage's, and calls nothing. ``source`` is the kernel's: ``"linux"`` reads the
+    thread's own count in one call, ``"macos"`` the process's in a snapshot of several, the count
+    read by the one in the middle."""
+
+    def __init__(
+        self, edge: str, source: str, *, block: float = _PLANTED, ready: float = _WOKEN_AND_READY
+    ) -> None:
+        self.edge, self.source, self.block, self.callback_ready = edge, source, block, ready
+        self.t = self.cpu = self.ready = 0.0
+        self.ran = False
+
+    def _back_from_the_kernel(self) -> None:
+        if self.edge == "every" or (self.edge == "end") == self.ran:
+            self.t += _AT_AN_EDGE
+            self.ready += _AT_AN_EDGE
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def thread_time(self) -> float:
+        cpu = self.cpu
+        self._back_from_the_kernel()
+        return cpu
+
+    def loop_waited(self) -> float | None:
+        if self.source != "linux":
+            return None  # macOS has no count of the thread's own: nothing is called
+        ready = self.ready
+        self._back_from_the_kernel()
+        return ready
+
+    def snapshot(self) -> SimpleNamespace:
+        at = self.t
+        self._back_from_the_kernel()  # the thread list and each thread's
+        ready_at, ready = self.t, self.ready
+        self._back_from_the_kernel()  # the process's count
+        self._back_from_the_kernel()  # the task's
+        return SimpleNamespace(at=at, ready_at=ready_at, ready=ready, done=self.t)
+
+    def waited(self, first, then, _threads) -> float:
+        return then.ready - first.ready
+
+    def callback(self) -> None:
+        self.t += self.block
+        self.t += self.callback_ready
+        self.ready += self.callback_ready
+        self.cpu += 0.001
+        self.ran = True
+
+
+def _counted(reads: _AStepsReads) -> float:
+    """The step as :class:`_Window` counts it, its clocks being *reads*."""
+    with (
+        patch.object(time, "monotonic", reads.monotonic),
+        patch.object(time, "thread_time", reads.thread_time),
+    ):
+        window = _Window(reads, set())
+        reads.callback()
+        wall, cpu, waited = window.end(counted_from=_COUNTED)
+    return max(wall - waited, cpu)
+
+
+def _counted_the_old_way(reads: _AStepsReads) -> float:
+    """Planted: the order the probe had, the time ready read before the clocks start and after
+    they end, with the CPU clock's call between the wall time's end and the count."""
+    own = reads.loop_waited()
+    first = reads.snapshot() if own is None else None
+    began, cpu = reads.monotonic(), reads.thread_time()
+    reads.callback()
+    wall, cpu = reads.monotonic() - began, reads.thread_time() - cpu
+    now = reads.loop_waited()
+    waited = now - own if own is not None else reads.waited(first, reads.snapshot(), set())
+    return max(wall - waited, cpu)
+
+
+def _counted_with_the_reads_inside(reads: _AStepsReads) -> float:
+    """Planted: the counts read inside the wall time, every probe call of the kernel with them."""
+    began, cpu = reads.monotonic(), reads.thread_time()
+    own = reads.loop_waited()
+    first = reads.snapshot() if own is None else None
+    reads.callback()
+    now = reads.loop_waited()
+    waited = now - own if own is not None else reads.waited(first, reads.snapshot(), set())
+    wall, cpu = reads.monotonic() - began, reads.thread_time() - cpu
+    return max(wall - waited, cpu)
+
+
+@pytest.mark.parametrize("source", ["linux", "macos"])
+@pytest.mark.parametrize("edge", ["start", "end"])
+def test_a_wait_for_a_cpu_at_a_steps_edge_is_never_left_out_of_it(edge, source):
+    """A wait for a CPU at one of the probe's own calls of the kernel, at an edge of a step that
+    held a 0.2 s block, was taken off the step though its wall time never held it: the planted
+    order counts the step 0.088 s, as breadth did."""
+    old = _counted_the_old_way(_AStepsReads(edge, source))
+    if source == "linux":
+        assert (
+            abs(old - (_PLANTED - _AT_AN_EDGE)) < 1e-9
+        ), f"premise: breadth's 0.088s, not {old:.3f}s"
+    assert old < _BOUND, f"premise: the planted order counts the block under the bound: {old:.3f}s"
+    took = _counted(_AStepsReads(edge, source))
+    assert took >= _PLANTED - 1e-9, (
+        f"the step that held a {_PLANTED}s block was counted {took:.3f}s: a wait for a CPU outside "
+        "its wall time was left out of it"
+    )
+
+
+@pytest.mark.parametrize("source", ["linux", "macos"])
+def test_a_wait_for_a_cpu_at_the_probes_own_calls_is_never_counted_in_a_step(source):
+    """A step the runner held, with no block in it, and a wait for a CPU at every one of the
+    probe's own calls of the kernel: each wait is inside both the wall time and the time ready, or
+    outside both, and the step is counted for its CPU time. Planted with the counts read inside the
+    wall time, those waits were counted in the step (0.324 s of 0.510 s, on a loaded Mac)."""
+
+    def starved() -> _AStepsReads:
+        return _AStepsReads("every", source, block=0.0, ready=0.3)
+
+    inside = _counted_with_the_reads_inside(starved())
+    assert inside >= _BOUND, f"premise: the planted order counts the waits: {inside:.3f}s"
+    took = _counted(starved())
+    assert took < _BOUND, (
+        f"a step that held no block was counted {took:.3f}s: a wait for a CPU at the probe's own "
+        "calls was counted in it"
+    )
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS's snapshot reads the process's count")
+def test_macos_snapshot_reads_its_clock_just_before_the_call_that_reads_the_count():
+    """``ready_at`` is read with no call to the kernel between it and ``proc_pid_rusage``: a wait
+    for a CPU at any other of the snapshot's calls is then on one side of both."""
+    no_cpu, calls = _NoCpu(), []
+    kernel, clock = no_cpu._libsystem, time.monotonic
+
+    class Recorded:
+        def __getattr__(self, name):
+            real = getattr(kernel, name)
+
+            def call(*args):
+                calls.append(f"{name}:{args[1]}" if name == "proc_pidinfo" else name)
+                return real(*args)
+
+            return call
+
+    def monotonic() -> float:
+        calls.append("clock")
+        return clock()
+
+    no_cpu._libsystem = Recorded()
+    with patch.object(time, "monotonic", monotonic):
+        seen = no_cpu.snapshot()
+    at = calls.index("proc_pid_rusage")
+    assert calls[at - 1] == "clock", f"a call between ready_at and the count: {calls}"
+    assert calls.count("proc_pid_rusage") == 1 and "proc_pidinfo:28" in calls[:at], calls
+    assert seen.at <= seen.ready_at <= seen.done, seen
+
+
+def test_a_window_without_a_threads_own_count_runs_from_one_snapshots_ready_at_to_the_next():
+    """Where the kernel keeps no count of the loop thread's own (macOS), the window's wall time is
+    from the first snapshot's ``ready_at`` to the second's, not from the clock around them."""
+
+    class Snapshots:
+        def __init__(self) -> None:
+            self.taken = 0
+
+        def loop_waited(self) -> None:
+            return None
+
+        def snapshot(self) -> SimpleNamespace:
+            self.taken += 1
+            return SimpleNamespace(ready_at=10.0 * self.taken, ready=0.0)
+
+        def waited(self, first, then, _threads) -> float:
+            return 0.0
+
+    with (
+        patch.object(time, "monotonic", lambda: 15.0),
+        patch.object(time, "thread_time", lambda: 0.0),
+    ):
+        window = _Window(Snapshots(), set())
+        wall, _cpu, _waited = window.end(counted_from=_COUNTED)
+    assert (
+        window.began == 10.0
+    ), f"the window does not start at the first snapshot's ready_at: {window.began}"
+    assert wall == 10.0, f"the window does not end at the second snapshot's ready_at: {wall}"
+
+
+def _answered(reads: _AStepsReads) -> float:
+    """A health check's answer as :meth:`_Probe._timed_answer` counts it, its clocks being *reads*,
+    and the answer holding what the step above holds. The coroutine is driven by hand: it awaits
+    nothing, and no event loop reads the clocks meanwhile."""
+    probe = _Probe(None, asking=False)
+    probe.no_cpu = reads
+
+    async def answer() -> None:
+        reads.callback()
+
+    with (
+        patch.object(time, "monotonic", reads.monotonic),
+        patch.object(time, "thread_time", reads.thread_time),
+    ):
+        timed = probe._timed_answer(answer)
+        with pytest.raises(StopIteration):
+            timed.send(None)
+    return probe.slowest_answer
+
+
+@pytest.mark.parametrize("source", ["linux", "macos"])
+@pytest.mark.parametrize("edge", ["start", "end"])
+def test_a_wait_for_a_cpu_at_an_answers_edge_is_never_left_out_of_it(edge, source):
+    """The health check's answer is timed in the same window as a step, and so is never counted
+    short by a wait for a CPU outside it (the step's test above has the planted order)."""
+    took = _answered(_AStepsReads(edge, source))
+    assert took >= _PLANTED - 1e-9, (
+        f"an answer that waited on a {_PLANTED}s block was counted {took:.3f}s: a wait for a CPU "
+        "outside its wall time was left out of it"
+    )
 
 
 def test_an_exception_in_the_probes_own_work_still_runs_the_loops_callback():
