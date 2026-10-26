@@ -145,12 +145,12 @@ reason = "the masking census over every workflow and script, and 11 planted cont
 [[mark]]
 site = "tests/rails/test_ci_supply_chain_contract.py::ROW_TIMEOUTS[run-install]"
 cap = 90
-reason = "101 planted controls, each the row's own supply-chain rules over a scaffold copy of the tree's files; 121 s on CI before #5362 ran only the row's rules, 9.5 s on this machine after (2026-10-24)"
+reason = "101 planted controls, each the row's own supply-chain rules over the tree's files; 121 s on CI before #5362 ran only the row's rules, then 11.6 s on this machine with a scaffold copy for each control, 3.4 s planting each in one scaffold (load 14) and 21 s beside its siblings at -n 2 at load 45 (2026-10-24)"
 
 [[mark]]
 site = "tests/rails/test_ci_supply_chain_contract.py::ROW_TIMEOUTS[run-install-scripts]"
 cap = 40
-reason = "57 planted controls, each the row's own supply-chain rules over a scaffold copy of the tree's files; 68 s on CI before #5362 ran only the row's rules, 5.7 s on this machine after (2026-10-24)"
+reason = "57 planted controls, each the row's own supply-chain rules over the tree's files; 68 s on CI before #5362 ran only the row's rules, then 5.4 s on this machine with a scaffold copy for each control, 1.8 s planting each in one scaffold (load 14) and 12 s beside its siblings at -n 2 at load 45 (2026-10-24)"
 
 [[mark]]
 site = "tests/rails/test_agent_safety_rules_census_tree.py::test_every_site_that_names_its_agent_hands_it_its_own_instructions"
