@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 from . import (
     audit,
+    bisect_pollution,
     catalogue,
     catalogue_check,
     fetch,
@@ -77,6 +78,7 @@ def _verify_check_run(argv: list[str]) -> int:
 
 COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "audit": audit.main,
+    "bisect-pollution": bisect_pollution.main,
     "catalogue-check": catalogue_check.main,
     "contract": _contract,
     "explain": catalogue.explain_main,

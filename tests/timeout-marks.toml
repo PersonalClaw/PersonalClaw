@@ -783,3 +783,8 @@ reason = "the select import graph over the whole tree (about 4,700 modules), par
 site = "tests/rails/test_main_contract_over_a_head_tree.py::_TREE"
 cap = 150
 reason = "each plant lays out the committed tree as a worktree (9,239 files) and runs one test of one of main's contract rails over it, before and after its edit; 5.5 s at a load of 9, and at a load of 22 the checkout alone took 28.7 s, 3.4 s of it CPU and the rest waiting on the disk, of a plant's ~36 s; a plant past 60 s timed out on a Mac at a load of about 25 (2026-10-27)"
+
+[[mark]]
+site = "tests/test_a_test_left_failing_by_another_is_traced_to_it.py::test_a_planted_polluter_is_found_in_at_most_12_pytest_runs"
+cap = 120
+reason = "11 pytest runs over a planted tree of 256 tests, each a fresh interpreter; 17 s here at a load of 38 (2026-10-26)"

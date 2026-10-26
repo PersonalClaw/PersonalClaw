@@ -2882,8 +2882,7 @@ worker that turns red later.
 
 Not read yet: files a test writes outside its temporary paths. Under xdist every worker writes
 to one tree, so a per-test listing would charge one worker's writes to another worker's test;
-the real-home guard already fails writes to the real home. The bisect tool comes later in
-#3949.
+the real-home guard already fails writes to the real home.
 
 ### The randomized-order leg
 
@@ -2913,7 +2912,28 @@ report for each seed (taken before any fence restored), and the shard's file lis
 worker's own sequence is its order file. Under `--dist worksteal` a worker runs a share of the
 seed's order and then tests it steals from the tail of another's, so
 `pytest -n 0 tests --shard-list <shard.txt> --random-order-seed <seed>`, which reruns the
-seed's whole order in one process, runs no one worker's sequence.
+seed's whole order in one process, runs no one worker's sequence. `--replay-order <file>` runs
+one: exactly the tests the file lists, in its order, in one process. The file is a worker's
+order file or one node id a line, and a listed test the run did not collect stops it.
+
+### Finding the test that left another failing
+
+`python -m tools.ci bisect-pollution <nodeid> --orders <folder>` (`tools/ci/bisect_pollution.py`)
+names the test that left another failing, from a red shard's `random-order-<shard>` artifact. It
+reads the failing test's worker's order file (`--seed` and `--worker` pick one when the test ran
+in more than one) and replays that worker's tests with `pytest -n 0 --replay-order`:
+
+1. the failing test alone: if it fails there, nothing before it is to blame;
+2. every test its worker ran before it, then it: if it passes, the sequence does not repeat the
+   failure;
+3. half of the tests before it, then it, keeping whichever half still fails it, until one is
+   left;
+4. that one, then the failing test, when no run has yet shown the pair failing.
+
+So *n* earlier tests take at most `2 + ceil(log2 n)` runs, and one more when the last is
+unproven: 512 take at most 12. A failure that needs two earlier tests together shows as the
+last pair passing, and is said so. Each run has a `--basetemp` and a JUnit report of its own,
+and only the failing test's result moves the search. `--out` writes the finding as JSON.
 
 ## The release manifest
 

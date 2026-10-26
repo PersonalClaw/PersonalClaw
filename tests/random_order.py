@@ -17,7 +17,11 @@ A failing worker's own sequence is its order file. Under ``--dist worksteal`` a 
 share of the seed's order and then tests it steals from the tail of another's, so
 ``pytest -n 0 tests --shard-list <list> --random-order-seed <seed>``, which reruns the seed's
 whole order in one process, runs no one worker's sequence: it puts tests that ran on different
-workers into one process.
+workers into one process. ``--replay-order FILE`` runs one: exactly the tests the file lists, in
+its order, in one process. The file is a worker's order file, or one node id a line, and a listed
+test that was not collected stops the run, since a replay that drops a test is not that order.
+``tools/ci/bisect_pollution.py`` replays a failing worker's tests to find the one that left it
+failing.
 """
 
 from __future__ import annotations
@@ -53,6 +57,23 @@ def addoption(parser) -> None:
         help="run the modules, and the tests within each, in an order drawn from this seed "
         "(tests/random_order.py)",
     )
+    parser.addoption(
+        "--replay-order",
+        type=Path,
+        default=None,
+        help="run exactly the tests this file lists, in its order, in one process: a worker's "
+        "order file, or one node id a line (tests/random_order.py)",
+    )
+
+
+def replayed(text: str) -> list[str]:
+    """The node ids *text* lists, in order: an order file's lines (JSON with ``nodeid`` and
+    ``position``, read by position) or one node id a line."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if lines and all(line.startswith("{") for line in lines):
+        rows = sorted((json.loads(line) for line in lines), key=lambda row: int(row["position"]))
+        return [str(row["nodeid"]) for row in rows]
+    return lines
 
 
 def _module(nodeid: str) -> str:
@@ -128,7 +149,42 @@ def _is_controller_of_workers(config) -> bool:
     return bool(numprocesses) and dist != "no"
 
 
+class Replay:
+    """Runs exactly the listed tests, in the listed order."""
+
+    def __init__(self, nodeids: list[str]) -> None:
+        self.nodeids = nodeids
+
+    @pytest.hookimpl(trylast=True)
+    def pytest_collection_modifyitems(self, config, items: list[pytest.Item]) -> None:
+        by_id: dict[str, list[pytest.Item]] = {}
+        for item in items:
+            by_id.setdefault(item.nodeid, []).append(item)
+        missing = [nodeid for nodeid in self.nodeids if nodeid not in by_id]
+        if missing:
+            raise pytest.UsageError(
+                f"--replay-order lists {len(missing)} test(s) this run did not collect, first "
+                f"{missing[0]!r}: collect the files they are in"
+            )
+        listed = set(self.nodeids)
+        dropped = [item for item in items if item.nodeid not in listed]
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
+        items[:] = [item for nodeid in dict.fromkeys(self.nodeids) for item in by_id[nodeid]]
+
+
 def configure(config) -> None:
     seed = config.getoption("--random-order-seed")
+    replay = config.getoption("--replay-order")
+    if replay is not None:
+        if seed is not None:
+            raise pytest.UsageError("--replay-order runs the order it is given: drop the seed")
+        if _is_controller_of_workers(config) or getattr(config, "workerinput", None) is not None:
+            raise pytest.UsageError("--replay-order runs in one process: pass -n 0")
+        try:
+            nodeids = replayed(replay.read_text(encoding="utf-8"))
+        except (OSError, ValueError, KeyError) as exc:
+            raise pytest.UsageError(f"--replay-order could not read {replay}: {exc}") from None
+        config.pluginmanager.register(Replay(nodeids), "random-order-replay")
     if seed is not None:
         config.pluginmanager.register(Plugin(config, seed), "random-order")
