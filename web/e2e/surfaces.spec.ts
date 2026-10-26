@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { ROUTES, SETTINGS_ROUTES, VIEW_ROUTES, NON_NAV_ROUTES, SUBSTATE_ROUTES, THEMES, type Theme } from './routes'
 import { seedTheme, gotoRoute, assertMounted, OPENERS } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
-import { BASELINED_STEPS, runMatrix, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
+import { BASELINED_STEPS, runMatrix, stepVerdict, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
 import { STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
 
 // ── The UI quality check: every surface, once per theme, every check ────────────────────────────
@@ -34,8 +34,12 @@ import { STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedR
 // fonts render at 200% and in contrast (#3905). So the set is made in one place, the Refresh visual
 // baselines workflow (`.github/workflows/visual-baselines.yml`), which runs this spec with
 // `--update-snapshots` on the runner against the pinned image's browser (`e2e/run-pinned.mjs`), and
-// a reviewer reads its artifact as a diff. Outside CI a missing baseline is written on first run,
-// under this machine's own suffix, which `web/.gitignore` keeps out of the tree.
+// a reviewer reads its artifact as a diff. On that run a step held to a baseline does not fail on
+// what differs from the old one: that difference is what the run writes (`stepVerdict`), and the
+// workflow lists each file it changed. A step held to zero, a crash or a file it cannot write still
+// fails it, and the workflow then runs this spec again as a compare, which holds the dark theme to
+// the tree the light run wrote. Outside CI a missing baseline is written on first run, under this
+// machine's own suffix, which `web/.gitignore` keeps out of the tree.
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ARIA_DIR = join(HERE, '__aria__')
@@ -512,11 +516,17 @@ function writeBaselines(id: string, theme: Theme, measured: Measured, info: Test
 
 async function checkSurface(page: Page, info: TestInfo, ctx: SurfaceContext, id: string): Promise<void> {
   const baselines = readBaselines(id, ctx.theme, info)
+  const rewriting = updating(info)
   const report: string[] = []
-  const measured = await runMatrix(page, ctx, baselines, async (name, findings) => {
+  const measured = await runMatrix(page, ctx, baselines, async (name, findings, baselined) => {
     await test.step(name, async () => {
       const found = await findings()
-      report.push(`## ${name}: ${found.length}`, ...found.map((f) => `  ${f}`))
+      const verdict = stepVerdict(found, baselined, rewriting)
+      report.push(`## ${name}: ${found.length}${verdict === 'rewritten' ? ', rewritten' : ''}`, ...found.map((f) => `  ${f}`))
+      if (verdict === 'rewritten') {
+        info.annotations.push({ type: 'rebaselined', description: `${name} on ${ctx.where}: ${found.length} changed` })
+        return
+      }
       expect.soft(found, `${name} on ${ctx.where}`).toEqual([])
     })
   })

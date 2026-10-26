@@ -94,6 +94,11 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
     'Lays out a scratch web/ (the pin, the lock, and the manifest an update writes) for ' +
     '`e2e/run-pinned.mjs` to read and write, to prove each refusal and that an update writes the ' +
     'manifest from the probe while a compare holds the probe to it.',
+  'design/baselineRefresh.test.ts':
+    'Lays out a planted repository of baseline files for `e2e/baseline-changes.mjs` to list, a ' +
+    'folder of planted goldens for `e2e/visual-coverage.mjs`, and a scratch Playwright project of ' +
+    'three goldens, to prove a refresh lists what it changed, reds on a surface with no golden, and ' +
+    'rewrites only a golden that fails the compare.',
   'design/uiMatrixSteps.test.ts':
     'Writes planted Playwright JSON reports for `e2e/assert-no-route-skips.mjs` to read, to prove ' +
     'the report checker fails a skipped scan, a missing scan and a scan short of one matrix step.',
