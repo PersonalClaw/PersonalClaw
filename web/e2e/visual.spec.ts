@@ -1,10 +1,12 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
   ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, axisShots, type ReducedMotionOpen, type VisualAxis,
 } from './routes'
 import {
-  seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations,
+  seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations, type SettleReport,
 } from './helpers'
+import { FIXED_CLOCK } from './fixedClock'
+import { AUDIT_VERIFIED, LEARNING_WEEK, SYSTEM_READING, answerStubbedRead, type StubbedRead } from './stubbedReads'
 
 // ── Visual-regression baselines — every nav route × both themes ─────────────
 // This is the safety rail. Its baselines are made and compared against the pinned image's browser
@@ -62,6 +64,85 @@ const BUDGET = {
   fadeMs: 10_000,
 } as const
 
+// ── What makes a shot the same picture on every run ────────────────────────────────────────────
+// A refresh writes a golden only where the compare fails (`run-pinned.mjs`, UPDATE_SNAPSHOTS), so a
+// surface that draws something the run does not decide moves its golden on whichever run crosses
+// the tolerance. The Inbox refresh (run 40150040941) found four, each under it on that run: the
+// day, the run's own counts and readings, a probe's timing and a caret. Each is pinned before the
+// shot, on every shot of the route (its themes, axes and reduced-motion shots alike):
+//   · a route in FIXED_CLOCK (`fixedClock.ts`, the UI matrix's table) loads under its instant;
+//   · a read in VISUAL_STUBS answers with fixed values, and each must have answered by the shot,
+//     so a read that moved and no longer matches is a red, never a live value photographed;
+//   · a read in ANSWERED is waited for, and then the state it settles;
+//   · under forced colours a focused text field is blurred (`blurField`).
+// The tests at the end of this file plant each cause and fail when its pin stops holding.
+
+/** Reads a shot answers with fixed values (`StubbedRead`, `e2e/stubbedReads.ts`), and why there. */
+const VISUAL_STUBS: Record<string, StubbedRead[]> = {
+  learning: [LEARNING_WEEK],
+  settings: [AUDIT_VERIFIED, SYSTEM_READING],
+}
+
+/** A read a route draws a state from with nothing on screen saying it is still loading, so the
+ *  page settles before it answers; and the state the page is in until it does. */
+const ANSWERED: Record<string, { read: RegExp; pending: (page: Page) => Locator; why: string }> = {
+  terminal: {
+    read: /\/api\/terminal\/sessions(\?.*)?$/,
+    // The persistent-sessions toggle is disabled, under its action's label, until the host's
+    // capability comes back (`persistToggleCopy`): grey under forced colours, black once answered.
+    pending: (page) => page.getByRole('button', { name: /^(Enable|Disable) persistent sessions$/, disabled: true }),
+    why: 'the persistent-sessions toggle is disabled until the host says whether it can keep a session',
+  },
+}
+
+/** Before the route loads: its fixed clock and its stubbed reads. Returns the hit count per stub. */
+async function pinRoute(page: Page, route: string): Promise<Map<StubbedRead, number>> {
+  if (FIXED_CLOCK[route]) await page.clock.setFixedTime(new Date(FIXED_CLOCK[route]))
+  const hits = new Map<StubbedRead, number>()
+  for (const stub of VISUAL_STUBS[route] ?? []) {
+    hits.set(stub, 0)
+    await page.route(stub.url, (r) => {
+      hits.set(stub, (hits.get(stub) ?? 0) + 1)
+      return answerStubbedRead(stub, r)
+    })
+  }
+  return hits
+}
+
+/** Once the route has settled: its ANSWERED read has come back and the page has left the state
+ *  it held until then, and every stub answered at least once. */
+async function waitForPins(page: Page, route: string, answered: Promise<unknown> | null, hits: Map<StubbedRead, number>, exhausted: string[]): Promise<void> {
+  const wait = ANSWERED[route]
+  if (wait && answered) {
+    await answered
+    await expect(wait.pending(page), `${route}: ${wait.why}`).toHaveCount(0)
+    if (!(await settleDom(page, undefined, BUDGET.settleMs))) exhausted.push(`settleDom (after ${route}'s probe answered)`)
+  }
+  for (const [stub, n] of hits) expect(n, `${route}: the stubbed read ${stub.url.source} was never asked, so the shot is not of its fixed values`).toBeGreaterThan(0)
+}
+
+/** Load `route` for a shot: pinned, settled, and waited for. */
+async function loadPinned(page: Page, route: string): Promise<SettleReport> {
+  const hits = await pinRoute(page, route)
+  const answered = ANSWERED[route] ? page.waitForResponse(ANSWERED[route].read) : null
+  const loaded = await gotoRoute(page, route, BUDGET)
+  const exhausted = [...loaded.exhausted]
+  await waitForPins(page, route, answered, hits, exhausted)
+  return { settled: exhausted.length === 0, exhausted }
+}
+
+/** Blur a focused text field. Playwright hides the caret with `caret-color: transparent`, which
+ *  forced colours override, so a field focused on load (Settings' search) photographed its caret
+ *  on one run and not the next, by where in its blink the shot fell. */
+async function blurField(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const el = document.activeElement as HTMLElement | null
+    if (!el || !(el.matches('input, textarea, select') || el.isContentEditable)) return false
+    el.blur()
+    return true
+  })
+}
+
 for (const theme of THEMES) {
   // `@visual` is the selector `npm run e2e` uses to run this file separately from the
   // turn-driving specs (`--grep-invert @visual`, then `npm run e2e:visual`). A tag rather
@@ -84,7 +165,7 @@ for (const theme of THEMES) {
         // one-shot check could pass for the run and still be false by the time #35 captures.
         await assertPristineFlywheel(page)
         await seedTheme(page, theme)
-        const settle = await gotoRoute(page, route, BUDGET)
+        const settle = await loadPinned(page, route)
         await expectRouteScreenshot(page, `${id ?? route}-${theme}`, settle)
       })
     }
@@ -155,7 +236,7 @@ for (const { key, theme, route, open } of REDUCED_MOTION_SHOTS) {
     test(open ? `${open} open` : 'the route at rest', async ({ page }) => {
       await assertPristineFlywheel(page)
       await seedTheme(page, theme)
-      const loaded = await gotoRoute(page, route, BUDGET)
+      const loaded = await loadPinned(page, route)
       expect(
         await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
         `${key}: prefers-reduced-motion is not in force, so this would photograph a user with no preference`,
@@ -199,7 +280,7 @@ for (const { key, axis, theme, route, label } of axisShots()) {
     test(`${label} at ${axis}`, async ({ page }) => {
       await assertPristineFlywheel(page)
       await seedTheme(page, theme)
-      const loaded = await gotoRoute(page, route, BUDGET)
+      const loaded = await loadPinned(page, route)
       const exhausted = [...loaded.exhausted]
       if (axis === 'text-200') {
         await page.evaluate(() => {
@@ -210,8 +291,78 @@ for (const { key, axis, theme, route, label } of axisShots()) {
         if (!(await settleDom(page, undefined, BUDGET.settleMs))) exhausted.push('settleDom (200% text)')
       }
       expect(await AXIS_IN_FORCE[axis](page), `${key}: ${axis} is not in force, so this would photograph the default page`).toBe(true)
+      if (axis === 'high-contrast' && (await blurField(page)) && !(await settleDom(page, undefined, BUDGET.settleMs))) {
+        exhausted.push('settleDom (after the blur)')
+      }
       const settle = { settled: exhausted.length === 0, exhausted }
       await expectRouteScreenshot(page, key, settle)
     })
   })
 }
+
+// ── Each pin, planted ──────────────────────────────────────────────────────────────────────────
+// Each cause the pins above remove, planted on its own route, with the pin shown to hold. A pin
+// that stops holding (a stub whose read moved, a wait that no longer waits, a blur that no longer
+// happens) fails here, and not as one golden among two hundred moving on some later run. The titles
+// carry no `(#/`: these are not route scans, so `assert-no-route-skips.mjs` does not count them.
+test.describe('visual: each pin holds', { tag: '@visual' }, () => {
+  test.describe.configure({ timeout: 300_000 })
+
+  test("Learning's week ends on its fixed day, whatever day the gateway is on", async ({ page }) => {
+    await assertPristineFlywheel(page)
+    await seedTheme(page, 'light')
+    const hits = await pinRoute(page, 'learning')
+    await gotoRoute(page, 'learning', BUDGET)
+    await waitForPins(page, 'learning', null, hits, [])
+    // Each tile's title starts with its day (`YYYY-MM-DD — ...`): the seven end on the fixed day.
+    const days = await page.evaluate(() =>
+      [...document.querySelectorAll('[title]')].map((el) => /^(\d{4}-\d{2}-\d{2}) — /.exec(el.getAttribute('title') ?? '')?.[1]).filter(Boolean),
+    )
+    const fixed = FIXED_CLOCK.learning.slice(0, 10)
+    const before = (n: number) => new Date(Date.parse(`${fixed}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10)
+    expect(days).toEqual([6, 5, 4, 3, 2, 1, 0].map(before))
+  })
+
+  test("Settings' tiles read the fixed count and reading, not the run's", async ({ page }) => {
+    await assertPristineFlywheel(page)
+    await seedTheme(page, 'light')
+    await loadPinned(page, 'settings')
+    await expect(page.getByText('all 150 events verified').first()).toBeVisible()
+    await expect(page.getByText('Memory 3.2/15.6GB').first()).toBeVisible()
+    await expect(page.getByText('CPU 12%').first()).toBeVisible()
+  })
+
+  test("the terminal's shot waits for a probe that answers after the page settles", async ({ page }) => {
+    await assertPristineFlywheel(page)
+    await seedTheme(page, 'light')
+    // The probe held until the page has settled without it, as a slow host answers it.
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    await page.route(ANSWERED.terminal.read, async (r) => {
+      await held
+      await r.continue()
+    })
+    const answered = page.waitForResponse(ANSWERED.terminal.read)
+    const hits = await pinRoute(page, 'terminal')
+    await gotoRoute(page, 'terminal', BUDGET)
+    // The cause: settled, and still showing the state it holds until the probe answers.
+    await expect(ANSWERED.terminal.pending(page), 'the planted slow probe left the toggle pending at rest').toHaveCount(1)
+    release()
+    await waitForPins(page, 'terminal', answered, hits, [])
+    await expect(ANSWERED.terminal.pending(page)).toHaveCount(0, { timeout: 0 })
+  })
+
+  test.describe('under forced colours', () => {
+    test.use(AXIS_USE['high-contrast'])
+    test('a focused text field is blurred before the shot', async ({ page }) => {
+      await assertPristineFlywheel(page)
+      await seedTheme(page, 'light')
+      await loadPinned(page, 'settings')
+      const field = page.getByRole('searchbox').or(page.getByRole('textbox')).first()
+      await field.focus()
+      expect(await page.evaluate(() => document.activeElement?.matches('input, textarea') ?? false), 'the plant: a text field holds focus').toBe(true)
+      expect(await blurField(page)).toBe(true)
+      expect(await page.evaluate(() => document.activeElement?.matches('input, textarea') ?? false)).toBe(false)
+    })
+  })
+})
