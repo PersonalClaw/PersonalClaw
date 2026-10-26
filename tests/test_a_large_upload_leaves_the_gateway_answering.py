@@ -1443,26 +1443,40 @@ _HOLD = 5 if sys.platform == "darwin" else 20
 
 
 def _until_crowded(
-    tmp_path, child: str, *, args=lambda where: (), premise, holds, measure, measured
+    tmp_path,
+    child: str,
+    *,
+    args=lambda where: (),
+    premise,
+    holds,
+    measure,
+    measured,
+    required=None,
+    required_premise="",
 ) -> dict:
     """Runs ``child`` crowded (:func:`_crowded`) up to :data:`_TRIES` times, each try in a folder
     of its own, until ``holds`` says its ``premise`` held, and returns that try's line. A premise
     unmet every time fails on Linux, where nice 19 makes it hold each time, and skips on macOS,
     whose background band does not always (:data:`_HOLD`), naming the ``measure`` each try
-    ``measured``."""
-    measures = []
+    ``measured``. A ``required`` part of the premise, which the band has no say in, fails on
+    every platform when no try met it: a test whose tries never reach what it checks has
+    checked nothing."""
+    measures, met = [], False
     for n in range(_TRIES):
         where = tmp_path / f"try-{n}"
         where.mkdir()
         seen = _crowded(child, where / "home", *args(where), hold=_HOLD)
         assert seen["status"] == 200, f"premise: the request answered; {seen['says']}"
         measures.append(measured(seen))
+        met = met or required is None or required(seen)
         if holds(seen):
             return seen
     unmet = (
         f"premise: {premise}, in none of {_TRIES} tries ({measure}: {', '.join(measures)});"
         f" the last: {seen['says']}"
     )
+    if not met:
+        pytest.fail(f"premise: {required_premise}, in none of {_TRIES} tries; {unmet}")
     if sys.platform == "darwin":
         pytest.skip(unmet)
     pytest.fail(unmet)
@@ -1639,9 +1653,15 @@ def test_the_crowded_plants_read_waits_all_its_time_however_late_the_loop_comes_
     assert waited >= _PLANTED * 0.95, says
 
 
-#: Between two snapshots, at the lowest priority while every CPU is taken: a thread that spins for
+#: How long the thread that stands for the loop waits after the join before its second snapshot:
+#: the kernel adds an ended thread's CPU, and its time ready, to the process's counts up to 2.5 ms
+#: after its join, and a snapshot taken before then holds none of that thread's time.
+_AFTER_THE_JOIN = 0.01
+
+#: Between two snapshots, while every CPU is taken: a thread in the background band that spins for
 #: 0.3 s, so it is ready to run whenever it is not running, and ends, while the thread that stands
-#: for the loop waits for it to end.
+#: for the loop waits for it to end. The stand-in stays out of the band, so its own waits for a CPU,
+#: woken from the start, the join and the pause after it, are a few milliseconds.
 _ENDED_THREAD_CHILD = (
     textwrap.dedent("""
     import json, os, sys, threading, time
@@ -1654,19 +1674,21 @@ _ENDED_THREAD_CHILD = (
     lowest()
 
     def spin():
+        os.setpriority(os.PRIO_DARWIN_THREAD, 0, os.PRIO_DARWIN_BG)  # this thread alone
         began, cpu = time.monotonic(), time.thread_time()
         while time.monotonic() - began < 0.3:
             pass
         spun["share"] = (time.thread_time() - cpu) / (time.monotonic() - began)
 
-    with upload._in_the_background_band():
-        first = no_cpu.snapshot()
-        thread = threading.Thread(target=spin)
-        thread.start()
-        thread.join()
-        then = no_cpu.snapshot()
+    first = no_cpu.snapshot()
+    thread = threading.Thread(target=spin)
+    thread.start()
+    thread.join()
+    time.sleep(upload._AFTER_THE_JOIN)
+    then = no_cpu.snapshot()
     print(json.dumps({
         "status": 200, "says": no_cpu.source, "share": spun["share"],
+        "counted": then.ended != first.ended,
         "waited": no_cpu.waited(first, then, {threading.get_native_id()}),
     }), flush=True)
     """)
@@ -1684,23 +1706,73 @@ def test_a_thread_that_came_and_went_is_never_counted_as_the_loops_wait(tmp_path
     neither list, so its time ready to run was left in the process's count and charged to the
     loop thread. The crowded plant's read has one, its writer, and on a CI runner a health check's
     answer beside the block left out 0.295 s of that thread's wait as the loop's. Here the thread
-    that stands for the loop is blocked the whole time, waiting for the spinning thread to end,
-    so none of the wait between the two snapshots is its own.
+    that stands for the loop waits for the spinning thread to end, so the only wait between the
+    two snapshots that is its own is its wait for a CPU each time it wakes.
 
-    macOS alone: on Linux each thread's count is its own, and the stand-in is not quite blocked
-    the whole time. Woken from the thread's start and from its join, it waits for a CPU at the
-    lowest priority under the crowd, and Linux counts that wait, rightly, as its own: main's push
-    run 40218103397 charged it 0.115 s, the thread beside at 1% of a CPU."""
+    That wait is kept small: only the spinning thread is in the background band. With the
+    stand-in in it too, a try on a CI runner (run 40391397926) charged it 0.079 s, the thread
+    beside at 15% of a CPU: that try's second snapshot came before the kernel had added the ended
+    thread's time to the process's counts, so none of it was there to charge, and the 0.079 s
+    was the stand-in's own wait at the band's priority. And a try counts only once the ended
+    thread's time is in the count at the second snapshot (:data:`_AFTER_THE_JOIN`): before then
+    there is nothing of it to charge, so such a try cannot tell this code from the code before.
+
+    macOS alone: on Linux each thread's count is its own, and the stand-in's wait for a CPU after
+    the start and after the join is, rightly, the loop's: main's push run 40218103397 charged it
+    0.115 s, the thread beside at 1% of a CPU."""
     seen = _until_crowded(
         tmp_path,
         _ENDED_THREAD_CHILD,
-        premise="the thread that ended waited for a CPU",
-        holds=lambda seen: seen["share"] < 0.5,
-        measure="the share of a CPU it used",
-        measured=lambda seen: f"{seen['share']:.0%}",
+        premise="the thread that ended waited for a CPU, and its time was in the count",
+        holds=lambda seen: seen["share"] < 0.5 and seen["counted"],
+        measure="the share of a CPU it used, and whether its time was counted",
+        measured=lambda seen: f"{seen['share']:.0%} {'counted' if seen['counted'] else 'not'}",
+        required=lambda seen: seen["counted"],
+        required_premise="the ended thread's time was in the count at the second snapshot",
     )
     says = f"the thread that ended used {seen['share']:.0%} of a CPU ({seen['says']})"
     assert seen["waited"] < 0.05, f"the loop was charged {seen['waited']:.3f}s; {says}"
+
+
+@pytest.mark.parametrize(
+    ("counted", "tries", "outcome"),
+    [
+        pytest.param([False] * _TRIES, _TRIES, "fails", id="the time never arrives"),
+        pytest.param([False, True], 2, "passes", id="the time arrives on the second try"),
+    ],
+)
+def test_a_came_and_went_run_whose_ended_threads_time_never_arrives_fails(
+    tmp_path, monkeypatch, counted, tries, outcome
+):
+    """The test above retries a try whose ended thread's time is not yet in the count, at most
+    :data:`_TRIES` times, and fails, on every platform, when no try had it: it has then checked
+    nothing. The crowded runs are planted, each a line the child could print."""
+    lines = iter(counted)
+    ran = []
+
+    def planted(child, home, *args, hold):
+        ran.append(home)
+        return {
+            "status": 200,
+            "says": "planted",
+            "share": 0.1,
+            "counted": next(lines),
+            "waited": 0.0,
+        }
+
+    monkeypatch.setattr(sys.modules[__name__], "_crowded", planted)
+    if outcome == "fails":
+        try:
+            test_a_thread_that_came_and_went_is_never_counted_as_the_loops_wait(tmp_path)
+        except pytest.skip.Exception as skipped:
+            pytest.fail(f"it skipped, having checked nothing: {skipped}")
+        except pytest.fail.Exception as failed:
+            assert "the ended thread's time was in the count" in str(failed), failed
+        else:
+            pytest.fail("it passed, though no try had the ended thread's time in the count")
+    else:
+        test_a_thread_that_came_and_went_is_never_counted_as_the_loops_wait(tmp_path)
+    assert len(ran) == tries
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS's count is the process's alone")
