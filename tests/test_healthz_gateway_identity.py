@@ -216,6 +216,9 @@ class TestAnAnswerWaitsOnNoDisk:
     async def test_a_fresh_read_that_fails_is_logged_and_never_left_unretrieved(
         self, tmp_path, monkeypatch, caplog
     ):
+        """The fresh read is held until the test has it, as the tests above hold theirs: let go at
+        once, it failed and was let go while the client still read the answer, and the reading
+        held nothing by the time the test looked (breadth's random order, seed 92)."""
         monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
         loop, unretrieved = asyncio.get_running_loop(), []
         loop.set_exception_handler(lambda _loop, context: unretrieved.append(context))
@@ -225,17 +228,24 @@ class TestAnAnswerWaitsOnNoDisk:
             async with TestClient(TestServer(app)) as client:
                 first = await (await client.get("/api/healthz")).json()  # the first read
                 monkeypatch.setattr(handlers_system, "ROOT_TTL_S", 0.0)
+                held = threading.Event()
 
                 def broken() -> bool:
+                    assert held.wait(10), "the read was never let go"
                     raise RuntimeError("the disk went away")
 
                 monkeypatch.setattr(handlers_system, "_root_ok", broken)
                 answer = await (await client.get("/api/healthz")).json()
                 assert answer["root_ok"] == first["root_ok"], "the check answers from the last"
                 reading = handlers_system._IDENTITY._reading
-                assert reading is not None
+                assert reading is not None and not reading.done(), "premise: the read is held"
+                held.set()
                 await asyncio.wait({reading}, timeout=5)
+                # Done, its error left to the reading's own callback: taken here, it would be
+                # retrieved by the test, and the check below would pass on that.
+                assert reading.done(), reading
                 await asyncio.sleep(0)  # the read's done callback
+                assert handlers_system._IDENTITY._reading is None, "a read done is still held"
                 del reading
                 gc.collect()
         finally:
