@@ -9,8 +9,10 @@ requests it, so a test's own ``monkeypatch.chdir`` is undone before it looks.
 What it reads, each against the reading taken as the test began:
 
 - **threads**: a non-daemon thread the test started that is still alive after a short grace
-  (:data:`GRACE_S`). A thread whose name a pool gives (:data:`POOL_PREFIXES`) is recorded as a
-  ``thread pool`` and never fails: executors keep their workers by design.
+  (:data:`GRACE_S`). A worker a ``concurrent.futures`` pool started (:func:`is_pool_worker`),
+  asyncio's default executor's included, is recorded as a ``thread pool`` and never fails:
+  executors keep their workers by design. It is known by the pool's own register of its workers,
+  not by its name, since a pool may name its workers anything.
 - **the working directory**, given back after it is read.
 - **signal handlers** for the signals the product installs (:data:`SIGNALS`), given back.
 - **child processes** the test started (``subprocess.Popen``, asyncio's included) still running.
@@ -37,6 +39,7 @@ A fenced change and a thread pool never fail. The report also carries how long t
 
 from __future__ import annotations
 
+import concurrent.futures.thread
 import json
 import os
 import signal
@@ -64,8 +67,6 @@ CAP = 5
 #: How long a thread the test started may take to end after the test returns.
 GRACE_S = 0.25
 
-#: Names a thread pool gives its workers: ``concurrent.futures`` and asyncio's default executor.
-POOL_PREFIXES = ("ThreadPoolExecutor", "asyncio_")
 
 #: The signals the product installs a handler for.
 SIGNALS = tuple(
@@ -105,6 +106,12 @@ def _cwd() -> str | None:
         return os.getcwd()
     except OSError:
         return None
+
+
+def is_pool_worker(thread: threading.Thread) -> bool:
+    """Whether a ``concurrent.futures`` thread pool started *thread*: every such pool registers
+    each worker it starts, whatever it names it."""
+    return thread in concurrent.futures.thread._threads_queues
 
 
 # ── the children a test starts ─────────────────────────────────────────────────────────────
@@ -480,10 +487,10 @@ class Guard:
         began = time.perf_counter()
         start = len(self.leaks)
         new = [t for t in threading.enumerate() if (t.ident or 0) not in before.threads]
-        for thread in [t for t in new if t.name.startswith(POOL_PREFIXES) and not t.daemon]:
+        for thread in [t for t in new if is_pool_worker(t) and not t.daemon]:
             self._leak("thread pool", f"{thread.name} (a pool keeps its workers)", False)
         deadline = time.monotonic() + GRACE_S
-        for thread in [t for t in new if not t.name.startswith(POOL_PREFIXES) and not t.daemon]:
+        for thread in [t for t in new if not is_pool_worker(t) and not t.daemon]:
             thread.join(max(0.0, deadline - time.monotonic()))
             if thread.is_alive():
                 self._leak("thread", f"{thread.name} is still running", True)
@@ -683,7 +690,17 @@ class Plugin:
         summary = self._summary()
         tests = summary["tests"]
         per = 1000 * summary["guard_seconds"] / tests if tests else 0.0
-        terminalreporter.write_line(
-            f"state leaks: {len(summary['leaks'])} recorded over {tests} tests, "
-            f"{per:.2f} ms a test ({REPORT})"
-        )
+        terminalreporter.write_line(summary_line(summary["leaks"], tests, per))
+
+
+def summary_line(leaks: Sequence[Mapping], tests: int, per_ms: float) -> str:
+    """The terminal's line: the leaks recorded, and how many of them ``--strict-state`` fails
+    (strict and not allowlisted) and of how many kinds, so a run's log says it with no
+    download."""
+    failing = [leak for leak in leaks if leak["strict"] and leak["allowlisted"] is None]
+    kinds = len({leak["kind"] for leak in failing})
+    return (
+        f"state leaks: {len(leaks)} recorded over {tests} tests, "
+        f"{len(failing)} strict ({kinds} kind{'' if kinds == 1 else 's'}), "
+        f"{per_ms:.2f} ms a test ({REPORT})"
+    )

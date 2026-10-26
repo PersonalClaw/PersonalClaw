@@ -14,6 +14,7 @@ back, and the fenced entry restored by its fence after the guard saw it. The gua
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import os
 import signal
@@ -194,7 +195,7 @@ def test_report_mode_names_each_leaker_and_fails_none(tmp_path: Path) -> None:
     for name, leaks in found.items():
         assert leaks[0]["position"] == order.index(name) + 1, (name, leaks[0])
     assert report["tests"] == 13 and report["guard_seconds"] >= 0
-    assert "state leaks: 8 recorded" in proc.stdout, out
+    assert "state leaks: 8 recorded over 13 tests, 5 strict (5 kinds)," in proc.stdout, out
 
 
 def _names_in(source: str) -> list[str]:
@@ -243,6 +244,23 @@ def test_strict_mode_fails_each_unfenced_leaker_but_an_allowlisted_one(tmp_path:
     assert report["strict"] is True
     [allowed] = _by_test(report)["test_installs_a_signal_handler"]
     assert allowed["allowlisted"] == 4242
+    # The allowlisted handler is not counted: the line counts what strict mode fails.
+    assert "state leaks: 8 recorded over 13 tests, 4 strict (4 kinds)," in proc.stdout, out
+
+
+def test_the_summary_line_counts_what_strict_mode_fails_and_its_kinds() -> None:
+    def leak(kind: str, strict: bool = True, allowlisted: int | None = None) -> dict:
+        return {"kind": kind, "strict": strict, "allowlisted": allowlisted}
+
+    line = slg.summary_line(
+        [leak("thread"), leak("thread"), leak("fenced registry", False), leak("thread", True, 7)],
+        20,
+        0.5,
+    )
+    assert line.startswith("state leaks: 4 recorded over 20 tests, 2 strict (1 kind), 0.50 ms")
+    assert slg.summary_line([], 3, 0.0).startswith(
+        "state leaks: 0 recorded over 3 tests, 0 strict (0 kinds)"
+    )
 
 
 def test_each_record_names_its_real_xdist_worker_and_place_in_its_order(tmp_path: Path) -> None:
@@ -289,15 +307,34 @@ def test_a_thread_pool_is_recorded_but_never_fails() -> None:
     guard.start("t::pool", 1)
     before = guard.before()
     done = threading.Event()
-    pool = threading.Thread(target=done.wait, name="ThreadPoolExecutor-9_0")
-    pool.start()
+    pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix="notification-verify")
+    pool.submit(done.wait)
     try:
         assert guard.after(before, strict=True, allowlist={}) == ""
         [leak] = _leaks(guard)
         assert leak.kind == "thread pool" and leak.strict is False
+        assert leak.detail.startswith("notification-verify_0")
     finally:
         done.set()
-        pool.join()
+        pool.shutdown()
+
+
+def test_a_thread_named_as_a_pool_names_its_workers_is_still_a_thread() -> None:
+    guard = _guard()
+    guard.start("t::named", 1)
+    before = guard.before()
+    done = threading.Event()
+    thread = threading.Thread(target=done.wait, name="ThreadPoolExecutor-9_0")
+    thread.start()
+    try:
+        assert "ThreadPoolExecutor-9_0 is still running" in guard.after(
+            before, strict=True, allowlist={}
+        )
+        [leak] = _leaks(guard)
+        assert leak.kind == "thread" and leak.strict is True
+    finally:
+        done.set()
+        thread.join()
 
 
 def test_a_changed_directory_is_given_back(tmp_path: Path) -> None:

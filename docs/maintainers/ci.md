@@ -3150,14 +3150,21 @@ worker that turns red later.
   fence, so its after-reading of the registries is taken before any fence restores one. Such a
   change is recorded as `fenced` and never fails while its fence stands; the record is what a
   fence's retirement is judged on.
-- **Never failing:** a fenced change, a file written, and a thread named as a pool names its
-  workers (`ThreadPoolExecutor`, asyncio's executor).
+- **Never failing:** a fenced change, a file written, and a worker a `concurrent.futures` pool
+  started (asyncio's executor's included), known by the pool's own register of its workers
+  rather than by its name, so a pool that names its workers anything is still a pool.
 - **Report mode** is the default: every leak goes to `reports/state-leaks.json`, with the test's
   real xdist worker and its position in that worker's order, and the guard's own seconds. The
-  terminal summary gives the count and the cost per test.
+  terminal summary gives the count, how many of them `--strict-state` would fail and of how many
+  kinds (`N strict (M kinds)`), and the cost per test, so every run's log says it.
 - **`--strict-state`** fails a leaking test in its teardown, with what it left, unless
   `tests/state_leak_allowlist.toml` names it with the issue that tracks its fix. At most 5
   entries, each exactly `nodeid` and `issue`; a list that breaks a rule stops the session.
+- **Where it is strict.** Nowhere yet. The merge verdict is required, so a leaker under strict
+  stops every merge until it is allowlisted, and a suite turns strict only once its own logs show
+  it clean: the merge tier's Ubuntu suite (`python-suite`, on 3.12) after 5 consecutive merge runs
+  show `0 strict` in each of its shards, and the macOS suite after 7 days of its merge runs do.
+  `tests/rails/test_ci_catalogue_tree.py` holds the list.
 
 - **Files written** outside the run's temporary folders: each path the test's process opens for
   writing, makes, moves or removes while the test runs, read through an audit hook

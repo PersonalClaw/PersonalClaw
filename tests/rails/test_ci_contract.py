@@ -2598,13 +2598,15 @@ def main_push_runs_violations(tree: Tree) -> list[str]:
 
 
 def _suite_words(argv: Sequence[str]) -> list[str]:
-    """A pytest step's words, less the two a macOS shard may differ in: its worker count and its
-    report's path. Everything else (paths, selections, the split) must be the same."""
+    """A pytest step's words, less those a macOS shard may differ in: its worker count, its
+    report's path, and ``--strict-state``, which only the Ubuntu suite runs until the macOS
+    suite's merge runs show no strict leak (tests/state_leak_guard.py). Everything else (paths,
+    selections, the split) must be the same."""
     words = list(argv)
     if "-n" in words:
         at = words.index("-n")
         del words[at : at + 2]
-    return [w for w in words if not w.startswith("--junitxml=")]
+    return [w for w in words if not w.startswith("--junitxml=") and w != "--strict-state"]
 
 
 #: The suite's two merge-tier entries, and the leg of the shard plan each lists its share from.

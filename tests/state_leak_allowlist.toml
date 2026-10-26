@@ -5,3 +5,7 @@
 #   issue = 1234                         # the issue that tracks its fix
 #
 # At most 5 entries. A leak here is still recorded in reports/state-leaks.json.
+
+[[entry]]
+nodeid = "tests/test_backend_runtime_reap.py::test_pids_running_empty_for_unknown_path"
+issue = 5584
