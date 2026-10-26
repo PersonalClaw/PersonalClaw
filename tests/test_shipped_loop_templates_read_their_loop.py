@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.workflows import store
@@ -22,6 +23,14 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun, spec_path, walk
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
 
 _JUDGED = {
     "reasoning": "each criterion is met by the work as it stands",
@@ -154,10 +163,14 @@ async def test_each_shipped_template_gets_past_the_step_that_reads_its_loop(
         run = store.create(WorkflowRun(id="", workflow_name=name, mode="background", inputs=inputs))
         store.write_spec(run.id, spec)
         stand_in = _Answers(answers)
-        ctl = RunController(
-            run,
-            spec,
-            services=EngineServices(subagents=stand_in, completion=_judge_gate, cwd=str(workspace)),
+        ctl = live_runs.started(
+            RunController(
+                run,
+                spec,
+                services=EngineServices(
+                    subagents=stand_in, completion=_judge_gate, cwd=str(workspace)
+                ),
+            )
         )
         await ctl.start()
         deadline = asyncio.get_running_loop().time() + 120

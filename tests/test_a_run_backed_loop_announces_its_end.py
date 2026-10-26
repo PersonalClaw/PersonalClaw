@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw import notification_kinds
@@ -209,13 +210,15 @@ def test_the_engine_announces_a_loop_run_that_hit_its_cycle_ceiling(raised: list
     )
     store.write_spec(run.id, spec)
     state = _State()
-    controller = RunController(
-        run, spec, services=EngineServices(subagents=_Subagents(), attention_state=state)
+    controller = live_runs.started(
+        RunController(
+            run, spec, services=EngineServices(subagents=_Subagents(), attention_state=state)
+        )
     )
 
     async def _go() -> RunStatus:
         await controller.start()
         return await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
 
-    assert asyncio.run(_go()) is RunStatus.ESCALATED
+    assert live_runs.run(_go()) is RunStatus.ESCALATED
     assert [c["title"] for c in raised] == ["Loop stopped at its budget"], raised

@@ -25,6 +25,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw import __version__, self_update
@@ -242,6 +243,13 @@ def _model_steps_answered(spec: dict[str, Any]) -> dict[str, Any]:
     return replaced
 
 
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
@@ -293,7 +301,7 @@ async def test_the_optimize_harness_template_runs_its_steps_in_an_isolated_insta
         WorkflowRun(id="", workflow_name=spec["name"], mode="background", inputs=inputs)
     )
     store.write_spec(run.id, spec)
-    controller = RunController(run, spec, services=EngineServices())
+    controller = live_runs.started(RunController(run, spec, services=EngineServices()))
     await controller.start()
     deadline = asyncio.get_running_loop().time() + 240
     while not controller.run.is_terminal:

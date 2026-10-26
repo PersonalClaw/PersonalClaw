@@ -21,6 +21,7 @@ import asyncio
 import copy
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.workflows import journal as J
@@ -29,6 +30,13 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import Node, RunStatus, WorkflowRun, walk
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -77,7 +85,7 @@ async def _paused() -> RunController:
     spec = _spec()
     run = store.create(WorkflowRun(id="", workflow_name="edited", mode="background"))
     store.write_spec(run.id, spec)
-    c = RunController(run, copy.deepcopy(spec), services=EngineServices())
+    c = live_runs.started(RunController(run, copy.deepcopy(spec), services=EngineServices()))
     store.request_pause(run.id)
     await c.start()
     await _until(lambda: c.run.status == RunStatus.PAUSED, what="the run to pause")
@@ -150,8 +158,8 @@ async def test_two_queued_edits_survive_a_restart_and_apply_in_order() -> None:
 
     # The gateway restarts before anyone resumes the run: nothing of `c` survives but the disk.
     run_id = c.run.id
-    fresh = RunController(
-        store.get(run_id), store.read_spec(run_id) or {}, services=EngineServices()
+    fresh = live_runs.started(
+        RunController(store.get(run_id), store.read_spec(run_id) or {}, services=EngineServices())
     )
     await _resume(fresh)
     assert _said(run_id) == {"draft": "first edit", "publish": "second edit"}

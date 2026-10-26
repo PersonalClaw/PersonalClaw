@@ -28,7 +28,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+import live_runs
 import pytest
+import pytest_asyncio
 
 from personalclaw.action_providers.base import ActionResult
 from personalclaw.config import credentials as cred
@@ -53,6 +55,13 @@ def _project_key(project_id: str, name: str = NAME) -> str:
     from personalclaw.secrets_vault import project_secret_key
 
     return project_secret_key(project_id, name)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _stopped_runs():
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -273,7 +282,7 @@ class _Supervisor:
         services = EngineServices(
             get_provider=self._provider, completion=self.recorder.complete, supervisor=self
         )
-        controller = RunController(run, spec, services=services, depth=depth)
+        controller = live_runs.started(RunController(run, spec, services=services, depth=depth))
         self.controllers.append(controller)
         await controller.start()
         return controller

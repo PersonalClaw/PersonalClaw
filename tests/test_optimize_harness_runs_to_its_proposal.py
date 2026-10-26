@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.agents.defaults import TEMPLATE_REFINER_AGENT_NAME, TEMPLATE_REFINER_TOOLS
@@ -61,6 +62,13 @@ CASES = ("case-1", "case-2", "case-3")
 #: The statuses a run waits in for a person: a test reads where the run stopped rather than wait
 #: out its deadline on a run nobody will answer.
 _WAITING = (RunStatus.NEEDS_INPUT, RunStatus.PAUSED)
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
 
 
 @pytest.fixture
@@ -297,8 +305,10 @@ async def _run(
     )
     store.write_spec(run.id, spec)
     proposer = _Proposer(answers)
-    ctl = RunController(
-        run, spec, services=EngineServices(subagents=proposer, cwd=str(space / "workspace"))
+    ctl = live_runs.started(
+        RunController(
+            run, spec, services=EngineServices(subagents=proposer, cwd=str(space / "workspace"))
+        )
     )
     await ctl.start()
     deadline = asyncio.get_running_loop().time() + 240

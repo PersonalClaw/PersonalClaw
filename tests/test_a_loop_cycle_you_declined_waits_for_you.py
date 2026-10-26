@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.approval_answer import YOU
@@ -163,8 +164,10 @@ def _loop(spec: dict[str, Any] | None = None, **policy: Any) -> tuple[WorkflowRu
 
 
 def _controller(run: WorkflowRun, spec: dict[str, Any], subagents: _Subagents) -> RunController:
-    return RunController(
-        run, spec, services=EngineServices(subagents=subagents, attention_state=_State())
+    return live_runs.started(
+        RunController(
+            run, spec, services=EngineServices(subagents=subagents, attention_state=_State())
+        )
     )
 
 
@@ -199,7 +202,7 @@ def test_a_cycle_you_declined_is_not_run_again_into_the_same_ask(inbox: dict) ->
         # A wait, not a run that goes on: nothing more is spawned while it waits.
         await asyncio.sleep(0.6)
 
-    asyncio.run(_go())
+    live_runs.run(_go())
 
     # Positive control: the cycle's work did run, once.
     assert len(subagents.work) == 1, subagents.work
@@ -241,7 +244,7 @@ def test_a_cycle_you_declined_is_not_run_again_into_the_same_ask(inbox: dict) ->
 def test_the_run_page_says_what_you_declined(inbox: dict) -> None:
     subagents = _Subagents(denies=[[WROTE_NOTE]])
     run, spec = _loop()
-    asyncio.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
+    live_runs.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
 
     status = service.status(run.id)
     assert status["status"] == "paused"
@@ -276,7 +279,7 @@ def test_resume_runs_the_next_cycle_with_what_you_told_it(inbox: dict) -> None:
         assert service.resume_run(run.id, by=YOU, supervisor=supervisor)["resumed"] is True
         return await asyncio.wait_for(controller.run_to_completion(), timeout=TIMEOUT)
 
-    status = asyncio.run(_go())
+    status = live_runs.run(_go())
 
     # Her Resume ran cycle 2, and what she told it while it waited is in its prompt.
     assert len(subagents.work) >= 2, subagents.work
@@ -311,7 +314,7 @@ def test_a_restart_while_it_waits_resumes_into_the_next_cycle(inbox: dict) -> No
         await _until(lambda: bool(second_mgr.work), what="cycle 2's work to start")
         return second_mgr, second
 
-    second_mgr, second = asyncio.run(_go())
+    second_mgr, second = live_runs.run(_go())
     assert "root.body@1.children[0]" in second.instances
     assert second._iterations.get("root", 0) >= 1
     assert second.run.error_message != WAITS
@@ -324,7 +327,7 @@ def test_a_restart_while_it_waits_resumes_into_the_next_cycle(inbox: dict) -> No
 def test_a_loop_at_its_budget_stops_saying_its_last_cycle_ended_at_your_deny(inbox: dict) -> None:
     subagents = _Subagents(denies=[[WROTE_NOTE]])
     run, spec = _loop(max_cycles=1)
-    status = asyncio.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
+    status = live_runs.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
     assert status is RunStatus.ESCALATED, status
     finished = store.get(run.id)
     attention = finished.attention or {}
@@ -346,7 +349,7 @@ def test_a_counted_loop_that_ran_its_count_is_done(inbox: dict) -> None:
     }
     run, spec = _loop(spec)
     subagents = _Subagents(denies=[[WROTE_NOTE]])
-    status = asyncio.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
+    status = live_runs.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
     assert status is RunStatus.COMPLETE, (status, store.get(run.id).error_message)
     assert service.status(run.id)["declined"] == [SAID]
     assert inbox["raised"] == [], "a loop with no cycle left does not wait"
@@ -358,7 +361,7 @@ def test_a_counted_loop_that_ran_its_count_is_done(inbox: dict) -> None:
 def test_a_cycle_you_declined_nothing_in_goes_on_with_the_judges_critique(inbox: dict) -> None:
     subagents = _Subagents(denies=[[]], verdicts=("REJECT", "PASS"))
     run, spec = _loop()
-    status = asyncio.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
+    status = live_runs.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
     # Cycle 2 ran with the judge's ruling on cycle 1, and nobody was asked to wait.
     assert len(subagents.work) >= 2, subagents.work
     assert "REJECT" in subagents.work[1]
@@ -382,7 +385,7 @@ def test_a_step_outside_a_loop_goes_on_and_says_what_you_declined(inbox: dict) -
     }
     run, spec = _loop(spec)
     subagents = _Subagents(denies=[[WROTE_NOTE], []])
-    status = asyncio.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
+    status = live_runs.run(_controller(run, spec, subagents).run_to_completion(timeout=TIMEOUT))
     # Nothing would run "draft" again, so nothing waits: "tidy" runs, and the run completes.
     assert status is RunStatus.COMPLETE, (status, store.get(run.id).error_message)
     assert len(subagents.work) == 2

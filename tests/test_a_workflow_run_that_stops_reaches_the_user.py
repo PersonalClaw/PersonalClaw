@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.workflows import attention, store
@@ -172,15 +173,17 @@ def test_the_engine_announces_a_workflow_run_that_escalated(raised: list) -> Non
         )
     )
     store.write_spec(run.id, spec)
-    controller = RunController(
-        run, spec, services=EngineServices(subagents=_Subagents(), attention_state=_State())
+    controller = live_runs.started(
+        RunController(
+            run, spec, services=EngineServices(subagents=_Subagents(), attention_state=_State())
+        )
     )
 
     async def _go() -> RunStatus:
         await controller.start()
         return await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
 
-    assert asyncio.run(_go()) is RunStatus.ESCALATED
+    assert live_runs.run(_go()) is RunStatus.ESCALATED
     assert [(c["title"], c["refs"]) for c in raised] == [
         ("Workflow run stopped before it finished", {"workflow": run.id})
     ], raised

@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.workflows import store
@@ -42,6 +43,14 @@ from personalclaw.workflows.models import (
 from personalclaw.workflows.mutations import binding_closure
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
 
 RUN_TIMEOUT = 60.0
 
@@ -95,7 +104,7 @@ def _routed(*after: dict[str, Any], cases: dict[str, Any] | None = None) -> dict
 async def _run(spec: dict[str, Any], inputs: dict[str, Any]) -> tuple[RunController, RunStatus]:
     run = store.create(WorkflowRun(id="", workflow_name=spec["name"], inputs=dict(inputs)))
     store.write_spec(run.id, spec)
-    ctl = RunController(run, spec, services=EngineServices())
+    ctl = live_runs.started(RunController(run, spec, services=EngineServices()))
     return ctl, await ctl.run_to_completion(timeout=20)
 
 
@@ -176,7 +185,9 @@ async def test_the_branch_output_is_kept_with_its_step_and_read_back_on_resume()
     record = {"case": "large", "produced": LARGE}
     assert store.read_output(ctl.run.id, "root.children[1]") == record
 
-    resumed = RunController(store.get(ctl.run.id), ctl.spec, services=EngineServices())
+    resumed = live_runs.started(
+        RunController(store.get(ctl.run.id), ctl.spec, services=EngineServices())
+    )
     assert resumed._outputs["route"] == record
 
 
@@ -292,8 +303,12 @@ async def _drive(
     spec = template.to_dict()
     run = store.create(WorkflowRun(id="", workflow_name=name, mode="background", inputs=inputs))
     store.write_spec(run.id, spec)
-    ctl = RunController(
-        run, spec, services=EngineServices(subagents=stages, completion=calls, cwd=str(workspace))
+    ctl = live_runs.started(
+        RunController(
+            run,
+            spec,
+            services=EngineServices(subagents=stages, completion=calls, cwd=str(workspace)),
+        )
     )
     await ctl.start()
     deadline = asyncio.get_running_loop().time() + RUN_TIMEOUT

@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.guardrails import incident
@@ -156,7 +157,9 @@ def _views_say_held(run: WorkflowRun) -> tuple[str, str]:
 def test_a_running_stage_is_stopped_and_the_run_carries_on_once_the_switch_is_off() -> None:
     run, spec = _new_run()
     fake = _Subagents()
-    controller = RunController(run, spec, services=EngineServices(subagents=fake))
+    controller = live_runs.started(
+        RunController(run, spec, services=EngineServices(subagents=fake))
+    )
 
     async def _go() -> None:
         await controller.start()
@@ -185,7 +188,7 @@ def test_a_running_stage_is_stopped_and_the_run_carries_on_once_the_switch_is_of
         status = await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
         assert status in (RunStatus.COMPLETE, RunStatus.ESCALATED), status
 
-    asyncio.run(_go())
+    live_runs.run(_go())
 
 
 def test_a_stage_the_run_reaches_while_the_switch_is_on_waits_for_it_instead_of_failing() -> None:
@@ -194,7 +197,9 @@ def test_a_stage_the_run_reaches_while_the_switch_is_on_waits_for_it_instead_of_
     fake = _Subagents()
     fake.hold = False
     incident.activate("rollback in progress")
-    controller = RunController(run, spec, services=EngineServices(subagents=fake))
+    controller = live_runs.started(
+        RunController(run, spec, services=EngineServices(subagents=fake))
+    )
 
     async def _go() -> None:
         await controller.start()
@@ -208,7 +213,7 @@ def test_a_stage_the_run_reaches_while_the_switch_is_on_waits_for_it_instead_of_
         status = await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
         assert status in (RunStatus.COMPLETE, RunStatus.ESCALATED), status
 
-    asyncio.run(_go())
+    live_runs.run(_go())
 
 
 def test_a_spawn_the_switch_refuses_as_it_arrives_is_held_and_not_counted_as_an_attempt() -> None:
@@ -218,7 +223,9 @@ def test_a_spawn_the_switch_refuses_as_it_arrives_is_held_and_not_counted_as_an_
     fake = _Subagents()
     fake.hold = False
     fake.switch_on_at_spawn = True
-    controller = RunController(run, spec, services=EngineServices(subagents=fake))
+    controller = live_runs.started(
+        RunController(run, spec, services=EngineServices(subagents=fake))
+    )
 
     async def _go() -> None:
         await controller.start()
@@ -235,7 +242,7 @@ def test_a_spawn_the_switch_refuses_as_it_arrives_is_held_and_not_counted_as_an_
         status = await asyncio.wait_for(controller.run_to_completion(), timeout=20.0)
         assert status in (RunStatus.COMPLETE, RunStatus.ESCALATED), status
 
-    asyncio.run(_go())
+    live_runs.run(_go())
 
 
 def test_the_run_list_says_a_running_run_is_held_while_the_switch_is_on() -> None:

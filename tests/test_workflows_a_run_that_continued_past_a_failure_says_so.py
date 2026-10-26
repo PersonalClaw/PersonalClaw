@@ -25,6 +25,7 @@ import copy
 import json
 from typing import Any
 
+import live_runs
 import pytest
 
 from personalclaw.workflows import journal as J
@@ -33,6 +34,14 @@ from personalclaw.workflows.controller import EngineServices, RunController
 from personalclaw.workflows.models import InstanceState, RunStatus, WorkflowRun
 
 pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+async def _stopped_runs(anyio_backend):
+    """Each run a test started, stopped before its loop closes (``live_runs``)."""
+    yield
+    await live_runs.stop_started()
+
 
 #: Long enough for the judge's free rule tier (`judge_pretier`) to let it through to the model.
 EVIDENCE = "A substantial deliverable with plenty of characters for the pre-tier to allow through."
@@ -101,7 +110,9 @@ async def _run(spec: dict[str, Any]) -> tuple[RunController, list[dict[str, Any]
         if event == "workflow_run_update":
             published.append(dict(payload))
 
-    c = RunController(run, spec, services=EngineServices(completion=_completion, publish=publish))
+    c = live_runs.started(
+        RunController(run, spec, services=EngineServices(completion=_completion, publish=publish))
+    )
     await c.start()
     await _until(lambda: c.run.is_terminal, what=f"the run to end (it is {c.run.status.value})")
     return c, published
