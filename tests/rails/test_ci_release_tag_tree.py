@@ -1,7 +1,9 @@
 """``.github/workflows/release-tag.yml``'s trust shape: the one way a ``v*`` tag is made (#4584).
 
 It runs only on a dispatch, its one job only on main, in the ``ci-controller`` environment, with
-``contents: read``, ``actions: read`` and ``issues: read``. The dispatch inputs reach the steps
+``contents: read``, ``actions: read`` and ``issues: read``, and with ``checks: read`` and
+``pull-requests: read`` beside them once the tag also reads the merge controller's verdict on its
+commit (#5383): one set or the other, nothing between. The dispatch inputs reach the steps
 only as environment variables, never as text in a command. ``python -m tools.ci release-tag``
 checks the commit and the tag, and reads the commit's push run on main, its breadth and the
 issues that own breadth's advisory reds with the job's own token (#3911), before the release
@@ -28,6 +30,19 @@ _REHEARSE = 'if [ "$REHEARSAL" = true ]; then more+=(--rehearsal); fi'
 #: The job's own token, which reads the commit's push run on main and nothing else.
 _RUNS_TOKEN = "${{ github.token }}"
 _GATE = '--repository "$GITHUB_REPOSITORY"'
+#: What the tag job may hold: the job's own token reads the commit's push run on main, its breadth
+#: and the issues that own breadth's advisory reds, and, once the tag reads the merge controller's
+#: verdict on the commit (#5383), that verdict's check run and its pull request too.
+_PERMISSIONS = (
+    {"contents": "read", "actions": "read", "issues": "read"},
+    {
+        "contents": "read",
+        "actions": "read",
+        "issues": "read",
+        "checks": "read",
+        "pull-requests": "read",
+    },
+)
 
 
 def _problems(text: str) -> list[str]:
@@ -48,7 +63,7 @@ def _problems(text: str) -> list[str]:
         found.append(f"the job runs on {job.get('if')!r}, not main alone")
     if job.get("environment") != "ci-controller":
         found.append(f"the job deploys to {job.get('environment')!r}")
-    if job.get("permissions") != {"contents": "read", "actions": "read", "issues": "read"}:
+    if job.get("permissions") not in _PERMISSIONS:
         found.append(f"the job holds {job.get('permissions')!r}")
     steps = job.get("steps") or []
     names = [s.get("name") for s in steps]
@@ -175,6 +190,37 @@ def test_a_planted_edit_fails(old: str, new: str, says: str) -> None:
     assert text.count(old) == 1, f"the plant's anchor is not once: {old!r}"
     found = _problems(text.replace(old, new))
     assert any(says in p for p in found), found
+
+
+def _holding(permissions: dict[str, str]) -> list[str]:
+    """The real file's problems with the tag job holding *permissions*, whichever set it holds."""
+    data = yaml.safe_load(_WORKFLOW.read_text(encoding="utf-8"))
+    data["jobs"]["tag"]["permissions"] = dict(permissions)
+    return _problems(yaml.safe_dump(data))
+
+
+@pytest.mark.parametrize("permissions", _PERMISSIONS, ids=["three", "with-the-verdict"])
+def test_either_set_passes(permissions: dict[str, str]) -> None:
+    assert _holding(permissions) == []
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        {"contents": "read", "actions": "read", "issues": "read", "checks": "read"},
+        {"contents": "read", "actions": "read", "issues": "read", "pull-requests": "read"},
+        {
+            "contents": "read",
+            "actions": "read",
+            "issues": "read",
+            "checks": "write",
+            "pull-requests": "read",
+        },
+    ],
+    ids=["checks-alone", "pull-requests-alone", "checks-write"],
+)
+def test_a_set_between_or_beyond_the_two_fails(permissions: dict[str, str]) -> None:
+    assert any("the job holds" in p for p in _holding(permissions))
 
 
 def test_a_token_made_before_the_check_fails() -> None:
