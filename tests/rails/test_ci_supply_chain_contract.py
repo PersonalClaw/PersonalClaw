@@ -13,6 +13,8 @@ import datetime
 import functools
 import json
 import os
+import shutil
+import sys
 import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -112,8 +114,15 @@ def _locked(name: str) -> str:
 _LOCKED_PACKAGING = _locked("packaging")
 
 
+#: The one day the rows read, for their plants' dates and for their checks. The rows are built at
+#: import, so a plant's date is the day the run collected them; a check that read the clock as it
+#: ran saw the next day in a run that crossed midnight, and the exception planted 31 days out read
+#: as 30 and went unseen (a smallest set collected at 23:48, 2026-10-25).
+_TODAY = datetime.date.today()
+
+
 def _days(n: int) -> str:
-    return (datetime.date.today() + datetime.timedelta(days=n)).isoformat()
+    return (_TODAY + datetime.timedelta(days=n)).isoformat()
 
 
 @functools.cache
@@ -137,7 +146,7 @@ def _supply_row(name: str, rules: tuple[str, ...], controls: tuple[Control, ...]
     """A row over *rules*, or over every rule and the exceptions when *rules* is empty."""
 
     def check_tree(tree: supply_chain.Tree) -> list[str]:
-        found = supply_chain.check(tree, rules=rules)
+        found = supply_chain.check(tree, today=_TODAY, rules=rules)
         return [str(v) for v in found if not rules or v.rule in rules]
 
     def check(root: Path) -> list[str]:
@@ -2278,3 +2287,32 @@ def test_the_supply_chain_holds_and_each_check_can_fail(
     row: _SupplyRow, subtests, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     _run_supply_row(row, subtests, tmp_path, request)
+
+
+def test_a_row_dated_the_day_before_its_check_runs_still_reads_its_dated_plants(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run crosses the date: its rows are dated the day it collects them, and their checks run on
+    the next. Moving the rows' day back one is that crossing. The check reads the rows' day, not the
+    clock, so an exception planted 31 days out is still more than 30, and one that expires on the
+    rows' day is not yet expired."""
+    monkeypatch.setattr(sys.modules[__name__], "_TODAY", _TODAY - datetime.timedelta(days=1))
+    assert (
+        _days(0) != datetime.date.today().isoformat()
+    ), "vacuity floor: the rows' day did not move"
+    (row,) = [r for r in SUPPLY_CHAIN_ROWS if r.name == "exceptions"]
+    expires = f"expires = {_days(30)}\n"
+    controls = (
+        _waived("31 days out", expires, f"expires = {_days(31)}\n", expect="more than 30 days"),
+        _waived("expires on the rows' day", expires, f"expires = {_days(0)}\n", fails=False),
+    )
+    row.scaffold(tmp_path / "scaffold")
+    for index, control in enumerate(controls):
+        root = tmp_path / f"control-{index}"
+        shutil.copytree(tmp_path / "scaffold", root)
+        control.plant(root)
+        found = row.check(root)
+        if control.fails:
+            assert any(control.expect in v for v in found), f"{control.name}: {found}"
+        else:
+            assert found == [], f"{control.name}: {found}"
