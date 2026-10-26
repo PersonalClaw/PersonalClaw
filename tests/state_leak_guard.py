@@ -20,9 +20,13 @@ What it reads, each against the reading taken as the test began:
   the fence uses (:func:`fenced_state`). Its fence puts it back, so it is recorded as ``fenced``
   and never fails, until that registry's fence retires.
 
-The environment is ``env_guard``'s, which already fails a leak, so it is not read twice. Files a
-test writes outside its temporary paths are not read here yet: under xdist every worker writes
-to one tree, so a per-test listing would charge one worker's writes to another's test.
+- **files written** outside the run's temporary folders (:func:`temporary_roots`): each path this
+  process opens for writing, makes, moves or removes while the test runs, read through an audit
+  hook (:class:`Writes`). A process sees its own writes alone, so under xdist no worker's writes
+  are charged to another worker's test; a thread the test's process runs is its process's, and a
+  child's writes are the child's. Recorded, never failing, until the suite's own are known.
+
+The environment is ``env_guard``'s, which already fails a leak, so it is not read twice.
 
 **Report mode** is the default: every leak goes to ``reports/state-leaks.json`` with the test's
 real xdist worker (``PYTEST_XDIST_WORKER``, ``main`` without xdist) and its position in that
@@ -37,10 +41,12 @@ import json
 import os
 import signal
 import subprocess
+import sys
+import tempfile
 import threading
 import time
 import tomllib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -136,6 +142,150 @@ class Children:
         live = [p for p in self._started if p.poll() is None]
         self._started = []
         return live
+
+
+# ── the files a test writes ────────────────────────────────────────────────────────────────
+
+#: The audit events that write a path: an ``open`` for writing, read from its mode or its flags,
+#: and those that make, move or remove one. ``shutil.rmtree`` names its tree once; the removals it
+#: makes inside it name a folder's descriptor (``dir_fd``) and are not read.
+WRITE_EVENTS = frozenset(
+    {
+        "open",
+        "os.mkdir",
+        "os.rename",
+        "os.remove",
+        "os.rmdir",
+        "os.symlink",
+        "os.link",
+        "os.truncate",
+        "shutil.copyfile",
+        "shutil.copytree",
+        "shutil.move",
+        "shutil.rmtree",
+    }
+)
+
+_WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+
+#: The most paths one window keeps, and the most a leak names.
+KEPT_PATHS = 1000
+SHOWN_PATHS = 5
+
+
+def _no_fd(fd: object) -> bool:
+    """Whether a path is read without a folder's descriptor: the audit events give ``-1``."""
+    return fd is None or fd == -1
+
+
+def _written(event: str, args: tuple) -> list[object]:
+    """The paths an audit event writes, before they are made absolute."""
+    if event == "open":
+        path, mode, flags = (tuple(args) + (None, None, 0))[:3]
+        writes = (isinstance(mode, str) and bool(set(mode) & set("wax+"))) or bool(
+            isinstance(flags, int) and flags & _WRITE_FLAGS
+        )
+        return [path] if writes else []
+    if event == "os.rename":  # os.replace's too
+        src, dst, src_fd, dst_fd = (tuple(args) + (None, None, None, None))[:4]
+        return [p for p, fd in ((src, src_fd), (dst, dst_fd)) if _no_fd(fd)]
+    if event == "os.link":
+        src, dst, src_fd, dst_fd = (tuple(args) + (None, None, None, None))[:4]
+        return [dst] if _no_fd(dst_fd) else []
+    if event in ("os.mkdir", "os.remove", "os.rmdir", "shutil.rmtree"):
+        path = args[0] if args else None
+        dir_fd = args[-1] if len(args) > 1 else None
+        return [path] if _no_fd(dir_fd) else []
+    if event == "os.symlink":
+        src, dst, dir_fd = (tuple(args) + (None, None, None))[:3]
+        return [dst] if _no_fd(dir_fd) else []
+    if event in ("shutil.copyfile", "shutil.copytree"):
+        return [args[1]] if len(args) > 1 else []
+    if event == "shutil.move":
+        return list(args[:2])
+    if event == "os.truncate":
+        return [args[0]] if args else []
+    return []
+
+
+def _text(path: object) -> str | None:
+    if isinstance(path, bytes):
+        return os.fsdecode(path)
+    if isinstance(path, str):
+        return path
+    if isinstance(path, os.PathLike):
+        return os.fsdecode(os.fspath(path))
+    return None  # a file descriptor
+
+
+def temporary_roots(config) -> list[str]:
+    """Where a test may write: the system's temporary folder (pytest's own basetemp is in it), a
+    basetemp the run names, the run's ``reports/`` and pytest's cache folder, the downloads folder
+    a run names (``PERSONALCLAW_TEST_DOWNLOADS``), the device folder ``os.devnull`` is in, and
+    coverage's data files beside the run's root."""
+    root = Path(config.rootpath)
+    roots = [tempfile.gettempdir(), str(root / "reports"), str(root / ".pytest_cache")]
+    basetemp = config.getoption("basetemp", None)
+    if basetemp:
+        roots.append(str(basetemp))
+    downloads = os.environ.get("PERSONALCLAW_TEST_DOWNLOADS")
+    if downloads:
+        roots.append(downloads)
+    roots.append(os.path.dirname(os.devnull))
+    return roots
+
+
+class Writes:
+    """Each path this process writes while a window is open, outside the roots it is given,
+    read through an audit hook (``sys.addaudithook``). A hook cannot be taken away, so it is
+    added once and records only while a window is open; it never raises.
+
+    The hook's guard against its own calls (``_busy``) is the instance's, not a thread's: a write
+    another thread makes while one call of the hook runs goes unrecorded. A gap in the evidence,
+    never a failed write."""
+
+    def __init__(self, roots: Sequence[str], files: Sequence[str] = ()) -> None:
+        self._roots = tuple(os.path.join(os.path.realpath(r), "") for r in roots)
+        self._files = tuple(os.path.realpath(f) for f in files)
+        self._open = False
+        self._busy = False
+        self._seen: list[str] = []
+        self._installed = False
+
+    def install(self) -> None:
+        if not self._installed:
+            sys.addaudithook(self._hook)
+            self._installed = True
+
+    def _hook(self, event: str, args: tuple) -> None:
+        if not self._open or event not in WRITE_EVENTS or self._busy:
+            return
+        self._busy = True
+        try:
+            for path in _written(event, args):
+                text = _text(path)
+                if text is not None and len(self._seen) < KEPT_PATHS:
+                    self._seen.append(os.path.abspath(text))
+        except Exception:  # noqa: BLE001 - a hook that raises would fail the write it watched
+            pass
+        finally:
+            self._busy = False
+
+    def open(self) -> None:
+        self._seen = []
+        self._open = True
+
+    def close(self) -> list[str]:
+        """The paths written in the window outside the roots, each once, in the order written."""
+        self._open = False
+        seen, self._seen = self._seen, []
+        out: list[str] = []
+        for path in dict.fromkeys(seen):
+            real = os.path.realpath(path)
+            if real.startswith(self._roots) or real.startswith(self._files):
+                continue
+            out.append(path)
+        return out
 
 
 # ── the fenced registries ──────────────────────────────────────────────────────────────────
@@ -244,6 +394,7 @@ class Guard:
     listening: Callable[[], frozenset[int]] = _no_ports
     fenced: Callable[[], Mapping[str, frozenset[str]]] = lambda: {}
     children: Children | None = None
+    writes: Writes | None = None
     leaks: list[Leak] = field(default_factory=list)
     seconds: float = 0.0
     tests: int = 0
@@ -293,6 +444,8 @@ class Guard:
         )
         if self.children is not None:
             self.children.open()
+        if self.writes is not None:
+            self.writes.open()
         self.seconds += time.perf_counter() - began
         return reading
 
@@ -352,6 +505,18 @@ class Guard:
             for child in self.children.close():
                 self._leak(
                     "child process", f"pid {child.pid} ({child.args!r}) is still running", True
+                )
+        if self.writes is not None:
+            written = self.writes.close()
+            if written:
+                shown = ", ".join(written[:SHOWN_PATHS])
+                more = (
+                    f" and {len(written) - SHOWN_PATHS} more" if len(written) > SHOWN_PATHS else ""
+                )
+                self._leak(
+                    "file written",
+                    f"wrote {len(written)} path(s) outside the temporary folders: {shown}{more}",
+                    False,
                 )
         opened = sorted(set(self.listening()) - before.ports)
         if opened:
@@ -445,7 +610,11 @@ class Plugin:
             raise pytest.UsageError(str(exc)) from None
         children = Children()
         children.install()
-        self.guard = Guard(listening=listening, fenced=fenced_state, children=children)
+        writes = Writes(temporary_roots(config), [str(Path(config.rootpath) / ".coverage")])
+        writes.install()
+        self.guard = Guard(
+            listening=listening, fenced=fenced_state, children=children, writes=writes
+        )
         self.position = 0
         self._before: Before | None = None
         self._relayed: list[dict] = []

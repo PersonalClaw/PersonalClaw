@@ -3150,8 +3150,8 @@ worker that turns red later.
   fence, so its after-reading of the registries is taken before any fence restores one. Such a
   change is recorded as `fenced` and never fails while its fence stands; the record is what a
   fence's retirement is judged on.
-- **Never failing:** a fenced change, and a thread named as a pool names its workers
-  (`ThreadPoolExecutor`, asyncio's executor).
+- **Never failing:** a fenced change, a file written, and a thread named as a pool names its
+  workers (`ThreadPoolExecutor`, asyncio's executor).
 - **Report mode** is the default: every leak goes to `reports/state-leaks.json`, with the test's
   real xdist worker and its position in that worker's order, and the guard's own seconds. The
   terminal summary gives the count and the cost per test.
@@ -3159,9 +3159,14 @@ worker that turns red later.
   `tests/state_leak_allowlist.toml` names it with the issue that tracks its fix. At most 5
   entries, each exactly `nodeid` and `issue`; a list that breaks a rule stops the session.
 
-Not read yet: files a test writes outside its temporary paths. Under xdist every worker writes
-to one tree, so a per-test listing would charge one worker's writes to another worker's test;
-the real-home guard already fails writes to the real home.
+- **Files written** outside the run's temporary folders: each path the test's process opens for
+  writing, makes, moves or removes while the test runs, read through an audit hook
+  (`sys.addaudithook`), so under xdist no worker's writes are charged to another worker's test;
+  a thread of the process is the process's, and a child's writes are the child's. The run may
+  write the system's temporary folder (pytest's basetemp is in it), a basetemp the run names, its
+  `reports/` and pytest's cache folder, a named downloads folder, the device folder and
+  coverage's data files. Recorded as `file written`, never failing, until the suite's own writes
+  are known; the real-home guard already fails writes to the real home.
 
 ### The randomized-order leg
 
