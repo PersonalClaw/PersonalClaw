@@ -12639,6 +12639,20 @@ then
 fi
 tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/published.txt"
 """,  # noqa: E501
+        "the push's replay, in shadow, beside the tree check (merge.yml's)": r"""
+set -uo pipefail
+judge="$RUNNER_TEMP/judge"
+history="$RUNNER_TEMP/main-history.git"
+rc=0
+{ git init -q --bare "$history" \
+  && git -C "$history" fetch -q --no-tags --filter=tree:0 "https://github.com/${GITHUB_REPOSITORY}" "+refs/heads/main:refs/remotes/origin/main" \
+  && (cd "$judge" && python3 -m tools.ci replay --tier merge --root "$judge" --git-dir "$history" \
+        --image "ubuntu-24.04=${ImageOS}/${ImageVersion}" --controller-revision "$BEFORE" \
+        --receipt "$RUNNER_TEMP/replay-receipt.json" --beside-tested "$TESTED"); } || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "::warning title=replay shadow::the push's replay did not answer (exit $rc), so this push has no shadow decisions. Nothing else changes."
+fi
+""",  # noqa: E501
         "main's check of this run's catalogue (merge.yml's)": r"""
 set -uo pipefail
 judge="$RUNNER_TEMP/judge"
@@ -12745,6 +12759,7 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
             "main's planner, over this checkout's catalogue, as a matrix",
             "the keys and the stage jobs' matrices, read back before they are published",
         ),
+        ("the push's replay, in shadow, beside the tree check (merge.yml's)",),
         ("main's check of this run's catalogue (merge.yml's)",),
     ),
     _TREE_CHECK_JOB: (
@@ -12786,6 +12801,12 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
         for blocks in steps
     }
     for job, steps in _TIER_STEPS.items()
+}
+#: The listed steps a tier workflow may run or leave out, by job: each is held to its listed lines
+#: when it runs. A step a row names lands in two merges (#4584 step 4): these rows first, then the
+#: workflow. merge.yml's push replay in shadow (#3919 (b1)) is one.
+_TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {
+    _PLAN_JOB: frozenset({("the push's replay, in shadow, beside the tree check (merge.yml's)",)}),
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
@@ -12878,7 +12899,7 @@ def tier_lines_violations(root: Path) -> list[str]:
                     )
     for job_id, listed in _TIER_STEP_LINES.items():
         for blocks in listed:
-            if blocks not in ran[job_id]:
+            if blocks not in ran[job_id] and blocks not in _TIER_OPTIONAL_STEPS.get(job_id, ()):
                 bad.append(
                     f"this row lists the step {' + '.join(blocks)!r} for the {job_id} job, and no"
                     f" tier workflow's {job_id} runs it"
@@ -12919,6 +12940,30 @@ _KEYS_LINE = """          printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"\n
 _PARTNER_PUBLISH = '          echo "apps-partner=$apps" | tee -a "$GITHUB_OUTPUT"\n'
 _RUN_JOB_STEP = f"        run: {_RUN_JOB_LINE}\n"
 
+#: merge.yml's push replay in shadow (#3919 (b1)), as its step reads: an optional step of the
+#: changes job, which a tier workflow may run, only as listed, or leave out.
+_REPLAY_SHADOW_STEP = """      - name: the push's replay, in shadow, beside the tree check
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          TESTED: ${{ needs.tree-check.outputs.tested }}
+        run: |
+          set -uo pipefail
+          judge="$RUNNER_TEMP/judge"
+          history="$RUNNER_TEMP/main-history.git"
+          rc=0
+          { git init -q --bare "$history" \\
+            && git -C "$history" fetch -q --no-tags --filter=tree:0 "https://github.com/${GITHUB_REPOSITORY}" "+refs/heads/main:refs/remotes/origin/main" \\
+            && (cd "$judge" && python3 -m tools.ci replay --tier merge --root "$judge" --git-dir "$history" \\
+                  --image "ubuntu-24.04=${ImageOS}/${ImageVersion}" --controller-revision "$BEFORE" \\
+                  --receipt "$RUNNER_TEMP/replay-receipt.json" --beside-tested "$TESTED"); } || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning title=replay shadow::the push's replay did not answer (exit $rc), so this push has no shadow decisions. Nothing else changes."
+          fi
+"""  # noqa: E501
+_CATALOGUE_CHECK_STEP = "      - name: main's tools/ci checks this run's catalogue\n"
+
 THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
     name="the-tier-workflows-run-only-their-closed-lists-of-lines",
     check=tier_lines_violations,
@@ -12941,6 +12986,14 @@ THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
                       "      - run: uv sync --locked --extra dev\n"
                       "      - name: Upload the entry's record\n",
                       expect="pr.yml job test is a stage job and runs"),
+        _plant("merge.yml's changes running the push's replay in shadow, as listed, passes",
+               _MERGE_YML, _CATALOGUE_CHECK_STEP, _REPLAY_SHADOW_STEP + _CATALOGUE_CHECK_STEP,
+               fails=False),
+        _plant("the push's replay in shadow with a line of its own",
+               _MERGE_YML, _CATALOGUE_CHECK_STEP,
+               _REPLAY_SHADOW_STEP.replace("rc=0\n", "rc=0\n          rm -rf ~\n", 1)
+               + _CATALOGUE_CHECK_STEP,
+               expect="merge.yml job changes runs 'rm -rf ~'"),
         Control("a listed line no job runs any more: the catalogue check removed",
                 _cut(_MERGE_YML, "      - name: main's tools/ci checks this run's catalogue\n",
                      "\n  shard-plan:\n"),
