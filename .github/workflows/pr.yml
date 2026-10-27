@@ -346,9 +346,22 @@ jobs:
           if [ -f "$RUNNER_TEMP/superseded.json" ]; then
             proof="$RUNNER_TEMP/superseded.json"
           fi
+          # The flake rule's two lists, on a pull request only: its changed paths, and this run's
+          # jobs on this attempt. Without both, the verdict passes no flake.
+          flakes=()
+          if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
+            if gh api --paginate --slurp \
+                 "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+                 > "$RUNNER_TEMP/jobs.json"; then
+              flakes=(--changed "$RUNNER_TEMP/changes/changed.z" --jobs "$RUNNER_TEMP/jobs.json")
+            else
+              echo "::warning title=no jobs list::this run's jobs could not be listed, so the flake rule passes no flake"
+            fi
+          fi
           python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
             --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
             --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
             --key-partners "$RUNNER_TEMP/key-partners.json" \
             ${proof:+--superseded "$proof"} \
+            ${flakes[@]+"${flakes[@]}"} \
             --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"

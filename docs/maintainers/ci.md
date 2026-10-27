@@ -1044,7 +1044,11 @@ pass that reads green, with the quarantined failure listed.
 
 **The flake rule.** Given a pull request's changed paths (`--changed`, NUL-separated) and its
 run's jobs on the attempt (`--jobs`, as `gh api --paginate --slurp` lists them), a run whose only
-failures are flakes reads green, and the verdict names each one, when all of these hold:
+failures are flakes reads green, and the verdict names each one, when all of these hold. On a pull
+request's Merge run, `changes` writes the paths as the `ci-changes` artifact, from the test
+merge's own diff against its first parent (a rename as both its paths), and only when the
+checkout is that pull request's test merge; `results` lists the run's jobs and gives both to
+main's verdict. Neither step can fail its job, and a push's run writes neither.
 
 - each failing job failed one way only: on attempt 1, one step exited 1 and every other exited 0,
   the diagnostic rerun ran alone in a new process and exited 0, and every test its record names
