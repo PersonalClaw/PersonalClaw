@@ -370,7 +370,9 @@ jobs:
           DMG=$(cat ../wanted.txt)
           MNT=$(mktemp -d)
           hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -quiet
-          trap 'hdiutil detach "$MNT" -quiet || true' EXIT
+          # The detach runs whatever the check concluded, and the step's own status is what
+          # leaves: `|| true` would have hidden it, which the masking row forbids unseen.
+          trap 'status=$?; hdiutil detach "$MNT" -quiet; exit "$status"' EXIT
           APP=$(ls -1d "$MNT"/*.app | head -1)
           test -n "$APP"
           echo "mounted: $DMG -> $APP"
