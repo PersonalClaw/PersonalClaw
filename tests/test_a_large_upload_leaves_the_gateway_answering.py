@@ -330,6 +330,89 @@ class _NoCpu:
         return max(0.0, then.ready - first.ready - others)
 
 
+class _ThreadCounts:
+    """Linux: the loop thread's major page faults and its voluntary and involuntary context
+    switches, read from the files ``/proc/thread-self`` names for the thread that opens them. A
+    step that waited off its CPU and not ready to run shows how: a major fault waited on the disk
+    for a page, a voluntary switch slept (on a lock, the GIL, a read), an involuntary one was
+    taken off its CPU. Elsewhere it reads nothing."""
+
+    def __init__(self) -> None:
+        self._stat: int | None = None
+        self._status: int | None = None
+
+    def open(self) -> None:
+        """On the loop thread."""
+        if os.path.exists("/proc/thread-self/stat"):
+            self._stat = os.open("/proc/thread-self/stat", os.O_RDONLY)
+            self._status = os.open("/proc/thread-self/status", os.O_RDONLY)
+
+    def close(self) -> None:
+        for fd in (self._stat, self._status):
+            if fd is not None:
+                os.close(fd)
+        self._stat = self._status = None
+
+    def read(self) -> tuple[bytes, bytes] | None:
+        """The two files as they read now, unparsed, so a step pays only the reads; None off
+        Linux. :meth:`counts` reads them."""
+        if self._stat is None or self._status is None:
+            return None
+        return os.pread(self._stat, 1024, 0), os.pread(self._status, 4096, 0)
+
+    @staticmethod
+    def counts(read: tuple[bytes, bytes]) -> tuple[int, int, int]:
+        """``(major faults, voluntary switches, involuntary switches)`` from one :meth:`read`."""
+        stat, status = read
+        # The fields after the name, which may hold spaces, in its parentheses: majflt is the
+        # tenth of them (field 12 of proc(5)).
+        majflt = int(stat[stat.rindex(b")") + 2 :].split()[9])
+        switches = {
+            key: int(value)
+            for key, _, value in (line.partition(":\t") for line in status.decode().splitlines())
+            if key in ("voluntary_ctxt_switches", "nonvoluntary_ctxt_switches")
+        }
+        return majflt, switches["voluntary_ctxt_switches"], switches["nonvoluntary_ctxt_switches"]
+
+
+def _what_runs(handle) -> tuple:
+    """What a step of *handle* runs, read before it runs: the task it wakes and the frames the
+    task waits in, outermost first, as ``(task, [(code, line), ...])``; for a handle that wakes
+    no task, ``(handle, [])``. Kept raw, so the loop pays only the walk; :func:`_said` writes it."""
+    task = getattr(getattr(handle, "_callback", None), "__self__", None)
+    if not isinstance(task, asyncio.Task):
+        return handle, []
+    frames, awaited = [], task.get_coro()
+    while awaited is not None and len(frames) < 16:
+        frame = (
+            getattr(awaited, "cr_frame", None)
+            or getattr(awaited, "ag_frame", None)
+            or getattr(awaited, "gi_frame", None)
+        )
+        if frame is None:
+            break
+        frames.append((frame.f_code, frame.f_lineno))
+        awaited = (
+            getattr(awaited, "cr_await", None)
+            or getattr(awaited, "ag_await", None)
+            or getattr(awaited, "gi_yieldfrom", None)
+        )
+    return task, frames
+
+
+def _said(runs: tuple) -> str:
+    """:func:`_what_runs`'s reading as a line: the task, then where it waited, its three
+    innermost frames, each a function with its file and line."""
+    what, frames = runs
+    if not isinstance(what, asyncio.Task):
+        return repr(what)[:200]
+    where = " > ".join(
+        f"{code.co_name} ({os.path.basename(code.co_filename)}:{line})"
+        for code, line in frames[-3:]
+    )
+    return f"task {what.get_name()}, resumed in {where or 'its first step'}"
+
+
 class _Window:
     """One stretch of the loop thread's time, a step or a health check's answer: its wall time, its
     CPU time, and the time the loop thread spent in it ready to run with no CPU (:class:`_NoCpu`).
@@ -410,8 +493,13 @@ class _Probe:
         self.client = client
         self.asking = asking
         self.no_cpu = _NoCpu()
+        self.counts = _ThreadCounts()
         self.worst_step = 0.0
         self.worst_step_was = ""
+        #: The longest step's own wall time, CPU time and time ready left out, and what the loop
+        #: thread's counts did over it (:class:`_ThreadCounts`; None off Linux).
+        self.worst_step_own: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self.worst_step_counts: tuple[int, int, int] | None = None
         self.worst_step_wall = 0.0
         self.worst_gap = 0.0
         self.slowest_answer = 0.0
@@ -426,6 +514,8 @@ class _Probe:
             if threading.get_ident() != loop_thread:
                 return real(handle)
             try:
+                # What the step runs, and the thread's counts, read outside its window.
+                runs, counts = _what_runs(handle), probe.counts.read()
                 # The step's window: its reads of the time ready inside its wall time (_Window).
                 window = _Window(probe.no_cpu, {threading.get_native_id()})
             except BaseException:
@@ -444,8 +534,20 @@ class _Probe:
                 probe.worst_step_wall = max(probe.worst_step_wall, wall)
                 probe.waited_for_a_cpu += waited
                 if took > probe.worst_step:
+                    after = probe.counts.read()
                     probe.worst_step = took
-                    probe.worst_step_was = repr(handle)[:200]
+                    probe.worst_step_was = _said(runs)
+                    probe.worst_step_own = (wall, cpu, waited)
+                    probe.worst_step_counts = (
+                        tuple(  # type: ignore[assignment]
+                            b - a
+                            for a, b in zip(
+                                _ThreadCounts.counts(counts), _ThreadCounts.counts(after)
+                            )
+                        )
+                        if counts is not None and after is not None
+                        else None
+                    )
 
         return run
 
@@ -457,6 +559,7 @@ class _Probe:
             first = await self.client.get("/api/healthz")
             await first.read()
         self.no_cpu.open()
+        self.counts.open()
         try:
             with patch.object(
                 asyncio.events.Handle,
@@ -465,6 +568,7 @@ class _Probe:
             ):
                 return await self._during(work)
         finally:
+            self.counts.close()
             self.no_cpu.close()
 
     async def _timed_answer(self, answer) -> None:
@@ -521,15 +625,31 @@ class _Probe:
         return result
 
     def says(self) -> str:
-        return (
-            f"the work took {self.took:.2f}s; the event loop's longest step was "
-            f"{self.worst_step:.3f}s ({self.worst_step_was}) and the slowest health check "
-            f"{self.slowest_answer:.3f}s ({self.answered_during} answered during it), less the "
-            f"time ready to run with no CPU ({self.no_cpu.source}: {self.waited_for_a_cpu:.3f}s "
-            f"in steps); in wall time, the longest step {self.worst_step_wall:.3f}s, the slowest "
-            f"health check {self.slowest_answer_wall:.3f}s and the longest gap between turns "
-            f"{self.worst_gap:.3f}s"
-        )
+        """The probe's reading, one line a field: what the longest step ran and how its time
+        went, beside the health checks, the time left out and the tick."""
+        wall, cpu, waited = self.worst_step_own
+        lines = [
+            f"the work took {self.took:.2f}s",
+            f"the longest step: {self.worst_step:.3f}s counted, of {wall:.3f}s in wall time,"
+            f" {cpu:.3f}s of CPU and {waited:.3f}s ready with no CPU",
+            f"  it ran {self.worst_step_was}",
+        ]
+        if self.worst_step_counts is not None:
+            major, voluntary, involuntary = self.worst_step_counts
+            lines.append(
+                f"  the loop thread over it: {major} major faults, {voluntary} voluntary and"
+                f" {involuntary} involuntary switches"
+            )
+        lines += [
+            f"the slowest health check: {self.slowest_answer:.3f}s counted, of"
+            f" {self.slowest_answer_wall:.3f}s in wall time ({self.answered_during} answered"
+            " during the work)",
+            f"ready with no CPU, left out of the steps: {self.waited_for_a_cpu:.3f}s"
+            f" ({self.no_cpu.source})",
+            f"the longest step in wall time: {self.worst_step_wall:.3f}s",
+            f"the longest gap between turns: {self.worst_gap:.3f}s",
+        ]
+        return "\n".join(lines)
 
 
 async def _init(client, size: int, *, target: str, filename: str, mime: str) -> dict:
@@ -969,6 +1089,55 @@ async def test_a_blocking_call_on_the_loop_fails_the_probe(subtests, tmp_path):
             assert status == 200, f"{name}: premise: the planted request answered"
             assert probe.worst_step >= _BOUND, f"{name}: the step missed it; {probe.says()}"
             assert probe.worst_gap >= _BOUND, f"{name}: premise: the tick saw it; {probe.says()}"
+
+
+#: How long the step the report test plants keeps the loop.
+_REPORTED = 0.15
+
+
+@pytest.mark.parametrize("how", ["burns its CPU", "sleeps"])
+@pytest.mark.asyncio
+async def test_the_report_names_the_longest_steps_task_its_line_and_where_its_time_went(how):
+    """A failure says what the longest step ran and how its time went, one line a field: the task
+    and the frames it resumed in, the step's CPU, and on Linux the loop thread's major faults and
+    switches over it. A step that burns its CPU reads its CPU as its time; one that sleeps reads
+    almost none, and on Linux at least one voluntary switch, so a block the next failure shows
+    says whether the loop thread ran or waited off its CPU, and in whose code."""
+    async with TestClient(TestServer(web.Application())) as client:
+        probe = _Probe(client, asking=False)
+
+        async def planted() -> None:
+            await asyncio.sleep(0)  # the step below resumes here
+            if how == "sleeps":
+                time.sleep(_REPORTED)
+            else:
+                began = time.thread_time()
+                while time.thread_time() - began < _REPORTED:
+                    pass
+
+        await probe.during(planted())
+
+    says = probe.says()
+    lines = says.splitlines()
+    _, cpu, _ = probe.worst_step_own
+    assert probe.worst_step >= _REPORTED, says
+    assert lines[0].startswith("the work took "), says
+    assert lines[1].startswith(f"the longest step: {probe.worst_step:.3f}s counted"), says
+    resumed = f"planted ({os.path.basename(__file__)}:{planted.__code__.co_firstlineno + 1})"
+    assert lines[2].startswith("  it ran task ") and resumed in lines[2], says
+    if how == "sleeps":
+        assert cpu < _REPORTED / 3, f"a sleeping step read {cpu:.3f}s of CPU; {says}"
+    else:
+        assert cpu >= _REPORTED, f"a burning step read {cpu:.3f}s of CPU; {says}"
+    if os.path.exists("/proc/thread-self/stat"):
+        assert probe.worst_step_counts is not None, says
+        assert lines[3].startswith("  the loop thread over it: "), says
+        if how == "sleeps":
+            assert probe.worst_step_counts[1] >= 1, f"no voluntary switch over a sleep; {says}"
+    else:
+        assert probe.worst_step_counts is None, says
+        assert not any("the loop thread over it" in line for line in lines), says
+    assert all(line.strip() for line in lines), f"an empty line in the report; {says}"
 
 
 class _StoppedWhileIdle:
