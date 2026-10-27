@@ -22,6 +22,7 @@ from aiohttp import web
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import json_object_body, require_string, string_field
+from personalclaw.sel import sel_log_async
 
 logger = logging.getLogger(__name__)
 
@@ -610,18 +611,18 @@ async def api_skill_files(request: web.Request) -> web.Response:
     rel = request.rel_url.query.get("path", "").strip()
 
     if not _safe_skill_name(name) or (rel and (".." in rel or rel.startswith("/") or "\\" in rel)):
-        _sel_log("skills.files", "denied", f"unsafe:{name}:{rel}", request)
+        await sel_log_async(_sel_log, "skills.files", "denied", f"unsafe:{name}:{rel}", request)
         return web.json_response({"error": "invalid skill or path"}, status=400)
 
     skill_dir = _skill_folder(request, name)
     if skill_dir is None:
-        _sel_log("skills.files", "denied", f"notfound:{name}", request)
+        await sel_log_async(_sel_log, "skills.files", "denied", f"notfound:{name}", request)
         return web.json_response({"error": f"Skill '{name}' not found"}, status=404)
 
     try:
         detail = NativeSkillsMarketplace(root=skill_dir.parent).fetch(skill_dir.name)
     except Exception:
-        _sel_log("skills.files", "denied", f"fetch-failed:{name}", request)
+        await sel_log_async(_sel_log, "skills.files", "denied", f"fetch-failed:{name}", request)
         return web.json_response({"error": f"Skill '{name}' not found"}, status=404)
 
     def _is_sensitive(entry_path: str) -> bool:
@@ -638,22 +639,24 @@ async def api_skill_files(request: web.Request) -> web.Response:
             files.append({"path": p, "size": len(f.get("contents", "").encode("utf-8"))})
             if len(files) >= SKILL_FILES_MAX:
                 break
-        _sel_log("skills.files", "ok", f"tree:{name}:{len(files)}", request)
+        await sel_log_async(_sel_log, "skills.files", "ok", f"tree:{name}:{len(files)}", request)
         return web.json_response({"name": name, "files": files})
 
     # Single-file view.
     match = next((f for f in detail.files if f.get("path") == rel), None)
     if match is None:
-        _sel_log("skills.files", "denied", f"file-notfound:{name}:{rel}", request)
+        await sel_log_async(
+            _sel_log, "skills.files", "denied", f"file-notfound:{name}:{rel}", request
+        )
         return web.json_response({"error": f"File '{rel}' not found"}, status=404)
     if _is_sensitive(rel):
-        _sel_log("skills.files", "denied", f"sensitive:{name}:{rel}", request)
+        await sel_log_async(_sel_log, "skills.files", "denied", f"sensitive:{name}:{rel}", request)
         return web.json_response({"error": "access denied"}, status=403)
     content = match.get("contents", "")
     if len(content.encode("utf-8")) > SKILL_FILE_MAX_BYTES:
-        _sel_log("skills.files", "denied", f"too-large:{name}:{rel}", request)
+        await sel_log_async(_sel_log, "skills.files", "denied", f"too-large:{name}:{rel}", request)
         return web.json_response({"error": "file too large"}, status=413)
-    _sel_log("skills.files", "ok", f"file:{name}:{rel}", request)
+    await sel_log_async(_sel_log, "skills.files", "ok", f"file:{name}:{rel}", request)
     return web.json_response({"name": name, "path": rel, "content": content})
 
 
@@ -694,13 +697,17 @@ async def api_skills_install(request: web.Request) -> web.Response:
         )
     try:
         result = registry.install_guarded(marketplace_name, skill_id, target, force=force)
-        _sel_log("skills.install", "ok", f"{marketplace_name}/{skill_id}", request)
+        await sel_log_async(
+            _sel_log, "skills.install", "ok", f"{marketplace_name}/{skill_id}", request
+        )
         return web.json_response(
             {"ok": True, "path": str(result.path), "scan": result.report.to_dict()},
             status=201,
         )
     except SkillNotFoundError as exc:
-        _sel_log("skills.install", "denied", f"notfound:{marketplace_name}/{skill_id}", request)
+        await sel_log_async(
+            _sel_log, "skills.install", "denied", f"notfound:{marketplace_name}/{skill_id}", request
+        )
         return json_error("not_found", message=str(exc), status=404)
     except SkillInstallRefused as exc:
         # 409 = a WARNING the user can re-attempt with force=true; 403 = a DANGEROUS
@@ -735,7 +742,7 @@ async def api_skills_delete(request: web.Request) -> web.Response:
     # Reject path-traversal before any rmtree — ``name`` is a single URL segment
     # but ``..`` alone still resolves to a skill dir's parent.
     if not _safe_skill_name(name):
-        _sel_log("skills.delete", "denied", f"unsafe:{name}", request)
+        await sel_log_async(_sel_log, "skills.delete", "denied", f"unsafe:{name}", request)
         return web.json_response({"error": "invalid skill name"}, status=400)
     from personalclaw.skills.loader import agent_skills_dir, skills_dir
 
@@ -748,10 +755,12 @@ async def api_skills_delete(request: web.Request) -> web.Response:
         folder = _skill_folder(request, name)
     if folder is not None and home in folder.parents:
         shutil.rmtree(folder)
-        _sel_log("skills.delete", "ok", f"{agent}:{name}" if agent else name, request)
+        await sel_log_async(
+            _sel_log, "skills.delete", "ok", f"{agent}:{name}" if agent else name, request
+        )
         return web.json_response({"ok": True, "removed": str(folder)})
     if folder is not None:
-        _sel_log("skills.delete", "denied", f"outside-home:{name}", request)
+        await sel_log_async(_sel_log, "skills.delete", "denied", f"outside-home:{name}", request)
         return web.json_response(
             {
                 "error": (
@@ -773,18 +782,19 @@ async def api_skill_verify(request: web.Request) -> web.Response:
     ``tampered`` (a damaged record) or ``unverified`` (no record)."""
     name = request.match_info["name"]
     if not _safe_skill_name(name):
-        _sel_log("skills.verify", "denied", f"unsafe:{name}", request)
+        await sel_log_async(_sel_log, "skills.verify", "denied", f"unsafe:{name}", request)
         return web.json_response({"error": "invalid skill name"}, status=400)
 
     folder = _skill_folder(request, name)
     if folder is None:
-        _sel_log("skills.verify", "denied", f"notfound:{name}", request)
+        await sel_log_async(_sel_log, "skills.verify", "denied", f"notfound:{name}", request)
         return web.json_response({"error": f"Skill '{name}' not found"}, status=404)
 
     from personalclaw.skills.marketplace import TAMPERED, verify_skill_integrity
 
     rep = await asyncio.to_thread(verify_skill_integrity, folder)
-    _sel_log(
+    await sel_log_async(
+        _sel_log,
         "skills.verify",
         "tampered" if rep.state == TAMPERED else "ok",
         f"{name}:{rep.state}",
@@ -829,9 +839,9 @@ async def api_skill_bundled_update(request: web.Request) -> web.Response:
     except shipped.VersionChanged:
         return json_error("skill_bundled_version_changed", status=409)
     except shipped.NotInstalled:
-        _sel_log("skills.bundled_update", "error", name, request)
+        await sel_log_async(_sel_log, "skills.bundled_update", "error", name, request)
         return json_error("skill_bundled_update_failed", status=500)
-    _sel_log("skills.bundled_update", "ok", name, request)
+    await sel_log_async(_sel_log, "skills.bundled_update", "ok", name, request)
     return web.json_response({"ok": True, "name": name})
 
 
@@ -855,7 +865,7 @@ async def api_skill_bundled_keep(request: web.Request) -> web.Response:
         )
     except shipped.VersionChanged:
         return json_error("skill_bundled_version_changed", status=409)
-    _sel_log("skills.bundled_keep", "declined", name, request)
+    await sel_log_async(_sel_log, "skills.bundled_keep", "declined", name, request)
     return web.json_response({"ok": True, "name": name})
 
 
@@ -882,7 +892,9 @@ async def api_skill_overlay_revert(request: web.Request) -> web.Response:
     from ._shared import _get_skills
 
     removed = _get_skills(request.app["state"]).revert_refinements(name, refinement)
-    _sel_log("skills.overlay_revert", "ok" if removed else "noop", name, request)
+    await sel_log_async(
+        _sel_log, "skills.overlay_revert", "ok" if removed else "noop", name, request
+    )
     if refinement and not removed:
         return json_error(
             "not_found",
@@ -949,9 +961,11 @@ async def api_ephemeral_skill_promote(request: web.Request) -> web.Response:
             body=(str(body["body"]) if body.get("body") else None),
         )
     except ephemeral.PromotionError as exc:
-        _sel_log("skills.ephemeral_promote", "rejected", f"{slug}:{exc}", request)
+        await sel_log_async(
+            _sel_log, "skills.ephemeral_promote", "rejected", f"{slug}:{exc}", request
+        )
         return web.json_response({"error": str(exc)}, status=409)
-    _sel_log("skills.ephemeral_promote", "ok", f"{scope}:{name}", request)
+    await sel_log_async(_sel_log, "skills.ephemeral_promote", "ok", f"{scope}:{name}", request)
     return web.json_response({"ok": True, "name": name, "scope": scope})
 
 
@@ -1040,12 +1054,13 @@ async def api_skill_proposal_accept(request: web.Request) -> web.Response:
             procedure_md=(str(body["procedure_md"]) if body.get("procedure_md") else None),
         )
     except proposals.AcceptError as exc:
-        _sel_log("skills.proposal_accept", "rejected", f"{pid}:{exc}", request)
+        await sel_log_async(_sel_log, "skills.proposal_accept", "rejected", f"{pid}:{exc}", request)
         return web.json_response({"error": str(exc)}, status=409)
     # The version is on the audit line, not only in the response: two refinements of one skill
     # are two different approvals, and an audit that records both as the bare skill name cannot
     # say which one a reader is looking at.
-    _sel_log(
+    await sel_log_async(
+        _sel_log,
         "skills.proposal_accept",
         "ok",
         f"{result.name} v{result.version}" if result.version else result.name,
@@ -1060,7 +1075,9 @@ async def api_skill_proposal_reject(request: web.Request) -> web.Response:
 
     pid = request.match_info.get("id", "")
     ok = proposals.reject(pid)
-    _sel_log("skills.proposal_reject", "ok" if ok else "rejected", pid, request)
+    await sel_log_async(
+        _sel_log, "skills.proposal_reject", "ok" if ok else "rejected", pid, request
+    )
     # Same condition, same shape as api_skills_delete: a nonexistent proposal is
     # a 404 — the 200 {ok:false} told every ignore-the-body caller "Rejected"
     # while a double-submit or stale surface (Skills page / Inbox / ActionCenter
