@@ -13,6 +13,7 @@ answered, expired, or cancelled because the work that asked for it ended first.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -275,6 +276,14 @@ class DashboardApprovalState:
     push_sessions_update: Callable[[], None]
     channel_provider_for: Callable[[str], str]
     get_or_create_session: Callable[..., _ChatSession]
+
+    @functools.cached_property
+    def posture_lock(self) -> asyncio.Lock:
+        """One change to the approval posture at a time. A change writes its security-log rows in
+        a worker thread, awaited, and a second change landing meanwhile waits for the first to
+        finish, so the posture, the config and the log follow one order (`api_chat_mode`, the
+        config PATCH of `agent.yolo`). Held across those awaits: it is an asyncio lock."""
+        return asyncio.Lock()
 
     def approval_window_secs(self) -> float:
         """How long an approval waits for an answer: ``agent.approval_timeout_minutes``.

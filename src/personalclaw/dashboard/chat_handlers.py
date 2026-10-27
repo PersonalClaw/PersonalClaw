@@ -79,7 +79,7 @@ from personalclaw.request_validation import bool_field, json_object_body
 # key the room turn path mints must be the same string, and a literal here could drift from it.
 from personalclaw.rooms.turn import SESSION_KEY_PREFIX as ROOM_SESSION_PREFIX
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 from personalclaw.turn_source import STEERED
 from personalclaw.validation import _AGENT_NAME_RE
 
@@ -574,7 +574,8 @@ async def _maybe_cancel_and_replace(
                 "superseded_by": qid,
             },
         )
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key=_history_key_for(session.key),
             agent=getattr(session, "agent", "") or "personalclaw",
             source="dashboard",
@@ -1398,7 +1399,8 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
         stop_id = session._stop_event_id or ""
         forced = await state.sessions.stop_turn(_history_key_for(name), force=True)
         _close_stop_event(state, session, stop_id, forced)
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key=_history_key_for(name),
             agent=getattr(session, "agent", "") or "personalclaw",
             source="dashboard",
@@ -1425,7 +1427,8 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     logger.info("Stop: cooperative cancel for session %s (queue=%d)", name, len(session._queue))
     outcome = await state.sessions.stop_turn(_history_key_for(name), force=False)
     _close_stop_event(state, session, stop_id, outcome)
-    sel().log_tool_invocation(
+    await sel_log_async(
+        sel().log_tool_invocation,
         session_key=_history_key_for(name),
         agent=getattr(session, "agent", "") or "personalclaw",
         source="dashboard",
@@ -1542,7 +1545,8 @@ async def api_chat_screen_frame(request: web.Request) -> web.Response:
     # the switch that permitted it, or turning the feature off would strand a slot.
     if action == "stop":
         screen_context.clear(session_key)
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.screen_share_stop",
             outcome="success",
@@ -1555,7 +1559,8 @@ async def api_chat_screen_frame(request: web.Request) -> web.Response:
         # Drop anything already staged as well. Withdrawing consent mid-session must
         # take effect on the frame in hand, not just on the next one.
         screen_context.clear(session_key)
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation=f"chat.screen_{'share_start' if action == 'start' else 'frame'}",
             outcome="denied",
@@ -1573,7 +1578,8 @@ async def api_chat_screen_frame(request: web.Request) -> web.Response:
 
     if action == "start":
         screen_context.clear(session_key)
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.screen_share_start",
             outcome="success",
@@ -1586,7 +1592,8 @@ async def api_chat_screen_frame(request: web.Request) -> web.Response:
         frame = screen_context.parse_frame(str(body.get("frame_b64") or ""))
     except screen_context.FrameRejected as exc:
         # `str(exc)` never contains the payload — see parse_frame's docstring.
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.screen_frame",
             outcome="denied",
@@ -1600,7 +1607,8 @@ async def api_chat_screen_frame(request: web.Request) -> web.Response:
     # Audit the SHAPE of the frame (type + size), never the frame. A length is not
     # content; a base64 blob in the security log would be the leak this feature is
     # built to avoid.
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.screen_frame",
         outcome="success",
@@ -1650,7 +1658,8 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
 
     if not AppConfig.load().dashboard.screen_share_enabled:
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.screen_frame_pin",
             outcome="denied",
@@ -1667,7 +1676,8 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
         )
 
     if session.is_restricted:
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.screen_frame_pin",
             outcome="denied",
@@ -1709,7 +1719,8 @@ async def api_chat_screen_frame_pin(request: web.Request) -> web.Response:
     # Not read ahead: a frame is an image, read only when its text is asked for
     # (`AttachmentExtractor.start`).
 
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.screen_frame_pin",
         outcome="success",
@@ -1771,7 +1782,8 @@ async def api_chat_session_interrupt(request: web.Request) -> web.Response:
         _history_key_for(name), force=False, preserve_queue=True
     )
     _close_stop_event(state, session, stop_id, outcome)
-    sel().log_tool_invocation(
+    await sel_log_async(
+        sel().log_tool_invocation,
         session_key=_history_key_for(name),
         agent=getattr(session, "agent", "") or "personalclaw",
         source="dashboard",
@@ -1807,7 +1819,8 @@ async def api_chat_session_queue_cancel(request: web.Request) -> web.Response:
     )
     chat_phase.restate(state, session)  # one fewer message waits behind the turn
     state.push_sessions_update()
-    sel().log_tool_invocation(
+    await sel_log_async(
+        sel().log_tool_invocation,
         session_key=f"dashboard:{name}",
         agent="personalclaw",
         source="dashboard",
@@ -1912,7 +1925,8 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
         stale_keys.append(name)
     # Dry-run: return the exact list without archiving
     if dry_run:
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.cleanup_dry_run",
             outcome="allowed",
@@ -1966,7 +1980,8 @@ async def api_chat_sessions_cleanup(request: web.Request) -> web.Response:
     if archived:
         state.push_sessions_update()
         state.push_refresh("history")
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.sessions_cleanup",
         outcome="ok" if not failed else ("partial" if archived else "error"),
@@ -2287,7 +2302,8 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
         if not os.path.isdir(workspace_dir):
             return web.json_response({"error": "Not a directory"}, status=400)
         if is_sensitive_path(workspace_dir):
-            sel().log_api_access(
+            await sel_log_async(
+                sel().log_api_access,
                 caller=request.get("user", "dashboard"),
                 operation="chat_session_workspace_dir",
                 outcome="denied",
@@ -2303,7 +2319,8 @@ async def api_chat_session_workspace_dir(request: web.Request) -> web.Response:
     if workspace_dir != running_turn.once_moved(session, "workspace_dir"):
         logger.info("Session %s workspace_dir set to %r", name, workspace_dir)
         moved = await running_turn.rebind(state, session, running_turn.to_folder(workspace_dir))
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="chat_session_workspace_dir",
         outcome="allowed",
@@ -2370,7 +2387,8 @@ async def api_recent_projects(request: web.Request) -> web.Response:
         ]
 
     dirs = await asyncio.to_thread(_read_recent_projects)
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="recent_projects",
         outcome="allowed",
@@ -2629,18 +2647,32 @@ async def api_chat_mode(request: web.Request) -> web.Response:
             "approval_grant_refused", message=approval_grants.refusal_sentence(), status=409
         )
     take_pick(state, body, "mode")
+    # One posture change at a time (`DashboardState.posture_lock`): a change landing while this
+    # one writes its rows waits for them, so the security log names the changes in their order.
+    async with state.posture_lock:
+        return await _switch_posture(request, state, mode, session_name)
+
+
+async def _switch_posture(
+    request: web.Request, state: DashboardState, mode: str, session_name: str | None
+) -> web.Response:
+    """The mode switch's changes and then its rows (`api_chat_mode`), under the posture lock."""
+    # The switch makes every change (the posture, the answers, the policy each chat's runtime
+    # holds) before it writes any row, in one step on the loop, and writes its rows after. A row
+    # is written in a worker thread: another switch landing while one is written must find this
+    # one whole, not a YOLO walk still answering asks after a switch back to normal.
+    rows: list[dict[str, str]] = []
 
     if mode == "yolo":
         state.enable_yolo()  # TTL enforced internally (state._YOLO_TTL)
-        try:
-            sel().log_api_access(
-                caller="dashboard:mode",
-                operation="mode_change:yolo",
-                outcome="enabled",
-                resources=",".join(s.key for s in state._sessions.values()),
-            )
-        except Exception:
-            logger.warning("SEL audit failed for YOLO mode activation", exc_info=True)
+        rows.append(
+            {
+                "caller": "dashboard:mode",
+                "operation": "mode_change:yolo",
+                "outcome": "enabled",
+                "resources": ",".join(s.key for s in state._sessions.values()),
+            }
+        )
     elif mode == "trust_reads":
         state.disable_yolo()
         if session_name is not None:
@@ -2650,15 +2682,14 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         else:
             for session in state._sessions.values():
                 _set_posture(session, trust=False, trust_reads=True)
-        try:
-            sel().log_api_access(
-                caller="dashboard:mode",
-                operation="mode_change:trust_reads",
-                outcome="enabled",
-                resources=session_name or ",".join(s.key for s in state._sessions.values()),
-            )
-        except Exception:
-            logger.warning("SEL audit failed for trust_reads mode activation", exc_info=True)
+        rows.append(
+            {
+                "caller": "dashboard:mode",
+                "operation": "mode_change:trust_reads",
+                "outcome": "enabled",
+                "resources": session_name or ",".join(s.key for s in state._sessions.values()),
+            }
+        )
     elif mode == "trust":
         state.disable_yolo()
         if session_name is not None:
@@ -2668,15 +2699,14 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         else:
             for session in state._sessions.values():
                 _set_posture(session, trust=True)
-        try:
-            sel().log_api_access(
-                caller="dashboard:mode",
-                operation="mode_change:trust",
-                outcome="enabled",
-                resources=session_name or ",".join(s.key for s in state._sessions.values()),
-            )
-        except Exception:
-            logger.warning("SEL audit failed for trust mode activation", exc_info=True)
+        rows.append(
+            {
+                "caller": "dashboard:mode",
+                "operation": "mode_change:trust",
+                "outcome": "enabled",
+                "resources": session_name or ",".join(s.key for s in state._sessions.values()),
+            }
+        )
     else:  # normal
         state.disable_yolo()
         if session_name is not None:
@@ -2686,15 +2716,14 @@ async def api_chat_mode(request: web.Request) -> web.Response:
         else:
             for session in state._sessions.values():
                 _set_posture(session, trust=False, trust_reads=False)
-        try:
-            sel().log_api_access(
-                caller="dashboard:mode",
-                operation="mode_change:normal",
-                outcome="disabled",
-                resources=session_name or ",".join(s.key for s in state._sessions.values()),
-            )
-        except Exception:
-            logger.warning("SEL audit failed for normal mode activation", exc_info=True)
+        rows.append(
+            {
+                "caller": "dashboard:mode",
+                "operation": "mode_change:normal",
+                "outcome": "disabled",
+                "resources": session_name or ",".join(s.key for s in state._sessions.values()),
+            }
+        )
 
     # YOLO is unified process-global trust state (personalclaw.trust_mode):
     # state.enable_yolo()/disable_yolo() above already drive the single source of
@@ -2735,15 +2764,14 @@ async def api_chat_mode(request: web.Request) -> web.Response:
                         request_id=aid,
                         session=session.key,
                     )
-                    try:
-                        sel().log_api_access(
-                            caller=f"dashboard:{session.key}",
-                            operation=f"tool_approval:bulk_{mode}",
-                            outcome="approved",
-                            resources=aid,
-                        )
-                    except Exception:
-                        logger.warning("SEL audit failed for bulk approval %s", aid, exc_info=True)
+                    rows.append(
+                        {
+                            "caller": f"dashboard:{session.key}",
+                            "operation": f"tool_approval:bulk_{mode}",
+                            "outcome": "approved",
+                            "resources": aid,
+                        }
+                    )
         # And the background ones (a subagent, a trigger's run) it covers. An ask only a decision
         # on it answers (a batch's consent to change things, a call off the allowed hosts:
         # `DashboardState.answered_alone`) keeps asking: a posture switch is not that decision.
@@ -2754,21 +2782,27 @@ async def api_chat_mode(request: web.Request) -> web.Response:
             if only is not None and state._pending_approvals.get(aid, {}).get("session") != only:
                 continue
             if not fut.done() and state.resolve_approval(aid, True, by=by):
-                try:
-                    sel().log_api_access(
-                        caller="dashboard:background",
-                        operation=f"tool_approval:bulk_{mode}",
-                        outcome="approved",
-                        resources=aid,
-                    )
-                except Exception:
-                    logger.warning("SEL audit failed for bulk approval %s", aid, exc_info=True)
+                rows.append(
+                    {
+                        "caller": "dashboard:background",
+                        "operation": f"tool_approval:bulk_{mode}",
+                        "outcome": "approved",
+                        "resources": aid,
+                    }
+                )
     # Hand each chat's runtime the policy its posture answers now, so subagents inherit it: none
     # for a turn someone else asked for, nor for a conversation an app started.
     for session in state._sessions.values():
         state.push_chat_policy(session)
 
     state.push_sessions_update()
+    for row in rows:
+        try:
+            await sel_log_async(sel().log_api_access, **row)
+        except Exception:
+            logger.warning(
+                "SEL audit failed for %s (%s)", row["operation"], row["resources"], exc_info=True
+            )
     return web.json_response({"ok": True, "mode": mode})
 
 
@@ -2847,7 +2881,8 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
         # auto-approve can't bypass an ask/plan/build restriction).
         apply_task_mode(state, session, mode)
     try:
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard:task-mode",
             operation=f"task_mode_change:{mode}",
             outcome="enabled",
@@ -3193,7 +3228,8 @@ async def api_chat_session_context(request: web.Request) -> web.Response:
     session._pending_context.append(entry)  # type: ignore[arg-type]
 
     # SEL audit logging
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller=request_app or request.get("user", "dashboard"),
         operation="context_inject",
         outcome="ok",
@@ -3300,7 +3336,8 @@ async def api_nav_resolve_links(request: web.Request) -> web.Response:
 
     summaries = _parse_nav_links_response(text, len(links))
     try:
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard:nav",
             operation="resolve_links",
             outcome="ok",
