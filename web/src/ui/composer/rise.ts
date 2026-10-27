@@ -14,6 +14,10 @@
 export const RISE_GROW_PX = 4
 export const DROP_GROW_PX = 6
 
+/** A move with no animation: motion's `type: false` sets the new layout at once. The new-chat
+ *  hero's stage and its composer both move this way until the chat starts (`settled`). */
+export const INSTANT = { type: false } as const
+
 /** The awake scale for a composer `width` px wide: `1 + fraction`, capped so neither side grows by
  *  more than `maxGrowPx`. An unmeasured composer (`width` 0 — first paint, or no ResizeObserver)
  *  keeps the plain fraction rather than guessing a width. */

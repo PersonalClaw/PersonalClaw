@@ -3,9 +3,7 @@ import { motion } from 'framer-motion'
 import { Composer } from './Composer'
 import { physics, expr } from '../design/motion'
 import type { ComposerProps } from './composer/types'
-
-/** A move with no animation: motion's `type: false` sets the new layout at once. */
-const INSTANT = { type: false } as const
+import { INSTANT } from './composer/rise'
 
 type ComposerStageProps = ComposerProps & {
   /** The stage moves without a spring while this holds: a chat's new-chat hero, until the chat
@@ -36,7 +34,7 @@ export const ComposerStage = forwardRef<HTMLDivElement, ComposerStageProps>(func
   const morph = settled ? INSTANT : { ...physics.fluid, stiffness: 200 + expr(80, 0.4) }
   return (
     <motion.div ref={ref} layoutId="composer-stage" data-composer-stage transition={morph} className="relative z-10 w-full" style={{ maxWidth: 'var(--content-width)' }}>
-      <Composer {...props} />
+      <Composer {...props} settled={settled} />
     </motion.div>
   )
 })

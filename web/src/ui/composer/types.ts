@@ -198,6 +198,10 @@ export interface ComposerProps {
    *  needs ≥20 chars to plan, so the button stays disabled (not a silent no-op)
    *  until the draft is long enough. */
   minChars?: number
+  /** The new-chat hero's composer, until its chat starts (`ComposerStage` passes its own
+   *  `settled`): the composer's moves land at once, as the stage's do. Its rise on focus and
+   *  drag-over still springs. */
+  settled?: boolean
   /** Monotonic counters — incrementing any of them opens the agent-and-model pill, and the
    *  reasoning one opens its effort levels too. Drives the "/model", "/agent" and "/effort"
    *  GUI-affordance slash commands. */
