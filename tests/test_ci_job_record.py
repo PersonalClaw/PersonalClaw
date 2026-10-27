@@ -75,6 +75,7 @@ def test_a_record_reads_back_as_the_result_it_names() -> None:
         verdict.Identity(HEAD, {"apps-partner": PARTNER}),
         2,
         own_partners=True,
+        step_exits=(0,),
     )
 
 
@@ -255,8 +256,10 @@ def test_decide_refuses_a_run_that_is_no_whole_number_from_1(run_id) -> None:
 # ── the failed tests a record names, and how each stands ─────────────────────────────────────
 #
 # A failure's record names each failed test with the diagnostic rerun's word for it, and a pass's
-# names each quarantined test that failed. The verdict lists every one of them and reads them for
-# nothing else: the first result is the result, so a job whose only failure is a flake stays red.
+# names each quarantined test that failed. The verdict lists every one of them. Given no changed
+# list and no list of the run's jobs (a push's run, a local one), it reads them for nothing else,
+# so a job whose only failure is a flake stays red; tests/test_ci_verdict_flakes.py holds the
+# flake rule a pull request's run is judged by.
 
 FLAKY = "tests/test_a.py::test_flaky"
 TWICE = "tests/test_a.py::TestB::test_twice[a b]"
@@ -354,7 +357,7 @@ def test_the_summary_lists_each_failed_test_and_says_a_flake_is_still_red() -> N
     assert "- `rails`: failure (attempt 1)" in text
     assert f"- `rails` attempt 1: `{FLAKY}`: flake ({PASSED_ALONE})" in text
     assert f"- `rails` attempt 1: `{RAIL}`: not classified (a rail: never rerun)" in text
-    assert "A flake is still a failure" in text
+    assert "A flake is a failure unless the flake rule passes it" in text
 
 
 def test_a_green_summary_lists_each_quarantined_failure() -> None:

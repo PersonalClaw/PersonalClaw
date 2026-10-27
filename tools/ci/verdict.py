@@ -26,9 +26,12 @@ reported a word this module does not know, on any attempt, reads red, so the ver
 A result read from a record carries the record's failed tests (:class:`FailedTest`): each one the
 diagnostic rerun classified :data:`FLAKE` or :data:`REPEATED_FAILURE`, or left
 :data:`NOT_CLASSIFIED`, and each quarantined failure (:data:`QUARANTINED`). :func:`decide` lists
-every one of them in the verdict, and reads them for nothing else: the first result is the result,
-so a job whose only failure is a flake reads red as a failure, and a pass that a quarantine entry
-waived a failure in reads green. Only that entry waives a known failure.
+every one of them in the verdict. A pass that a quarantine entry waived a failure in reads green,
+and a failure reads red, but for one thing: on a pull request's run, given its changed paths and
+the run's jobs, the flake rule (:func:`_pass_flakes`) passes a run whose only failures are at most
+:data:`MAX_FLAKES` tests that each passed alone in a new process, in a file the pull request does
+not change, and names each one (:func:`flake_notices`). A red is still never rerun into green:
+the rule reads the one attempt's records, and a later attempt fills nothing attempt 1 left.
 
 Given the run's id (``run_id``, when the results are one run's own records, :func:`read_records`),
 :func:`decide` reads two more reds: a result of another run (``another run``) or of none (``no
@@ -51,7 +54,10 @@ would exit 0 having judged nothing, and an option given twice is refused, not la
 ``$GITHUB_STEP_SUMMARY`` is set, the verdict's reasons, or why the input could not be read, are
 appended to it. ``--records`` adds one run's per-job records (:func:`read_records`), with
 ``--run-id`` naming that run and ``--key-partners`` each planned key's partners (a JSON object of
-key to partner names, with --records only), and ``--attempt`` names the run's attempt.
+key to partner names, with --records only), and ``--attempt`` names the run's attempt. On a pull
+request's run, ``--changed`` (its changed paths, NUL-separated) and ``--jobs`` (the run's jobs on
+the attempt, as the API lists them) give the flake rule what it reads; it passes nothing without
+them, and they are refused on a push.
 
 :func:`job_record` writes, and :func:`from_job_records` reads, the per-job record a run of a
 catalogue job leaves (``python -m tools.ci run-job``): its key, result, identity, the GitHub run
@@ -71,7 +77,7 @@ import os
 import re
 import sys
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import NoReturn
 
 #: The result words GitHub gives a job: in ``needs``, on a check run's conclusion and in the API.
@@ -151,6 +157,12 @@ class JobResult:
     #: one written without them) and for a ``needs`` result.
     runner: Mapping[str, str] | None = None
     toolchain: Mapping[str, str] | None = None
+    #: A per-job record's steps' exits, in order, and its diagnostic rerun: whether one ran (its
+    #: argv named) and its exit. Empty, False and None for a ``needs`` result, and for a record
+    #: whose rerun started nothing. The flake rule reads them (:func:`decide`).
+    step_exits: tuple[int, ...] = ()
+    reran: bool = False
+    rerun_exit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -169,9 +181,14 @@ class Verdict:
     #: On a push to main only (:func:`decide_main_push`): the newer commit whose run replaced
     #: this one, when that is the whole of why it is red. Empty everywhere else. Never green.
     superseded_by: str = ""
-    #: Every failed test the results' records name, by key, attempt and test: listed, and never
-    #: read for green or red.
+    #: Every failed test the results' records name, by key, attempt and test. Listed, and read for
+    #: green or red only by the flake rule.
     tests: tuple[FailedTest, ...] = ()
+    #: The failed tests the flake rule passed, when they are the whole of why the run would be red
+    #: (:func:`decide`). Empty everywhere else.
+    flakes: tuple[FailedTest, ...] = ()
+    #: Why the flake rule passed none, said when the records name a flake and the verdict is red.
+    flake_rule: str = ""
 
 
 def _fault(
@@ -286,6 +303,240 @@ def _key_partners(
     return out
 
 
+# ── the flake rule ───────────────────────────────────────────────────────────────────────────
+
+#: The most failed tests one run may pass as flakes.
+MAX_FLAKES = 2
+#: The one step a stage job may fail in for its flakes to pass: its entry's run-job line.
+RUN_JOB_STEP = "the entry's catalogue job, through run-job"
+#: The run's own results job, which is still running when it lists the run's jobs.
+RESULTS_JOB = "results"
+#: The title of the annotation the verdict writes for each test the flake rule passed, which the
+#: merge controller reads to name them in its verdict.
+FLAKE_NOTICE = "flake passed"
+#: What every pytest test's run reads besides its own file and the conftests above it.
+PYTEST_CONFIG = ("pyproject.toml",)
+#: What every Vitest test's run reads besides its own file: the runner's configuration, and the
+#: folder its setup files are in.
+VITEST_CONFIG = ("web/vitest.config.ts", "web/vite.config.ts")
+VITEST_SETUP = "web/src/test/"
+#: Where the end-to-end tests live. Playwright's own retry runs beside the other workers, not
+#: alone, so none of them passes as a flake.
+E2E = "web/e2e/"
+_CLEAN = frozenset({SUCCESS, SKIPPED})
+
+
+@dataclass(frozen=True)
+class JobRun:
+    """One job of the run's attempt, as the Actions API lists it: its name, its status, its
+    conclusion, and each step that neither passed nor was skipped, with its conclusion."""
+
+    name: str
+    status: str
+    conclusion: str | None
+    failed_steps: tuple[tuple[str, str], ...] = ()
+
+
+def read_jobs(text: str, *, run_id: int, attempt: int) -> list[JobRun]:
+    """The run's jobs on ``attempt``, as ``gh api --paginate --slurp
+    repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs`` writes them: a list of pages,
+    each holding ``total_count`` and ``jobs``.
+
+    Refused: anything else; a page whose count is not the first page's; a listing holding more
+    or fewer jobs than its count, so a job may be unseen; a job of another run or attempt; a job
+    named twice; and a job or a step whose name or words are not strings."""
+    where = "the run's jobs"
+    try:
+        pages = json.loads(
+            text, object_pairs_hook=_no_repeats_in(where), parse_constant=_no_constant_in(where)
+        )
+    except Refused:
+        raise
+    except RecursionError:
+        raise Refused(f"{where} are nested too deeply to read") from None
+    except ValueError as exc:
+        raise Refused(f"{where} are not JSON: {exc}") from None
+    if not isinstance(pages, list) or not pages:
+        raise Refused(f"{where} must be a list of the API's pages")
+    total: int | None = None
+    out: list[JobRun] = []
+    for page in pages:
+        if (
+            not isinstance(page, dict)
+            or not _whole(page.get("total_count"))
+            or not isinstance(page.get("jobs"), list)
+        ):
+            raise Refused(f"{where}: each page holds a total_count and a list of jobs")
+        if total is None:
+            total = page["total_count"]
+        elif page["total_count"] != total:
+            raise Refused(f"{where}: the pages count {total} and {page['total_count']} jobs")
+        for job in page["jobs"]:
+            if not isinstance(job, dict):
+                raise Refused(f"{where}: a job must be an object")
+            name, status, conclusion = job.get("name"), job.get("status"), job.get("conclusion")
+            if (
+                not isinstance(name, str)
+                or not name
+                or not isinstance(status, str)
+                or (conclusion is not None and not isinstance(conclusion, str))
+            ):
+                raise Refused(f"{where}: a job names no name, status or conclusion")
+            if job.get("run_id") != run_id or job.get("run_attempt") != attempt:
+                raise Refused(
+                    f"{where}: {name!r} is of run {job.get('run_id')!r} attempt"
+                    f" {job.get('run_attempt')!r}, not run {run_id} attempt {attempt}"
+                )
+            if any(j.name == name for j in out):
+                raise Refused(f"{where} name {name!r} twice")
+            steps = job.get("steps")
+            if not isinstance(steps, list):
+                raise Refused(f"{where}: {name!r} lists no steps")
+            failed: list[tuple[str, str]] = []
+            for step in steps:
+                if not isinstance(step, dict) or not isinstance(step.get("name"), str):
+                    raise Refused(f"{where}: a step of {name!r} names no name")
+                word = step.get("conclusion")
+                if word is not None and not isinstance(word, str):
+                    raise Refused(f"{where}: a step of {name!r} has no conclusion string")
+                if word not in _CLEAN:
+                    failed.append((step["name"], str(word)))
+            out.append(JobRun(name, status, conclusion, tuple(failed)))
+    if len(out) != total:
+        raise Refused(f"{where} list {len(out)} jobs of {total}, so a job may be unseen")
+    return out
+
+
+def read_changed(text: str) -> frozenset[str]:
+    """The pull request's changed paths, NUL-separated, as ``git diff --name-only -z`` writes
+    them. Refused: a path that is empty, absolute, or that names ``.`` or ``..``."""
+    names = text.split("\0")
+    if names and names[-1] == "":
+        names.pop()
+    for name in names:
+        parts = name.split("/")
+        if not name or name.startswith("/") or any(p in ("", ".", "..") for p in parts):
+            raise Refused(f"the changed list names {name!r}, which is no path of the repository")
+    return frozenset(names)
+
+
+def _reads(test: str) -> tuple[tuple[str, ...], tuple[str, ...]] | str:
+    """The files a failed test's run reads that its pull request may not change for the test to
+    pass as a flake, and the folders whose files it reads: for pytest its own file, each
+    ``conftest.py`` above it and the pytest configuration; for Vitest its own file, the runner's
+    configuration and its setup folder. Or why the test passes as no flake: an id that names no
+    file of the repository, or an end-to-end test."""
+    path = test.split("::", 1)[0]
+    parts = path.split("/")
+    if "::" not in test or path.startswith("/") or any(p in ("", ".", "..") for p in parts):
+        return f"`{_inline(test)}` names no file of the repository"
+    if path.startswith(E2E):
+        return f"`{_inline(test)}` is an end-to-end test, which is never rerun alone"
+    if path.startswith("web/"):
+        return (path, *VITEST_CONFIG), (VITEST_SETUP,)
+    conftests = tuple("/".join([*parts[:i], "conftest.py"]) for i in range(len(parts) - 1, -1, -1))
+    return (path, *conftests, *PYTEST_CONFIG), ()
+
+
+def _pass_flakes(
+    plan: Sequence[str],
+    by_key: Mapping[str, Sequence[JobResult]],
+    reasons: Sequence[Reason],
+    candidate: Identity,
+    run_id: int | None,
+    reads: Mapping[str, frozenset[str]] | None,
+    changed: frozenset[str] | None,
+    jobs: Sequence[JobRun] | None,
+) -> tuple[tuple[FailedTest, ...], str]:
+    """The flake rule: the failed tests that pass as flakes, when they are the whole of why the
+    run reads red, or none and why. A test passes only when all of these hold:
+
+    - its job failed one way only: on attempt 1, one step exited 1 and every other exited 0, a
+      rerun ran, alone in a new process, and exited 0, and every test the record names is a
+      ``flake`` (a rail, a security-marked test or a test the rerun skipped is never one);
+    - the pull request changes no file its run reads (:func:`_reads`), so a test it adds or
+      edits, or a conftest or runner configuration it changes, is never passed;
+    - the run holds at most :data:`MAX_FLAKES` of them;
+    - nothing else in the run fell short: every other planned key is green, and every job of the
+      run's attempt that did not pass is a failing key's, failed in its run-job line alone.
+
+    A cancelled or timed-out shard is never a flake: it has no rerun, or no record."""
+    if changed is None or jobs is None:
+        return (), "it was given no changed list and no list of the run's jobs, so it passes none"
+    if not changed:
+        return (), "the changed list is empty, which no pull request's is, so it passes none"
+    failing: list[str] = []
+    for r in reasons:
+        if r.key in plan and r.kind == FAILURE:
+            failing.append(r.key)
+        elif r.key and r.key not in plan and r.kind == f"unplanned {FAILURE}":
+            continue  # a stage job's own result, held below to the run's jobs
+        else:
+            name = f"`{_inline(r.key)}`" if r.key else "the plan"
+            return (), f"{name} reads {r.kind}, which no flake explains"
+    if not failing:
+        return (), "no planned job failed"
+    passed: list[FailedTest] = []
+    for key in failing:
+        results = by_key[key]
+        if len(results) != 1 or results[0].attempt != 1 or not results[0].own_partners:
+            return (), f"`{_inline(key)}` has no one record of attempt 1"
+        rec = results[0]
+        fault = _fault(
+            replace(rec, result=SUCCESS), candidate, run_id, None if reads is None else reads[key]
+        )
+        if fault:
+            return (), f"`{_inline(key)}`: {fault[0]} ({fault[1]})"
+        if sorted(rec.step_exits) != [0] * (len(rec.step_exits) - 1) + [1]:
+            return (), f"`{_inline(key)}` did not fail in one step that exited 1 alone"
+        if not rec.reran or rec.rerun_exit != 0 or not rec.tests:
+            return (), f"`{_inline(key)}`'s failed tests were not passed by a rerun alone"
+        for t in rec.tests:
+            if t.standing != FLAKE:
+                return (), f"`{_inline(t.test)}` is {t.standing}, not a flake"
+            found = _reads(t.test)
+            if isinstance(found, str):
+                return (), found
+            files, folders = found
+            hit = sorted(
+                {f for f in files if f in changed} | {c for c in changed if c.startswith(folders)}
+            )
+            if hit:
+                return (
+                    (),
+                    f"`{_inline(t.test)}` reads `{_inline(hit[0])}`, which the pull request"
+                    " changes",
+                )
+            passed.append(t)
+    if len(passed) > MAX_FLAKES:
+        return (), f"{len(passed)} failed tests passed alone, more than the {MAX_FLAKES} it passes"
+    failed_jobs: set[str] = set()
+    for job in jobs:
+        if job.name == RESULTS_JOB:
+            continue
+        if job.status != "completed":
+            return (), f"the job `{_inline(job.name)}` is {job.status}, not completed"
+        if job.conclusion in _CLEAN:
+            continue
+        if job.conclusion != FAILURE or job.name not in failing:
+            return (
+                (),
+                f"the job `{_inline(job.name)}` is {job.conclusion!r}, which no flake explains",
+            )
+        if job.failed_steps != ((RUN_JOB_STEP, FAILURE),):
+            steps = ", ".join(f"{n!r} ({w})" for n, w in job.failed_steps) or "no step"
+            return (
+                (),
+                f"the job `{_inline(job.name)}` failed in {_inline(steps)}, not in its run-job"
+                " line alone",
+            )
+        failed_jobs.add(job.name)
+    unlisted = sorted(set(failing) - failed_jobs)
+    if unlisted:
+        return (), f"the run's jobs list no failed job `{_inline(unlisted[0])}`"
+    return tuple(sorted(passed, key=lambda t: (t.key, t.test))), ""
+
+
 def decide(
     planned: Iterable[str],
     results: Iterable[JobResult],
@@ -293,6 +544,8 @@ def decide(
     *,
     run_id: int | None = None,
     key_partners: Mapping[str, Iterable[str]] | None = None,
+    changed: Iterable[str] | None = None,
+    jobs: Sequence[JobRun] | None = None,
 ) -> Verdict:
     """The verdict on ``candidate``: green only when every planned job did its work on it.
 
@@ -300,7 +553,11 @@ def decide(
     that run, and each planned key must have a result on attempt 1. ``key_partners`` names, for
     every planned key and no other, the partners its own job reads: each record of that key must
     name exactly those, at the candidate's revisions. Without it, a record is held to the
-    candidate's partners exactly."""
+    candidate's partners exactly.
+
+    ``changed`` (a pull request's changed paths) and ``jobs`` (its run's jobs on the attempt) are
+    given on a pull request's run only. With both, a run whose only failures are flakes the flake
+    rule passes (:func:`_pass_flakes`) is green, and names them; without them it passes none."""
     if run_id is not None and (not _whole(run_id) or run_id < 1):
         raise Refused(f"run_id must be a whole number from 1, got {run_id!r}")
     plan: list[str] = []
@@ -310,6 +567,11 @@ def decide(
         if key not in plan:
             plan.append(key)
     reads = None if key_partners is None else _key_partners(key_partners, plan)
+    paths: frozenset[str] | None = None
+    if changed is not None:
+        paths = frozenset(changed)
+        if not all(isinstance(p, str) and p for p in paths):
+            raise Refused("a changed path must be a non-empty string")
     by_key: dict[str, list[JobResult]] = {}
     tests: list[FailedTest] = []
     for r in results:
@@ -328,8 +590,19 @@ def decide(
         fault = _unplanned(by_key[key])
         if fault:
             reasons.append(Reason(key, *fault))
-    # The tests are listed, never judged: the green above is read from the results alone.
     listed = tuple(sorted(tests, key=lambda t: (t.key, t.attempt, t.test)))
+    # The tests are listed, and read for nothing else but the flake rule's one question: whether
+    # the flakes it passes are the whole of why the run reads red.
+    if (
+        reasons
+        and paths is not None
+        and jobs is not None
+        and any(t.standing == FLAKE for t in listed)
+    ):
+        flakes, why = _pass_flakes(plan, by_key, reasons, candidate, run_id, reads, paths, jobs)
+        if flakes:
+            return Verdict(green=True, tests=listed, flakes=flakes)
+        return Verdict(green=False, reasons=tuple(reasons), tests=listed, flake_rule=why)
     return Verdict(green=not reasons, reasons=tuple(reasons), tests=listed)
 
 
@@ -726,8 +999,20 @@ def _one_record(text: str, n: int) -> JobResult:
         for t in (data["rerun"] or {}).get("tests", [])
     ]
     tests += [FailedTest(key, attempt, test, QUARANTINED, WAIVED) for test in quarantined]
+    rerun = data["rerun"] or {}
     return JobResult(
-        key, data["result"], identity, attempt, run_id, tuple(tests), True, runner, toolchain
+        key,
+        data["result"],
+        identity,
+        attempt,
+        run_id,
+        tuple(tests),
+        True,
+        runner,
+        toolchain,
+        tuple(step["exit"] for step in steps),
+        rerun.get("argv") is not None,
+        rerun.get("exit"),
     )
 
 
@@ -893,8 +1178,8 @@ def tests_summary(tests: Sequence[FailedTest], *, budget: int | None = None) -> 
         return ""
     lines = [
         "",
-        "Each failed test the records name, and how it stands. A flake is still a failure: only a"
-        " quarantine entry waives one.",
+        "Each failed test the records name, and how it stands. A flake is a failure unless the"
+        " flake rule passes it; a quarantine entry waives a known failure.",
         "",
     ]
     used = 0
@@ -912,6 +1197,20 @@ def tests_summary(tests: Sequence[FailedTest], *, budget: int | None = None) -> 
 def summary(verdict: Verdict, *, budget: int | None = None) -> str:
     """The verdict as Markdown, one line per reason, then each failed test the records name
     (within ``budget`` bytes, when given: :func:`tests_summary`)."""
+    if verdict.green and verdict.flakes:
+        lines = [
+            "### Verdict: green",
+            "",
+            "Every planned job passed on this candidate but for the failed tests below, which the"
+            " flake rule passed: each one failed, then passed alone in a new process; the pull"
+            " request changes no file its run reads; the run holds at most"
+            f" {MAX_FLAKES} of them; and nothing else in the run failed.",
+            "",
+            "Passed as flakes:",
+            "",
+            *(f"- `{_inline(t.key)}`: `{_inline(t.test)}`" for t in verdict.flakes),
+        ]
+        return "\n".join(lines) + "\n" + tests_summary(verdict.tests, budget=budget)
     if verdict.green:
         head = "### Verdict: green\n\nEvery planned job passed on this candidate.\n"
         return head + tests_summary(verdict.tests, budget=budget)
@@ -919,7 +1218,21 @@ def summary(verdict: Verdict, *, budget: int | None = None) -> str:
     for r in verdict.reasons:
         name = f"`{r.key}`" if r.key else "the plan"
         lines.append(f"- {name}: {r.kind}" + (f" ({r.detail})" if r.detail else ""))
+    if verdict.flake_rule:
+        lines.append(f"- the flake rule passed none: {verdict.flake_rule}")
     return "\n".join(lines) + "\n" + tests_summary(verdict.tests, budget=budget)
+
+
+def flake_notices(verdict: Verdict) -> str:
+    """One ``::notice`` line per test the flake rule passed, titled :data:`FLAKE_NOTICE`, for the
+    merge controller to name: the test and its key, kept to one line and escaped as a workflow
+    command's message is (``%``, CR and LF)."""
+    out = []
+    for t in verdict.flakes:
+        text = _inline(f"{t.test} ({t.key})")
+        text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+        out.append(f"::notice title={FLAKE_NOTICE}::{text}\n")
+    return "".join(out)
 
 
 # ── the command ───────────────────────────────────────────────────────────────────────────────
@@ -1050,6 +1363,18 @@ def main(argv: list[str] | None = None) -> int:
         "--attempt", action=_Once, help="this run's attempt, 1 to 999999 (default 1)"
     )
     parser.add_argument(
+        "--changed",
+        action=_Once,
+        help="the pull request's changed paths, NUL-separated (with --records, on a pull request's"
+        " run only)",
+    )
+    parser.add_argument(
+        "--jobs",
+        action=_Once,
+        help="the run's jobs on this attempt, as gh api --paginate --slurp lists them (with"
+        " --changed)",
+    )
+    parser.add_argument(
         "--superseded",
         action=_Once,
         help="a JSON object of each cancelled key a newer push replaced and that push's commit, as"
@@ -1063,6 +1388,17 @@ def main(argv: list[str] | None = None) -> int:
         planned = _plan(args.plan)
         run_id: int | None = None
         key_partners: dict[str, Iterable[str]] | None = None
+        changed: frozenset[str] | None = None
+        jobs: list[JobRun] | None = None
+        if (args.changed is None) != (args.jobs is None):
+            raise Refused("--changed and --jobs are read together, or neither is")
+        if args.changed is not None:
+            if args.records is None:
+                raise Refused("--changed and --jobs are read only with --records")
+            if args.superseded is not None:
+                raise Refused("--changed and --jobs are a pull request's, never a push's")
+            if os.environ.get("GITHUB_EVENT_NAME", "pull_request") != "pull_request":
+                raise Refused("--changed and --jobs are read on a pull request's run only")
         if args.records is None:
             if args.run_id is not None:
                 raise Refused("--run-id is read only with --records")
@@ -1089,8 +1425,19 @@ def main(argv: list[str] | None = None) -> int:
                         "--key-partners must be a mapping of each planned key to its partners"
                     )
                 key_partners = by_key
+            if args.changed is not None:
+                changed = read_changed(_read(args.changed))
+                jobs = read_jobs(_read(args.jobs), run_id=own, attempt=attempt)
         if args.superseded is None:
-            verdict = decide(planned, results, candidate, run_id=run_id, key_partners=key_partners)
+            verdict = decide(
+                planned,
+                results,
+                candidate,
+                run_id=run_id,
+                key_partners=key_partners,
+                changed=changed,
+                jobs=jobs,
+            )
         else:
             proven = _json_file(args.superseded, "--superseded")
             if not isinstance(proven, dict):
@@ -1111,6 +1458,7 @@ def main(argv: list[str] | None = None) -> int:
         _to_summary(f"### Verdict: unreadable input\n\n{reason}\n")
         return 2
     print(_printable(summary(verdict)), end="")
+    print(flake_notices(verdict), end="")
     _to_summary(_printable(summary(verdict, budget=SUMMARY_TESTS_BYTES)))
     return 0 if verdict.green else 1
 
