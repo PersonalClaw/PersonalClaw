@@ -502,6 +502,45 @@ class TestTheFastScanRestsOnThreeFacts:
         assert S.redact_credentials(once) == (once, [])
 
 
+#: Linear cost grows ×4 for ×4 input and quadratic cost ×16: a growth past this is not linear.
+_NOT_LINEAR = 8.0
+
+
+#: How many ticks of the thread clock each sample spans at least, so a clock coarser than one run
+#: (Windows' ticks in about 15.6 ms) still reads it to within a hundredth.
+_TICKS = 100
+
+
+def _cpu_cost(redact, text: str, clock=time.thread_time, resolution: float | None = None) -> float:
+    """The least CPU time this thread spent in one run of *redact* over *text*, of three samples.
+    Each sample repeats the run until *clock* has advanced :data:`_TICKS` of its *resolution*
+    (the thread clock's own by default), and divides by the runs it made.
+
+    CPU time, not wall time. On a CI runner whose 4 CPUs ran 4 workers, the three runs of the
+    large scp input, back to back, sat inside one stretch with no CPU for them (run 40477167976),
+    and their best came out ×17.3 the small input's, for a reading measured at ×3.4-×3.9 for ×4
+    input at every size up to 320k units. A thread's CPU time leaves out the time it waited for a
+    CPU, or for the GIL behind another thread, and counts the work, which a quadratic reading
+    still multiplies by 16 (``test_a_quadratic_redactor_fails_the_bound``)."""
+    least = _TICKS * (resolution or time.get_clock_info("thread_time").resolution)
+    best = float("inf")
+    for _ in range(3):
+        runs, started = 0, clock()
+        while True:
+            redact(text)
+            runs += 1
+            spent = clock() - started
+            if spent >= least:
+                break
+        best = min(best, spent / runs)
+    return best
+
+
+def _growth(redact, small: str, large: str, **clock) -> float:
+    """How many times *large* costs *small* in CPU time (:func:`_cpu_cost`, given *clock*)."""
+    return _cpu_cost(redact, large, **clock) / max(_cpu_cost(redact, small, **clock), 1e-6)
+
+
 class TestTheCostTracksNothingQuadratic:
     """Driven from the single-token curve, not a document-size fixture.
 
@@ -540,17 +579,12 @@ class TestTheCostTracksNothingQuadratic:
         """The shape assertion the absolute bound cannot make: ×4 input, ×4 cost, not ×16."""
         small = self._unbroken(64 * 1024)
         large = self._unbroken(256 * 1024)
+        ratio = _growth(S.redact_credentials, small, large)
+        assert ratio < _NOT_LINEAR, f"cost grew ×{ratio:.1f} for ×4 input — that is not linear"
 
-        def _cost(text: str) -> float:
-            best = float("inf")
-            for _ in range(3):
-                started = time.perf_counter()
-                S.redact_credentials(text)
-                best = min(best, time.perf_counter() - started)
-            return best
 
-        ratio = _cost(large) / max(_cost(small), 1e-6)
-        assert ratio < 8.0, f"cost grew ×{ratio:.1f} for ×4 input — that is not linear"
+#: How long the stalled runner below keeps each large run off the CPU.
+_STALL = 0.05
 
 
 class TestTheReadingsPastTheAuthorityStayLinear:
@@ -568,15 +602,6 @@ class TestTheReadingsPastTheAuthorityStayLinear:
         # A login-shaped name at every comma, and one host at the end.
         "scp, every opener": (",a:", 40_000),
     }
-
-    @staticmethod
-    def _cost(text: str) -> float:
-        best = float("inf")
-        for _ in range(3):
-            started = time.perf_counter()
-            S.redact_credentials(text)
-            best = min(best, time.perf_counter() - started)
-        return best
 
     @staticmethod
     def _text(shape: str, units: int) -> str:
@@ -601,8 +626,60 @@ class TestTheReadingsPastTheAuthorityStayLinear:
     def test_quadrupling_the_input_does_not_multiply_the_cost_by_sixteen(self, shape):
         units = self.SHAPES[shape][1]
         small, large = self._text(shape, units), self._text(shape, 4 * units)
-        ratio = self._cost(large) / max(self._cost(small), 1e-6)
-        assert ratio < 8.0, f"{shape}: cost grew ×{ratio:.1f} for ×4 input — that is not linear"
+        ratio = _growth(S.redact_credentials, small, large)
+        assert (
+            ratio < _NOT_LINEAR
+        ), f"{shape}: cost grew ×{ratio:.1f} for ×4 input — that is not linear"
+
+    def _scp_inputs(self) -> tuple[str, str]:
+        units = self.SHAPES["scp, every opener"][1]
+        return self._text("scp, every opener", units), self._text("scp, every opener", 4 * units)
+
+    def test_a_quadratic_redactor_fails_the_bound(self):
+        """Vacuity floor for the measure: a redactor whose CPU grows with the square of its input
+        (a full count of the text per 1000 characters of it), over the scp inputs, grows ×16 and
+        fails. A measure that saw none of the work would pass it."""
+
+        def quadratic(text: str) -> None:
+            for _ in range(len(text) // 1000):
+                text.count("@")
+
+        small, large = self._scp_inputs()
+        ratio = _growth(quadratic, small, large)
+        assert ratio >= _NOT_LINEAR, f"a quadratic redactor grew ×{ratio:.1f} and passed"
+
+    def test_a_runner_that_stalls_the_large_runs_does_not_fail_the_bound(self):
+        """🔴 Red before (wall time was the measure): the CI failure's shape, a runner that gives
+        the three large runs no CPU for a stretch, here 50 ms each off the CPU before the real
+        redaction, grew ×40 and more in wall time and failed a linear reading. The time with no
+        CPU is not the redaction's, so it is left out."""
+
+        def stalled(text: str):
+            if len(text) > len(small):
+                time.sleep(_STALL)
+            return S.redact_credentials(text)
+
+        small, large = self._scp_inputs()
+        ratio = _growth(stalled, small, large)
+        assert ratio < _NOT_LINEAR, f"a stalled runner grew ×{ratio:.1f}: the stall was counted"
+
+    def test_a_clock_coarser_than_a_run_still_reads_a_linear_cost_as_four_times(self):
+        """🔴 Red before (one run a sample): on a thread clock that ticks every 15.6 ms, as
+        Windows' does, a 1.2 ms run of the small scp input reads no tick, and the ratio came out
+        0, a false pass, or a tick over the 1 µs floor, a false red. Here a stand-in redactor
+        spends 10 ns of a fake thread clock per character, so its cost is exactly linear, and
+        each sample runs until that clock has ticked :data:`_TICKS` times."""
+        tick, now = 0.0156, [0.0]
+
+        def spend(text: str) -> None:
+            now[0] += len(text) * 1e-8
+
+        def coarse() -> float:
+            return now[0] // tick * tick
+
+        small, large = self._scp_inputs()
+        ratio = _growth(spend, small, large, clock=coarse, resolution=tick)
+        assert 3.9 < ratio < 4.1, f"a linear cost read ×{ratio:.2f} on a {tick * 1000} ms clock"
 
 
 # ── #2717: the per-match rebuild ────────────────────────────────────────────────────────────────
@@ -770,14 +847,5 @@ class TestManyMatchesIsNotQuadratic:
 
     def test_quadrupling_the_match_count_does_not_multiply_the_cost_by_sixteen(self):
         """The shape assertion: ×4 matches, ~×4 cost. This is what the old loop could not do."""
-
-        def _cost(text: str) -> float:
-            best = float("inf")
-            for _ in range(3):
-                started = time.perf_counter()
-                S.redact_credentials(text)
-                best = min(best, time.perf_counter() - started)
-            return best
-
-        ratio = _cost(self._many(8000)) / max(_cost(self._many(2000)), 1e-6)
-        assert ratio < 8.0, f"cost grew x{ratio:.1f} for x4 matches — that is not linear"
+        ratio = _growth(S.redact_credentials, self._many(2000), self._many(8000))
+        assert ratio < _NOT_LINEAR, f"cost grew x{ratio:.1f} for x4 matches — that is not linear"
