@@ -1151,3 +1151,50 @@ def test_the_random_order_leg_is_never_reused_and_has_four_shards() -> None:
     assert "random-order" in be.NON_REUSABLE
     assert be.SHARDS["random-order"] == 4
     assert not be.reusable("random-order", _leg(), INPUTS)
+
+
+# ── a quiet night: the second run on an unchanged tree (#3913) ───────────────────────────────
+
+
+@pytest.mark.parametrize("result", [be.GREEN, be.RED], ids=["a-green-night", "a-red-night"])
+def test_a_second_run_on_an_unchanged_tree_carries_exactly_the_reusable_legs(result: str) -> None:
+    """A scheduled night's record, read by a dispatched run on the same tree through
+    ``previous`` and ``decide``: the rails on macOS and the collection carry its results, red or
+    green, and every other shard runs, the suite's among them, since a security result is never
+    carried. Main's runs are read whatever started them (``GhSource.runs``)."""
+    night = _every_shard(**{key: _leg(result) for key in be.expected_keys()})
+    name, data = _stored(night)
+    found, said = be.previous(_Source({40: {name: data}}))
+    assert "run 40" in said
+    carried = {key for key in found if be.decide(key, INPUTS, found) is not None}
+    assert carried == {f"{leg}/1" for leg in CARRYING_LEGS}
+    for key in carried:
+        entry = be.decide(key, INPUTS, found)
+        assert entry is not None and entry["result"] == result
+        assert entry["reused_from"]["run_id"] == 40
+    ran = set(found) - carried
+    assert {be.leg_of(key) for key in ran} == set(be.SHARDS) - CARRYING_LEGS
+    assert all(be.leg_of(key) in be.NON_REUSABLE for key in ran)
+
+
+def test_a_second_run_on_another_tree_carries_nothing() -> None:
+    name, data = _stored(_every_shard())
+    found, _ = be.previous(_Source({40: {name: data}}))
+    moved = {**INPUTS, "tree": "e" * 40}
+    assert [key for key in found if be.decide(key, moved, found) is not None] == []
+
+
+def test_main_s_runs_are_read_whatever_started_them(monkeypatch) -> None:
+    """A dispatched run reads a scheduled night's record: the listing names main and no event."""
+    gh = _Gh()
+    gh.runs = {"main": [41, 40]}
+    calls: list[tuple[str, ...]] = []
+
+    def recording(*args: str) -> str:
+        calls.append(args)
+        return gh(*args)
+
+    monkeypatch.setattr(be, "_gh", recording)
+    assert be.GhSource("o/r", 41).runs() == [40]
+    asked = [" ".join(call) for call in calls if any("breadth.yml/runs" in a for a in call)]
+    assert asked and all("branch=main" in c and "event=" not in c for c in asked), asked
