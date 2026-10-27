@@ -4,11 +4,13 @@ import asyncio
 import json
 import os
 import re
+import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw import tmux_substrate
 from personalclaw.dashboard.handlers import terminal
@@ -652,6 +654,42 @@ def _a_terminal_of_its_own(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(terminal, "_sel", lambda: MagicMock())
 
 
+class _ARowHeldInItsThread:
+    """A security log whose ``ok`` row for *operation* waits, in the worker thread writing it,
+    until ``release`` is set. ``operations`` is every row's operation, in order."""
+
+    def __init__(self, operation: str):
+        self.operation = operation
+        self.operations: list[str] = []
+        self.held = threading.Event()
+        self.release = threading.Event()
+
+    def log_api_access(self, **row):
+        self.operations.append(row["operation"])
+        if row["operation"] == self.operation and row["outcome"] == "ok":
+            self.held.set()
+            self.release.wait(5)
+
+
+class _GatewayServer(TestServer):
+    """A test server whose handler goes on running when its client goes away, as the gateway's
+    own runner does (``dashboard/server.py`` leaves aiohttp's ``handler_cancellation`` off).
+    aiohttp's test server turns it on, which cancels the handler instead."""
+
+    async def _make_runner(self, **kwargs):
+        kwargs["handler_cancellation"] = False
+        return await super()._make_runner(**kwargs)
+
+
+async def _the_row_count(log: _ARowHeldInItsThread, operation: str, count: int) -> bool:
+    """Whether *log* holds *count* rows of *operation* within five seconds."""
+    for _ in range(100):
+        if log.operations.count(operation) == count:
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
 class TestTerminalWsIntegration:
     """Integration tests that exercise the full WebSocket PTY lifecycle."""
 
@@ -786,6 +824,40 @@ class TestTerminalWsIntegration:
                 await ws.close()
 
             await terminal._kill_session(registry["recon-sess@none"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("operation", ["terminal.ws.open", "terminal.ws.reconnect"])
+    async def test_a_terminal_deleted_while_its_row_is_written_still_disconnects(
+        self, monkeypatch, tmp_path, operation
+    ):
+        """The socket's open (or reconnect) row is written in a worker thread, after the session is
+        registered and before its PTY is watched, so a delete can land while the row is written.
+        The socket then finds its PTY already closed: it goes on to its disconnect row, rather than
+        watching a closed fd (``add_reader(-1)`` raises out of the handler, and no row follows)."""
+        _a_terminal_of_its_own(monkeypatch, tmp_path)
+        log = _ARowHeldInItsThread(operation)
+        monkeypatch.setattr(terminal, "_sel", lambda: log)
+        sid = "held-sess@none"
+        registry: dict = {}
+        app = _make_app(registry=registry)
+
+        async with TestClient(_GatewayServer(app)) as client:
+            if operation == "terminal.ws.reconnect":
+                async with client.ws_connect(f"/api/ws/terminal/{sid}") as ws:
+                    await ws.close()
+                assert await _the_row_count(log, "terminal.ws.disconnect", 1)
+            try:
+                async with client.ws_connect(f"/api/ws/terminal/{sid}") as ws:
+                    assert await asyncio.to_thread(log.held.wait, 5), "the row was never written"
+                    deleted = asyncio.ensure_future(client.delete(f"/api/terminal/sessions/{sid}"))
+                    while (await ws.receive(timeout=5)).type != web.WSMsgType.CLOSE:
+                        pass  # the delete closes the socket: answer it, so the delete goes on
+                    assert (await deleted).status == 200
+                    assert sid not in registry
+            finally:
+                log.release.set()
+            expected = 2 if operation == "terminal.ws.reconnect" else 1
+            assert await _the_row_count(log, "terminal.ws.disconnect", expected), log.operations
 
     @pytest.mark.asyncio
     async def test_ws_invalid_json_ignored(self, monkeypatch, tmp_path):

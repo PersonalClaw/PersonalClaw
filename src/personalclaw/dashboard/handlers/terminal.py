@@ -21,6 +21,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import strict_bool
+from personalclaw.sel import sel_log_async
 
 
 def config_path():
@@ -340,7 +341,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
     """
     app_name = request.get("app", "")
     if app_name:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=f"app:{app_name}",
             operation="terminal.ws.open",
             outcome="denied",
@@ -351,7 +353,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         return web.Response(status=403, text="The terminal is owner-only")
     caller = request.get("user")
     if not caller:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller="unknown",
             operation="terminal.ws.open",
             outcome="denied",
@@ -360,7 +363,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         )
         return web.Response(status=401, text="Unauthorized")
     if not _is_enabled(request):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.ws.open",
             outcome="denied",
@@ -371,7 +375,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
 
     session_id = request.match_info.get("session_id", "")
     if not session_id or len(session_id) > 64:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.ws.open",
             outcome="denied",
@@ -394,7 +399,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
 
     # Reserve session synchronously before any await to prevent race condition
     if not existing and len(registry) >= max_sessions:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.ws.open",
             outcome="denied",
@@ -423,7 +429,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         existing.ws = ws
         existing.last_ws_disconnect = None
         sess = existing
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.ws.reconnect",
             outcome="ok",
@@ -526,7 +533,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             if handle is not None:
                 await asyncio.to_thread(handle.cleanup)
             if isinstance(exc, _Refused):
-                _sel().log_api_access(
+                await sel_log_async(
+                    _sel().log_api_access,
                     caller=caller,
                     operation="terminal.ws.open",
                     outcome="denied",
@@ -553,7 +561,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
             sandbox=handle,
         )
         registry[session_id] = sess
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.ws.open",
             outcome="ok",
@@ -617,13 +626,16 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         if sess.ws and not sess.ws.closed:
             asyncio.ensure_future(_safe_send(sess, data))
 
-    # register the fd reader on the running loop (idempotent on reconnect)
+    # register the fd reader on the running loop (idempotent on reconnect). Not when the session
+    # was torn down while its open row was written (a delete, the reaper or its shell's exit
+    # closed the fd): there is nothing to watch, and the write loop goes on to the disconnect row.
     _loop = asyncio.get_running_loop()
     try:
         _loop.remove_reader(sess.master_fd)
     except Exception:
         pass
-    _loop.add_reader(sess.master_fd, on_pty_readable)
+    if sess.master_fd >= 0:
+        _loop.add_reader(sess.master_fd, on_pty_readable)
 
     # --- Write loop: WebSocket → PTY ---
     try:
@@ -672,7 +684,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
         # WS disconnected — mark for orphan reaper, but keep PTY alive
         sess.ws = None
         sess.last_ws_disconnect = time.monotonic()
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.ws.disconnect",
             outcome="ok",
@@ -720,7 +733,8 @@ async def api_terminal_create(request: web.Request) -> web.Response:
     """POST /api/terminal/sessions — create a new terminal session (returns session_id)."""
     caller = request.get("user")
     if not caller:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller="unknown",
             operation="terminal.session.create",
             outcome="denied",
@@ -729,7 +743,8 @@ async def api_terminal_create(request: web.Request) -> web.Response:
         )
         return web.Response(status=401, text="Unauthorized")
     if not _is_enabled(request):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.session.create",
             outcome="denied",
@@ -743,7 +758,8 @@ async def api_terminal_create(request: web.Request) -> web.Response:
     max_sessions = cfg.get("max_sessions", _MAX_SESSIONS)
 
     if len(registry) >= max_sessions:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.session.create",
             outcome="denied",
@@ -774,7 +790,8 @@ async def api_terminal_create(request: web.Request) -> web.Response:
         from personalclaw.security import is_sensitive_path, is_system_path
 
         if is_sensitive_path(requested_cwd) or is_system_path(requested_cwd):
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="terminal.session.create",
                 outcome="denied",
@@ -795,7 +812,8 @@ async def api_terminal_create(request: web.Request) -> web.Response:
         from personalclaw.sandbox_providers import get_provider
 
         if get_provider(requested_sandbox) is None:
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="terminal.session.create",
                 outcome="denied",
@@ -813,7 +831,8 @@ async def api_terminal_create(request: web.Request) -> web.Response:
     session_id = f"{session_id}{_TIER_SEP}{requested_sandbox or HOST_TIER}"
     if requested_cwd:
         _pending_cwd[session_id] = requested_cwd
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=caller,
         operation="terminal.session.create",
         outcome="ok",
@@ -836,7 +855,8 @@ async def api_terminal_delete(request: web.Request) -> web.Response:
     """DELETE /api/terminal/sessions/{session_id} — kill a terminal session."""
     caller = request.get("user")
     if not caller:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller="unknown",
             operation="terminal.session.delete",
             outcome="denied",
@@ -845,7 +865,8 @@ async def api_terminal_delete(request: web.Request) -> web.Response:
         )
         return web.Response(status=401, text="Unauthorized")
     if not _is_enabled(request):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.session.delete",
             outcome="denied",
@@ -877,7 +898,8 @@ async def api_terminal_delete(request: web.Request) -> web.Response:
     if sess is None:
         # Not in-process. If it was a live tmux session we just killed it → ok; else 404.
         if persistent:
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="terminal.session.delete",
                 outcome="ok",
@@ -894,7 +916,8 @@ async def api_terminal_delete(request: web.Request) -> web.Response:
         await sess.ws.close()
     await _kill_session(sess)
 
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=caller,
         operation="terminal.session.delete",
         outcome="ok",
@@ -908,7 +931,8 @@ async def api_terminal_list(request: web.Request) -> web.Response:
     """GET /api/terminal/sessions — list active terminal sessions."""
     caller = request.get("user")
     if not caller:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller="unknown",
             operation="terminal.session.list",
             outcome="denied",
@@ -917,7 +941,8 @@ async def api_terminal_list(request: web.Request) -> web.Response:
         )
         return web.Response(status=401, text="Unauthorized")
     if not _is_enabled(request):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="terminal.session.list",
             outcome="denied",
@@ -989,7 +1014,8 @@ async def api_terminal_list(request: web.Request) -> web.Response:
                     "sandbox": "",
                 }
             )
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=caller,
         operation="terminal.session.list",
         outcome="ok",
