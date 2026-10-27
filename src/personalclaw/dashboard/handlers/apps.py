@@ -46,6 +46,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
+from personalclaw.sel import sel_log_async
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
@@ -515,7 +516,7 @@ async def api_app_sources_add(request: web.Request) -> web.Response:
         catalog.add_git_source(url)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    _sel_log("apps.source_add", "ok", url, request)
+    await sel_log_async(_sel_log, "apps.source_add", "ok", url, request)
     return web.json_response({"ok": True, "sources": catalog.list_git_sources()})
 
 
@@ -527,7 +528,7 @@ async def api_app_sources_remove(request: web.Request) -> web.Response:
     if not url:
         return web.json_response({"error": "url is required"}, status=400)
     catalog.remove_git_source(url)
-    _sel_log("apps.source_remove", "ok", url, request)
+    await sel_log_async(_sel_log, "apps.source_remove", "ok", url, request)
     return web.json_response({"ok": True, "sources": catalog.list_git_sources()})
 
 
@@ -554,7 +555,7 @@ async def api_app_local_sources_add(request: web.Request) -> web.Response:
         catalog.add_local_source(path)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    _sel_log("apps.local_source_add", "ok", path, request)
+    await sel_log_async(_sel_log, "apps.local_source_add", "ok", path, request)
     return web.json_response({"ok": True, "sources": catalog.list_local_sources()})
 
 
@@ -566,7 +567,7 @@ async def api_app_local_sources_remove(request: web.Request) -> web.Response:
     if not path:
         return web.json_response({"error": "path is required"}, status=400)
     catalog.remove_local_source(path)
-    _sel_log("apps.local_source_remove", "ok", path, request)
+    await sel_log_async(_sel_log, "apps.local_source_remove", "ok", path, request)
     return web.json_response({"ok": True, "sources": catalog.list_local_sources()})
 
 
@@ -707,7 +708,7 @@ async def api_app_install(request: web.Request) -> web.Response:
     try:
         resolved = await asyncio.to_thread(app_source.resolve, src, listed_by=_listed_by(body))
     except app_source.SourceError as exc:
-        _sel_log("apps.install", "error", src, request, error=str(exc))
+        await sel_log_async(_sel_log, "apps.install", "error", src, request, error=str(exc))
         return web.json_response({"error": str(exc)}, status=400)
 
     def _do_install():
@@ -736,7 +737,8 @@ async def api_app_install(request: web.Request) -> web.Response:
         status = 200
     else:
         status = 400
-    _sel_log(
+    await sel_log_async(
+        _sel_log,
         "apps.install",
         "ok" if result.ok else "refused",
         result.name or src,
@@ -819,7 +821,9 @@ async def api_app_update(request: web.Request) -> web.Response:
     result = await asyncio.to_thread(_do_update)
 
     status = 200 if result.ok else (409 if result.needs_consent else 400)
-    _sel_log("apps.update", "ok" if result.ok else "error", name, request, error=result.error)
+    await sel_log_async(
+        _sel_log, "apps.update", "ok" if result.ok else "error", name, request, error=result.error
+    )
     payload = result.to_dict()
     if result.ok:
         _reconcile_app_crons(request)  # a manifest edit may add/remove/retime crons
@@ -852,7 +856,7 @@ async def api_app_enable(request: web.Request) -> web.Response:
         name,
         caller=request.get("user", "dashboard"),
     )
-    _sel_log("apps.enable", "ok" if ok else "error", name, request)
+    await sel_log_async(_sel_log, "apps.enable", "ok" if ok else "error", name, request)
     if not ok:
         # The sentence the refusal was made with, when this core will not run the app here (the
         # Apps page shows the same one); else the enable failed for a reason of its own.
@@ -873,7 +877,7 @@ async def api_app_disable(request: web.Request) -> web.Response:
         name,
         caller=request.get("user", "dashboard"),
     )
-    _sel_log("apps.disable", "ok" if ok else "error", name, request)
+    await sel_log_async(_sel_log, "apps.disable", "ok" if ok else "error", name, request)
     if not ok:
         return web.json_response({"error": f"disable failed for {name!r}"}, status=400)
     _reconcile_app_crons(request)  # prune the now-disabled app's crons immediately
@@ -911,7 +915,7 @@ async def api_app_uninstall(request: web.Request) -> web.Response:
     if (force or remove) and (busy := _engine_installing(request, name)) is not None:
         return busy
     ok = await asyncio.to_thread(fn, name, caller=caller)
-    _sel_log(op, "ok" if ok else "error", name, request)
+    await sel_log_async(_sel_log, op, "ok" if ok else "error", name, request)
     if not ok:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
     _reconcile_app_crons(request)  # prune the uninstalled app's crons immediately
@@ -1063,7 +1067,7 @@ async def api_app_config_put(request: web.Request) -> web.Response:
         request, mask_secrets(stored, schema)[0], what=f"the settings of {name!r}"
     )
     if stale is not None:
-        _sel_log("apps.config", refusal_outcome(stale), name, request)
+        await sel_log_async(_sel_log, "apps.config", refusal_outcome(stale), name, request)
         return stale
     # A sensitive field carrying the mask sentinel (or empty when it was already set)
     # means "keep the stored secret" — don't overwrite it with the placeholder. What is
@@ -1073,9 +1077,9 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     try:
         write_config(name, values, schema)
     except AppConfigError as exc:
-        _sel_log("apps.config", "error", name, request, error=str(exc))
+        await sel_log_async(_sel_log, "apps.config", "error", name, request, error=str(exc))
         return web.json_response({"error": str(exc)}, status=400)
-    _sel_log("apps.config", "ok", name, request)
+    await sel_log_async(_sel_log, "apps.config", "ok", name, request)
     # The saved values reach the app's live provider now — the rebuild the providers route
     # does, shared, so Configure → Save needs no restart for any app.
     from personalclaw.providers.routes import apply_saved_settings
@@ -1161,7 +1165,14 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
     _, name = _agent_run_identity(request)
     held = _app_agent_tier(name)
     if not held:
-        _sel_log("apps.agent_run", "denied", name, request, error="agent permission not granted")
+        await sel_log_async(
+            _sel_log,
+            "apps.agent_run",
+            "denied",
+            name,
+            request,
+            error="agent permission not granted",
+        )
         return _no_agent_tier(name)
 
     state = request.app["state"]
@@ -1214,7 +1225,7 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
     else:
         refusal = ""
     if refusal:
-        _sel_log("apps.agent_run", "denied", name, request, error=refusal)
+        await sel_log_async(_sel_log, "apps.agent_run", "denied", name, request, error=refusal)
         return json_error("agent_tier_exceeded", message=refusal, status=403)
 
     # App-run agents are headless and silent (no chat surfacing), tagged by the app so the run is
@@ -1235,9 +1246,9 @@ async def api_app_agent_run(request: web.Request) -> web.Response:
             {"error": f"capacity reached ({state.subagents.max_concurrent})"}, status=429
         )
     if info.done and info.error:
-        _sel_log("apps.agent_run", "error", name, request, error=info.error)
+        await sel_log_async(_sel_log, "apps.agent_run", "error", name, request, error=info.error)
         return web.json_response({"error": info.error}, status=400)
-    _sel_log("apps.agent_run", "ok", name, request, error="")
+    await sel_log_async(_sel_log, "apps.agent_run", "ok", name, request, error="")
     return web.json_response(
         {"id": info.id, "task": task, "status": "running", "tier": tier}, status=202
     )
@@ -1268,7 +1279,8 @@ async def api_app_agent_run_status(request: web.Request) -> web.StreamResponse:
     # identity (the dashboard reaches this route when app-token minting failed) and
     # is not scoped — the owner already sees every run via /api/spawn.
     if request_app and info.parent_session_key != session_keys.APP.key(request_app):
-        _sel_log(
+        await sel_log_async(
+            _sel_log,
             "apps.agent_run_status",
             "denied",
             f"{name}:{run_id}",
