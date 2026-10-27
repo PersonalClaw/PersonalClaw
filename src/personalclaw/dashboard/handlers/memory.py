@@ -27,6 +27,7 @@ from personalclaw.security import (
     redact_for_display,
     stored_name,
 )
+from personalclaw.sel import sel_log_async
 from personalclaw.stale_write import revision_of, stale_write_refusal
 from personalclaw.vector_memory import SemanticRejectCode
 
@@ -285,7 +286,8 @@ async def api_memory_settings(request: web.Request) -> web.Response:
         try:
             await mutate_config_async(_apply)
         except ConfigWriteError as exc:
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="memory.settings.update",
                 outcome="error",
@@ -293,7 +295,8 @@ async def api_memory_settings(request: web.Request) -> web.Response:
                 resources=type(exc).__name__,
             )
             return config_write_refusal(exc)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="memory.settings.update",
             outcome="success",
@@ -507,7 +510,8 @@ async def api_memory_partition_delete(request: web.Request) -> web.Response:
     sk = work_of_request(request)
     pid = request.match_info["id"]
     if _is_restricted_session(state, request):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory.partition_remove",
             outcome="denied",
@@ -524,7 +528,8 @@ async def api_memory_partition_delete(request: web.Request) -> web.Response:
     if part is None or part.is_global:
         return json_error("memory_partition_not_found", status=404)
     removed = await asyncio.to_thread(memory_locality.remove_partition, part)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=sk or "dashboard:ui",
         operation="memory.partition_remove",
         outcome="success" if removed else "failure",
@@ -582,7 +587,8 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
     """PUT /api/memory/semantic — create/update a semantic entry."""
     if _is_restricted_session(request.app["state"], request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="semantic.write",
             outcome="denied",
@@ -634,7 +640,8 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
     if err is not None:
         code, message = err
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="semantic.write",
             outcome="rejected",
@@ -646,7 +653,8 @@ async def api_memory_semantic_write(request: web.Request) -> web.Response:
         msg, _ = redact_credentials(msg)
         return web.json_response({"error": msg}, status=status)
     sk = work_of_request(request)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=sk,
         operation="semantic.write",
         outcome="success",
@@ -660,7 +668,8 @@ async def api_memory_semantic_delete(request: web.Request) -> web.Response:
     """DELETE /api/memory/semantic/{key} — tombstone a semantic entry."""
     if _is_restricted_session(request.app["state"], request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="semantic.delete",
             outcome="denied",
@@ -710,7 +719,8 @@ async def api_memory_approval_rules(request: web.Request) -> web.Response:
     # given your memory, read none of them, and are told why (`triage_rules_list`).
     withheld = _memory_refusal(state, request)
     if withheld:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=work_of_request(request),
             operation="approval_rule.list",
             outcome="denied",
@@ -751,7 +761,8 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
 
     if _is_restricted_session(request.app["state"], request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="approval_rule.write",
             outcome="denied",
@@ -814,7 +825,8 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
             refused = await asyncio.to_thread(
                 svc.set_semantic, rule.key, rule_to_value(rule), 1.0, "user_explicit"
             )
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=sk,
                 operation="approval_rule.write",
                 outcome="rejected" if refused else "success",
@@ -838,7 +850,8 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
     )
     if err is not None:
         code, message = err
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="approval_rule.write",
             outcome="rejected",
@@ -849,7 +862,8 @@ async def api_memory_approval_rule_add(request: web.Request) -> web.Response:
         msg, _ = redact_credentials(msg)
         status = 409 if code == SemanticRejectCode.CONFLICT else 422
         return web.json_response({"error": msg}, status=status)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=sk,
         operation="approval_rule.write",
         outcome="success",
@@ -867,7 +881,8 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
 
     if _is_restricted_session(request.app["state"], request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="approval_rule.delete",
             outcome="denied",
@@ -894,7 +909,8 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
 
         async def _on_her_allow() -> None:
             if svc.delete_semantic(key, source="user_explicit"):
-                _sel().log_api_access(
+                await sel_log_async(
+                    _sel().log_api_access,
                     caller=sk,
                     operation="approval_rule.delete",
                     outcome="success",
@@ -914,7 +930,8 @@ async def api_memory_approval_rule_delete(request: web.Request) -> web.Response:
         return memory_holds.held(request, revoke, _on_her_allow)
     if not svc.delete_semantic(key, source="user_explicit"):
         return web.json_response({"error": "not found"}, status=404)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=work_of_request(request),
         operation="approval_rule.delete",
         outcome="success",
@@ -965,7 +982,8 @@ async def api_memory_event_undo(request: web.Request) -> web.Response:
         return web.json_response({"error": "event_id must be an integer"}, status=400)
     ok, message = svc.undo_event(event_id)
     try:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller="dashboard:ui",
             operation="memory.undo_event",
             outcome="allowed" if ok else "denied",
@@ -1047,7 +1065,8 @@ async def api_memory_recall(request: web.Request) -> web.Response:
     refusal = _memory_refusal(state, request)
     if refusal:
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory.recall",
             outcome="denied",
@@ -1369,7 +1388,8 @@ async def api_memory_vault_sync(request: web.Request) -> web.Response:
     ``raw/`` because they are still being written (``raw_waiting``: the next sync takes them)."""
     if _is_restricted_session(request.app["state"], request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory.vault_sync",
             outcome="denied",
@@ -1410,7 +1430,8 @@ async def api_memory_migrate(request: web.Request) -> web.Response:
     """POST /api/memory/migrate — migrate legacy markdown memory to vector store."""
     if _is_restricted_session(request.app["state"], request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory.migrate",
             outcome="denied",
@@ -1448,7 +1469,8 @@ async def api_memory_import(request: web.Request) -> web.Response:
     """POST /api/memory/import — import memory from JSON (export format)."""
     if _is_restricted_session(request.app["state"], request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory.import",
             outcome="denied",
@@ -1505,7 +1527,8 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     if _is_restricted_session(state, request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory.consolidate",
             outcome="denied",
@@ -1573,7 +1596,8 @@ async def api_memory_promote(request: web.Request) -> web.Response:
     """POST /api/memory/promote — promote repeated episodic patterns to semantic facts."""
     if _is_restricted_session(request.app["state"], request):
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory.promote",
             outcome="denied",
@@ -1757,14 +1781,20 @@ async def api_memory_graph(request: web.Request) -> web.Response:
             # A node's handle quotes its label, so it is masked as the label is.
             n["ref"] = _redact_memory_field(n["ref"])
 
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="memory_graph", outcome="success"
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="memory_graph",
+            outcome="success",
         )
         return web.json_response({"nodes": nodes, "edges": edges})
     except Exception:
         logging.getLogger(__name__).exception("memory_graph failed")
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="memory_graph", outcome="failure"
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="memory_graph",
+            outcome="failure",
         )
         return web.json_response({"error": "failed to build memory graph"}, status=500)
 
@@ -2002,12 +2032,18 @@ async def api_memory_graph_export(request: web.Request) -> web.Response:
         )
     except Exception:
         logger.exception("memory graph export failed")
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="memory_graph_export", outcome="failure"
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="memory_graph_export",
+            outcome="failure",
         )
         return web.json_response({"error": "failed to render the graph export"}, status=500)
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="memory_graph_export", outcome="success"
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="memory_graph_export",
+        outcome="success",
     )
     filename = f"memory-graph-{now.strftime('%Y%m%d-%H%M%S')}.html"
     return web.Response(
@@ -2066,8 +2102,11 @@ async def api_memory_slot_append(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": exc.proposal.message, "proposal": exc.proposal.to_dict()}, status=409
         )
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="memory_slot_append", outcome="success"
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="memory_slot_append",
+        outcome="success",
     )
     return web.json_response({"ok": True, "lines": lines})
 
@@ -2093,8 +2132,11 @@ async def api_memory_slot_line_retire(request: web.Request) -> web.Response:
     ok = await loop.run_in_executor(None, lambda: svc.slot_tombstone(name, text))
     if not ok:
         return web.json_response({"error": "that line is not in the slot"}, status=404)
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="memory_slot_tombstone", outcome="success"
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="memory_slot_tombstone",
+        outcome="success",
     )
     return web.json_response({"ok": True})
 
@@ -2140,8 +2182,11 @@ async def api_memory_facet_pin(request: web.Request) -> web.Response:
     ok = await loop.run_in_executor(None, lambda: svc.facet_pin(key, pinned))
     if not ok:
         return web.json_response({"error": "no such facet"}, status=404)
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="memory_facet_pin", outcome="success"
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="memory_facet_pin",
+        outcome="success",
     )
     return web.json_response({"ok": True, "pinned": pinned})
 
@@ -2164,8 +2209,11 @@ async def api_memory_facet_forget(request: web.Request) -> web.Response:
     ok = await loop.run_in_executor(None, lambda: svc.facet_forget(key))
     if not ok:
         return web.json_response({"error": "no such facet"}, status=404)
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="memory_facet_forget", outcome="success"
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="memory_facet_forget",
+        outcome="success",
     )
     return web.json_response({"ok": True})
 
@@ -2183,8 +2231,11 @@ async def api_memory_graph_rebuild(request: web.Request) -> web.Response:
     loop = asyncio.get_event_loop()
     seeded = await loop.run_in_executor(None, svc.graph_seed)
     result = await loop.run_in_executor(None, svc.graph_backfill)
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="memory_graph_rebuild", outcome="success"
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="memory_graph_rebuild",
+        outcome="success",
     )
     return web.json_response({"ok": True, "seeded": seeded, **result})
 
