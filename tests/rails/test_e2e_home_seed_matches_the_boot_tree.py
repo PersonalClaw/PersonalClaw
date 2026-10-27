@@ -13,6 +13,12 @@ those rows switched off, which the boot keeps as it finds it, and a ``config.jso
 off the two whose switch is a setting (the identity report's cadence and self-remediation), which
 the boot would otherwise switch back on.
 
+The same ``config.json`` turns automatic update checks off. The run's gateway is a source
+checkout, so its own update check, at start and on the status poll's schedule, is a ``git fetch``
+of its origin: on a slow network the fetch timed out, its warning landed in Settings ›
+Diagnostics' log panel, and the panel's pinned tree read it (#5618's run). With checks off the
+gateway reaches out only when a test presses Check now.
+
 These checks hold the seed to the boot: the reconcilers the boot calls are read from the gateway's
 own source, so one added there, or a row one of them starts creating differently, is a red here
 until the seed is regenerated.
@@ -129,3 +135,35 @@ def test_the_seeded_settings_are_what_keeps_the_two_config_switched_rows_off(hom
     shutil.copy(SEED / "triggers.json", home / "triggers.json")
     on = sorted(r["id"] for r in _boot(home) if r["enabled"])
     assert on == ["system:learning-identity-report", "system:self-remediation"], on
+
+
+# ── The update check ─────────────────────────────────────────────────────────────────────────
+
+
+def test_the_seed_turns_automatic_update_checks_off(home):
+    from personalclaw import self_update
+
+    assert self_update.may_check_for_updates(asked=False) is False, (
+        "web/e2e/fixtures/home/config.json no longer turns automatic update checks off, so the"
+        " run's gateway runs a `git fetch` of its checkout on its own"
+    )
+
+
+def test_without_the_seeds_setting_the_gateway_would_check_on_its_own(home):
+    # The control: checks are on by default, which is why config.json carries the setting.
+    (home / "config.json").write_text('{"dashboard":{"user_name":"Keyur"}}', encoding="utf-8")
+    from personalclaw import self_update
+
+    assert self_update.may_check_for_updates(asked=False) is True
+
+
+def test_the_gateway_starts_with_the_check_the_seed_turns_off():
+    # tests/test_the_browser_runs_gateway_runs_no_update_check.py runs this call under the seed.
+    from personalclaw import gateway
+
+    assert "_updates.update_status(asked=False, at_start=True)" in inspect.getsource(gateway)
+
+
+def test_the_browser_run_starts_its_gateway_on_the_seeds_settings():
+    config = (REPO / "web" / "playwright.config.ts").read_text(encoding="utf-8")
+    assert """'cp e2e/fixtures/home/config.json "$D/config.json"',""" in config

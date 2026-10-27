@@ -9,5 +9,8 @@
     "remediation": {
       "enabled": false
     }
+  },
+  "updates": {
+    "check_enabled": false
   }
 }
