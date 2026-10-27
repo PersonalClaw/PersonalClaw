@@ -119,7 +119,7 @@ async def list_all_providers_info() -> list[dict[str, Any]]:
     active_name = resolved[0].name if resolved else ""
 
     result = []
-    for prov in _providers.values():
+    for prov in list(_providers.values()):
         available = await prov.is_available()
         info = prov.info()
         info["available"] = available

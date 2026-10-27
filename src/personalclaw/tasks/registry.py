@@ -128,7 +128,7 @@ async def _routed(task_id: str, provider_name: str | None) -> TaskProvider | Non
     prov = _resolve(provider_name)
     if prov is not None:
         return prov
-    for candidate in _providers.values():
+    for candidate in list(_providers.values()):
         if await candidate.get_task(task_id):
             return candidate
     return None
