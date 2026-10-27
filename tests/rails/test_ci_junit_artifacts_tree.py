@@ -21,9 +21,9 @@ from ci_junit_artifacts_shared import (
     junit_uploads,
     key,
     pytest_commands,
-    steps,
     with_key,
 )
+from ci_run_job import read_run_job
 
 from tools.ci import catalogue
 from tools.ci import jobs as run_jobs
@@ -50,12 +50,52 @@ def workflows() -> dict[str, dict[str, str]]:
     return parsed
 
 
-def _pytest_jobs(parsed: dict[str, str]) -> dict[str, str]:
+@pytest.fixture(scope="module")
+def pytest_runs() -> dict[str, dict[str, list[str]]]:
+    """Each job's pytest commands as it runs them: a step that runs a catalogue entry through
+    run-job read as the entry's command (``tests/ci_run_job.py``), so a leg that moves to
+    run-job keeps the rails below."""
+    listed = (_REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
     return {
-        name: block
-        for name, block in parsed.items()
-        if any(pytest_commands(s) for s in steps(block))
+        path.name: _runs(listed, yaml.safe_load(path.read_text(encoding="utf-8")))
+        for path in (_BREADTH,)
     }
+
+
+def _runs(listed: str, workflow: dict) -> dict[str, list[str]]:
+    """Each of *workflow*'s jobs' pytest commands, read against the catalogue *listed*."""
+    workflow = read_run_job(listed, workflow)
+    return {
+        str(job_id): [c for step in job.get("steps") or [] for c in pytest_commands(_step(step))]
+        for job_id, job in (workflow.get("jobs") or {}).items()
+    }
+
+
+def _step(step: dict) -> str:
+    """A parsed step's run: as a step block of the workflow holds it, for the text readers."""
+    run = str(step.get("run", "")).strip()
+    if "\n" not in run:
+        return f"      - run: {run}"
+    return "      - run: |\n" + "\n".join(f"          {line}" for line in run.splitlines())
+
+
+def _pytest_jobs(parsed: dict[str, str], runs: dict[str, list[str]]) -> dict[str, str]:
+    return {name: block for name, block in parsed.items() if runs.get(name)}
+
+
+def test_a_leg_run_through_run_job_is_read_by_its_entry_s_pytest() -> None:
+    """The rails below hold a leg the same once it runs its entry through run-job: ubuntu's
+    suite step as `run-job suite-ubuntu`, read against the catalogue, still runs its pytest with
+    its report."""
+    listed = (_REPO / catalogue.CATALOGUE).read_text(encoding="utf-8")
+    workflow = yaml.safe_load(_BREADTH.read_text(encoding="utf-8"))
+    (step,) = [s for s in workflow["jobs"]["ubuntu"]["steps"] if s.get("id") == "pytest"]
+    step["run"] = (
+        '"$(uv python find "$PY")" -m tools.ci run-job suite-ubuntu'
+        ' --shard ${{ matrix.shard }}/4 --out "$RUNNER_TEMP/run-job"'
+    )
+    (command,) = _runs(listed, workflow)["ubuntu"]
+    assert f"--junitxml={_REPORT_DIR}junit-ubuntu.xml" in command, command
 
 
 def test_the_job_scan_is_not_vacuous(workflows: dict[str, dict[str, str]]) -> None:
@@ -65,13 +105,15 @@ def test_the_job_scan_is_not_vacuous(workflows: dict[str, dict[str, str]]) -> No
         assert not missing, f"the job scan lost long-standing {filename} jobs {sorted(missing)}"
 
 
-def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[str, str]]) -> None:
+def test_the_pytest_step_scan_finds_every_known_leg(
+    workflows: dict[str, dict[str, str]], pytest_runs: dict[str, dict[str, list[str]]]
+) -> None:
     """The rails are about pytest steps, so a scan that found none would be self-satisfying.
 
     Named by JOB rather than by count: a new pytest job should extend this list (and pick up
     the rails with it), not silently shrink what they cover.
     """
-    full = set(_pytest_jobs(workflows["breadth.yml"]))
+    full = set(_pytest_jobs(workflows["breadth.yml"], pytest_runs["breadth.yml"]))
     assert full >= {
         "ubuntu",
         "macos",
@@ -84,25 +126,26 @@ def test_the_pytest_step_scan_finds_every_known_leg(workflows: dict[str, dict[st
 
 @pytest.mark.parametrize("filename", ["breadth.yml"])
 def test_every_pytest_invocation_writes_a_junit_report(
-    workflows: dict[str, dict[str, str]], filename: str
+    pytest_runs: dict[str, dict[str, list[str]]], filename: str
 ) -> None:
     """A pytest step with no ``--junitxml`` has nothing to publish."""
-    for job, block in _pytest_jobs(workflows[filename]).items():
-        for step in steps(block):
-            for command in pytest_commands(step):
-                assert f"--junitxml={_REPORT_DIR}" in command, (
-                    f"{filename} job `{job}` invokes pytest without "
-                    f"`--junitxml={_REPORT_DIR}…`, so a red run publishes no report and "
-                    f"classifying it costs a full log read or a blind re-run: {command}"
-                )
+    for job, commands in pytest_runs[filename].items():
+        for command in commands:
+            assert f"--junitxml={_REPORT_DIR}" in command, (
+                f"{filename} job `{job}` invokes pytest without "
+                f"`--junitxml={_REPORT_DIR}…`, so a red run publishes no report and "
+                f"classifying it costs a full log read or a blind re-run: {command}"
+            )
 
 
 @pytest.mark.parametrize("filename", ["breadth.yml"])
 def test_every_pytest_job_uploads_its_report_even_when_red(
-    workflows: dict[str, dict[str, str]], filename: str
+    workflows: dict[str, dict[str, str]],
+    pytest_runs: dict[str, dict[str, list[str]]],
+    filename: str,
 ) -> None:
     """And uploads it on FAILURE — a ``success()``-gated report is the wrong half."""
-    for job, block in _pytest_jobs(workflows[filename]).items():
+    for job, block in _pytest_jobs(workflows[filename], pytest_runs[filename]).items():
         uploads = junit_uploads(block)
         assert uploads, (
             f"{filename} job `{job}` writes a JUnit report but no step uploads it, so the "
@@ -119,7 +162,9 @@ def test_every_pytest_job_uploads_its_report_even_when_red(
 
 @pytest.mark.parametrize("filename", ["breadth.yml"])
 def test_a_matrix_job_names_its_artifact_per_leg(
-    workflows: dict[str, dict[str, str]], filename: str
+    workflows: dict[str, dict[str, str]],
+    pytest_runs: dict[str, dict[str, list[str]]],
+    filename: str,
 ) -> None:
     """Artifact names are unique per run, so N legs sharing one name collapse to one upload.
 
@@ -129,7 +174,7 @@ def test_a_matrix_job_names_its_artifact_per_leg(
     """
     matrixed = {
         job: block
-        for job, block in _pytest_jobs(workflows[filename]).items()
+        for job, block in _pytest_jobs(workflows[filename], pytest_runs[filename]).items()
         if re.search(r"^ {6}matrix:\s*$", block, flags=re.MULTILINE)
     }
     # Vacuity floor, per file: the sharded job is named, not counted, so a `matrix:` indent

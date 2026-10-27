@@ -95,6 +95,46 @@ cap = 190
 reason = "the rails census over the tree: every test module parsed and walked; 94 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[every catalogue command is the workflow's]"
+cap = 240
+reason = "the row's 74 planted controls read twice, its legs written out and through run-job (#5600); the row alone is 58 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[no suite step keeps pytest's temporary folders under the runner's home]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[breadth-each-suite-leg-is-held-to-its-own-planned-ids]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[every suite shard runs its share of its run's one plan]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[every pytest step that runs the suite sets its worker count]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[no-macos-14-and-no-coverage-on-a-push]"
+cap = 60
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice the suite's 30 s default"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[nothing-throws-an-exit-status-away-unseen]"
+cap = 80
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice its own 40 s cap"
+
+[[mark]]
+site = "tests/rails/test_ci_contract.py::READ_THROUGH_TIMEOUTS[each-whole-tree-check-runs-in-every-tier-that-needs-it-as-a-step-that-fails-its-job]"
+cap = 140
+reason = "the row's planted controls read twice, its legs written out and through run-job (#5600): twice its own 70 s cap"
+
+[[mark]]
 site = "tests/rails/test_ci_contract.py::ROW_TIMEOUTS[every catalogue command is the workflow's]"
 cap = 120
 reason = "74 planted controls, each the catalogue and both workflows read and matched token for token; 58 s on CI at worst (a merge leg, 2026-10-24)"
