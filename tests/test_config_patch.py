@@ -1,7 +1,9 @@
 """Tests for PATCH /api/config/personalclaw validators (enum, int, float, bool, str)."""
 
+import asyncio
 import json
-from unittest.mock import patch
+import threading
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp import web
@@ -744,10 +746,12 @@ def _make_app_with_state(state) -> web.Application:
 
 
 class _FakeState:
-    """Just the two members the yolo seam touches — enable/disable recording."""
+    """Just the members the yolo seam touches — enable/disable recording, and the posture lock
+    the PATCH holds while it writes and applies `agent.yolo`."""
 
     def __init__(self) -> None:
         self.calls: list[tuple] = []
+        self.posture_lock = asyncio.Lock()
 
     def enable_yolo(self, *, from_config: bool = False) -> None:
         self.calls.append(("enable", from_config))
@@ -804,6 +808,110 @@ class TestYoloAppliesLive:
             assert resp.status == 200
         saved = json.loads(tmp_config.read_text(encoding="utf-8"))
         assert saved["agent"]["yolo"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_on_then_an_off_back_to_back_end_off_with_their_rows_in_order(
+        self, tmp_config
+    ) -> None:
+        # ON writes its audit row (in a worker thread) before it turns YOLO on. An OFF sent while
+        # that row is written waits for the ON to finish (the posture lock), so the two land on
+        # disk, live and in the log in the order they were sent: off, off, and ON's row first.
+        from personalclaw import trust_mode
+
+        class _LiveState:
+            def __init__(self) -> None:
+                self.posture_lock = asyncio.Lock()
+
+            def enable_yolo(self, *, from_config: bool = False) -> None:
+                trust_mode.enable_yolo(from_config=from_config)
+
+            def disable_yolo(self) -> None:
+                trust_mode.disable_yolo()
+
+        held, release = threading.Event(), threading.Event()
+        rows: list[str] = []
+
+        def log_api_access(**row):
+            if row.get("operation") != "mode_change:yolo":
+                return
+            if row.get("outcome") == "enabled":
+                held.set()
+                release.wait(5)
+            rows.append(row["outcome"])  # as the log appends it: once the write is done
+
+        log = MagicMock(log_api_access=log_api_access)
+        trust_mode.disable_yolo()
+        try:
+            with patch("personalclaw.sel.sel", return_value=log):
+                async with TestClient(TestServer(_make_app_with_state(_LiveState()))) as c:
+                    on = asyncio.ensure_future(_patch_consented(c, "agent.yolo", True))
+                    assert await asyncio.to_thread(held.wait, 5), "the ON row was never written"
+                    off = asyncio.ensure_future(_patch(c, "agent.yolo", False))
+                    await asyncio.sleep(0.2)  # time for the OFF to run, if it could
+                    release.set()
+                    assert (await on).status == 200
+                    assert (await off).status == 200, await (await off).text()
+            assert rows == ["enabled", "disabled"], rows
+            assert json.loads(tmp_config.read_text(encoding="utf-8"))["agent"]["yolo"] is False
+            assert not trust_mode.is_yolo_active()
+        finally:
+            release.set()
+            trust_mode.disable_yolo()
+
+
+class TestOrchestratorSkillFollowsTheLastToggle:
+    @pytest.mark.asyncio
+    async def test_an_off_whose_row_is_still_written_leaves_a_later_ons_skill(
+        self, tmp_config, tmp_path
+    ) -> None:
+        # The PUT removes the orchestrator skill when its toggle goes off, and writes its audit
+        # row in a worker thread. An ON landing while the OFF's row is written generates the
+        # skill again; the OFF's removal must already be done, not run after and remove it.
+        from personalclaw.dashboard.handlers import api_personalclaw_config
+
+        skill = tmp_path / "skills" / "orchestrator" / "SKILL.md"
+
+        class _Skills:
+            _dir = tmp_path / "skills"
+
+        def _generate(loader) -> None:
+            skill.parent.mkdir(parents=True, exist_ok=True)
+            skill.write_text("route to agents", encoding="utf-8")
+
+        held, release = threading.Event(), threading.Event()
+
+        def log_api_access(**row):
+            if row.get("outcome") == "ok" and not held.is_set():
+                held.set()
+                release.wait(5)
+
+        app = web.Application()
+        app.router.add_put("/api/config/personalclaw", api_personalclaw_config)
+        _generate(None)
+        try:
+            with (
+                patch("personalclaw.skills.SkillsLoader", _Skills),
+                patch("personalclaw.orchestrator_skill.generate_orchestrator_skill", _generate),
+                patch(
+                    "personalclaw.dashboard.handlers.sel",
+                    return_value=MagicMock(log_api_access=log_api_access),
+                ),
+            ):
+                async with TestClient(TestServer(app)) as c:
+                    put = "/api/config/personalclaw"
+                    off = asyncio.ensure_future(
+                        c.put(put, json={"agent": {"orchestrator_skill": False}})
+                    )
+                    assert await asyncio.to_thread(held.wait, 5), "the OFF row was never written"
+                    on = await c.put(put, json={"agent": {"orchestrator_skill": True}})
+                    assert on.status == 200, await on.text()
+                    release.set()
+                    assert (await off).status == 200
+        finally:
+            release.set()
+        saved = json.loads(tmp_config.read_text(encoding="utf-8"))
+        assert saved["agent"]["orchestrator_skill"] is True
+        assert skill.exists(), "the OFF's late removal took away the skill the ON made"
 
 
 async def _patch_consented(client, path, value):
