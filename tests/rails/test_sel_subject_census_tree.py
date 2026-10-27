@@ -11,22 +11,30 @@ import ast
 
 import source_index
 from rails_repo import REPO
+from sel_log_calls_shared import the_call_it_runs
 from sel_subject_census_shared import _problem
 
 SRC = REPO / "src" / "personalclaw"
 
 
-def _audit_calls() -> list[tuple[str, int, ast.Call]]:
+def audit_calls(trees: list[tuple[str, ast.AST]]) -> list[tuple[str, int, ast.Call]]:
+    """Each ``log_tool_invocation`` call in *trees*, ``(path, tree)`` pairs. One handed to
+    ``sel_log_async`` is read as the call it runs (``sel_log_calls_shared``)."""
     found: list[tuple[str, int, ast.Call]] = []
-    for path, tree in source_index.package_trees():
+    for where, tree in trees:
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "log_tool_invocation"
-            ):
-                found.append((str(path.relative_to(SRC)), node.lineno, node))
+            if not isinstance(node, ast.Call):
+                continue
+            call = the_call_it_runs(node)
+            if isinstance(call.func, ast.Attribute) and call.func.attr == "log_tool_invocation":
+                found.append((where, call.lineno, call))
     return found
+
+
+def _audit_calls() -> list[tuple[str, int, ast.Call]]:
+    return audit_calls(
+        [(str(path.relative_to(SRC)), tree) for path, tree in source_index.package_trees()]
+    )
 
 
 def test_every_audited_tool_call_hands_the_log_what_it_ran():
@@ -55,3 +63,21 @@ def test_the_census_reads_the_whole_surface():
         "mcp_shared.py",
     ):
         assert host in files, f"the census no longer reads {host}"
+
+
+_HANDED = """
+async def handler(x):
+    await sel_log_async(sel().log_tool_invocation, session_key="", tool_name="bash", outcome="ok")
+    await sel_log_async(
+        sel().log_tool_invocation, session_key="", tool_name="bash", tool_input=x, outcome="ok"
+    )
+    sel().log_tool_invocation(session_key="", tool_name="bash", outcome="ok")
+"""
+
+
+def test_a_row_handed_to_sel_log_async_is_read_as_the_call_it_runs():
+    """A row moved off the loop is still in the census, and still judged: the handed row that
+    leaves out what ran is flagged as the direct one is, and the one that hands it over is not."""
+    calls = audit_calls([("planted.py", ast.parse(_HANDED))])
+    assert sorted(line for _, line, _ in calls) == [3, 4, 7], calls
+    assert sorted(line for _, line, call in calls if _problem(call)) == [3, 7]

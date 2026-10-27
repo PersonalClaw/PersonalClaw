@@ -12,6 +12,7 @@ import re
 
 import source_index
 from rails_repo import REPO
+from sel_log_calls_shared import the_call_it_runs
 
 _SRC = REPO / "src" / "personalclaw"
 
@@ -32,14 +33,11 @@ def test_no_sentence_puts_a_possessive_after_a_quoted_name() -> None:
     assert any("!r}" in source_index.text(p) for p in source_index.package_files())
 
 
-def test_every_audited_refusal_records_which_refusal_it_was() -> None:
-    """The thirteen routes that audit a refusal each wrote their own words for it; the rule is
-    that each asks the refusal (`refusal_outcome`), so none can say "stale base" of a 428 again.
+def refusal_audits(trees: list[tuple[str, ast.AST]]) -> tuple[int, list[str]]:
+    """The audited refusal blocks in *trees*, ``(path, tree)`` pairs, and each audit row among
+    them that names no refusal. A write handed to ``sel_log_async`` is read as the call it runs
+    (``sel_log_calls_shared``)."""
 
-    Read from the tree: a block that runs only when a refusal was built — ``if <refusal> is not
-    None:`` after ``<refusal> = stale_write_refusal(…)`` (or the artifact route's
-    ``_source_file_refusal``), or the ``except ArtifactStaleWrite`` arm — and writes an audit row
-    must pass ``refusal_outcome(<refusal>)`` to it."""
     writers = {"_sel_log", "_audit", "log_api_access", "log_tool_invocation"}
     builders = {"stale_write_refusal", "_source_file_refusal"}
 
@@ -51,19 +49,20 @@ def test_every_audited_refusal_records_which_refusal_it_was() -> None:
         found = []
         for stmt in block:
             for node in ast.walk(stmt):
-                if isinstance(node, ast.Call) and called(node) in writers:
-                    found.append(node)
-                elif (
-                    isinstance(node, ast.Call)
-                    and called(node) == "RefusedInConfigTransaction"
-                    and any(k.arg == "audit" for k in node.keywords)
+                if not isinstance(node, ast.Call):
+                    continue
+                call = the_call_it_runs(node)
+                if called(call) in writers:
+                    found.append(call)
+                elif called(node) == "RefusedInConfigTransaction" and any(
+                    k.arg == "audit" for k in node.keywords
                 ):
                     found.append(node)
         return found
 
     blocks = 0
     wrong = []
-    for path, tree in source_index.package_trees():
+    for where, tree in trees:
         for fn in ast.walk(tree):
             if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
@@ -93,7 +92,43 @@ def test_every_audited_refusal_records_which_refusal_it_was() -> None:
                     blocks += 1
                     src = ast.unparse(call)
                     if not re.search(rf"refusal_outcome\({name or r'\w+'}\)", src):
-                        wrong.append(f"{path.relative_to(_SRC)}:{call.lineno}: {src[:90]}")
+                        wrong.append(f"{where}:{call.lineno}: {src[:90]}")
+    return blocks, wrong
+
+
+def test_every_audited_refusal_records_which_refusal_it_was() -> None:
+    """The thirteen routes that audit a refusal each wrote their own words for it; the rule is
+    that each asks the refusal (`refusal_outcome`), so none can say "stale base" of a 428 again.
+
+    Read from the tree: a block that runs only when a refusal was built — ``if <refusal> is not
+    None:`` after ``<refusal> = stale_write_refusal(…)`` (or the artifact route's
+    ``_source_file_refusal``), or the ``except ArtifactStaleWrite`` arm — and writes an audit row
+    must pass ``refusal_outcome(<refusal>)`` to it."""
+    trees = [(str(path.relative_to(_SRC)), tree) for path, tree in source_index.package_trees()]
+    blocks, wrong = refusal_audits(trees)
     assert not wrong, "an audited refusal names no refusal:\n" + "\n".join(wrong)
     # Vacuity floor: the scan found the audited refusals it is about.
     assert blocks >= 13, blocks
+
+
+_HANDED = """
+async def save(request, text):
+    stale = stale_write_refusal(request, text, what="x")
+    if stale is not None:
+        await sel_log_async(_sel().log_tool_invocation, session_key="d", outcome="stale base")
+        return stale
+    other = stale_write_refusal(request, text, what="y")
+    if other is not None:
+        await sel_log_async(
+            _sel().log_tool_invocation, session_key="d", outcome=refusal_outcome(other)
+        )
+        return other
+"""
+
+
+def test_a_refusal_audit_handed_to_sel_log_async_is_read_as_the_call_it_runs() -> None:
+    """An audit moved off the loop is still one of the refusal's audits, and still judged: the
+    handed row with its own words for the refusal is named, and the one that asks it is not."""
+    blocks, wrong = refusal_audits([("planted.py", ast.parse(_HANDED))])
+    assert blocks == 2, blocks
+    assert [w.split(": ", 1)[0] for w in wrong] == ["planted.py:5"], wrong

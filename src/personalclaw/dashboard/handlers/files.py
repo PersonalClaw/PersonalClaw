@@ -45,6 +45,7 @@ from personalclaw.security import (
     redact_exfiltration_urls,
     redact_for_display,
 )
+from personalclaw.sel import sel_log_async
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 from personalclaw.uploads.content_scan import ContentRefused, scan_upload
 from personalclaw.uploads.spool import Spool
@@ -213,7 +214,8 @@ async def api_reveal_path(request: web.Request) -> web.Response:
         refused = _app_path_refusal(path, tool="reveal_path", reach=_REVEAL_REACH)
         if refused is not None:
             return refused
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="reveal_path",
@@ -252,7 +254,8 @@ async def api_reveal_path(request: web.Request) -> web.Response:
     # which passes an `entry.path` the explorer itself enumerated — and the explorer cannot leave
     # the roots. (Yours: an app was held to its own data folder above.)
     if not app_name and _validate_dashboard_path(path) is None:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="reveal_path",
@@ -282,7 +285,8 @@ async def api_reveal_path(request: web.Request) -> web.Response:
             subprocess.Popen(["xdg-open", str(Path(path).parent)])
         else:
             return web.json_response({"ok": True, "copy": path})
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key="api",
         source="api",
         tool_name="reveal_path",
@@ -300,7 +304,8 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
 
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -325,7 +330,8 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
     # Reject files whose names/paths contain sensitive patterns
     if redact(raw_filename) != raw_filename or redact(raw_path) != raw_path:
 
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -356,7 +362,8 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
     resolved = Path(file_data["path"]).resolve()
     if not resolved.is_relative_to(outbox_dir().resolve()):
 
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -369,7 +376,8 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
         raw = safe_read_file_bytes(str(resolved))
     except FileTooLargeError as e:
 
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -380,7 +388,8 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=413)
     if raw is None:
 
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -401,7 +410,8 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
             raw.decode("utf-8")
         except UnicodeDecodeError:
 
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key="api",
                 source="api",
                 tool_name="notify_attachment",
@@ -423,7 +433,8 @@ async def api_outbox_notify(request: web.Request) -> web.Response:
             active.append("file", json.dumps(file_data))
     state.broadcast_ws("file_ready", file_data)
 
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key="api",
         source="api",
         tool_name="notify_attachment",
@@ -445,7 +456,8 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
     filename = request.match_info["filename"]
     path = (outbox_dir() / filename).resolve()
     if not path.is_relative_to(outbox_dir().resolve()):
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -463,7 +475,8 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
         or content_type == "application/pdf"
     )
     if _is_media and path.is_file():
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -475,7 +488,8 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
     try:
         raw = safe_read_file_bytes(str(path))
     except FileTooLargeError as e:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -485,7 +499,8 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
         )
         return web.json_response({"error": str(e)}, status=413)
     if raw is None:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -498,7 +513,8 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -509,7 +525,8 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": "Only UTF-8 text files are supported"}, status=400)
     redacted = redact(text)
     if redacted != text:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -520,7 +537,8 @@ async def api_outbox_download(request: web.Request) -> web.StreamResponse:
         return web.json_response(
             {"error": "file content was redacted; download aborted"}, status=400
         )
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key="api",
         source="api",
         tool_name="notify_attachment",
@@ -552,7 +570,8 @@ async def api_outbox_list(request: web.Request) -> web.Response:
             entries.append({"filename": f.name, "size": st.st_size, "modified": st.st_mtime})
     entries.sort(key=lambda x: float(x["modified"]), reverse=True)  # type: ignore[arg-type,return-value]  # noqa: E501
 
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key="api",
         source="api",
         tool_name="notify_attachment",
@@ -571,7 +590,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     delivery = state.channel_delivery
     if not delivery:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -583,7 +603,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except (json.JSONDecodeError, ValueError):
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -596,7 +617,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
     filename = body.get("filename", "")
     thread_ts = body.get("thread_ts")
     if not file_path_raw or not filename:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -612,7 +634,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
     allowed_outbox = outbox_dir().resolve()
     allowed_workspace = workspace_root().resolve()
     if not (resolved.is_relative_to(allowed_outbox) or resolved.is_relative_to(allowed_workspace)):
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -625,7 +648,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
     try:
         raw = safe_read_file_bytes(str(resolved))
     except FileTooLargeError as e:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -636,7 +660,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": str(e)}, status=413)
     if raw is None:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -651,7 +676,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
     try:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -664,7 +690,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
     try:
         redacted = redact(text)
         if redacted != text:
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key="api",
                 source="api",
                 tool_name="notify_attachment",
@@ -678,7 +705,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
             )
         pass  # content validated, proceed to upload
     except Exception as redact_err:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -691,7 +719,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
         return web.json_response({"error": relayed_failure_copy(redact_err)}, status=500)
     safe_filename = filename
     if redact(safe_filename) != safe_filename:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -719,7 +748,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
             state=state,
         )
         if not outcome.delivered:
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key="api",
                 source="api",
                 tool_name="notify_attachment",
@@ -734,7 +764,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
             return web.json_response(
                 {"ok": False, "error": outcome.sentence(), "inbox": outcome.inboxed}
             )
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -745,7 +776,8 @@ async def api_channel_upload_file(request: web.Request) -> web.Response:
         )
         return web.json_response({"ok": True})
     except Exception as e:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="api",
             source="api",
             tool_name="notify_attachment",
@@ -869,7 +901,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
                 continue
             if len(paths) >= _MAX_UPLOAD_FILES:
                 _cleanup()
-                _sel().log_api_access(
+                await sel_log_async(
+                    _sel().log_api_access,
                     caller=caller,
                     operation="upload.file",
                     outcome="rejected",
@@ -895,7 +928,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
             dest = _upload_dir() / f"{uuid.uuid4().hex}_{safe_name}"
             if not dest.resolve().is_relative_to(_upload_dir().resolve()):
                 _cleanup()
-                _sel().log_api_access(
+                await sel_log_async(
+                    _sel().log_api_access,
                     caller=caller,
                     operation="upload.file",
                     outcome="rejected",
@@ -925,7 +959,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
             if over:
                 dest.unlink(missing_ok=True)
                 _cleanup()
-                _sel().log_api_access(
+                await sel_log_async(
+                    _sel().log_api_access,
                     caller=caller,
                     operation="upload.file",
                     outcome="rejected",
@@ -943,7 +978,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
                 await scan_upload(dest, policy.category, surface="attachment")
             except ContentRefused as exc:
                 _cleanup()
-                _sel().log_api_access(
+                await sel_log_async(
+                    _sel().log_api_access,
                     caller=caller,
                     operation="upload.file",
                     outcome="rejected",
@@ -953,7 +989,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
                 return exc.response()
     except Exception:
         _cleanup()
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="upload.file",
             outcome="error",
@@ -962,7 +999,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
         )
         raise
     if not paths:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="upload.file",
             outcome="rejected",
@@ -970,7 +1008,8 @@ async def api_upload_file(request: web.Request) -> web.Response:
             resources="reason:no_files",
         )
         return web.json_response({"error": "No files uploaded"}, status=400)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=caller,
         operation="upload.file",
         outcome="success",
@@ -1023,7 +1062,8 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
     path = os.path.realpath(os.path.expanduser(raw))
     uploads = str(_upload_dir().resolve())
     if not path.startswith(uploads + os.sep):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="attachment_extract",
             outcome="denied",
@@ -1043,7 +1083,8 @@ async def api_attachment_extract(request: web.Request) -> web.Response:
         return web.json_response(
             {"name": display_name(path), "pending": True, "text": "", "read": False, "unread": ""}
         )
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=caller,
         operation="attachment_extract",
         outcome="allowed",
@@ -1245,8 +1286,12 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
     try:
         validate_tool_args({"path": raw_path}, FILE_READ_SCHEMA)
     except ValidationError as exc:
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_watch", outcome="denied", resources=raw_path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_watch",
+            outcome="denied",
+            resources=raw_path,
         )
         return web.json_response({"error": _path_rejection(exc)}, status=400)
 
@@ -1255,19 +1300,31 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
         refused = _app_path_refusal(raw_path, tool="file_watch")
         if refused is not None:
             return refused
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_watch", outcome="denied", resources=raw_path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_watch",
+            outcome="denied",
+            resources=raw_path,
         )
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
 
     if os.path.isdir(path):
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_watch", outcome="denied", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_watch",
+            outcome="denied",
+            resources=path,
         )
         return web.json_response({"error": "path is a directory"}, status=400)
 
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="file_watch", outcome="success", resources=path
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="file_watch",
+        outcome="success",
+        resources=path,
     )
 
     resp = web.StreamResponse()
@@ -1303,7 +1360,8 @@ async def api_file_watch(request: web.Request) -> web.StreamResponse:
                         resolved_at_start,
                         current_resolved,
                     )
-                    _sel().log_tool_invocation(
+                    await sel_log_async(
+                        _sel().log_tool_invocation,
                         session_key="dashboard",
                         tool_name="file_watch",
                         outcome="denied",
@@ -1344,7 +1402,8 @@ async def api_config_fs_watch(request: web.Request) -> web.StreamResponse:
     state = request.app["state"]
     state.config_fs_watcher()  # lazy-start the poll watcher (idempotent)
     registry = state.config_fs_sse()
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key="dashboard",
         tool_name="config_fs_watch",
         outcome="success",
@@ -1379,7 +1438,8 @@ async def api_file_read(request: web.Request) -> web.Response:
     try:
         validate_tool_args({"path": raw_path}, FILE_READ_SCHEMA)
     except ValidationError as exc:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_read",
             outcome="denied",
@@ -1392,7 +1452,8 @@ async def api_file_read(request: web.Request) -> web.Response:
         refused = _app_path_refusal(raw_path, tool="file_read")
         if refused is not None:
             return refused
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_read",
             outcome="denied",
@@ -1400,21 +1461,33 @@ async def api_file_read(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
     if not os.path.isfile(path):
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_read", outcome="not_found", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_read",
+            outcome="not_found",
+            resources=path,
         )
         return web.json_response({"error": "not found"}, status=404)
     if request.method == "HEAD":
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_read", outcome="success", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_read",
+            outcome="success",
+            resources=path,
         )
         return web.Response(status=200)
     try:
         # RAW bytes first, so a binary file (a .pyc/.so/.db/image-with-odd-ext) is DETECTED and
         # the FE shows a clean "binary file" placeholder instead of an editor full of mojibake.
         content, truncated, binary = file_as_read(read_head(path))
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_read", outcome="success", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_read",
+            outcome="success",
+            resources=path,
         )
         if binary:
             return web.Response(text="", content_type="text/plain", headers={"X-Binary": "true"})
@@ -1424,8 +1497,12 @@ async def api_file_read(request: web.Request) -> web.Response:
         return web.Response(text=content, content_type="text/plain", headers=headers)
     except Exception:
         logging.getLogger(__name__).exception("file_read failed for %s", path)
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_read", outcome="failure", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_read",
+            outcome="failure",
+            resources=path,
         )
         return web.json_response({"error": "failed to read file"}, status=500)
 
@@ -1590,7 +1667,8 @@ async def api_file_write(request: web.Request) -> web.Response:
             {"path": body.get("path", ""), "content": body.get("content")}, FILE_WRITE_SCHEMA
         )
     except ValidationError as exc:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_write",
             outcome="denied",
@@ -1603,7 +1681,8 @@ async def api_file_write(request: web.Request) -> web.Response:
         refused = _app_path_refusal(str(body.get("path", "")), tool="file_write")
         if refused is not None:
             return refused
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_write",
             outcome="denied",
@@ -1611,10 +1690,15 @@ async def api_file_write(request: web.Request) -> web.Response:
         )
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
     if not os.path.isfile(path):
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_write", outcome="not_found", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_write",
+            outcome="not_found",
+            resources=path,
         )
         return web.json_response({"error": "not found"}, status=404)
+    stale = None
     try:
         from personalclaw import memory
         from personalclaw.write_locks import write_lock
@@ -1629,12 +1713,9 @@ async def api_file_write(request: web.Request) -> web.Response:
             head = read_head(path)
             stale = stale_write_refusal(request, whole_text(head), what=f"the file {path!r}")
             if stale is not None:
-                _sel().log_tool_invocation(
-                    session_key="dashboard",
-                    tool_name="file_write",
-                    outcome=refusal_outcome(stale),
-                    resources=path,
-                )
+                # Its row is written in `finally`, once the lock is let go: the write is a worker
+                # thread's, awaited, and an await under the lock would hold it while the loop ran
+                # whatever else wants it.
                 return stale
             # That copy is the file as `file_as_read` shows it, with a marker for every value it
             # masks. Each marker is put back from the file itself, so saving an edit never writes
@@ -1659,8 +1740,12 @@ async def api_file_write(request: web.Request) -> web.Response:
                     except OSError:
                         pass
                     raise
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_write", outcome="success", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_write",
+            outcome="success",
+            resources=path,
         )
         _allow_heartbeat_tasks_the_owner_wrote(
             path, head, content, caller=request.get("user", "dashboard")
@@ -1670,16 +1755,33 @@ async def api_file_write(request: web.Request) -> web.Response:
             {"ok": True, "revision": None if written is None else revision_of(written)}
         )
     except MaskConflict as exc:
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_write", outcome="denied", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_write",
+            outcome="denied",
+            resources=path,
         )
         return web.json_response({"error": str(exc)}, status=409)
     except Exception:
         logging.getLogger(__name__).exception("file_write failed for %s", path)
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_write", outcome="failure", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_write",
+            outcome="failure",
+            resources=path,
         )
         return web.json_response({"error": "failed to write file"}, status=500)
+    finally:
+        if stale is not None:
+            await sel_log_async(
+                _sel().log_tool_invocation,
+                session_key="dashboard",
+                tool_name="file_write",
+                outcome=refusal_outcome(stale),
+                resources=path,
+            )
 
 
 # Files larger than this are listed but flagged non-previewable to keep the
@@ -1710,8 +1812,12 @@ async def api_file_list(request: web.Request) -> web.Response:
         for label, rp in _dashboard_roots():
             if os.path.isdir(rp):
                 roots.append({"label": label, "path": rp, "name": label, "is_dir": True})
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_list", outcome="success", resources="<roots>"
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_list",
+            outcome="success",
+            resources="<roots>",
         )
         return web.json_response({"roots": roots, "entries": [], "path": ""})
 
@@ -1720,13 +1826,21 @@ async def api_file_list(request: web.Request) -> web.Response:
         refused = _app_path_refusal(raw_path, tool="file_list")
         if refused is not None:
             return refused
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_list", outcome="denied", resources=raw_path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_list",
+            outcome="denied",
+            resources=raw_path,
         )
         return web.json_response({"error": "invalid or forbidden path"}, status=400)
     if not os.path.isdir(path):
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_list", outcome="not_found", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_list",
+            outcome="not_found",
+            resources=path,
         )
         if os.path.isfile(path):
             return json_error(
@@ -1771,14 +1885,22 @@ async def api_file_list(request: web.Request) -> web.Response:
                 )
     except OSError:
         logging.getLogger(__name__).exception("file_list failed for %s", path)
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_list", outcome="failure", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_list",
+            outcome="failure",
+            resources=path,
         )
         return web.json_response({"error": "failed to list directory"}, status=500)
 
     entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="file_list", outcome="success", resources=path
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="file_list",
+        outcome="success",
+        resources=path,
     )
     return web.json_response({"roots": [], "entries": entries, "path": path})
 
@@ -2129,8 +2251,12 @@ async def api_file_git_status(request: web.Request) -> web.Response:
             i += 1
     statuses.update(await _expand_untracked_dirs(repo, collapsed))
 
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="git_status", outcome="success", resources=repo
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="git_status",
+        outcome="success",
+        resources=repo,
     )
     return web.json_response({"repoRoot": repo, "branch": branch, "statuses": statuses})
 
@@ -2167,8 +2293,12 @@ async def api_file_git_log(request: web.Request) -> web.Response:
             commits.append(
                 {"hash": parts[0], "subject": parts[1], "relative": parts[2], "author": parts[3]}
             )
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="git_log", outcome="success", resources=repo
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="git_log",
+        outcome="success",
+        resources=repo,
     )
     return web.json_response({"repoRoot": repo, "commits": commits})
 
@@ -2214,8 +2344,12 @@ async def api_file_git_commit(request: web.Request) -> web.Response:
     diff = (
         await _git(["show", "--no-color", "--stat", "--patch", h, "--"], repo, timeout=10.0)
     ).out
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="git_commit", outcome="success", resources=repo
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="git_commit",
+        outcome="success",
+        resources=repo,
     )
     # Cap the payload, but SIGNAL when it was cut so the cockpit can say so — a silently
     # truncated patch reads as the whole commit (no-silent-caps).
@@ -2276,8 +2410,12 @@ async def api_file_git_original(request: web.Request) -> web.Response:
     )
     if not res.ok:
         return web.json_response({"content": "", "exists": False})
-    _sel().log_tool_invocation(
-        session_key="dashboard", tool_name="git_show", outcome="success", resources=repo
+    await sel_log_async(
+        _sel().log_tool_invocation,
+        session_key="dashboard",
+        tool_name="git_show",
+        outcome="success",
+        resources=repo,
     )
     return web.json_response({"content": res.out, "exists": True, "truncated": res.truncated})
 
@@ -2513,7 +2651,8 @@ async def api_file_content_search(request: web.Request) -> web.Response:
                 )
             if not search_task.done():
                 search_task.cancel()
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key="dashboard",
                 tool_name="file_content_search",
                 outcome="error",
@@ -2527,7 +2666,8 @@ async def api_file_content_search(request: web.Request) -> web.Response:
                 ),
                 status=504,
             )
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key="dashboard",
         tool_name="file_content_search",
         outcome="success",
@@ -2681,8 +2821,12 @@ async def api_file_create(request: web.Request) -> web.Response:
         if refused is not None:
             return refused
     if not parent or not os.path.isdir(parent):
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_create", outcome="denied", resources=parent_raw
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_create",
+            outcome="denied",
+            resources=parent_raw,
         )
         return web.json_response({"error": "invalid or forbidden parent directory"}, status=400)
 
@@ -2691,7 +2835,8 @@ async def api_file_create(request: web.Request) -> web.Response:
         refused = _app_path_refusal(os.path.join(parent, name), tool="file_create")
         if refused is not None:
             return refused
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_create",
             outcome="denied",
@@ -2708,16 +2853,24 @@ async def api_file_create(request: web.Request) -> web.Response:
             text = content if isinstance(content, str) else ""
             with open(target, "x", encoding="utf-8") as f:
                 f.write(text)
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_create", outcome="success", resources=target
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_create",
+            outcome="success",
+            resources=target,
         )
         return web.json_response({"ok": True, "path": target, "is_dir": kind == "dir"})
     except FileExistsError:
         return web.json_response({"error": "already exists"}, status=409)
     except Exception:
         logging.getLogger(__name__).exception("file_create failed for %s", target)
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_create", outcome="failure", resources=target
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_create",
+            outcome="failure",
+            resources=target,
         )
         return web.json_response({"error": "failed to create"}, status=500)
 
@@ -2745,7 +2898,8 @@ async def api_file_move(request: web.Request) -> web.Response:
         refused = _app_path_refusal(refused_raw, tool="file_move")
         if refused is not None:
             return refused
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_move",
             outcome="denied",
@@ -2756,7 +2910,8 @@ async def api_file_move(request: web.Request) -> web.Response:
     # but a root is never a valid move endpoint: moving `src` relocates the whole
     # root, and a `dest` that IS a root would target the root itself (issue #780).
     if _is_dashboard_root(src) or _is_dashboard_root(dest):
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_move",
             outcome="denied",
@@ -2774,7 +2929,8 @@ async def api_file_move(request: web.Request) -> web.Response:
         # A relocate to another disk copies the whole file or folder, so in a worker thread: the
         # gateway answers everything else meanwhile.
         await asyncio.to_thread(shutil.move, src, dest)
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_move",
             outcome="success",
@@ -2783,7 +2939,8 @@ async def api_file_move(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "path": dest})
     except Exception:
         logging.getLogger(__name__).exception("file_move failed %s → %s", src, dest)
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_move",
             outcome="failure",
@@ -2811,7 +2968,8 @@ async def api_file_delete(request: web.Request) -> web.Response:
         refused = _app_path_refusal(str(body.get("path", "")), tool="file_delete")
         if refused is not None:
             return refused
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_delete",
             outcome="denied",
@@ -2823,8 +2981,12 @@ async def api_file_delete(request: web.Request) -> web.Response:
     # Without this guard, deleting a root shutil.rmtree()s the whole root, e.g.
     # the workspace or the real ~/.personalclaw home (issue #780).
     if _is_dashboard_root(path):
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_delete", outcome="denied", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_delete",
+            outcome="denied",
+            resources=path,
         )
         return web.json_response({"error": "refusing to delete a root directory"}, status=400)
     if not os.path.exists(path):
@@ -2834,14 +2996,22 @@ async def api_file_delete(request: web.Request) -> web.Response:
             shutil.rmtree(path)
         else:
             os.unlink(path)
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_delete", outcome="success", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_delete",
+            outcome="success",
+            resources=path,
         )
         return web.json_response({"ok": True})
     except Exception:
         logging.getLogger(__name__).exception("file_delete failed for %s", path)
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="file_delete", outcome="failure", resources=path
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="file_delete",
+            outcome="failure",
+            resources=path,
         )
         return web.json_response({"error": "failed to delete"}, status=500)
 
@@ -2930,7 +3100,8 @@ async def api_file_upload(request: web.Request) -> web.Response:
         for p in saved:
             with contextlib.suppress(OSError):
                 os.unlink(p)
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_upload",
             outcome="rejected",
@@ -2943,7 +3114,8 @@ async def api_file_upload(request: web.Request) -> web.Response:
         for p in saved:
             with contextlib.suppress(OSError):
                 os.unlink(p)
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="file_upload",
             outcome="failure",
@@ -2953,7 +3125,8 @@ async def api_file_upload(request: web.Request) -> web.Response:
 
     if not saved:
         return web.json_response({"error": "no file parts in upload"}, status=400)
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key="dashboard",
         tool_name="file_upload",
         outcome="success",
@@ -3088,7 +3261,8 @@ async def api_file_search(request: web.Request) -> web.Response:
     if project:
         project = os.path.realpath(os.path.expanduser(project))
         if is_sensitive_path(project):
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="file_search",
                 outcome="denied",
@@ -3097,7 +3271,8 @@ async def api_file_search(request: web.Request) -> web.Response:
             )
             return web.json_response({"error": "Access denied"}, status=403)
         if _is_system_root(project):
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="file_search",
                 outcome="denied",
@@ -3139,7 +3314,8 @@ async def api_file_search(request: web.Request) -> web.Response:
     safe_roots: list[str] = []
     for r in search_roots:
         if is_sensitive_path(r):
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="file_search",
                 outcome="denied",
@@ -3161,7 +3337,8 @@ async def api_file_search(request: web.Request) -> web.Response:
                 _apply_centrality, results, safe_roots[0], max_results
             )
             trimmed = [{k: v for k, v in r.items() if k != "_score"} for r in results]
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="file_search",
                 outcome="allowed",
@@ -3252,7 +3429,8 @@ async def api_file_search(request: web.Request) -> web.Response:
     # Strip internal scoring field before response
     trimmed = [{k: v for k, v in r.items() if k != "_score"} for r in results[:max_results]]
 
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=caller,
         operation="file_search",
         outcome="allowed",
@@ -3314,7 +3492,8 @@ async def api_browse_dirs(request: web.Request) -> web.Response:
     # folders, not enumerating secrets or system internals.
     refusal = _picker_refusal(base)
     if refusal:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="browse_dirs",
             outcome="denied",
@@ -3348,7 +3527,13 @@ async def api_browse_dirs(request: web.Request) -> web.Response:
                 dirs.append({"name": entry.name, "path": entry.path, "is_repo": is_repo})
     except PermissionError:
         pass
-    _sel().log_api_access(caller=caller, operation="browse_dirs", outcome="allowed", resources=base)
+    await sel_log_async(
+        _sel().log_api_access,
+        caller=caller,
+        operation="browse_dirs",
+        outcome="allowed",
+        resources=base,
+    )
     # Whether the CURRENT dir is inside a git repo (walks up, so a subdir of a repo
     # counts too) — lets the workspace picker confirm "Use this folder" lands on a
     # version-tracked codebase, the signal that most matters for a brownfield workspace
@@ -3377,7 +3562,8 @@ async def api_create_dir(request: web.Request) -> web.Response:
         return web.json_response({"error": "path required"}, status=400)
     target = os.path.realpath(os.path.expanduser(raw))
     if is_sensitive_path(target):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="create_dir",
             outcome="denied",
@@ -3392,7 +3578,8 @@ async def api_create_dir(request: web.Request) -> web.Response:
     # allowed by the parent rule), so this can't materialize a stray folder anywhere a
     # workspace bind would then reject.
     if is_system_path(target):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="create_dir",
             outcome="denied",
@@ -3411,7 +3598,8 @@ async def api_create_dir(request: web.Request) -> web.Response:
     parent = os.path.dirname(target)
     parent_refusal = _picker_refusal(parent)
     if parent_refusal:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="create_dir",
             outcome="denied",
@@ -3448,7 +3636,9 @@ async def api_create_dir(request: web.Request) -> web.Response:
         # Raw OS text (errno + path) is diagnostics; the wire speaks guidance (failure_copy).
         logger.warning("create_dir failed for %s", target, exc_info=True)
         return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
-    _sel().log_api_access(caller=caller, operation="create_dir", outcome="ok", resources=target)
+    await sel_log_async(
+        _sel().log_api_access, caller=caller, operation="create_dir", outcome="ok", resources=target
+    )
     return web.json_response({"ok": True, "path": target})
 
 
@@ -3462,13 +3652,19 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
         try:
             body = await request.json()
         except Exception:
-            _sel().log_tool_invocation(
-                session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+            await sel_log_async(
+                _sel().log_tool_invocation,
+                session_key="dashboard",
+                tool_name="dashboard_config_write",
+                outcome="failure",
             )
             return web.json_response({"error": "invalid JSON"}, status=400)
         if not isinstance(body, dict):
-            _sel().log_tool_invocation(
-                session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+            await sel_log_async(
+                _sel().log_tool_invocation,
+                session_key="dashboard",
+                tool_name="dashboard_config_write",
+                outcome="failure",
             )
             return web.json_response({"error": "request body must be a JSON object"}, status=400)
         _allowed = {
@@ -3497,15 +3693,21 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
         }
         unknown = set(body.keys()) - _allowed
         if unknown:
-            _sel().log_tool_invocation(
-                session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+            await sel_log_async(
+                _sel().log_tool_invocation,
+                session_key="dashboard",
+                tool_name="dashboard_config_write",
+                outcome="failure",
             )
             return web.json_response({"error": f"Unknown fields: {unknown}"}, status=400)
         if "restore_sessions" in body:
             val = body["restore_sessions"]
             if not isinstance(val, bool):
-                _sel().log_tool_invocation(
-                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                await sel_log_async(
+                    _sel().log_tool_invocation,
+                    session_key="dashboard",
+                    tool_name="dashboard_config_write",
+                    outcome="failure",
                 )
                 return web.json_response(
                     {"error": "restore_sessions must be a boolean"}, status=400
@@ -3517,8 +3719,11 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
                     0, min(1440, int(body["restore_window_minutes"]))
                 )
         except (TypeError, ValueError):
-            _sel().log_tool_invocation(
-                session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+            await sel_log_async(
+                _sel().log_tool_invocation,
+                session_key="dashboard",
+                tool_name="dashboard_config_write",
+                outcome="failure",
             )
             return web.json_response(
                 {"error": "restore_window_minutes must be an integer"}, status=400
@@ -3526,8 +3731,11 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
         if "merge_queued_messages" in body:
             val = body["merge_queued_messages"]
             if not isinstance(val, bool):
-                _sel().log_tool_invocation(
-                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                await sel_log_async(
+                    _sel().log_tool_invocation,
+                    session_key="dashboard",
+                    tool_name="dashboard_config_write",
+                    outcome="failure",
                 )
                 return web.json_response(
                     {"error": "merge_queued_messages must be a boolean"}, status=400
@@ -3536,8 +3744,11 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
         if "widget_density" in body:
             val = body["widget_density"]
             if val not in ("more", "less"):
-                _sel().log_tool_invocation(
-                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                await sel_log_async(
+                    _sel().log_tool_invocation,
+                    session_key="dashboard",
+                    tool_name="dashboard_config_write",
+                    outcome="failure",
                 )
                 return web.json_response(
                     {"error": "widget_density must be 'more' or 'less'"}, status=400
@@ -3546,8 +3757,11 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
         if "stream_reveal" in body:
             val = body["stream_reveal"]
             if val not in ("smooth", "immediate"):
-                _sel().log_tool_invocation(
-                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                await sel_log_async(
+                    _sel().log_tool_invocation,
+                    session_key="dashboard",
+                    tool_name="dashboard_config_write",
+                    outcome="failure",
                 )
                 return web.json_response(
                     {"error": "stream_reveal must be 'smooth' or 'immediate'"}, status=400
@@ -3556,8 +3770,11 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
         if "user_name" in body:
             val = body["user_name"]
             if not isinstance(val, str):
-                _sel().log_tool_invocation(
-                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                await sel_log_async(
+                    _sel().log_tool_invocation,
+                    session_key="dashboard",
+                    tool_name="dashboard_config_write",
+                    outcome="failure",
                 )
                 return web.json_response({"error": "user_name must be a string"}, status=400)
             # Operator name — trimmed + length-capped. Empty string is valid
@@ -3566,8 +3783,11 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
         if "username" in body:
             val = body["username"]
             if not isinstance(val, str):
-                _sel().log_tool_invocation(
-                    session_key="dashboard", tool_name="dashboard_config_write", outcome="failure"
+                await sel_log_async(
+                    _sel().log_tool_invocation,
+                    session_key="dashboard",
+                    tool_name="dashboard_config_write",
+                    outcome="failure",
                 )
                 return web.json_response({"error": "username must be a string"}, status=400)
             # Attribution handle — normalized at the boundary so what lands in
@@ -3592,7 +3812,8 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
             if _bool_field in body:
                 val = body[_bool_field]
                 if not isinstance(val, bool):
-                    _sel().log_tool_invocation(
+                    await sel_log_async(
+                        _sel().log_tool_invocation,
                         session_key="dashboard",
                         tool_name="dashboard_config_write",
                         outcome="failure",
@@ -3602,12 +3823,18 @@ async def api_dashboard_config(request: web.Request) -> web.Response:
                     )
                 setattr(cfg.dashboard, _bool_field, val)
         cfg.save()
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="dashboard_config_write", outcome="success"
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="dashboard_config_write",
+            outcome="success",
         )
     else:
-        _sel().log_tool_invocation(
-            session_key="dashboard", tool_name="dashboard_config_read", outcome="success"
+        await sel_log_async(
+            _sel().log_tool_invocation,
+            session_key="dashboard",
+            tool_name="dashboard_config_read",
+            outcome="success",
         )
     # Both methods answer the settings AS STORED, from this one body. A PUT answers them because
     # the server rewrites what it is sent (``username`` slugified, ``user_name`` trimmed and

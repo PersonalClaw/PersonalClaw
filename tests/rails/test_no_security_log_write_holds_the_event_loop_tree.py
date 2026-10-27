@@ -13,11 +13,20 @@ method of the log reached through ``sel()`` or ``_sel()``, or a module's ``_sel_
 site is ``path::function::callee``, repeats in one function told apart. The ones that were there
 when the rail came are in :data:`BASELINE`, each with why; a new one fails by name, and the list
 only shrinks, file by file, as #5605 converts them.
+
+Moving a write off the loop puts an ``await`` where there was none. Under a ``with`` over a lock
+that blocks (``write_lock``, the heartbeat queue's ``flock``, the memory documents' lock, a
+``threading`` lock), that await holds the lock while the loop runs other work, and loop code that
+takes the same lock then blocks the loop thread with the holder unable to resume. So no ``await``
+in an ``async def`` may sit inside a sync ``with`` whose context names a lock (``lock``,
+``hold_``, ``flock``, ``mutex`` or ``semaphore`` in its text). ``async with`` is an asyncio
+lock's, which an await may hold. There were none when this came, so it has no baseline.
 """
 
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import Iterator
 
 import site_baseline
@@ -71,6 +80,43 @@ def sites(trees: list[tuple[str, ast.AST]]) -> list[str]:
     )
 
 
+#: A sync ``with`` whose context names a lock that blocks.
+_LOCKISH = re.compile(r"lock|hold_|flock|mutex|semaphore", re.IGNORECASE)
+
+
+def awaits_under_a_sync_lock(rel: str, tree: ast.AST) -> list[str]:
+    """Each ``await`` directly in an ``async def`` (not in a ``def`` or ``lambda`` nested in it)
+    inside a sync ``with`` over a lock, as ``path:line function under <lock>``."""
+    found: list[str] = []
+
+    def walk(node: ast.AST, scope: str, is_async: bool, held: list[str]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                inner = child.name if scope == "<module>" else f"{scope}.{child.name}"
+                walk(child, inner, isinstance(child, ast.AsyncFunctionDef), [])
+            elif isinstance(child, ast.Lambda):
+                walk(child, scope, False, [])
+            elif isinstance(child, ast.With):
+                locks = [
+                    ast.unparse(item.context_expr)
+                    for item in child.items
+                    if _LOCKISH.search(ast.unparse(item.context_expr))
+                ]
+                for item in child.items:
+                    walk(item, scope, is_async, held)
+                for statement in child.body:
+                    walk(
+                        ast.Module(body=[statement], type_ignores=[]), scope, is_async, held + locks
+                    )
+            else:
+                if is_async and held and isinstance(child, ast.Await):
+                    found.append(f"{rel}:{child.lineno} {scope} under {held[-1]}")
+                walk(child, scope, is_async, held)
+
+    walk(tree, "<module>", False, [])
+    return found
+
+
 def test_no_new_security_log_write_runs_on_the_event_loop() -> None:
     found = sites([(source_index.rel(path), tree) for path, tree in source_index.package_trees()])
     assert found, "the scan found no security-log write at all: it is reading nothing"
@@ -115,3 +161,56 @@ def test_a_new_write_on_the_loop_fails_the_baseline_by_name() -> None:
         assert planted in str(exc), exc
     else:
         raise AssertionError("a write on the loop the baseline does not list passed")
+
+
+def test_no_await_in_async_code_holds_a_sync_lock() -> None:
+    trees = [(source_index.rel(path), tree) for path, tree in source_index.package_trees()]
+    assert trees, "the scan read no module"
+    found = [site for rel, tree in trees for site in awaits_under_a_sync_lock(rel, tree)]
+    assert found == [], (
+        "an await inside a sync with over a lock holds that lock while the loop runs other work: "
+        "do the awaited work before taking the lock or after letting it go\n" + "\n".join(found)
+    )
+
+
+_PLANTED_LOCKS = """
+async def save(request, path):
+    with write_lock(path):
+        head = read_head(path)
+        if head is None:
+            await sel_log_async(sel().log_api_access, caller="x", operation="y", outcome="z")
+    await sel_log_async(sel().log_api_access, caller="x", operation="y", outcome="ok")
+    with self._lock:
+        for item in items:
+            await item.flush()
+    with heartbeat.hold_queue(), open(path) as f:
+        await asyncio.sleep(0)
+    async with self._async_lock:
+        await item.flush()
+    with open(path) as f:
+        await asyncio.sleep(0)
+    with self._lock:
+
+        async def later():
+            await item.flush()
+
+        task = later
+
+    def in_a_thread():
+        with self._lock:
+            write()
+
+
+def sync_caller():
+    with self._lock:
+        write()
+"""
+
+
+def test_a_planted_await_under_a_sync_lock_is_named_and_the_safe_ones_are_not() -> None:
+    found = awaits_under_a_sync_lock("planted.py", ast.parse(_PLANTED_LOCKS))
+    assert found == [
+        "planted.py:6 save under write_lock(path)",
+        "planted.py:10 save under self._lock",
+        "planted.py:12 save under heartbeat.hold_queue()",
+    ], found
