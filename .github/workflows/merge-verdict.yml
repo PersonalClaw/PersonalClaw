@@ -11,14 +11,14 @@
 # request's head; it names nothing of the candidate anywhere else.
 #
 # The verdict is green only when the head is up to date with main, merge.yml's `results` job,
-# which judges the run with main's verdict.py, passed on every attempt, and the head's dependency
-# review (dependency-review.yml, main's copy) passed (#4585 step 6), and CodeQL analysed the head
-# in every language main's analyses name, with no alert of the pull request's own; and, for a head
-# that changes a CI definition (tools/ci/trust.py), main's CI contract passed over its
-# definitions. Anything else, an answer the API would not give included,
-# posts failure, never neutral. A completed Dependency review run, or code scanning's CodeQL
-# check, judges its head again from the head's own completed Merge run, so they may finish in any
-# order.
+# which judges the run with main's verdict.py, passed on every attempt, the head's dependency
+# review (dependency-review.yml, main's copy) passed (#4585 step 6), its sign-off check (dco.yml,
+# main's copy) passed (#3908), and CodeQL analysed the head in every language main's analyses
+# name, with no alert of the pull request's own; and, for a head that changes a CI definition
+# (tools/ci/trust.py), main's CI contract passed over its definitions. Anything else, an answer
+# the API would not give included, posts failure, never neutral. A completed Dependency review or
+# DCO run, or code scanning's CodeQL check, judges its head again from the head's own completed
+# Merge run, so they may finish in any order.
 #
 # A head that changes a CI definition is judged by its own run and by main's CI contract over its
 # definitions (#4584 step 4). The `contract` job points the branch `contract-run/<head>` at
@@ -41,14 +41,15 @@
 name: Merge verdict
 
 on:
-  # A Merge run is judged. A Dependency review run, GitHub's dynamic CodeQL workflow (matched by
-  # its run's path, never its name), or a Contract run (by its path and branch) judges its head
-  # again. The contract job's own dispatch uses the job's token, whose events start no workflow,
-  # so that run's completion raises nothing here; one a person runs again does, and the run's own
-  # `wake` job dispatches this (below). A pull request's Merge run, merge.yml's by its path,
-  # starts its head's contract when it starts: no other run's start takes a runner.
+  # A Merge run is judged. A Dependency review or DCO run (each matched by its run's path and
+  # event, never its name), GitHub's dynamic CodeQL workflow (by its run's path), or a Contract
+  # run (by its path and branch) judges its head again. The contract job's own dispatch uses the
+  # job's token, whose events start no workflow, so that run's completion raises nothing here; one
+  # a person runs again does, and the run's own `wake` job dispatches this (below). A pull
+  # request's Merge run, merge.yml's by its path, starts its head's contract when it starts: no
+  # other run's start takes a runner.
   workflow_run:
-    workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]
+    workflows: ["Merge", "Dependency review", "CodeQL", "Contract", "DCO"]
     types: [in_progress, completed]
   # Code scanning's CodeQL check, completed, wakes the poster to judge its head again; its
   # conclusion is never read. The job skips every other check run without a runner.
@@ -87,16 +88,16 @@ permissions:
 
 jobs:
   post:
-    # Only what can judge a pull request's head takes a runner: the sweep; a dispatch of this
-    # file on main (a contract run's wake), never off it; a completed dispatch off main (a
-    # contract run, a dispatch proof); and, once merge.yml runs on pull requests
-    # (MERGE_VERDICT_LIVE, which #3915's flip sets to 'true'), code scanning's CodeQL check, a
-    # completed run of a pull request (its own, its dependency review, or CodeQL's on
-    # refs/pull/*), and a pull request's own Merge run starting. A push, a dispatch on main,
-    # CodeQL on main, any other run's start and any other check run start no runner. decide
-    # checks each again through the API, which is the gate: this only spares the queue (#3910).
-    # Whether a started run's head may have its contract started (its run approved, a job of
-    # attempt 1 on a runner) is read from the jobs API by decide, never from this condition.
+    # Only what can judge a pull request's head takes a runner: the sweep; a dispatch of this file
+    # on main (a contract run's wake), never off it; a completed dispatch off main (a contract run,
+    # a dispatch proof); and, once merge.yml runs on pull requests (MERGE_VERDICT_LIVE, which
+    # #3915's flip sets to 'true'), code scanning's CodeQL check, a completed run of a pull request
+    # (its own, its dependency review, its sign-off check, or CodeQL's on refs/pull/*), and a pull
+    # request's own Merge run starting. A push, a dispatch on main, CodeQL on main, any other run's
+    # start and any other check run start no runner. decide checks each again through the API, which
+    # is the gate: this only spares the queue (#3910). Whether a started run's head may have its
+    # contract started (its run approved, a job of attempt 1 on a runner) is read from the jobs API
+    # by decide, never from this condition.
     if: >-
       github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')

@@ -1,10 +1,11 @@
 """``.github/workflows/merge-verdict.yml``: the merge verdict's poster keeps its trust shape.
 
-It runs only as a ``workflow_run`` listener of Merge and Dependency review and a listener of
-completed check runs, so GitHub runs main's copy, and, beside a head's Merge run (the shape
-``beside``), also on a pull request's Merge run's start, to start the head's contract with it
-(``decide --start``, which posts nothing), and on a dispatch on main alone, which a contract run's
-``wake`` job sends for its head (``decide --head``). It names nothing of the candidate but in its
+It runs only as a ``workflow_run`` listener of Merge and of the runs that judge a head again
+(Dependency review, CodeQL, Contract and DCO) and a listener of completed check runs, so GitHub
+runs main's copy, and, beside a head's Merge run (the shape ``beside``), also on a pull request's
+Merge run's start, to start the head's contract with it (``decide --start``, which posts nothing),
+and on a dispatch on main alone, which a contract run's ``wake`` job sends for its head (``decide
+--head``). It names nothing of the candidate but in its
 jobs' one condition, which reads the triggering run's event and branch only to spare the queue
 the runs that can judge no pull request's head (each case below a planted event), checks out
 only the default branch and keeps no credential. ``post`` reads with its own token
@@ -239,12 +240,9 @@ def _problems(text: str) -> list[str]:
 
 def _shape(on: object) -> str | None:
     """Which of the poster's two shapes its triggers are, or None for neither."""
-    wake = [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL", "Contract"]
-    # The DCO run may wake it too, once the verdict reads the head's sign-off check (#3908): the
-    # rail takes either list until that change lands, so it lands in two merges.
-    lists = (wake, [*wake, "DCO"])
+    names = [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL", "Contract", "DCO"]
     both = {"check_run": {"types": ["completed"]}, "schedule": [{"cron": "*/10 * * * *"}]}
-    if any(on == {"workflow_run": {"workflows": n, "types": ["completed"]}, **both} for n in lists):
+    if on == {"workflow_run": {"workflows": names, "types": ["completed"]}, **both}:
         return _AFTER
     if not isinstance(on, dict) or set(on) != {"workflow_run", "workflow_dispatch", *both}:
         return None
@@ -253,10 +251,7 @@ def _shape(on: object) -> str | None:
     head = inputs.get("head") if isinstance(inputs, dict) else None
     if (
         all(on[k] == v for k, v in both.items())
-        and any(
-            on["workflow_run"] == {"workflows": n, "types": ["in_progress", "completed"]}
-            for n in lists
-        )
+        and on["workflow_run"] == {"workflows": names, "types": ["in_progress", "completed"]}
         and set(dispatch) == {"inputs"}
         and set(inputs) == {"head"}
         and isinstance(head, dict)
@@ -380,6 +375,11 @@ def _anchored(text: str, old: str, new: str) -> tuple[str, str]:
             "runs on",
         ),
         (
+            _WAKE_LIST,
+            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]',
+            "runs on",
+        ),
+        (
             "          RUN_ID: ${{ github.event.workflow_run.id }}\n",
             "          RUN_ID: ${{ github.event.workflow_run.id }}\n"
             "          HEAD: ${{ github.event.workflow_run.head_sha }}\n",
@@ -463,21 +463,6 @@ def test_a_planted_edit_of_the_poster_fails(old: str, new: str, says: str) -> No
     )
 
 
-@pytest.mark.parametrize(
-    "names",
-    [
-        '["Merge", "Dependency review", "CodeQL", "Contract"]',
-        '["Merge", "Dependency review", "CodeQL", "Contract", "DCO"]',
-    ],
-)
-def test_the_poster_wakes_on_either_list_until_the_dco_read_lands(names: str) -> None:
-    """Either list holds its trust shape, so the change that adds the DCO run is judged by this
-    row on its own head and main's alike."""
-    text = _WORKFLOW.read_text(encoding="utf-8")
-    old, _ = _anchored(text, _WAKE_LIST, "")
-    assert _problems(text.replace(old, f"workflows: {names}")) == []
-
-
 #: Each event the poster can be started by, and when its jobs take a runner: ``head``, a pull
 #: request's wake, only with MERGE_VERDICT_LIVE 'true'; ``always``; ``never``. Each is a
 #: completion (``completed``), a check run's (``check``), the schedule, a run's start
@@ -493,6 +478,7 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
         "head",
         "completed",
     ),
+    ("a DCO run", "workflow_run", {"event": "pull_request_target"}, "head", "completed"),
     (
         "CodeQL on a pull request",
         "workflow_run",
@@ -575,6 +561,13 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
         "a Dependency review run starting",
         "workflow_run",
         {"event": "pull_request_target", "path": ".github/workflows/dependency-review.yml"},
+        "never",
+        "in_progress",
+    ),
+    (
+        "a DCO run starting",
+        "workflow_run",
+        {"event": "pull_request_target", "path": ".github/workflows/dco.yml"},
         "never",
         "in_progress",
     ),
