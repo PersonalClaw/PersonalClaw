@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2253,6 +2254,105 @@ class TestApiChatModePropagation:
         assert "dashboard:s1" in keys
         assert "dashboard:s2" in keys
         assert all(p == "auto" for p in policies)
+
+    @pytest.mark.asyncio
+    async def test_a_chat_opened_while_a_switch_writes_its_row_leaves_the_switch_whole(
+        self, tmp_path, monkeypatch
+    ):
+        """A YOLO switch answers each chat's waiting asks, and writes each one's row in a worker
+        thread. A chat opened while a row is written does not stop the switch halfway: every ask
+        is still answered, and the switch answers 200."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        import personalclaw.trust_mode as _tm
+        from personalclaw.dashboard import chat_handlers
+
+        _tm.disable_yolo()
+        state = _make_state(tmp_path)
+        state.push_sessions_update = MagicMock()
+        loop = asyncio.get_running_loop()
+        asks = {}
+        for name in ("s1", "s2"):
+            asks[name] = loop.create_future()
+            state.get_or_create_session(name)._approval_futures["call-1"] = asks[name]
+        held, release = threading.Event(), threading.Event()
+
+        def log_api_access(**row):
+            if row["operation"] == "tool_approval:bulk_yolo" and not held.is_set():
+                held.set()
+                release.wait(5)
+
+        monkeypatch.setattr(chat_handlers, "sel", lambda: MagicMock(log_api_access=log_api_access))
+
+        try:
+            async with TestClient(TestServer(_make_app(state))) as client:
+                switched = asyncio.ensure_future(
+                    client.post("/api/chat/mode", json={"mode": "yolo"})
+                )
+                assert await asyncio.to_thread(held.wait, 5), "no ask's row was written"
+                state.get_or_create_session("s3")  # opened while the first row is written
+                release.set()
+                resp = await switched
+                assert resp.status == 200, await resp.text()
+        finally:
+            release.set()
+            _tm.disable_yolo()
+        assert {name: fut.done() and fut.result() for name, fut in asks.items()} == {
+            "s1": "approved",
+            "s2": "approved",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_switch_back_to_normal_waits_for_yolos_rows_and_yolo_answers_nothing_after(
+        self, tmp_path, monkeypatch
+    ):
+        """A YOLO switch makes all its changes, then writes its rows, under the posture lock. A
+        switch back to normal landing while YOLO's first row is written waits for YOLO to finish,
+        so the log names the two in the order they were made. An ask that arrives meanwhile waits
+        for the owner: YOLO's walk was over before it came, and normal answers nothing."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        import personalclaw.trust_mode as _tm
+        from personalclaw.dashboard import chat_handlers
+
+        _tm.disable_yolo()
+        state = _make_state(tmp_path)
+        state.push_sessions_update = MagicMock()
+        loop = asyncio.get_running_loop()
+        session = state.get_or_create_session("s1")
+        waiting = session._approval_futures["call-1"] = loop.create_future()
+        held, release = threading.Event(), threading.Event()
+        rows: list[str] = []
+
+        def log_api_access(**row):
+            rows.append(f"{row['operation']} {row['resources']}")
+            if row["operation"] == "mode_change:yolo":
+                held.set()
+                release.wait(5)
+
+        monkeypatch.setattr(chat_handlers, "sel", lambda: MagicMock(log_api_access=log_api_access))
+
+        try:
+            async with TestClient(TestServer(_make_app(state))) as client:
+                yolo = asyncio.ensure_future(client.post("/api/chat/mode", json={"mode": "yolo"}))
+                assert await asyncio.to_thread(held.wait, 5), "the YOLO row was never written"
+                later = session._approval_futures["call-2"] = loop.create_future()
+                normal = asyncio.ensure_future(
+                    client.post("/api/chat/mode", json={"mode": "normal"})
+                )
+                await asyncio.sleep(0.2)  # time for the switch to normal to run, if it could
+                release.set()
+                assert (await yolo).status == 200
+                assert (await normal).status == 200
+        finally:
+            release.set()
+            _tm.disable_yolo()
+        assert rows == [
+            "mode_change:yolo s1",
+            "tool_approval:bulk_yolo call-1",
+            "mode_change:normal s1",
+        ], rows
+        assert waiting.done() and waiting.result() == "approved"
+        assert not later.done(), "the YOLO switch answered an ask that came after it"
+        assert not state.is_yolo_active()
 
     @pytest.mark.asyncio
     async def test_normal_mode_clears_policy(self, tmp_path, monkeypatch):
