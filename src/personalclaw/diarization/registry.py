@@ -64,7 +64,7 @@ async def list_all_providers_info() -> list[dict[str, Any]]:
     resolved = active_diarization()
     active_name = resolved[0].name if resolved else ""
     result = []
-    for prov in _providers.values():
+    for prov in list(_providers.values()):
         info = prov.info()
         info["available"] = await prov.is_available()
         info["active"] = prov.name == active_name

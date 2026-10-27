@@ -48,7 +48,7 @@ def list_provider_info() -> list[dict[str, Any]]:
 
 async def search_all(query: str, limit: int = 10) -> list[KnowledgeItem]:
     results: list[KnowledgeItem] = []
-    for prov in _providers.values():
+    for prov in list(_providers.values()):
         try:
             items = await prov.search(query, limit=limit)
             results.extend(items)
