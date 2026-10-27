@@ -127,6 +127,8 @@ class FireContext:
     #: The config of the action this fire runs, for a provider whose effect it decides
     #: (`screen.READ_ONLY_WHEN_DECLARED`).
     action_config: dict[str, Any] = field(default_factory=dict)
+    #: The fire's own local time, which the quiet and duty gates read (`admit_fire` sets it from its
+    #: `now`). A walk past the screen without one raises: there is no wall-clock fallback.
     moment: datetime | None = None
     #: None means "no budget configured"; a number is the remaining allowance. A budget that
     #: could not be
@@ -336,7 +338,12 @@ async def evaluate(ctx: FireContext) -> FireDecision:
             return _refuse("screen", f"payload blocked by the injection screen ({groups})", passed)
     passed.append("screen")
 
-    moment = ctx.moment or datetime.now()
+    # The gates' clock is the fire's own: `admit_fire` sets it from the `now` it admits at.
+    # 🔴 It fell back to `datetime.now()`, which `admit_fire` never overrode, so a fire admitted at
+    # any other `now` was judged by the wall clock. A context without one is a caller's bug.
+    if ctx.moment is None:
+        raise ValueError(f"{ctx.trigger_id}: no moment, and the gates never read the wall clock")
+    moment = ctx.moment
 
     # ── 2. spacing: debounce + cooldown (the order is "debounce/quiet/cooldown/condition") ──
     #

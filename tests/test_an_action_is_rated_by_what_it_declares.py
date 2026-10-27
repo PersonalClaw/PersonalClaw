@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -117,6 +118,11 @@ def test_a_trigger_driving_an_app_route_needs_a_grant_unless_the_route_reads(
     assert ungranted_providers(trigger) == expected
 
 
+#: The fire's own moment, which the walk needs past the screen: a Wednesday noon, inside no quiet
+#: window these tests set.
+_NOON = datetime(2026, 1, 14, 12, 0)
+
+
 @pytest.mark.parametrize("op,allowed", [("list_notes", True), ("add_note", False)])
 def test_the_fence_at_fire_time_reads_the_same_declaration(notes_app, op, allowed):
     from personalclaw.triggers.firepath import FireContext, evaluate
@@ -129,6 +135,7 @@ def test_the_fence_at_fire_time_reads_the_same_declaration(notes_app, op, allowe
                 requested={"providers": ["call-app-route"]},
                 capabilities={},
                 action_config=action["config"],
+                moment=_NOON,
             )
         )
     )

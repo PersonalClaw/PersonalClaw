@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **An automation's quiet hours and duty check read the time of the fire they decide, the one its schedule was checked at, never a second reading of the computer's clock. A check made for any other time was judged by the time of day it ran: under quiet hours of 00:00–23:59, every check made during the real 23:59 fired.**
 - **A report's schedule names the time zone in force at the next run shown beside it, on either side of a daylight-saving change. Its words were read at the clock's own time and its next run at the time the page was read for, so the two could name different zones: "At 8:00 AM EST" beside a next run at 8:00 AM EDT.**
 
 ## [0.3.0] — 2026-10-26
