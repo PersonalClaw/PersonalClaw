@@ -42,3 +42,56 @@ test("the hero's composer takes its place at once when Chat opens from Loops, an
   await expect.poll(async () => (await writes()) - typed, { message: 'the flight into the dock springs', timeout: 5_000 })
     .toBeGreaterThan(20)
 })
+
+// ── A move made while the composer alone redraws lands at once too ───────────────────────────────
+//
+// Inside the stage, the composer's own box (the one that rises on focus and drag-over) is a layout
+// element of its own. A render of the composer alone, from its own state or a context it reads, takes
+// that box's snapshot and not the stage's, so a move during it sprang the inner box for about a second
+// while the stage held still. On CI's idle Chat that spring started 928 ms before the window and was
+// still asking for frames inside it (#3905, R6). On the hero it now lands at once, as the stage does.
+//
+// The plant is that render with a move in it: files dragged over the composer, whose drag-over state
+// redraws the composer and nothing above it, and a strip landing above the stage in the same update.
+// The spring wrote the inner box 133 to 135 times; landing at once writes it once or not at all.
+
+const RISE = `${STAGE} > div.relative.w-full > div.relative`
+test("the hero's composer takes a move made while it alone redraws at once", async ({ page }) => {
+  await page.addInitScript((rise) => {
+    const w = window as typeof window & { __riseWrites?: number }
+    w.__riseWrites = 0
+    new MutationObserver((list) => {
+      for (const m of list) if ((m.target as Element).matches?.(rise)) w.__riseWrites! += 1
+    }).observe(document, { subtree: true, attributes: true, attributeFilter: ['style'] })
+  }, RISE)
+  const writes = () => page.evaluate(() => (window as typeof window & { __riseWrites?: number }).__riseWrites ?? 0)
+
+  await gotoRoute(page, 'chat')
+  const before = await writes()
+  const moved = await page.evaluate((stageSel) => {
+    const stage = document.querySelector<HTMLElement>(stageSel)!
+    const card = stage.querySelector<HTMLElement>('.bg-surface-container.px-m.py-s')!
+    const top = stage.getBoundingClientRect().top
+    const strip = document.createElement('div')
+    strip.style.height = '80px'
+    // The drag-over render's first DOM write queues this observer's callback ahead of motion's
+    // measuring step, so the strip lands between the box's snapshot and its measurement.
+    const landed = new Promise<void>((resolve) => {
+      const obs = new MutationObserver(() => {
+        obs.disconnect()
+        stage.parentElement!.insertBefore(strip, stage)
+        resolve()
+      })
+      obs.observe(stage, { attributes: true, childList: true, subtree: true })
+    })
+    const files = new DataTransfer()
+    files.items.add(new File(['x'], 'plant.txt', { type: 'text/plain' }))
+    card.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: files }))
+    return landed.then(() => stage.getBoundingClientRect().top - top)
+  }, STAGE)
+  // The plant took: the composer redrew for the drag, and the strip moved it.
+  await expect(page.locator(STAGE).getByText('Drop files to attach')).toBeVisible()
+  expect(moved, 'the strip moved the composer').toBeGreaterThan(0)
+  await page.waitForTimeout(1_500)
+  expect(await writes() - before, 'the move landed without a spring').toBeLessThanOrEqual(10)
+})

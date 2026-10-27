@@ -9,7 +9,7 @@ import { AgentModelPill, ApprovalPill, ReplyStylePill, PlusMenu } from './compos
 import { MarkdownInput, type MarkdownInputHandle } from './composer/MarkdownInput'
 import { resolveSendButton } from './composer/sendButtonState'
 import { StopSweep } from './composer/StopSweep'
-import { DROP_GROW_PX, RISE_GROW_PX, riseScale } from './composer/rise'
+import { DROP_GROW_PX, INSTANT, RISE_GROW_PX, riseScale } from './composer/rise'
 import { useMicRecorder } from './composer/useMicRecorder'
 import type { ComposerProps } from './composer/types'
 import { useIsMobile } from '../app/useIsMobile'
@@ -44,7 +44,7 @@ export function Composer({
   mentionProject, onMentionFile, onMentionKnowledge, onLargePaste,
   onOptimize, optimizing, history, onRecall, onTranscribe, onMicError, canQueue, canSteer, contextPct, contextWindow, sessionCost, contextPin, onCompact, contextParts, contextActions, servedModel, askBeforeModelSwitch, autoChain, minChars = 1,
   openModelSignal, openAgentSignal, openReasoningSignal, handsFree, onHandsFreeSubmit, screenShare,
-  replyStyle, sendHeldReason, hostPills,
+  replyStyle, sendHeldReason, hostPills, settled = false,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false)
   const [dragOver, setDragOver] = useState(false)
@@ -351,7 +351,12 @@ export function Composer({
           y: !awake ? 0 : dragOver ? -expr(11, 0.4) : -expr(6, 0.4),
           scale: !awake ? 1 : dragOver ? riseScale(expr(0.028, 0.4), DROP_GROW_PX, width) : riseScale(expr(0.016, 0.4), RISE_GROW_PX, width),
         }}
-        transition={physics.playful}
+        // On the new-chat hero (`settled`) a move lands at once, as the stage's does. This box is
+        // a layout node of its own, so a render of the composer alone (its own state or a context
+        // it reads) during a move sprang it on `playful` for about a second while the stage held
+        // still, and on a slow runner that spring's tail was in an idle Chat's window (#3905, R6).
+        // `layout` is motion's key for the move alone: the rise above keeps `playful`.
+        transition={settled ? { ...physics.playful, layout: INSTANT } : physics.playful}
         className="relative"
       >
         {/* The gradient ring, the decorative light's alone. Pill↔pill-rounder shape
