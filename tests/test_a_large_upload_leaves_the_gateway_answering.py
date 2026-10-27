@@ -19,6 +19,15 @@ slow callback: a blocking call on the loop is inside one, a wait on the disk inc
 the loop spends idle in its selector, given CPU or not, is between steps (:class:`_Probe`). Time
 the kernel counts as ready to run with no CPU to run on is left out of both: that is the runner's
 load, not anything the loop waited on (:class:`_NoCpu`).
+
+A macOS runner that reads no thread's instruction count can leave none of it out, so there the
+probe measures wall time, and a virtual machine that stops the whole process for a tenth of a
+second fails a reading that no block of the loop did. A reading over the bound only by time the
+process's own count says was ready is measured once more, on a fresh gateway, and the second is
+judged (:func:`_judged`): a block every upload makes is in both and fails, while a stall of the
+runner's passes. The limit: a block that comes only sometimes, or once a process (a lazy import on
+the loop), can pass that second measurement on macOS. Linux counts each thread's own time ready,
+leaves out exactly the loop's, and catches it.
 """
 
 from __future__ import annotations
@@ -76,6 +85,25 @@ def gateway(tmp_path, monkeypatch):
 
     Free disk reads as plenty, so a large upload is kept as separate parts and assembled at its
     complete, whatever this machine has free."""
+    return _a_gateway(tmp_path, monkeypatch)
+
+
+@pytest.fixture()
+def again(tmp_path, monkeypatch):
+    """A fresh gateway for a second measurement (:func:`_judged`), as a restarted one is: a home,
+    a library and a security log of its own, so a write its first upload makes once is made again.
+    """
+
+    def fresh():
+        SecurityEventLog._instance = None
+        SecurityEventLog._initialized = False
+        return _a_gateway(_mkdir(tmp_path / "again"), monkeypatch)
+
+    return fresh
+
+
+def _a_gateway(tmp_path, monkeypatch):
+    """:func:`gateway`'s, under *tmp_path*."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
     # The security log made before anything is served, its key with it, as the gateway's start
     # makes it (dashboard.server): never by the first event a request writes.
@@ -477,6 +505,24 @@ def _said(runs: tuple) -> str:
     return f"task {what.get_name()}, resumed in {where or 'its first step'}"
 
 
+#: How far a window's count of the loop thread's time ready may run past the window less its CPU
+#: time before the count is taken to be wrong: the CPU clock's own calls, and the probe's reads
+#: around the count, lie inside the CPU time and outside the count.
+_COUNT_SLACK = 0.001
+
+
+def _believed(wall: float, cpu: float, waited: float) -> float:
+    """What a window of *wall* seconds, in which the loop thread used *cpu*, may leave out of the
+    *waited* its count says the loop spent ready with no CPU: all of it, or nothing. The loop thread
+    cannot have been ready for longer than the window less the time it ran, so a count that says it
+    was is wrong, and the window is counted in wall time. On a CI runner, a macOS virtual machine,
+    the process's count over a health check's answer held more than its three threads could have
+    been ready for, one of them blocked 0.2 s in it: given the surplus, the loop's share came to the
+    whole answer, which was counted 0.008 s of its 1.967 s, and the block was lost (run
+    40518880630). A count that says less than that, however wrong, is not caught here."""
+    return waited if waited <= wall - cpu + _COUNT_SLACK else 0.0
+
+
 class _Window:
     """One stretch of the loop thread's time, a step or a health check's answer: its wall time, its
     CPU time, and the time the loop thread spent in it ready to run with no CPU (:class:`_NoCpu`).
@@ -502,6 +548,8 @@ class _Window:
         self.began = time.monotonic()
         self.own = no_cpu.loop_waited()
         self.first = self.then = None
+        self.said = 0.0
+        self.could = 0.0
         if self.own is None:
             self.first = no_cpu.snapshot()
             self.began = self.first.ready_at
@@ -526,7 +574,18 @@ class _Window:
         else:
             ended = time.monotonic()
         # The CPU clock last: its call is outside the window.
-        return ended - self.began, time.thread_time() - self.cpu, waited
+        wall, cpu = ended - self.began, time.thread_time() - self.cpu
+        #: What the count said, before :func:`_believed` judged it.
+        self.said = waited
+        waited = _believed(wall, cpu, waited)
+        #: What the window would count were all of the process's time ready the loop's, as much
+        #: as the window less the loop's CPU can hold: the least it can be, and what a runner that
+        #: reads no instruction counts cannot rule out (:meth:`_Probe.undecided`).
+        ready = 0.0
+        if self.first is not None and self.then is not None:
+            ready = min(max(0.0, self.then.ready - self.first.ready), max(0.0, wall - cpu))
+        self.could = max(wall - max(waited, ready), cpu)
+        return wall, cpu, waited
 
 
 class _Probe:
@@ -553,10 +612,12 @@ class _Probe:
     is wall time between two turns, the selector's wait included, which is why it is not the
     measure."""
 
-    def __init__(self, client: TestClient, *, asking: bool = True) -> None:
+    def __init__(
+        self, client: TestClient, *, asking: bool = True, no_cpu: _NoCpu | None = None
+    ) -> None:
         self.client = client
         self.asking = asking
-        self.no_cpu = _NoCpu()
+        self.no_cpu = no_cpu or _NoCpu()
         self.counts = _ThreadCounts()
         self.worst_step = 0.0
         self.worst_step_was = ""
@@ -567,12 +628,49 @@ class _Probe:
         #: macOS: the longest step's two snapshots' process count of time ready, and each other
         #: thread's CPU, run states and credit over it (:meth:`_NoCpu.accounts`); None elsewhere.
         self.worst_step_threads: tuple[float, list, dict[int, str]] | None = None
+        #: What the longest step's count said, before :func:`_believed` judged it.
+        self.worst_step_said = 0.0
         self.worst_step_wall = 0.0
         self.worst_gap = 0.0
         self.slowest_answer = 0.0
         self.slowest_answer_wall = 0.0
+        #: The answer longest in wall time: its wall time, CPU time, time ready left out and what
+        #: its count said, and the threads over it as for the longest step.
+        self.longest_answer_own: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+        self.longest_answer_threads: tuple[float, list, dict[int, str]] | None = None
         self.waited_for_a_cpu = 0.0
         self.answered_during = 0
+        #: The longest step and the slowest answer, were all of the process's time ready over
+        #: each the loop's (:attr:`_Window.could`).
+        self.worst_step_could = 0.0
+        self.slowest_answer_could = 0.0
+        #: The reading this one was measured again after (:func:`_judged`), if it was.
+        self.before: _Probe | None = None
+        #: macOS: the snapshots taken, and whether any read a thread's instruction count
+        #: (:attr:`reads_no_instructions`).
+        self.snapshots = 0
+        self.instructions_read = False
+
+    @property
+    def reads_no_instructions(self) -> bool:
+        """macOS, with no thread's instruction count read in any snapshot taken: every other thread
+        is then credited its whole window (:meth:`_NoCpu.accounts`), so nothing is left out, and
+        the probe measures wall time. A macOS virtual machine is such a runner (runs 40518880630
+        and 40578869717)."""
+        return (
+            self.no_cpu.source.startswith("macOS")
+            and self.snapshots > 0
+            and not self.instructions_read
+        )
+
+    def _note(self, window: _Window) -> None:
+        """Count *window*'s snapshots toward :attr:`reads_no_instructions`."""
+        for snapshot in (window.first, window.then):
+            if snapshot is not None:
+                self.snapshots += 1
+                self.instructions_read |= any(
+                    t[2] is not None for t in getattr(snapshot, "threads", {}).values()
+                )
 
     def _timed(self, loop_thread: int, real):
         probe = self
@@ -599,6 +697,8 @@ class _Probe:
                 wall, cpu, waited = window.end(counted_from=_COUNTED)
                 took = max(wall - waited, cpu)
                 probe.worst_step_wall = max(probe.worst_step_wall, wall)
+                probe.worst_step_could = max(probe.worst_step_could, window.could)
+                probe._note(window)
                 probe.waited_for_a_cpu += waited
                 if took > probe.worst_step:
                     after = probe.counts.read()
@@ -615,15 +715,8 @@ class _Probe:
                         if counts is not None and after is not None
                         else None
                     )
-                    probe.worst_step_threads = (
-                        (
-                            window.then.ready - window.first.ready,
-                            probe.no_cpu.accounts(window.first, window.then, window.threads),
-                            {t.native_id: t.name for t in threading.enumerate() if t.native_id},
-                        )
-                        if window.first is not None and window.then is not None
-                        else None
-                    )
+                    probe.worst_step_said = window.said
+                    probe.worst_step_threads = probe._threads_over(window)
 
         return run
 
@@ -647,6 +740,18 @@ class _Probe:
             self.counts.close()
             self.no_cpu.close()
 
+    def _threads_over(self, window: _Window) -> tuple[float, list, dict[int, str]] | None:
+        """macOS: the process's count of time ready over *window*, each other thread's CPU, run
+        states and credit over it (:meth:`_NoCpu.accounts`), and the threads' names; None
+        elsewhere."""
+        if window.first is None or window.then is None:
+            return None
+        return (
+            window.then.ready - window.first.ready,
+            self.no_cpu.accounts(window.first, window.then, window.threads),
+            {t.native_id: t.name for t in threading.enumerate() if t.native_id},
+        )
+
     async def _timed_answer(self, answer) -> None:
         """One health check's answer, *answer* awaited, counted as :meth:`during` counts each: in
         a window whose reads of the time ready lie inside its wall time (:class:`_Window`), less
@@ -655,7 +760,12 @@ class _Probe:
         await answer()
         wall, cpu, waited = window.end()
         self.slowest_answer = max(self.slowest_answer, wall - waited, cpu)
-        self.slowest_answer_wall = max(self.slowest_answer_wall, wall)
+        self.slowest_answer_could = max(self.slowest_answer_could, window.could)
+        self._note(window)
+        if wall > self.slowest_answer_wall:
+            self.slowest_answer_wall = wall
+            self.longest_answer_own = (wall, cpu, waited, window.said)
+            self.longest_answer_threads = self._threads_over(window)
 
     async def _during(self, work):
         stop = asyncio.Event()
@@ -700,6 +810,18 @@ class _Probe:
         self.took = finished - started
         return result
 
+    def undecided(self, *, answers: bool = True) -> bool:
+        """Whether this reading is over the bound only by time the probe cannot place: on a runner
+        that reads no instruction counts (:attr:`reads_no_instructions`), every step, and
+        with *answers* every answer, is under the bound once the process's own time ready over it
+        is taken for the loop's. A reading over the bound even then is decided: it fails. One under
+        the bound is decided too."""
+        over = self.worst_step >= _BOUND or (answers and self.slowest_answer >= _BOUND)
+        placed = self.worst_step_could >= _BOUND or (
+            answers and self.slowest_answer_could >= _BOUND
+        )
+        return over and not placed and self.reads_no_instructions
+
     def says(self) -> str:
         """The probe's reading, one line a field: what the longest step ran and how its time
         went, beside the health checks, the time left out and the tick."""
@@ -716,26 +838,58 @@ class _Probe:
                 f"  the loop thread over it: {major} major faults, {voluntary} voluntary and"
                 f" {involuntary} involuntary switches"
             )
-        if self.worst_step_threads is not None:
-            ready, rows, names = self.worst_step_threads
-            lines.append(f"  the process over it: {ready:.3f}s ready with no CPU")
-            lines += [
-                f"  {names.get(thread, f'thread {thread}')}: {used:.6f}s of CPU,"
-                f" {'unread' if ran is None else ran} instructions,"
-                f" {_STATES.get(was, 'unlisted')} then {_STATES.get(now, 'unlisted')},"
-                f" credited {credited:.3f}s"
-                for thread, used, was, now, ran, credited in rows
-            ]
+        lines += _set_aside(waited, self.worst_step_said)
+        lines += _over(self.worst_step_threads)
+        answer_wall, answer_cpu, answer_waited, answer_said = self.longest_answer_own
         lines += [
             f"the slowest health check: {self.slowest_answer:.3f}s counted, of"
             f" {self.slowest_answer_wall:.3f}s in wall time ({self.answered_during} answered"
             " during the work)",
+            f"  the longest in wall time: {answer_wall:.3f}s, {answer_cpu:.3f}s of CPU and"
+            f" {answer_waited:.3f}s ready with no CPU left out",
+            *_set_aside(answer_waited, answer_said),
+            *_over(self.longest_answer_threads),
             f"ready with no CPU, left out of the steps: {self.waited_for_a_cpu:.3f}s"
             f" ({self.no_cpu.source})",
             f"the longest step in wall time: {self.worst_step_wall:.3f}s",
             f"the longest gap between turns: {self.worst_gap:.3f}s",
         ]
+        if self.reads_no_instructions:
+            lines.append(
+                "this runner reads no instruction counts: nothing another thread could account for"
+                " is left out, so the probe measures wall time here. A reading over the bound only"
+                " by the process's time ready is measured again on a fresh gateway, and the second"
+                " judged; a block that comes only sometimes can pass that second measurement on"
+                " macOS, and Linux, which counts each thread's own time ready, catches it"
+            )
+        if self.before is not None:
+            lines.append(
+                "measured again: the first reading was over the bound only by time ready this"
+                " runner cannot place, and read:"
+            )
+            lines += [f"  {line}" for line in self.before.says().splitlines()]
         return "\n".join(lines)
+
+
+def _set_aside(waited: float, said: float) -> list[str]:
+    """The line that says a window's count was set aside (:func:`_believed`), if it was."""
+    if said == waited:
+        return []
+    return [f"  its count said {said:.3f}s ready, more than it could hold: nothing left out"]
+
+
+def _over(threads: tuple[float, list, dict[int, str]] | None) -> list[str]:
+    """The lines for the threads over a window (:meth:`_Probe._threads_over`); none off macOS."""
+    if threads is None:
+        return []
+    ready, rows, names = threads
+    return [f"  the process over it: {ready:.3f}s ready with no CPU"] + [
+        f"  {names.get(thread, f'thread {thread}')}: {used:.6f}s of CPU,"
+        f" {'unread' if ran is None else ran} instructions,"
+        f" {_STATES.get(was, 'unlisted')} then {_STATES.get(now, 'unlisted')},"
+        f" credited {credited:.3f}s"
+        for thread, used, was, now, ran, credited in rows
+    ]
 
 
 async def _init(client, size: int, *, target: str, filename: str, mime: str) -> dict:
@@ -767,28 +921,60 @@ def _items(store: KnowledgeStore) -> int:
     return store.db.execute("SELECT COUNT(*) AS c FROM items").fetchone()["c"]
 
 
+async def _judged(measure, gateway, again, *, answers: bool = True) -> _Probe:
+    """The reading to judge: *measure* run over *gateway*, and, when that reading is over the bound
+    only by time the probe cannot place (:meth:`_Probe.undecided`), run once more over a fresh one
+    from *again*, whose reading is judged as it is, carrying the first in its report.
+
+    A runner that reads no instruction counts, a macOS virtual machine, leaves nothing out of a
+    window, so a stall of the whole process there reads as a block: run 40578869717 counted a step
+    of the probe's own health check 0.097 s with 0.001 s of CPU, the process 0.096 s ready over it
+    and every other thread idle, and its answer 0.144 s. A block the upload makes, it makes every
+    time, so it fails the second measurement too; the runner's stall does not come back. A block
+    that comes only sometimes, or once a process (a lazy import on the loop), can pass the second
+    on macOS: Linux, which counts each thread's own time ready and leaves out exactly the loop's,
+    catches it. *answers* says whether the health
+    checks' answers are judged, as well as the steps."""
+    probe = await measure(gateway)
+    if probe.undecided(answers=answers):
+        first, probe = probe, await measure(again())
+        probe.before = first
+    return probe
+
+
 @pytest.mark.asyncio
-async def test_completing_a_large_upload_leaves_the_gateway_answering(gateway):
+async def test_completing_a_large_upload_leaves_the_gateway_answering(gateway, again):
     """🔴 Red before: the complete of a 256 MB video copied its 32 parts into one file and hashed
     it on the event loop, which went 0.19 s without a turn."""
     payload = _bytes(_LARGE)
-    async with TestClient(TestServer(gateway.app)) as client:
-        info = await _init(
-            client, _LARGE, target="knowledge", filename="walkthrough.mov", mime="video/quicktime"
-        )
-        await _send_parts(client, info, payload)
-        probe = _Probe(client)
 
-        status, body = await probe.during(_complete(client, info["uploadId"]))
+    async def measure(gw) -> _Probe:
+        async with TestClient(TestServer(gw.app)) as client:
+            info = await _init(
+                client,
+                _LARGE,
+                target="knowledge",
+                filename="walkthrough.mov",
+                mime="video/quicktime",
+            )
+            await _send_parts(client, info, payload)
+            probe = _Probe(client)
 
-    assert status == 200, body
-    assert gateway.queued == [body["item_id"]], "premise: the upload became an item"
-    item = gateway.store.get_item(body["item_id"])
-    assert item["file_size"] == _LARGE
-    assert not (gateway.parts / info["uploadId"]).exists(), "its parts were removed"
+            status, body = await probe.during(_complete(client, info["uploadId"]))
+
+        assert status == 200, body
+        assert gw.queued == [body["item_id"]], "premise: the upload became an item"
+        item = gw.store.get_item(body["item_id"])
+        assert item["file_size"] == _LARGE
+        assert not (gw.parts / info["uploadId"]).exists(), "its parts were removed"
+        assert (
+            probe.answered_during >= 1
+        ), f"premise: the gateway was asked meanwhile; {probe.says()}"
+        return probe
+
+    probe = await _judged(measure, gateway, again)
     assert probe.worst_step < _BOUND, probe.says()
     assert probe.slowest_answer < _BOUND, probe.says()
-    assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
 
 async def _multipart(filename: str, mime: str, payload: bytes, boundary: str):
@@ -805,30 +991,37 @@ async def _multipart(filename: str, mime: str, payload: bytes, boundary: str):
 
 
 @pytest.mark.asyncio
-async def test_filing_a_large_single_request_upload_leaves_the_gateway_answering(gateway):
+async def test_filing_a_large_single_request_upload_leaves_the_gateway_answering(gateway, again):
     """🔴 Red before: a knowledge upload sent in one request was moved and hashed on the event
     loop once its bytes had arrived: 0.18 s without a turn for this one."""
     payload = _bytes(_LARGER)
     boundary = "pcuploadboundary"
-    async with TestClient(TestServer(gateway.app)) as client:
-        probe = _Probe(client)
 
-        async def send() -> tuple[int, dict]:
-            r = await client.post(
-                "/api/knowledge/ingest",
-                data=_multipart("walkthrough.mov", "video/quicktime", payload, boundary),
-                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            )
-            return r.status, await r.json()
+    async def measure(gw) -> _Probe:
+        async with TestClient(TestServer(gw.app)) as client:
+            probe = _Probe(client)
 
-        status, body = await probe.during(send())
+            async def send() -> tuple[int, dict]:
+                r = await client.post(
+                    "/api/knowledge/ingest",
+                    data=_multipart("walkthrough.mov", "video/quicktime", payload, boundary),
+                    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                )
+                return r.status, await r.json()
 
-    assert status == 200, body
-    assert gateway.queued == [body["item_id"]], "premise: the upload became an item"
-    assert gateway.store.get_item(body["item_id"])["file_size"] == _LARGER
+            status, body = await probe.during(send())
+
+        assert status == 200, body
+        assert gw.queued == [body["item_id"]], "premise: the upload became an item"
+        assert gw.store.get_item(body["item_id"])["file_size"] == _LARGER
+        assert (
+            probe.answered_during >= 1
+        ), f"premise: the gateway was asked meanwhile; {probe.says()}"
+        return probe
+
+    probe = await _judged(measure, gateway, again)
     assert probe.worst_step < _BOUND, probe.says()
     assert probe.slowest_answer < _BOUND, probe.says()
-    assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
 
 #: How long the planted security-log write takes: as long as the log's key once took to make,
@@ -837,7 +1030,7 @@ _SLOW_SECURITY_LOG = 0.2
 
 
 @pytest.mark.asyncio
-async def test_a_slow_security_log_write_does_not_hold_the_gateway(gateway, monkeypatch):
+async def test_a_slow_security_log_write_does_not_hold_the_gateway(gateway, again, monkeypatch):
     """🔴 Red before: the ingest wrote its security event on the event loop, so a write the disk
     took 0.2 s for held every other request as long. On a Linux runner beside a 384 MB upload the
     first write made the log's key with an fsync and took up to 0.343 s, failing the test above
@@ -852,23 +1045,31 @@ async def test_a_slow_security_log_write_does_not_hold_the_gateway(gateway, monk
 
     monkeypatch.setattr(SecurityEventLog, "log", slow)
     boundary = "pcuploadboundary"
-    async with TestClient(TestServer(gateway.app)) as client:
-        probe = _Probe(client)
 
-        async def send() -> tuple[int, dict]:
-            r = await client.post(
-                "/api/knowledge/ingest",
-                data=_multipart("walkthrough.mov", "video/quicktime", _bytes(_MB), boundary),
-                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-            )
-            return r.status, await r.json()
+    async def measure(gw) -> _Probe:
+        wrote.clear()
+        async with TestClient(TestServer(gw.app)) as client:
+            probe = _Probe(client)
 
-        status, body = await probe.during(send())
+            async def send() -> tuple[int, dict]:
+                r = await client.post(
+                    "/api/knowledge/ingest",
+                    data=_multipart("walkthrough.mov", "video/quicktime", _bytes(_MB), boundary),
+                    headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                )
+                return r.status, await r.json()
 
-    assert status == 200, body
-    assert "knowledge.ingest" in wrote, f"premise: the ingest wrote its event; {wrote}"
+            status, body = await probe.during(send())
+
+        assert status == 200, body
+        assert "knowledge.ingest" in wrote, f"premise: the ingest wrote its event; {wrote}"
+        assert (
+            probe.answered_during >= 1
+        ), f"premise: the gateway was asked meanwhile; {probe.says()}"
+        return probe
+
+    probe = await _judged(measure, gateway, again, answers=False)
     assert probe.worst_step < _BOUND, probe.says()
-    assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
 
 def _json_lines(size: int) -> bytes:
@@ -882,30 +1083,37 @@ def _json_lines(size: int) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_scanning_a_large_text_upload_leaves_the_gateway_answering(gateway):
+async def test_scanning_a_large_text_upload_leaves_the_gateway_answering(gateway, again):
     """🔴 Red before: the content scan ran on the event loop, which went its whole run without
     a turn. In a worker thread its parse still held the loop for about 0.1 s; in a child
     process, not at all."""
     payload = _json_lines(2 * _MB)
-    async with TestClient(TestServer(gateway.app)) as client:
-        info = await _init(
-            client,
-            len(payload),
-            target="attachment",
-            filename="feed-export.jsonl",
-            mime="application/x-ndjson",
-        )
-        await _send_parts(client, info, payload)
-        probe = _Probe(client)
 
-        status, body = await probe.during(_complete(client, info["uploadId"]))
+    async def measure(gw) -> _Probe:
+        async with TestClient(TestServer(gw.app)) as client:
+            info = await _init(
+                client,
+                len(payload),
+                target="attachment",
+                filename="feed-export.jsonl",
+                mime="application/x-ndjson",
+            )
+            await _send_parts(client, info, payload)
+            probe = _Probe(client)
 
-    assert status == 200, body
-    (path,) = body["paths"]
-    assert os.path.getsize(path) == len(payload), "premise: the scanned upload was kept"
+            status, body = await probe.during(_complete(client, info["uploadId"]))
+
+        assert status == 200, body
+        (path,) = body["paths"]
+        assert os.path.getsize(path) == len(payload), "premise: the scanned upload was kept"
+        assert (
+            probe.answered_during >= 1
+        ), f"premise: the gateway was asked meanwhile; {probe.says()}"
+        return probe
+
+    probe = await _judged(measure, gateway, again)
     assert probe.worst_step < _BOUND, probe.says()
     assert probe.slowest_answer < _BOUND, probe.says()
-    assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
 
 # ── what the upload becomes is decided off the loop ─────────────────────────────────────────
@@ -1388,6 +1596,9 @@ class _AStepsReads:
 
     def waited(self, first, then, _threads) -> float:
         return then.ready - first.ready
+
+    def accounts(self, _first, _then, _threads) -> list:
+        return []  # the loop thread is the only one
 
     def callback(self) -> None:
         self.t += self.block
@@ -2202,6 +2413,200 @@ def test_threads_that_ran_nothing_and_waited_at_both_ends_account_for_nothing():
     no_cpu = _macos_no_cpu()
     assert no_cpu.waited(first, then, {loop}) == pytest.approx(1.2)
     assert [row[-1] for row in no_cpu.accounts(first, then, {loop})] == [0.0, 0.0]
+
+
+#: Run 40518880630's health check on a CI runner, a macOS virtual machine: its answer took 1.967 s
+#: in wall time and 0.0083 s of the loop thread's CPU, beside two threads whose instructions could
+#: not be read, with a block of 0.2 s inside it. To count it 0.008 s, the process's count of time
+#: ready over it was 5.89 s or more; three threads, one of them blocked 0.2 s, could have been
+#: ready for at most 5.69 s of it.
+_CI_ANSWER, _CI_ANSWER_CPU = 1.967, 0.0083
+
+
+def test_a_count_of_more_time_ready_than_the_window_holds_leaves_nothing_out():
+    """🔴 Red before (a window left out whatever its count gave the loop thread): over the CI
+    answer, with the process's count at 5.90 s, the two threads beside were credited all they
+    could account for and the loop thread's share came to more than the answer less its CPU time,
+    which no thread can be ready for. The answer was counted 0.008 s and its block lost. A count
+    that says more than the window holds is wrong, so nothing is left out of it."""
+    loop, beside, worker = 1, 2, 3
+    first = _snapshot(
+        0.0, 0.0, {loop: (0.0, 1, None), beside: (0.0, 1, None), worker: (0.0, 3, None)}
+    )
+    then = _snapshot(
+        _CI_ANSWER,
+        5.90,
+        {loop: (_CI_ANSWER_CPU, 1, None), beside: (0.002, 1, None), worker: (0.0008, 3, None)},
+    )
+    said = _macos_no_cpu().waited(first, then, {loop})
+    assert said > _CI_ANSWER - _CI_ANSWER_CPU, f"premise: the count held too much ({said:.3f}s)"
+    left_out = _believed(_CI_ANSWER, _CI_ANSWER_CPU, said)
+    counted = max(_CI_ANSWER - left_out, _CI_ANSWER_CPU)
+    assert counted >= _BOUND, f"the answer was counted {counted:.3f}s of its {_CI_ANSWER}s"
+
+
+@pytest.mark.parametrize("over", [0.0, _COUNT_SLACK / 2], ids=["within the window", "in the slack"])
+def test_a_count_the_window_can_hold_is_left_out_whole(over):
+    """The guard's other side: a window whose count gives the loop thread no more than the window
+    less its CPU time, or up to :data:`_COUNT_SLACK` past it, leaves all of it out, as a step the
+    runner gave no CPU needs."""
+    wall, cpu = 0.5, 0.04
+    assert _believed(wall, cpu, wall - cpu + over) == wall - cpu + over
+
+
+# ── a reading the runner cannot place is measured again ─────────────────────────────────────
+
+
+class _StarvedRunner(_NoCpu):
+    """A macOS virtual machine that reads no instruction counts, its process starved: each
+    snapshot lists the loop thread and one other, waiting, neither's instructions read, and the
+    process's count says it was ready for every moment its loop thread did not run. So a step of
+    the loop's that waits on a write and one the runner stalls read alike to the probe, as on run
+    40578869717. *instructions* reads both threads' counts instead, the other thread's moving, so
+    the probe can tell it ran and could have been the one ready; *starved* False has the count say
+    the process was never ready."""
+
+    def __init__(self, *, instructions: bool = False, starved: bool = True) -> None:
+        super().__init__()
+        self.source = "macOS: the process's, less what its other threads could account for"
+        self.instructions, self.starved = instructions, starved
+        self._began, self._cpu = time.monotonic(), time.thread_time()
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def loop_waited(self) -> float | None:
+        return None
+
+    def snapshot(self) -> SimpleNamespace:
+        at, cpu = time.monotonic(), time.thread_time() - self._cpu
+        ran = int(at * 1e9) if self.instructions else None
+        threads = {threading.get_native_id(): (cpu, 1, ran), 0: (0.0, 3, ran)}
+        ready = max(0.0, at - self._began - cpu) if self.starved else 0.0
+        return SimpleNamespace(
+            at=at, ready_at=at, ready=ready, threads=threads, ended=0, ending=False, done=at
+        )
+
+
+#: How long the planted stall holds the loop thread off its CPU: a whole process stopped by the
+#: virtual machine, as run 40578869717's was for 0.096 s of a 0.097 s step, but over the bound.
+_STALLED = 0.15
+
+
+def _stalled_once_app(stalls: list[float]) -> web.Application:
+    """A request whose first answer the runner stalls for the first of *stalls*, and so on: what
+    the starved runner's count reads as ready, as a stall of the machine's is."""
+
+    async def stalled(_request: web.Request) -> web.Response:
+        if stalls:
+            time.sleep(stalls.pop(0))  # stands for the machine's stall, never the loop's own
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.router.add_get("/api/healthz", api_healthz)
+    app.router.add_get("/planted", stalled)
+    return app
+
+
+def _measure_on(runner, app_for):
+    """A measure for :func:`_judged`: one request to ``/planted`` of the app *app_for* makes for
+    each gateway (a folder), probed on a fresh *runner*."""
+
+    async def measure(where) -> _Probe:
+        async with TestClient(TestServer(app_for(where))) as client:
+            probe = _Probe(client, no_cpu=runner())
+
+            async def ask() -> int:
+                r = await client.get("/planted")
+                return r.status
+
+            assert await probe.during(ask()) == 200, "premise: the planted request answered"
+        return probe
+
+    return measure
+
+
+def _folders(tmp_path):
+    """The first gateway's folder, and a maker of fresh ones for :func:`_judged`."""
+    made = iter(range(1, 10))
+    return _mkdir(tmp_path / "first"), lambda: _mkdir(tmp_path / f"again-{next(made)}")
+
+
+@pytest.mark.asyncio
+async def test_on_a_starved_runner_a_blocking_write_on_the_loop_fails_both_measurements(tmp_path):
+    """The differential's failing side: on a runner that reads no instruction counts, with the
+    process starved, a write on the loop that waits on the disk reads as time ready, so the first
+    reading cannot be placed and is measured again on a fresh gateway. The write is the upload's
+    own, so it is in the second too, which is judged and fails. The report says why."""
+    first, again = _folders(tmp_path)
+    measure = _measure_on(_StarvedRunner, lambda where: _planted_app(_block_by_writing, where))
+    probe = await _judged(measure, first, again)
+    assert probe.before is not None, f"premise: the first reading was undecided; {probe.says()}"
+    assert probe.before.worst_step >= _BOUND, f"the first missed the write; {probe.says()}"
+    assert probe.worst_step >= _BOUND, f"the second missed the write; {probe.says()}"
+    says = probe.says()
+    assert "this runner reads no instruction counts" in says, says
+    assert "a block that comes only sometimes can pass" in says and "Linux" in says, says
+    assert "measured again" in says, says
+
+
+@pytest.mark.asyncio
+async def test_on_a_starved_runner_a_stalled_idle_loop_passes_the_second_measurement(tmp_path):
+    """🔴 Red before (the first reading was the one judged): the runner stalls the process once,
+    while the loop runs a step that waits on nothing, and the first reading is over the bound by
+    nothing the probe can place. Measured again on a fresh gateway, the stall is not there, and
+    the second reading is under the bound."""
+    first, again = _folders(tmp_path)
+    stalls = [_STALLED]
+    measure = _measure_on(_StarvedRunner, lambda _where: _stalled_once_app(stalls))
+    probe = await _judged(measure, first, again)
+    assert probe.before is not None, f"premise: the first reading was undecided; {probe.says()}"
+    assert probe.before.worst_step >= _BOUND, f"premise: the stall failed the first; {probe.says()}"
+    assert probe.worst_step < _BOUND, probe.says()
+    assert probe.slowest_answer < _BOUND, probe.says()
+
+
+@pytest.mark.parametrize(
+    ("runner", "unread"),
+    [
+        pytest.param(
+            lambda: _StarvedRunner(instructions=True), False, id="instruction counts read"
+        ),
+        pytest.param(lambda: _StarvedRunner(starved=False), True, id="no time ready to place"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_reading_over_the_bound_by_what_the_probe_can_place_is_never_measured_again(
+    tmp_path, runner, unread
+):
+    """Only a reading that cannot be placed is measured again: where the runner reads instruction
+    counts the probe leaves out what it can prove and judges the rest, and where the process's
+    count says it was never ready, the window is over the bound whatever the count. A runner's
+    stall that comes once fails such a reading: it is measured once."""
+    first, again = _folders(tmp_path)
+    stalls = [_STALLED]
+    probe = await _judged(
+        _measure_on(runner, lambda _where: _stalled_once_app(stalls)), first, again
+    )
+    assert probe.before is None, f"it was measured again; {probe.says()}"
+    assert probe.worst_step >= _BOUND, f"premise: the stall is over the bound; {probe.says()}"
+    assert ("this runner reads no instruction counts" in probe.says()) == unread, probe.says()
+
+
+def test_a_reading_judged_by_its_steps_alone_is_not_measured_again_for_an_answer():
+    """The security log's test judges its steps alone: an answer over the bound, there, does not
+    make the reading undecided, and a step over it still does."""
+    probe = _Probe(None, asking=False, no_cpu=_StarvedRunner())
+    probe.snapshots = 1
+    probe.slowest_answer, probe.slowest_answer_could = 0.3, 0.01
+    assert probe.undecided() and not probe.undecided(answers=False)
+    probe.worst_step, probe.worst_step_could = 0.3, 0.01
+    assert probe.undecided(answers=False)
+    probe.worst_step_could = _BOUND
+    assert not probe.undecided(answers=False), "a step over the bound whatever the count fails"
 
 
 # ── what the upload's requests read and write on disk, they do off the loop ─────────────────
