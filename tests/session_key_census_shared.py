@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from sel_log_calls_shared import the_call_it_runs
+
 from personalclaw import session_keys
 
 REPO = Path(__file__).resolve().parents[1]
@@ -67,11 +69,6 @@ RECORDS = frozenset(
         "record_units",
     }
 )
-
-
-#: Calls that run their first argument with the rest of their arguments: a record handed to one,
-#: as ``sel_log_async(sel().log_api_access, session_key=...)`` hands it, is still a record.
-RUNS_ITS_FIRST_ARGUMENT = frozenset({"sel_log_async"})
 
 
 #: A name a key is assigned to, and a function that returns one.
@@ -237,14 +234,12 @@ class Census:
     def _handed(self, node: ast.AST):
         """The key expressions the node *node* hands over as a session key."""
         if isinstance(node, ast.Call):
+            # A record handed to `sel_log_async` is still a record, and anything else handed to it
+            # is judged as the call it runs (`sel_log_calls_shared`).
+            node = the_call_it_runs(node)
             callee = _callee(node)
             if callee in RECORDS:
                 return
-            if callee in RUNS_ITS_FIRST_ARGUMENT and node.args:
-                first = node.args[0]
-                ran = first.attr if isinstance(first, ast.Attribute) else getattr(first, "id", "")
-                if ran in RECORDS:
-                    return
             for keyword in node.keywords:
                 if keyword.arg in KEY_KEYWORDS or keyword.arg == KEY_KEYWORD_OF.get(callee):
                     yield keyword.value
