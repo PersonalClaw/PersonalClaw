@@ -36,7 +36,7 @@ from personalclaw.request_validation import (
 )
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 from personalclaw.token_estimate import NOMINAL_CHARS_PER_TOKEN
 
@@ -80,6 +80,12 @@ def _sel_log(tool: str, **kwargs: object) -> None:
         outcome=str(kwargs.pop("outcome", "completed")),
         resources=str(kwargs) if kwargs else "",
     )
+
+
+async def _sel_log_async(tool: str, **kwargs: object) -> None:
+    """:func:`_sel_log` from a handler: in a worker thread, awaited (``sel_log_async``), so the
+    log's disk work never holds the event loop."""
+    await sel_log_async(_sel_log, tool, **kwargs)
 
 
 def _store(request: web.Request):
@@ -365,7 +371,7 @@ async def create_item(request: web.Request) -> web.Response:
     if item_type == "bookmark":
         existing = store.find_active_by_url(url)
         if existing:
-            _sel_log("item.create.dedup", item_id=existing["id"], url=url)
+            await _sel_log_async("item.create.dedup", item_id=existing["id"], url=url)
             return web.json_response(existing, status=200)
     # Route through the native provider so the item is registered into the library
     # AND enqueued for node-graph ingestion: graph → extracted-content pool →
@@ -383,7 +389,7 @@ async def create_item(request: web.Request) -> web.Response:
         gist_language=str(body.get("gist_language") or "") if item_type == "gist" else "",
         extra={"title_source": "user"} if title_given else None,
     )
-    _sel_log("item.create", item_id=item_id, type=item_type)
+    await _sel_log_async("item.create", item_id=item_id, type=item_type)
     item = store.get_item(item_id)
     return web.json_response(item, status=201)
 
@@ -404,7 +410,7 @@ async def generate_intelligence(request: web.Request) -> web.Response:
         request.app["state"].knowledge_ingest_queue().enqueue(item_id)
     except Exception:
         logger.debug("regen enqueue failed for %s", item_id, exc_info=True)
-    _sel_log("item.generate_intelligence", item_id=item_id)
+    await _sel_log_async("item.generate_intelligence", item_id=item_id)
     return web.json_response(store.get_item(item_id))
 
 
@@ -479,7 +485,7 @@ async def regenerate_intelligence(request: web.Request) -> web.Response:
         queue.enqueue_background(r["id"])
         n += 1
     store.db.commit()
-    _sel_log("knowledge.regenerate_intelligence", scope=scope, queued=n)
+    await _sel_log_async("knowledge.regenerate_intelligence", scope=scope, queued=n)
     return web.json_response({"queued": n, "scope": scope})
 
 
@@ -782,7 +788,7 @@ async def update_item(request: web.Request) -> web.Response:
             request, current.get("content") or "", what=f"the body of the item {item_id!r}"
         )
         if stale is not None:
-            _sel_log("item.update", item_id=item_id, outcome=refusal_outcome(stale))
+            await _sel_log_async("item.update", item_id=item_id, outcome=refusal_outcome(stale))
             return stale
     if tag_edits:
         dropped = {n.strip() for n in tag_edits.get("remove_tags", [])}
@@ -809,7 +815,7 @@ async def update_item(request: web.Request) -> web.Response:
             request.app["state"].knowledge_ingest_queue().enqueue(item_id)
         except Exception:
             logger.debug("re-enrich enqueue failed for %s", item_id, exc_info=True)
-    _sel_log("item.update", item_id=item_id, fields=list(fields))
+    await _sel_log_async("item.update", item_id=item_id, fields=list(fields))
     # Of the body this request left stored — what the page now holds — not a re-read, which could
     # describe a rewrite that landed after it and so let the page's next save undo that rewrite.
     saved = {"content": fields["content"] if "content" in fields else current.get("content")}
@@ -850,7 +856,7 @@ async def delete_item(request: web.Request) -> web.Response:
                 resolved.unlink(missing_ok=True)
         except (OSError, ValueError):
             logger.debug("delete cleanup skipped for %s", raw, exc_info=True)
-    _sel_log("item.delete", item_id=item_id)
+    await _sel_log_async("item.delete", item_id=item_id)
     return web.json_response({"ok": True})
 
 
@@ -1035,7 +1041,8 @@ async def merge_items(request: web.Request) -> web.Response:
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
     try:
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key="dashboard:knowledge",
             tool_name="knowledge_merge_items",
             outcome="success",
@@ -1775,7 +1782,7 @@ async def ingest_file(request: web.Request) -> web.Response:
                 request.app["state"].knowledge_ingest_queue().enqueue(item["id"])
             except Exception:
                 logger.debug("file enqueue failed for %s", item["id"], exc_info=True)
-        _sel_log("ingest", filename=filename, item_id=item["id"], deduped=not is_new)
+        await _sel_log_async("ingest", filename=filename, item_id=item["id"], deduped=not is_new)
         return web.json_response(
             {
                 "item_id": item["id"],
@@ -1934,7 +1941,7 @@ async def search_for_context(request: web.Request) -> web.Response:
         )
         total_tokens += tokens
 
-    _sel_log("search_for_context", query=q, results=len(cards))
+    await _sel_log_async("search_for_context", query=q, results=len(cards))
     return web.json_response(
         {
             "query": q,
@@ -2015,7 +2022,9 @@ async def upsert_intent(request: web.Request) -> web.Response:
                 what=f"the intent “{(stored.goal if stored else intent.goal).strip()}”",
             )
             if stale is not None:
-                _sel_log("intent.upsert", intent_id=intent.id, outcome=refusal_outcome(stale))
+                await _sel_log_async(
+                    "intent.upsert", intent_id=intent.id, outcome=refusal_outcome(stale)
+                )
                 return stale
         store.upsert(intent, replace=replace)
     except ValueError as e:
@@ -2035,7 +2044,7 @@ async def upsert_intent(request: web.Request) -> web.Response:
                 status=409,
             )
         return web.json_response({"error": detail}, status=400)
-    _sel_log("intent.upsert", intent_id=intent.id)
+    await _sel_log_async("intent.upsert", intent_id=intent.id)
     return web.json_response({"intents": _intents_payload(request), "id": intent.id}, status=201)
 
 
@@ -2046,7 +2055,7 @@ async def delete_intent(request: web.Request) -> web.Response:
     if not store.delete(intent_id):
         return web.json_response({"error": "not found"}, status=404)
     _store(request).delete_intent_outcomes(intent_id)
-    _sel_log("intent.delete", intent_id=intent_id)
+    await _sel_log_async("intent.delete", intent_id=intent_id)
     return web.json_response({"intents": _intents_payload(request)})
 
 
@@ -2169,7 +2178,7 @@ async def run_intent(request: web.Request) -> web.Response:
     if _intent_store(request).get(intent_id) is None:
         return web.json_response({"error": "not found"}, status=404)
     counts = await _run_intent_retroactive(request.app, intent_id)
-    _sel_log("intent.run", intent_id=intent_id, **counts)
+    await _sel_log_async("intent.run", intent_id=intent_id, **counts)
     return web.json_response(
         {
             # `recorded` kept as an alias of total matched (back-compat); `new`/`matched`
@@ -2310,7 +2319,7 @@ async def generate_skill_from_intent(request: web.Request) -> web.Response:
             },
             status=422,
         )
-    _sel_log("intent.generate_skill", intent_id=intent_id, skill=name)
+    await _sel_log_async("intent.generate_skill", intent_id=intent_id, skill=name)
     # Feedback producer meta (#1783), the same identity `GET /api/skills` stamps on
     # this skill from here on: the synthesizer is the producer, keyed by the skill it just
     # wrote. Returned with the 201 so a caller that renders the fresh skill can attribute a
@@ -2993,7 +3002,8 @@ async def regenerate_item(request: web.Request) -> web.Response:
     filed = bool(result.get("pending") or result.get("applied"))
     already = result.get("already_pending")
     try:
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key="dashboard:knowledge",
             tool_name="knowledge_regenerate_item",
             outcome="success" if filed else "skip",
@@ -3081,7 +3091,7 @@ async def rename_tag(request: web.Request) -> web.Response:
             # words, never user copy, and it was reaching the notification verbatim.
             message = "That tag update wasn't valid."
         return web.json_response({"error": {"code": code, "message": message}}, status=400)
-    _sel_log("tag_update", tag_id=tid, fields=sorted(body.keys()))
+    await _sel_log_async("tag_update", tag_id=tid, fields=sorted(body.keys()))
     return web.json_response({"ok": True, "tags": store.list_tags()})
 
 
@@ -3137,7 +3147,7 @@ async def merge_tag(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": {"code": "invalid_merge", "message": str(exc)}}, status=400
         )
-    _sel_log("tag_merge", source=tid, target=body["into"], **result)
+    await _sel_log_async("tag_merge", source=tid, target=body["into"], **result)
     return web.json_response({"ok": True, **result, "tags": store.list_tags()})
 
 
@@ -3153,7 +3163,7 @@ async def delete_tag(request: web.Request) -> web.Response:
     store = _store(request)
     if not store.delete_tag(tid):
         return web.json_response({"error": "tag not found"}, status=404)
-    _sel_log("tag_delete", tag_id=tid)
+    await _sel_log_async("tag_delete", tag_id=tid)
     return web.json_response({"ok": True, "tags": store.list_tags()})
 
 
@@ -3231,7 +3241,7 @@ async def bulk_items(request: web.Request) -> web.Response:
             status=400,
         )
 
-    _sel_log(
+    await _sel_log_async(
         f"bulk.{op}",
         changed=len(result["changed"]),
         unchanged=len(result["unchanged"]),
@@ -3623,7 +3633,9 @@ async def create_watched_source(request: web.Request) -> web.Response:
         budget=raw_budget if isinstance(raw_budget, dict) else {},
         item_type=item_type,
     )
-    _sel_log("sources.create", source_id=sid, provider=provider.name, enrichment=enrichment)
+    await _sel_log_async(
+        "sources.create", source_id=sid, provider=provider.name, enrichment=enrichment
+    )
     created = store.get_source(sid)
     return web.json_response({"source": _serialize_source(created or {}, store)}, status=201)
 
@@ -3711,12 +3723,14 @@ async def update_watched_source(request: web.Request) -> web.Response:
             what=f"the settings of the source {current['name']!r}",
         )
         if stale is not None:
-            _sel_log("sources.update", source_id=source_id, outcome=refusal_outcome(stale))
+            await _sel_log_async(
+                "sources.update", source_id=source_id, outcome=refusal_outcome(stale)
+            )
             return stale
     updated = store.update_source(source_id, **fields)
     if updated is None:
         return web.json_response({"error": "not found"}, status=404)
-    _sel_log("sources.update", source_id=source_id, fields=sorted(fields))
+    await _sel_log_async("sources.update", source_id=source_id, fields=sorted(fields))
     return web.json_response({"source": _serialize_source(updated, store)})
 
 
@@ -3781,7 +3795,7 @@ async def preview_watched_source(request: web.Request) -> web.Response:
     spec = body.get("spec") if isinstance(body.get("spec"), dict) else {}
     budget = body.get("budget") if isinstance(body.get("budget"), dict) else {}
     result = await preview(spec, budget=budget, policy=SourceEngine.egress_policy())
-    _sel_log(
+    await _sel_log_async(
         "sources.preview",
         provider=provider.name,
         items=len(result.items),
@@ -3906,9 +3920,9 @@ async def restructure_item(request: web.Request) -> web.Response:
             relink=bool_field(body, "relink", default=True),
         )
     except restructure.RestructureError as exc:
-        _sel_log("restructure", verb=verb, item_id=item_id, outcome="denied")
+        await _sel_log_async("restructure", verb=verb, item_id=item_id, outcome="denied")
         return _restructure_refusal(exc)
-    _sel_log("restructure", verb=verb, item_id=item_id, outcome="completed")
+    await _sel_log_async("restructure", verb=verb, item_id=item_id, outcome="completed")
     return web.json_response({"ok": True, "confirmed": True, **result})
 
 
@@ -3931,9 +3945,9 @@ async def undo_restructure(request: web.Request) -> web.Response:
     try:
         result = restructure.undo(_store(request), token)
     except restructure.RestructureError as exc:
-        _sel_log("restructure_undo", outcome="denied")
+        await _sel_log_async("restructure_undo", outcome="denied")
         return _restructure_refusal(exc)
-    _sel_log("restructure_undo", verb=result["verb"], item_id=result["item_id"])
+    await _sel_log_async("restructure_undo", verb=result["verb"], item_id=result["item_id"])
     return web.json_response(result)
 
 

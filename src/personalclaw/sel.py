@@ -16,6 +16,7 @@ Storage: ``<home>/security_events.jsonl`` (append-only JSONL), the home ``config
 Retention: configurable, default 365 days.
 """
 
+import asyncio
 import contextlib
 import hashlib
 import hmac
@@ -418,19 +419,26 @@ class SecurityEventLog:
     def __init__(self, base_dir: Path | None = None) -> None:
         if self._initialized:
             return
-        # The home, from the one resolver — so the log moves wherever the home is moved: a
-        # container's mounted `PERSONALCLAW_HOME`, a dev home, a test's `config_dir` isolation.
-        from personalclaw.config.loader import config_dir
+        # Built once, however many threads ask at once: async code writes from worker threads
+        # (sel_log_async), and two first builds would each make a lock and read the last hash,
+        # so rows written through the two could fork the chain.
+        with type(self)._init_lock:
+            if self._initialized:
+                return
+            # The home, from the one resolver — so the log moves wherever the home is moved: a
+            # container's mounted `PERSONALCLAW_HOME`, a dev home, a test's `config_dir`
+            # isolation.
+            from personalclaw.config.loader import config_dir
 
-        self._dir = base_dir or config_dir()
-        self._path = self._dir / _SEL_FILE
-        self._archive_dir = self._dir / _ARCHIVE_DIR
-        self._lock = threading.Lock()
-        self._hmac_key = self._load_or_create_hmac_key()
-        self._last_hash = self._read_last_hash()
-        self._forward_callback: Callable[[dict], None] | None = None
-        self._adopt_loose_archives()
-        self._initialized = True
+            self._dir = base_dir or config_dir()
+            self._path = self._dir / _SEL_FILE
+            self._archive_dir = self._dir / _ARCHIVE_DIR
+            self._lock = threading.Lock()
+            self._hmac_key = self._load_or_create_hmac_key()
+            self._last_hash = self._read_last_hash()
+            self._forward_callback: Callable[[dict], None] | None = None
+            self._adopt_loose_archives()
+            self._initialized = True
 
     def _adopt_loose_archives(self) -> None:
         """Move archives an earlier manual rotate left beside the log into the archive directory.
@@ -1125,6 +1133,21 @@ def _infer_source(session_key: str) -> str:
 def sel() -> SecurityEventLog:
     """Module-level accessor for the singleton SEL instance."""
     return SecurityEventLog()
+
+
+async def sel_log_async(write: Callable[..., object], /, *args: object, **kwargs: object) -> None:
+    """Write a security event from async code: ``write(*args, **kwargs)``, a
+    :class:`SecurityEventLog` method or a helper that calls one, in a worker thread, awaited.
+
+    A write is disk work: the log's file opened, appended to and closed, and on a home's first
+    event its key made with an fsync. On the event loop that held every other request for as long
+    as the disk took (0.35 s once, beside a large upload). Awaited, the caller still goes on only
+    once the event is on disk, as a sync write lets it, so no event is lost to a process that
+    dies after answering. Each append takes the log's own lock, so the HMAC chain stays in order
+    across handlers that write at once, and the thread carries the caller's context, so the row
+    names the same caller scope (:meth:`SecurityEventLog.log`).
+    """
+    await asyncio.to_thread(write, *args, **kwargs)
 
 
 #: Whether a row the log's file cannot take is said in this process's own log instead of raised

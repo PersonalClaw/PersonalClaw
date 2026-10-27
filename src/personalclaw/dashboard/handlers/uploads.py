@@ -36,6 +36,7 @@ from personalclaw.http_errors import json_error
 # loop, and this one's (its dataclasses built as it loads) held a complete up for 0.13-0.44 s on
 # a busy machine.
 from personalclaw.knowledge.file_items import store_file_item
+from personalclaw.sel import sel_log_async
 from personalclaw.uploads.content_scan import ContentRefused, scan_upload
 from personalclaw.uploads.policy import limits_table, single_post_threshold
 from personalclaw.uploads.store import UploadError, UploadSession, UploadStore
@@ -349,7 +350,8 @@ async def _finalize_target(request: web.Request, sess: UploadSession, final_path
             try:
                 from personalclaw.dashboard.handlers.voice_profiles import _sel
 
-                _sel().log_api_access(
+                await sel_log_async(
+                    _sel().log_api_access,
                     caller=str(request.get("user", "dashboard") or "dashboard"),
                     operation="voice_profile.consent.record",
                     outcome="success",
