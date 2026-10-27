@@ -800,6 +800,8 @@ async def admit_fire(
     The grant's write is the trigger as the caller hands it over, so a one-shot whose slot the tick
     has taken is switched off by this same write — after its claim is on disk, never before it.
     """
+    from datetime import datetime
+
     from personalclaw.triggers import claims
     from personalclaw.triggers import firepath as fp
     from personalclaw.triggers import screen
@@ -856,6 +858,12 @@ async def admit_fire(
         # after the `existing_claim` and the `requested`. `gates.max_fires` was the
         # user-visible cost: set to 2, a trigger fired 8 times in 8 slots.
         budget_remaining=_budget_remaining(trigger),
+        # 🔴 THE CLOCK THE QUIET AND DUTY GATES READ. Never supplied, and `evaluate` fell back
+        # to `datetime.now()`, so a fire admitted at any other `now` was judged by the wall
+        # clock: a 24h storm under quiet hours 00:00–23:59 fired on every tick that ran in the
+        # real 23:59. Local time, as `datetime.now()` was; `evaluate` now refuses a context
+        # without one.
+        moment=datetime.fromtimestamp(now),
     )
     decision = await fp.evaluate(ctx)
     row = fp.ledger_row(decision, ctx)

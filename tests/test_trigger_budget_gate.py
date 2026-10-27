@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 
 import pytest
 from table_rows import row
@@ -39,7 +40,7 @@ def store(tmp_path):
     return TriggerStore(base_dir=tmp_path)
 
 
-def _due(store, tmp_path, gates=None, tid="clock:t"):
+def _due(store, tmp_path, gates=None, tid="clock:t", at=NOW):
     store.upsert(
         Trigger(
             id=tid,
@@ -47,7 +48,7 @@ def _due(store, tmp_path, gates=None, tid="clock:t"):
             kind="clock",
             enabled=True,
             spec={"kind": "interval", "interval_secs": 60},
-            next_fire_at=svc.to_iso(NOW),
+            next_fire_at=svc.to_iso(at),
             gates=gates or {},
             capabilities={"providers": ["notify"]},
             workflow={"inline": {"provider": "notify", "config": {}}},
@@ -525,23 +526,75 @@ def test_the_unmetered_set_and_the_gate_vocabulary_stay_in_step():
 # ── the 24h storm ──
 
 
+def _wall_clock_reads(monkeypatch, hhmmss: str) -> None:
+    """The fire path's `datetime.now()` reads *hhmmss* today, local time: the clock its gates fell
+    back to before `admit_fire` handed them the fire's own. Pinned, so no test here reads the
+    real time of day."""
+    hour, minute, second = map(int, hhmmss.split(":"))
+
+    class _Wall(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz).replace(hour=hour, minute=minute, second=second)
+
+    monkeypatch.setattr(firepath, "datetime", _Wall)
+
+
+def _slot_at(hhmm: str) -> int:
+    """The minute slot from NOW whose local time reads *hhmm*."""
+    for i in range(1440):
+        if datetime.fromtimestamp(NOW + i * 60).strftime("%H:%M") == hhmm:
+            return i
+    raise AssertionError(f"no slot reads {hhmm}")
+
+
 @pytest.mark.timeout(50)
-def test_a_24H_STORM_drops_NOTHING(store, tmp_path):
+def test_a_24H_STORM_drops_NOTHING(store, tmp_path, monkeypatch):
     """🔴 The bar is "zero silent drops under a 24h storm", and that test did not exist.
 
     1440 slots of a per-minute trigger suppressed by quiet hours: every slot must produce
     exactly one
     typed row with a reason. Runs the real `tick` against a real store.
+
+    The slots span a whole day of the tick's own clock, and `00:00`–`23:59` is `[start, end)`, so
+    the slot at 23:59 is the one that fires. The wall clock is pinned inside that minute: it went
+    red in a CI shard that ran across the real 23:59, when the gates read the wall clock and
+    every tick in that minute fired.
     """
+    _wall_clock_reads(monkeypatch, "23:59:15")
     _due(store, tmp_path, {"quiet_hours": {"start": "00:00", "end": "23:59"}})
     rows = 0
-    fires = 0
+    fired = []
     for i in range(1440):
         result = asyncio.run(svc.tick(store, now=NOW + i * 60, base_dir=tmp_path, persist=True))
         rows += len(result.ledger_rows)
-        fires += len(result.fires)
-    assert fires == 0
+        fired += [i] * len(result.fires)
+    assert fired == [_slot_at("23:59")], f"fired at slots {fired[:5]}… ({len(fired)} in all)"
     assert rows == 1440, "one typed row per slot — zero silent drops"
+
+
+@pytest.mark.parametrize(
+    ("slot", "wall", "fires"),
+    [
+        pytest.param("08:00", "23:59:15", 0, id="a-quiet-slot-while-the-wall-clock-is-open"),
+        pytest.param("23:59", "08:00:00", 1, id="an-open-slot-while-the-wall-clock-is-quiet"),
+    ],
+)
+def test_a_tick_judges_quiet_hours_at_its_own_now_never_the_wall_clock(
+    store, tmp_path, monkeypatch, slot, wall, fires
+):
+    """The quiet gate reads the tick's `now`, whatever the wall clock reads: here *wall*, under
+    quiet hours 00:00–23:59, for a slot at *slot*."""
+    _wall_clock_reads(monkeypatch, wall)
+    at = NOW + _slot_at(slot) * 60
+    _due(store, tmp_path, {"quiet_hours": {"start": "00:00", "end": "23:59"}}, at=at)
+
+    result = asyncio.run(svc.tick(store, now=at, base_dir=tmp_path, persist=True))
+
+    assert len(result.fires) == fires, (
+        f"a slot at {slot} with the wall clock at {wall}: {len(result.fires)} fires, "
+        f"rows {[r.get('reason') for r in result.ledger_rows]}"
+    )
 
 
 def test_the_counter_write_does_NOT_RE_ARM_a_one_shot_whose_slot_was_taken(store, tmp_path):

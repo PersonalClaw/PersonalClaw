@@ -24,6 +24,7 @@ Every test drives the REAL `incident` store under an isolated home.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 import pytest
 
@@ -98,9 +99,14 @@ def test_the_gate_vocabulary_covers_the_new_gate():
     assert gate_order_is_intact() == []
 
 
+#: The fire's own moment, which the walk needs past the screen: a Wednesday noon, inside no quiet
+#: window these tests set.
+_NOON = datetime(2026, 1, 14, 12, 0)
+
+
 def test_an_incident_refuses_the_walk():
     incident.activate(reason="test")
-    decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x")))
+    decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON)))
     assert decision.allowed is False
     assert decision.gate == "incident"
 
@@ -110,29 +116,29 @@ def test_the_refusal_is_typed_REFUSED_not_a_skip():
     quiet hours in the runs inbox — a user filtering for "why did nothing run" needs to tell "the
     operator suspended everything" from "it was 3am"."""
     incident.activate(reason="test")
-    decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x")))
+    decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON)))
     assert decision.outcome == Outcome.REFUSED.value
 
 
 def test_the_reason_says_HOW_TO_RESUME():
     """An operator who finds a refused fire must not have to grep for the command."""
     incident.activate(reason="test")
-    decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x")))
+    decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON)))
     assert "incident mode" in decision.reason
     assert "personalclaw incident off" in decision.reason
 
 
 def test_no_incident_passes_the_gate():
-    decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x")))
+    decision = asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON)))
     assert "incident" in decision.passed
 
 
 def test_resuming_lets_fires_through_again():
     """A kill switch that could not be released would be a self-inflicted outage."""
     incident.activate(reason="test")
-    assert asyncio.run(evaluate(FireContext(trigger_id="clock:x"))).allowed is False
+    assert asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON))).allowed is False
     incident.resume()
-    assert asyncio.run(evaluate(FireContext(trigger_id="clock:x"))).allowed is True
+    assert asyncio.run(evaluate(FireContext(trigger_id="clock:x", moment=_NOON))).allowed is True
 
 
 # ── driven through a real tick ──

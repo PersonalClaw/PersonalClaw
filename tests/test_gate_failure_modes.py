@@ -27,6 +27,7 @@ itself. A test that only compared the table to a hardcoded list would have passe
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 
 import pytest
 
@@ -73,12 +74,17 @@ def test_an_UNCLASSIFIED_gate_still_defaults_to_CLOSED():
 # ── verified against what the gates ACTUALLY do ──
 
 
+#: The fire's own moment, which the walk needs past the screen: a Wednesday noon, inside no quiet
+#: window these tests set.
+_NOON = datetime(2026, 1, 14, 12, 0)
+
+
 def test_the_DUTY_gate_really_fails_OPEN(monkeypatch):
     """🔴 The classification checked against behaviour. The duty gate calls out to
     a provider, and uninstalling the calendar app that supplied it must not silently stop every
     automation that referenced it."""
     gates = {"duty_gate": {"provider": "no-such-calendar-app"}}
-    decision = asyncio.run(evaluate(FireContext(trigger_id="t", gates=gates)))
+    decision = asyncio.run(evaluate(FireContext(trigger_id="t", gates=gates, moment=_NOON)))
     assert decision.allowed is True, "an unregistered duty provider must not block the fire"
     assert gate_failure_mode("duty") == "open", "and the classifier must agree"
 
@@ -87,7 +93,9 @@ def test_the_BUDGET_gate_really_fails_CLOSED():
     """The budget rule is more specific than the "budget/storm-guard … fail-open" prose, and the
     code follows
     it: "an unreadable budget is not an unlimited one". The classifier now matches it."""
-    decision = asyncio.run(evaluate(FireContext(trigger_id="t", budget_readable=False)))
+    decision = asyncio.run(
+        evaluate(FireContext(trigger_id="t", budget_readable=False, moment=_NOON))
+    )
     assert decision.allowed is False
     assert decision.gate == "budget"
     assert gate_failure_mode("budget") == "closed"
@@ -104,7 +112,7 @@ def test_the_INCIDENT_gate_really_fails_OPEN(monkeypatch):
     )
     incident.reset_incident_mirror()
     try:
-        decision = asyncio.run(evaluate(FireContext(trigger_id="t")))
+        decision = asyncio.run(evaluate(FireContext(trigger_id="t", moment=_NOON)))
         assert decision.allowed is True
     finally:
         incident.reset_incident_mirror()
@@ -115,7 +123,14 @@ def test_the_CAPABILITY_fence_really_fails_CLOSED():
     """A security fence: the cost of skipping it is unbounded, while the cost of a skipped budget
     check is one extra run. An empty capability block denies."""
     decision = asyncio.run(
-        evaluate(FireContext(trigger_id="t", requested={"providers": ["bash"]}, capabilities={}))
+        evaluate(
+            FireContext(
+                trigger_id="t",
+                requested={"providers": ["bash"]},
+                capabilities={},
+                moment=_NOON,
+            )
+        )
     )
     assert decision.allowed is False
     assert decision.gate == "capability"
