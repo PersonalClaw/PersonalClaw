@@ -563,6 +563,13 @@ the `breadth.yml` jobs it maps to, in both directions, and every entry to the re
   `npx` and `npm exec`. A word that only names a runner (`echo pytest`, `pip install
   pytest`) runs none. A new test goes in an entry, whose command the row above holds to its
   job.
+- A tier workflow runs each test through run-job. The row
+  "a-tier-workflow-runs-each-test-through-run-job" refuses a step of `pr.yml`, `merge.yml` or
+  `breadth.yml` that runs a test runner itself, read as the row above reads one, outside the
+  17 `breadth.yml` steps that still do until #5600 moves them. That list never grows: the
+  Contract run judges a head with main's copy of the row, so a head can't add to it. A listed
+  step that goes is refused too, unless its job now runs `python -m tools.ci run-job`, so each
+  leg moves in one merge.
 - The harness's `replay` and `exemplars` profiles are local shortcuts, not catalogue
   entries: the merge tier already runs what they gate. `python-suite` collects
   `tests/test_harness_replay.py` (every replay scenario against its baseline),
