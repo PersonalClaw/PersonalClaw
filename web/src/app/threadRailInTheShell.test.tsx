@@ -25,7 +25,7 @@ import { SHIPPED_ROUTES } from './shippedRoutes'
 
 vi.mock('../lib/useChatSocket', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  useChatSocket: () => {},
+  useChatSocket: (await import('../test/quietSocket')).useChatSocket,
 }))
 
 vi.mock('./identity', async (orig) => {

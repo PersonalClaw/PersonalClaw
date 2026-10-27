@@ -22,7 +22,7 @@ import { PALETTE_SEARCH_LABEL } from './paletteSearchLabel'
 // resolves empty unless named below, and the file pane's viewer is a stand-in, since what is under
 // test is which pane opens, not what a file looks like. jsdom reports no Mac, so keys read as Ctrl.
 
-vi.mock('../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
+vi.mock('../lib/useChatSocket', () => import('../test/quietSocket'))
 
 vi.mock('./identity', async (orig) => {
   const real = await orig<typeof import('./identity')>()
