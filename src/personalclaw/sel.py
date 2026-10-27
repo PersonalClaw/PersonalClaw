@@ -18,6 +18,7 @@ Retention: configurable, default 365 days.
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import hmac
 import json
@@ -32,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
 
-from personalclaw import session_keys
+from personalclaw import memory_writes, session_keys
 from personalclaw.atomic_write import atomic_write, atomic_write_bytes
 from personalclaw.audit_subject import SUBJECT_MAX_CHARS, audit_text, subject_of
 
@@ -1135,19 +1136,48 @@ def sel() -> SecurityEventLog:
     return SecurityEventLog()
 
 
+def _writer() -> memory_writes.ScopeCarryingExecutor:
+    """A thread of the log's own for the writes async code makes (:func:`sel_log_async`). Each
+    write runs in its caller's context, so the row names the caller's scope."""
+    return memory_writes.ScopeCarryingExecutor(
+        max_workers=1, thread_name_prefix="ThreadPoolExecutor-security-log"
+    )
+
+
+#: The one thread every write from async code runs on, in the order asked. The writes take the
+#: log's lock one at a time anyway, so one thread costs them nothing, and they leave the loop's
+#: default executor to everything else: on a 4-CPU runner that pool is 8 threads, and a burst of
+#: writes held up on the disk could hold every one of them while a file read or an upload waited.
+#: A process forked from this one has none of its threads, so it makes its own.
+_WRITER = _writer()
+
+
+def _a_writer_of_its_own() -> None:
+    global _WRITER
+    _WRITER = _writer()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_a_writer_of_its_own)
+
+
 async def sel_log_async(write: Callable[..., object], /, *args: object, **kwargs: object) -> None:
     """Write a security event from async code: ``write(*args, **kwargs)``, a
-    :class:`SecurityEventLog` method or a helper that calls one, in a worker thread, awaited.
+    :class:`SecurityEventLog` method or a helper that calls one, on the log's own thread
+    (:data:`_WRITER`), awaited.
 
     A write is disk work: the log's file opened, appended to and closed, and on a home's first
     event its key made with an fsync. On the event loop that held every other request for as long
     as the disk took (0.35 s once, beside a large upload). Awaited, the caller still goes on only
     once the event is on disk, as a sync write lets it, so no event is lost to a process that
-    dies after answering. Each append takes the log's own lock, so the HMAC chain stays in order
-    across handlers that write at once, and the thread carries the caller's context, so the row
-    names the same caller scope (:meth:`SecurityEventLog.log`).
+    dies after answering. The writes run one at a time in the order asked, so the HMAC chain
+    follows the order the handlers wrote in, and each carries its caller's context, so the row
+    names the same caller scope (:meth:`SecurityEventLog.log`). A caller cancelled while its
+    write waits its turn goes on at once, and the write is still made: an event is not dropped
+    because the request that caused it was given up.
     """
-    await asyncio.to_thread(write, *args, **kwargs)
+    call = functools.partial(write, *args, **kwargs)
+    await asyncio.shield(asyncio.get_running_loop().run_in_executor(_WRITER, call))
 
 
 #: Whether a row the log's file cannot take is said in this process's own log instead of raised

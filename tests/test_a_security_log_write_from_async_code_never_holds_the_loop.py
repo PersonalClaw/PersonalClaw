@@ -12,8 +12,10 @@ key's fsync is never a handler's.
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -140,3 +142,124 @@ def test_two_threads_building_the_log_at_once_build_it_once(home, monkeypatch):
     assert len(built) == 2, built
     assert len(made) == 1, f"the key was read or made {len(made)} times: {made}"
     assert built[0] is built[1] and built[0]._lock is built[1]._lock
+
+
+#: The loop's default executor on a 4-CPU runner: ``min(32, CPUs + 4)`` threads.
+_RUNNERS_POOL = 8
+
+#: How long an unrelated call to a thread may wait while security-log writes are held up.
+_OTHER_WORK = 2.0
+
+
+@pytest.mark.asyncio
+async def test_writes_held_up_on_the_disk_leave_the_loops_threads_to_other_work(home, monkeypatch):
+    """🔴 Red before: each write took a thread of the loop's default executor, and the writes take
+    the log's lock one at a time. On a 4-CPU runner that pool is 8 threads, and 8 writes held up
+    on the disk held all 8, so an unrelated ``asyncio.to_thread`` call (a file read, an upload's
+    hashing) waited for them. The writes now run on the log's own thread, one at a time as the
+    lock would have them, and leave the loop's threads to everything else."""
+    sel()  # made, as the gateway makes it before it serves
+    pool = ThreadPoolExecutor(max_workers=_RUNNERS_POOL)
+    asyncio.get_running_loop().set_default_executor(pool)
+    disk = threading.Event()
+    real = SecurityEventLog.log
+
+    def held_up(self, event):
+        disk.wait(10)
+        return real(self, event)
+
+    monkeypatch.setattr(SecurityEventLog, "log", held_up)
+    writes = [
+        asyncio.create_task(sel_log_async(_write, f"probe.held.{n}")) for n in range(_RUNNERS_POOL)
+    ]
+    await asyncio.sleep(0)  # each write's task starts and asks for its thread
+    try:
+        began = time.monotonic()
+        await asyncio.wait_for(asyncio.to_thread(time.monotonic), _OTHER_WORK)
+    except TimeoutError:
+        pytest.fail(
+            f"an unrelated to_thread call waited {time.monotonic() - began:.1f}s behind"
+            f" {_RUNNERS_POOL} security-log writes held up on the disk"
+        )
+    finally:
+        disk.set()
+        await asyncio.gather(*writes)
+        pool.shutdown()
+    held = [r for r in sel().recent(50) if r["operation"].startswith("probe.held.")]
+    assert len(held) == _RUNNERS_POOL, f"premise: every held write was written ({len(held)})"
+
+
+def _held_up_until(disk: threading.Event, monkeypatch, only: str = "") -> None:
+    """Each write (or only the one whose operation is *only*) waits for *disk* before it is
+    made, as a write the disk is slow to take does."""
+    real = SecurityEventLog.log
+
+    def held_up(self, event):
+        if not only or event.operation == only:
+            disk.wait(10)
+        return real(self, event)
+
+    monkeypatch.setattr(SecurityEventLog, "log", held_up)
+
+
+@pytest.mark.asyncio
+async def test_writes_asked_while_one_is_held_up_are_written_in_the_order_asked(home, monkeypatch):
+    """🔴 Red before: the writes waiting on a slow disk each had a thread of their own, and when
+    it let go they raced for the log's lock, so the chain took them in whatever order the threads
+    won. They now wait their turn on the log's one thread, in the order the handlers asked."""
+    sel()
+    disk = threading.Event()
+    _held_up_until(disk, monkeypatch)
+    asked = [f"probe.order.{n:02d}" for n in range(20)]
+    writes = [asyncio.create_task(sel_log_async(_write, operation)) for operation in asked]
+    await asyncio.sleep(0.05)  # every write is under way, or waiting its turn
+    disk.set()
+    await asyncio.gather(*writes)
+    rows = reversed(sel().recent(50))
+    assert [r["operation"] for r in rows if r["operation"].startswith("probe.order.")] == asked
+
+
+@pytest.mark.asyncio
+async def test_a_write_whose_caller_is_cancelled_while_it_waits_its_turn_is_still_made(
+    home, monkeypatch
+):
+    """🔴 Red before: a write waiting for a thread was dropped when the handler that asked for it
+    was cancelled (a client that went away), and the event it recorded was never written. The
+    caller still goes on at once, and the write is made in its turn."""
+    sel()
+    pool = ThreadPoolExecutor(max_workers=1)  # the loop's threads all taken, as a burst takes them
+    asyncio.get_running_loop().set_default_executor(pool)
+    disk = threading.Event()
+    _held_up_until(disk, monkeypatch, only="probe.first")
+    try:
+        first = asyncio.create_task(sel_log_async(_write, "probe.first"))
+        await asyncio.sleep(0.05)  # the first is under way, held up on the disk
+        second = asyncio.create_task(sel_log_async(_write, "probe.given-up"))
+        await asyncio.sleep(0.05)  # the second waits its turn
+        second.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await second
+    finally:
+        disk.set()
+    await first
+    await sel_log_async(_write, "probe.after")  # in turn after the given-up one, if it is made
+    pool.shutdown()
+    written = [r["operation"] for r in sel().recent(10)]
+    assert "probe.given-up" in written, f"the cancelled caller's write was dropped: {written}"
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="a process is forked only where there is fork")
+def test_a_process_forked_after_a_write_writes_on_a_thread_of_its_own(home):
+    """A process forked from one that has written has none of its threads. The log's thread there
+    is a new one: it inherited one it could not start, the write waited for it, and never came."""
+    asyncio.run(sel_log_async(_write, "probe.before-fork"))  # the log's thread is up, and idle
+    pid = os.fork()
+    if pid == 0:
+        try:
+            asyncio.run(asyncio.wait_for(sel_log_async(_write, "probe.in-the-child"), 5))
+        except BaseException:
+            os._exit(1)
+        os._exit(0)
+    _, status = os.waitpid(pid, 0)
+    assert os.waitstatus_to_exitcode(status) == 0, "the forked process's write never came back"
+    assert "probe.in-the-child" in [r["operation"] for r in sel().recent(10)]
