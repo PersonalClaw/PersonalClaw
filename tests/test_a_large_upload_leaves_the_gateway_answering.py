@@ -1611,14 +1611,19 @@ def _seen(probe: _Probe) -> SimpleNamespace:
 
 def _crowded(child: str, home, *args: str, hold: float) -> dict:
     """Runs ``child`` on the scratch ``home`` once it is up, with every CPU taken by a process of
-    its own for at most ``hold`` seconds, and returns the one line of JSON it prints."""
-    child_process = subprocess.Popen(
-        [sys.executable, "-c", child, os.path.dirname(__file__), *args],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-        env={**os.environ, "PERSONALCLAW_HOME": str(home)},
-    )
+    its own for at most ``hold`` seconds, and returns the one line of JSON it prints. What the
+    child says on stderr goes to a file beside ``home``, and a child that fails, or prints
+    nothing, fails the test with the end of it."""
+    said = home.parent / "child-stderr.txt"
+    with open(said, "w", encoding="utf-8") as stderr:
+        child_process = subprocess.Popen(
+            [sys.executable, "-c", child, os.path.dirname(__file__), *args],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            text=True,
+            env={**os.environ, "PERSONALCLAW_HOME": str(home)},
+        )
     busy: list[subprocess.Popen] = []
     out = ""
     try:
@@ -1637,8 +1642,12 @@ def _crowded(child: str, home, *args: str, hold: float) -> dict:
             one.kill()
             one.wait()
         child_process.stdin.close()
-        if child_process.wait(10) != 0:
-            pytest.fail(f"the child failed: {out!r}")
+        code = child_process.wait(10)
+        if code != 0 or not out:
+            tail = said.read_text(encoding="utf-8", errors="replace")[-3000:].strip()
+            pytest.fail(
+                f"the child exited {code} and printed {out!r}; on stderr: {tail or 'nothing'}"
+            )
     return json.loads(out)
 
 
@@ -1693,6 +1702,38 @@ def _until_crowded(
     if sys.platform == "darwin":
         pytest.skip(unmet)
     pytest.fail(unmet)
+
+
+#: The start of a child that is ready at once and waits to be told to go (:func:`_crowded`).
+_READY = """
+    import json, sys
+    sys.stdout.write("ready\\n")
+    sys.stdout.flush()
+    assert sys.stdin.readline() == "go\\n"
+"""
+
+
+@pytest.mark.parametrize(
+    ("child", "said"),
+    [
+        ('raise RuntimeError("planted before it was ready")', "planted before it was ready"),
+        (
+            textwrap.dedent(_READY) + 'raise RuntimeError("planted once told to go")',
+            "RuntimeError: planted once told to go",
+        ),
+        (textwrap.dedent(_READY), "exited 0 and printed ''; on stderr: nothing"),
+    ],
+    ids=["before it was ready", "once told to go", "printing nothing"],
+)
+def test_a_crowded_child_that_fails_says_why(tmp_path, child, said):
+    """🔴 Red before: the beside-thread child imported another clone's ``personalclaw``
+    (tests/tree_under_test.py), raised and printed nothing, and its test failed with "the child
+    failed: ''", the child's traceback only in pytest's captured stderr. A child that exits 0
+    printing nothing failed on reading its empty line as JSON. Each failure now says the child's
+    exit code, what it printed and the end of its stderr."""
+    with pytest.raises(pytest.fail.Exception) as failed:
+        _crowded(child, tmp_path / "home", hold=1.0)
+    assert said in str(failed.value), failed.value
 
 
 def test_a_step_the_runner_gives_no_cpu_does_not_fail_the_probe(tmp_path):

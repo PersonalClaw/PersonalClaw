@@ -23,7 +23,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-import personalclaw
+import tree_under_test
 
 #: How long a measurement may take, inside the suite's 120 s limit for the test that runs it.
 TIMEOUT_SECONDS = 100
@@ -43,7 +43,7 @@ def measure(program: str, scratch: Path, **values: object) -> dict:
     with what the child said on stderr.
     """
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(Path(personalclaw.__file__).resolve().parent.parent)
+    tree_under_test.put_first(env)
     if not env.get("PERSONALCLAW_HOME"):
         (scratch / "user").mkdir(parents=True, exist_ok=True)
         env["HOME"] = str(scratch / "user")
