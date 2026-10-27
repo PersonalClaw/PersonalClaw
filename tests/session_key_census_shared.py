@@ -69,6 +69,11 @@ RECORDS = frozenset(
 )
 
 
+#: Calls that run their first argument with the rest of their arguments: a record handed to one,
+#: as ``sel_log_async(sel().log_api_access, session_key=...)`` hands it, is still a record.
+RUNS_ITS_FIRST_ARGUMENT = frozenset({"sel_log_async"})
+
+
 #: A name a key is assigned to, and a function that returns one.
 KEY_TARGET = re.compile(r"(^|_)session_key$")
 
@@ -235,6 +240,11 @@ class Census:
             callee = _callee(node)
             if callee in RECORDS:
                 return
+            if callee in RUNS_ITS_FIRST_ARGUMENT and node.args:
+                first = node.args[0]
+                ran = first.attr if isinstance(first, ast.Attribute) else getattr(first, "id", "")
+                if ran in RECORDS:
+                    return
             for keyword in node.keywords:
                 if keyword.arg in KEY_KEYWORDS or keyword.arg == KEY_KEYWORD_OF.get(callee):
                     yield keyword.value

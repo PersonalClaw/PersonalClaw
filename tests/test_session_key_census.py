@@ -73,6 +73,15 @@ def refresh(sessions, ref):
 _SNIPPET_A_RECORD = """
 def audit(sel, x):
     sel.log_tool_invocation(session_key=f"newkind:{x}", tool_name="t")
+
+
+async def audit_off_the_loop(sel, x):
+    await sel_log_async(sel.log_api_access, session_key=f"newkind:{x}", operation="o")
+"""
+
+_SNIPPET_A_KEY_HANDED_ON = """
+async def start(x):
+    await sel_log_async(get_or_create_session, session_key=f"newkind:{x}")
 """
 
 
@@ -184,3 +193,11 @@ def test_the_policy_reads_each_kind_as_its_row_says(kind):
     assert session_keys.kind_of(key) is kind
     assert is_unattended_session(key) is kind.unattended
     assert session_keys.is_stateless(key) is kind.stateless
+
+
+def test_a_record_written_through_sel_log_async_is_still_a_record_and_nothing_else_is():
+    """``sel_log_async(write, ...)`` runs *write* with the rest: a record handed to it is not a
+    mint, and anything else handed to it is judged as the call it is."""
+    assert violations(Census({"personalclaw.audit": _SNIPPET_A_RECORD})) == []
+    census = Census({"personalclaw.example": _SNIPPET_A_KEY_HANDED_ON})
+    assert [m.literal for m in census.mints()] == ["newkind:"], census.mints()

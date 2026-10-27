@@ -50,6 +50,7 @@ from personalclaw.dashboard.handlers_system import api_healthz
 from personalclaw.dashboard.routes import _register_upload_routes
 from personalclaw.knowledge.pipeline import ensure_nodes_registered
 from personalclaw.knowledge.store import KnowledgeStore
+from personalclaw.sel import SecurityEventLog, sel
 from personalclaw.uploads.store import UploadStore
 
 _MB = 1024 * 1024
@@ -76,6 +77,9 @@ def gateway(tmp_path, monkeypatch):
     Free disk reads as plenty, so a large upload is kept as separate parts and assembled at its
     complete, whatever this machine has free."""
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
+    # The security log made before anything is served, its key with it, as the gateway's start
+    # makes it (dashboard.server): never by the first event a request writes.
+    sel()
     monkeypatch.setattr(tempfile, "tempdir", str(_mkdir(tmp_path / "tmp")))
     monkeypatch.setattr("personalclaw.uploads.store._free_bytes", lambda _path: 1 << 40)
     # A chat attachment's extraction is the chat's business, not this upload's.
@@ -742,6 +746,46 @@ async def test_filing_a_large_single_request_upload_leaves_the_gateway_answering
     assert gateway.store.get_item(body["item_id"])["file_size"] == _LARGER
     assert probe.worst_step < _BOUND, probe.says()
     assert probe.slowest_answer < _BOUND, probe.says()
+    assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
+
+
+#: How long the planted security-log write takes: as long as the log's key once took to make,
+#: with its fsync, beside a large upload on a Linux runner (#5605).
+_SLOW_SECURITY_LOG = 0.2
+
+
+@pytest.mark.asyncio
+async def test_a_slow_security_log_write_does_not_hold_the_gateway(gateway, monkeypatch):
+    """🔴 Red before: the ingest wrote its security event on the event loop, so a write the disk
+    took 0.2 s for held every other request as long. On a Linux runner beside a 384 MB upload the
+    first write made the log's key with an fsync and took up to 0.343 s, failing the test above
+    in 5 runs of 30 (#5605). The write runs in a worker thread now, awaited, so the gateway
+    answers meanwhile and the event is on disk before the upload's answer."""
+    real, wrote = SecurityEventLog.log, []
+
+    def slow(self, event):
+        time.sleep(_SLOW_SECURITY_LOG)
+        wrote.append(event.operation)
+        return real(self, event)
+
+    monkeypatch.setattr(SecurityEventLog, "log", slow)
+    boundary = "pcuploadboundary"
+    async with TestClient(TestServer(gateway.app)) as client:
+        probe = _Probe(client)
+
+        async def send() -> tuple[int, dict]:
+            r = await client.post(
+                "/api/knowledge/ingest",
+                data=_multipart("walkthrough.mov", "video/quicktime", _bytes(_MB), boundary),
+                headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            )
+            return r.status, await r.json()
+
+        status, body = await probe.during(send())
+
+    assert status == 200, body
+    assert "knowledge.ingest" in wrote, f"premise: the ingest wrote its event; {wrote}"
+    assert probe.worst_step < _BOUND, probe.says()
     assert probe.answered_during >= 1, f"premise: the gateway was asked meanwhile; {probe.says()}"
 
 

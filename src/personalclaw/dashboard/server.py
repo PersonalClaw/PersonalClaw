@@ -934,6 +934,12 @@ async def start_dashboard(
     # AuthMode.NONE invariant: an unauthenticated gateway must never leave loopback.
     if _no_auth:
         _bind_host = "127.0.0.1"
+    # The security log made before anything is served, its key with it (an fsync, on a home's
+    # first run), in a worker thread: never by the first event a handler writes, which would make
+    # it on the event loop (sel.sel_log_async).
+    from personalclaw.sel import sel
+
+    await asyncio.to_thread(sel)
     site = web.TCPSite(runner, _bind_host, port)
     await _start_site(site, port)
 
