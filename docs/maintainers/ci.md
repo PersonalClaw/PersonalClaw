@@ -1477,13 +1477,19 @@ listing its own share of its own leg, and the shard plan holds every file in exa
 each. With `python-suite` on Ubuntu and 3.12, every
 change that merges has run both operating systems and both Pythons. The security corpus is the exception: no shard collects it, so a pull request
 runs it once, in `security`, on Ubuntu and 3.12, and breadth runs it each night on macOS on
-3.13. The three shards take three of the five macOS runners the account runs at once, the most one
-merge-tier run may take (#3915), and breadth's `macos` leg runs one shard at a time
-(`max-parallel: 1`), so a pull request's run and a night's breadth fit the five together; the
-contract row "a-pull-requests-macos-jobs-and-breadths-macos-leg-fit-the-macos-runners" fails a
-merge tier that takes more than three, a macOS shard of more than two workers or of `auto`, and a
-count that does not fit (the merge tier's macOS shards with breadth's). Concurrent pull
-requests still queue on macOS.
+3.13. The shards take three of the five macOS runners the account runs at once (the free plan's
+five). A merge-tier run may take all five: pull requests run one at a time, and the suite's
+shards are the longest leg of every merge. Breadth's macOS jobs hold at most three at once
+(`rails-macos` beside the `macos` leg, which runs one shard at a time with `max-parallel: 1`, or
+beside `security-macos` and `planned-ids-macos`, which wait for it), so a pull request's run
+beside a night's breadth always starts two of its shards, and the rest queue until breadth frees a
+runner. Breadth queues behind a run that holds them all; its timeouts count only the minutes its
+jobs run. The contract row "a-merge-run-may-take-every-macos-runner-and-breadth-leaves-it-some"
+fails a merge tier that takes more than five, a macOS shard of more than two workers or of
+`auto`, and breadth's macOS jobs holding more than three at once. Concurrent pull requests still
+queue on macOS, and so does any job when GitHub's own macOS capacity is short: a shard of #5615's
+run waited 31 minutes for a runner it never got, the first five with no other macOS job of the
+account running.
 
 ### The suite's shards
 
