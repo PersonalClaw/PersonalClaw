@@ -1063,8 +1063,12 @@ main's verdict. Neither step can fail its job, and a push's run writes neither.
   attempt that did not pass is a failing key's, failed in its run-job line alone.
 
 A cancelled or timed-out shard is never a flake: it has no rerun, or no record, and its other
-tests never ran. An end-to-end test is never passed: Playwright's own retry runs beside the other
-workers, not alone. Without a changed list, or with an empty one, the rule passes nothing, and a
+tests never ran. An end-to-end test passes only on `run-job`'s rerun of it alone, which its
+record's argv shows (`npx playwright test --workers=1 --retries=0`, and no other option that adds
+workers or tries): Playwright's own retry runs beside the other workers. Its run reads its own
+spec, `web/playwright.config.*` (which holds the harness gateway's launcher),
+`scripts/spa_dist_freshness.py` (the preview's first step) and every file under `web/e2e/` but
+another spec. Without a changed list, or with an empty one, the rule passes nothing, and a
 push's run is never given one. The verdict writes one `::notice` titled `flake passed` per test
 it passes, and the merge controller names them in its green title. Each passed flake reaches the
 per-test history (#3948) with the tested push's history, whose pull request run it was. A test's
@@ -2714,16 +2718,25 @@ budget, and red on a first failure the retry passes.
   step that exits 0 with such a report is red; a rerun that exits otherwise than 0 or 1, is
   stopped at the end of the job's time or is interrupted, or whose report is missing or
   unreadable, classifies nothing.
-- **Playwright:** its own retry is the rerun, so `run-job` starts no second one. Under CI
-  `web/playwright.config.ts` keeps `retries: 1` (a new worker process, the same test timeout) and
-  sets `failOnFlakyTests`, so a test that passes only on its retry fails the run. When the `e2e`
-  step exits 1, and nothing else went wrong, `run-job` reads its JSON report
-  (`PLAYWRIGHT_JSON_OUTPUT_NAME`): a `flaky` test is a `flake`; an `unexpected` one whose retry
-  failed or timed out too is a `repeated failure`; one that failed with no retry run, or whose
-  retry ended otherwise (it was interrupted), is not classified. The record's `rerun` names the
-  step's own argv and exit. A report that is missing, older than the job (an earlier run's, left
-  when Playwright exits 1 before writing one, as on a config that throws at load), or not of the
-  shape Playwright writes classifies nothing, and says so.
+- **Playwright:** under CI `web/playwright.config.ts` keeps `retries: 1` (a new worker process,
+  beside the others, the same test timeout) and sets `failOnFlakyTests`, so a test that passes
+  only on its retry fails the run. That retry is not a run alone, so it only says which tests to
+  rerun. When the `e2e-shard` step (`npx playwright test …`) exits 1, and nothing else went wrong,
+  `run-job` reads its JSON report (`PLAYWRIGHT_JSON_OUTPUT_NAME`). Each `flaky` test of the
+  `smoke` or `chromium` project, at most two (a step with more reruns none), is rerun in one
+  invocation, so the gateway starts once: `npx playwright test --workers=1 --retries=0`, each
+  test's `--project` and its `<file>:<line>`, with the step's env and its reports, traces and
+  outputs in the job's scratch folder, inside the job's remaining time. The step's own reports
+  beside it are put back after it. It is a `flake` when it passed there and a `repeated failure`
+  when it failed there. A flaky test of a project that runs only in its chain or its home (the
+  stateful passes, the specs with a home of their own) is not rerun, and not classified. An
+  `unexpected` test whose retry failed or timed out too is a `repeated failure` with no rerun; one
+  that failed with no retry run, or whose retry ended otherwise, is not classified. The rerun's
+  report is read only when every test it ran is one it reran, or a `setup` test (chromium's
+  dependency), and its exit is 0 or 1. The record's `rerun` names the alone rerun's own argv and
+  exit, or no argv when none ran. A report that is missing, older than the job (an earlier run's,
+  left when Playwright exits 1 before writing one, as on a config that throws at load), or not of
+  the shape Playwright writes classifies nothing, and says so.
 
 Three contract rows, one per runner, hold what the tree must not add, each rule with a planted
 break, each listed option, plugin and key its own:

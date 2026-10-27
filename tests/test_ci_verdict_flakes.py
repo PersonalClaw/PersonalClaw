@@ -46,6 +46,7 @@ def _record(
     reran: bool = True,
     attempt: int = 1,
     head: str = HEAD,
+    argv: Sequence[str] = RERUN,
 ) -> str:
     """A shard's record: green when it names no test and no exit, else failed, with its tests
     rerun."""
@@ -54,7 +55,7 @@ def _record(
     rerun = None
     if tests:
         rerun = {
-            "argv": RERUN if reran else None,
+            "argv": list(argv) if reran else None,
             "exit": rerun_exit if reran else None,
             "tests": list(tests),
         }
@@ -273,8 +274,8 @@ def test_a_test_that_failed_alone_too_is_red() -> None:
         ),
         pytest.param(
             _test("web/e2e/chat.spec.ts::it answers [chromium]", verdict.FLAKE, "a retry"),
-            "end-to-end test",
-            id="an end-to-end test",
+            "was not rerun alone",
+            id="an end-to-end test its record does not show rerun alone",
         ),
     ],
 )
@@ -291,6 +292,75 @@ def test_a_playwright_flake_is_red() -> None:
     rerun alone passed it, and its test is an end-to-end one."""
     test = _test("web/e2e/chat.spec.ts::it answers [chromium]", why="passed on Playwright's retry")
     _red(_judge([_record(ONE, test, rerun_exit=1)]), "not passed by a rerun alone")
+
+
+# ── An end-to-end test, rerun alone by run-job ───────────────────────────────────────────────
+
+E2E_TEST = "web/e2e/chat.spec.ts::it answers [chromium]"
+#: run-job's alone rerun of it (tools/ci/jobs.py, diagnose_playwright).
+ALONE = [
+    "npx",
+    "playwright",
+    "test",
+    *verdict.E2E_ALONE,
+    "--project=chromium",
+    "--output=/tmp/rerun/test-results",
+    "e2e/chat.spec.ts:7",
+]
+#: The e2e-shard step's own argv, which a record of Playwright's own retry names.
+E2E_STEP = ["npx", "playwright", "test", "--project=smoke", "--project=chromium", "--shard=1/2"]
+
+
+def test_an_end_to_end_flake_rerun_alone_is_green_and_named() -> None:
+    judged = _judge([_record(ONE, _test(E2E_TEST), argv=ALONE)])
+    assert judged.green, judged.flake_rule
+    assert [(t.key, t.test) for t in judged.flakes] == [(ONE, E2E_TEST)]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param([a for a in ALONE if a != "--workers=1"], id="no --workers=1"),
+        pytest.param([a for a in ALONE if a != "--retries=0"], id="no --retries=0"),
+        pytest.param([*ALONE[:3], "--workers", "1", *ALONE[4:]], id="--workers spelled apart"),
+        pytest.param([*ALONE, "--workers=3"], id="a second --workers"),
+        pytest.param([*ALONE, "-j2"], id="-j"),
+        pytest.param([*ALONE, "--retries=1"], id="a second --retries"),
+        pytest.param([*ALONE, "--repeat-each=2"], id="--repeat-each"),
+        pytest.param(E2E_STEP, id="the step's own argv, exit 0"),
+        pytest.param(RERUN, id="a pytest rerun's argv"),
+    ],
+)
+def test_an_end_to_end_flake_whose_rerun_did_not_run_alone_is_red(argv: list[str]) -> None:
+    _red(_judge([_record(ONE, _test(E2E_TEST), argv=argv)]), "was not rerun alone")
+
+
+def test_playwrights_own_retry_with_no_alone_rerun_is_red() -> None:
+    """A record of Playwright's own retry names the step's own argv and its exit, 1."""
+    test = _test(E2E_TEST, why="passed on Playwright's one retry, in a new worker")
+    _red(_judge([_record(ONE, test, argv=E2E_STEP, rerun_exit=1)]), "not passed by a rerun alone")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("web/e2e/chat.spec.ts", id="its own spec"),
+        pytest.param("web/e2e/helpers.ts", id="a helper"),
+        pytest.param("web/e2e/fixtures/home/config.json", id="a fixture"),
+        pytest.param("web/e2e/isolation.ts", id="the isolation rules"),
+        pytest.param("web/e2e/on-shard.mjs", id="a runner"),
+        pytest.param("web/playwright.config.ts", id="the configuration and its gateway launcher"),
+        pytest.param("scripts/spa_dist_freshness.py", id="the preview's first script"),
+    ],
+)
+def test_an_end_to_end_flake_whose_run_reads_a_changed_file_is_red(path: str) -> None:
+    judged = _judge([_record(ONE, _test(E2E_TEST), argv=ALONE)], changed=CHANGED | {path})
+    _red(judged, path)
+
+
+def test_an_end_to_end_flake_beside_another_changed_spec_still_passes() -> None:
+    changed = CHANGED | {"web/e2e/settings.spec.ts"}
+    assert _judge([_record(ONE, _test(E2E_TEST), argv=ALONE)], changed=changed).green
 
 
 def test_a_job_that_failed_in_two_steps_is_red() -> None:

@@ -381,7 +381,8 @@ export default defineConfig({
   // A retried pass is reported as `flaky` in the JSON and blob reports, never as a plain pass.
   // One retry, in a new worker process, under the same test timeout: it only classifies. Under CI
   // a test that passes only on its retry fails the run (`failOnFlakyTests`), and `tools/ci
-  // run-job` records it as a flake from the JSON report (tools/ci/jobs.py, classify_playwright).
+  // run-job` runs it once more, alone (`--workers=1 --retries=0`), and records it as a flake only
+  // if it passes there (tools/ci/jobs.py, diagnose_playwright).
   retries: process.env.CI ? 1 : 0,
   failOnFlakyTests: !!process.env.CI,
   // The isolation reporter is FIRST: it annotates every test with its isolation mode before the
