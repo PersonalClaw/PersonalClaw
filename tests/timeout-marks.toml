@@ -228,6 +228,11 @@ cap = 60
 reason = "the error-envelope census over every route, then a planted and a fixed payload; 26 s on CI at worst (a merge leg, 2026-10-24)"
 
 [[mark]]
+site = "tests/test_a_child_a_test_starts_imports_the_tree_under_test.py::test_a_run_with_another_personalclaw_on_its_path_still_hands_its_children_this_tree"
+cap = 50
+reason = "a child pytest run with another personalclaw on its path, as the gateway-address proof runs one (23 s on CI at worst, breadth's night, 2026-10-24)"
+
+[[mark]]
 site = "tests/test_a_headless_gateway_serves_its_channels.py::test_a_headless_gateway_answers_its_channel_through_the_door"
 cap = 50
 reason = "a real gateway started in a child process and driven over its channel; 24 s on CI at worst (breadth's coverage leg, 2026-10-24)"

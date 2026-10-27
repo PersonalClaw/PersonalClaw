@@ -138,6 +138,14 @@ if not _IMPORTED_PACKAGE_ROOT.is_relative_to(_INVOKING_REPO_ROOT):
         f"  invoking repository root: {_INVOKING_REPO_ROOT}"
     )
 
+# ── A test's child imports the tree under test ──────────────────────────
+# The rail above holds this process to this checkout's `personalclaw`, but a child a test starts
+# does not inherit pytest's path: it imports whatever the venv's editable install points at, which
+# can be another clone. From here this checkout's `src` is first on the run's PYTHONPATH, so every
+# child started with the run's environment imports the same tree this process does. Mechanism:
+# tests/tree_under_test.py. Proof: tests/test_a_child_a_test_starts_imports_the_tree_under_test.py.
+importlib.import_module("tree_under_test").put_first(os.environ)
+
 # ── The machine's keychain stays out ────────────────────────────────────
 # The OS keychain is the machine's, not a home's. A scratch home keeps the store to that home's
 # own namespace there, but the store still writes the machine's keychain and deletes from it
