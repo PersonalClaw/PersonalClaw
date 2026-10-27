@@ -154,6 +154,28 @@ class _ProcThreadInfo(ctypes.Structure):
     )
 
 
+class _ThreadCountsAtALevel(ctypes.Structure):
+    """``struct proc_threadcounts_data`` from macOS's ``<sys/proc_info.h>``: a thread's counts on
+    one kind of core."""
+
+    _fields_ = [
+        (name, ctypes.c_uint64)
+        for name in "instructions cycles user_time_mach system_time_mach energy_nj".split()
+    ]
+
+
+class _ProcThreadCounts(ctypes.Structure):
+    """``struct proc_threadcounts`` (``PROC_PIDTHREADCOUNTS``): a thread's counts on each kind of
+    core, as many as the call says it wrote."""
+
+    _fields_ = [
+        ("ptc_len", ctypes.c_uint16),
+        ("ptc_reserved0", ctypes.c_uint16),
+        ("ptc_reserved1", ctypes.c_uint32),
+        ("ptc_counts", _ThreadCountsAtALevel * 8),
+    ]
+
+
 class _ProcTaskInfo(ctypes.Structure):
     """``struct proc_taskinfo`` from macOS's ``<sys/proc_info.h>``. Its totals count every thread
     the process has had, its ``threads`` fields only the ones it has: the difference is the CPU
@@ -176,6 +198,14 @@ class _ProcTaskInfo(ctypes.Structure):
 #: macOS run states (``<mach/thread_info.h>``) in which a thread is neither running nor ready to
 #: run: stopped, waiting, waiting uninterruptibly, halted.
 _NOT_READY = frozenset({2, 3, 4, 5})
+#: Those run states by name, and running or ready (1), for the probe's report.
+_STATES = {
+    1: "running or ready",
+    2: "stopped",
+    3: "waiting",
+    4: "waiting uninterruptibly",
+    5: "halted",
+}
 
 
 class _NoCpu:
@@ -199,10 +229,16 @@ class _NoCpu:
     :meth:`waited` counts for the loop thread only the ready time no other thread can account
     for. Any other thread that ran, or was ready, between two :meth:`snapshot` calls could have
     been ready for all of that time less its CPU, and that much is taken off the process's count,
-    which stops at 0. A thread neither running nor ready at either end that used no CPU between
-    accounts for nothing, since to be ready it would have had to run before it could wait again.
-    So a thread beside the loop that waits for a CPU is never counted as the loop's wait, and a
-    step or answer beside such a thread is counted in wall time.
+    which stops at 0. A thread neither running nor ready at either end that ran no instruction
+    between accounts for nothing, since to be ready it would have had to run before it could wait
+    again. Whether it ran is read from its instruction count (``PROC_PIDTHREADCOUNTS``), which any
+    run moves, and not from its CPU time, which macOS gives in whole microseconds: a thread woken
+    in a crowd, which waits for a CPU and then runs under a microsecond before it waits again,
+    reads as one that never ran. On a CI runner two such threads were taken for idle beside a
+    step of 1.474 s, the process's 1.793 s ready was all left out as the loop's, and the step's
+    0.2 s block with it (run 40496838581). A thread whose count cannot be read is taken to have
+    run. So a thread beside the loop that waits for a CPU is never counted as the loop's wait,
+    and a step or answer beside such a thread is counted in wall time.
 
     A thread that started and ended between two snapshots is in neither list, but its ready time
     is in the process's count. A blocking read in the crowded plant is one: its writer thread
@@ -280,14 +316,23 @@ class _NoCpu:
             return SimpleNamespace(
                 at=at, ready_at=at, ready=0.0, threads={}, ended=0, ending=False, done=at
             )
-        pid, info, threads = os.getpid(), _ProcThreadInfo(), {}
+        pid, info, counts, threads = os.getpid(), _ProcThreadInfo(), _ProcThreadCounts(), {}
         listed = self._libsystem.proc_pidinfo(pid, 28, 0, self._ids, ctypes.sizeof(self._ids))
         ids = self._ids[: max(0, listed) // 8]
         for thread in ids:  # PROC_PIDLISTTHREADIDS
             size = ctypes.sizeof(info)  # PROC_PIDTHREADID64INFO
             if self._libsystem.proc_pidinfo(pid, 15, thread, ctypes.byref(info), size) == size:
                 used = (info.pth_user_time + info.pth_system_time) / 1e9
-                threads[thread] = (used, info.pth_run_state)
+                wrote = self._libsystem.proc_pidinfo(  # PROC_PIDTHREADCOUNTS
+                    pid, 34, thread, ctypes.byref(counts), ctypes.sizeof(counts)
+                )
+                levels = (wrote - 8) // ctypes.sizeof(_ThreadCountsAtALevel) if wrote > 8 else 0
+                ran = (
+                    sum(counts.ptc_counts[level].instructions for level in range(levels))
+                    if levels
+                    else None
+                )
+                threads[thread] = (used, info.pth_run_state, ran)
         usage, task = _RusageInfoV4(), _ProcTaskInfo()
         ready_at = time.monotonic()  # the commpage's clock: no call to the kernel
         if self._libsystem.proc_pid_rusage(pid, 4, ctypes.byref(usage)) != 0:
@@ -321,17 +366,32 @@ class _NoCpu:
             )
         if then.ended != first.ended or first.ending or then.ending:
             return 0.0  # a thread came and went, or was ending or starting, unread at either end
+        others = sum(row[-1] for row in self.accounts(first, then, threads))
+        return max(0.0, then.ready - first.ready - others)
+
+    def accounts(
+        self, first: SimpleNamespace, then: SimpleNamespace, threads: set[int]
+    ) -> list[tuple[int, float, int | None, int | None, float]]:
+        """macOS: each thread not in ``threads`` between two snapshots, as ``(id, CPU it used,
+        its run state at the first and at the second, the instructions it ran or None where they
+        could not be read, the ready time it could account for)``. A thread listed at one end only
+        used no CPU the probe can read. Elsewhere, nothing."""
+        if not self.source.startswith("macOS"):
+            return []
         between = then.done - first.at
-        others = 0.0
-        for thread in first.threads.keys() | then.threads.keys():
+        rows = []
+        for thread in sorted(first.threads.keys() | then.threads.keys()):
             if thread in threads:
                 continue
             was, now = first.threads.get(thread), then.threads.get(thread)
-            if was and now and now[0] == was[0] and {was[1], now[1]} <= _NOT_READY:
-                continue  # neither running nor ready at either end, and it never ran between
             used = now[0] - was[0] if was and now else 0.0
-            others += max(0.0, between - used)
-        return max(0.0, then.ready - first.ready - others)
+            ran = now[2] - was[2] if was and now and None not in (was[2], now[2]) else None
+            if ran == 0 and {was[1], now[1]} <= _NOT_READY:
+                credited = 0.0  # neither running nor ready at either end, and it never ran between
+            else:
+                credited = max(0.0, between - used)
+            rows.append((thread, used, was and was[1], now and now[1], ran, credited))
+        return rows
 
 
 class _ThreadCounts:
@@ -441,7 +501,7 @@ class _Window:
         # from just before its call that reads the count.
         self.began = time.monotonic()
         self.own = no_cpu.loop_waited()
-        self.first = None
+        self.first = self.then = None
         if self.own is None:
             self.first = no_cpu.snapshot()
             self.began = self.first.ready_at
@@ -460,7 +520,7 @@ class _Window:
             waited = max(0.0, now - self.own) if now is not None else 0.0
         elif time.monotonic() - self.began >= counted_from:
             # macOS's second snapshot: the window ends just before its call that reads the count.
-            then = self.no_cpu.snapshot()
+            self.then = then = self.no_cpu.snapshot()
             ended = then.ready_at
             waited = self.no_cpu.waited(self.first, then, self.threads)
         else:
@@ -504,6 +564,9 @@ class _Probe:
         #: thread's counts did over it (:class:`_ThreadCounts`; None off Linux).
         self.worst_step_own: tuple[float, float, float] = (0.0, 0.0, 0.0)
         self.worst_step_counts: tuple[int, int, int] | None = None
+        #: macOS: the longest step's two snapshots' process count of time ready, and each other
+        #: thread's CPU, run states and credit over it (:meth:`_NoCpu.accounts`); None elsewhere.
+        self.worst_step_threads: tuple[float, list, dict[int, str]] | None = None
         self.worst_step_wall = 0.0
         self.worst_gap = 0.0
         self.slowest_answer = 0.0
@@ -550,6 +613,15 @@ class _Probe:
                             )
                         )
                         if counts is not None and after is not None
+                        else None
+                    )
+                    probe.worst_step_threads = (
+                        (
+                            window.then.ready - window.first.ready,
+                            probe.no_cpu.accounts(window.first, window.then, window.threads),
+                            {t.native_id: t.name for t in threading.enumerate() if t.native_id},
+                        )
+                        if window.first is not None and window.then is not None
                         else None
                     )
 
@@ -644,6 +716,16 @@ class _Probe:
                 f"  the loop thread over it: {major} major faults, {voluntary} voluntary and"
                 f" {involuntary} involuntary switches"
             )
+        if self.worst_step_threads is not None:
+            ready, rows, names = self.worst_step_threads
+            lines.append(f"  the process over it: {ready:.3f}s ready with no CPU")
+            lines += [
+                f"  {names.get(thread, f'thread {thread}')}: {used:.6f}s of CPU,"
+                f" {'unread' if ran is None else ran} instructions,"
+                f" {_STATES.get(was, 'unlisted')} then {_STATES.get(now, 'unlisted')},"
+                f" credited {credited:.3f}s"
+                for thread, used, was, now, ran, credited in rows
+            ]
         lines += [
             f"the slowest health check: {self.slowest_answer:.3f}s counted, of"
             f" {self.slowest_answer_wall:.3f}s in wall time ({self.answered_during} answered"
@@ -2062,6 +2144,64 @@ def test_a_thread_ending_at_a_snapshot_has_its_window_counted_in_wall_time(endin
     # window is still counted in wall time.
     grown = SimpleNamespace(**{**vars(then), "ready": then.ready + 1.0})
     assert no_cpu.waited(first, grown, {threading.get_native_id()}) == 0.0
+
+
+def _snapshot(at: float, ready: float, threads: dict) -> SimpleNamespace:
+    """A macOS snapshot as :meth:`_NoCpu.snapshot` gives one, from its numbers."""
+    return SimpleNamespace(
+        at=at, ready_at=at, ready=ready, threads=threads, ended=0, ending=False, done=at
+    )
+
+
+def _macos_no_cpu() -> _NoCpu:
+    """A :class:`_NoCpu` that reads snapshots as macOS's, on any host: :meth:`_NoCpu.waited` and
+    :meth:`_NoCpu.accounts` read nothing but the snapshots they are given."""
+    no_cpu = _NoCpu()
+    no_cpu.source = "macOS: the process's, less what its other threads could account for"
+    return no_cpu
+
+
+#: Run 40496838581's longest step on a CI runner: 1.474 s in wall time and no CPU, with the
+#: process 1.793 s ready with no CPU over it, and a block of 0.2 s inside it.
+_CI_STEP, _CI_READY = 1.474, 1.793
+
+
+@pytest.mark.parametrize(
+    "ran", [(400, 300, 200), (None, None, None)], ids=["under a microsecond", "counts unread"]
+)
+def test_a_thread_that_ran_beside_a_step_is_not_taken_for_idle_for_its_cpu_time(ran):
+    """🔴 Red before (a thread's run was read from its CPU time): the CI step's two other threads
+    were waiting at both ends with their CPU times, which macOS gives in whole microseconds,
+    unchanged, and were taken for idle though each had run. The process's whole 1.793 s ready was
+    left out as the loop's, and the step was counted 0.000 s, its 0.2 s block lost. Each ran a few
+    hundred instructions between, so each could account for the window; a thread whose count could
+    not be read is taken to have run."""
+    loop, beside, worker = 1, 2, 3
+    start = None if ran[0] is None else 0
+    first = _snapshot(
+        0.0, 0.0, {loop: (0.0, 1, start), beside: (0.5, 3, start), worker: (0.1, 3, start)}
+    )
+    then = _snapshot(
+        _CI_STEP,
+        _CI_READY,
+        {loop: (0.0, 1, ran[0]), beside: (0.5, 3, ran[1]), worker: (0.1, 3, ran[2])},
+    )
+    counted = max(_CI_STEP - _macos_no_cpu().waited(first, then, {loop}), 0.0)
+    assert counted >= _BOUND, f"the step was counted {counted:.3f}s of its {_CI_STEP}s"
+
+
+def test_threads_that_ran_nothing_and_waited_at_both_ends_account_for_nothing():
+    """The rule's other side, which keeps what the probe leaves out on macOS: other threads that
+    ran no instruction between and were waiting at both ends could not have been ready, so the
+    process's time ready over the step is the loop's own wait for a CPU, and all of it is left
+    out."""
+    loop, beside, worker = 1, 2, 3
+    idle = {beside: (0.5, 3, 1_000), worker: (0.1, 3, 2_000)}
+    first = _snapshot(0.0, 0.0, {loop: (0.0, 1, 0), **idle})
+    then = _snapshot(_CI_STEP, 1.2, {loop: (0.0, 1, 900), **idle})
+    no_cpu = _macos_no_cpu()
+    assert no_cpu.waited(first, then, {loop}) == pytest.approx(1.2)
+    assert [row[-1] for row in no_cpu.accounts(first, then, {loop})] == [0.0, 0.0]
 
 
 # ── what the upload's requests read and write on disk, they do off the loop ─────────────────
