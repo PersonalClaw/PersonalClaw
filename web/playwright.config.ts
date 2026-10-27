@@ -132,7 +132,7 @@ export const SCRIPTED = {
 //    _dev_user_middleware, so any a11y/CSRF-adjacent conclusion drawn under it
 //    would not describe a real user. The token flow below is the real one.
 //  - A MODEL, and still no credential and still no network: the two scripted-provider
-//    env vars below. config.json holds a user name and two switches (the seed below)
+//    env vars below. config.json holds a user name and three switches (the seed below)
 //    and NO model entry, on purpose: `registry.py`'s `register_scripted_provider_type()`
 //    synthesizes its own entry ("Scripted"/scripted-1, credential=None) and registers
 //    it BEFORE the config-derived ones so it wins the implicit
@@ -154,8 +154,10 @@ const GATEWAY_COMMAND = [
   // thing. The absolute path also means the gateway resolves it after any chdir.
   `S="$PWD/${SCRIPTED.scriptPath}"`,
   `[ -f "$S" ] || { echo "PERSONALCLAW_E2E_FATAL: scripted-provider script not found at $S (cwd $PWD)" >&2; exit 1; }`,
-  // The home starts from `e2e/fixtures/home/`: config.json (the user name, and the two settings
-  // that keep the identity report and self-remediation off) and triggers.json (every system
+  // The home starts from `e2e/fixtures/home/`: config.json (the user name, the two settings
+  // that keep the identity report and self-remediation off, and automatic update checks off, so
+  // the gateway never runs a `git fetch` of its checkout on its own, whose timeout would land in
+  // Settings › Diagnostics' log panel) and triggers.json (every system
   // trigger the boot creates, switched off). The gateway runs its automations, so without the
   // seed the minutely heartbeat queue fires during the run and the dashboard's schedule card
   // changes state with the run's age. `tests/rails/test_e2e_home_seed_matches_the_boot_tree.py`

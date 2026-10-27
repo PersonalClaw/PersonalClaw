@@ -71,7 +71,7 @@
   - button "Open Backups settings"
   - text: Backups # snapshot kept Nightly + hourly, automatic
   - button "Open Updates settings"
-  - text: Updates #.#.# <update status> Auto-update
+  - text: Updates #.#.# Automatic update checks are off Auto-update
   - switch "Auto-update"
   - heading "Workspace" [level=#]
   - button "Open Inbox settings"
