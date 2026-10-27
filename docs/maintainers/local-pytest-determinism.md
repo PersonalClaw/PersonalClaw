@@ -26,7 +26,7 @@ The worker cap resolves `auto` to three workers for these measurements. A bare
 
 CI does not run the same shape. The pull-request gate's `python-suite` (Ubuntu,
 Python 3.12) and `python-suite-macos` (macOS 26, Python 3.13) jobs in `merge.yml`
-partition the suite into three shards of whole test files, planned from
+partition the suite into shards of whole test files (three on Ubuntu, five on macOS), planned from
 recorded per-file durations (`python -m tools.ci shards`), measure no coverage,
 and cap macOS shards at two xdist workers. The nightly `breadth.yml` runs
 the suite the same way: four shards on Ubuntu and arm64, and six on macOS. Every

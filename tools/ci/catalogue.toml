@@ -133,10 +133,12 @@ command = [
   { argv = ["uv", "run", "pytest", "-n", "auto", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-shard-{shard}.xml"] },
 ]
 
-# The suite on macOS in three shards: one pull request's merge-tier run holds 3 macOS runners of
-# the account's 5, and pull requests run one at a time (#3915). Each shard runs two workers, held
-# there by a macOS runner's memory: at three, its 7 GiB with no swap ran under real pressure
-# (#3923). The contract holds it to three shards of at most two workers.
+# The suite on macOS in five shards: one pull request's merge-tier run holds every one of the
+# account's 5 macOS runners, and pull requests run one at a time. At three shards each ran 14 to 25
+# minutes, the longest leg of every merge (#3923). Breadth's macOS jobs hold at most 3 and queue
+# behind a run that holds the rest. Each shard runs two workers, held there by a macOS runner's
+# memory: at three, its 7 GiB with no swap ran under real pressure (#3923). The contract holds it
+# to as many shards as the account has macOS runners, of at most two workers.
 [[job]]
 id = "python-suite-macos"
 tiers = ["merge"]
@@ -149,11 +151,11 @@ platform = "macos-26"
 python = "3.13.16"
 timeout_min = 50
 workers = 2
-shards = 3
+shards = 5
 env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1", PERSONALCLAW_TEST_CONTAINER_RUNTIME = "1" }
 junit = ["reports/junit-test-macos-{shard}.xml"]
 command = [
-  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-macos", "--shard", "{shard}/3", "--out", "{runner_temp}/shard.txt"] },
+  { argv = ["uv", "run", "python", "-m", "tools.ci", "shards", "list", "--plan", "{runner_temp}/shard-plan/plan.json", "--leg", "test-macos", "--shard", "{shard}/5", "--out", "{runner_temp}/shard.txt"] },
   { argv = ["uv", "run", "pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list", "{runner_temp}/shard.txt", "--junitxml=reports/junit-test-macos-{shard}.xml"] },
 ]
 
