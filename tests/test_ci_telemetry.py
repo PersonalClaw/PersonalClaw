@@ -829,7 +829,7 @@ def test_the_run_line_maps_each_report_to_the_cpu_model_it_ran_on(
     gh.artifacts.append(gh._artifact(13, "junit-test-shard-2", _junit(PASSED)))
     _, lines = _collect(tmp_path, monkeypatch, gh)
     head = lines[0]
-    assert head["version"] >= 3 and telemetry.VERSION == 5
+    assert head["version"] >= 3 and telemetry.VERSION == 6
     assert head["cpus"] == {"junit-test-shard-1": "EPYC 7763", "junit-test-shard-2": None}
     assert "cpus" in telemetry.RUN_FIELDS
     for line in lines[1:]:
@@ -852,12 +852,14 @@ def test_a_report_whose_processes_disagree_on_the_cpu_model_writes_nothing(
     assert code == 1 and lines == []
 
 
-def test_the_schema_is_version_five_and_every_reader_accepts_versions_one_to_four() -> None:
-    """Version 3 only added the run line's ``cpus``, version 4 only the record lines, and version
-    5 only the run line's ``tested_by``, so a history kept from before any of them stays readable
-    for as long as it is kept, and nothing newer is guessed at."""
-    assert telemetry.VERSION == 5
-    assert telemetry.READS == frozenset({1, 2, 3, 4, 5})
+def test_the_schema_is_version_six_and_every_reader_accepts_versions_one_to_five() -> None:
+    """Version 3 only added the run line's ``cpus``, version 4 only the record lines, version 5
+    only the run line's ``tested_by``, and version 6 only the tested run's record lines, so a
+    history kept from before any of them stays readable for as long as it is kept, and nothing
+    newer is guessed at."""
+    assert telemetry.VERSION == 6
+    assert telemetry.READS == frozenset({1, 2, 3, 4, 5, 6})
+    assert telemetry.TESTED_RECORDS_SINCE == telemetry.VERSION
     assert "cpus" in telemetry.RUN_FIELDS and "records" not in telemetry.RUN_FIELDS
     assert telemetry.RUN_FIELDS[-1] == "tested_by"
     assert telemetry.RECORD_FIELDS == ("kind", "key", "result", "rerun", "quarantined")
@@ -1664,6 +1666,88 @@ def test_the_planner_reads_a_tested_push_s_suite(tmp_path: Path, monkeypatch) ->
 
     _collect(tmp_path, monkeypatch, _tested(FakeGh()))
     [written] = (tmp_path / "history").glob("*.jsonl")
+    leg = shards.Leg.parse("test-macos:main-push:junit-test-macos-:2")
+    history = shards.history_seconds(
+        _zip(written.name, written.read_bytes()), leg, ["tests/test_m.py"], run=RUN
+    )
+    assert history.seconds == {
+        ("macOS-26-arm64", 2): {"junit-test-macos-1": {"tests/test_m.py": 4.0}}
+    }
+
+
+def _their_record(gh: FakeGh, ident: int, key: str, text: str, **members: bytes) -> None:
+    """A job record the tested run's first attempt uploaded, as ``run-job`` names it."""
+    from tools.ci import verdict
+
+    data = _zip_members(members or {"record.json": text.encode()})
+    gh.others[OTHER]["artifacts"].append(
+        {
+            "id": ident,
+            "name": verdict.record_artifact(key, run_id=OTHER, attempt=1),
+            "size_in_bytes": len(data),
+            "expired": False,
+            "created_at": "2026-10-18T08:35:00Z",
+            "_data": data,
+        }
+    )
+
+
+E2E_FLAKE = "web/e2e/chat.spec.ts::it answers [chromium]"
+
+
+def test_a_tested_push_s_history_holds_the_pull_request_run_s_records(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Version 6: the flakes the merge verdict passed on the pull request run, Playwright's too,
+    which no junit report carries, are in main's history beside the push's own records."""
+    gh = _tested(FakeGh())
+    _record_artifact(gh, 21, "lint", _job_record("lint", result="success"))
+    _their_record(
+        gh,
+        62,
+        "e2e-shard (1/2)",
+        _job_record("e2e-shard (1/2)", tests=((E2E_FLAKE, "flake"),), run_id=OTHER),
+    )
+    _their_record(gh, 63, "suite (1/2)", _job_record("suite (1/2)", run_id=OTHER))
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0
+    assert lines[0]["version"] == 6 and lines[0]["tested_by"]["run_id"] == OTHER
+    assert [(r["key"], r["result"]) for r in _record_lines(lines)] == [("lint", "success")]
+    tested = [line for line in lines if line["kind"] == telemetry.TESTED_RECORD]
+    assert [set(t) for t in tested] == [set(telemetry.TESTED_RECORD_FIELDS)] * 2
+    assert [(t["run_id"], t["attempt"], t["key"]) for t in tested] == [
+        (OTHER, 1, "e2e-shard (1/2)"),
+        (OTHER, 1, "suite (1/2)"),
+    ]
+    assert tested[0]["rerun"] == [{"test": E2E_FLAKE, "rerun_result": "flake"}]
+    order = ["run", "record", telemetry.TESTED_RECORD, "test"]
+    kinds = [line["kind"] for line in lines]
+    assert kinds == sorted(kinds, key=order.index), "the run, its records, the tested run's, tests"
+
+
+def test_a_tested_run_whose_record_cannot_be_read_keeps_neither_its_reports_nor_its_records(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    gh = _tested(FakeGh())
+    _their_record(gh, 62, "e2e-shard (1/2)", "", **{"a.json": b"{}", "b.json": b"{}"})
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0
+    assert lines[0]["tested_by"] is None
+    assert not [line for line in lines if line["kind"] == telemetry.TESTED_RECORD]
+    assert not [line for line in lines if line["kind"] == "test" and line["run_id"] == OTHER]
+    assert "the tested pull request run's reports are not read" in capsys.readouterr().out
+
+
+def test_the_planner_reads_a_version_6_history_with_tested_records(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from tools.ci import shards
+
+    gh = _tested(FakeGh())
+    _their_record(gh, 62, "suite (1/2)", _job_record("suite (1/2)", run_id=OTHER))
+    _collect(tmp_path, monkeypatch, gh)
+    [written] = (tmp_path / "history").glob("*.jsonl")
+    assert '"kind": "tested_record"' in written.read_text()
     leg = shards.Leg.parse("test-macos:main-push:junit-test-macos-:2")
     history = shards.history_seconds(
         _zip(written.name, written.read_bytes()), leg, ["tests/test_m.py"], run=RUN

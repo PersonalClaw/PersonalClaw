@@ -553,6 +553,71 @@ def test_a_record_line_in_a_history_of_an_older_version_fails_the_report(
     assert "history-1-1.jsonl: a line after the first is not a test line" in capsys.readouterr().out
 
 
+def _tested(*rerun: tuple[str, str | None], run_id: int = 600, attempt: int = 1) -> dict:
+    """A tested pull request run's record line (version 6), as the collector writes it."""
+    return dict(
+        _job("e2e-shard (1/2)", *rerun),
+        kind=telemetry.TESTED_RECORD,
+        run_id=run_id,
+        attempt=attempt,
+    )
+
+
+def test_a_version_6_history_with_a_tested_runs_records_is_read_and_counted_in_no_figure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    folder = tmp_path / "h"
+    _write(
+        folder,
+        1,
+        1,
+        0,
+        {"t::a": ("passed", 1.0)},
+        records=[_job("suite", (FLAKY, "flake"))],
+        extra=[_tested(("web/e2e/chat.spec.ts::it answers [chromium]", "flake"))],
+    )
+    code, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 0
+    assert set(_diagnosed(data)) == {
+        FLAKY
+    }, "the pull request run's records are its, not the push's"
+
+
+def test_a_version_5_history_is_still_read(tmp_path: Path, monkeypatch) -> None:
+    folder = tmp_path / "h"
+    _write(
+        folder,
+        1,
+        1,
+        0,
+        {"t::a": ("passed", 1.0)},
+        records=[_job("suite", (FLAKY, "flake"))],
+        version=5,
+    )
+    code, data, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 0 and set(_diagnosed(data)) == {FLAKY}
+
+
+@pytest.mark.parametrize(
+    ("version", "line", "said"),
+    [
+        (5, _tested(), "a line after the first is not a test line"),
+        (6, _tested(attempt=2), "not of its run's first attempt"),
+        (6, {**_tested(), "why": "a log line"}, "does not hold its fields"),
+        (6, {**_tested(), "run_id": "600"}, "names no run"),
+    ],
+    ids=["in version 5", "a later attempt", "another field", "no run"],
+)
+def test_a_tested_record_line_out_of_its_place_or_shape_fails_the_report(
+    tmp_path: Path, monkeypatch, capsys, version: int, line: dict, said: str
+) -> None:
+    folder = tmp_path / "h"
+    _write(folder, 1, 1, 0, {}, extra=[line], version=version)
+    code, _, _ = _report(folder, monkeypatch, tmp_path)
+    assert code == 2
+    assert said in capsys.readouterr().out
+
+
 def test_a_later_attempts_records_not_in_their_shape_fail_the_report_too(
     tmp_path: Path, monkeypatch
 ) -> None:

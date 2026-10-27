@@ -1807,9 +1807,13 @@ the shard planner and the weekly report read it.
   this repository, on that head. So a run on an older head, a fork's run, and an unmerged pull
   request's run are never read. Its test lines carry its own run id, attempt and head, for each
   report the push did not upload itself, and the run line's `tested_by` names the run, the pull
-  request, the head and the tree. It's null when no such run was found, or its reports could not
-  be read; the job's log says which. The collector reads pull requests and their events for it,
-  as `tree-check` does.
+  request, the head and the tree. Each job record that run's first attempt uploaded is a
+  `tested_record` line after the push's own record lines: the run and attempt it came from, then
+  a record line's fields. So a flake the merge verdict passed on that run, Playwright's too, which
+  no junit report carries, is in main's history. It's null, with neither its test lines nor its
+  record lines kept, when no such run was found, or its reports or its records could not be read;
+  the job's log says which. The collector reads pull requests and their events for it, as
+  `tree-check` does.
 - **A first result is never replaced.** Each attempt is collected on its own: from that
   attempt's own start, end and conclusion, its own jobs, and only the reports uploaded between
   its start and its end. So attempt 1's file keeps the first result even when it is collected
@@ -1823,10 +1827,13 @@ the shard planner and the weekly report read it.
   `machdep.cpu.brand_string` sysctl), and the run line's `cpus` maps each report to it (null
   where none was recorded), which the planner weighs seconds by.
 - **Versions.** Version 3 added the run line's `cpus` and nothing else, version 4 the job
-  record lines and nothing else, and version 5 the run line's `tested_by` and nothing else. The
-  planner, the report and the parity check read versions 1 to 5, so a history kept from before
-  reads as one whose reports recorded no CPU model, whose run carried no job records and that no
-  pull request run's suite filled in, and they refuse anything newer.
+  record lines and nothing else, version 5 the run line's `tested_by` and nothing else, and
+  version 6 the tested run's `tested_record` lines and nothing else. The planner, the report and
+  the parity check read versions 1 to 6, so a history kept from before reads as one whose reports
+  recorded no CPU model, whose run carried no job records and that no pull request run's suite or
+  records filled in, and they refuse anything newer. The planner and the parity check read test
+  lines alone; the report checks a `tested_record` line's shape and counts it in no figure, and
+  refuses one in a history before version 6.
 - **Artifacts are data.** An archive over 8 MiB (128 MiB for a `reports-*` one) is never
   downloaded, a report is read in memory up to 8 MiB, a report that is not UTF-8 or declares a
   DOCTYPE anywhere is refused, and nothing is extracted or run. A report that cannot be read fails the collection and writes nothing. The

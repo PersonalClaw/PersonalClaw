@@ -80,6 +80,15 @@ that record too) leaves its run with no history. Version 4 adds the record lines
 nothing else: the shard planner and the parity check read test lines alone, and every reader takes
 an older history as one that carries no records.
 
+**The tested run's records** (version 6). A tested push's history also holds the job records that
+pull request run's first attempt uploaded, each a ``tested_record`` line after the push's own
+record lines: the run and attempt it came from, then a record line's fields. So a flake the merge
+verdict passed on that run, Playwright's included, which no junit report carries, is in main's
+history as the push's own flakes are. The run's reports and its records are read together: when
+either cannot be read, neither is kept and ``tested_by`` is null. Version 6 adds those lines and
+changes nothing else, so every reader takes a version 1 to 5 history as one that holds none, and
+refuses a ``tested_record`` line in one.
+
 **Artifacts are data.** Their content is never executed or extracted to disk: an archive larger
 than ``MAX_ARCHIVE_BYTES`` is never downloaded, a report is read in memory up to
 ``MAX_JUNIT_BYTES``, a report that is not UTF-8 is refused, and so is one that declares a
@@ -122,11 +131,12 @@ from typing import Any
 from . import tree_tested, verdict, workflows
 
 SCHEMA = "personalclaw-ci-telemetry"
-VERSION = 5
-#: The versions a reader takes: this one; version 4, whose run line lacks ``tested_by``; version
-#: 3, which lacks ``records`` too; version 2, which lacks ``cpus`` too; and version 1, whose test
-#: lines also lack ``environment_failure``.
-READS = frozenset({1, 2, 3, 4, VERSION})
+VERSION = 6
+#: The versions a reader takes: this one; version 5, which holds no ``tested_record`` line;
+#: version 4, whose run line lacks ``tested_by`` too; version 3, which lacks ``records`` too;
+#: version 2, which lacks ``cpus`` too; and version 1, whose test lines also lack
+#: ``environment_failure``.
+READS = frozenset({1, 2, 3, 4, 5, VERSION})
 
 #: The run line's fields, after ``kind``, ``schema`` and ``version``.
 RUN_FIELDS = (
@@ -155,6 +165,12 @@ RUN_FIELDS = (
 
 #: A record line's fields, exactly: one line per job record the attempt uploaded (version 4).
 RECORD_FIELDS = ("kind", "key", "result", "rerun", "quarantined")
+#: The kind of a tested run's record line (version 6), and its fields, exactly: the run and
+#: attempt it came from, then a record line's.
+TESTED_RECORD = "tested_record"
+TESTED_RECORD_FIELDS = ("kind", "run_id", "attempt", "key", "result", "rerun", "quarantined")
+#: The first schema version that holds :data:`TESTED_RECORD` lines.
+TESTED_RECORDS_SINCE = 6
 
 #: A test line's fields, exactly.
 TEST_FIELDS = (
@@ -882,15 +898,7 @@ def collect(
         if j.get("run_attempt", attempt) == attempt
     ]
     artifacts = _uploads(text, base, this, attempt, run_id)
-    uploaded: dict[str, Mapping[str, Any]] = {}
-    for artifact in sorted(artifacts, key=lambda a: int(a["id"])):
-        name = str(artifact.get("name", ""))
-        if name.startswith(RECORD_PREFIX) and name not in uploaded:
-            uploaded[name] = artifact
-    records: list[dict[str, Any]] = []
-    for name, artifact in sorted(uploaded.items()):
-        data = _download(binary, repo, artifact, MAX_RECORD_ARCHIVE_BYTES)
-        records.append(record_line(name, data, run_id, attempt))
+    records = _record_lines(binary, repo, artifacts, run_id, attempt)
     tests, cpus = _test_lines(
         binary,
         repo,
@@ -901,6 +909,7 @@ def collect(
         sha=run.get("head_sha"),
     )
     tested_by = None
+    tested: list[dict[str, Any]] = []
     if workflow == workflows.MERGE and run.get("event") == "push":
         found = _tested_run(text, repo, run)
         if isinstance(found, str):
@@ -911,16 +920,18 @@ def collect(
             other_base = f"repos/{repo}/actions/runs/{other_id}"
             try:
                 first = _json(text("api", f"{other_base}/attempts/1"), "its first attempt")
+                theirs = _uploads(text, other_base, first, 1, other_id)
                 more, more_cpus = _test_lines(
                     binary,
                     repo,
-                    _uploads(text, other_base, first, 1, other_id),
+                    theirs,
                     run_id=other_id,
                     attempt=1,
                     workflow=workflow,
                     sha=answer.head,
                     skip=frozenset(report.split("@", 1)[0] for report in cpus),
                 )
+                their_records = _record_lines(binary, repo, theirs, other_id, 1)
             except CollectError as err:
                 print(
                     "::warning title=the tested pull request run's reports are not read::"
@@ -929,6 +940,10 @@ def collect(
             else:
                 tests += more
                 cpus.update(more_cpus)
+                tested = [
+                    {**line, "kind": TESTED_RECORD, "run_id": other_id, "attempt": 1}
+                    for line in their_records
+                ]
                 tested_by = {
                     "run_id": other_id,
                     "attempt": 1,
@@ -973,7 +988,30 @@ def collect(
         "cpus": cpus,
         "tested_by": tested_by,
     }
-    return [head, *sorted(records, key=lambda r: str(r["key"])), *tests]
+    return [head, *sorted(records, key=lambda r: str(r["key"])), *tested, *tests]
+
+
+def _record_lines(
+    binary: Callable[..., bytes],
+    repo: str,
+    artifacts: Sequence[Mapping[str, Any]],
+    run_id: int,
+    attempt: int,
+) -> list[dict[str, Any]]:
+    """The record line of each job record *artifacts* hold, by key (:func:`record_line`): of two
+    with one name, the lower artifact id."""
+    uploaded: dict[str, Mapping[str, Any]] = {}
+    for artifact in sorted(artifacts, key=lambda a: int(a["id"])):
+        name = str(artifact.get("name", ""))
+        if name.startswith(RECORD_PREFIX) and name not in uploaded:
+            uploaded[name] = artifact
+    lines = [
+        record_line(
+            name, _download(binary, repo, artifact, MAX_RECORD_ARCHIVE_BYTES), run_id, attempt
+        )
+        for name, artifact in sorted(uploaded.items())
+    ]
+    return sorted(lines, key=lambda r: str(r["key"]))
 
 
 def history_text(lines: Sequence[Mapping[str, Any]]) -> str:
