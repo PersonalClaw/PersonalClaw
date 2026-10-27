@@ -101,8 +101,9 @@ const DEEPER = [
 ] as const
 
 /** Boot the shell fresh at `address`, as a copied link or a reload opens it, and wait until it has
- *  stopped moving. */
-async function open(address: string) {
+ *  stopped moving with its page drawn: `drawn` says when it is, by default once it shows its
+ *  heading. */
+async function open(address: string, drawn = () => !!heading()) {
   cleanup()
   history.replaceState(null, '', `#/${address}`)
   render(
@@ -112,17 +113,18 @@ async function open(address: string) {
       </IdentityProvider></PersonalityProvider></AppearanceProvider></ThemeProvider>
     </StrictMode>,
   )
-  await settle()
+  await settle(drawn)
 }
 
-/** Let the shell run until the address and the page have held still for a few ticks. */
-async function settle() {
+/** Let the shell run until its page is drawn, and the address and the page have held still for a
+ *  few ticks. */
+async function settle(drawn = () => !!heading()) {
   let last = ''
   let still = 0
   for (let tick = 0; tick < 600 && still < 3; tick++) {
     await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
-    const now = `${location.hash}|${document.querySelector('main h1')?.textContent ?? ''}`
-    still = now === last && now.split('|')[1] ? still + 1 : 0
+    const now = `${location.hash}|${heading()}`
+    still = now === last && drawn() ? still + 1 : 0
     last = now
   }
 }
@@ -187,7 +189,9 @@ describe('each tab of Capabilities is its own address', () => {
   })
 
   it('an installed app\'s own page stays outside Capabilities, at #/app/<name>', async () => {
-    await open('app/an-app')
+    // The app's page has no heading of its own while its manifest is on its way: it says what it
+    // is loading.
+    await open('app/an-app', () => !!screen.queryByText('Loading the app…'))
     expect(strip()).toBeNull()
     expect(location.hash).toBe('#/app/an-app')
   })

@@ -49,7 +49,7 @@ vi.mock('../pages/terminal/TerminalView', async () => {
   }
 })
 
-vi.mock('../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
+vi.mock('../lib/useChatSocket', () => import('../test/quietSocket'))
 
 /** The rows the shell hands ⌘K. */
 let rows: readonly Command[] = []
