@@ -41,7 +41,7 @@ NON_LEG_JOBS = frozenset({"resolve", "report"})
 
 #: The legs `report` reads back, by artifact name. A leg renamed in the workflow without this
 #: list following would read as "no verdict was written" on a release that was verified.
-REPORTED_LEGS = ("v1-wheel", "images", "desktop-linux", "desktop-mac")
+REPORTED_LEGS = ("v1-wheel", "images-amd64", "images-arm64", "desktop-linux", "desktop-mac")
 
 
 def _load(path: pathlib.Path) -> dict:

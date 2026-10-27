@@ -19,9 +19,17 @@
 #
 # WHAT AN INCOMPLETE LEG MEANS. `tools/ci/release_verdict.py` owns the vocabulary: passed, failed,
 # incomplete — each with its reason. A leg is `incomplete` when it cannot check what was never
-# published (v0.2.0 attaches no AppImage or deb and carries no SHA256SUMS yet — #4323), or
-# what it deliberately did not measure (the arm64 image, #4330 open question). The report job
-# treats incomplete exactly like failed: the release did not verify.
+# published (v0.2.0 attaches no AppImage or deb — #4323), or what it can no longer prove: the
+# digest-bound manifest the Release run attached is kept 30 days, and past that the downloaded
+# bytes have no reference to be held against. The report job treats incomplete exactly like
+# failed: the release did not verify.
+#
+# WHAT A DESKTOP LEG HOLDS THE BYTES AGAINST. Not `SHA256SUMS`, which releases never attached
+# (#4323): the digest-bound manifest of #3911 — the `release-manifest` artifact of the release's
+# own Release run — the same one `release.yml` compares PyPI against before publishing. Each
+# downloaded file's sha256 is compared with the digest the manifest records for it
+# (`tools/ci/release_manifest.py compare`), so a byte that differs from what the pipeline built
+# fails the leg, rather than the absence of a checksum file making it unverifiable.
 #
 # THE WHEEL LEG IS A CALL, NOT A SECOND COPY. It delegates to the walkthroughs' own V1 leg,
 # which gained `workflow_call` with a `version` input in #4564 — and that leg writes its own
@@ -102,7 +110,19 @@ jobs:
   # ── images: the gateway image, pulled the way a stranger pulls it ───────────────────────
   images:
     needs: [resolve]
-    runs-on: ubuntu-24.04
+    # Both architectures on a machine of their own (#4330's open question): an arm runner
+    # needs no QEMU, so the arm64 image is measured, not recorded as an unmeasured gap.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     # Sized above the pull plus the smoke, not near it (#3326 was the cost of the other
     # mistake). The published-image pull measured ~1m in walkthroughs runs.
     timeout-minutes: 30
@@ -117,46 +137,35 @@ jobs:
         id: check
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
-          docker pull --platform linux/amd64 \
+          docker pull --platform "$PLATFORM" \
             "ghcr.io/personalclaw/personalclaw-gateway:${VERSION}"
           python3 tools/docker_single_container_smoke.py \
             --image "ghcr.io/personalclaw/personalclaw-gateway:${VERSION}"
-      - name: Record what this leg deliberately did not measure
-        id: gap
-        # The arm64 image needs QEMU (slow) or an arm runner, and #4330 leaves the choice
-        # open until the smoke is measured under QEMU. An unmeasured architecture is
-        # recorded as incomplete — never dressed up as passed or skipped silently.
-        run: |
-          set -euo pipefail
-          echo "arm64: the image smoke needs QEMU or an arm runner; not measured yet (#4330)."
-          echo "gap=the arm64 image smoke needs QEMU or an arm runner and has not been measured yet (#4330)" >> "$GITHUB_OUTPUT"
       - name: Write the leg's verdict
         if: always()
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
+          ARCH: ${{ matrix.arch }}
           CHECK_OUTCOME: ${{ steps.check.outcome }}
-          GAP: ${{ steps.gap.outputs.gap }}
         run: |
           set -euo pipefail
           if [ "$CHECK_OUTCOME" != "success" ]; then
             word=failed
-            reason="the amd64 single-container smoke failed — see the log above"
-          elif [ -n "$GAP" ]; then
-            word=incomplete
-            reason="$GAP"
+            reason="the $ARCH single-container smoke failed — see the log above"
           else
             word=passed
-            reason="the gateway image pulls and its single-container smoke passes (amd64)"
+            reason="the gateway image pulls and its single-container smoke passes ($ARCH)"
           fi
-          python3 tools/ci/release_verdict.py --leg images --verdict "$word" \
+          python3 tools/ci/release_verdict.py --leg "images-$ARCH" --verdict "$word" \
             --release "$VERSION" --out-dir verdict --reason "$reason"
       - name: Upload the leg's verdict
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: verdict-images
+          name: verdict-images-${{ matrix.arch }}
           path: verdict/verdict.json
           # A step that died before the verdict was written must not turn into a second,
           # misleading red on the upload (the same guard the JUnit uploads use).
@@ -167,6 +176,9 @@ jobs:
   desktop-linux:
     needs: [resolve]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read   # the digest-bound manifest of the release's own Release run
     # Sized above download + checksum + extract + boot, not near it.
     timeout-minutes: 30
     steps:
@@ -192,11 +204,20 @@ jobs:
             echo "gap=the release attaches no AppImage or no deb, so this leg has no desktop files to verify" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if ! grep -qx 'SHA256SUMS' assets.txt; then
-            echo "gap=the release carries no SHA256SUMS, so the bytes cannot be checked yet (#4323)" >> "$GITHUB_OUTPUT"
+          # The bytes are held against the digest-bound manifest the release's own Release run
+          # wrote and attached (#3911) — not SHA256SUMS, which releases never attached (#4323).
+          # The artifact is kept 30 days; past that this leg says what it cannot prove rather
+          # than reading a missing reference as a failed release.
+          run=$(gh run list --workflow release.yml --branch "$TAG" --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$run" ]; then
+            echo "gap=the Release run for $TAG is not readable, so its digest-bound manifest cannot be checked" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          gh release download "$TAG" --dir dl --pattern '*.AppImage' --pattern '*.deb' --pattern 'SHA256SUMS'
+          if ! gh run download "$run" --name release-manifest --dir manifest; then
+            echo "gap=the release's digest-bound manifest is no longer attached to the Release run (kept 30 days), so the bytes cannot be checked" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release download "$TAG" --dir dl --pattern '*.AppImage' --pattern '*.deb'
           ls -la dl/
           # The names, against the tree's OWN config at the tag — refreshed from the API
           # rather than the checkout, because the verification infra (this workflow, the
@@ -217,10 +238,22 @@ jobs:
               f"missing {missing}, got {got}"
           )
           PY
-          # Bytes, through the file: `sha256sum -c` reads a file, never a pipe into grep -q
-          # (the pipefail rail in tests/test_no_workflow_step_feeds_a_quiet_grep...).
+          # Every downloaded byte, against the digest the approved manifest records for it. The
+          # manifest is read through its own digest (`compare` refuses one that does not hash to
+          # it), and a file the selection does not name is refused rather than ignored.
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          published = {
+              path.name: "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in sorted(pathlib.Path("dl").iterdir())
+          }
+          pathlib.Path("published.json").write_text(json.dumps(published, sort_keys=True), encoding="utf-8")
+          print("published:", published)
+          PY
+          digest=$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("manifest/manifest.json").read_text(encoding="utf-8"))["digest"])')
+          python3 tools/ci/release_manifest.py compare --manifest manifest/manifest.json \
+            --digest "$digest" --select '*.AppImage' --select '*.deb' --published published.json
           cd dl
-          sha256sum --ignore-missing -c SHA256SUMS
           # Boot the packaged backend for real — `--version` is argparse and would pass on a
           # bundle missing its SDK (scripts/smoke_backend_bundle.sh's own docstring).
           chmod +x ./PersonalClaw-*.AppImage
@@ -244,7 +277,7 @@ jobs:
             reason="$GAP"
           else
             word=passed
-            reason="the AppImage and the deb download, match desktop/package.json, verify against SHA256SUMS, and their backend boots"
+            reason="the AppImage and the deb download, match desktop/package.json, match the release's digest-bound manifest, and their backend boots"
           fi
           python3 tools/ci/release_verdict.py --leg desktop-linux --verdict "$word" \
             --release "$VERSION" --out-dir verdict --reason "$reason"
@@ -261,6 +294,9 @@ jobs:
   desktop-mac:
     needs: [resolve]
     runs-on: macos-26
+    permissions:
+      contents: read
+      actions: read   # the digest-bound manifest of the release's own Release run
     timeout-minutes: 40
     steps:
       - name: Runner identity
@@ -282,11 +318,18 @@ jobs:
             echo "gap=the release attaches no dmg, so this leg has no desktop file to verify" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if ! grep -qx 'SHA256SUMS' assets.txt; then
-            echo "gap=the release carries no SHA256SUMS, so the bytes cannot be checked yet (#4323)" >> "$GITHUB_OUTPUT"
+          # Same reference as the Linux leg: the digest-bound manifest of the release's own
+          # Release run (#3911), kept 30 days — past that, the leg says what it cannot prove.
+          run=$(gh run list --workflow release.yml --branch "$TAG" --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$run" ]; then
+            echo "gap=the Release run for $TAG is not readable, so its digest-bound manifest cannot be checked" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          gh release download "$TAG" --dir dl --pattern '*.dmg' --pattern 'SHA256SUMS'
+          if ! gh run download "$run" --name release-manifest --dir manifest; then
+            echo "gap=the release's digest-bound manifest is no longer attached to the Release run (kept 30 days), so the bytes cannot be checked" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh release download "$TAG" --dir dl --pattern '*.dmg'
           ls -la dl/
           gh api "repos/${GITHUB_REPOSITORY}/contents/desktop/package.json?ref=$TAG" \
             -H "Accept: application/vnd.github.raw" > desktop-package-at-tag.json
@@ -306,12 +349,25 @@ jobs:
               f"the release's dmg name does not match desktop/package.json at the tag: "
               f"wanted {want}, got {got}"
           )
+          pathlib.Path("wanted.txt").write_text(want, encoding="utf-8")
           PY
+          # Both dmgs' bytes, against the digest the approved manifest records for each.
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          published = {
+              path.name: "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in sorted(pathlib.Path("dl").iterdir())
+          }
+          pathlib.Path("published.json").write_text(json.dumps(published, sort_keys=True), encoding="utf-8")
+          print("published:", published)
+          PY
+          digest=$(python3 -c 'import json, pathlib; print(json.loads(pathlib.Path("manifest/manifest.json").read_text(encoding="utf-8"))["digest"])')
+          python3 tools/ci/release_manifest.py compare --manifest manifest/manifest.json \
+            --digest "$digest" --select '*.dmg' --published published.json
           cd dl
-          # BSD shasum reads the same "<hex>  <name>" shape; --ignore-missing skips the
-          # assets this leg did not download rather than redding on their absence.
-          shasum -a 256 --ignore-missing -c SHA256SUMS
-          DMG=$(ls -1 *.dmg | head -1)
+          # The arch-matching dmg is the one the name check asserted — not `head -1`, which
+          # would mount the other architecture's file just as happily.
+          DMG=$(cat ../wanted.txt)
           MNT=$(mktemp -d)
           hdiutil attach "$DMG" -mountpoint "$MNT" -nobrowse -quiet
           trap 'hdiutil detach "$MNT" -quiet || true' EXIT
@@ -340,7 +396,7 @@ jobs:
             reason="$GAP"
           else
             word=passed
-            reason="the dmg downloads, matches desktop/package.json, verifies against SHA256SUMS, is ad-hoc signed with a valid seal, and its backend boots"
+            reason="the dmg downloads, matches desktop/package.json, matches the release's digest-bound manifest, is ad-hoc signed with a valid seal, and its backend boots"
           fi
           python3 tools/ci/release_verdict.py --leg desktop-mac --verdict "$word" \
             --release "$VERSION" --out-dir verdict --reason "$reason"
@@ -392,7 +448,7 @@ jobs:
           #: The legs expected in every run. A leg with no verdict.json artifact is reported
           #: as failed, not skipped: silence must never read as success (the file's own
           #: header rule), and that includes the runner dying before the verdict is written.
-          LEGS = ("v1-wheel", "images", "desktop-linux", "desktop-mac")
+          LEGS = ("v1-wheel", "images-amd64", "images-arm64", "desktop-linux", "desktop-mac")
           found: dict[str, dict] = {}
           for path in pathlib.Path("verdicts").glob("**/verdict.json"):
               verdict = json.loads(path.read_text())
