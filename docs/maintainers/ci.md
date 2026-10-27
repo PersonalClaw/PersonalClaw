@@ -2012,6 +2012,35 @@ and on dispatch, one run at a time and never cancelled:
 - **No durations cache.** The shard planner reads the record itself (#4778), so this workflow
   refreshes nothing for it.
 
+### The flaky tests' issues
+
+The verdict passes a pull request run whose only failures are flakes, so a test can flake on
+every run and still merge. `.github/workflows/flaky-tests.yml` runs daily at 11:23 UTC, a slot no
+other workflow takes, and on dispatch, on `main` only and one run at a time. It keeps one issue
+for each such test (`tools/ci/flaky_issues.py`, `python -m tools.ci flaky-issues`). It is a
+workflow of its own so the collector holds no write.
+
+- **The window.** `python -m tools.ci fetch --days 15 --no-carry` fetches the last 14 days of
+  histories, a day of slack, as the weekly report's fetch does. A flake is a failed test a job
+  record's rerun classified `flake`: the run's own records, and a tested push's pull request
+  run's (`tested_record`, version 6). Each counts once per test, run and attempt.
+- **Opening.** A test with 2 or more flakes in 7 days has one issue, titled `Flaky test: <id>`
+  (past GitHub's 256 characters, cut, with the id's digest after it) and labelled `flaky-test`.
+  Its open issue is edited; or, when it was closed and 2 flakes came after that, the fix did not
+  hold and it is reopened; or one is opened. Never two for one test.
+- **Closing.** An open issue whose test had no flake in 14 days is closed with a comment, but
+  only when the window holds all 14 days: the fetch left no history unread (none left, refused
+  or dropped), the oldest history is 14 days old or more and the newest at most 2. A window the
+  collector stopped filling closes nothing. A pull request that says `Fixes #N` closes it
+  through GitHub.
+- **Only its own issues.** An issue is the job's when `github-actions[bot]` opened it, it carries
+  the label, its title is one the job gives, and it is no pull request. It lists them through the
+  issues API, never search. Every other issue is never edited, reopened, closed or counted.
+- **No log text.** A body holds the id, in a fence longer than any run of backticks in it, the
+  counts, and each flake's day and run link. Nothing else of a history reaches it.
+- **Its token.** `contents: read`, `actions: read` for the histories, and `issues: write`, an
+  audited write.
+
 ## The selection map
 
 `tools/ci/selection_map.py` (`python -m tools.ci selection-map --data <coverage database>
@@ -3126,6 +3155,7 @@ The audited writes today:
 | `release.yml` | `attest` | `id-token: write`, `attestations: write` | build-provenance attestations |
 | `breadth.yml` | `report` | `issues: write` | one issue per red nightly leg |
 | `flake-report.yml` | `report` | `issues: write` | the one "Weekly CI health" issue |
+| `flaky-tests.yml` | `flaky-tests` | `issues: write` | one issue per flaky test |
 | `settings-report.yml` | `report` | `issues: write` | the one "Repository settings drift" issue |
 
 ### The dependency audit

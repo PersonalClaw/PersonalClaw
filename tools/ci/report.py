@@ -450,6 +450,30 @@ def tested_records(lines: Sequence[dict[str, Any]], where: str) -> list[dict[str
     return list(lines)
 
 
+def run_records(path: Source) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """One history's run line, its own job record lines (version 4 on) and its tested pull
+    request run's (version 6), each checked as :func:`read` checks them. Its test lines are not
+    read here."""
+    head = _head(path, "run")
+    version = int(head["version"])
+    own: list[dict[str, Any]] = []
+    tested: list[dict[str, Any]] = []
+    records = _records(path)
+    try:
+        next(records)
+        for record in records:
+            if record.get("kind") == "record" and version >= 4:
+                own.append(record)
+            elif (
+                record.get("kind") == telemetry.TESTED_RECORD
+                and version >= telemetry.TESTED_RECORDS_SINCE
+            ):
+                tested.append(record)
+    finally:
+        records.close()
+    return head, job_records(own, path.name), tested_records(tested, path.name)
+
+
 def _outcomes(
     files: Sequence[_File],
 ) -> tuple[dict[str, _Outcome], dict[int, bool | None], list[dict[str, Any]]]:
