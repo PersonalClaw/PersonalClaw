@@ -477,6 +477,24 @@ def _said(runs: tuple) -> str:
     return f"task {what.get_name()}, resumed in {where or 'its first step'}"
 
 
+#: How far a window's count of the loop thread's time ready may run past the window less its CPU
+#: time before the count is taken to be wrong: the CPU clock's own calls, and the probe's reads
+#: around the count, lie inside the CPU time and outside the count.
+_COUNT_SLACK = 0.001
+
+
+def _believed(wall: float, cpu: float, waited: float) -> float:
+    """What a window of *wall* seconds, in which the loop thread used *cpu*, may leave out of the
+    *waited* its count says the loop spent ready with no CPU: all of it, or nothing. The loop thread
+    cannot have been ready for longer than the window less the time it ran, so a count that says it
+    was is wrong, and the window is counted in wall time. On a CI runner, a macOS virtual machine,
+    the process's count over a health check's answer held more than its three threads could have
+    been ready for, one of them blocked 0.2 s in it: given the surplus, the loop's share came to the
+    whole answer, which was counted 0.008 s of its 1.967 s, and the block was lost (run
+    40518880630). A count that says less than that, however wrong, is not caught here."""
+    return waited if waited <= wall - cpu + _COUNT_SLACK else 0.0
+
+
 class _Window:
     """One stretch of the loop thread's time, a step or a health check's answer: its wall time, its
     CPU time, and the time the loop thread spent in it ready to run with no CPU (:class:`_NoCpu`).
@@ -502,6 +520,7 @@ class _Window:
         self.began = time.monotonic()
         self.own = no_cpu.loop_waited()
         self.first = self.then = None
+        self.said = 0.0
         if self.own is None:
             self.first = no_cpu.snapshot()
             self.began = self.first.ready_at
@@ -526,7 +545,10 @@ class _Window:
         else:
             ended = time.monotonic()
         # The CPU clock last: its call is outside the window.
-        return ended - self.began, time.thread_time() - self.cpu, waited
+        wall, cpu = ended - self.began, time.thread_time() - self.cpu
+        #: What the count said, before :func:`_believed` judged it.
+        self.said = waited
+        return wall, cpu, _believed(wall, cpu, waited)
 
 
 class _Probe:
@@ -567,10 +589,16 @@ class _Probe:
         #: macOS: the longest step's two snapshots' process count of time ready, and each other
         #: thread's CPU, run states and credit over it (:meth:`_NoCpu.accounts`); None elsewhere.
         self.worst_step_threads: tuple[float, list, dict[int, str]] | None = None
+        #: What the longest step's count said, before :func:`_believed` judged it.
+        self.worst_step_said = 0.0
         self.worst_step_wall = 0.0
         self.worst_gap = 0.0
         self.slowest_answer = 0.0
         self.slowest_answer_wall = 0.0
+        #: The answer longest in wall time: its wall time, CPU time, time ready left out and what
+        #: its count said, and the threads over it as for the longest step.
+        self.longest_answer_own: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+        self.longest_answer_threads: tuple[float, list, dict[int, str]] | None = None
         self.waited_for_a_cpu = 0.0
         self.answered_during = 0
 
@@ -615,15 +643,8 @@ class _Probe:
                         if counts is not None and after is not None
                         else None
                     )
-                    probe.worst_step_threads = (
-                        (
-                            window.then.ready - window.first.ready,
-                            probe.no_cpu.accounts(window.first, window.then, window.threads),
-                            {t.native_id: t.name for t in threading.enumerate() if t.native_id},
-                        )
-                        if window.first is not None and window.then is not None
-                        else None
-                    )
+                    probe.worst_step_said = window.said
+                    probe.worst_step_threads = probe._threads_over(window)
 
         return run
 
@@ -647,6 +668,18 @@ class _Probe:
             self.counts.close()
             self.no_cpu.close()
 
+    def _threads_over(self, window: _Window) -> tuple[float, list, dict[int, str]] | None:
+        """macOS: the process's count of time ready over *window*, each other thread's CPU, run
+        states and credit over it (:meth:`_NoCpu.accounts`), and the threads' names; None
+        elsewhere."""
+        if window.first is None or window.then is None:
+            return None
+        return (
+            window.then.ready - window.first.ready,
+            self.no_cpu.accounts(window.first, window.then, window.threads),
+            {t.native_id: t.name for t in threading.enumerate() if t.native_id},
+        )
+
     async def _timed_answer(self, answer) -> None:
         """One health check's answer, *answer* awaited, counted as :meth:`during` counts each: in
         a window whose reads of the time ready lie inside its wall time (:class:`_Window`), less
@@ -655,7 +688,10 @@ class _Probe:
         await answer()
         wall, cpu, waited = window.end()
         self.slowest_answer = max(self.slowest_answer, wall - waited, cpu)
-        self.slowest_answer_wall = max(self.slowest_answer_wall, wall)
+        if wall > self.slowest_answer_wall:
+            self.slowest_answer_wall = wall
+            self.longest_answer_own = (wall, cpu, waited, window.said)
+            self.longest_answer_threads = self._threads_over(window)
 
     async def _during(self, work):
         stop = asyncio.Event()
@@ -716,26 +752,44 @@ class _Probe:
                 f"  the loop thread over it: {major} major faults, {voluntary} voluntary and"
                 f" {involuntary} involuntary switches"
             )
-        if self.worst_step_threads is not None:
-            ready, rows, names = self.worst_step_threads
-            lines.append(f"  the process over it: {ready:.3f}s ready with no CPU")
-            lines += [
-                f"  {names.get(thread, f'thread {thread}')}: {used:.6f}s of CPU,"
-                f" {'unread' if ran is None else ran} instructions,"
-                f" {_STATES.get(was, 'unlisted')} then {_STATES.get(now, 'unlisted')},"
-                f" credited {credited:.3f}s"
-                for thread, used, was, now, ran, credited in rows
-            ]
+        lines += _set_aside(waited, self.worst_step_said)
+        lines += _over(self.worst_step_threads)
+        answer_wall, answer_cpu, answer_waited, answer_said = self.longest_answer_own
         lines += [
             f"the slowest health check: {self.slowest_answer:.3f}s counted, of"
             f" {self.slowest_answer_wall:.3f}s in wall time ({self.answered_during} answered"
             " during the work)",
+            f"  the longest in wall time: {answer_wall:.3f}s, {answer_cpu:.3f}s of CPU and"
+            f" {answer_waited:.3f}s ready with no CPU left out",
+            *_set_aside(answer_waited, answer_said),
+            *_over(self.longest_answer_threads),
             f"ready with no CPU, left out of the steps: {self.waited_for_a_cpu:.3f}s"
             f" ({self.no_cpu.source})",
             f"the longest step in wall time: {self.worst_step_wall:.3f}s",
             f"the longest gap between turns: {self.worst_gap:.3f}s",
         ]
         return "\n".join(lines)
+
+
+def _set_aside(waited: float, said: float) -> list[str]:
+    """The line that says a window's count was set aside (:func:`_believed`), if it was."""
+    if said == waited:
+        return []
+    return [f"  its count said {said:.3f}s ready, more than it could hold: nothing left out"]
+
+
+def _over(threads: tuple[float, list, dict[int, str]] | None) -> list[str]:
+    """The lines for the threads over a window (:meth:`_Probe._threads_over`); none off macOS."""
+    if threads is None:
+        return []
+    ready, rows, names = threads
+    return [f"  the process over it: {ready:.3f}s ready with no CPU"] + [
+        f"  {names.get(thread, f'thread {thread}')}: {used:.6f}s of CPU,"
+        f" {'unread' if ran is None else ran} instructions,"
+        f" {_STATES.get(was, 'unlisted')} then {_STATES.get(now, 'unlisted')},"
+        f" credited {credited:.3f}s"
+        for thread, used, was, now, ran, credited in rows
+    ]
 
 
 async def _init(client, size: int, *, target: str, filename: str, mime: str) -> dict:
@@ -1388,6 +1442,9 @@ class _AStepsReads:
 
     def waited(self, first, then, _threads) -> float:
         return then.ready - first.ready
+
+    def accounts(self, _first, _then, _threads) -> list:
+        return []  # the loop thread is the only one
 
     def callback(self) -> None:
         self.t += self.block
@@ -2202,6 +2259,45 @@ def test_threads_that_ran_nothing_and_waited_at_both_ends_account_for_nothing():
     no_cpu = _macos_no_cpu()
     assert no_cpu.waited(first, then, {loop}) == pytest.approx(1.2)
     assert [row[-1] for row in no_cpu.accounts(first, then, {loop})] == [0.0, 0.0]
+
+
+#: Run 40518880630's health check on a CI runner, a macOS virtual machine: its answer took 1.967 s
+#: in wall time and 0.0083 s of the loop thread's CPU, beside two threads whose instructions could
+#: not be read, with a block of 0.2 s inside it. To count it 0.008 s, the process's count of time
+#: ready over it was 5.89 s or more; three threads, one of them blocked 0.2 s, could have been
+#: ready for at most 5.69 s of it.
+_CI_ANSWER, _CI_ANSWER_CPU = 1.967, 0.0083
+
+
+def test_a_count_of_more_time_ready_than_the_window_holds_leaves_nothing_out():
+    """🔴 Red before (a window left out whatever its count gave the loop thread): over the CI
+    answer, with the process's count at 5.90 s, the two threads beside were credited all they
+    could account for and the loop thread's share came to more than the answer less its CPU time,
+    which no thread can be ready for. The answer was counted 0.008 s and its block lost. A count
+    that says more than the window holds is wrong, so nothing is left out of it."""
+    loop, beside, worker = 1, 2, 3
+    first = _snapshot(
+        0.0, 0.0, {loop: (0.0, 1, None), beside: (0.0, 1, None), worker: (0.0, 3, None)}
+    )
+    then = _snapshot(
+        _CI_ANSWER,
+        5.90,
+        {loop: (_CI_ANSWER_CPU, 1, None), beside: (0.002, 1, None), worker: (0.0008, 3, None)},
+    )
+    said = _macos_no_cpu().waited(first, then, {loop})
+    assert said > _CI_ANSWER - _CI_ANSWER_CPU, f"premise: the count held too much ({said:.3f}s)"
+    left_out = _believed(_CI_ANSWER, _CI_ANSWER_CPU, said)
+    counted = max(_CI_ANSWER - left_out, _CI_ANSWER_CPU)
+    assert counted >= _BOUND, f"the answer was counted {counted:.3f}s of its {_CI_ANSWER}s"
+
+
+@pytest.mark.parametrize("over", [0.0, _COUNT_SLACK / 2], ids=["within the window", "in the slack"])
+def test_a_count_the_window_can_hold_is_left_out_whole(over):
+    """The guard's other side: a window whose count gives the loop thread no more than the window
+    less its CPU time, or up to :data:`_COUNT_SLACK` past it, leaves all of it out, as a step the
+    runner gave no CPU needs."""
+    wall, cpu = 0.5, 0.04
+    assert _believed(wall, cpu, wall - cpu + over) == wall - cpu + over
 
 
 # ── what the upload's requests read and write on disk, they do off the loop ─────────────────
