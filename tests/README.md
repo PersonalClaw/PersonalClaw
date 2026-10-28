@@ -169,10 +169,10 @@ python -m pytest tests/rails -n 4 --dist worksteal
 
 `tools/ci/rails-leg-1.txt`, `rails-leg-2.txt` and `rails-leg-3.txt` name each leg's files, balanced
 by the time each file takes on the slowest common runner, so each leg finishes well inside 8 minutes
-and the job's 10-minute cap. Junit counts the time of a test's subtests twice (once in the test,
-once per subtest), so a file whose tests use subtests weighs less than its junit seconds. The legs
-hold about a third of the time each, not a third of the files: leg 3 holds the fewest. A new rail
-goes in the leg whose recent runs took the least time (each leg's step time on main, or its
+and the job's 10-minute cap. Junit records each test at the time it took, a test with subtests
+once (`tests/junit_once.py`), so a leg's `junit-rails-<i>` report weighs its files as they ran.
+The legs hold about a third of the time each, not a third of the files: leg 3 holds the fewest. A
+new rail goes in the leg whose recent runs took the least time (each leg's step time on main, or its
 `junit-rails-<i>` report); `python -m tools.ci rails check` fails on a rail in no leg or in two (a
 rail is any module pytest collects there, `test_*.py` or `*_test.py`), and on a listed file that is
 no module under `tests/rails/`. The "every rail is in exactly one leg of the rails job" row of the
