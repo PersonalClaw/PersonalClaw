@@ -458,7 +458,9 @@ def test_a_step_of_another_action_is_not_read():
 # ``auto`` caches for whichever events setup-uv picks), and never on the release path: a release
 # workflow, a workflow a release tag's push starts, or one either calls. The release path builds
 # and publishes what users run, so it restores no interpreter a pull request's or main's run left
-# behind.
+# behind, and no cache at all: each of its setup-uv steps turns caching off itself
+# (``enable-cache: false``), since ``auto`` restores one on a release's dispatch and a
+# rehearsal's schedule.
 
 
 #: A release tag, as release.yml's own filter (``v*``) takes it. A rehearsal's tag
@@ -515,9 +517,26 @@ def python_caches(
     return problems
 
 
+def release_caches(name: str, workflow: dict, actions: dict | None = None) -> list[str]:
+    """One problem line for each setup-uv step of a release-path workflow that keeps a cache."""
+    problems = []
+    for job_id, step in setup_uv_steps(workflow, actions):
+        enabled = _flag((step.get("with") or {}).get("enable-cache", "auto"))
+        if enabled != "false":
+            where = f"{name} {job_id} {step.get('name') or step['uses'].split('@')[0]!r}"
+            problems.append(
+                f"{where}: keeps uv's cache on the release path (enable-cache: {enabled}), so a"
+                " release restores what another run left: turn it off (enable-cache: false)"
+            )
+    return problems
+
+
 def _python_problems(workflows: dict[str, dict], actions: dict) -> list[str]:
     release = frozenset(release_path(workflows))
-    return [line for n, wf in workflows.items() for line in python_caches(n, wf, actions, release)]
+    found = [line for n, wf in workflows.items() for line in python_caches(n, wf, actions, release)]
+    return found + [
+        line for n in sorted(release) for line in release_caches(n, workflows[n], actions)
+    ]
 
 
 def test_managed_python_is_cached_only_where_uv_s_cache_is_and_never_on_the_release_path():
@@ -537,6 +556,30 @@ def test_managed_python_is_cached_only_where_uv_s_cache_is_and_never_on_the_rele
     )
     assert "breadth.yml" not in release_path(workflows)
     assert not caching & release_path(workflows), caching & release_path(workflows)
+    # And the release path's own setup-uv steps are read: the artifacts build has them.
+    assert setup_uv_steps(workflows["release-artifacts.yml"], actions)
+
+
+@pytest.mark.parametrize(
+    "given",
+    [{"enable_cache": True}, {"enable_cache": "auto"}, {"enable_cache": None}],
+    ids=["enable-cache true", "enable-cache auto", "enable-cache left out"],
+)
+def test_a_release_build_that_keeps_uv_s_cache_fails(given):
+    workflows, actions = _workflows(), _actions()
+    planted = copy.deepcopy(workflows["release-artifacts.yml"])
+    for job in (planted.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"):
+                inputs = step.setdefault("with", {})
+                for key, value in given.items():
+                    if value is None:
+                        inputs.pop(key.replace("_", "-"), None)
+                    else:
+                        inputs[key.replace("_", "-")] = value
+    workflows["release-artifacts.yml"] = planted
+    problems = _python_problems(workflows, actions)
+    assert problems and all("keeps uv's cache on the release path" in p for p in problems), problems
 
 
 def _with_step_input(workflow: dict, **given: object) -> dict:

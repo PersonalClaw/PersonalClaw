@@ -101,7 +101,9 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12.15"
-          prune-cache: true
+          # A release restores nothing another run left in the cache, main's pruned wheels
+          # included (tests/rails/test_ci_uv_cache_is_pruned.py).
+          enable-cache: false
       - name: Build sdist + wheel (with web/dist)
         # `uv build` (not `uv pip install --system build` + `python -m build`): the
         # runner's /usr python is PEP-668 externally managed, so --system errors.
@@ -600,7 +602,9 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12.15"
-          prune-cache: true
+          # A release restores nothing another run left in the cache, main's pruned wheels
+          # included (tests/rails/test_ci_uv_cache_is_pruned.py).
+          enable-cache: false
       - name: Create .venv for the bundled backend build
         # Same reasoning as desktop-linux: the spec collect_submodules()s
         # openai/anthropic/slack_sdk, which are extras and must be importable here, the
@@ -800,7 +804,9 @@ jobs:
         with:
           version: "0.13.1"
           python-version: "3.12.15"
-          prune-cache: true
+          # A release restores nothing another run left in the cache, main's pruned wheels
+          # included (tests/rails/test_ci_uv_cache_is_pruned.py).
+          enable-cache: false
       - name: Create .venv for the bundled backend build
         # Plain `.` is not enough: personalclaw-backend.spec collect_submodules()s
         # openai/anthropic/slack_sdk into the frozen bundle, and those are extras —
