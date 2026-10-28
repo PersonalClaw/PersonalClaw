@@ -588,8 +588,13 @@ The map from entry to job lives in that row.
 The stage jobs of `pr.yml` and `merge.yml` set up their toolchain with one
 composite action, `.github/actions/setup`. It runs setup-uv with the one uv release and the exact
 Python the job names (`python-version`), and setup-node from `.nvmrc` when the job asks for it
-(`node: "true"`, with `node-cache`, `npm` by default). `programs` names the programs of a
-catalogue job's toolchain that `run-job` finds on PATH and does not install
+(`node: "true"`, with `node-cache`, `npm` by default). setup-uv keeps uv's cache, pruned, and the
+managed Python `uv sync` installs beside it (`cache-python`): uncached, 2 to 4 of a merge run's 23
+fetches took 20 to 215 s inside the job's budget. The uv-cache rail lets a step cache the
+interpreter only with `enable-cache: true`, and never on the release path (a `release*`
+workflow, one a release tag's push starts, or one either calls), which uses no such step.
+`programs` names the programs of a catalogue job's toolchain that `run-job` finds on PATH and
+does not install
 (`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`, `docker`), space-separated,
 as the plan's matrix gives them: every name is checked before anything installs, and any other
 name fails the step with nothing installed (none is read as a pattern); each one PATH lacks is
