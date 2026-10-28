@@ -1,6 +1,6 @@
 """``run-job``'s diagnostic rerun for the web runners (tools/ci/jobs.py): a failed Vitest test is
-run once more, alone, in a new process; a Playwright test is classified by Playwright's own one
-retry; and the job stays red whatever either shows.
+run once more, alone, in a new process; a Playwright test that its own one retry passed is run
+once more, alone (one worker, no retry); and the job stays red whatever either shows.
 
 The runners are stand-ins on the job's ``PATH``: an ``npm`` that answers ``npm run test:web`` as
 Vitest does under CI (a JUnit report at ``reports/junit-web-unit.xml``, exit 1 on a failure), and
@@ -111,7 +111,9 @@ def write(path, text, fault):
 def finish(fault, failed):
     with (STATE / "calls.jsonl").open("a") as f:
         f.write(json.dumps({"tool": "__TOOL__", "argv": args, "cwd": os.getcwd(), "ran": ran,
-            "workers": os.environ.get("VITEST_MAX_WORKERS"), "ci": os.environ.get("CI")}) + "\n")
+            "workers": os.environ.get("VITEST_MAX_WORKERS"), "ci": os.environ.get("CI"),
+            "json": os.environ.get("PLAYWRIGHT_JSON_OUTPUT_NAME"),
+            "blob": os.environ.get("PLAYWRIGHT_BLOB_OUTPUT_DIR")}) + "\n")
     if fault.get("signal"):
         os.kill(os.getppid(), signal.SIGINT)
     if "on_term" in fault:
@@ -141,6 +143,42 @@ if args[:2] == ["vitest", "run"]:
         Path("..", "reports", "junit-web-unit.xml").write_text(text)
         Path("..", "reports", "beside.txt").write_text("the rerun's")
     finish(fault, failed)
+if args[:2] == ["playwright", "test"] and "--workers=1" in args:
+    # The alone rerun: only the tests at the places it names, in the projects it names, each with
+    # its planted result alone; chromium brings its `setup` dependency, as Playwright does.
+    fault = faults.get("alone", {})
+    places = {a for a in args[2:] if not a.startswith("-")}
+    projects = {a.split("=", 1)[1] for a in args if a.startswith("--project=")}
+    suites, failed = [], False
+    if "chromium" in projects:
+        setup = {"title": "authenticate", "file": "auth.setup.ts", "line": 1, "tests": [
+            {"projectName": "setup", "status": "expected", "results": [{"status": "passed"}]}]}
+        suites.append({"title": "auth.setup.ts", "file": "auth.setup.ts", "specs": [setup]})
+    for suite in PLANT["playwright"]["suites"] + PLANT.get("beside_in_rerun", []):
+        specs = []
+        for spec in suite["specs"]:
+            beside = suite in PLANT.get("beside_in_rerun", [])
+            if not beside and f"e2e/{spec['file']}:{spec.get('line')}" not in places:
+                continue
+            tests = []
+            for t in spec["tests"]:
+                if not beside and t["projectName"] not in projects:
+                    continue
+                got = PLANT.get("alone", {}).get(spec["title"], "expected")
+                failed = failed or got == "unexpected"
+                result = {"expected": "passed", "unexpected": "failed"}.get(got, got)
+                tests.append({"projectName": t["projectName"], "status": got,
+                    "results": [{"status": result, "retry": 0}]})
+                ran.append(spec["title"])
+            if tests:
+                specs.append({**spec, "tests": tests})
+        if specs:
+            suites.append({**suite, "specs": specs})
+    write(Path(os.environ["PLAYWRIGHT_JSON_OUTPUT_NAME"]), json.dumps({"suites": suites}), fault)
+    if fault.get("beside"):
+        # As a config reporter would: the step's own report path, from web/.
+        Path("e2e-report.json").write_text("the rerun's")
+    finish(fault, failed)
 if args[:2] == ["playwright", "test"]:
     fault = faults.get("playwright", {})
     write(Path(os.environ["PLAYWRIGHT_JSON_OUTPUT_NAME"]), json.dumps(PLANT["playwright"]), fault)
@@ -149,10 +187,12 @@ sys.exit(f"__TOOL__: not planted: {args}")
 '''
 
 
-def _playwright_report(*tests: tuple[str, str, str, list[str]]) -> dict:
-    """A Playwright JSON report: each test's file, title, status and its results' statuses."""
+def _playwright_report(*tests: tuple) -> dict:
+    """A Playwright JSON report: each test's file, title, status and its results' statuses, and
+    its project (``chromium`` unless a fifth item names another). Each spec is on its own line,
+    numbered from 1 in the order given."""
     suites = []
-    for file, title, status, results in tests:
+    for line, (file, title, status, results, *project) in enumerate(tests, 1):
         suites.append(
             {
                 "title": file,
@@ -161,9 +201,10 @@ def _playwright_report(*tests: tuple[str, str, str, list[str]]) -> dict:
                     {
                         "title": title,
                         "file": file,
+                        "line": line,
                         "tests": [
                             {
-                                "projectName": "chromium",
+                                "projectName": project[0] if project else "chromium",
                                 "status": status,
                                 "results": [
                                     {"status": r, "retry": n} for n, r in enumerate(results)
@@ -206,10 +247,14 @@ def _plant(
     vitest=VITEST_CASES,
     playwright: dict | None = None,
     faults: dict | None = None,
+    alone: dict | None = None,
+    beside_in_rerun: list | None = None,
 ) -> tuple[Path, str]:
     """A repository with a ``web/`` folder holding the planted test files (and one test file
     outside it, at the root), and a ``bin/`` of stand-in runners that play *vitest* and
-    *playwright* with *faults*. Returns the root and the PATH."""
+    *playwright* with *faults*: *alone* gives each Playwright test's status, by its title, when
+    the alone rerun runs it (``expected`` unless named), and *beside_in_rerun* the suites that
+    rerun reports beside the tests it was asked for. Returns the root and the PATH."""
     root = tmp_path / "repo"
     (root / "web" / "e2e").mkdir(parents=True)
     for file, _, _ in (*VITEST_CASES, *vitest):
@@ -225,7 +270,13 @@ def _plant(
     bin_dir, state = tmp_path / "bin", tmp_path / "state"
     bin_dir.mkdir()
     state.mkdir()
-    plant = {"vitest": vitest, "playwright": playwright or {"suites": []}, "faults": faults or {}}
+    plant = {
+        "vitest": vitest,
+        "playwright": playwright or {"suites": []},
+        "faults": faults or {},
+        "alone": alone or {},
+        "beside_in_rerun": beside_in_rerun or [],
+    }
     (state / "plant.json").write_text(json.dumps(plant))
     for tool in ("npm", "npx"):
         script = bin_dir / tool
@@ -682,7 +733,18 @@ def test_a_vitest_report_folder_that_cannot_be_put_back_is_a_reason(tmp_path, mo
 # ── Playwright: its own one retry classifies, and the job stays red ────────────────────────────
 
 
-def test_a_flaky_playwright_test_is_a_flake_and_the_job_stays_red(tmp_path):
+LOADS = "web/e2e/a.spec.ts::loads [chromium]"
+
+
+def _playwright_calls(tmp_path: Path) -> list[dict]:
+    return [c for c in _calls(tmp_path) if c["argv"][:2] == ["playwright", "test"]]
+
+
+def test_a_flaky_playwright_test_that_passes_alone_is_a_flake_and_the_job_stays_red(tmp_path):
+    """Playwright's own retry runs beside the other workers, so a pass there is not a pass alone:
+    the flaky test is run once more, alone, and is a flake only because it passed there. A test
+    that failed on its retry too is a repeated failure with no rerun, and one that passed in the
+    step is never rerun."""
     report = _playwright_report(
         ("a.spec.ts", "loads", "flaky", ["failed", "passed"]),
         ("a.spec.ts", "breaks", "unexpected", ["failed", "failed"]),
@@ -695,35 +757,119 @@ def test_a_flaky_playwright_test_is_a_flake_and_the_job_stays_red(tmp_path):
     record = _record(outcome)
     assert record["result"] == verdict.FAILURE
     assert {t: e["rerun_result"] for t, e in _by_test(record).items()} == {
-        "web/e2e/a.spec.ts::loads [chromium]": verdict.FLAKE,
+        LOADS: verdict.FLAKE,
         "web/e2e/a.spec.ts::breaks [chromium]": verdict.REPEATED_FAILURE,
         "web/e2e/a.spec.ts::hangs [chromium]": verdict.REPEATED_FAILURE,
     }
-    # Playwright's own retry is the rerun: run-job starts no second one.
-    assert [c["argv"][:2] for c in _calls(tmp_path)] == [["playwright", "test"]]
-    assert record["rerun"]["argv"] == ["npx", "playwright", "test", "--grep-invert", "@visual"]
+    assert _by_test(record)[LOADS]["why"] == "passed rerun alone in a new process"
+    step, alone = _playwright_calls(tmp_path)
+    assert step["argv"] == ["playwright", "test", "--grep-invert", "@visual"]
+    assert alone["argv"][:4] == ["playwright", "test", *verdict.E2E_ALONE]
+    assert "--project=chromium" in alone["argv"]
+    assert [a for a in alone["argv"][2:] if not a.startswith("-")] == ["e2e/a.spec.ts:1"]
+    assert alone["ran"] == ["loads"], "only the flaky test is rerun"
+    assert alone["json"] != step["json"] and alone["blob"] is not None
+    # The record names the alone rerun, its own argv and its own exit.
+    assert record["rerun"]["argv"][:5] == ["npx", "playwright", "test", *verdict.E2E_ALONE]
+    assert record["rerun"]["exit"] == 0
+
+
+def test_a_flaky_playwright_test_that_fails_alone_is_a_repeated_failure(tmp_path):
+    report = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"]))
+    root, path = _plant(tmp_path, playwright=report, alone={"loads": "unexpected"})
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    assert outcome.code == run.RED
+    record = _record(outcome)
+    assert record["rerun"]["tests"] == [
+        {"test": LOADS, "rerun_result": verdict.REPEATED_FAILURE, "why": "failed again, alone"}
+    ]
     assert record["rerun"]["exit"] == 1
 
 
-def test_a_playwright_job_whose_only_failure_is_a_flake_stays_red(tmp_path):
+def test_a_green_playwright_step_starts_no_rerun(tmp_path):
+    report = _playwright_report(("a.spec.ts", "works", "expected", ["passed"]))
+    root, path = _plant(tmp_path, playwright=report, faults={"playwright": {"exit": 0}})
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    assert outcome.code == run.OK, outcome.reasons
+    assert len(_playwright_calls(tmp_path)) == 1
+    assert _record(outcome)["rerun"] is None
+
+
+def test_more_flaky_playwright_tests_than_a_run_passes_are_none_of_them_rerun(tmp_path):
     report = _playwright_report(
-        ("a.spec.ts", "loads", "flaky", ["failed", "passed"]),
-        ("a.spec.ts", "works", "expected", ["passed"]),
+        *((f"{n}.spec.ts", "loads", "flaky", ["failed", "passed"]) for n in "abc")
     )
     root, path = _plant(tmp_path, playwright=report)
     outcome = _run(root, path, _playwright_job(), tmp_path)
-    assert outcome.code == run.RED, outcome.reasons
+    assert outcome.code == run.RED
     record = _record(outcome)
-    assert record["result"] == verdict.FAILURE
-    assert record["rerun"]["tests"] == [
-        {
-            "test": "web/e2e/a.spec.ts::loads [chromium]",
-            "rerun_result": verdict.FLAKE,
-            "why": "passed on Playwright's one retry, in a new worker",
-        }
-    ]
-    [read] = verdict.from_job_records([outcome.record.read_text()])
-    assert read.result == verdict.FAILURE
+    assert len(_playwright_calls(tmp_path)) == 1, "no alone rerun"
+    assert record["rerun"]["argv"] is None
+    assert {e["rerun_result"] for e in record["rerun"]["tests"]} == {None}
+    assert all("one of 3 flaky tests" in e["why"] for e in record["rerun"]["tests"])
+
+
+@pytest.mark.parametrize("project", ["stateful", "stateful-again-1", "app-ui"])
+def test_a_flaky_playwright_test_of_a_chained_or_homed_project_is_not_rerun_alone(
+    tmp_path, project
+):
+    report = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"], project))
+    root, path = _plant(tmp_path, playwright=report)
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    [entry] = _record(outcome)["rerun"]["tests"]
+    assert entry["rerun_result"] is None
+    assert f"its project, {project}, runs only in its chain or its home" in entry["why"]
+    assert len(_playwright_calls(tmp_path)) == 1
+
+
+@pytest.mark.parametrize(
+    ("fault", "said"),
+    [
+        ({"report": None}, "Playwright wrote no rerun report"),
+        ({"report": "{not json"}, "its rerun report is unreadable"),
+        ({"exit": 2}, None),
+    ],
+    ids=["no report", "unreadable", "exit 2"],
+)
+def test_an_alone_rerun_that_cannot_be_read_classifies_nothing(tmp_path, fault, said):
+    report = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"]))
+    root, path = _plant(tmp_path, playwright=report, faults={"alone": fault})
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    assert outcome.code == run.RED
+    [entry] = _record(outcome)["rerun"]["tests"]
+    assert entry["rerun_result"] is None, entry
+    if said:
+        assert any(said in r for r in outcome.reasons), outcome.reasons
+
+
+def test_an_alone_rerun_that_ran_another_test_classifies_nothing(tmp_path):
+    """A test the rerun was not asked for, which ran there (not ``setup``, which chromium brings
+    as its dependency), means the rerun is not the one asked for: it classifies nothing."""
+    report = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"]))
+    other = _playwright_report(("b.spec.ts", "other", "expected", ["passed"]))["suites"]
+    root, path = _plant(tmp_path, playwright=report, beside_in_rerun=other)
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    [entry] = _record(outcome)["rerun"]["tests"]
+    assert entry["rerun_result"] is None
+    assert any("b.spec.ts::other [chromium]" in r for r in outcome.reasons), outcome.reasons
+
+
+def test_the_alone_rerun_leaves_the_steps_report_as_the_step_wrote_it(tmp_path):
+    report = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"]))
+    root, path = _plant(tmp_path, playwright=report, faults={"alone": {"beside": True}})
+    outcome = _run(root, path, _playwright_job(), tmp_path)
+    assert json.loads((root / "web" / "e2e-report.json").read_text()) == report
+    assert _by_test(_record(outcome))[LOADS]["rerun_result"] == verdict.FLAKE
+
+
+def test_no_alone_rerun_starts_once_the_jobs_time_is_spent(tmp_path):
+    flaky = {"status": "flaky", "projectName": "chromium", "results": _RETRIED}
+    report = _spec(flaky)
+    report["suites"][0]["specs"][0]["line"] = 3
+    found, _ = _classify(tmp_path, report)
+    assert found is not None and found["argv"] is None
+    [entry] = found["tests"]
+    assert entry["why"] == "the job's time ran out before the rerun"
 
 
 @pytest.mark.parametrize(
@@ -801,19 +947,27 @@ def test_a_malformed_playwright_report_is_a_reason_and_never_a_crash(tmp_path):
     assert any("e2e-report.json is unreadable" in r for r in outcome.reasons), outcome.reasons
 
 
-def _classify(tmp_path: Path, report: object) -> tuple[dict | None, list[str]]:
+def _classify(
+    tmp_path: Path, report: object, *, left: float = -1.0
+) -> tuple[dict | None, list[str]]:
+    """The step's classification from *report*, with *left* seconds of the job's time (none, so
+    no rerun starts, unless given)."""
     cwd = tmp_path / "web"
     cwd.mkdir(exist_ok=True)
     text = report if isinstance(report, str) else json.dumps(report)
     (cwd / "e2e-report.json").write_text(text)
-    return jobs.classify_playwright(
+    found, reasons, _ = jobs.diagnose_playwright(
         ["npx", "playwright", "test"],
         root=tmp_path,
         cwd=cwd,
         env={jobs.PLAYWRIGHT_REPORT_ENV: "e2e-report.json"},
-        code=1,
+        host=jobs.Host(root=tmp_path, family="ubuntu-", path=os.defpath),
+        scratch=run.Scratch.create(tmp_path / "scratch"),
+        grace=1.0,
+        deadline=time.monotonic() + left,
         started=time.time() - 60,
     )
+    return found, reasons
 
 
 def _spec(*tests: object) -> dict:

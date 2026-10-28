@@ -36,7 +36,9 @@ not runs of the test.
 lowest attempt as for first results: every test the diagnostic rerun classified, with how many job
 records found it a flake and how many a repeated failure, and the jobs that did. Every runner's
 classification is there, Playwright's included, which no test line carries. A history of an older
-version carries none, and a record line in one, or one not in its shape, fails the report.
+version carries none, and a record line in one, or one not in its shape, fails the report. A
+tested push's pull request run's record lines (``tested_record``, version 6) are checked as
+record lines are and counted in no figure here: they are that run's, not the push's.
 
 **Durations.** Each test's p50 and p99 seconds over the window, the 20 slowest by p50, and the
 trend: the p50 of the last 7 days over the p50 of the 7 days before, less one.
@@ -422,6 +424,56 @@ def job_records(lines: Sequence[dict[str, Any]], where: str) -> list[dict[str, A
     return list(lines)
 
 
+def tested_records(lines: Sequence[dict[str, Any]], where: str) -> list[dict[str, Any]]:
+    """One attempt's tested run's record lines (version 6), each as the collector writes it: a
+    record line's fields (:func:`job_records`) after the run and attempt it came from, attempt 1,
+    one run for them all. One in another shape fails the report."""
+    runs = set()
+    for entry in lines:
+        if set(entry) != set(telemetry.TESTED_RECORD_FIELDS):
+            raise SchemaError(f"{where}: a tested record line does not hold its fields")
+        run_id = entry["run_id"]
+        if not isinstance(run_id, int) or isinstance(run_id, bool) or run_id < 1:
+            raise SchemaError(f"{where}: a tested record line names no run")
+        if entry["attempt"] != 1:
+            raise SchemaError(f"{where}: a tested record line is not of its run's first attempt")
+        runs.add(run_id)
+    if len(runs) > 1:
+        raise SchemaError(f"{where}: tested record lines name more than one run")
+    job_records(
+        [
+            {k: v for k, v in e.items() if k not in ("run_id", "attempt")} | {"kind": "record"}
+            for e in lines
+        ],
+        where,
+    )
+    return list(lines)
+
+
+def run_records(path: Source) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """One history's run line, its own job record lines (version 4 on) and its tested pull
+    request run's (version 6), each checked as :func:`read` checks them. Its test lines are not
+    read here."""
+    head = _head(path, "run")
+    version = int(head["version"])
+    own: list[dict[str, Any]] = []
+    tested: list[dict[str, Any]] = []
+    records = _records(path)
+    try:
+        next(records)
+        for record in records:
+            if record.get("kind") == "record" and version >= 4:
+                own.append(record)
+            elif (
+                record.get("kind") == telemetry.TESTED_RECORD
+                and version >= telemetry.TESTED_RECORDS_SINCE
+            ):
+                tested.append(record)
+    finally:
+        records.close()
+    return head, job_records(own, path.name), tested_records(tested, path.name)
+
+
 def _outcomes(
     files: Sequence[_File],
 ) -> tuple[dict[str, _Outcome], dict[int, bool | None], list[dict[str, Any]]]:
@@ -438,9 +490,18 @@ def _outcomes(
         records = _records(file.path)
         next(records)  # the run line, read and checked in the first pass
         jobs: list[dict[str, Any]] = []
+        tested: list[dict[str, Any]] = []
         for record in records:
             if record.get("kind") == "record" and file.version >= 4:
                 jobs.append(record)
+                continue
+            if (
+                record.get("kind") == telemetry.TESTED_RECORD
+                and file.version >= telemetry.TESTED_RECORDS_SINCE
+            ):
+                # A tested push's pull request run's records (version 6): checked, and not this
+                # run's own, so no figure here reads them.
+                tested.append(record)
                 continue
             if record.get("kind") != "test":
                 raise SchemaError(f"{file.path.name}: a line after the first is not a test line")
@@ -465,6 +526,7 @@ def _outcomes(
             if found.first in FAILED and record.get("rerun_result") == telemetry.FLAKE:
                 found.passed_on_rerun = True
         checked = job_records(jobs, file.path.name)
+        tested_records(tested, file.path.name)
         if first is None:
             first = checked
     return outcomes, browse, first or []

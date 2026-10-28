@@ -1216,16 +1216,20 @@ def _object(value: object, what: str) -> dict[str, object]:
 
 def _playwright_tests(
     suite: object, titles: tuple[str, ...]
-) -> list[tuple[str, str, str, str, list[str]]]:
+) -> list[tuple[str, str, str, str, list[str], int | None]]:
     """Each test of a JSON report's suite, nested ones included: its file, its titles below the
-    file's own suite, its status, its project, and each of its runs' status. A suite, spec, test
-    or run of another shape than Playwright writes raises :class:`ValueError`."""
-    found: list[tuple[str, str, str, str, list[str]]] = []
+    file's own suite, its status, its project, each of its runs' status, and its spec's line (None
+    when the report gives none). A suite, spec, test or run of another shape than Playwright
+    writes raises :class:`ValueError`."""
+    found: list[tuple[str, str, str, str, list[str], int | None]] = []
     suite = _object(suite, "a suite")
     for spec in _items(suite.get("specs", []), "a suite's specs"):
         spec = _object(spec, "a spec")
         path = " > ".join((*titles, _text(spec.get("title"), "a spec's title")))
         file = _text(spec.get("file"), "a spec's file")
+        line = spec.get("line")
+        if line is not None and (not isinstance(line, int) or isinstance(line, bool) or line < 1):
+            raise ValueError("a spec's line is not a whole number from 1")
         for test in _items(spec.get("tests"), "a spec's tests"):
             test = _object(test, "a test")
             runs = [
@@ -1234,54 +1238,88 @@ def _playwright_tests(
             ]
             status = _text(test.get("status"), "a test's status")
             project = _text(test.get("projectName"), "a test's projectName")
-            found.append((file, path, status, project, runs))
+            found.append((file, path, status, project, runs, line))
     for child in _items(suite.get("suites", []), "a suite's suites"):
         title = _text(_object(child, "a suite").get("title"), "a suite's title")
         found += _playwright_tests(child, (*titles, title))
     return found
 
 
-def classify_playwright(
+def _playwright_report(
+    report: Path, name: str, started: float
+) -> tuple[list[tuple[str, str, str, str, list[str], int | None]] | None, str]:
+    """The tests of a Playwright JSON report written since *started*, or None and why not."""
+    try:
+        if not report.is_file():
+            return None, f"Playwright wrote no {name}, so nothing is classified"
+        if report.stat().st_mtime < started:
+            return None, (
+                f"Playwright wrote no {name} in this run (the one there is older than the job),"
+                " so nothing is classified"
+            )
+        data = _object(json.loads(report.read_text(encoding="utf-8")), "the report")
+        return [
+            t
+            for s in _items(data.get("suites"), "the report's suites")
+            for t in _playwright_tests(s, ())
+        ], ""
+    except (OSError, ValueError, RecursionError) as exc:
+        return None, f"its {name} is unreadable: {exc}"
+
+
+#: The projects whose tests an invocation filtered to them runs on their own: the render smoke,
+#: and the shared specs (``chromium``, which brings ``setup``, as the step does). A test of any
+#: other project runs only in its chain or its home (web/playwright.config.ts), and is not rerun
+#: alone.
+PLAYWRIGHT_ALONE_PROJECTS = frozenset({"smoke", "chromium"})
+
+#: The project the alone rerun runs as a dependency: its tests are not judged.
+PLAYWRIGHT_SETUP = "setup"
+
+
+def diagnose_playwright(
     argv: Sequence[str],
     *,
     root: Path,
     cwd: Path,
     env: Mapping[str, str],
-    code: int,
+    host: Host,
+    scratch: run.Scratch,
+    grace: float,
+    deadline: float,
     started: float,
-) -> tuple[dict[str, object] | None, list[str]]:
-    """Classify a red Playwright step's tests from its JSON report. Playwright's own one retry
-    (``retries: 1`` under CI, a new worker process, the same test timeout) is the rerun, so none
-    is started here: a ``flaky`` test (it failed, then passed on its retry) is a flake, which
-    ``failOnFlakyTests`` makes red; an ``unexpected`` one whose retry failed or timed out too is a
-    repeated failure; one that failed with no retry run, or whose retry ended otherwise (it was
-    interrupted), is not classified. The job stays red either way.
+) -> tuple[dict[str, object] | None, list[str], bool]:
+    """Classify a red Playwright step's failed tests, rerunning each that Playwright's own retry
+    passed once more, alone; the job stays red whatever the rerun shows.
 
-    The report is this run's only when it was written since the job started (*started*): one an
-    earlier run left is never read as this one's. A report that is missing, older than the job,
-    or of another shape than Playwright writes classifies nothing, and says so."""
+    Playwright's one retry (``retries: 1`` under CI) runs in a new worker, beside the others, so
+    a pass there is not a pass alone. Each ``flaky`` test of :data:`PLAYWRIGHT_ALONE_PROJECTS`, at
+    most :data:`verdict.MAX_FLAKES` of them (a step with more reruns none: the run could not pass
+    them all), is rerun in one invocation, so one gateway starts: ``npx playwright test`` with
+    :data:`verdict.E2E_ALONE` (one worker, no retry), each test's project and its
+    ``<file>:<line>``, the step's env, and its reports, traces and outputs in the job's scratch
+    folder, inside what is left of the job's time. The step's own reports beside it are put back
+    after it. Each is ``flake`` when it passed there and ``repeated failure`` when it failed
+    there. An ``unexpected`` test whose retry failed or timed out too is a repeated failure
+    without a rerun. Any other is not classified.
+
+    The rerun's own report is read only when every test it ran is one rerun, or a test of
+    :data:`PLAYWRIGHT_SETUP`, which it runs as their dependency, and its exit is 0 or 1. The
+    record's ``rerun`` names the alone rerun's own argv and exit, or no argv when none ran.
+
+    The step's report is this run's only when it was written since the job started (*started*):
+    one an earlier run left is never read as this one's. A report that is missing, older than
+    the job, or of another shape than Playwright writes classifies nothing, and says so."""
     name = env.get(PLAYWRIGHT_REPORT_ENV)
-    report = cwd / name if name else None
-    try:
-        if report is None or not report.is_file():
-            missing = name or "JSON report"
-            return None, [f"rerun: Playwright wrote no {missing}, so nothing is classified"]
-        if report.stat().st_mtime < started:
-            return None, [
-                f"rerun: Playwright wrote no {name} in this run (the one there is older than the"
-                " job), so nothing is classified"
-            ]
-        data = _object(json.loads(report.read_text(encoding="utf-8")), "the report")
-        tests = [
-            t
-            for s in _items(data.get("suites"), "the report's suites")
-            for t in _playwright_tests(s, ())
-        ]
-    except (OSError, ValueError, RecursionError) as exc:
-        return None, [f"rerun: its {name} is unreadable: {exc}"]
+    if not name:
+        return None, ["rerun: Playwright wrote no JSON report, so nothing is classified"], False
+    tests, why_not = _playwright_report(cwd / name, name, started)
+    if tests is None:
+        return None, [f"rerun: {why_not}"], False
     order: list[str] = []
     entries: dict[str, dict[str, object]] = {}
-    for file, title, status, project, runs in tests:
+    alone: dict[tuple[str, str, str], tuple[str, int]] = {}  # (file, title, project): id, line
+    for file, title, status, project, runs, line in tests:
         if status not in ("flaky", "unexpected"):
             continue
         rel = Path(os.path.relpath(cwd / PLAYWRIGHT_TEST_DIR / file, root)).as_posix()
@@ -1289,19 +1327,122 @@ def classify_playwright(
         if test_id in entries:
             continue
         order.append(test_id)
-        if status == "flaky":
-            word, why = verdict.FLAKE, "passed on Playwright's one retry, in a new worker"
-        elif len(runs) < 2:
-            word, why = None, "failed with no retry run, so not classified"
-        elif runs[-1] in _PLAYWRIGHT_FAILED:
-            word, why = verdict.REPEATED_FAILURE, "failed again on Playwright's one retry"
+        if status == "unexpected":
+            if len(runs) < 2:
+                word, why = None, "failed with no retry run, so not classified"
+            elif runs[-1] in _PLAYWRIGHT_FAILED:
+                word, why = verdict.REPEATED_FAILURE, "failed again on Playwright's one retry"
+            else:
+                word, why = None, f"its retry ended {runs[-1]}, so not classified"
+            entries[test_id] = _entry(test_id, word, why)
+        elif project not in PLAYWRIGHT_ALONE_PROJECTS:
+            entries[test_id] = _entry(
+                test_id,
+                None,
+                f"its project, {project}, runs only in its chain or its home, so it is not"
+                " rerun alone",
+            )
+        elif line is None:
+            entries[test_id] = _entry(
+                test_id, None, "its report gives no line, so it is not rerun alone"
+            )
         else:
-            word, why = None, f"its retry ended {runs[-1]}, so not classified"
-        entries[test_id] = _entry(test_id, word, why)
+            alone[(file, title, project)] = (test_id, line)
+            entries[test_id] = _entry(test_id, None, "not rerun alone")
     if not order:
-        return None, []
-    found, reasons, _ = _finish(None, order, entries, {}, [], list(argv), code, False)
-    return found, reasons
+        return None, [], False
+    reasons: list[str] = []
+    if len(alone) > verdict.MAX_FLAKES:
+        for test_id, _ in alone.values():
+            entries[test_id] = _entry(
+                test_id,
+                None,
+                f"one of {len(alone)} flaky tests, more than the {verdict.MAX_FLAKES} a run passes"
+                " as flakes, so none is rerun alone",
+            )
+        alone = {}
+    rerun_argv: list[str] | None = None
+    code: int | None = None
+    interrupted = False
+    work = scratch.tmp / f"rerun-{uuid.uuid4().hex}"
+    kept: dict[str, tuple[int, int]] | None = None
+    left = 0.0
+    if alone:
+        try:
+            kept = _keep(cwd, work / "kept")
+        except OSError as exc:
+            reasons.append(f"rerun: the step's report folder could not be kept aside: {exc}")
+        left = deadline - time.monotonic()
+    if alone and (kept is None or left <= 0):
+        why = (
+            "the step's report folder could not be kept aside, so it is not rerun"
+            if kept is None
+            else "the job's time ran out before the rerun"
+        )
+        shutil.rmtree(work, ignore_errors=True)
+        for test_id, _ in alone.values():
+            entries[test_id] = _entry(test_id, None, why)
+    elif kept is not None:
+        out = work / "report.json"
+        projects = sorted({project for _, _, project in alone})
+        places = sorted(
+            {f"{PLAYWRIGHT_TEST_DIR}/{f}:{line}" for (f, _, _), (_, line) in alone.items()}
+        )
+        rerun_argv = [
+            *PLAYWRIGHT_STEP,
+            *verdict.E2E_ALONE,
+            *(f"--project={project}" for project in projects),
+            f"--output={work / 'test-results'}",
+            *places,
+        ]
+        print(f"rerun, alone, for diagnosis only: {shlex.join(rerun_argv)}", file=sys.stderr)
+        result = run.run_job(
+            rerun_argv,
+            cwd=cwd,
+            scratch=scratch,
+            timeout=left,
+            path=host.path,
+            env={
+                **env,
+                PLAYWRIGHT_REPORT_ENV: str(out),
+                "PLAYWRIGHT_BLOB_OUTPUT_DIR": str(work / "blob-report"),
+                "PLAYWRIGHT_HTML_OUTPUT_DIR": str(work / "playwright-report"),
+            },
+            grace=grace,
+        )
+        code, interrupted = result.returncode, result.interrupted
+        other = [v for v in result.violations if not v.startswith("the job exited")]
+        reasons += [f"rerun: {v}" for v in other]
+        try:
+            _put_back(cwd, work / "kept", kept, work / "outputs")
+        except OSError as exc:
+            reasons.append(f"rerun: the step's report folder could not be put back: {exc}")
+        ran, why_not = _playwright_report(out, "rerun report", started)
+        if ran is None:
+            reasons.append(f"rerun: {why_not}")
+        seen: dict[tuple[str, str, str], str] | None = None
+        if ran is not None:
+            seen = {(f, t, p): status for f, t, status, p, _, _ in ran if p != PLAYWRIGHT_SETUP}
+            foreign = sorted(k for k, got in seen.items() if got != "skipped" and k not in alone)
+            if foreign:
+                reasons.append(
+                    f"rerun: its report names {foreign[0][0]}::{foreign[0][1]}"
+                    f" [{foreign[0][2]}], which was not rerun, so it classifies nothing"
+                )
+                seen = None
+        clean = seen is not None and code in (0, 1) and not other and not interrupted
+        for key, (test_id, _) in alone.items():
+            got = (seen or {}).get(key) if clean else None
+            if got == "expected":
+                word, why = verdict.FLAKE, "passed rerun alone in a new process"
+            elif got == "unexpected":
+                word, why = verdict.REPEATED_FAILURE, "failed again, alone"
+            elif got is not None:
+                word, why = None, f"it was {got} on the rerun, so not classified"
+            else:
+                word, why = None, f"the rerun reported nothing for it (exit {code})"
+            entries[test_id] = _entry(test_id, word, why)
+    return _finish(None, order, entries, {}, reasons, rerun_argv, code, interrupted)
 
 
 def _owned_env(job: Job) -> None:
@@ -1661,8 +1802,8 @@ def run_one(
                 )
                 reasons.extend(f"step {n}: {m}" for m in more)
                 interrupted = interrupted or stopped
-            # The same for the web runners: Vitest's failed tests are rerun once, alone;
-            # Playwright's are classified from its own one retry. The job stays red.
+            # The same for the web runners: Vitest's failed tests are rerun once, alone, and so
+            # are the Playwright tests its own retry passed. The job stays red.
             elif result.violations == (f"the job exited {TESTS_FAILED}",):
                 if tuple(argv) == VITEST_STEP and not workdir:
                     rerun, more, stopped = diagnose_vitest(
@@ -1677,15 +1818,19 @@ def run_one(
                     reasons.extend(f"step {n}: {m}" for m in more)
                     interrupted = interrupted or stopped
                 elif tuple(argv[:3]) == PLAYWRIGHT_STEP:
-                    rerun, more = classify_playwright(
+                    rerun, more, stopped = diagnose_playwright(
                         argv,
                         root=host.root,
                         cwd=host.root / workdir,
                         env={**base_env, **env},
-                        code=result.returncode,
+                        host=host,
+                        scratch=scratch,
+                        grace=options.grace,
+                        deadline=deadline,
                         started=started,
                     )
                     reasons.extend(f"step {n}: {m}" for m in more)
+                    interrupted = interrupted or stopped
             break
     quarantined: list[str] = []
     skipped: list[str] = []

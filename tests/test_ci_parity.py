@@ -103,6 +103,24 @@ def test_equal_sets_pass(tmp_path, capsys):
     assert "test-shard and test-macos ran the same 3 tests" in out
 
 
+def test_a_version_6_history_with_record_lines_reads_only_its_test_lines(tmp_path, capsys):
+    """Version 6 adds the tested run's record lines: a check of test lines reads past them, as
+    it reads past the push's own record lines."""
+    path = _history(
+        tmp_path, {"junit-test-shard-1": _junit(A, B), "junit-test-macos-1": _junit(B, A)}
+    )
+    assert json.loads(path.read_text().splitlines()[0])["version"] == 6
+    record = {"key": "e2e", "result": "failure", "rerun": [], "quarantined": []}
+    with path.open("a", encoding="utf-8") as out:
+        out.write(json.dumps(dict(record, kind="record")) + "\n")
+        out.write(
+            json.dumps(dict(record, kind=telemetry.TESTED_RECORD, run_id=600, attempt=1)) + "\n"
+        )
+    code, out = _parity(path, capsys)
+    assert code == 0, out
+    assert "test-shard and test-macos ran the same 2 tests" in out
+
+
 def test_a_skipped_case_is_still_in_its_sides_set(tmp_path, capsys):
     """A test skipped on macOS was collected there: it is the same test, not a missing one."""
     path = _history(

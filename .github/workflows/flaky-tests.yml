@@ -1,0 +1,56 @@
+# Flaky tests (#3948's flake rule): one issue for each test that keeps passing as a flake.
+#
+# The merge verdict passes a pull request run whose only failures are flakes, so a test can flake
+# on every run and still merge. Once a day `flaky-tests` fetches the last 14 days of the
+# collector's histories (`python -m tools.ci fetch --days 15 --no-carry`), each checked to be the
+# collector's own upload as the weekly report checks it, and `python -m tools.ci flaky-issues`
+# keeps one issue for each test that passed as a flake twice in 7 days, titled
+# "Flaky test: <id>" and labelled `flaky-test`. It edits that test's open issue, reopens its
+# closed one when two flakes came after it closed, or opens one; and it closes an open one after
+# 14 days with no flake, only when the window holds all 14 days. It writes only the issues this
+# workflow's account opened, and a body holds the test's id, its counts and its runs' links,
+# never a log line.
+#
+# A workflow of its own, so the collector (ci-telemetry.yml) holds no write. Its own schedule
+# slot, daily at 11:23 UTC, after the collector's daily run and clear of every other workflow's.
+name: Flaky tests
+
+on:
+  schedule:
+    - cron: "23 11 * * *"  # daily, 11:23 UTC
+  workflow_dispatch:
+
+# One run at a time, never cancelled: a second would list the same issues and open a test's twice.
+concurrency:
+  group: flaky-tests
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  flaky-tests:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    # About 140 histories, two calls and one download each.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read   # the collector's runs and their history archives
+      issues: write   # the "Flaky test: <id>" issues this workflow opens, edits, reopens and closes
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's own tools/ci, run on the image's python3: standard-library Python, nothing installed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: fetch the last 14 days' histories
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m tools.ci fetch --repo "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/window" --days 15 --no-carry
+      - name: open, edit, reopen and close the flaky tests' issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m tools.ci flaky-issues --repo "$GITHUB_REPOSITORY" --window "$RUNNER_TEMP/window"

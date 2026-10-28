@@ -163,6 +163,9 @@ class JobResult:
     step_exits: tuple[int, ...] = ()
     reran: bool = False
     rerun_exit: int | None = None
+    #: The rerun's argv, as its record names it (empty when none ran): an end-to-end test passes
+    #: as a flake only when it shows the rerun ran alone (:data:`E2E_ALONE`).
+    rerun_argv: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -321,8 +324,19 @@ PYTEST_CONFIG = ("pyproject.toml",)
 VITEST_CONFIG = ("web/vitest.config.ts", "web/vite.config.ts")
 VITEST_SETUP = "web/src/test/"
 #: Where the end-to-end tests live. Playwright's own retry runs beside the other workers, not
-#: alone, so none of them passes as a flake.
+#: alone, so an end-to-end test passes as a flake only on run-job's rerun of it alone
+#: (tools/ci/jobs.py, ``diagnose_playwright``), which its record's argv shows.
 E2E = "web/e2e/"
+#: What every end-to-end test's run reads besides its own spec: Playwright's configuration, which
+#: holds the harness gateway's launcher, and the script its served preview runs first. Every file
+#: of :data:`E2E` but another spec is read too (helpers, fixtures, the isolation rules, the
+#: runners).
+E2E_CONFIG = ("web/playwright.config.", "scripts/spa_dist_freshness.py")
+#: The flags the alone rerun runs Playwright with, in the one spelling run-job writes: one
+#: worker, and no retry of its own.
+E2E_ALONE = ("--workers=1", "--retries=0")
+#: Options that would give that rerun more workers or more tries.
+_E2E_MORE = ("--workers", "-j", "--retries", "--repeat-each")
 _CLEAN = frozenset({SUCCESS, SKIPPED})
 
 
@@ -429,20 +443,40 @@ def read_changed(text: str) -> frozenset[str]:
 
 def _reads(test: str) -> tuple[tuple[str, ...], tuple[str, ...]] | str:
     """The files a failed test's run reads that its pull request may not change for the test to
-    pass as a flake, and the folders whose files it reads: for pytest its own file, each
-    ``conftest.py`` above it and the pytest configuration; for Vitest its own file, the runner's
-    configuration and its setup folder. Or why the test passes as no flake: an id that names no
-    file of the repository, or an end-to-end test."""
+    pass as a flake, and the prefixes of the paths whose files it reads: for pytest its own file,
+    each ``conftest.py`` above it and the pytest configuration; for Vitest its own file, the
+    runner's configuration and its setup folder; for an end-to-end test its own spec,
+    :data:`E2E_CONFIG` and every file of :data:`E2E` but another spec (:func:`_read_by`). Or why
+    the test passes as no flake: an id that names no file of the repository."""
     path = test.split("::", 1)[0]
     parts = path.split("/")
     if "::" not in test or path.startswith("/") or any(p in ("", ".", "..") for p in parts):
         return f"`{_inline(test)}` names no file of the repository"
     if path.startswith(E2E):
-        return f"`{_inline(test)}` is an end-to-end test, which is never rerun alone"
+        return (path, E2E_CONFIG[1]), (E2E_CONFIG[0], E2E)
     if path.startswith("web/"):
         return (path, *VITEST_CONFIG), (VITEST_SETUP,)
     conftests = tuple("/".join([*parts[:i], "conftest.py"]) for i in range(len(parts) - 1, -1, -1))
     return (path, *conftests, *PYTEST_CONFIG), ()
+
+
+def _read_by(test: str, files: tuple[str, ...], prefixes: tuple[str, ...], changed: str) -> bool:
+    """Whether a run of *test* that reads *files* and the paths under *prefixes* reads the
+    *changed* path: another end-to-end spec is no file an end-to-end test's run reads."""
+    if changed in files:
+        return True
+    if changed.startswith(E2E) and changed.endswith(".spec.ts"):
+        return changed == test.split("::", 1)[0]
+    return changed.startswith(prefixes)
+
+
+def _ran_alone(argv: Sequence[str]) -> bool:
+    """Whether *argv* is run-job's alone rerun of Playwright tests: ``npx playwright test`` with
+    :data:`E2E_ALONE`, and no other option that adds workers or tries."""
+    if tuple(argv[:3]) != ("npx", "playwright", "test"):
+        return False
+    more = [a for a in argv[3:] if a.split("=", 1)[0] in _E2E_MORE or a.startswith("-j")]
+    return sorted(more) == sorted(E2E_ALONE)
 
 
 def _pass_flakes(
@@ -501,13 +535,16 @@ def _pass_flakes(
         for t in rec.tests:
             if t.standing != FLAKE:
                 return (), f"`{_inline(t.test)}` is {t.standing}, not a flake"
+            if t.test.startswith(E2E) and not _ran_alone(rec.rerun_argv):
+                return (), (
+                    f"`{_inline(t.test)}` was not rerun alone: its record's rerun is not"
+                    f" `npx playwright test {' '.join(E2E_ALONE)}`"
+                )
             found = _reads(t.test)
             if isinstance(found, str):
                 return (), found
             files, folders = found
-            hit = sorted(
-                {f for f in files if f in changed} | {c for c in changed if c.startswith(folders)}
-            )
+            hit = sorted(c for c in changed if _read_by(t.test, files, folders, c))
             if hit:
                 return (
                     (),
@@ -1020,6 +1057,7 @@ def _one_record(text: str, n: int) -> JobResult:
         tuple(step["exit"] for step in steps),
         rerun.get("argv") is not None,
         rerun.get("exit"),
+        tuple(rerun.get("argv") or ()),
     )
 
 

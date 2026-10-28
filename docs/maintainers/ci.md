@@ -1063,8 +1063,12 @@ main's verdict. Neither step can fail its job, and a push's run writes neither.
   attempt that did not pass is a failing key's, failed in its run-job line alone.
 
 A cancelled or timed-out shard is never a flake: it has no rerun, or no record, and its other
-tests never ran. An end-to-end test is never passed: Playwright's own retry runs beside the other
-workers, not alone. Without a changed list, or with an empty one, the rule passes nothing, and a
+tests never ran. An end-to-end test passes only on `run-job`'s rerun of it alone, which its
+record's argv shows (`npx playwright test --workers=1 --retries=0`, and no other option that adds
+workers or tries): Playwright's own retry runs beside the other workers. Its run reads its own
+spec, `web/playwright.config.*` (which holds the harness gateway's launcher),
+`scripts/spa_dist_freshness.py` (the preview's first step) and every file under `web/e2e/` but
+another spec. Without a changed list, or with an empty one, the rule passes nothing, and a
 push's run is never given one. The verdict writes one `::notice` titled `flake passed` per test
 it passes, and the merge controller names them in its green title. Each passed flake reaches the
 per-test history (#3948) with the tested push's history, whose pull request run it was. A test's
@@ -1803,9 +1807,13 @@ the shard planner and the weekly report read it.
   this repository, on that head. So a run on an older head, a fork's run, and an unmerged pull
   request's run are never read. Its test lines carry its own run id, attempt and head, for each
   report the push did not upload itself, and the run line's `tested_by` names the run, the pull
-  request, the head and the tree. It's null when no such run was found, or its reports could not
-  be read; the job's log says which. The collector reads pull requests and their events for it,
-  as `tree-check` does.
+  request, the head and the tree. Each job record that run's first attempt uploaded is a
+  `tested_record` line after the push's own record lines: the run and attempt it came from, then
+  a record line's fields. So a flake the merge verdict passed on that run, Playwright's too, which
+  no junit report carries, is in main's history. It's null, with neither its test lines nor its
+  record lines kept, when no such run was found, or its reports or its records could not be read;
+  the job's log says which. The collector reads pull requests and their events for it, as
+  `tree-check` does.
 - **A first result is never replaced.** Each attempt is collected on its own: from that
   attempt's own start, end and conclusion, its own jobs, and only the reports uploaded between
   its start and its end. So attempt 1's file keeps the first result even when it is collected
@@ -1819,10 +1827,13 @@ the shard planner and the weekly report read it.
   `machdep.cpu.brand_string` sysctl), and the run line's `cpus` maps each report to it (null
   where none was recorded), which the planner weighs seconds by.
 - **Versions.** Version 3 added the run line's `cpus` and nothing else, version 4 the job
-  record lines and nothing else, and version 5 the run line's `tested_by` and nothing else. The
-  planner, the report and the parity check read versions 1 to 5, so a history kept from before
-  reads as one whose reports recorded no CPU model, whose run carried no job records and that no
-  pull request run's suite filled in, and they refuse anything newer.
+  record lines and nothing else, version 5 the run line's `tested_by` and nothing else, and
+  version 6 the tested run's `tested_record` lines and nothing else. The planner, the report and
+  the parity check read versions 1 to 6, so a history kept from before reads as one whose reports
+  recorded no CPU model, whose run carried no job records and that no pull request run's suite or
+  records filled in, and they refuse anything newer. The planner and the parity check read test
+  lines alone; the report checks a `tested_record` line's shape and counts it in no figure, and
+  refuses one in a history before version 6.
 - **Artifacts are data.** An archive over 8 MiB (128 MiB for a `reports-*` one) is never
   downloaded, a report is read in memory up to 8 MiB, a report that is not UTF-8 or declares a
   DOCTYPE anywhere is refused, and nothing is extracted or run. A report that cannot be read fails the collection and writes nothing. The
@@ -2000,6 +2011,35 @@ and on dispatch, one run at a time and never cancelled:
   first 20 refusals (each as code, since it can quote an archive's names).
 - **No durations cache.** The shard planner reads the record itself (#4778), so this workflow
   refreshes nothing for it.
+
+### The flaky tests' issues
+
+The verdict passes a pull request run whose only failures are flakes, so a test can flake on
+every run and still merge. `.github/workflows/flaky-tests.yml` runs daily at 11:23 UTC, a slot no
+other workflow takes, and on dispatch, on `main` only and one run at a time. It keeps one issue
+for each such test (`tools/ci/flaky_issues.py`, `python -m tools.ci flaky-issues`). It is a
+workflow of its own so the collector holds no write.
+
+- **The window.** `python -m tools.ci fetch --days 15 --no-carry` fetches the last 14 days of
+  histories, a day of slack, as the weekly report's fetch does. A flake is a failed test a job
+  record's rerun classified `flake`: the run's own records, and a tested push's pull request
+  run's (`tested_record`, version 6). Each counts once per test, run and attempt.
+- **Opening.** A test with 2 or more flakes in 7 days has one issue, titled `Flaky test: <id>`
+  (past GitHub's 256 characters, cut, with the id's digest after it) and labelled `flaky-test`.
+  Its open issue is edited; or, when it was closed and 2 flakes came after that, the fix did not
+  hold and it is reopened; or one is opened. Never two for one test.
+- **Closing.** An open issue whose test had no flake in 14 days is closed with a comment, but
+  only when the window holds all 14 days: the fetch left no history unread (none left, refused
+  or dropped), the oldest history is 14 days old or more and the newest at most 2. A window the
+  collector stopped filling closes nothing. A pull request that says `Fixes #N` closes it
+  through GitHub.
+- **Only its own issues.** An issue is the job's when `github-actions[bot]` opened it, it carries
+  the label, its title is one the job gives, and it is no pull request. It lists them through the
+  issues API, never search. Every other issue is never edited, reopened, closed or counted.
+- **No log text.** A body holds the id, in a fence longer than any run of backticks in it, the
+  counts, and each flake's day and run link. Nothing else of a history reaches it.
+- **Its token.** `contents: read`, `actions: read` for the histories, and `issues: write`, an
+  audited write.
 
 ## The selection map
 
@@ -2714,16 +2754,25 @@ budget, and red on a first failure the retry passes.
   step that exits 0 with such a report is red; a rerun that exits otherwise than 0 or 1, is
   stopped at the end of the job's time or is interrupted, or whose report is missing or
   unreadable, classifies nothing.
-- **Playwright:** its own retry is the rerun, so `run-job` starts no second one. Under CI
-  `web/playwright.config.ts` keeps `retries: 1` (a new worker process, the same test timeout) and
-  sets `failOnFlakyTests`, so a test that passes only on its retry fails the run. When the `e2e`
-  step exits 1, and nothing else went wrong, `run-job` reads its JSON report
-  (`PLAYWRIGHT_JSON_OUTPUT_NAME`): a `flaky` test is a `flake`; an `unexpected` one whose retry
-  failed or timed out too is a `repeated failure`; one that failed with no retry run, or whose
-  retry ended otherwise (it was interrupted), is not classified. The record's `rerun` names the
-  step's own argv and exit. A report that is missing, older than the job (an earlier run's, left
-  when Playwright exits 1 before writing one, as on a config that throws at load), or not of the
-  shape Playwright writes classifies nothing, and says so.
+- **Playwright:** under CI `web/playwright.config.ts` keeps `retries: 1` (a new worker process,
+  beside the others, the same test timeout) and sets `failOnFlakyTests`, so a test that passes
+  only on its retry fails the run. That retry is not a run alone, so it only says which tests to
+  rerun. When the `e2e-shard` step (`npx playwright test …`) exits 1, and nothing else went wrong,
+  `run-job` reads its JSON report (`PLAYWRIGHT_JSON_OUTPUT_NAME`). Each `flaky` test of the
+  `smoke` or `chromium` project, at most two (a step with more reruns none), is rerun in one
+  invocation, so the gateway starts once: `npx playwright test --workers=1 --retries=0`, each
+  test's `--project` and its `<file>:<line>`, with the step's env and its reports, traces and
+  outputs in the job's scratch folder, inside the job's remaining time. The step's own reports
+  beside it are put back after it. It is a `flake` when it passed there and a `repeated failure`
+  when it failed there. A flaky test of a project that runs only in its chain or its home (the
+  stateful passes, the specs with a home of their own) is not rerun, and not classified. An
+  `unexpected` test whose retry failed or timed out too is a `repeated failure` with no rerun; one
+  that failed with no retry run, or whose retry ended otherwise, is not classified. The rerun's
+  report is read only when every test it ran is one it reran, or a `setup` test (chromium's
+  dependency), and its exit is 0 or 1. The record's `rerun` names the alone rerun's own argv and
+  exit, or no argv when none ran. A report that is missing, older than the job (an earlier run's,
+  left when Playwright exits 1 before writing one, as on a config that throws at load), or not of
+  the shape Playwright writes classifies nothing, and says so.
 
 Three contract rows, one per runner, hold what the tree must not add, each rule with a planted
 break, each listed option, plugin and key its own:
@@ -3106,6 +3155,7 @@ The audited writes today:
 | `release.yml` | `attest` | `id-token: write`, `attestations: write` | build-provenance attestations |
 | `breadth.yml` | `report` | `issues: write` | one issue per red nightly leg |
 | `flake-report.yml` | `report` | `issues: write` | the one "Weekly CI health" issue |
+| `flaky-tests.yml` | `flaky-tests` | `issues: write` | one issue per flaky test |
 | `settings-report.yml` | `report` | `issues: write` | the one "Repository settings drift" issue |
 
 ### The dependency audit

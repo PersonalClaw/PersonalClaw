@@ -105,6 +105,13 @@ steps = ["report, and on main write the weekly issue"]
 reason = "Edits the one open issue titled `Weekly CI health` that the workflow's own account opened, or opens it once; it writes the issue only on main, and nothing else."
 
 [[audited_write]]
+workflow = "flaky-tests.yml"
+job = "flaky-tests"
+permission = "issues: write"
+steps = ["open, edit, reopen and close the flaky tests' issues"]
+reason = "Keeps one issue per test that passed as a flake twice in 7 days, titled `Flaky test: <id>` and labelled `flaky-test`, and closes it after 14 days with none; it writes only the issues the workflow's own account opened, and runs only on main."
+
+[[audited_write]]
 workflow = "settings-report.yml"
 job = "report"
 permission = "issues: write"
