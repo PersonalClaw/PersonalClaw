@@ -89,6 +89,28 @@ def _job(name: str, conclusion: str = "success", **kw: Any) -> dict[str, Any]:
     }
 
 
+#: The stages a plan leaves empty, as GitHub lists them: each skipped matrix job under its
+#: unexpanded name, with no step and no runner (#5623's Merge run 40619732396: build, test-2 and
+#: test-3).
+EMPTY_STAGES = [_job("matrix.key", "skipped", steps=[]) for _ in range(3)]
+#: #5623's Merge run 40619732396 as its results job listed it: every planned job passed, and the
+#: verdict refused the listing for its three `matrix.key` jobs (exit 2).
+LISTED_5623 = [
+    *(
+        _job(n)
+        for n in (
+            "tree-check", "shard-plan", "changes", "python-suite (1/3)", "rails (1/3)",
+            "python-suite (3/3)", "python-suite-macos (2/3)", "python-suite (2/3)",
+            "python-suite-macos (1/3)", "rails (2/3)", "static", "python-suite-macos (3/3)",
+            "rails (3/3)",
+        )
+    ),
+    *EMPTY_STAGES,
+    *(_job(n) for n in ("rails-checks", "security", "browse-live")),
+    _job("results", None, status="in_progress"),
+]  # fmt: skip
+
+
 def _jobs(*failed: str, extra: Sequence[dict[str, Any]] = ()) -> list[verdict.JobRun]:
     listed = [_job(n, "failure" if n in failed else "success") for n in ("tree-check", *PLAN)]
     listed += [*extra, _job("results", None, status="in_progress")]
@@ -358,6 +380,26 @@ def test_a_failing_key_the_jobs_do_not_list_as_failed_is_red() -> None:
             [{"total_count": 2, "jobs": [_job(ONE), _job(ONE)]}], "twice", id="a job twice"
         ),
         pytest.param(
+            [{"total_count": 2, "jobs": [_job(ONE), _job(ONE, "skipped", steps=[])]}],
+            "twice",
+            id="a job that ran and a skipped job of one name",
+        ),
+        pytest.param(
+            [{"total_count": 2, "jobs": [_job(ONE, "skipped", steps=[]), _job(ONE, "failure")]}],
+            "twice",
+            id="a skipped job and a job that ran of one name",
+        ),
+        pytest.param(
+            [{"total_count": 3, "jobs": [*EMPTY_STAGES[:2], _job("matrix.key")]}],
+            "twice",
+            id="a job that ran named as the skipped stages are",
+        ),
+        pytest.param(
+            [{"total_count": 3, "jobs": [_job("matrix.key", "failure"), *EMPTY_STAGES[:2]]}],
+            "twice",
+            id="a failed job named as the skipped stages are, listed first",
+        ),
+        pytest.param(
             [{"total_count": 2, "jobs": [_job(ONE)]}, {"total_count": 3, "jobs": [_job(TWO)]}],
             "the pages count",
             id="pages that disagree",
@@ -367,6 +409,16 @@ def test_a_failing_key_the_jobs_do_not_list_as_failed_is_red() -> None:
 def test_a_jobs_listing_that_cannot_be_trusted_is_refused(pages: list[Any], says: str) -> None:
     with pytest.raises(verdict.Refused, match=says):
         verdict.read_jobs(json.dumps(pages), run_id=RUN, attempt=1)
+
+
+def test_the_stages_a_plan_leaves_empty_read_under_one_name() -> None:
+    listed = [_job(n) for n in ("tree-check", *PLAN)] + EMPTY_STAGES
+    jobs = verdict.read_jobs(
+        json.dumps([{"total_count": len(listed), "jobs": listed}]), run_id=RUN, attempt=1
+    )
+    assert [j.name for j in jobs].count("matrix.key") == 3
+    judged = _judge([_record(ONE, _test(FLAKY))], jobs=_jobs(ONE, extra=EMPTY_STAGES))
+    assert judged.green and [t.test for t in judged.flakes] == [FLAKY]
 
 
 # ── The identity still holds ─────────────────────────────────────────────────────────────────
@@ -387,7 +439,13 @@ def test_a_changed_list_naming_no_path_is_refused(name: str) -> None:
 # ── The command ──────────────────────────────────────────────────────────────────────────────
 
 
-def _files(tmp_path: Path, records: Sequence[str], *, failed: Sequence[str] = (ONE,)) -> list[str]:
+def _files(
+    tmp_path: Path,
+    records: Sequence[str],
+    *,
+    failed: Sequence[str] = (ONE,),
+    extra: Sequence[dict[str, Any]] = (),
+) -> list[str]:
     folder = tmp_path / "records"
     for text in [
         *records,
@@ -398,7 +456,7 @@ def _files(tmp_path: Path, records: Sequence[str], *, failed: Sequence[str] = (O
         art.mkdir(parents=True)
         (art / "record.json").write_text(text)
     listed = [_job(n, "failure" if n in failed else "success") for n in ("tree-check", *PLAN)]
-    listed.append(_job("results", None, status="in_progress"))
+    listed += [*extra, _job("results", None, status="in_progress")]
     (tmp_path / "jobs.json").write_text(json.dumps([{"total_count": len(listed), "jobs": listed}]))
     (tmp_path / "changed").write_text("".join(p + "\0" for p in sorted(CHANGED)))
     (tmp_path / "plan.json").write_text(json.dumps(PLAN))
@@ -420,6 +478,23 @@ def test_the_command_passes_a_flake_and_writes_its_notice(
     out = capsys.readouterr().out
     assert out.startswith("### Verdict: green\n")
     assert f"::notice title=flake passed::tests/test_timing.py::test_it[100%25] ({ONE})\n" in out
+
+
+def test_the_command_reads_a_green_run_whose_plan_leaves_stages_empty(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #5623: every planned job passed, and the verdict refused the listing (exit 2).
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    argv = _files(tmp_path, [], failed=(), extra=EMPTY_STAGES)
+    (tmp_path / "needs.json").write_text(_needs(test="success"))
+    assert verdict.main(argv) == 0
+    capsys.readouterr()
+    # And with the listing as it happened.
+    real = [{"total_count": len(LISTED_5623), "jobs": LISTED_5623}]
+    (tmp_path / "jobs.json").write_text(json.dumps(real))
+    assert verdict.main(argv) == 0
+    assert capsys.readouterr().out.startswith("### Verdict: green\n")
 
 
 def test_the_command_refuses_the_rules_lists_on_a_push(
