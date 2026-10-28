@@ -31,6 +31,7 @@ import subprocess
 from pathlib import Path
 
 import app_catalog_provenance_shared
+import pytest
 
 from personalclaw.apps import catalog
 
@@ -313,6 +314,7 @@ def test_source_kind_for_origin_never_guesses():
         assert catalog.source_kind_for_origin(origin) in catalog.SOURCE_PRECEDENCE
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_the_bundled_default_source_can_be_turned_off(tmp_path, monkeypatch):
     """ "Cannot be turned off" no longer holds. The bundled tuple is folded into every read,
     so there is no row to delete — ``apps.bundled_source_enabled`` is the off switch, and it
@@ -332,6 +334,7 @@ def test_the_bundled_default_source_can_be_turned_off(tmp_path, monkeypatch):
     assert _EDITABLE_CONFIG["apps.bundled_source_enabled"]["type"] == "bool"
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_an_unparseable_config_still_lists_the_default(tmp_path, monkeypatch):
     """Polarity, stated: losing the Store's only source on a corrupt config is the worse
     failure, and the listing is disclosed and refusable either way.
@@ -348,6 +351,7 @@ def test_an_unparseable_config_still_lists_the_default(tmp_path, monkeypatch):
     assert "https://example.invalid/apps.git" in catalog.list_git_sources()
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_a_config_read_that_RAISES_still_lists_the_default(tmp_path, monkeypatch):
     """🔴 The fail-open guarantee, actually exercised. Added after a mutation battery.
 

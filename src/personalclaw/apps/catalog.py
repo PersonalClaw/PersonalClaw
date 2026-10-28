@@ -1259,6 +1259,21 @@ def bundled_source_enabled() -> bool:
         return True
 
 
+def registry_source_enabled() -> bool:
+    """Whether the curated registry is seeded into the sources (:func:`seed_default_git_sources`).
+
+    ``apps.registry_source_enabled``. Unlike :func:`bundled_source_enabled`, a config-read
+    failure reads OFF: a shipped network source is opt-out-able state, and the safe direction for
+    an unreadable config is to add no source the operator never saw."""
+    from personalclaw.config.loader import AppConfig
+
+    try:
+        return bool(AppConfig.load().apps.registry_source_enabled)
+    except Exception:
+        logger.warning("could not read apps.registry_source_enabled; not seeding", exc_info=True)
+        return False
+
+
 def list_git_sources() -> list[str]:
     """The configured git source URLs (defaults + user-added), de-duped in order.
 
@@ -1461,14 +1476,7 @@ def seed_default_git_sources() -> list[str]:
     Config-read failures are non-fatal and seed NOTHING: a shipped network source is
     opt-out-able state, and the safe direction for an unreadable config is to add no source
     the operator never saw."""
-    from personalclaw.config.loader import AppConfig
-
-    try:
-        enabled = bool(AppConfig.load().apps.registry_source_enabled)
-    except Exception:
-        logger.warning("could not read apps.registry_source_enabled; not seeding", exc_info=True)
-        return []
-    if not enabled:
+    if not registry_source_enabled():
         return []
     src = _read_sources()
     if _SEEDED_REGISTRY_KEY in src["seeded"]:
