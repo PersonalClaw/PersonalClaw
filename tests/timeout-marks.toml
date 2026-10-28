@@ -5,7 +5,9 @@
 # scope it sits in (see tests/timeout_marks.py). The CI contract row
 # `every-timeout-mark-is-listed-with-its-reason` fails on a mark this list lacks, an entry whose
 # mark is gone, a cap that differs, and an entry with no reason. Adding an entry is the reviewed
-# act; a mark that is deleted takes its entry with it.
+# act; a mark that is deleted takes its entry with it. Main's CI contract over a head runs with
+# main's entries for the files it lays over the head, and the head's for the rest
+# (tools/ci/contract.py's overlaid_marks).
 
 [[mark]]
 site = "tests/rails/test_keychain_namespace_census.py::test_every_keychain_call_names_the_homes_own_namespace"
