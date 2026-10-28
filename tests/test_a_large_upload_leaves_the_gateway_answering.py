@@ -529,7 +529,16 @@ def _said(runs: tuple) -> str:
 #: wait on a read, a write, a lock or the GIL) is counted in wall time, no part of its count's time
 #: ready left out, and an answer leaves out none of what such steps inside it held. The probe reads
 #: both ways and reports the other beside what it judges (:meth:`_Probe.says`).
-_SLEPT_STEPS_EXCUSE_NOTHING = False
+#:
+#: It is. A step that slept waited on something for a time the probe cannot read: the kernel's
+#: count of a thread's sleep is off on the runners (``kernel.sched_schedstats``), and what the step
+#: waited on is the code under test. So the most of the step's count that is the runner's is the
+#: step less that wait, which may be all of it, and none of the count is left out. On a CI runner
+#: the count said 0.192 s ready in a 0.284 s step holding a 0.2 s wait to read, more than the step
+#: less the wait could hold, and the step was counted 0.091 s, the block missed (run 40760127591).
+#: A step the loop thread never gave up its CPU in is left its count as before: there the count
+#: can only be the runner's.
+_SLEPT_STEPS_EXCUSE_NOTHING = True
 
 
 class SleptSteps(UserWarning):
@@ -1982,6 +1991,32 @@ def test_a_linux_count_whose_second_file_will_not_open_leaves_the_first_closed(m
         no_cpu.open()
     assert opened and closed == opened, f"opened {opened}, closed {closed}"
     assert no_cpu._fd is None and no_cpu._status is None
+
+
+def test_a_linux_step_whose_count_is_ready_through_its_own_sleep_fails_the_probe():
+    """🔴 Red before (a Linux step left out all its count gave it): the CI runner's step, 0.284 s
+    with no CPU around a 0.2 s wait to read, its count at 0.192 s ready, was counted 0.091 s, and
+    its answer 0.093 s, both under the bound, so the block was missed (run 40760127591). The loop
+    thread slept in it, so none of the count is left out: the step reads 0.284 s and the answer,
+    leaving out none of what that step held, 0.285 s."""
+    probe = _probed(_LinuxReads(), _CI_SLEPT_STEP, _CI_SLEPT_ANSWER)
+    assert probe.worst_step >= _BOUND, f"the step missed the block; {probe.says()}"
+    assert probe.slowest_answer >= _BOUND, f"the answer missed the block; {probe.says()}"
+
+
+def test_a_linux_step_with_a_wait_for_a_cpu_and_no_sleep_is_left_out_exactly_as_before():
+    """The rule's other side: a step the loop thread never gave up its CPU in has the runner's
+    wait for a CPU left out as before, all its count gives it."""
+    probe = _probed(_LinuxReads(), (0.284, 0.04, 0.192, 0))
+    assert probe.worst_step == pytest.approx(0.284 - 0.192), probe.says()
+
+
+def test_without_the_rule_the_ci_runners_step_is_counted_under_the_bound(monkeypatch):
+    """The mutant: with the rule dropped, the CI runner's step and its answer read under the bound
+    again, so the plant above fails on it."""
+    monkeypatch.setattr(sys.modules[__name__], "_SLEPT_STEPS_EXCUSE_NOTHING", False)
+    probe = _probed(_LinuxReads(), _CI_SLEPT_STEP, _CI_SLEPT_ANSWER)
+    assert probe.worst_step < _BOUND and probe.slowest_answer < _BOUND, probe.says()
 
 
 def test_an_exception_in_the_probes_own_work_still_runs_the_loops_callback():
