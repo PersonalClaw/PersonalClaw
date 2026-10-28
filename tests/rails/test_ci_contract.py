@@ -2501,12 +2501,19 @@ def macos_suite_first_violations(tree: Tree) -> list[str]:
     return bad
 
 
-#: The macOS runners the account runs at once: a pull request's macOS shards and breadth's macOS
-#: leg, which a night's run and a day's pull request can hold together, share them (#3915).
+#: The macOS runners the account runs at once (the free plan's 5): a pull request's macOS shards
+#: and breadth's macOS jobs share them.
 _MACOS_RUNNERS = 5
-#: The macOS runners one merge-tier run may hold of them (#3915). Pull requests run one at a time,
-#: and a tested push holds none, so one run's three leave breadth's macOS leg its own.
-_MERGE_MACOS = 3
+#: The macOS runners one merge-tier run may hold of them: every one. Pull requests run one at a
+#: time and a tested push holds none, so the merge tier's macOS suite runs in as many shards as
+#: the account has runners, and breadth's macOS jobs queue behind a run that holds them (their
+#: timeouts count only the minutes they run). This was three until the suite's shards ran 20 to 25
+#: minutes, the longest leg of every merge (#3915, #3923).
+_MERGE_MACOS = _MACOS_RUNNERS
+#: The macOS runners breadth's jobs may hold at once, so a pull request's run beside a night's
+#: breadth still starts two of its shards at once: the `macos` leg (one shard at a time,
+#: ``max-parallel: 1``) or the legs that wait for it, whichever holds more, and the legs beside it.
+_BREADTH_MACOS = 3
 #: The workers one merge-tier macOS job may run: a macOS runner's memory holds it there (#3923).
 #: A count of its own, never ``auto``, which reads the host's CPUs and not its memory.
 _MACOS_WORKERS = 2
@@ -2537,8 +2544,8 @@ def _macos_workers(name: str, workers: str, *, expect: str = "", fails: bool = T
         catalogue.CATALOGUE,
         (
             (
-                "timeout_min = 50\nworkers = 2\nshards = 3\n",
-                f"timeout_min = 50\nworkers = {workers}\nshards = 3\n",
+                f"timeout_min = 50\nworkers = 2\nshards = {_MACOS_SHARDS}\n",
+                f"timeout_min = 50\nworkers = {workers}\nshards = {_MACOS_SHARDS}\n",
             ),
             (
                 '"pytest", "-n", "2", "--dist", "worksteal", "-q", "tests", "--shard-list"',
@@ -2551,13 +2558,31 @@ def _macos_workers(name: str, workers: str, *, expect: str = "", fails: bool = T
     )
 
 
+def breadth_macos_at_once(tree: Tree) -> tuple[int, str]:
+    """The macOS runners breadth's jobs hold at once, and how: the legs beside the ``macos``
+    leg, and the larger of that leg (capped by ``max-parallel``) and the legs that wait for it,
+    which run after it but may run beside a leg still going (``rails-macos``, say, on a night
+    whose suite shards were carried and took a minute each)."""
+    jobs = _breadth_jobs(tree)
+    suite = _macos_at_once(jobs.get("macos") or {})
+    after = beside = 0
+    for job_id, job in jobs.items():
+        if job_id == "macos" or not isinstance(job, dict):
+            continue
+        if _waits_on(jobs, job_id, "macos"):
+            after += _macos_at_once(job)
+        else:
+            beside += _macos_at_once(job)
+    how = f"{beside} beside the macos leg, and the larger of its {suite} and the {after} after it"
+    return beside + max(suite, after), how
+
+
 def macos_budget_violations(tree: Tree) -> list[str]:
-    """A merge-tier run holds at most :data:`_MERGE_MACOS` macOS runners, each running at most
-    :data:`_MACOS_WORKERS` workers, and a pull request's macOS jobs and breadth's macOS suite
-    leg, at once, fit the account's macOS runners: the merge tier's macOS shards, which
-    merge.yml runs, as the catalogue gives them. The legs that wait for breadth's macOS suite run
-    after it, never beside it (:data:`_AFTER_THE_MACOS_SUITE`), so they are not counted."""
-    breadth = _macos_at_once(_breadth_jobs(tree).get("macos") or {})
+    """A merge-tier run holds at most :data:`_MERGE_MACOS` macOS runners, every one the account
+    runs, each running at most :data:`_MACOS_WORKERS` workers: the merge tier's macOS shards,
+    which merge.yml runs, as the catalogue gives them. Breadth's macOS jobs hold at most
+    :data:`_BREADTH_MACOS` at once (:func:`breadth_macos_at_once`), so a night's breadth always
+    leaves a pull request's run some of its shards, and queues behind a run that holds the rest."""
     cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
     merge = sum(j.shards for j in cat.tier("merge") if j.platform.startswith("macos"))
     bad: list[str] = []
@@ -2572,14 +2597,14 @@ def macos_budget_violations(tree: Tree) -> list[str]:
             )
     if merge > _MERGE_MACOS:
         bad.append(
-            f"the merge tier's run holds {merge} macOS runners, more than the {_MERGE_MACOS} one"
-            " run may take"
+            f"the merge tier's run holds {merge} macOS runners, more than the {_MERGE_MACOS} the"
+            " account runs"
         )
-    if merge + breadth > _MACOS_RUNNERS:
+    held, how = breadth_macos_at_once(tree)
+    if held > _BREADTH_MACOS:
         bad.append(
-            f"the merge tier's run holds {merge} macOS runners and breadth's macos leg"
-            f" {breadth} at once: {merge + breadth}, more than the {_MACOS_RUNNERS} the account"
-            " runs"
+            f"breadth's macOS jobs hold {held} runners at once ({how}), more than the"
+            f" {_BREADTH_MACOS} breadth may hold"
         )
     return bad
 
@@ -3693,7 +3718,7 @@ _BREADTH = ".github/workflows/breadth.yml"
 _SETUP_ACTION = ".github/actions/setup/action.yml"
 
 
-#: How many shards the merge tier's macOS suite runs in, as the tree's catalogue gives it (3). A
+#: How many shards the merge tier's macOS suite runs in, as the tree's catalogue gives it. A
 #: change of what a row names lands in two merges (#4584 step 4), these rows first, so they read
 #: the count from the tree, and the macOS runners' row holds it to at most :data:`_MERGE_MACOS`.
 _MACOS_SHARDS = next(j.shards for j in catalogue.read(REPO).jobs if j.id == "python-suite-macos")
@@ -5014,47 +5039,42 @@ ROWS: tuple[Row, ...] = (
         ),
     ),
     _toolchain_row(
-        "a-pull-requests-macos-jobs-and-breadths-macos-leg-fit-the-macos-runners",
+        "a-merge-run-may-take-every-macos-runner-and-breadth-leaves-it-some",
         macos_budget_violations,
         (
             # The macOS shards are the tree's (_MACOS_SHARDS), so each plant reads both trees.
             _plant(
-                "breadth's macos leg beside the macOS shards up to the account's 5 fits",
-                _BREADTH,
-                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
-                f"      max-parallel: {_MACOS_RUNNERS - _MACOS_SHARDS}\n      matrix:\n"
-                '        python: ["3.12.15"]\n',
+                "the merge tier's macOS suite in as many shards as the account's macOS runners"
+                " fits",
+                catalogue.CATALOGUE,
+                f"timeout_min = 50\nworkers = 2\nshards = {_MACOS_SHARDS}\n",
+                f"timeout_min = 50\nworkers = 2\nshards = {_MACOS_RUNNERS}\n",
                 fails=False,
             ),
             _plant(
-                "breadth's macos leg one more beside the macOS shards",
-                _BREADTH,
-                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
-                f"      max-parallel: {_MACOS_RUNNERS - _MACOS_SHARDS + 1}\n      matrix:\n"
-                '        python: ["3.12.15"]\n',
-                expect=f"breadth's macos leg {_MACOS_RUNNERS - _MACOS_SHARDS + 1} at once: 6",
-            ),
-            _plant(
-                "the merge tier's macOS suite in four shards",
+                "the merge tier's macOS suite in one shard more than the account's macOS runners",
                 catalogue.CATALOGUE,
                 f"timeout_min = 50\nworkers = 2\nshards = {_MACOS_SHARDS}\n",
-                "timeout_min = 50\nworkers = 2\nshards = 4\n",
-                expect="the merge tier's run holds 4 macOS runners, more than the 3 one run may",
+                f"timeout_min = 50\nworkers = 2\nshards = {_MACOS_RUNNERS + 1}\n",
+                expect=f"the merge tier's run holds {_MACOS_RUNNERS + 1} macOS runners, more than"
+                f" the {_MACOS_RUNNERS} the account runs",
             ),
-            _plant(
-                "the merge tier's macOS suite in five shards",
+            _plants(
+                "two more macOS entries in the merge tier, the browser legs' two shards and the"
+                " rails' three",
                 catalogue.CATALOGUE,
-                f"timeout_min = 50\nworkers = 2\nshards = {_MACOS_SHARDS}\n",
-                "timeout_min = 50\nworkers = 2\nshards = 5\n",
-                expect="the merge tier's run holds 5 macOS runners and breadth's macos leg",
-            ),
-            _plant(
-                "a second macOS entry in the merge tier, the browser legs' two shards",
-                catalogue.CATALOGUE,
-                'id = "e2e-shard"\ntiers = ["merge"]\n',
-                'id = "e2e-shard"\ntiers = ["merge"]\nplatform = "macos-26"\n',
-                expect=f"the merge tier's run holds {_MACOS_SHARDS + 2} macOS runners, more than"
-                " the 3 one run may",
+                (
+                    (
+                        'id = "e2e-shard"\ntiers = ["merge"]\n',
+                        'id = "e2e-shard"\ntiers = ["merge"]\nplatform = "macos-26"\n',
+                    ),
+                    (
+                        'id = "rails"\ntiers = ["change", "merge"]\n',
+                        'id = "rails"\ntiers = ["change", "merge"]\nplatform = "macos-26"\n',
+                    ),
+                ),
+                expect=f"the merge tier's run holds {_MACOS_SHARDS + 5} macOS runners, more than"
+                f" the {_MACOS_RUNNERS} the account runs",
             ),
             _macos_workers("the merge tier's macOS suite at one worker fits", "1", fails=False),
             _macos_workers(
@@ -5067,12 +5087,55 @@ ROWS: tuple[Row, ...] = (
                 '"auto"',
                 expect="python-suite-macos runs 'auto' workers on a macOS runner, not a count",
             ),
+            # Breadth today: rails-macos beside the macos leg, which runs one shard at a time,
+            # and security-macos and planned-ids-macos after it: 1 + max(1, 2) = 3.
+            _plant(
+                "breadth's macos leg two shards at once, as many as the legs after it, fits",
+                _BREADTH,
+                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
+                '      max-parallel: 2\n      matrix:\n        python: ["3.12.15"]\n',
+                fails=False,
+            ),
+            _plant(
+                "breadth's macos leg three shards at once",
+                _BREADTH,
+                '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
+                '      max-parallel: 3\n      matrix:\n        python: ["3.12.15"]\n',
+                expect="breadth's macOS jobs hold 4 runners at once (1 beside the macos leg, and"
+                " the larger of its 3 and the 2 after it), more than the 3 breadth may hold",
+            ),
             _plant(
                 "breadth's macos leg uncapped: six shards at once",
                 _BREADTH,
                 '      max-parallel: 1\n      matrix:\n        python: ["3.12.15"]\n',
                 '      matrix:\n        python: ["3.12.15"]\n',
-                expect="breadth's macos leg 6 at once",
+                expect="breadth's macOS jobs hold 7 runners at once (1 beside the macos leg, and"
+                " the larger of its 6",
+            ),
+            _plant_in_job(
+                "breadth's collection-parses moved onto macOS, a second leg beside the suite",
+                _BREADTH,
+                "collection-parses",
+                "    runs-on: ubuntu-24.04\n",
+                "    runs-on: macos-26\n",
+                expect="breadth's macOS jobs hold 4 runners at once (2 beside the macos leg",
+            ),
+            _plant_in_job(
+                "rails-macos waiting for the macos leg, a third leg after it, fits",
+                _BREADTH,
+                "rails-macos",
+                "    needs: [freshness]\n",
+                "    needs: [freshness, macos]\n",
+                fails=False,
+            ),
+            _plant_in_job(
+                "rails-macos in two legs, both waiting for the macos leg",
+                _BREADTH,
+                "rails-macos",
+                "    needs: [freshness]\n",
+                "    needs: [freshness, macos]\n    strategy:\n      matrix:\n        n: [1, 2]\n",
+                expect="breadth's macOS jobs hold 4 runners at once (0 beside the macos leg, and"
+                " the larger of its 1 and the 4 after it)",
             ),
         ),
     ),
