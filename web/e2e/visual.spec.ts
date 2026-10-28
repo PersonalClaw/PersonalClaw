@@ -64,6 +64,16 @@ const BUDGET = {
   fadeMs: 10_000,
 } as const
 
+// ── A red is told once (#3943) ───────────────────────────────────────────────────────────────
+// No retry: a shot compares one frame with its golden, so a retry only classifies a red that
+// `failOnFlakyTests` keeps red. On run 40599132936 the retry did worse. The pinned browser was
+// starved, every light text-200 shot failed its settle, and each retry, in a new worker, hung on its
+// first call to the browser (`seedTheme`'s `addInitScript`) for its whole 300 s test timeout, until
+// run-job stopped the leg at 39 minutes. The config stops this leg at its second failure
+// (`maxFailures`, playwright.config.ts), and each action here (a click, a focus) gives up after 30 s.
+test.describe.configure({ retries: 0 })
+test.use({ actionTimeout: 30_000 })
+
 // ── What makes a shot the same picture on every run ────────────────────────────────────────────
 // A refresh writes a golden only where the compare fails (`run-pinned.mjs`, UPDATE_SNAPSHOTS), so a
 // surface that draws something the run does not decide moves its golden on whichever run crosses

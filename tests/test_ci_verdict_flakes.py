@@ -28,6 +28,16 @@ PLAN = [ONE, TWO, THREE, "static"]
 FLAKY = "tests/test_timing.py::test_it_answers_in_time"
 OTHER = "tests/test_other.py::test_it_waits"
 THIRD = "tests/test_third.py::test_it_resumes"
+
+
+@pytest.fixture(autouse=True)
+def _a_pull_requests_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test here is on a pull request's run unless it says otherwise: the command reads the
+    rule's two lists on one only (``GITHUB_EVENT_NAME``), so a test that took the runner's event
+    went red on a dispatch, a schedule or a push to main (breadth run 40633282629)."""
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+
+
 PASSED_ALONE = "passed rerun alone in a new process"
 PYTEST = ["uv", "run", "pytest", "-n", "4", "--junitxml=reports/junit.xml"]
 RERUN = ["uv", "run", "pytest", "-n", "0", "-p", "no:cacheprovider", "-m", "not security"]
@@ -541,7 +551,6 @@ def _files(
 def test_the_command_passes_a_flake_and_writes_its_notice(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     odd = "tests/test_timing.py::test_it[100%]"
     assert verdict.main(_files(tmp_path, [_record(ONE, _test(odd))])) == 0
@@ -554,7 +563,6 @@ def test_the_command_reads_a_green_run_whose_plan_leaves_stages_empty(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # #5623: every planned job passed, and the verdict refused the listing (exit 2).
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     argv = _files(tmp_path, [], failed=(), extra=EMPTY_STAGES)
     (tmp_path / "needs.json").write_text(_needs(test="success"))

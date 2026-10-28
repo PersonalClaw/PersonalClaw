@@ -288,6 +288,23 @@ if (process.env.PW_STATEFUL_ONLY === undefined) {
 }
 const STATEFUL_ONLY = process.env.PW_STATEFUL_ONLY === '1'
 
+// The pinned visual leg (`run-pinned.mjs -- e2e/visual.spec.ts`, #3943) stops at its second
+// failure (`maxFailures` below). A shot that fails there says the pinned browser is starved: on
+// run 40599132936 every light text-200 shot after the first failed too, until run-job stopped the
+// leg at 39 minutes, where a passing leg takes about 4. A refresh (`run-pinned.mjs --update`,
+// which passes an `--update-snapshots` mode other than `none`) runs to the end, so that no golden
+// after the second it fixes is left stale. Decided once, in the runner, and handed to the workers
+// through the environment.
+if (process.env.PW_VISUAL_COMPARE === undefined) {
+  const filters = fileFilters(process.argv)
+  const at = process.argv.indexOf('test')
+  const refresh = at >= 0 && process.argv.slice(at + 1).some((word) =>
+    word === '-u' || (word.startsWith('--update-snapshots') && word !== '--update-snapshots=none'))
+  process.env.PW_VISUAL_COMPARE =
+    !refresh && filters.length > 0 && filters.every((f) => /(^|\/)visual\.spec\.ts$/.test(f)) ? '1' : '0'
+}
+const VISUAL_COMPARE = process.env.PW_VISUAL_COMPARE === '1'
+
 // A spec that runs alone (`alone` in e2e/isolation.ts) runs in an invocation of its own, on the
 // gateway and home this config makes for that invocation, as the visual rail does: its home's
 // project is in the list only when the file filter names that home's specs and nothing else
@@ -385,6 +402,8 @@ export default defineConfig({
   // if it passes there (tools/ci/jobs.py, diagnose_playwright).
   retries: process.env.CI ? 1 : 0,
   failOnFlakyTests: !!process.env.CI,
+  // The pinned visual leg's compare, under CI: it stops at its second failure (VISUAL_COMPARE, above).
+  maxFailures: process.env.CI && VISUAL_COMPARE ? 2 : 0,
   // The isolation reporter is FIRST: it annotates every test with its isolation mode before the
   // JSON and blob reporters read them, and fails the run when a spec runs where its mode forbids.
   // The JSON report's path is PLAYWRIGHT_JSON_OUTPUT_NAME; the blob's is PLAYWRIGHT_BLOB_OUTPUT_DIR
