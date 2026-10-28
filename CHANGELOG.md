@@ -18,7 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### For maintainers
 
-- **When the browser suite's gateway stops answering, its log says where: after 20 s with no answer from its event loop, the gateway writes every thread's stack into `gateway.log`, and a failed run keeps that log with the reports CI uploads.**
+- **When the browser suite's gateway stops answering, its log says where: after 20 s with no answer from its event loop, the gateway writes every thread's stack into `gateway.log`, and a failed run keeps that log with the reports CI uploads. A Python test still running at 120 s dumps every thread's stack too.**
 
 ## [0.3.0] — 2026-10-26
 
