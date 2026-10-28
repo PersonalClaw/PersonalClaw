@@ -25,6 +25,7 @@ would add; an adversarial rewrite is review's to catch.
 
 from __future__ import annotations
 
+import datetime
 import re
 import shutil
 from collections.abc import Iterator
@@ -67,11 +68,21 @@ class Tolerated:
     step: str | None
     reason: str
     outcome_read: bool = False
+    #: The day, ``YYYY-MM-DD``, by which the site lands, in the merge after the entry's: main's
+    #: contract judges a head by main's list, so the entry comes first, and until its site lands
+    #: it may match nothing. The site's merge clears it. At most :data:`LANDS_WITHIN_DAYS` out,
+    #: and past it the entry fails whether or not it matches, so a site that never lands, or a
+    #: mark nothing cleared, goes red on its own.
+    lands_by: str | None = None
+
+
+LANDS_WITHIN_DAYS = 7
 
 
 _MERGE = ".github/workflows/merge.yml"
 _WALK = ".github/workflows/clean-machine-walkthroughs.yml"
 _BREADTH = ".github/workflows/breadth.yml"
+_PR = ".github/workflows/pr.yml"
 _SUITE_LEGS = ("ubuntu", "macos", "arm", "coverage-shard")
 #: The breadth legs that may carry an earlier result: the rails on macOS, and the whole-suite
 #: collection that counts parses of the source tree (it runs no test). The suite legs run the
@@ -200,6 +211,19 @@ TOLERATED: tuple[Tolerated, ...] = (
         None,
         "Best effort by design: the website is a separate repository, and the release is done.",
     ),
+    *(
+        Tolerated(
+            rel,
+            jobs,
+            "record",
+            "A stage job's record upload, tried again when it fails: GitHub's artifact service "
+            "fails one now and then, and a job with no record reads as missing. The retry runs "
+            "only when this failed, and fails the job if it fails too.",
+            outcome_read=True,
+            lands_by="2026-11-04",
+        )
+        for rel, jobs in ((_MERGE, ("build", "test", "test-2", "test-3")), (_PR, ("test",)))
+    ),
 )
 
 
@@ -250,7 +274,29 @@ def _on(value: object) -> bool:
     return value is not None and value is not False and str(value).strip().lower() != "false"
 
 
-def violations(root: Path) -> list[str]:
+def _landing(entry: Tolerated, today: datetime.date) -> list[str]:
+    """Why a ``lands_by`` entry no longer holds: its day is not a date, is more than
+    :data:`LANDS_WITHIN_DAYS` out, or has passed."""
+    if entry.lands_by is None:
+        return []
+    what = f"step {entry.step!r}" if entry.step else "the job"
+    where = f"{entry.file}:{','.join(entry.jobs)}: the entry for {what} lands by {entry.lands_by!r}"
+    try:
+        day = datetime.date.fromisoformat(entry.lands_by)
+    except ValueError:
+        return [f"{where}, not a date"]
+    if day > today + datetime.timedelta(days=LANDS_WITHIN_DAYS):
+        return [f"{where}, more than {LANDS_WITHIN_DAYS} days out"]
+    if day < today:
+        return [f"{where}, and that day has passed: clear the mark, or delete the entry"]
+    return []
+
+
+def violations(
+    root: Path,
+    tolerated: tuple[Tolerated, ...] = TOLERATED,
+    today: datetime.date | None = None,
+) -> list[str]:
     bad: list[str] = []
     masked = _masked_lines(root)
     for rel, line in masked:
@@ -268,7 +314,7 @@ def violations(root: Path) -> list[str]:
             if _on(step.get("continue-on-error")):
                 key = str(step.get("id") or step.get("name") or f"step {i + 1}")
                 sites[(rel, job_id, key)] = (job, i)
-    named = {(e.file, job, e.step): e for e in TOLERATED for job in e.jobs}
+    named = {(e.file, job, e.step): e for e in tolerated for job in e.jobs}
     for (rel, job_id, step), (job, index) in sites.items():
         entry = named.get((rel, job_id, step))
         where = f"{rel}:{job_id}" + (f" step {step!r}" if step else "")
@@ -281,11 +327,12 @@ def violations(root: Path) -> list[str]:
             if not sid or f"steps.{sid}.outcome" not in later:
                 bad.append(f"{where} is continue-on-error, and no later step reads its outcome")
     bad += _read_together(sites, named)
-    for key in named:
-        if key not in sites:
-            rel, job_id, step = key
+    for (rel, job_id, step), entry in named.items():
+        if (rel, job_id, step) not in sites and entry.lands_by is None:
             what = f"step {step!r}" if step else "the job"
             bad.append(f"{rel}:{job_id}: the entry for {what} matches nothing: delete it")
+    for entry in tolerated:
+        bad += _landing(entry, today or datetime.date.today())
     return bad
 
 

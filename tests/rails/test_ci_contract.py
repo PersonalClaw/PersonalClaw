@@ -16,6 +16,8 @@ control is one edit of one of them.
 from __future__ import annotations
 
 import ast
+import dataclasses
+import datetime
 import fnmatch
 import functools
 import itertools
@@ -6719,6 +6721,58 @@ NOTHING_IS_MASKED_UNSEEN = Row(
 ROWS = (*ROWS, NOTHING_IS_MASKED_UNSEEN)
 
 
+def test_a_masking_entry_waiting_on_its_site_holds_only_to_its_day(tmp_path: Path) -> None:
+    """A ``lands_by`` entry (tests/ci_masking.py) may match nothing until its day, and no later;
+    one dated more than a week out fails as it is written; and one past its day fails even when
+    its site is there, so the mark cannot outlive the merge that was to clear it. The entries are
+    the list's, so these plants are entries, not files, and the day is the one the test read."""
+    today = datetime.date.today()
+
+    def day(n: int) -> str:
+        return (today + datetime.timedelta(days=n)).isoformat()
+
+    waiting = ci_masking.Tolerated(_MERGE_YML, ("test",), "a step yet to land", "planted")
+    [dl] = [e for e in ci_masking.TOLERATED if e.step == "dl"]
+
+    def plus(entry: ci_masking.Tolerated) -> tuple[ci_masking.Tolerated, ...]:
+        return (*ci_masking.TOLERATED, entry)
+
+    def landed(lands_by: str) -> tuple[ci_masking.Tolerated, ...]:
+        marked = dataclasses.replace(dl, lands_by=lands_by)
+        return tuple(marked if e is dl else e for e in ci_masking.TOLERATED)
+
+    plants = (
+        ("waiting, on its day", plus(dataclasses.replace(waiting, lands_by=day(0))), ""),
+        ("waiting, a week out", plus(dataclasses.replace(waiting, lands_by=day(7))), ""),
+        ("landed, on its day", landed(day(0)), ""),
+        ("waiting with no day", plus(waiting), "matches nothing: delete it"),
+        (
+            "waiting, more than a week out",
+            plus(dataclasses.replace(waiting, lands_by=day(8))),
+            "more than 7 days out",
+        ),
+        (
+            "waiting, past its day",
+            plus(dataclasses.replace(waiting, lands_by=day(-1))),
+            "that day has passed",
+        ),
+        ("landed, past its day", landed(day(-1)), "that day has passed"),
+        (
+            "a day that is not one",
+            plus(dataclasses.replace(waiting, lands_by="next week")),
+            "not a date",
+        ),
+    )
+    ci_masking.scaffold(tmp_path)
+    assert ci_masking.violations(tmp_path, today=today) == [], "the scaffold does not hold"
+    for name, tolerated, expect in plants:
+        found = ci_masking.violations(tmp_path, tolerated, today)
+        if expect:
+            assert any(expect in v for v in found), f"{name}: {found}"
+        else:
+            assert found == [], f"{name}: {found}"
+
+
 # ── The randomized-order leg runs two seeded orders and keeps them (#3949) ─────────────────────
 # Each order is its own step, seeded from the run's number so a rerun repeats it; the second runs
 # whatever the first concluded; the entry keeps the seeds beside its inputs; and the shard uploads
@@ -13387,9 +13441,131 @@ def _tier_plan(root: Path, tier: str) -> dict[str, Any]:
     return ci_plan.matrix(cat, ci_plan.plan(cat, tier, None, overrides=()))
 
 
+#: A stage job's record upload, tried again when it fails: GitHub's artifact service failed 2 of
+#: about 1,400 in 50 merge runs (an ENOTFOUND and a busy server), and a job with no record reads
+#: as missing, which no flake explains. The first upload is the one step of a stage job that may
+#: carry continue-on-error: the retry, last of the job's uploads so the others stand between
+#: them, runs only when it failed, and fails the job if it fails too, so a job neither wrote a
+#: record for is red and `results` reads it missing. One upload, as before, holds too.
+_RECORD_STEP_ID = "record"
+_RECORD_RETRY_IF = f"${{{{ always() && steps.{_RECORD_STEP_ID}.outcome == 'failure' }}}}"
+#: What the retry uploads the same as the first.
+_RECORD_SAME = ("name", "path", "if-no-files-found", "retention-days")
+
+
+#: A stage job's record upload as the tier workflows write it, and the same as the first try of a
+#: retry pair, with the retry itself: what a plant puts in a job to give it the pair.
+_RECORD_UPLOAD = "      - name: Upload the entry's record\n        if: ${{ always() }}\n"
+_RECORD_FIRST = (
+    "      - name: Upload the entry's record\n        id: record\n        if: ${{ always() }}\n"
+    "        continue-on-error: true\n"
+)
+_RECORD_RETRY = (
+    "      - name: Upload the entry's record, again\n"
+    f"        if: {_RECORD_RETRY_IF}\n"
+    "        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2\n"
+    "        with:\n"
+    "          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}\n"
+    f"          path: {_RECORDS_PATH}\n"
+    "          if-no-files-found: ignore\n"
+    f"          retention-days: {_RECORD_RETENTION_DAYS}\n"
+    "          overwrite: true\n"
+)
+
+
+def _record_retry_plant(
+    name: str,
+    rel: str,
+    job_id: str,
+    edits: tuple[tuple[str, str], ...] = (),
+    expect: str = "",
+    fails: bool = True,
+    retry: str = _RECORD_RETRY,
+    first: str = _RECORD_FIRST,
+) -> Control:
+    """*job_id*'s record upload made a first try and a retry, the retry last in the job, then
+    each of *edits* made once inside the job."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        start = text.find(f"\n  {job_id}:\n")
+        assert start >= 0, f"the plant {name!r} found no job {job_id} in {rel}"
+        following = re.search(r"\n  [\w-]+:\n", text[start + 1 :])
+        end = start + 1 + following.start() if following else len(text)
+        # A job that has the pair already is put back to one upload first.
+        job = (
+            text[start:end].replace(_RECORD_RETRY, "", 1).replace(_RECORD_FIRST, _RECORD_UPLOAD, 1)
+        )
+        assert job.count(_RECORD_UPLOAD) == 1, f"the plant {name!r} found no record upload"
+        job = job.replace(_RECORD_UPLOAD, first, 1).rstrip("\n") + "\n" + retry
+        for old, new in edits:
+            assert old in job, f"the plant {name!r} found no {old!r} in {rel}:{job_id}"
+            job = job.replace(old, new, 1)
+        _write(root, rel, text[:start] + job + text[end:])
+
+    return Control(name, plant, fails, expect)
+
+
+def _record_if_plant(name: str, rel: str, job_id: str, new: str, expect: str = "") -> Control:
+    """*job_id*'s first record upload with its ``if: ${{ always() }}`` line made *new* (empty:
+    left out), in either shape the row takes: once, or the first try of a retry pair."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        start = text.find(f"\n  {job_id}:\n")
+        step = text.find("      - name: Upload the entry's record\n", start)
+        line = "        if: ${{ always() }}\n"
+        at = text.find(line, step)
+        following = text.find("      - ", step + 1)
+        assert (
+            start >= 0 and step >= 0 and 0 <= at < following
+        ), f"the plant {name!r} found no record upload's if: in {rel}:{job_id}"
+        _write(root, rel, text[:at] + new + text[at + len(line) :])
+
+    return Control(name, plant, True, expect)
+
+
 def _record_name(template: str, entry: dict[str, Any], run_id: int, attempt: int) -> str:
     values = {"matrix.slug": entry["slug"], "github.run_id": run_id, "github.run_attempt": attempt}
     return re.sub(r"\$\{\{\s*([\w.]+)\s*\}\}", lambda m: str(values.get(m[1], m[0])), template)
+
+
+def _record_retry_problems(where: str, job: dict[str, Any], uploads: list[dict]) -> list[str]:
+    """Why a stage job's two record uploads are not the first try and its retry, or none."""
+    first, retry = uploads
+    bad: list[str] = []
+    if first.get("id") != _RECORD_STEP_ID or first.get("continue-on-error") is not True:
+        bad.append(
+            f"{where} uploads its record twice, and the first is not id {_RECORD_STEP_ID!r} with"
+            " continue-on-error: its failure fails the job before the retry can settle it"
+        )
+    if retry.get("if") != _RECORD_RETRY_IF:
+        bad.append(
+            f"{where} retries its record's upload on {retry.get('if')!r}, not only when the"
+            f" first failed ({_RECORD_RETRY_IF})"
+        )
+    if "continue-on-error" in retry:
+        bad.append(
+            f"{where}'s record retry carries continue-on-error, so a job neither upload wrote a"
+            " record for is green"
+        )
+    one, two = first.get("with") or {}, retry.get("with") or {}
+    for key in _RECORD_SAME:
+        if one.get(key) != two.get(key):
+            bad.append(
+                f"{where}'s record retry uploads {key} {two.get(key)!r}, not the first's"
+                f" {one.get(key)!r}"
+            )
+    if two.get("overwrite") is not True:
+        bad.append(f"{where}'s record retry does not overwrite what a failed first upload left")
+    steps = _trust_steps(job)
+    after = [s for s in steps[steps.index(first) + 1 :] if _action(s) == "actions/upload-artifact"]
+    if after[-1:] != [retry]:
+        bad.append(
+            f"{where} retries its record's upload before its other uploads, so nothing stands"
+            " between the two"
+        )
+    return bad
 
 
 def _step_using(job: dict[str, Any], action: str, **with_: str) -> list[dict[str, Any]]:
@@ -13464,10 +13640,13 @@ def tier_shape_violations(root: Path) -> list[str]:
                 if job.get(key) != value:
                     bad.append(f"{where}: {key} is {job.get(key)!r}, not {value!r}")
             # A stage job's red is its entry's: nothing in it may conclude green on a failure.
+            # The one exception is a record upload its retry settles (_record_retry_problems).
             if "continue-on-error" in job:
                 bad.append(f"{where} carries continue-on-error, so a red entry's job is green")
+            uploads = _step_using(job, "actions/upload-artifact", path=_RECORDS_PATH)
+            first = uploads[0] if len(uploads) == 2 else None
             for step in _trust_steps(job):
-                if "continue-on-error" in step:
+                if "continue-on-error" in step and step is not first:
                     bad.append(
                         f"{where}'s step {step.get('name') or step.get('run')!r} carries"
                         " continue-on-error, so its red is green"
@@ -13476,10 +13655,14 @@ def tier_shape_violations(root: Path) -> list[str]:
                 bad.append(
                     f"{where} does not set fail-fast: false, so one red entry cancels the rest"
                 )
-            uploads = _step_using(job, "actions/upload-artifact", path=_RECORDS_PATH)
-            if len(uploads) != 1:
-                bad.append(f"{where} uploads its record {len(uploads)} times, not once")
+            if len(uploads) not in (1, 2):
+                bad.append(
+                    f"{where} uploads its record {len(uploads)} times, not once, or once and a"
+                    " retry"
+                )
                 continue
+            if len(uploads) == 2:
+                bad += _record_retry_problems(where, job, uploads)
             upload = uploads[0]
             if upload.get("if") != "${{ always() }}":
                 bad.append(f"{where} uploads its record only {upload.get('if')!r}, not always()")
@@ -13736,10 +13919,51 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
         _plant_in_job("the record kept a week", _MERGE_YML, "test",
                       "          retention-days: 30\n", "          retention-days: 7\n",
                       expect="keeps its record 7 days, not 30"),
-        _plant_in_job("the record uploaded only on a green", _MERGE_YML, "test-2",
-                      "      - name: Upload the entry's record\n        if: ${{ always() }}\n",
-                      "      - name: Upload the entry's record\n",
-                      expect="uploads its record only None"),
+        _record_if_plant("the record uploaded only on a green", _MERGE_YML, "test-2", "",
+                         expect="uploads its record only None"),
+        _record_retry_plant("a record upload tried again, last, when it failed", _MERGE_YML,
+                            "test", fails=False),
+        _record_retry_plant("pr.yml's record upload tried again", _PR_YML, "test", fails=False),
+        _record_retry_plant("a record retry that runs after a green upload too", _MERGE_YML,
+                            "test-2", ((f"        if: {_RECORD_RETRY_IF}\n",
+                                        "        if: ${{ always() }}\n"),),
+                            expect="retries its record's upload on '${{ always() }}'"),
+        _record_retry_plant("a record retry that is green when it fails", _MERGE_YML, "build",
+                            ((f"        if: {_RECORD_RETRY_IF}\n",
+                              f"        if: {_RECORD_RETRY_IF}\n"
+                              "        continue-on-error: true\n"),),
+                            expect="record retry carries continue-on-error"),
+        _record_retry_plant("a record's first upload that fails the job before its retry",
+                            _PR_YML, "test", first=_RECORD_UPLOAD.replace(
+                                "        if:", "        id: record\n        if:"),
+                            expect="the first is not id 'record' with continue-on-error"),
+        _record_retry_plant("a record retry uploading another name", _MERGE_YML, "test-3",
+                            retry=_RECORD_RETRY.replace("name: ci-record-", "name: ci-recorded-"),
+                            expect="record retry uploads name"),
+        _record_retry_plant("a record retry kept a week", _MERGE_YML, "test",
+                            retry=_RECORD_RETRY.replace(
+                                f"retention-days: {_RECORD_RETENTION_DAYS}\n", "retention-days: 7\n"
+                            ),
+                            expect="record retry uploads retention-days 7"),
+        _record_retry_plant("a record retry that leaves a failed upload's artifact", _PR_YML,
+                            "test", retry=_RECORD_RETRY.replace("          overwrite: true\n", ""),
+                            expect="does not overwrite"),
+        _record_retry_plant("a record retry right after the first, with nothing between",
+                            _MERGE_YML, "test-2",
+                            retry="",
+                            edits=(("      - name: Upload the entry's reports\n",
+                                    _RECORD_RETRY + "      - name: Upload the entry's reports\n"),),
+                            expect="before its other uploads"),
+        _record_retry_plant("continue-on-error on another upload beside the pair", _MERGE_YML,
+                            "build", (("      - name: Upload the entry's reports\n"
+                                       "        if: ${{ always() }}\n",
+                                       "      - name: Upload the entry's reports\n"
+                                       "        if: ${{ always() }}\n"
+                                       "        continue-on-error: true\n"),),
+                            expect="merge.yml job build's step"),
+        _record_retry_plant("a third record upload", _MERGE_YML, "test-3",
+                            retry=_RECORD_RETRY + _RECORD_RETRY,
+                            expect="uploads its record 3 times"),
         _plant("results only when everything passed", _PR_YML,
                "    needs: [changes, test]\n    if: ${{ !cancelled() }}\n",
                "    needs: [changes, test]\n", expect="pr.yml job results runs None"),
@@ -14112,11 +14336,9 @@ PR_YML_CARRIES_NO_PUSH_STAGE = Row(
                "    if: ${{ !cancelled() && needs.changes.outputs.test != '' }}\n",
                "    if: ${{ github.event_name == 'push' && needs.changes.outputs.test != '' }}\n",
                expect="pr.yml job test: the job reads"),
-        _plant("a step that runs only on main", _PR_YML,
-               "      - name: Upload the entry's record\n        if: ${{ always() }}\n",
-               "      - name: Upload the entry's record\n"
-               "        if: ${{ github.ref == 'refs/heads/main' }}\n",
-               expect="reads \"${{ github.ref == 'refs/heads/main' }}\""),
+        _record_if_plant("a step that runs only on main", _PR_YML, "test",
+                         "        if: ${{ github.ref == 'refs/heads/main' }}\n",
+                         expect="reads \"${{ github.ref == 'refs/heads/main' }}\""),
         _plant("a step reading the commit a push replaced", _PR_YML,
                "          HEAD_SHA: ${{ github.sha }}\n",
                "          HEAD_SHA: ${{ github.sha }}\n"
