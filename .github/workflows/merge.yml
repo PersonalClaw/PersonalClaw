@@ -127,7 +127,10 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read   # main's recent CI runs and their telemetry, for the rails floor
+      actions: read         # main's recent CI runs and their telemetry, for the rails floor
+      pull-requests: read   # the push's replay: the pull request merged as the pushed commit
+      issues: read          # the push's replay: whether that pull request's base was changed
+      checks: read          # the push's replay: the controller's merge-verdict on its head
     outputs:
       keys: ${{ steps.plan.outputs.keys }}
       key-partners: ${{ steps.plan.outputs.key-partners }}
@@ -281,6 +284,39 @@ jobs:
             exit 1
           fi
           tee -a "$GITHUB_OUTPUT" < "$RUNNER_TEMP/published.txt"
+      # The push's replay, in shadow (#3919 (b1)): main's own `replay`, from the copy the plan
+      # step fetched, decides each merge-tier job of this push, carried from the pull request's
+      # run or run again, and writes each decision beside the tree check's answer, which is what
+      # the push does. It changes nothing this run plans or judges, and a replay that cannot
+      # answer only says so: this step never fails the job. The verdict's controller revision is
+      # held to main by a history of main's commits alone (`--filter=tree:0`).
+      - name: the push's replay, in shadow, beside the tree check
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          TESTED: ${{ needs.tree-check.outputs.tested }}
+        run: |
+          set -uo pipefail
+          judge="$RUNNER_TEMP/judge"
+          history="$RUNNER_TEMP/main-history.git"
+          rc=0
+          { git init -q --bare "$history" \
+            && git -C "$history" fetch -q --no-tags --filter=tree:0 "https://github.com/${GITHUB_REPOSITORY}" "+refs/heads/main:refs/remotes/origin/main" \
+            && (cd "$judge" && python3 -m tools.ci replay --tier merge --root "$judge" --git-dir "$history" \
+                  --image "ubuntu-24.04=${ImageOS}/${ImageVersion}" --controller-revision "$BEFORE" \
+                  --receipt "$RUNNER_TEMP/replay-receipt.json" --beside-tested "$TESTED"); } || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning title=replay shadow::the push's replay did not answer (exit $rc), so this push has no shadow decisions. Nothing else changes."
+          fi
+      - name: Upload the push's replay receipt
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: replay-receipt
+          path: ${{ runner.temp }}/replay-receipt.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: main's tools/ci checks this run's catalogue
         id: catalogue-check
         run: |

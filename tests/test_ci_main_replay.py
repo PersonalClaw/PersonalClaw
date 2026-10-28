@@ -1158,12 +1158,16 @@ def _command(
     *args: str,
     event: str = "push",
     plan: object = ("rails", "served", "web-unit", "python-suite"),
+    tier: str | None = None,
+    verified: Any = lambda head: None,
 ) -> tuple[int, _Api, list[str], Path]:
     """Run ``python -m tools.ci replay`` on planted answers and artifacts, PLAN as main's
-    catalogue; its exit, the API reads, the archives fetched, and the folder it wrote in."""
+    catalogue (``python-suite`` its every-push job); its exit, the API reads, the archives
+    fetched, and the folder it wrote in. *tier* plans that tier of it instead of *plan*."""
     answers, archives = _uploaded()
     api, fetched = _Api(answers), []
-    monkeypatch.setattr(main_replay.catalogue, "read", lambda root: catalogue.Catalogue(PLAN))
+    main_cat = catalogue.Catalogue(PLAN, every_push=("python-suite",))
+    monkeypatch.setattr(main_replay.catalogue, "read", lambda root: main_cat)
     for name, value in {
         "GITHUB_EVENT_NAME": event,
         "GITHUB_REF": "refs/heads/main",
@@ -1176,8 +1180,7 @@ def _command(
         monkeypatch.setenv(name, value)
     (tmp_path / "plan.json").write_text(json.dumps(list(plan) if isinstance(plan, tuple) else plan))
     argv = [
-        "--plan",
-        str(tmp_path / "plan.json"),
+        *(["--tier", tier] if tier is not None else ["--plan", str(tmp_path / "plan.json")]),
         "--controller-revision",
         CONTROLLER,
         "--receipt",
@@ -1192,7 +1195,7 @@ def _command(
         argv,
         get=api,
         binary=_fetch(archives, fetched),
-        verified=lambda head: None,
+        verified=verified,
         clock=lambda: NOW,
     )
     return code, api, fetched, tmp_path
@@ -1253,6 +1256,75 @@ def test_the_commands_own_inputs_are_refused_before_anything_is_read(
     assert not (folder / "output").exists() and not (folder / "receipt.json").exists()
 
 
+# ── The decision shadow (#3919 (b1)) ─────────────────────────────────────────────────────────
+
+
+def test_a_tested_push_s_shadow_carries_what_the_tree_check_carried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _, _, folder = _command(tmp_path, monkeypatch, "--beside-tested", "true", tier="merge")
+    assert code == 0
+    receipt = json.loads((folder / "receipt.json").read_text())
+    assert sorted(job["key"] for job in receipt["jobs"]) == sorted(KEYS), "the whole tier"
+    line = "the tree check: tested; the replay agrees on 5 key(s), would run 0 it carried and"
+    assert line in capsys.readouterr().out
+    summary = (folder / "summary").read_text()
+    assert "### the push's replay, in shadow, beside the tree check" in summary
+    assert line in summary
+
+
+def test_an_untested_push_s_shadow_names_each_key_the_replay_would_have_carried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _, _, _ = _command(tmp_path, monkeypatch, "--beside-tested", "false", tier="merge")
+    assert code == 0
+    printed = capsys.readouterr().out
+    assert "the replay agrees on 1 key(s), would run 0 it carried and replay 4 it ran" in printed
+    for key in REPLAYABLE:
+        assert f"would replay {key}, which this push ran" in printed
+
+
+def test_a_carried_key_the_replay_would_run_is_named_with_why() -> None:
+    jobs = (
+        main_replay.Decision("rails", "rails", "tree", True, "a green verdict of attempt 1 (tree)"),
+        main_replay.Decision("served", "served", "ttl:6", False, "attempt 1 started 7.0h ago"),
+        main_replay.Decision("python-suite", "python-suite", "never", False, "security evidence"),
+    )
+    replay = main_replay.Replay("one decision per job", jobs)
+    tested = main_replay.tally(replay, tested=True, every_push=("python-suite",))
+    assert tested.agreed == 2 and tested.would_replay == ()
+    assert tested.would_run == (("served", "attempt 1 started 7.0h ago"),)
+    assert "would run served: attempt 1 started 7.0h ago" in tested.lines()
+    untested = main_replay.tally(replay, tested=False, every_push=("python-suite",))
+    assert untested.agreed == 2 and untested.would_replay == ("rails",)
+
+
+def test_the_merge_verdict_is_held_to_main_by_the_history_the_shadow_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    asked: list[Path] = []
+
+    def verifier(api: str, token: str, repo: str, git_dir: Path):
+        asked.append(git_dir)
+        return lambda head: None
+
+    monkeypatch.setattr(main_replay, "_verifier", verifier)
+    history = tmp_path / "main-history.git"
+    code, *_ = _command(tmp_path, monkeypatch, "--git-dir", str(history), verified=None)
+    assert code == 0 and asked == [history]
+    asked.clear()
+    code, *_ = _command(tmp_path, monkeypatch, "--root", str(tmp_path), verified=None)
+    assert code == 0 and asked == [tmp_path], "with no history named, main's own checkout"
+
+
+def test_a_tier_main_s_catalogue_has_no_job_in_is_refused_before_anything_is_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, api, fetched, folder = _command(tmp_path, monkeypatch, tier="change")
+    assert code == 2 and "no job in the change tier" in capsys.readouterr().err
+    assert api.read == [] and fetched == [] and not (folder / "receipt.json").exists()
+
+
 def test_the_command_is_tools_cis_replay() -> None:
     from tools.ci import __main__ as commands
 
@@ -1306,3 +1378,101 @@ def test_it_imports_only_the_standard_library_and_its_siblings() -> None:
                 assert alias.name.split(".")[0] in allowed, alias.name
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
             assert (node.module or "").split(".")[0] in allowed, node.module
+
+
+# ── the shadow (#3919 (b1)) ───────────────────────────────────────────────────────────────────
+
+_SHADOW_SHA, _SHADOW_RUN = "d" * 40, 9001
+
+
+def _live(key: str, result: str = "success", *, run_id: int | None = _SHADOW_RUN, attempt: int = 1):
+    return verdict.JobResult(
+        key, result, verdict.Identity(_SHADOW_SHA, {}), attempt, run_id=run_id, own_partners=True
+    )
+
+
+def _receipt_of(*replayed: str, ran: tuple[str, ...] = (), head: str = _SHADOW_SHA) -> dict:
+    jobs = [{"key": k, "decision": "replayed"} for k in replayed]
+    jobs += [{"key": k, "decision": "run"} for k in ran]
+    return {"head_sha": head, "jobs": jobs}
+
+
+#: (name, receipts, live records, agreed, disagreed keys, receipts that replayed nothing)
+SHADOW_ROWS: list[tuple[str, list[dict], list[Any], list[str], list[str], int]] = [
+    ("a replayed key that passed live agrees", [_receipt_of("static")], [_live("static")],
+     ["static"], [], 0),
+    ("a replayed key that failed live disagrees", [_receipt_of("static")],
+     [_live("static", "failure")], [], ["static"], 0),
+    ("a replayed key with no live record disagrees", [_receipt_of("static")], [], [],
+     ["static"], 0),
+    ("a replayed key whose record names another run disagrees", [_receipt_of("static")],
+     [_live("static", run_id=1)], [], ["static"], 0),
+    ("a replayed key passing only on a later attempt disagrees", [_receipt_of("static")],
+     [_live("static", "failure"), _live("static", attempt=2)], [], ["static"], 0),
+    ("a replayed key with two first-attempt records disagrees", [_receipt_of("static")],
+     [_live("static"), _live("static")], [], ["static"], 0),
+    ("a key the receipt ran is not compared", [_receipt_of("static", ran=("security",))],
+     [_live("static"), _live("security", "failure")], ["static"], [], 0),
+    ("a receipt that replayed nothing adds its reason", [{"reason": "x", "jobs": []}], [], [],
+     [], 1),
+    ("two receipts, the Linux keys' and the macOS keys', are both read",
+     [_receipt_of("static"), _receipt_of("python-suite-macos (1/2)")],
+     [_live("static"), _live("python-suite-macos (1/2)", "failure")], ["static"],
+     ["python-suite-macos (1/2)"], 0),
+]  # fmt: skip
+
+
+def test_the_shadow_reads_each_replayed_key_against_its_live_record(subtests: Any) -> None:
+    assert len(SHADOW_ROWS) == 9, "a row was dropped from the table"
+    for name, receipts, live, agreed, disagreed, nothing in SHADOW_ROWS:
+        with row(subtests, case=name):
+            got = main_replay.shadow(receipts, live, sha=_SHADOW_SHA, run_id=_SHADOW_RUN)
+            assert list(got.agreed) == agreed, name
+            assert [k for k, _ in got.disagreed] == disagreed, name
+            assert len(got.reasons) == nothing, name
+
+
+def test_the_shadow_refuses_a_receipt_of_another_push_or_of_no_decisions() -> None:
+    with pytest.raises(main_replay.Refused, match="not the pushed commit"):
+        main_replay.shadow([_receipt_of("static", head="e" * 40)], [], sha=_SHADOW_SHA, run_id=1)
+    with pytest.raises(main_replay.Refused, match="no list of decisions"):
+        main_replay.shadow([{"jobs": "all"}], [], sha=_SHADOW_SHA, run_id=1)
+
+
+def test_the_shadow_command_tallies_into_the_summary_and_never_fails_on_a_disagreement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    records = tmp_path / "records"
+    for key, result in (("static", "failure"), ("rails (1/3)", "success")):
+        folder = records / verdict.record_artifact(key, run_id=_SHADOW_RUN, attempt=1)
+        folder.mkdir(parents=True)
+        (folder / f"{verdict.record_slug(key)}.json").write_text(
+            verdict.job_record(
+                key=key,
+                result=result,
+                identity=verdict.Identity(_SHADOW_SHA, {}),
+                steps=[(["true"], 0 if result == "success" else 1, 0.5)],
+                attempt=1,
+                run_id=_SHADOW_RUN,
+            ),
+            encoding="utf-8",
+        )
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text(json.dumps(_receipt_of("static", "rails (1/3)")), encoding="utf-8")
+    summary = tmp_path / "summary.md"
+    for name, value in (
+        ("GITHUB_SHA", _SHADOW_SHA),
+        ("GITHUB_RUN_ID", str(_SHADOW_RUN)),
+        ("GITHUB_RUN_ATTEMPT", "1"),
+        ("GITHUB_STEP_SUMMARY", str(summary)),
+    ):
+        monkeypatch.setenv(name, value)
+    argv = ["--receipt", str(receipt), "--receipt", str(tmp_path / "macos.json")]
+    assert main_replay.shadow_main([*argv, "--records", str(records)]) == 0
+    out = capsys.readouterr().out
+    assert "2 replayed, 1 passed live, 1 did not" in out, out
+    assert "disagreed: static: it ran failure here" in out, out
+    assert "no receipt at macos.json: the replay did not answer" in out, out
+    assert "2 replayed, 1 passed live, 1 did not" in summary.read_text(encoding="utf-8")
+    receipt.write_text("[]", encoding="utf-8")
+    assert main_replay.shadow_main([*argv, "--records", str(records)]) == 2

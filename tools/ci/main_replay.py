@@ -775,8 +775,21 @@ def main(
     the receipt to ``--receipt``. Exit 0 with an answer, which may be "every job runs"; 2 when
     the caller's own inputs are not what they must be, and then nothing is read."""
     parser = argparse.ArgumentParser(prog="python -m tools.ci replay", description=__doc__)
-    parser.add_argument("--plan", required=True, type=Path, help="a JSON list of planned job ids")
+    planned = parser.add_mutually_exclusive_group(required=True)
+    planned.add_argument("--plan", type=Path, help="a JSON list of planned job ids")
+    planned.add_argument("--tier", help="every job of this tier of main's catalogue (the shadow)")
     parser.add_argument("--root", type=Path, default=catalogue.REPO, help="main's own checkout")
+    parser.add_argument(
+        "--git-dir",
+        type=Path,
+        help="a repository holding main's history, for the verdict's controller revision"
+        " (default: --root)",
+    )
+    parser.add_argument(
+        "--beside-tested",
+        choices=("true", "false"),
+        help="the tree check's answer for this push: tally each decision beside it (#3919 (b1))",
+    )
     parser.add_argument("--image", action="append", default=[], metavar="LABEL=IMAGE")
     parser.add_argument("--toolchain", action="append", default=[], metavar="NAME=VERSION")
     parser.add_argument("--controller-revision", required=True)
@@ -787,10 +800,15 @@ def main(
     repo = env.get("GITHUB_REPOSITORY", "")
     api, token = env.get("GITHUB_API_URL", "https://api.github.com"), env.get("GH_TOKEN", "")
     try:
-        ids = json.loads(args.plan.read_text(encoding="utf-8"))
+        cat = catalogue.read(args.root)
+        if args.tier is not None:
+            ids = [job.id for job in cat.tier(args.tier)]
+            if not ids:
+                raise Refused(f"main's catalogue has no job in the {args.tier} tier")
+        else:
+            ids = json.loads(args.plan.read_text(encoding="utf-8"))
         if not isinstance(ids, list) or not all(isinstance(i, str) and i for i in ids):
             raise Refused(f"{args.plan} is not a JSON list of job ids")
-        cat = catalogue.read(args.root)
         known = {job.id for job in cat.jobs}
         unknown = sorted(set(ids) - known)
         if unknown:
@@ -813,7 +831,7 @@ def main(
             before=env.get("BEFORE", ""),
             plan=plan,
             records=lambda run: source_records(reader, fetch, repo=repo, run_id=run),
-            verified=verified or _verifier(api, token, repo, args.root),
+            verified=verified or _verifier(api, token, repo, args.git_dir or args.root),
             now=clock(),
             controller_revision=args.controller_revision,
             toolchain=toolchain,
@@ -836,9 +854,175 @@ def main(
     outputs = f"replayed={json.dumps(replayed)}\nreplays={'true' if replayed else 'false'}\n"
     summary = "\n".join([f"### {args.workflow}: the push's replay", "", replay.reason + ".", ""])
     summary += "".join(f"- {line}\n" for line in lines)
+    if args.beside_tested is not None:
+        beside = tally(replay, tested=args.beside_tested == "true", every_push=cat.every_push or ())
+        for line in beside.lines():
+            print(line)
+        summary += "\n### the push's replay, in shadow, beside the tree check\n\n"
+        summary += "".join(f"- {line}\n" for line in beside.lines())
     for name, content in (("GITHUB_OUTPUT", outputs), ("GITHUB_STEP_SUMMARY", summary)):
         target = env.get(name)
         if target:
             with open(target, "a", encoding="utf-8") as handle:
                 handle.write(content)
+    return 0
+
+
+# ── the decision shadow (#3919 (b1)) ──────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Tally:
+    """A push's replay decisions beside its tree check's answer, which is what the push did.
+
+    On a push the tree check called tested, the push ran ``[tier.merge] every_push`` and carried
+    every other job from the pull request's run: ``would_run`` names each carried key the replay
+    would run instead, with why. On an untested one the push ran every job: ``would_replay``
+    names each key the replay would have carried. ``agreed`` counts the rest. It judges nothing:
+    the push stands on the tree check's answer."""
+
+    tested: bool
+    agreed: int
+    would_run: tuple[tuple[str, str], ...]
+    would_replay: tuple[str, ...]
+
+    def lines(self) -> list[str]:
+        answer = "tested" if self.tested else "not tested"
+        out = [
+            f"the tree check: {answer}; the replay agrees on {self.agreed} key(s),"
+            f" would run {len(self.would_run)} it carried and replay {len(self.would_replay)}"
+            " it ran"
+        ]
+        out += [f"would run {key}: {why}" for key, why in self.would_run]
+        out += [f"would replay {key}, which this push ran" for key in self.would_replay]
+        return out
+
+
+def tally(replay: Replay, *, tested: bool, every_push: Iterable[str]) -> Tally:
+    """Each of *replay*'s decisions beside what the push did: on a tested push, a job of
+    *every_push* ran and every other job was carried; on an untested one, every job ran."""
+    always = frozenset(every_push)
+    agreed = 0
+    would_run: list[tuple[str, str]] = []
+    would_replay: list[str] = []
+    for decision in replay.jobs:
+        ran = not tested or decision.job_id in always
+        if decision.replayed == (not ran):
+            agreed += 1
+        elif decision.replayed:
+            would_replay.append(decision.key)
+        else:
+            would_run.append((decision.key, decision.reason))
+    return Tally(tested, agreed, tuple(sorted(would_run)), tuple(sorted(would_replay)))
+
+
+# ── the outcome shadow, for the live checks (#3919 (b1)) ────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Shadow:
+    """Each key a push's receipts replayed, against the push run's own live record of it.
+
+    ``agreed`` passed live on the first attempt; ``disagreed`` did not, each with why; and
+    ``reasons`` names each receipt that replayed nothing, with its own reason. The shadow judges
+    nothing: the run is still judged by its live records."""
+
+    agreed: tuple[str, ...]
+    disagreed: tuple[tuple[str, str], ...]
+    reasons: tuple[str, ...]
+
+    def lines(self) -> list[str]:
+        replayed = len(self.agreed) + len(self.disagreed)
+        out = [
+            f"{replayed} replayed, {len(self.agreed)} passed live, {len(self.disagreed)} did not"
+        ]
+        out += [f"disagreed: {key}: {why}" for key, why in self.disagreed]
+        out += [f"replayed nothing: {why}" for why in self.reasons]
+        return out
+
+
+def shadow(
+    receipts: Sequence[Mapping[str, Any]],
+    live: Sequence[verdict.JobResult],
+    *,
+    sha: str,
+    run_id: int,
+) -> Shadow:
+    """Each key the receipts replayed, against this run's first-attempt record of it: a
+    ``success`` of this run agrees; a failure, no record, two records, or a record of another
+    run disagrees. A receipt that replayed nothing adds its reason. A receipt of another pushed
+    commit, or one naming no jobs, is refused, since it is no shadow of this run."""
+    first: dict[str, list[verdict.JobResult]] = {}
+    for result in live:
+        if result.attempt == 1:
+            first.setdefault(result.key, []).append(result)
+    agreed: list[str] = []
+    disagreed: list[tuple[str, str]] = []
+    reasons: list[str] = []
+    for receipt in receipts:
+        head = receipt.get("head_sha")
+        if head is not None and head != sha:
+            raise Refused(f"a receipt names head {head!r}, not the pushed commit {sha}")
+        decisions = receipt.get("jobs")
+        if not isinstance(decisions, list) or not all(isinstance(d, Mapping) for d in decisions):
+            raise Refused("a receipt names no list of decisions")
+        replayed = [d for d in decisions if d.get("decision") == "replayed"]
+        if not replayed:
+            reasons.append(str(receipt.get("reason") or "no key was replayed"))
+            continue
+        for decision in replayed:
+            key = decision.get("key")
+            if not isinstance(key, str) or not key:
+                raise Refused(f"a replayed decision names no key: {decision!r}")
+            records = first.get(key, [])
+            if not records:
+                disagreed.append((key, "this run left no first-attempt record of it"))
+            elif len(records) > 1:
+                disagreed.append((key, f"this run left {len(records)} first-attempt records"))
+            elif records[0].run_id != run_id:
+                disagreed.append((key, f"its record names run {records[0].run_id}, not {run_id}"))
+            elif records[0].result != "success":
+                disagreed.append((key, f"it ran {records[0].result} here"))
+            else:
+                agreed.append(key)
+    return Shadow(tuple(sorted(agreed)), tuple(sorted(disagreed)), tuple(reasons))
+
+
+def shadow_main(argv: list[str] | None = None) -> int:
+    """``python -m tools.ci replay-shadow``: the push's shadow tally (#3919 (b1)), from its
+    receipts and the records this run's stage jobs uploaded (``--records``, laid out as
+    ``download-artifact`` lays them), for ``GITHUB_SHA`` and ``GITHUB_RUN_ID``. It prints the
+    tally and writes it to ``GITHUB_STEP_SUMMARY``. A receipt that is not there is a replay that
+    did not answer. Exit 0 with a tally, whatever it says; 2 when the inputs cannot be read."""
+    parser = argparse.ArgumentParser(prog="python -m tools.ci replay-shadow")
+    parser.add_argument("--receipt", action="append", required=True, type=Path)
+    parser.add_argument("--records", required=True)
+    args = parser.parse_args(argv)
+    env = os.environ
+    receipts: list[Mapping[str, Any]] = []
+    missing: list[str] = []
+    try:
+        run_id = int(env.get("GITHUB_RUN_ID", ""))
+        attempt = int(env.get("GITHUB_RUN_ATTEMPT", "1"))
+        for path in args.receipt:
+            if not path.is_file():
+                missing.append(f"no receipt at {path.name}: the replay did not answer")
+                continue
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(loaded, Mapping):
+                raise Refused(f"{path.name} is not a receipt")
+            receipts.append(loaded)
+        live = verdict.read_records(args.records, run_id=run_id, attempt=attempt)
+        tally = shadow(receipts, live, sha=env.get("GITHUB_SHA", ""), run_id=run_id)
+    except (Refused, verdict.Refused, OSError, ValueError) as exc:
+        print(f"replay-shadow: {exc}", file=sys.stderr)
+        return 2
+    lines = tally.lines() + [f"replayed nothing: {why}" for why in missing]
+    for line in lines:
+        print(line)
+    summary = "### the push's replay, in shadow\n\n" + "".join(f"- {line}\n" for line in lines)
+    target = env.get("GITHUB_STEP_SUMMARY")
+    if target:
+        with open(target, "a", encoding="utf-8") as handle:
+            handle.write(summary)
     return 0
