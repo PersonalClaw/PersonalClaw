@@ -440,8 +440,13 @@ jobs:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
         run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+      # GitHub's artifact service drops about one upload in 700, and a job with no record reads
+      # as missing: "Upload the entry's record, again", last in the job, settles a failed first
+      # try, and the job is red with no record only when both fail.
       - name: Upload the entry's record
+        id: record
         if: ${{ always() }}
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -492,6 +497,15 @@ jobs:
           path: web/blob-report/
           if-no-files-found: ignore
           retention-days: 7
+          overwrite: true
+      - name: Upload the entry's record, again
+        if: ${{ always() && steps.record.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/run-job/records/
+          if-no-files-found: ignore
+          retention-days: 30
           overwrite: true
 
   test:
@@ -565,8 +579,13 @@ jobs:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
         run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+      # GitHub's artifact service drops about one upload in 700, and a job with no record reads
+      # as missing: "Upload the entry's record, again", last in the job, settles a failed first
+      # try, and the job is red with no record only when both fail.
       - name: Upload the entry's record
+        id: record
         if: ${{ always() }}
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -617,6 +636,15 @@ jobs:
           path: web/blob-report/
           if-no-files-found: ignore
           retention-days: 7
+          overwrite: true
+      - name: Upload the entry's record, again
+        if: ${{ always() && steps.record.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/run-job/records/
+          if-no-files-found: ignore
+          retention-days: 30
           overwrite: true
 
   test-2:
@@ -686,8 +714,13 @@ jobs:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
         run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+      # GitHub's artifact service drops about one upload in 700, and a job with no record reads
+      # as missing: "Upload the entry's record, again", last in the job, settles a failed first
+      # try, and the job is red with no record only when both fail.
       - name: Upload the entry's record
+        id: record
         if: ${{ always() }}
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -738,6 +771,15 @@ jobs:
           path: web/blob-report/
           if-no-files-found: ignore
           retention-days: 7
+          overwrite: true
+      - name: Upload the entry's record, again
+        if: ${{ always() && steps.record.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/run-job/records/
+          if-no-files-found: ignore
+          retention-days: 30
           overwrite: true
 
   test-3:
@@ -807,8 +849,13 @@ jobs:
           JOB: ${{ matrix.id }}
           SHARD: ${{ matrix.shard }}
         run: python3 -m tools.ci run-job "$JOB" ${SHARD:+--shard "$SHARD"} --out "$RUNNER_TEMP/run-job"
+      # GitHub's artifact service drops about one upload in 700, and a job with no record reads
+      # as missing: "Upload the entry's record, again", last in the job, settles a failed first
+      # try, and the job is red with no record only when both fail.
       - name: Upload the entry's record
+        id: record
         if: ${{ always() }}
+        continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -859,6 +906,15 @@ jobs:
           path: web/blob-report/
           if-no-files-found: ignore
           retention-days: 7
+          overwrite: true
+      - name: Upload the entry's record, again
+        if: ${{ always() && steps.record.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-record-${{ matrix.slug }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/run-job/records/
+          if-no-files-found: ignore
+          retention-days: 30
           overwrite: true
 
   results:
