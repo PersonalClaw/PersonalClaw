@@ -60,7 +60,7 @@ from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 from urllib.parse import quote
 
-from personalclaw import session_keys
+from personalclaw import session_keys, workref
 from personalclaw.instants import utc_iso
 from personalclaw.security import redact_for_display
 from personalclaw.textfmt import clip_words
@@ -285,7 +285,7 @@ def _helper_route(info: Any, session: str) -> str:
 
 
 def _route_of(work: str) -> str:
-    kind, _, ident = work.partition(":")
+    kind, ident = workref.read(work)
     if kind == "loop":
         return f"#/loops/{ident}"
     if kind == "workflow":
@@ -576,7 +576,7 @@ def _finished_row(snap: Snapshot, held: _Ended) -> dict[str, Any]:
     """An ending as a row, named as the work is named while it runs."""
     payload = held.payload
     work, kind = str(payload["work"]), str(payload["kind"])
-    _kind, _, ident = work.partition(":")
+    _kind, ident = workref.read(work)
     name, agent, route = held.name, held.agent, ""
     if kind == "chat":
         title, agent = snap.chats.get(ident, (ident, agent))
@@ -841,7 +841,7 @@ def asked(state: Any, entry: Mapping[str, Any]) -> None:
 
     raw = str(entry.get("session") or "")
     for work in approval_work(entry):
-        kind, _, ident = work.partition(":")
+        kind, ident = workref.read(work)
         if kind == "chat":
             changed(state, work, ident)
         elif kind == "subagent":
@@ -856,5 +856,5 @@ def question_changed(state: Any, session_key: str) -> None:
     that session runs (a chat's, its loop's, its run's) moved, whether or not its phase did."""
     work = work_of_session(session_key)
     if work:
-        kind, _, ident = work.partition(":")
+        kind, ident = workref.read(work)
         changed(state, work, ident if kind == "chat" else "")

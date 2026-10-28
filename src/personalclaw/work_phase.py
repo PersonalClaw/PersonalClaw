@@ -202,6 +202,10 @@ NO_PHASE_OF_ITS_OWN: Mapping[str, str] = MappingProxyType(
             "Its agent turn runs outside the chat runner, in a session nobody watches: the "
             "running list holds it while it runs (running_now), and nothing yet says its steps."
         ),
+        "job": (
+            "Nothing starts a background command yet: the change that runs one, owned by its "
+            "chat, gives it its phases or its reason here."
+        ),
     }
 )
 

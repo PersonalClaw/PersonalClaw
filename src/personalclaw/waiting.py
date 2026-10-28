@@ -70,7 +70,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
-from personalclaw import session_keys
+from personalclaw import session_keys, workref
 from personalclaw.instants import utc_iso
 
 logger = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ def _chat_route(key: str) -> str:
 
 
 def _work_route(work: str) -> str:
-    kind, _, ident = work.partition(":")
+    kind, ident = workref.read(work)
     if kind == "loop":
         return f"#/loops/{ident}"
     if kind == "workflow":

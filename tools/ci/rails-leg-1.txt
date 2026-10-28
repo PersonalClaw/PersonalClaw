@@ -154,3 +154,5 @@ tests/rails/test_ci_image_tree.py
 tests/rails/test_ledger_priced_tree.py
 tests/rails/test_select_tree.py
 tests/rails/test_event_loop_whole_file_census.py
+tests/rails/test_ids_have_one_minter.py
+tests/rails/test_work_references_have_one_parser.py

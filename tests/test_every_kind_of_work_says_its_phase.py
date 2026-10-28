@@ -104,8 +104,8 @@ def test_every_kind_of_work_says_its_phase_or_is_listed_with_why_not() -> None:
 
 def test_a_kind_of_work_with_no_row_is_caught() -> None:
     """The positive control: a planted kind on neither list is the one the census names."""
-    planted = (*workref.WORK_KINDS, "job")
-    assert _unlisted(planted, PHASE_PRODUCERS, NO_PHASE_OF_ITS_OWN) == {"job"}
+    planted = (*workref.WORK_KINDS, "cron")
+    assert _unlisted(planted, PHASE_PRODUCERS, NO_PHASE_OF_ITS_OWN) == {"cron"}
 
 
 def _said_by(module: Any, kind: str) -> list[dict[str, Any]]:
