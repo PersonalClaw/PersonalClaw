@@ -18,6 +18,7 @@ Security-marked: the rerun must never turn a red green.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import subprocess
@@ -405,6 +406,21 @@ def test_a_vitest_failure_is_rerun_once_alone_and_the_job_stays_red(tmp_path):
         for a in again["argv"]
     )
     assert record["rerun"]["argv"][:3] == ["npx", "vitest", "run"]
+
+
+def test_a_vitest_steps_failed_tests_let_the_jobs_next_steps_run(tmp_path):
+    """As web-unit's design detector and its desktop and mobile tests run after its Vitest step:
+    a flake there leaves the job red, and every step after it still runs."""
+    after = tmp_path / "after"
+    root, path = _plant(tmp_path, vitest=(VITEST_CASES[0], VITEST_CASES[1]))
+    later = Step((sys.executable, "-c", f"open({str(after)!r}, 'w').close()"))
+    job = _vitest_job()
+    outcome = _run(root, path, dataclasses.replace(job, command=(*job.command, later)), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    assert after.exists()
+    record = _record(outcome)
+    assert [s["exit"] for s in record["steps"]] == [1, 0]
+    assert _by_test(record)[FLAKY]["rerun_result"] == verdict.FLAKE
 
 
 def test_a_vitest_job_whose_only_failure_is_a_flake_stays_red(tmp_path):
@@ -1022,3 +1038,75 @@ def test_a_playwright_test_named_twice_is_listed_once(tmp_path):
     found, reasons = _classify(tmp_path, _spec(test, test))
     assert found is not None and reasons == []
     assert [t["test"] for t in found["tests"]] == ["web/e2e/a.spec.ts::t [chromium]"]
+
+
+# ── A browser leg's failed tests leave it red, and its other homes run on ─────────────────────
+
+
+def _home(blob: Path) -> Step:
+    """A leg's later run on a home of its own, as e2e-shard's idle and stateful runs are: here a
+    program that leaves its blob, outside the checkout so the job's record is still written."""
+    return Step((sys.executable, "-c", f"open({str(blob)!r}, 'w').write('blob')"))
+
+
+def _leg(*later: Step) -> Job:
+    first = _playwright_job()
+    return dataclasses.replace(first, command=(*first.command, *later))
+
+
+FLAKY_LEG = _playwright_report(("a.spec.ts", "loads", "flaky", ["failed", "passed"]))
+
+
+def test_a_legs_failed_tests_keep_it_red_and_its_other_homes_still_leave_their_blobs(tmp_path):
+    """e2e-shard's first run failed on a flake and its run-job stopped, so its idle home never
+    ran, and `e2e` and `ui-quality` each went red merging a leg with no blob. A step whose one
+    fault is failed tests its own report names lets the job's other steps run on: the job is
+    red, its record holds the one red step and its rerun, and every home leaves its blob."""
+    idle, stateful = tmp_path / "idle.zip", tmp_path / "stateful.zip"
+    root, path = _plant(tmp_path, playwright=FLAKY_LEG)
+    outcome = _run(root, path, _leg(_home(idle), _home(stateful)), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    assert idle.read_text() == "blob" and stateful.read_text() == "blob"
+    record = _record(outcome)
+    assert record["result"] == verdict.FAILURE
+    assert [s["exit"] for s in record["steps"]] == [1, 0, 0]
+    assert _by_test(record)[LOADS]["rerun_result"] == verdict.FLAKE
+    [read] = verdict.from_job_records([outcome.record.read_text()])
+    assert read.result == verdict.FAILURE and read.step_exits == (1, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "fault, said",
+    [
+        pytest.param({"exit": 2}, "step 1: the job exited 2", id="another exit"),
+        pytest.param({"signal": True}, "step 1: interrupted by SIGINT", id="a signal"),
+        pytest.param(
+            {"report": None, "exit": 1},
+            "step 1: rerun: ",
+            id="an exit 1 whose report names no failed test",
+        ),
+    ],
+)
+def test_a_leg_whose_step_failed_for_any_other_fault_runs_no_other_home(tmp_path, fault, said):
+    """A job's time spent stops it at the next step anyway, so it is not among these."""
+    blob = tmp_path / "idle.zip"
+    root, path = _plant(tmp_path, playwright=FLAKY_LEG, faults={"playwright": fault})
+    outcome = _run(root, path, _leg(_home(blob)), tmp_path)
+    assert outcome.code != run.OK, outcome.reasons
+    assert any(r.startswith(said) for r in outcome.reasons), outcome.reasons
+    assert not blob.exists(), "a step after a fault that is not failed tests ran"
+
+
+def test_a_red_step_after_a_legs_failed_tests_keeps_it_red_and_stops_it(tmp_path):
+    """The record holds one rerun, the first red step's, and a job with two red steps is never a
+    flake, so the second stops the job: the home after it never runs."""
+    blob = tmp_path / "stateful.zip"
+    root, path = _plant(tmp_path, playwright=FLAKY_LEG)
+    red = Step((sys.executable, "-c", "raise SystemExit(1)"))
+    outcome = _run(root, path, _leg(red, _home(blob)), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    assert not blob.exists()
+    record = _record(outcome)
+    assert [s["exit"] for s in record["steps"]] == [1, 1]
+    assert _by_test(record)[LOADS]["rerun_result"] == verdict.FLAKE
+    assert any(r.startswith("step 2: the job exited 1") for r in outcome.reasons), outcome.reasons

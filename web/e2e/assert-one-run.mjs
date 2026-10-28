@@ -6,10 +6,11 @@
 // modes (`isolationReporter.ts`), but no leg saw the others, and a merge is only as whole as what
 // was handed to it. This holds the merged report to one run:
 //
-//   · no test failed or passed only on its retry, and every test ran, each leg's auth setup
-//     included; and there are some. A test ran when one of its results passed, failed or timed
-//     out, or it skipped itself: a test with no result never started, and one whose only result
-//     was interrupted, or skipped while it expected to run, is one Playwright counts as not run;
+//   · no test failed, and every test ran, each leg's auth setup included; and there are some (a
+//     test that passed only on its retry is named, not red: its leg is red for it). A test ran
+//     when one of its results passed, failed or timed out, or it skipped itself: a test with no
+//     result never started, and one whose only result was interrupted, or skipped while it
+//     expected to run, is one Playwright counts as not run;
 //   · AND NO LEG ERRED OUTSIDE A TEST. A leg whose gateway never booted ends before Playwright lists
 //     its tests, so its blob holds the error and none of its tests, and every count below agrees
 //     with the other legs' tests alone. Its error is the one trace it leaves in the merge;
@@ -84,14 +85,23 @@ if (errors.length) problems.push(`${errors.length} error${errors.length === 1 ? 
 
 if (!tests.length) fail([...problems, 'the report holds no test'])
 
-// These three read every test, the auth setup too: a leg whose setup failed, passed only on its
-// retry or never ran is red here as its tests are.
+// These three read every test, the auth setup too: a leg whose setup failed or never ran is red
+// here as its tests are, and one whose setup passed only on its retry is named.
 const failed = all.filter((t) => t.test.status === 'unexpected').map(named)
 if (failed.length) problems.push(`${failed.length} test${failed.length === 1 ? '' : 's'} failed: ${some(failed)}`)
-// Under CI a test that passes only on its retry fails its leg (`failOnFlakyTests`), so it is a red
-// here too, never a pass.
-const flaky = all.filter((t) => t.test.status === 'flaky').map(named)
-if (flaky.length) problems.push(`${flaky.length} test${flaky.length === 1 ? '' : 's'} passed only on a retry: ${some(flaky)}`)
+// Under CI a test that passes only on its retry fails its leg (`failOnFlakyTests`), and the leg's
+// record holds the rerun alone the verdict's flake rule judges it by. So here it is named, with the
+// leg run that ran it, and is no second red: one no rerun could explain would keep every flake of
+// a leg red, the leg's own waived or not.
+const flaky = all.filter((t) => t.test.status === 'flaky')
+/** The leg run a test's project is, as far as the merged report tells it: which shard ran a shared
+ *  test only the shard's own record says. */
+const leg = (t) =>
+  t.project === 'setup' ? "one leg's auth setup"
+  : t.project === 'smoke' || t.project === 'chromium' ? "a shard leg's shared run"
+  : STATEFUL.test(t.project) ? 'the stateful run'
+  : `the ${t.project} home's run`
+for (const t of flaky) console.log(`• passed only on its retry, red on its leg (${leg(t)}): ${named(t)}`)
 // A test with no result never started: its project's dependency failed, the run was cut short, or
 // Playwright never scheduled it. It is in the report, and it measured nothing. Nor did a test whose
 // only result was interrupted, or skipped while the test expected to run: Playwright's own outcome

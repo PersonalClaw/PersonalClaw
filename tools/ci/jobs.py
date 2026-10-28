@@ -14,7 +14,10 @@ The job has its catalogue cap less a minute, across every step; a step still run
 runs out is stopped with its whole group, and a pytest step says first which of its processes
 were still alive, since a hung xdist worker is the usual cause. Every report the job declares
 must then exist and be newer than the job's start, so a pytest that died before writing one is
-red.
+red. A step that fails stops the job, except the first whose one fault is failed tests its own
+report names (the diagnostic rerun, below, found them): the job is red, and its other steps run on,
+inside the same time, so what they leave is there for a later job (a browser leg's later homes
+leave the blobs ``e2e`` and ``ui-quality`` merge).
 
 Each job (each shard of a sharded one) leaves one record (:func:`verdict.job_record`): its key,
 result, the head it ran on, the partner revisions it read, the run and its attempt (on GitHub,
@@ -1785,6 +1788,10 @@ def run_one(
                 write_feedback(work / FEEDBACK, argv, kept, number)
             code = result.code
             interrupted = result.interrupted
+            # Only the job's first red step is diagnosed: the record holds one rerun, and a job
+            # with two red steps is never a flake (verdict._pass_flakes), so a later one stops it.
+            if rerun is not None:
+                break
             # A pytest step whose tests ran and some failed (exit 1), and nothing else went wrong:
             # a timeout, a signal or the credential tripwire each adds a violation of its own, so
             # the exit is the only one. Its failed tests are rerun once, alone, to classify them.
@@ -1831,6 +1838,17 @@ def run_one(
                     )
                     reasons.extend(f"step {n}: {m}" for m in more)
                     interrupted = interrupted or stopped
+            # A step whose one fault is failed tests its own report names (its diagnosis found
+            # them) leaves the job red, and the job's other steps run on, inside the same time:
+            # what they leave is there for the jobs that read it, as a browser leg's later homes
+            # leave the blobs `e2e` and `ui-quality` merge. Any other fault stops the job.
+            if rerun is not None and not interrupted:
+                print(
+                    f"[{key}] step {n}: its failed tests make the job red; its other steps run on",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
             break
     quarantined: list[str] = []
     skipped: list[str] = []

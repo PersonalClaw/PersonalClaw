@@ -1516,3 +1516,31 @@ def test_a_test_with_any_failed_case_in_a_report_failed(tmp_path):
         ("t", "b"): "skipped",
         ("t", "c"): "passed",
     }
+
+
+def test_a_pytest_steps_failed_tests_keep_the_job_red_and_its_other_steps_run_on(tmp_path):
+    """A step whose one fault is failed tests its own report names lets the job's other steps
+    run, inside the same time: the job is red, and its record holds the one red step, its
+    rerun, and the steps after it."""
+    root, _, _ = _suite(tmp_path)
+    after = tmp_path / "after"
+    later = Step((PY, "-c", f"open({str(after)!r}, 'w').close()"))
+    flaky = _job("tests/test_flaky.py")
+    outcome = _run(root, _job(command=(*flaky.command, later)), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    assert after.exists()
+    record = _record(outcome)
+    assert [s["exit"] for s in record["steps"]] == [1, 0]
+    assert _by_test(record)[FLAKY]["rerun_result"] == "flake"
+
+
+def test_a_step_that_failed_for_another_reason_stops_the_job(tmp_path):
+    """A usage error is no failed test: the steps after it never run."""
+    root, _, _ = _suite(tmp_path)
+    after = tmp_path / "after"
+    later = Step((PY, "-c", f"open({str(after)!r}, 'w').close()"))
+    usage = _job("tests/test_flaky.py", "--no-such-option")
+    outcome = _run(root, _job(command=(*usage.command, later)), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    assert not after.exists()
+    assert _record(outcome)["rerun"] is None

@@ -1,10 +1,12 @@
+// @module-tag tree-scan
 import { afterEach, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { PROJECTS_FOR } from '../../e2e/isolation'
 import { withStatefulMetadata } from '../../e2e/merge-legs.mjs'
+import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── The browser run is two legs and a stateful run, and one report holds all three ─────────────
 //
@@ -234,12 +236,6 @@ describe('assert-one-run holds the merged report to one run', () => {
       /1 test failed: chromium › walkthrough\.spec\.ts › a describe › Tasks \(#\/tasks\) light/,
     ],
     [
-      // Under CI a test that passes only on its retry fails its leg (`failOnFlakyTests`).
-      'a test passed only on its retry in one leg',
-      GOOD.map((r, i) => (i === 4 ? { ...r, status: 'flaky' } : r)),
-      /1 test passed only on a retry: chromium › a11y\.spec\.ts › a describe › Home \(#\/dashboard\)/,
-    ],
-    [
       'the second pass never started (its tests are in the report with no result)',
       GOOD.map((r) => (r.project.startsWith('stateful-again') ? { ...r, status: 'unrun' } : r)),
       /2 tests did not run: stateful-again-1 › staleWrite\.spec\.ts › a describe › tab B is refused; stateful-again-2/,
@@ -262,12 +258,7 @@ describe('assert-one-run holds the merged report to one run', () => {
     ],
     [
       // Each leg runs the auth setup for itself, so the merged report holds it once per leg. Only
-      // that count is exempt: a setup that failed, passed only on its retry or never ran is red.
-      'the auth setup of one leg passed only on its retry',
-      GOOD.map((r, i) => (i === 1 ? { ...r, status: 'flaky' } : r)),
-      /1 test passed only on a retry: setup › auth\.setup\.ts › a describe › authenticate/,
-    ],
-    [
+      // that count is exempt: a setup that failed or never ran is red.
       'the auth setup of one leg failed',
       GOOD.map((r, i) => (i === 1 ? { ...r, status: 'unexpected' } : r)),
       /1 test failed: setup › auth\.setup\.ts › a describe › authenticate/,
@@ -299,6 +290,48 @@ describe('assert-one-run holds the merged report to one run', () => {
     expect(ran.stderr).toMatch(says)
   })
 
+  // Under CI a test that passes only on its retry fails its leg (`failOnFlakyTests`), and the leg's
+  // record holds the rerun alone the verdict's flake rule judges it by: here it is named, with the
+  // leg run that ran it, and is no second red.
+  const RETRIED: Array<[string, Row[], RegExp, Record<string, unknown>?]> = [
+    [
+      'a shared test of a shard leg',
+      GOOD.map((r, i) => (i === 4 ? { ...r, status: 'flaky' } : r)),
+      /• passed only on its retry, red on its leg \(a shard leg's shared run\): chromium › a11y\.spec\.ts › a describe › Home \(#\/dashboard\)/,
+    ],
+    [
+      "one leg's auth setup",
+      GOOD.map((r, i) => (i === 1 ? { ...r, status: 'flaky' } : r)),
+      /• passed only on its retry, red on its leg \(one leg's auth setup\): setup › auth\.setup\.ts › a describe › authenticate/,
+    ],
+    [
+      'a test of the stateful run',
+      GOOD.map((r, i) => (i === 7 ? { ...r, status: 'flaky' } : r)),
+      /• passed only on its retry, red on its leg \(the stateful run\): stateful › staleWrite\.spec\.ts › a describe › tab B is refused/,
+    ],
+    [
+      'a test of a home of its own',
+      ALONE_GOOD.map((r) => (r.project === 'idle' ? { ...r, status: 'flaky' } : r)),
+      /• passed only on its retry, red on its leg \(the idle home's run\): idle › idleCost\.spec\.ts › a describe › Chat idles/,
+      ALONE_METADATA,
+    ],
+  ]
+
+  it.each(RETRIED)('names %s that passed only on its retry, and holds the run whole', (_, rows, says, metadata) => {
+    const ran = judge(rows, metadata)
+    expect(ran.status, ran.stdout + ran.stderr).toBe(0)
+    expect(ran.stdout).toMatch(says)
+    expect(ran.stdout).toMatch(/✓ one run/)
+  })
+
+  it('still reds a test that failed, beside one that passed only on its retry', () => {
+    const rows = GOOD.map((r, i) => (i === 4 ? { ...r, status: 'flaky' } : i === 5 ? { ...r, status: 'unexpected' } : r))
+    const ran = judge(rows)
+    expect(ran.status, ran.stdout + ran.stderr).toBe(1)
+    expect(ran.stderr).toMatch(/1 test failed: chromium › walkthrough\.spec\.ts › a describe › Tasks \(#\/tasks\) light/)
+    expect(ran.stdout).toMatch(/passed only on its retry, red on its leg \(a shard leg's shared run\): chromium › a11y\.spec\.ts/)
+  })
+
   it('reds when a leg stopped before its first test: its error is there, and none of its tests', () => {
     // A leg whose gateway never booted ends before Playwright lists its tests, so its blob holds
     // the error and no test, and every count above agrees with the other legs' tests alone.
@@ -328,6 +361,60 @@ describe('assert-one-run holds the merged report to one run', () => {
     const ran = node('assert-one-run.mjs', [join(scratch(), 'absent.json')])
     expect(ran.status).toBe(1)
     expect(ran.stderr).toMatch(/cannot read the merged report .*absent\.json/)
+  })
+})
+
+// ── A retried pass is named, not red, because its leg is red for it ───────────────────────────
+//
+// assert-one-run names a test that passed only on its retry rather than redding on it, since under
+// CI its leg already failed for it (`failOnFlakyTests`) and the verdict judges that leg's record.
+// That holds only while a retry happens where failOnFlakyTests is on and nowhere else: the config
+// retries once and fails on a retried pass under CI, retries none without CI, and no spec turns its
+// own retries up.
+describe('a retried pass fails its leg wherever one can happen', () => {
+  /** The config as `playwright test --list` resolves it, with CI set or not. */
+  function listed(ci: boolean) {
+    const dir = scratch()
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      TMPDIR: dir,
+      PLAYWRIGHT_JSON_OUTPUT_NAME: undefined,
+      PLAYWRIGHT_BLOB_OUTPUT_DIR: join(dir, 'blob'),
+      PLAYWRIGHT_HTML_OUTPUT_DIR: join(dir, 'html'),
+      PW_E2E_HOME: '', PW_PORT: '', PW_GATEWAY_PORT: '', PW_NO_SERVER: '', PW_REUSE_SERVER: '',
+      STORAGE_STATE: '', PW_OUTPUT_DIR: '',
+      CI: ci ? '1' : undefined,
+    }
+    const ran = spawnSync('npx', ['playwright', 'test', '--list', '--reporter=json', '-c', 'playwright.config.ts'], {
+      cwd: WEB, encoding: 'utf8', env: env as NodeJS.ProcessEnv, timeout: 120_000,
+    })
+    expect(ran.status, ran.stderr).toBe(0)
+    const config = JSON.parse(ran.stdout).config as { failOnFlakyTests: boolean; projects: Array<{ name: string; retries: number }> }
+    expect(config.projects.length).toBeGreaterThan(0)
+    return config
+  }
+
+  it('retries once under CI, and fails the run on a retried pass there', () => {
+    const config = listed(true)
+    expect(config.failOnFlakyTests).toBe(true)
+    expect(config.projects.filter((p) => p.retries !== 1)).toEqual([])
+  })
+
+  it('retries none without CI, so no run there has a retried pass', () => {
+    const config = listed(false)
+    expect(config.failOnFlakyTests).toBe(false)
+    expect(config.projects.filter((p) => p.retries !== 0)).toEqual([])
+  })
+
+  it('has no spec or helper under e2e/ that sets its retries above 0', () => {
+    const dir = join(WEB, 'e2e')
+    const set: string[] = []
+    for (const path of filesUnder(dir, (name) => /\.(ts|mjs)$/.test(name))) {
+      for (const m of readSource(path).matchAll(/\bretries\s*:\s*([^,}\s]+)/g)) {
+        if (m[1] !== '0') set.push(`${relative(dir, path)}: retries: ${m[1]}`)
+      }
+    }
+    expect(set).toEqual([])
   })
 })
 
