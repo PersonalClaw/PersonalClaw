@@ -579,6 +579,10 @@ addopts = [
     "--color=yes",
 ]
 testpaths = ["tests"]
+# A test still running at 120 s, well past pytest-timeout's 30 s, dumps every thread's stack, so a
+# hang its signal cannot end says where it stopped: a worker of #5638's first run sat at 80% of its
+# shard until the job timed out, and left nothing else.
+faulthandler_timeout = 120
 markers = [
     "security: proves a security or fail-closed boundary; never rerun, quarantined or selected out. tests/security_census.py names the modules that must carry it.",
 ]

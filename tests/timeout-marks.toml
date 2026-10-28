@@ -788,3 +788,8 @@ reason = "each plant lays out the committed tree as a worktree (9,239 files) and
 site = "tests/test_a_test_left_failing_by_another_is_traced_to_it.py::test_a_planted_polluter_is_found_in_at_most_12_pytest_runs"
 cap = 120
 reason = "11 pytest runs over a planted tree of 256 tests, each a fresh interpreter; 17 s here at a load of 38 (2026-10-26)"
+
+[[mark]]
+site = "tests/rails/test_e2e_gateway_home_is_the_runs_tree.py::test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token"
+cap = 90
+reason = "boots a real gateway as the harness does, signs in, stops it and runs the harness's own clean-up in node: 22 s measured (2026-10-28), so about 4x that; its own waits (READY 45 s, stop 15 s, node 20 s) end within it"
