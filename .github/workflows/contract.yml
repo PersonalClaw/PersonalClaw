@@ -7,10 +7,11 @@
 #
 # The poster (merge-verdict.yml) dispatches it on the branch contract-run/<head>, which points at
 # main's tip, so the workflow that runs is main's, and what it writes to the Actions cache is that
-# branch's, never main's: it runs the head's tools/ci, which is what it tests. It holds no secret
-# and no write token, keeps no credential and saves no cache. A run counts for the head only when it
-# is this file, dispatched on the head's branch at main's tip and named for the head
-# (merge_controller.contract_run).
+# branch's, never main's: it runs the head's tools/ci, which is what it tests. Its contract job
+# holds no secret and no write token, keeps no credential and saves no cache. Its wake job, which
+# runs nothing of the head, holds `actions: write` alone, to dispatch the poster on main for the
+# head when the contract has run. A run counts for the head only when it is this file, dispatched
+# on the head's branch at main's tip and named for the head (merge_controller.contract_run).
 #
 # The verdict is main's: the rails run in a child pytest, and main's tools/ci/contract.py reads the
 # child's junit report, so a head that exits 0 on import is red. The child runs the head's code,
@@ -77,3 +78,33 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/head" "$HEAD_SHA"
       - name: main's CI contract over the head's definitions
         run: uv run --no-sync python -m tools.ci contract --main "$GITHUB_WORKSPACE" --head "$RUNNER_TEMP/head"
+
+  wake:
+    # When the contract has run, whatever it concluded, judge the head again: dispatch the poster
+    # on main for it. The poster dispatched this run with its job's token, so this run's completion
+    # raises no workflow_run; a dispatch made with this job's token starts a run. It holds
+    # `actions: write` alone and runs nothing of the head: no action, no checkout, no artifact or
+    # output of the contract job, and the head named only by this run's own input, checked against
+    # its branch (tests/rails/test_ci_contract.py, tests/rails/test_ci_merge_verdict_poster_tree.py).
+    needs: contract
+    if: always() && github.ref == format('refs/heads/contract-run/{0}', inputs.head)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      - name: judge the head again
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ inputs.head }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error title=no head::'$HEAD_SHA' is not a full commit id"
+            exit 1
+          fi
+          test "$GITHUB_REF" = "refs/heads/contract-run/$HEAD_SHA"
+          gh workflow run merge-verdict.yml --repo "$GITHUB_REPOSITORY" --ref main -f head="$HEAD_SHA"

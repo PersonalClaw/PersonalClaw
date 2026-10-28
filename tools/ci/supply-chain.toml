@@ -132,6 +132,13 @@ permission = "actions: write"
 steps = ["run main's contract.yml on it"]
 reason = "Dispatches main's contract.yml on the one contract-run branch the controller App just pointed at main's tip for a head that changes a CI definition (#3910, #4584 step 4), so main's CI contract judges its definitions. A workflow_run listener, so main's copy; it runs no candidate code and writes nothing else."
 
+[[audited_write]]
+workflow = "contract.yml"
+job = "wake"
+permission = "actions: write"
+steps = ["judge the head again"]
+reason = "Once main's contract has run over a head's definitions, dispatches the poster (merge-verdict.yml) on main for that head, so its verdict is judged again then: the poster dispatched this run with its job's token, so the run's completion raises no workflow_run. main's contract.yml, on the head's contract-run branch at main's tip; the job runs no action and nothing of the head, reads no artifact or output of the contract job, and checks its input against its own branch before the one dispatch."
+
 # Exceptions. One waives exactly one violation of one rule (scope) in one file, and expires at
 # most 30 days after the day it is written or renewed. Renewing is a new expiry with a new
 # reason. An expired entry, one more than 30 days out, one that matches nothing or more than one

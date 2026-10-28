@@ -323,16 +323,40 @@ verdict says all it must fix:
   (`git worktree`) and runs `python -m tools.ci contract` with `main`'s locked environment. A
   contract run counts only when it is `contract.yml`, dispatched on the head's branch at
   `main`'s tip and named for the head (its `run-name`, `Contract <head>`); one at an older tip
-  runs again. It is started only from the head's own completed `pull_request` run, which passed
-  the fork approval gate, once per head and tip. Until it reports, the head is a red that waits on
-  it ("waiting: main's CI contract over its definitions is ..."), marked waiting like a red that
-  waits on CodeQL. The `contract` job dispatches it with the job's token, and GitHub starts no
-  workflow for that token's events, so the run's completion wakes nothing (Contract 40180833095
-  passed at 09:32:43 on 2026-10-25 and no poster run followed). Every poster run judges waiting
-  reds again (below), so the head's verdict is posted and its branch deleted by the next poster
-  run after the contract reports, whatever woke it. A Contract run a person runs again does wake
-  the poster. Every completed run also
-  sweeps away contract branches no longer at `main`'s tip.
+  runs again. It is started only from the head's own `pull_request` run once that run has passed
+  the fork approval gate, once per head and tip, and beside the run rather than after it:
+  - **When the run starts.** The poster also follows a pull request's Merge run's `in_progress`
+    (merge.yml's, by its path), and `decide --start` dispatches the contract when a job of
+    attempt 1 ran on a runner (a `runner_id` and a `runner_name`, read from the jobs API: a fork's
+    run that waits for a maintainer's approval runs none, and a queued, waiting, skipped or
+    `action_required` job does not count), the
+    head is not behind `main` and changes a definition, and it has no contract run or branch at
+    `main`'s tip yet. It reads only the run's repository, path, event, status, head and attempt,
+    nothing a fork's author names, and posts nothing. A re-run's start starts nothing.
+  - **When the run completes,** as before, when no contract ran for the head at this tip, and only
+    if the attempt it completed ran a job on a runner: a fork's run reported completed with
+    `action_required` starts nothing.
+  The contract takes about 4.4 minutes and a Merge run 22 to 34, so it has nearly always reported
+  when the run completes, and the verdict is posted then. Over the 14 definition heads merged
+  from 2026-10-24 to 2026-10-27, starting it after the run added 10.2 minutes to the verdict at the
+  median, 15.2 at p90 and 34.8 at worst.
+
+  Until it reports, the head is a red that waits on it ("waiting: main's CI contract over its
+  definitions is ..."), marked waiting like a red that waits on CodeQL. The `contract` job
+  dispatches it with the job's token, and GitHub starts no workflow for that token's events, so
+  the run's completion raises no `workflow_run` (Contract 40180833095 passed at 09:32:43 on
+  2026-10-25 and no poster run followed). So `contract.yml`'s last job, `wake`, dispatches the
+  poster on `main` for the head, whatever the contract concluded: a dispatch made with the job's
+  token does start a run. It holds `actions: write` alone, runs no action and nothing of the head,
+  and checks its `inputs.head` against its own branch before the one dispatch. The poster takes a
+  `workflow_dispatch` on `main` alone, keyed on that head so two heads' wakes never replace each
+  other. Its decide step checks the head is a full commit id before the controller reads it, and
+  posts nothing for one that isn't. Then `decide --head` judges the head by the one judge a
+  completed Merge run's poster calls (`rejudge`). The contract's verdict is its `contract` job's,
+  not its run's, so a failing `wake` never reads as a failed contract, and nothing is waited for:
+  `wake` runs after that job. Every poster run still judges waiting reds again (below), and a
+  Contract run a person runs again still wakes the poster. Every completed run also sweeps away contract
+  branches no longer at `main`'s tip.
 
   The judge is not in the head's process. The rails import the head's `tools/ci`, so they run in
   a child pytest, and `main`'s `tools/ci/contract.py` reads the child's junit report from a path
@@ -394,15 +418,16 @@ verdict says all it must fix:
   the REST reads that stay the gate, and a query that gives no answer leaves the sweep reading every
   head.
 - **What takes a runner:** both jobs' one condition starts one only for what can judge a pull
-  request's head. The schedule and a completed dispatch off `main` (a contract run, a dispatch
-  proof) always do. A pull request's wakes, code scanning's CodeQL check and a completed run of
-  a pull request (its own Merge run, its dependency review, CodeQL's on `refs/pull/*`), do only
-  while the repository variable `MERGE_VERDICT_LIVE` is `true`. It is `false` until #3915's flip
+  request's head. The schedule, a dispatch of the poster on `main` (a contract run's wake, never
+  off `main`) and a completed dispatch off `main` (a contract run, a dispatch proof) always do. A
+  pull request's wakes, code scanning's CodeQL check, a completed run of a pull request (its own
+  Merge run, its dependency review, CodeQL's on `refs/pull/*`) and a pull request's own Merge run
+  starting do only while the repository variable `MERGE_VERDICT_LIVE` is `true`. It is `false` until #3915's flip
   runs merge.yml on pull requests, because until then a head has no Merge run to judge, and the
   flip sets it: forgotten, nothing posts on a pull request and `merge-verdict` cannot be
   required, so it fails closed. A push run, a dispatch on `main`, CodeQL on `main` and any other
-  check run never take one. decide checks each again through the API, which is the gate: the
-  condition only spares the queue. Measured on 2026-10-24, 08:34 to 14:34Z: 144 poster runs, of
+  check run never take one, and nor does any other run's start. decide checks each again through
+  the API, which is the gate: the condition only spares the queue. Measured on 2026-10-24, 08:34 to 14:34Z: 144 poster runs, of
   which 2 posted, whose runners waited a median 686 to 993 s.
 - **The schedule lags under load.** GitHub drops or delays a cron when its runners are busy: the
   same six hours started the sweep once, not 36 times. It is the backstop for the one gap above,
@@ -445,9 +470,10 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   `write-all`, no `permissions` at all (the repository default is unknown to the file), a
   `secrets.` reference anywhere in the job, or `secrets: inherit`.
 - `contract.yml`, which runs a head's code for its contract run, holds nothing worth taking:
-  `contents: read` alone, no job's own permissions, no `secrets.` reference, no environment and
-  no cache save (`actions/cache` or `actions/cache/save`, setup-uv with its cache on, setup-node
-  with a cache, or a local action, which may cache). A restore alone is fine.
+  `contents: read` alone, no job's own permissions but `wake`'s `actions: write` (which runs no
+  action and no git, uv or python), no `secrets.` reference, no environment and no cache save
+  (`actions/cache` or `actions/cache/save`, setup-uv with its cache on, setup-node with a cache,
+  or a local action, which may cache). A restore alone is fine.
 - Only `release.yml` holds a publishing permission (`contents`, `packages`, `id-token`,
   `attestations` or `deployments` write, or `write-all`) or any deployment environment. A new
   environment has to argue its way into `release.yml`. The one other is `settings-report`, on
