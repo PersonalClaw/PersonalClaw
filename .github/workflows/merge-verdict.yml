@@ -1,8 +1,9 @@
 # Merge verdict: the controller posts `merge-verdict` on a pull request's head (#3910, #4584).
 #
-# It runs when a Merge run (merge.yml) completes. GitHub runs a `workflow_run` listener from the
-# default branch, so this file and the tools/ci it runs are main's, whatever the candidate
-# brings. It never checks out or fetches the candidate: `python -m tools.ci merge-controller
+# It runs when a Merge run (merge.yml) completes, and when a pull request's Merge run starts, to
+# start main's contract for a head that changes a definition beside the run (`decide --start`,
+# which posts nothing). GitHub runs a `workflow_run` listener from the default branch, so this
+# file and the tools/ci it runs are main's, whatever the candidate brings. It never checks out or fetches the candidate: `python -m tools.ci merge-controller
 # decide` (tools/ci/merge_controller.py) reads everything through the API by the run's id, both
 # trees included, and judges it by main's rules. A run of another workflow named Merge, which a
 # candidate can add, a push run and a schedule post nothing. Both jobs' condition reads the
@@ -43,10 +44,12 @@ on:
   # A Merge run is judged. A Dependency review run, GitHub's dynamic CodeQL workflow (matched by
   # its run's path, never its name), or a Contract run (by its path and branch) judges its head
   # again. The contract job's own dispatch uses the job's token, whose events start no workflow,
-  # so that run's completion raises nothing here; one a person runs again does.
+  # so that run's completion raises nothing here; one a person runs again does, and the run's own
+  # `wake` job dispatches this (below). A pull request's Merge run, merge.yml's by its path,
+  # starts its head's contract when it starts: no other run's start takes a runner.
   workflow_run:
     workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]
-    types: [completed]
+    types: [in_progress, completed]
   # Code scanning's CodeQL check, completed, wakes the poster to judge its head again; its
   # conclusion is never read. The job skips every other check run without a runner.
   check_run:
@@ -58,11 +61,22 @@ on:
   # judges again the few oldest waiting heads.
   schedule:
     - cron: "*/10 * * * *"
+  # A contract run's last job (contract.yml's `wake`) dispatches this on main for the head it
+  # judged, so the head is judged again as soon as its contract reports: a dispatch made with the
+  # job's token starts a run, where its run's completion raises no workflow_run. The head only
+  # names which one to judge: decide reads everything again through the API.
+  workflow_dispatch:
+    inputs:
+      head:
+        description: the head whose contract run reported (a full commit id)
+        required: true
 
 # One post per Merge run and attempt, never cancelled: each run's verdict is its own check run,
-# and verify-check-run reads the newest.
+# and verify-check-run reads the newest. A wake (a dispatch on main) keys on the head it names, so
+# two heads' wakes, and a wake and the schedule, never replace each other's pending run. It is
+# `github.event.inputs.head`, which every other event leaves empty.
 concurrency:
-  group: merge-verdict-run-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}-check-${{ github.event.check_run.id }}
+  group: merge-verdict-run-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}-check-${{ github.event.check_run.id }}-head-${{ github.event.inputs.head }}
   cancel-in-progress: false
 
 permissions:
@@ -70,26 +84,36 @@ permissions:
 
 jobs:
   post:
-    # Only what can judge a pull request's head takes a runner: the sweep; a completed dispatch
-    # off main (a contract run, a dispatch proof); and, once merge.yml runs on pull requests
-    # (MERGE_VERDICT_LIVE, which #3915's flip sets to 'true'), code scanning's CodeQL check and a
+    # Only what can judge a pull request's head takes a runner: the sweep; a dispatch of this
+    # file on main (a contract run's wake), never off it; a completed dispatch off main (a
+    # contract run, a dispatch proof); and, once merge.yml runs on pull requests
+    # (MERGE_VERDICT_LIVE, which #3915's flip sets to 'true'), code scanning's CodeQL check, a
     # completed run of a pull request (its own, its dependency review, or CodeQL's on
-    # refs/pull/*). A push, a dispatch on main, CodeQL on main and any other check run start no
-    # runner. decide checks each again through the API, which is the gate: this only spares the
-    # queue (#3910).
+    # refs/pull/*), and a pull request's own Merge run starting. A push, a dispatch on main,
+    # CodeQL on main, any other run's start and any other check run start no runner. decide
+    # checks each again through the API, which is the gate: this only spares the queue (#3910).
+    # Whether a started run's head may have its contract started (its run approved, a job of
+    # attempt 1 on a runner) is read from the jobs API by decide, never from this condition.
     if: >-
       github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
       || (github.event_name == 'workflow_run'
+      && github.event.action == 'completed'
       && github.event.workflow_run.event == 'workflow_dispatch'
       && github.event.workflow_run.head_branch != 'main')
       || (vars.MERGE_VERDICT_LIVE == 'true'
       && ((github.event_name == 'check_run'
       && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')
       || (github.event_name == 'workflow_run'
+      && github.event.action == 'completed'
       && (github.event.workflow_run.event == 'pull_request'
       || github.event.workflow_run.event == 'pull_request_target'
       || (github.event.workflow_run.event == 'dynamic'
-      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))))
+      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))
+      || (github.event_name == 'workflow_run'
+      && github.event.action == 'in_progress'
+      && github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.path == '.github/workflows/merge.yml')))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: ci-controller
@@ -116,13 +140,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           CHECK_RUN_ID: ${{ github.event.check_run.id }}
+          ACTION: ${{ github.event.action }}
+          WAKE_HEAD: ${{ inputs.head }}
           APP_ID: ${{ vars.CONTROLLER_APP_ID }}
         run: |
           set -euo pipefail
           # Whatever woke it, the run also judges again a few heads whose red still waits: the
           # schedule fires far less often than its cron says.
-          if [ -n "$RUN_ID" ]; then
+          if [ -n "$RUN_ID" ] && [ "$ACTION" = in_progress ]; then
+            # A pull request's Merge run has started: at most its head's contract, beside it.
+            which=(--start "$RUN_ID")
+          elif [ -n "$RUN_ID" ]; then
             which=(--run-id "$RUN_ID")
+          elif [ -n "$WAKE_HEAD" ]; then
+            # A contract run's wake: its head, checked whole before the controller reads it, so a
+            # value that starts with `-` never reaches its options. Not echoed: it is any text.
+            if [[ ! "$WAKE_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::notice title=no head::the dispatch names no full commit id"
+              echo "post=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            which=(--head "$WAKE_HEAD")
           elif [ -n "$CHECK_RUN_ID" ]; then
             which=(--check-run-id "$CHECK_RUN_ID")
           else
@@ -155,17 +193,24 @@ jobs:
     needs: post
     if: >-
       (github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
       || (github.event_name == 'workflow_run'
+      && github.event.action == 'completed'
       && github.event.workflow_run.event == 'workflow_dispatch'
       && github.event.workflow_run.head_branch != 'main')
       || (vars.MERGE_VERDICT_LIVE == 'true'
       && ((github.event_name == 'check_run'
       && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')
       || (github.event_name == 'workflow_run'
+      && github.event.action == 'completed'
       && (github.event.workflow_run.event == 'pull_request'
       || github.event.workflow_run.event == 'pull_request_target'
       || (github.event.workflow_run.event == 'dynamic'
-      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/')))))))
+      && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))
+      || (github.event_name == 'workflow_run'
+      && github.event.action == 'in_progress'
+      && github.event.workflow_run.event == 'pull_request'
+      && github.event.workflow_run.path == '.github/workflows/merge.yml'))))
       && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
