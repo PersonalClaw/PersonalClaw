@@ -14,18 +14,28 @@ from pathlib import Path
 
 import nested_pytest
 import pytest
+import real_home_guard
 import tree_under_test
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_a_child_started_with_the_runs_environment_imports_this_tree() -> None:
-    """A plain child, started as most tests start theirs, imports the ``personalclaw`` this
-    process imported."""
+def _home_of_its_own(environ, home: Path) -> dict[str, str]:
+    """*environ* for a child, with a home of its own at *home* and no ``PERSONALCLAW_HOME``: the
+    real-home guard refuses a PersonalClaw child that would resolve the real home
+    (``tests/real_home_guard.py``), and a run need not have given this one a scratch home."""
+    env = {k: v for k, v in environ.items() if k != "PERSONALCLAW_HOME"}
+    env["HOME"] = str(home)
+    return env
+
+
+def _a_child_imports_this_tree(home: Path) -> None:
     import personalclaw
 
+    home.mkdir(parents=True, exist_ok=True)
     done = subprocess.run(
         [sys.executable, "-c", "import personalclaw; print(personalclaw.__file__)"],
+        env=_home_of_its_own(os.environ, home),
         capture_output=True,
         text=True,
         timeout=60,
@@ -34,6 +44,27 @@ def test_a_child_started_with_the_runs_environment_imports_this_tree() -> None:
     assert done.returncode == 0, done.stderr
     theirs = done.stdout.strip()
     assert Path(theirs).resolve() == Path(personalclaw.__file__).resolve(), theirs
+
+
+def test_a_child_started_with_the_runs_environment_imports_this_tree(tmp_path) -> None:
+    """A plain child, started as most tests start theirs, with the run's environment and a home
+    of its own, imports the ``personalclaw`` this process imported."""
+    _a_child_imports_this_tree(tmp_path / "home")
+
+
+def test_a_run_under_the_real_home_still_gives_its_child_a_home_of_its_own(
+    tmp_path, monkeypatch
+) -> None:
+    """🔴 Red before (the child took the run's environment as it was): breadth's suite legs, its
+    random-order leg and a plain local run keep the runner's own ``HOME`` and set no
+    ``PERSONALCLAW_HOME``, and the real-home guard refused the child, "a PersonalClaw child
+    process given no isolated home" (run 40633282629, in 5 legs). Under run-job a step's ``HOME``
+    is a scratch one, so no Merge leg saw it. Here the run's ``HOME`` is the real home, as the
+    guard spells it, with no ``PERSONALCLAW_HOME``, and the child still starts."""
+    monkeypatch.setenv("HOME", str(real_home_guard.REAL_HOME.parent))
+    monkeypatch.delenv("PERSONALCLAW_HOME", raising=False)
+    assert not real_home_guard.GUARD.isolates(os.environ), "premise: the run's home is the real one"
+    _a_child_imports_this_tree(tmp_path / "home")
 
 
 @pytest.mark.timeout(50)
