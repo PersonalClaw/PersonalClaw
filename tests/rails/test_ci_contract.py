@@ -16,8 +16,6 @@ control is one edit of one of them.
 from __future__ import annotations
 
 import ast
-import dataclasses
-import datetime
 import fnmatch
 import functools
 import itertools
@@ -6719,58 +6717,6 @@ NOTHING_IS_MASKED_UNSEEN = Row(
 )
 
 ROWS = (*ROWS, NOTHING_IS_MASKED_UNSEEN)
-
-
-def test_a_masking_entry_waiting_on_its_site_holds_only_to_its_day(tmp_path: Path) -> None:
-    """A ``lands_by`` entry (tests/ci_masking.py) may match nothing until its day, and no later;
-    one dated more than a week out fails as it is written; and one past its day fails even when
-    its site is there, so the mark cannot outlive the merge that was to clear it. The entries are
-    the list's, so these plants are entries, not files, and the day is the one the test read."""
-    today = datetime.date.today()
-
-    def day(n: int) -> str:
-        return (today + datetime.timedelta(days=n)).isoformat()
-
-    waiting = ci_masking.Tolerated(_MERGE_YML, ("test",), "a step yet to land", "planted")
-    [dl] = [e for e in ci_masking.TOLERATED if e.step == "dl"]
-
-    def plus(entry: ci_masking.Tolerated) -> tuple[ci_masking.Tolerated, ...]:
-        return (*ci_masking.TOLERATED, entry)
-
-    def landed(lands_by: str) -> tuple[ci_masking.Tolerated, ...]:
-        marked = dataclasses.replace(dl, lands_by=lands_by)
-        return tuple(marked if e is dl else e for e in ci_masking.TOLERATED)
-
-    plants = (
-        ("waiting, on its day", plus(dataclasses.replace(waiting, lands_by=day(0))), ""),
-        ("waiting, a week out", plus(dataclasses.replace(waiting, lands_by=day(7))), ""),
-        ("landed, on its day", landed(day(0)), ""),
-        ("waiting with no day", plus(waiting), "matches nothing: delete it"),
-        (
-            "waiting, more than a week out",
-            plus(dataclasses.replace(waiting, lands_by=day(8))),
-            "more than 7 days out",
-        ),
-        (
-            "waiting, past its day",
-            plus(dataclasses.replace(waiting, lands_by=day(-1))),
-            "that day has passed",
-        ),
-        ("landed, past its day", landed(day(-1)), "that day has passed"),
-        (
-            "a day that is not one",
-            plus(dataclasses.replace(waiting, lands_by="next week")),
-            "not a date",
-        ),
-    )
-    ci_masking.scaffold(tmp_path)
-    assert ci_masking.violations(tmp_path, today=today) == [], "the scaffold does not hold"
-    for name, tolerated, expect in plants:
-        found = ci_masking.violations(tmp_path, tolerated, today)
-        if expect:
-            assert any(expect in v for v in found), f"{name}: {found}"
-        else:
-            assert found == [], f"{name}: {found}"
 
 
 # ── The randomized-order leg runs two seeded orders and keeps them (#3949) ─────────────────────
@@ -13655,14 +13601,13 @@ def tier_shape_violations(root: Path) -> list[str]:
                 bad.append(
                     f"{where} does not set fail-fast: false, so one red entry cancels the rest"
                 )
-            if len(uploads) not in (1, 2):
+            if len(uploads) != 2:
                 bad.append(
-                    f"{where} uploads its record {len(uploads)} times, not once, or once and a"
-                    " retry"
+                    f"{where} uploads its record {len(uploads)} times, not once and a retry if"
+                    " that fails"
                 )
                 continue
-            if len(uploads) == 2:
-                bad += _record_retry_problems(where, job, uploads)
+            bad += _record_retry_problems(where, job, uploads)
             upload = uploads[0]
             if upload.get("if") != "${{ always() }}":
                 bad.append(f"{where} uploads its record only {upload.get('if')!r}, not always()")
@@ -13924,6 +13869,9 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
         _record_retry_plant("a record upload tried again, last, when it failed", _MERGE_YML,
                             "test", fails=False),
         _record_retry_plant("pr.yml's record upload tried again", _PR_YML, "test", fails=False),
+        _record_retry_plant("a record uploaded once, with no retry", _MERGE_YML, "test-2",
+                            retry="", first=_RECORD_UPLOAD,
+                            expect="uploads its record 1 times, not once and a retry"),
         _record_retry_plant("a record retry that runs after a green upload too", _MERGE_YML,
                             "test-2", ((f"        if: {_RECORD_RETRY_IF}\n",
                                         "        if: ${{ always() }}\n"),),

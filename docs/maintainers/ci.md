@@ -1191,8 +1191,13 @@ check of its own: `merge-verdict` is the trusted controller's alone (#3910).
   whatever it answered, the entry's record under `ci-record-<slug>-<run id>-<attempt>`
   (`verdict.record_artifact`) and its reports, on a failure the `lint-feedback` run-job left (a
   `lint_feedback` entry's alone; see "How a trusted job reads a candidate"), and `web-build`'s
-  dist and each browser leg's blob for the entries that wait on them. Each entry's cap is its job's `timeout_min`, its runner its
-  job's `platform`, and one red entry cancels no other.
+  dist and each browser leg's blob for the entries that wait on them. Last, if the record's
+  upload failed, it is uploaded once more ("Upload the entry's record, again", over what the
+  first left): GitHub's artifact service failed 2 of about 1,400 record uploads in 50 merge runs,
+  and a job with no record reads as missing. The first upload is the one step of a stage job
+  that carries `continue-on-error`. If the retry fails too, the job is red and has no record.
+  Each entry's cap is its job's `timeout_min`, its runner its job's `platform`, and one red entry
+  cancels no other.
 - **`results`** runs whatever ran before it unless the run was cancelled (`!cancelled()`, so a
   cancelled run publishes no verdict), after every other job, and judges the
   plan's keys against `toJSON(needs)` and the records the run's entries uploaded, with `main`'s
