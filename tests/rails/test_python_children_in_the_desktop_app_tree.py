@@ -22,6 +22,7 @@ _CLASSIFIED: dict[str, str] = {
     "self_update.py::python_child_argv": "helper",
     "self_update.py::cli_argv": "cli",
     "sandbox.py::spawn_shim_argv": "module",
+    "sandbox.py::_namespaces_take": "module",
     "computer_use/service.py::_driver_argv": "module",
     "evals/runner.py::_spawn_cell": "module",
     "uploads/content_scan.py::scan_argv": "module",

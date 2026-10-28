@@ -36,8 +36,6 @@ Config: ``"sandbox": "auto" | "off"`` in ``~/.personalclaw/config.json``.
 ``"auto"`` (default) uses namespace sandbox on Linux, seatbelt on macOS.
 """
 
-import ctypes
-import ctypes.util
 import functools
 import json
 import logging
@@ -559,6 +557,40 @@ def login_left_out_note(output: str, *, installer: str) -> str:
 # `reset_backend()` clears these too, so a test or a config change can still re-measure.
 
 
+#: The child module that answers whether this host lets a new process take namespaces.
+_NAMESPACE_PROBE = "personalclaw._namespace_probe"
+
+#: How long a namespace probe's child may take before the host reads as unable to give them.
+_NAMESPACE_PROBE_TIMEOUT = 10.0
+
+
+def _namespaces_take(*names: str) -> bool:
+    """Whether a new process can take the namespaces *names* (``_namespace_probe.NAMESPACES``),
+    with one ``unshare`` call each, in the order given.
+
+    Asked of a child started fresh (``subprocess`` with no ``preexec_fn``, so nothing of this
+    process's runs in it before it execs), never of a fork of this one: the gateway and a test
+    worker have other threads, and a forked copy that ran Python inherited every lock one of them
+    held at the fork, with no thread left to release it. A copy that waited on one never exited,
+    and the probe waited on it with no bound (#5638). A child that has not answered within
+    :data:`_NAMESPACE_PROBE_TIMEOUT` reads as no.
+    """
+    from personalclaw.self_update import python_child_argv
+
+    try:
+        done = subprocess.run(
+            python_child_argv(_NAMESPACE_PROBE, *names),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_NAMESPACE_PROBE_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0
+
+
 @functools.lru_cache(maxsize=1)
 def _probe_unshare() -> bool:
     """Return True if user + mount namespaces work (Linux).
@@ -576,27 +608,11 @@ def _probe_unshare() -> bool:
     there, so the backend falls back to ``sandbox-exec``/``none`` instead. On a normal
     unprivileged Linux host the sequential calls both succeed (exactly what the
     launcher does in production), so this does not regress real sandboxing.
+    The calls are made in a child of their own (:func:`_namespaces_take`).
     """
     if sys.platform != "linux":
         return False
-    try:
-        _clone_newuser = 0x10000000
-        _clone_newns = 0x00020000
-        _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-        _libc.unshare.argtypes = [ctypes.c_int]
-        _libc.unshare.restype = ctypes.c_int
-        pid = os.fork()
-        if pid == 0:
-            # Separate calls, matching the launcher — NOT a combined flag.
-            if _libc.unshare(_clone_newuser) != 0:
-                os._exit(1)
-            if _libc.unshare(_clone_newns) != 0:
-                os._exit(1)
-            os._exit(0)
-        _, status = os.waitpid(pid, 0)
-        return os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
-    except Exception:
-        return False
+    return _namespaces_take("user", "mount")
 
 
 @functools.lru_cache(maxsize=1)
@@ -607,27 +623,12 @@ def _probe_unshare_net() -> bool:
     ``unshare(NEWUSER)``, then ``unshare(NEWNS)``, then ``unshare(NEWNET)``. A host can allow the
     first two and refuse the third (``user.max_net_namespaces`` at 0, a filter on the flag), and
     such a host can take no command's network away, so the command is refused before it is built
-    rather than failing in the launcher.
+    rather than failing in the launcher. The calls are made in a child of their own
+    (:func:`_namespaces_take`).
     """
     if sys.platform != "linux":
         return False
-    try:
-        _clone_newuser = 0x10000000
-        _clone_newns = 0x00020000
-        _clone_newnet = 0x40000000
-        _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-        _libc.unshare.argtypes = [ctypes.c_int]
-        _libc.unshare.restype = ctypes.c_int
-        pid = os.fork()
-        if pid == 0:
-            for flag in (_clone_newuser, _clone_newns, _clone_newnet):
-                if _libc.unshare(flag) != 0:
-                    os._exit(1)
-            os._exit(0)
-        _, status = os.waitpid(pid, 0)
-        return os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
-    except Exception:
-        return False
+    return _namespaces_take("user", "mount", "net")
 
 
 # ── The wrapper's OWN enforcement binaries ──
