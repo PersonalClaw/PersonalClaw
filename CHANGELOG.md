@@ -17,6 +17,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A security event is still written when the request that caused it is given up, and a burst of them no longer holds up the gateway's other background work. The writes ran on the threads the gateway shares with file reads and uploads, so writes waiting on a slow disk could take every one of them, and a write still waiting when its request was cancelled was dropped. They now run one at a time, in the order asked, on a thread of the log's own.**
 - **A provider added or removed while a Knowledge search, a task lookup, or the list of image, video or diarization providers is being read no longer ends that call with an error. Each read the live set of providers while it waited on one of them, so a provider coming or going meanwhile broke the read off; each now reads the providers as they stood when it started.**
 
+### For maintainers
+
+- **When the browser suite's gateway stops answering, its log says where: after 20 s with no answer from its event loop, the gateway writes every thread's stack into `gateway.log`, and a failed run keeps that log with the reports CI uploads.**
+
 ## [0.3.0] — 2026-10-26
 
 Every release now ships a Mac dmg for Intel beside the Apple-silicon one, and `personalclaw doctor --crypto` checks the cryptography library an install carries. The Nix flake catches up from 0.2.2, with the image-library and certificate fixes it had missed. Memory search no longer matches a word in the folder a memory is kept in, every stop ends within 10 seconds, and the new-chat composer stays in its place. On a phone or a tablet, the controls around every page and the Inbox's own are 44 px targets. Behind them, nothing in a release is published before the owner approves the build it was given, and a release is tagged only on a commit whose own run and breadth run are green. No upgrade step is needed.

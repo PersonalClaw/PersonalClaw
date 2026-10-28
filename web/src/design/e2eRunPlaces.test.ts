@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { dirname, join, sep } from 'node:path'
-import { INSTALL_PORT, authDirFor, choosePlaces, cleanUpRun, userHomeFor } from '../../e2e/runPlaces'
+import { INSTALL_PORT, authDirFor, choosePlaces, cleanUpRun, cleanUpRunAtExit, userHomeFor } from '../../e2e/runPlaces'
 
 // ── Each browser run has a home and ports of its own ───────────────────────────────────────────
 //
@@ -184,6 +184,38 @@ describe('choosePlaces', () => {
     expect(p.storageState).toBe(join(dir, 'mine.json'))
   })
 
+  it("copies the gateway's log into the output folder when the run failed, and only then", async () => {
+    const dir = tmp()
+    const results = join(dir, 'test-results')
+    const failed = await choosePlaces({}, { tmp: dir, testResults: results })
+    const passed = await choosePlaces({}, { tmp: dir, testResults: results })
+    for (const p of [failed, passed]) {
+      writeFileSync(join(p.home, 'gateway.log'), 'what the gateway said')
+      writeFileSync(join(p.home, 'gateway.log.1'), 'what it rotated out')
+      writeFileSync(join(p.home, 'config.json'), '{}')
+    }
+    cleanUpRun(failed, true)
+    cleanUpRun(passed)
+    expect(readdirSync(failed.outputDir).sort(), 'the log and what it rotated out, nothing else').toEqual(['gateway.log', 'gateway.log.1'])
+    expect(readFileSync(join(failed.outputDir, 'gateway.log'), 'utf8')).toBe('what the gateway said')
+    expect(existsSync(passed.outputDir), 'a passed run keeps no log, and leaves no folder').toBe(false)
+    expect(existsSync(failed.home) || existsSync(passed.home), 'the homes go either way').toBe(false)
+  })
+
+  it('reads a nonzero exit as a failed run', async () => {
+    const dir = tmp()
+    const p = await choosePlaces({}, { tmp: dir, testResults: join(dir, 'test-results') })
+    writeFileSync(join(p.home, 'gateway.log'), 'what the gateway said')
+    const once = vi.spyOn(process, 'once').mockReturnValue(process)
+    cleanUpRunAtExit(p)
+    const [event, onExit] = once.mock.calls[0] as unknown as [string, (code: number) => void]
+    once.mockRestore()
+    expect(event).toBe('exit')
+    onExit(1)
+    expect(readdirSync(p.outputDir)).toEqual(['gateway.log'])
+    expect(existsSync(p.home)).toBe(false)
+  })
+
   it('makes no home for a run that starts no servers, unless one is named', async () => {
     const dir = tmp()
     const none = await choosePlaces({ PW_NO_SERVER: '1' }, { tmp: dir, testResults: join(dir, 'test-results') })
@@ -252,5 +284,13 @@ describe('the real config', () => {
     expect(config).not.toMatch(/rm -rf/)
     expect(config).not.toMatch(/PW_(GATEWAY_)?PORT \|\| \d/)
     expect(config).toMatch(/reuseExistingServer: process\.env\.PW_REUSE_SERVER === '1'/)
+  })
+
+  it("watches the gateway's event loop, under the name the gateway reads", () => {
+    const config = readFileSync(join(WEB, 'playwright.config.ts'), 'utf8')
+    const watch = readFileSync(join(WEB, '..', 'src', 'personalclaw', 'loop_watch.py'), 'utf8')
+    expect(watch).toContain('STALL_ENV = "PERSONALCLAW_LOOP_STALL_SECONDS"')
+    expect(config).toContain('PERSONALCLAW_LOOP_STALL_SECONDS=${LOOP_STALL_SECONDS} exec "$PC" gateway')
+    expect(config).toMatch(/^const LOOP_STALL_SECONDS = \d+$/m)
   })
 })

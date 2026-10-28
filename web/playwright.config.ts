@@ -56,6 +56,10 @@ cleanUpRunAtExit(PLACES)
 const PORT = PLACES.port
 const BASE_URL = process.env.PW_BASE_URL || `http://localhost:${PORT}`
 const GATEWAY_PORT = PLACES.gatewayPort
+// How long the harness gateway's event loop may go without answering before every thread's stack
+// goes into gateway.log (`src/personalclaw/loop_watch.py`): well under a spec's own waits, and far
+// above any one step the gateway takes on its loop.
+const LOOP_STALL_SECONDS = 20
 
 // Where auth.setup.ts writes the authenticated cookie jar (it reads STORAGE_STATE, which
 // `choosePlaces` sets): a 0700 folder beside this run's home, never in it (the Doctor audits the
@@ -205,7 +209,11 @@ const GATEWAY_COMMAND = [
   // listed as inherited from whoever started the run.
   // `tests/rails/test_e2e_gateway_home_is_the_runs_tree.py` holds every such folder to the run, and
   // holds the secrets read to none of the credentials it plants.
-  `${gatewayEnvPrefix()} PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
+  // The gateway's event loop is watched (`src/personalclaw/loop_watch.py`): when it goes
+  // LOOP_STALL_SECONDS without answering, every thread's stack goes into gateway.log, which a failed
+  // run keeps in its output folder (`cleanUpRun`). A hung gateway once left only requests that got
+  // no response, and nothing to say where it stopped (#5638).
+  `${gatewayEnvPrefix()} PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" PERSONALCLAW_LOOP_STALL_SECONDS=${LOOP_STALL_SECONDS} exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
 ].join('\n')
 
 // ── One invocation, three ways to share the gateway ───────────────────────────────────────────

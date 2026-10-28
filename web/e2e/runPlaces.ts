@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmdirSync, rmSync, statSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmdirSync, rmSync, statSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -328,10 +328,16 @@ export async function choosePlaces(
   return { home, port, gatewayPort, madeHome, storageState, authDir, madeAuthDir, userHome, madeUserHome, outputDir, madeOutputDir }
 }
 
+/** The gateway's log in its home: `gateway.log`, and the files it rotated out. */
+const GATEWAY_LOG = /^gateway\.log(\.\d+)?$/
+
 /** Remove what this process made for the run: the home, the cookie jar's folder beside it, and the
  *  output folder if the run wrote nothing there. Output a spec wrote stays, for CI to upload. A
- *  worker, and a run whose home or output folder the caller named, removes nothing it was given. */
-export function cleanUpRun(places: RunPlaces): void {
+ *  worker, and a run whose home or output folder the caller named, removes nothing it was given.
+ *  A run that `failed` first copies the gateway's log into its output folder, so CI uploads it with
+ *  the reports: what the gateway said, and any stack `loop_watch` dumped when its loop stalled. */
+export function cleanUpRun(places: RunPlaces, failed = false): void {
+  if (failed && places.home && places.outputDir) keepGatewayLog(places.home, places.outputDir)
   if (places.madeHome && places.home) rmSync(places.home, { recursive: true, force: true })
   if (places.madeAuthDir && places.authDir) rmSync(places.authDir, { recursive: true, force: true })
   if (places.madeUserHome && places.userHome) rmSync(places.userHome, { recursive: true, force: true })
@@ -340,8 +346,16 @@ export function cleanUpRun(places: RunPlaces): void {
   }
 }
 
-/** `cleanUpRun` when this process ends. */
+/** `cleanUpRun` when this process ends, a nonzero exit being a failed run. */
 export function cleanUpRunAtExit(places: RunPlaces): void {
   if (!places.madeHome && !places.madeAuthDir && !places.madeUserHome && !places.madeOutputDir) return
-  process.once('exit', () => cleanUpRun(places))
+  process.once('exit', (code) => cleanUpRun(places, code !== 0))
+}
+
+function keepGatewayLog(home: string, outputDir: string): void {
+  try {
+    const logs = readdirSync(home).filter((name) => GATEWAY_LOG.test(name))
+    if (logs.length) mkdirSync(outputDir, { recursive: true })
+    for (const name of logs) copyFileSync(join(home, name), join(outputDir, name))
+  } catch { /* a log that cannot be copied leaves the rest of the clean-up to run */ }
 }
