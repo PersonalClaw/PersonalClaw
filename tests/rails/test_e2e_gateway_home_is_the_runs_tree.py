@@ -26,12 +26,20 @@ environment and hold the probe's own secrets read to none of them.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
+import queue
 import re
+import secrets
 import shutil
+import signal
+import socket
 import subprocess
 import sys
+import threading
+import time
+from http.cookies import SimpleCookie
 from pathlib import Path
 
 import pytest
@@ -366,3 +374,117 @@ def test_the_harness_reads_credentials_by_the_secrets_reads_rule():
     assert _ts_list("GATEWAY_CREDENTIAL_HINTS") == list(SECRET_KEY_HINTS)
     assert _ts_list("GATEWAY_CREDENTIAL_WORD_HINTS") == list(SECRET_KEY_WORD_HINTS)
     assert _ts_list("GATEWAY_CREDENTIAL_NAMES") == ["SSH_AUTH_SOCK"]
+
+
+#: Copies a failed run's gateway log out of its home, as the harness does when a run ends red, and
+#: removes the run's places.
+NODE_KEEP = """
+import { cleanUpRun } from %(run_places)s
+cleanUpRun(JSON.parse(process.argv[1]), true)
+"""
+
+#: What the loop watch writes at the head of every dump (``loop_watch``).
+STALL_MARK = "The event loop has not answered for"
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _ready_token(lines: "queue.Queue[str]", deadline: float) -> str:
+    while True:
+        line = lines.get(timeout=max(0.1, deadline - time.monotonic()))
+        if line.startswith("PERSONALCLAW_READY:"):
+            return str(json.loads(line[len("PERSONALCLAW_READY:") :])["token"])
+
+
+def _get(port: int, path: str, cookie: str = "") -> http.client.HTTPResponse:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+    conn.request("GET", path, headers={"Cookie": cookie} if cookie else {})
+    response = conn.getresponse()
+    response.read()
+    conn.close()
+    return response
+
+
+@pytest.mark.timeout(90)
+def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_path):
+    """A failed run keeps its gateway's log beside its reports (``cleanUpRun``), which CI uploads
+    as an artifact of a public repository. So a gateway started as the harness starts it, inside an
+    environment holding every credential-shaped variable, signed in and asked for pages with the
+    session that gave it, and watched so tightly that the loop watch dumps every thread's stack many
+    times over, leaves a kept log with none of the planted values in it, and neither the READY
+    token nor the session's token in clear."""
+    h = _harness(tmp_path)
+    places = h["places"]
+    home = Path(places["home"])
+    (home / "workspace").mkdir()
+    for seed in ("config.json", "triggers.json"):
+        shutil.copy(WEB / "e2e" / "fixtures" / "home" / seed, home / seed)
+    planted = {
+        name: f"e2e-secret-{i:03d}-{secrets.token_hex(6)}"
+        for i, name in enumerate(_planted_credentials())
+    }
+    port = _free_port()
+    outer = {**os.environ, **planted}
+    outer.update(PW_E2E_HOME=str(home), PYTHONPATH=str(REPO / "src"), PY=sys.executable)
+    script = (
+        'D="$PW_E2E_HOME"\n'
+        f'{h["prefix"]} PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" '
+        f'PERSONALCLAW_LOOP_STALL_SECONDS=0.01 exec "$PY" -m personalclaw gateway --port {port} '
+        "--no-open --json-ready"
+    )
+    with open(tmp_path / "gateway.stderr", "w", encoding="utf-8") as stderr:
+        gateway = subprocess.Popen(
+            ["/bin/sh", "-c", script],
+            env=outer,
+            cwd=WEB,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            text=True,
+            start_new_session=True,
+        )
+    lines: "queue.Queue[str]" = queue.Queue()
+    assert gateway.stdout is not None
+    stdout = gateway.stdout
+    threading.Thread(target=lambda: [lines.put(line) for line in stdout], daemon=True).start()
+    try:
+        token = _ready_token(lines, time.monotonic() + 45)
+        handshake = _get(port, f"/?token={token}")
+        cookie = SimpleCookie(handshake.getheader("Set-Cookie") or "").get(f"pc_token_{port}")
+        assert cookie is not None and cookie.value, "the token handshake set no session cookie"
+        session = cookie.value
+        for path in ("/api/dashboard/config", "/api/loops", "/api/themes"):
+            assert _get(port, path, cookie=f"pc_token_{port}={session}").status == 200, path
+        _get(port, "/api/dashboard/config", cookie=f"pc_token_{port}=not-{session}")
+    finally:
+        os.killpg(gateway.pid, signal.SIGTERM)
+        try:
+            gateway.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            os.killpg(gateway.pid, signal.SIGKILL)
+            gateway.wait()
+    keep = subprocess.run(
+        [
+            _node(),
+            "--input-type=module",
+            "-e",
+            NODE_KEEP % {"run_places": json.dumps(str(RUN_PLACES))},
+            json.dumps(places),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        cwd=WEB,
+    )
+    assert keep.returncode == 0, keep.stderr
+    kept = sorted(Path(places["outputDir"]).glob("gateway.log*"))
+    assert kept, "the failed run kept no gateway log"
+    text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in kept)
+    assert STALL_MARK in text, "the watch dumped no stack, so no dump was checked"
+    values = {f"the planted {name}": value for name, value in planted.items()}
+    values.update({"the READY token": token, "the session's token": session})
+    leaked = sorted(what for what, value in values.items() if value in text)
+    assert leaked == [], f"the kept gateway log holds {leaked} in clear"

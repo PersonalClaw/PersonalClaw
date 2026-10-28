@@ -1159,6 +1159,11 @@ async def _gateway(
     safe_surfaces: bool = False,
 ) -> None:
     """Load config and start the gateway (dashboard + channel transports)."""
+    # First, so a stall at boot is named too: when the browser harness asks for it, a thread
+    # dumps every thread's stack into gateway.log whenever the loop stops answering (`loop_watch`).
+    from personalclaw.loop_watch import arm_from_env
+
+    arm_from_env()
     # Latch safe-surfaces mode BEFORE anything serves a page: the SPA's layer ceiling is
     # stamped into index.html at serve time, so setting it later would let one early load
     # resolve app/user layers the operator asked to keep out.
