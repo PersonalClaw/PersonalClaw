@@ -344,7 +344,9 @@ def read_jobs(text: str, *, run_id: int, attempt: int) -> list[JobRun]:
 
     Refused: anything else; a page whose count is not the first page's; a listing holding more
     or fewer jobs than its count, so a job may be unseen; a job of another run or attempt; a job
-    named twice; and a job or a step whose name or words are not strings."""
+    named twice, unless every job of that name was skipped; and a job or a step whose name or
+    words are not strings. GitHub lists a skipped matrix job under its unexpanded name, so the
+    stages a plan leaves empty are each ``matrix.key``, with no step and no runner."""
     where = "the run's jobs"
     try:
         pages = json.loads(
@@ -387,7 +389,8 @@ def read_jobs(text: str, *, run_id: int, attempt: int) -> list[JobRun]:
                     f"{where}: {name!r} is of run {job.get('run_id')!r} attempt"
                     f" {job.get('run_attempt')!r}, not run {run_id} attempt {attempt}"
                 )
-            if any(j.name == name for j in out):
+            skipped = status == "completed" and conclusion == SKIPPED
+            if any(j.name == name and not (skipped and _skipped(j)) for j in out):
                 raise Refused(f"{where} name {name!r} twice")
             steps = job.get("steps")
             if not isinstance(steps, list):
@@ -405,6 +408,10 @@ def read_jobs(text: str, *, run_id: int, attempt: int) -> list[JobRun]:
     if len(out) != total:
         raise Refused(f"{where} list {len(out)} jobs of {total}, so a job may be unseen")
     return out
+
+
+def _skipped(job: JobRun) -> bool:
+    return job.status == "completed" and job.conclusion == SKIPPED
 
 
 def read_changed(text: str) -> frozenset[str]:
