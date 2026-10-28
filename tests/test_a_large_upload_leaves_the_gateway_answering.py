@@ -46,6 +46,7 @@ import tempfile
 import textwrap
 import threading
 import time
+import warnings
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -287,6 +288,7 @@ class _NoCpu:
     def __init__(self) -> None:
         self.source = "none"
         self._fd: int | None = None
+        self._status: int | None = None
         if sys.platform == "darwin":
             self._libsystem = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
             self._libsystem.proc_pidinfo.argtypes = [
@@ -308,11 +310,29 @@ class _NoCpu:
         """On the loop thread: ``/proc/thread-self`` names the thread that opens it."""
         if self.source.startswith("Linux"):
             self._fd = os.open("/proc/thread-self/schedstat", os.O_RDONLY)
+            try:
+                self._status = os.open("/proc/thread-self/status", os.O_RDONLY)
+            except BaseException:
+                os.close(self._fd)
+                self._fd = None
+                raise
 
     def close(self) -> None:
-        if self._fd is not None:
-            os.close(self._fd)
-            self._fd = None
+        for fd in (self._fd, self._status):
+            if fd is not None:
+                os.close(fd)
+        self._fd = self._status = None
+
+    def loop_slept(self) -> int | None:
+        """Linux: how many times the loop thread has given up its CPU of its own accord
+        (``voluntary_ctxt_switches``), to sleep or to wait on a read, a write, a lock or the GIL,
+        from the file it holds open. Elsewhere None."""
+        if self._status is None:
+            return None
+        for line in os.pread(self._status, 4096, 0).splitlines():
+            if line.startswith(b"voluntary_ctxt_switches:"):
+                return int(line.split()[1])
+        return None
 
     def loop_waited(self) -> float | None:
         """Linux: the loop thread's own count, from the file it holds open. Elsewhere None."""
@@ -505,6 +525,19 @@ def _said(runs: tuple) -> str:
     return f"task {what.get_name()}, resumed in {where or 'its first step'}"
 
 
+#: Whether a Linux step in which the loop thread gave up its CPU of its own accord (a sleep, a
+#: wait on a read, a write, a lock or the GIL) is counted in wall time, no part of its count's time
+#: ready left out, and an answer leaves out none of what such steps inside it held. The probe reads
+#: both ways and reports the other beside what it judges (:meth:`_Probe.says`).
+_SLEPT_STEPS_EXCUSE_NOTHING = False
+
+
+class SleptSteps(UserWarning):
+    """Linux: a reading that held steps the loop thread slept in, whose count gave them time ready,
+    and what it reads both ways (:data:`_SLEPT_STEPS_EXCUSE_NOTHING`), in the run's warnings
+    summary, so a green run says what the rule costs it."""
+
+
 #: How far a window's count of the loop thread's time ready may run past the window less its CPU
 #: time before the count is taken to be wrong: the CPU clock's own calls, and the probe's reads
 #: around the count, lie inside the CPU time and outside the count.
@@ -542,6 +575,10 @@ class _Window:
         self.no_cpu, self.threads = no_cpu, threads
         # The CPU clock first: its call is outside the window.
         self.cpu = time.thread_time()
+        # Linux: the loop thread's voluntary switches, read before the window starts and after it
+        # ends, so a switch at either read is the window's, which only leaves out less
+        # (:attr:`slept`).
+        self._slept_from = no_cpu.loop_slept()
         # Then the wall time and, beside it, the time ready: Linux's count (a wait at its own call
         # is after both, so inside the window and in the count), or macOS's first snapshot, timed
         # from just before its call that reads the count.
@@ -550,6 +587,10 @@ class _Window:
         self.first = self.then = None
         self.said = 0.0
         self.could = 0.0
+        #: Linux: whether the loop thread gave up its CPU of its own accord in the window, and the
+        #: time ready its count gave the window, before :func:`_believed` judged it.
+        self.slept = False
+        self.ready = 0.0
         if self.own is None:
             self.first = no_cpu.snapshot()
             self.began = self.first.ready_at
@@ -566,6 +607,10 @@ class _Window:
             # The step that ends :meth:`_Probe.during` closes the file before it ends: it is
             # counted in wall time.
             waited = max(0.0, now - self.own) if now is not None else 0.0
+            slept_to = self.no_cpu.loop_slept()
+            self.slept = self._slept_from is not None and slept_to is not None
+            self.slept = self.slept and slept_to > self._slept_from
+            self.ready = waited
         elif time.monotonic() - self.began >= counted_from:
             # macOS's second snapshot: the window ends just before its call that reads the count.
             self.then = then = self.no_cpu.snapshot()
@@ -646,6 +691,14 @@ class _Probe:
         self.slowest_answer_could = 0.0
         #: The reading this one was measured again after (:func:`_judged`), if it was.
         self.before: _Probe | None = None
+        #: Linux: the steps the loop thread slept in whose count gave them time ready, and that
+        #: time in all (:attr:`_Window.slept`); and the longest step and the slowest answer read
+        #: leaving none of it out, beside as they read leaving all of it out
+        #: (:data:`_SLEPT_STEPS_EXCUSE_NOTHING` says which is judged).
+        self.slept_steps = 0
+        self.slept_ready = 0.0
+        self.worst_step_ruled = self.worst_step_unruled = 0.0
+        self.slowest_answer_ruled = self.slowest_answer_unruled = 0.0
         #: macOS: the snapshots taken, and whether any read a thread's instruction count
         #: (:attr:`reads_no_instructions`).
         self.snapshots = 0
@@ -694,7 +747,14 @@ class _Probe:
             try:
                 return real(handle)
             finally:
-                wall, cpu, waited = window.end(counted_from=_COUNTED)
+                wall, cpu, unruled = window.end(counted_from=_COUNTED)
+                ruled = 0.0 if window.slept else unruled
+                if window.slept and window.ready > 0:
+                    probe.slept_steps += 1
+                    probe.slept_ready += window.ready
+                probe.worst_step_ruled = max(probe.worst_step_ruled, wall - ruled, cpu)
+                probe.worst_step_unruled = max(probe.worst_step_unruled, wall - unruled, cpu)
+                waited = ruled if _SLEPT_STEPS_EXCUSE_NOTHING else unruled
                 took = max(wall - waited, cpu)
                 probe.worst_step_wall = max(probe.worst_step_wall, wall)
                 probe.worst_step_could = max(probe.worst_step_could, window.could)
@@ -739,6 +799,17 @@ class _Probe:
         finally:
             self.counts.close()
             self.no_cpu.close()
+            if self.slept_steps:
+                warnings.warn(
+                    SleptSteps(
+                        f"{self.slept_steps} step(s) the loop thread slept in held"
+                        f" {self.slept_ready:.3f}s ready; leaving none of it out, the longest step"
+                        f" reads {self.worst_step_ruled:.3f}s and the slowest answer"
+                        f" {self.slowest_answer_ruled:.3f}s (bound {_BOUND}s), against"
+                        f" {self.worst_step_unruled:.3f}s and {self.slowest_answer_unruled:.3f}s"
+                    ),
+                    stacklevel=2,
+                )
 
     def _threads_over(self, window: _Window) -> tuple[float, list, dict[int, str]] | None:
         """macOS: the process's count of time ready over *window*, each other thread's CPU, run
@@ -757,8 +828,14 @@ class _Probe:
         a window whose reads of the time ready lie inside its wall time (:class:`_Window`), less
         the loop thread's own time ready, never less than its CPU time."""
         window = _Window(self.no_cpu, {threading.get_native_id()})
+        slept_before = self.slept_ready
         await answer()
-        wall, cpu, waited = window.end()
+        wall, cpu, unruled = window.end()
+        # The steps inside it that slept had their time ready counted in this window's too.
+        ruled = max(0.0, unruled - (self.slept_ready - slept_before))
+        self.slowest_answer_ruled = max(self.slowest_answer_ruled, wall - ruled, cpu)
+        self.slowest_answer_unruled = max(self.slowest_answer_unruled, wall - unruled, cpu)
+        waited = ruled if _SLEPT_STEPS_EXCUSE_NOTHING else unruled
         self.slowest_answer = max(self.slowest_answer, wall - waited, cpu)
         self.slowest_answer_could = max(self.slowest_answer_could, window.could)
         self._note(window)
@@ -854,6 +931,15 @@ class _Probe:
             f"the longest step in wall time: {self.worst_step_wall:.3f}s",
             f"the longest gap between turns: {self.worst_gap:.3f}s",
         ]
+        if self.slept_steps:
+            rule = "judged" if _SLEPT_STEPS_EXCUSE_NOTHING else "not judged"
+            lines.append(
+                f"steps the loop thread slept in, whose count gave them time ready:"
+                f" {self.slept_steps}, {self.slept_ready:.3f}s in all; read leaving none of it out"
+                f" ({rule}), the longest step {self.worst_step_ruled:.3f}s and the slowest answer"
+                f" {self.slowest_answer_ruled:.3f}s, against {self.worst_step_unruled:.3f}s and"
+                f" {self.slowest_answer_unruled:.3f}s leaving it out"
+            )
         if self.reads_no_instructions:
             lines.append(
                 "this runner reads no instruction counts: nothing another thread could account for"
@@ -1586,6 +1672,9 @@ class _AStepsReads:
         self._back_from_the_kernel()
         return ready
 
+    def loop_slept(self) -> None:
+        return None  # read outside the window, so a wait at it is in neither
+
     def snapshot(self) -> SimpleNamespace:
         at = self.t
         self._back_from_the_kernel()  # the thread list and each thread's
@@ -1724,6 +1813,9 @@ def test_a_window_without_a_threads_own_count_runs_from_one_snapshots_ready_at_t
         def loop_waited(self) -> None:
             return None
 
+        def loop_slept(self) -> None:
+            return None
+
         def snapshot(self) -> SimpleNamespace:
             self.taken += 1
             return SimpleNamespace(ready_at=10.0 * self.taken, ready=0.0)
@@ -1773,6 +1865,123 @@ def test_a_wait_for_a_cpu_at_an_answers_edge_is_never_left_out_of_it(edge, sourc
         f"an answer that waited on a {_PLANTED}s block was counted {took:.3f}s: a wait for a CPU "
         "outside its wall time was left out of it"
     )
+
+
+class _LinuxReads:
+    """Linux's counts as a fake kernel gives them, for steps run through :meth:`_Probe._timed` and
+    answers through :meth:`_Probe._timed_answer`: each :meth:`spend` takes *wall* seconds, uses
+    *cpu* of them, has the count say *ready* of them were ready with no CPU, and has the loop thread
+    give up its CPU of its own accord *slept* times. No read costs any time."""
+
+    source = "Linux: each thread's own"
+
+    def __init__(self) -> None:
+        self.t = self.cpu = self.ready = 0.0
+        self.switches = 0
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def thread_time(self) -> float:
+        return self.cpu
+
+    def loop_waited(self) -> float:
+        return self.ready
+
+    def loop_slept(self) -> int:
+        return self.switches
+
+    def spend(self, wall: float, cpu: float, ready: float, slept: int) -> None:
+        self.t += wall
+        self.cpu += cpu
+        self.ready += ready
+        self.switches += slept
+
+
+#: Run 40760127591's longest step, python-suite (3/3) on Linux: 0.284 s in wall time and no CPU,
+#: holding the plant's 0.2 s wait to read, with the loop thread's own count at 0.192 s ready, more
+#: than the 0.084 s the step less that wait could hold, and one voluntary switch, the wait's own.
+_CI_SLEPT_STEP = (0.284, 0.0, 0.192, 1)
+#: Its slowest answer, around that step: 0.474 s in wall time, 0.381 s ready by the count.
+_CI_SLEPT_ANSWER = (0.474, 0.003, 0.381)
+
+
+def _probed(reads: _LinuxReads, step: tuple, answer: tuple | None = None) -> _Probe:
+    """A probe over *reads* that ran one *step* (wall, CPU, ready, voluntary switches), inside an
+    answer of *answer* (wall, CPU, ready, the rest beside the step's) when one is given, its
+    rest a wait in the loop's selector (one voluntary switch). Driven by hand, as :func:`_answered`
+    drives its answer."""
+    probe = _Probe(None, asking=False, no_cpu=reads)
+    probe.took = step[0] if answer is None else answer[0]
+    handle = SimpleNamespace()
+    run = probe._timed(threading.get_ident(), lambda _handle: reads.spend(*step))
+
+    async def answered() -> None:
+        run(handle)
+        if answer is not None:
+            wall, cpu, ready = answer
+            reads.spend(wall - step[0], cpu - step[1], ready - step[2], 1)
+
+    with (
+        patch.object(time, "monotonic", reads.monotonic),
+        patch.object(time, "thread_time", reads.thread_time),
+    ):
+        if answer is None:
+            run(handle)
+        else:
+            timed = probe._timed_answer(answered)
+            with pytest.raises(StopIteration):
+                timed.send(None)
+    return probe
+
+
+def test_a_linux_step_the_loop_slept_in_is_read_both_ways_and_reported():
+    """Each Linux step is read as the count gives it and, beside that, leaving out none of the
+    time ready of a step the loop thread slept in, and an answer leaving out none of what such
+    steps inside it held; the report and the run's warnings say both."""
+    probe = _probed(_LinuxReads(), _CI_SLEPT_STEP, _CI_SLEPT_ANSWER)
+    assert probe.slept_steps == 1 and probe.slept_ready == pytest.approx(0.192)
+    assert probe.worst_step_unruled == pytest.approx(0.284 - 0.192)
+    assert probe.worst_step_ruled == pytest.approx(0.284)
+    assert probe.slowest_answer_unruled == pytest.approx(0.474 - 0.381)
+    assert probe.slowest_answer_ruled == pytest.approx(0.474 - (0.381 - 0.192))
+    assert "steps the loop thread slept in" in probe.says(), probe.says()
+
+
+def test_a_linux_step_with_a_wait_for_a_cpu_and_no_sleep_is_read_alike_both_ways():
+    """A step the loop thread never gave up its CPU in, its wait for one the runner's, reads the
+    same both ways, and is reported as no slept step."""
+    probe = _probed(_LinuxReads(), (0.284, 0.04, 0.192, 0))
+    assert probe.slept_steps == 0
+    assert probe.worst_step_ruled == probe.worst_step_unruled == pytest.approx(0.284 - 0.192)
+    assert "steps the loop thread slept in" not in probe.says()
+
+
+def test_a_linux_count_whose_second_file_will_not_open_leaves_the_first_closed(monkeypatch):
+    """🔴 Red before: the loop thread's counts are read from two files, and when the second would
+    not open the first stayed open. It is closed before the error goes on."""
+    real_open, real_close = os.open, os.close
+    opened: list[int] = []
+    closed: list[int] = []
+
+    def open_(path, flags):
+        if path.endswith("/status"):
+            raise PermissionError(path)
+        opened.append(real_open(os.devnull, flags))
+        return opened[-1]
+
+    def close(fd):
+        closed.append(fd)
+        real_close(fd)
+
+    no_cpu = _NoCpu()
+    no_cpu.source = "Linux: each thread's own"
+    monkeypatch.setattr(os, "open", open_)
+    monkeypatch.setattr(os, "close", close)
+    with pytest.raises(PermissionError):
+        no_cpu.open()
+    assert opened and closed == opened, f"opened {opened}, closed {closed}"
+    assert no_cpu._fd is None and no_cpu._status is None
 
 
 def test_an_exception_in_the_probes_own_work_still_runs_the_loops_callback():
