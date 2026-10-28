@@ -592,7 +592,8 @@ Python the job names (`python-version`), and setup-node from `.nvmrc` when the j
 managed Python `uv sync` installs beside it (`cache-python`): uncached, 2 to 4 of a merge run's 23
 fetches took 20 to 215 s inside the job's budget. The uv-cache rail lets a step cache the
 interpreter only with `enable-cache: true`, and never on the release path (a `release*`
-workflow, one a release tag's push starts, or one either calls), which uses no such step.
+workflow, one a release tag's push starts, or one either calls), which uses no such step. The
+release path restores no uv cache at all: each of its setup-uv steps sets `enable-cache: false`.
 `programs` names the programs of a catalogue job's toolchain that `run-job` finds on PATH and
 does not install
 (`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`, `docker`), space-separated,
