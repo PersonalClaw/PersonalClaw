@@ -212,3 +212,49 @@ def test_a_seed_that_is_no_whole_number_from_zero_is_refused(tmp_path: Path, bad
     _plant(tmp_path)
     proc = _pytest(tmp_path, "-q", "-p", "no:xdist", "--random-order-seed", bad)
     assert proc.returncode == 4, proc.stdout[-2000:] + proc.stderr[-2000:]
+
+
+# ── a replay of one process's order ───────────────────────────────────────────────────────────
+
+
+def test_an_order_file_and_a_plain_list_read_as_the_same_order() -> None:
+    rows = [
+        {"nodeid": n, "position": p, "worker": "gw1", "seed": 3} for p, n in [(2, "b"), (1, "a")]
+    ]
+    as_order = "\n".join(json.dumps(r) for r in rows) + "\n"
+    assert random_order.replayed(as_order) == ["a", "b"], "an order file reads by position"
+    assert random_order.replayed("a\n\nb\n") == ["a", "b"]
+
+
+def test_a_replay_of_a_failing_order_file_fails_as_the_order_did(tmp_path: Path) -> None:
+    """The leg's artifact is enough: the order file a failing worker left, replayed in one
+    process, fails its victim again, and the two tests in the other order pass."""
+    (tmp_path / "test_a_polluter.py").write_text(textwrap.dedent(_POLLUTER))
+    (tmp_path / "test_b_victim.py").write_text(textwrap.dedent(_VICTIM))
+    polluter = "test_a_polluter.py::test_sets_a_global"
+    victim = "test_b_victim.py::test_needs_the_global"
+    seed = _failing_seed([polluter, victim], polluter, victim)
+    ran = _pytest(tmp_path, "-q", "-p", "no:xdist", "--random-order-seed", str(seed))
+    assert ran.returncode == 1, ran.stdout[-3000:] + ran.stderr[-2000:]
+    order = tmp_path / random_order.FOLDER / f"order-{seed}-main.jsonl"
+    again = _pytest(tmp_path, "-q", "-p", "no:xdist", "--replay-order", str(order))
+    assert again.returncode == 1 and f"FAILED {victim}" in again.stdout, again.stdout[-3000:]
+    (tmp_path / "fixed.txt").write_text(f"{polluter}\n{victim}\n")
+    fixed = _pytest(tmp_path, "-q", "-p", "no:xdist", "--replay-order", "fixed.txt")
+    assert fixed.returncode == 0 and "2 passed" in fixed.stdout, fixed.stdout[-3000:]
+
+
+def test_a_replay_runs_what_it_lists_in_its_order_and_refuses_what_it_cannot(
+    tmp_path: Path,
+) -> None:
+    _plant(tmp_path)
+    listed = ["test_two.py::test_3", "test_one.py::test_0", "test_two.py::test_1"]
+    (tmp_path / "listed.txt").write_text("\n".join(listed) + "\n")
+    assert _collected(tmp_path, "--replay-order", "listed.txt") == listed
+    (tmp_path / "gone.txt").write_text("test_one.py::test_0\ntest_one.py::test_99\n")
+    gone = _pytest(tmp_path, "-q", "-p", "no:xdist", "--replay-order", "gone.txt")
+    assert gone.returncode == 4 and "did not collect" in gone.stderr, gone.stderr[-2000:]
+    both = _pytest(
+        tmp_path, "-q", "-p", "no:xdist", "--replay-order", "listed.txt", "--random-order-seed", "3"
+    )
+    assert both.returncode == 4 and "drop the seed" in both.stderr, both.stderr[-2000:]
