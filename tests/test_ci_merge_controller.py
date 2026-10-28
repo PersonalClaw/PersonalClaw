@@ -145,6 +145,9 @@ class FakeApi:
                 "status": s,
                 "conclusion": c,
                 "labels": ["ubuntu-24.04"],
+                "runner_id": 1000 + i,
+                "runner_name": f"GitHub Actions {1000 + i}",
+                "started_at": "2026-10-28T00:00:00Z",
             }
             for i, (n, s, c) in enumerate(jobs)
         ]
@@ -366,12 +369,20 @@ def _contract(api: FakeApi, *runs: Mapping[str, Any]) -> None:
             "display_title": mc.CONTRACT_TITLE.format(head=HEAD),
             "status": "completed",
             "conclusion": "success",
+            "run_attempt": 1,
             "html_url": f"https://github.com/{REPO}/actions/runs/{4242 + n}",
             **r,
         }
         for n, r in enumerate(runs)
     ]
     api.answers[CONTRACT_RUNS] = {"total_count": len(listed), "workflow_runs": listed}
+    for run in listed:
+        # Its jobs: the contract job, in the run's state, unless the case lists them itself.
+        jobs = run.get("jobs")
+        if jobs is None:
+            jobs = [{"name": "contract", "status": run["status"], "conclusion": run["conclusion"]}]
+        path = f"/repos/{REPO}/actions/runs/{run['id']}/attempts/{run.get('run_attempt', 1)}/jobs"
+        api.answers[f"{path}?per_page=100&page=1"] = {"total_count": len(jobs), "jobs": jobs}
 
 
 def _changes(api: FakeApi, path: str = "tools/ci/verdict.py", text: str = "x = 1\n") -> FakeApi:
@@ -1513,3 +1524,472 @@ def test_an_unchanged_waiting_red_is_judged_to_the_same_bytes_and_not_posted_aga
     assert again is not None and json.dumps(again.body()) == json.dumps(first.body())
     _posted(api, _verdict(first, 1))
     assert mc.judge_waiting(api, REPO, APP, CONTROLLER) == [], "nothing changed, nothing posted"
+
+
+# ── A Merge run that has started: its contract beside it ──────────────────────────────────────
+
+STARTED_JOB = {
+    "id": 501,
+    "name": "changes",
+    "status": "in_progress",
+    "conclusion": None,
+    "started_at": "2026-10-28T00:00:05Z",
+    "runner_id": 1000147145,
+    "runner_name": "GitHub Actions 1000147145",
+}
+ATTEMPT_1_JOBS = f"/repos/{REPO}/actions/runs/{RUN}/attempts/1/jobs?per_page=100&page=1"
+
+
+def _started(api: FakeApi, *jobs: Mapping[str, Any], **run: Any) -> FakeApi:
+    """The head's Merge run, started: attempt 1's jobs as the jobs API lists them, no contract run
+    and no contract branch yet, unless a case plants them."""
+    api.run(**{"status": "in_progress", **run})
+    listed = [dict(j) for j in jobs]
+    api.answers[ATTEMPT_1_JOBS] = {"total_count": len(listed), "jobs": listed}
+    api.answers.setdefault(CONTRACT_RUNS, {"total_count": 0, "workflow_runs": []})
+    api.answers.setdefault(f"/repos/{REPO}/git/matching-refs/heads/{mc.CONTRACT_PREFIX}", [])
+    return api
+
+
+def test_a_started_run_of_a_definition_head_starts_its_contract_and_posts_nothing() -> None:
+    api = _started(_changes(FakeApi()), STARTED_JOB)
+    outcome = mc.start_contract(api, REPO, RUN)
+    assert (outcome.dispatch, outcome.base, outcome.posting) == (HEAD, MAIN, None)
+    assert "starts beside its run" in outcome.why
+
+
+@pytest.mark.parametrize(
+    "job",
+    [
+        pytest.param(None, id="no job yet"),
+        pytest.param({"status": "queued", "started_at": None, "runner_name": None}, id="queued"),
+        pytest.param({"status": "waiting", "started_at": None, "runner_name": ""}, id="waiting"),
+        pytest.param(
+            {"status": "completed", "conclusion": "action_required"}, id="action_required"
+        ),
+        pytest.param({"started_at": None}, id="no started_at"),
+        pytest.param({"runner_name": ""}, id="no runner name"),
+        pytest.param({"runner_id": 0}, id="runner id 0"),
+        pytest.param({"runner_id": None}, id="no runner id"),
+        pytest.param(
+            {"status": "queued", "started_at": "2026-10-28T00:00:01Z"}, id="queued, a time"
+        ),
+        pytest.param({"status": "completed", "conclusion": "skipped"}, id="skipped"),
+        pytest.param({"status": "pending"}, id="pending"),
+    ],
+)
+def test_no_contract_starts_until_a_job_of_attempt_1_ran_on_a_runner(
+    job: Mapping[str, Any] | None,
+) -> None:
+    """The approval gate, read from the jobs API: a run from a fork that waits for a
+    maintainer's approval starts no job on a runner, whatever the run itself says."""
+    jobs = () if job is None else ({**STARTED_JOB, **job},)
+    api = _started(_changes(FakeApi()), *jobs)
+    outcome = mc.start_contract(api, REPO, RUN)
+    assert outcome.dispatch is None and outcome.posting is None
+    assert "may wait for a maintainer's approval" in outcome.why
+
+
+class _Recorded(dict):  # type: ignore[type-arg]
+    """A run whose every read is recorded, to show which of its fields are read."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.read: set[str] = set()
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self.read.add(key)
+        return super().get(key, default)
+
+    def __getitem__(self, key: Any) -> Any:
+        self.read.add(key)
+        return super().__getitem__(key)
+
+
+#: A fork's run as the API gives it: its head is in another repository, and its branch, which
+#: its author names, says whatever the author likes; GitHub lists no pull request for it.
+FORK_FIELDS = {
+    "head_repository": {"full_name": "someone/project", "fork": True},
+    "head_branch": "contract-run/" + "9" * 40,
+    "pull_requests": [],
+    "display_title": "$(curl evil)",
+    "conclusion": "success",
+}
+
+
+@pytest.mark.parametrize("ran", [True, False], ids=["approved", "awaiting approval"])
+def test_a_forks_started_run_is_judged_by_its_jobs_and_nothing_its_author_names(ran: bool) -> None:
+    api = _started(_changes(FakeApi()), *([STARTED_JOB] if ran else []), **FORK_FIELDS)
+    path = f"/repos/{REPO}/actions/runs/{RUN}"
+    api.answers[path] = _Recorded(api.answers[path])
+    outcome = mc.start_contract(api, REPO, RUN)
+    assert (outcome.dispatch, outcome.posting) == ((HEAD, None) if ran else (None, None))
+    assert api.answers[path].read <= mc.START_READS, api.answers[path].read
+    assert not {"head_repository", "head_branch", "pull_requests"} & api.answers[path].read
+
+
+@pytest.mark.parametrize(
+    "plant, says",
+    [
+        pytest.param(
+            lambda api: _contract(api, {"status": "in_progress"}), "already has", id="a run"
+        ),
+        pytest.param(lambda api: _contract(api, {}), "already has", id="a finished run"),
+        pytest.param(
+            lambda api: _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: MAIN}),
+            "already at main's tip",
+            id="its branch at main's tip",
+        ),
+        pytest.param(
+            lambda api: api.run(run_attempt=2, status="in_progress"), "a re-run", id="a re-run"
+        ),
+    ],
+)
+def test_a_second_start_or_a_re_run_starts_no_second_contract(plant: Any, says: str) -> None:
+    api = _started(_changes(FakeApi()), STARTED_JOB)
+    plant(api)
+    outcome = mc.start_contract(api, REPO, RUN)
+    assert outcome.dispatch is None and outcome.posting is None and says in outcome.why
+
+
+def test_the_second_start_of_one_run_finds_the_first_ones_branch_and_starts_nothing() -> None:
+    api = _started(_changes(FakeApi()), STARTED_JOB)
+    first = mc.start_contract(api, REPO, RUN)
+    assert first.dispatch == HEAD
+    # What the first start's contract job does before its dispatch: the branch, at main's tip.
+    _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: first.base or ""})
+    assert mc.start_contract(api, REPO, RUN).dispatch is None
+
+
+def test_a_contract_branch_left_at_an_older_tip_does_not_stop_a_start() -> None:
+    api = _started(_changes(FakeApi()), STARTED_JOB)
+    _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: "9" * 40})
+    assert mc.start_contract(api, REPO, RUN).dispatch == HEAD
+
+
+@pytest.mark.parametrize(
+    "change, says",
+    [
+        pytest.param(
+            lambda api: api.run(event="workflow_dispatch", status="in_progress"),
+            "own run",
+            id="dispatch",
+        ),
+        pytest.param(lambda api: api.run(event="push", status="in_progress"), "own run", id="push"),
+        pytest.param(
+            lambda api: api.run(path=f"{WF}other.yml", status="in_progress"),
+            "is not",
+            id="other workflow",
+        ),
+        pytest.param(lambda api: api.run(status="queued"), "not started", id="queued"),
+        pytest.param(lambda api: api.run(status="waiting"), "not started", id="waiting"),
+        pytest.param(
+            lambda api: api.answers.update(
+                {f"/repos/{REPO}/compare/{MAIN}...{HEAD}": {"behind_by": 2}}
+            ),
+            "behind main",
+            id="behind main",
+        ),
+    ],
+)
+def test_a_start_that_is_not_a_current_pull_requests_own_run_starts_nothing(
+    change: Any, says: str
+) -> None:
+    api = _started(_changes(FakeApi()), STARTED_JOB)
+    change(api)
+    outcome = mc.start_contract(api, REPO, RUN)
+    assert outcome.dispatch is None and outcome.posting is None and says in outcome.why
+
+
+def test_a_started_run_of_a_head_that_changes_no_definition_starts_nothing() -> None:
+    api = _started(FakeApi(), STARTED_JOB)
+    outcome = mc.start_contract(api, REPO, RUN)
+    assert outcome.dispatch is None and "changes no CI definition" in outcome.why
+
+
+def test_start_never_posts_even_where_every_other_path_would(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A state where judging would post: a green completed run, a waiting head to judge again,
+    and stale branches to sweep. --start writes no body and says post=false, and no judge runs."""
+    api = _changes(FakeApi())
+    _contract(api, {})
+    _started(api, STARTED_JOB, status="completed")
+    _refs(api, mc.CONTRACT_PREFIX, {mc.CONTRACT_PREFIX + "1" * 40: "9" * 40})
+    _merge_runs(api, OWN_MERGE, [RUN])
+    assert mc.decide(api, REPO, RUN, CONTROLLER).posting is not None, "this state would post"
+
+    def judged(*_: Any, **__: Any) -> Any:
+        raise AssertionError("--start judged something")
+
+    for name in ("decide", "judge", "rejudge", "judge_waiting", "judge_check", "wake"):
+        monkeypatch.setattr(mc, name, judged)
+    out, outputs = tmp_path / "verdict.json", tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    argv = ["decide", "--repo", REPO, "--start", str(RUN), "--controller-revision", CONTROLLER]
+    query, _ = _asked(_graph((HEAD, [(1, "FAILURE", f"```{mc.WAITING_FENCE}\ncontract\n```\n")])))
+    argv += ["--controller-app-id", str(APP), "--out", str(out)]
+    assert mc.main(argv, get=api, query=query) == 0
+    assert not out.exists(), "--start wrote a body to post"
+    assert outputs.read_text().splitlines() == ["dispatch=", "base=", "cleanup=", "post=false"]
+
+
+def test_start_names_the_head_to_dispatch_and_nothing_else(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    api = _started(_changes(FakeApi()), STARTED_JOB)
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    argv = ["decide", "--repo", REPO, "--start", str(RUN), "--controller-revision", CONTROLLER]
+    assert mc.main([*argv, "--out", str(tmp_path / "v.json")], get=api) == 0
+    assert outputs.read_text().splitlines() == [
+        f"dispatch={HEAD}",
+        f"base={MAIN}",
+        "cleanup=",
+        "post=false",
+    ]
+
+
+def test_an_unread_start_starts_nothing_and_leaves_it_to_the_runs_completion(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    api = _started(_changes(FakeApi()), STARTED_JOB)
+    del api.answers[ATTEMPT_1_JOBS]
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    argv = ["decide", "--repo", REPO, "--start", str(RUN), "--controller-revision", CONTROLLER]
+    assert mc.main([*argv, "--out", str(tmp_path / "v.json")], get=api) == 0
+    assert outputs.read_text().splitlines() == ["dispatch=", "base=", "cleanup=", "post=false"]
+
+
+# ── A contract run's wake: the same judge as a Merge run's completion ─────────────────────────
+
+
+def _state(name: str) -> FakeApi:
+    """One state of a head, as both entry points read it: its completed Merge run, its contract
+    runs, and its branches."""
+    api = FakeApi()
+    _refs(api, mc.CONTRACT_PREFIX, {})
+    _refs(api, mc.TRUSTED_PREFIX, {})
+    if name != "no definition":
+        _changes(api)
+    _contract(api)
+    if name == "results red":
+        api.jobs(1, ("results", "completed", "failure"))
+    if name == "red on attempt 1, green on 2":
+        api.run(run_attempt=2)
+        api.jobs(1, ("results", "completed", "failure"))
+        api.jobs(2, ("results", "completed", "success"))
+    if name == "behind main":
+        api.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 3}
+    if name == "contract green":
+        _contract(api, {})
+        _refs(api, mc.CONTRACT_PREFIX, {CONTRACT_BRANCH: MAIN})
+    if name == "contract red":
+        _contract(api, {"conclusion": "failure"})
+    if name == "contract running":
+        _contract(api, {"status": "in_progress", "conclusion": None})
+    if name == "no contract yet":
+        _contract(api)
+    if name == "review red":
+        api.review(HEAD, ("completed", "failure"))
+    if name == "no evidence":
+        api.artifacts({"web-dist": "sha256:" + "e" * 64})
+    _merge_runs(api, OWN_MERGE, [RUN])
+    return api
+
+
+STATES = (
+    "contract green",
+    "contract red",
+    "contract running",
+    "no contract yet",
+    "results red",
+    "red on attempt 1, green on 2",
+    "behind main",
+    "review red",
+    "no evidence",
+    "no definition",
+)
+
+
+def _through(entry: list[str], api: FakeApi, tmp_path: Path, monkeypatch: Any) -> tuple[Any, ...]:
+    out, outputs = tmp_path / f"{entry[0]}.json", tmp_path / f"{entry[0]}.outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    argv = ["decide", "--repo", REPO, *entry, "--controller-revision", CONTROLLER]
+    assert mc.main([*argv, "--out", str(out)], get=api) == 0
+    body = json.loads(out.read_text()) if out.exists() else None
+    return body, outputs.read_text().splitlines()
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_a_wake_and_a_merge_runs_completion_give_one_verdict(
+    state: str, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The differential: one API state, judged through the completed Merge run (``--run-id``)
+    and through a contract run's wake (``--head``), gives the same check run, byte for byte, and
+    the same dispatch, base and branches to delete."""
+    by_run = _through(["--run-id", str(RUN)], _state(state), tmp_path, monkeypatch)
+    by_head = _through(["--head", HEAD], _state(state), tmp_path, monkeypatch)
+    assert by_head == by_run
+    assert by_run[0] is not None, "every state posts a verdict"
+
+
+def test_the_states_each_judge_as_their_names_say() -> None:
+    """A control for the differential: its states are not one verdict under many names."""
+    postings = {s: mc.decide(_state(s), REPO, RUN, CONTROLLER).posting for s in STATES}
+    assert all(isinstance(p, mc.Posting) for p in postings.values())
+    said = {s: p.output["title"] for s, p in postings.items() if p is not None}
+    assert said["contract green"].startswith("Green") and said["no definition"].startswith("Green")
+    assert "contract fails" in said["contract red"]
+    assert "'in_progress'" in said["contract running"] and "is started" in said["no contract yet"]
+    assert "behind main" in said["behind main"]
+    assert "attempt 1's `results` is 'failure'" in said["red on attempt 1, green on 2"]
+    bodies = {json.dumps(p.body(), sort_keys=True) for p in postings.values() if p is not None}
+    assert len(bodies) == len(STATES)
+
+
+@pytest.mark.parametrize("head", ["main", "a" * 39, "A" * 40, "$(id)", ""])
+def test_a_wake_for_what_is_not_a_full_commit_id_judges_nothing(head: str) -> None:
+    api = _state("contract green")
+    api.calls.clear()
+    outcome = mc.wake(api, REPO, head, CONTROLLER)
+    assert outcome.posting is None and "not a full commit id" in outcome.why
+    assert api.calls == []
+
+
+# ── The approval gate on the run's completion, and the contract judged by its job ─────────────
+
+
+def test_a_completed_run_that_ran_no_job_on_a_runner_starts_no_contract() -> None:
+    """A fork's run that waits for approval, were GitHub to report it completed with
+    ``action_required``: its head is red, and main's contract is not started over its tools/ci."""
+    api = _changes(FakeApi())
+    _contract(api)
+    api.run(**{**FORK_FIELDS, "conclusion": "action_required"})
+    api.answers[ATTEMPT_1_JOBS] = {
+        "total_count": 1,
+        "jobs": [{**STARTED_JOB, "status": "completed", "conclusion": "action_required"}],
+    }
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert outcome.dispatch is None
+    assert outcome.posting is not None and outcome.posting.conclusion == "failure"
+    assert "is not started from it" in outcome.posting.output["summary"]
+    assert mc.WAITING_FENCE not in outcome.posting.output.get("text", ""), "nothing it waits on"
+
+
+def test_a_completed_re_run_starts_the_contract_from_the_attempt_it_ran() -> None:
+    """Attempt 1 cancelled in the queue, attempt 2 ran: its completion starts the contract."""
+    api = _changes(FakeApi())
+    _contract(api)
+    api.run(run_attempt=2)
+    api.answers[ATTEMPT_1_JOBS] = {
+        "total_count": 1,
+        "jobs": [{"id": 1, "name": "results", "status": "completed", "conclusion": "cancelled"}],
+    }
+    api.jobs(2, ("results", "completed", "success"))
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER)
+    assert outcome.dispatch == HEAD
+    assert (
+        outcome.posting is not None and "attempt 1's `results`" in outcome.posting.output["title"]
+    )
+
+
+def test_a_contract_whose_wake_failed_is_judged_by_its_contract_job() -> None:
+    api = _changes(FakeApi())
+    _contract(
+        api,
+        {
+            "conclusion": "failure",
+            "jobs": [
+                {"name": "contract", "status": "completed", "conclusion": "success"},
+                {"name": "wake", "status": "completed", "conclusion": "failure"},
+            ],
+        },
+    )
+    found = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert found is not None and found.conclusion == "success", found
+
+
+def test_a_contract_job_that_failed_is_red_whatever_its_run_says() -> None:
+    api = _changes(FakeApi())
+    _contract(
+        api,
+        {
+            "conclusion": "success",
+            "jobs": [{"name": "contract", "status": "completed", "conclusion": "failure"}],
+        },
+    )
+    found = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert found is not None and "main's CI contract fails" in found.output["title"]
+
+
+@pytest.mark.parametrize(
+    "jobs",
+    [
+        pytest.param([], id="none"),
+        pytest.param(
+            [
+                {"name": "contract", "status": "completed", "conclusion": "success"},
+                {"name": "contract", "status": "completed", "conclusion": "success"},
+            ],
+            id="two",
+        ),
+    ],
+)
+def test_a_completed_contract_run_with_other_than_one_contract_job_is_unread(
+    jobs: list[dict[str, Any]],
+) -> None:
+    api = _changes(FakeApi())
+    _contract(api, {"jobs": jobs})
+    found = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert found is not None and "unread" in found.output["summary"]
+    assert "not one" in found.output["summary"]
+
+
+def test_a_contract_run_just_dispatched_and_listing_no_job_yet_is_waited_on() -> None:
+    api = _changes(FakeApi())
+    _contract(api, {"status": "queued", "conclusion": None, "jobs": []})
+    found = mc.decide(api, REPO, RUN, CONTROLLER).posting
+    assert found is not None and mc.WAITING_FENCE in found.output["text"]
+    assert "'queued'" in found.output["title"]
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "main",
+        "a" * 39,
+        "A" * 40,
+        "$(id)",
+        "a" * 40 + "; true",
+        "../../" + "a" * 40,
+        "-x",
+        "--run-id",
+        "--run-id\n" + "a" * 40,
+        "a" * 40 + "\n",
+    ],
+)
+def test_a_wake_dispatched_with_a_malformed_head_posts_nothing(
+    head: str, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The dispatch's ``head`` reaches the controller through the step's environment, quoted,
+    as one argument, once the step's own check has passed it: here the controller's check, given
+    the head as ``--head=`` would hand it on whatever it starts with. What is not a full commit id
+    is refused before any read, and posts nothing."""
+    api = _state("contract green")
+    api.calls.clear()
+    out, outputs = tmp_path / "v.json", tmp_path / "outputs"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    argv = ["decide", "--repo", REPO, f"--head={head}", "--controller-revision", CONTROLLER]
+    assert mc.main([*argv, "--out", str(out)], get=api) == 0
+    assert not out.exists(), "a malformed head wrote a body to post"
+    assert "post=false" in outputs.read_text().splitlines()
+    assert "dispatch=" in outputs.read_text().splitlines()
+    # Only the sweep of stale branches reads anything: main's tip and the branch lists.
+    sweep = {
+        f"/repos/{REPO}/git/ref/heads/main",
+        f"/repos/{REPO}/git/matching-refs/heads/{mc.CONTRACT_PREFIX}",
+        f"/repos/{REPO}/git/matching-refs/heads/{mc.TRUSTED_PREFIX}",
+    }
+    assert set(api.calls) <= sweep, set(api.calls) - sweep

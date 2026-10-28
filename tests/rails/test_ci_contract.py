@@ -855,11 +855,21 @@ _MAIN_ONLY_ENVIRONMENTS = {
 _SCHEDULED_ONLY = {"schedule", "workflow_dispatch"}
 #: The main-only jobs that run on another trigger: the merge verdict's poster and its trusted
 #: run's maker, in a listener of runs (`workflow_run`) and checks (`check_run`), with a
-#: schedule, that runs on nothing else. GitHub runs all three from the default branch, so no
-#: candidate's run can name the environment through them either.
+#: schedule, and a dispatch (a contract run's wake), that runs on nothing else. GitHub runs the
+#: first three from the default branch; a dispatch on another branch runs that branch's file, but
+#: its jobs' condition runs them on main alone and the environment deploys only from main, as for
+#: the scheduled jobs above. So no candidate's run can name the environment through them either.
+#: What a listener job's condition must hold a dispatch to: main alone. A dispatch on another
+#: branch runs that branch's copy of the file, and the environment deploys only from main.
+_ON_MAIN = "github.ref == 'refs/heads/main'"
 _LISTENER_ONLY = {
-    ("merge-verdict.yml", "post"): {"workflow_run", "check_run", "schedule"},
-    ("merge-verdict.yml", "contract"): {"workflow_run", "check_run", "schedule"},
+    ("merge-verdict.yml", "post"): {"workflow_run", "check_run", "schedule", "workflow_dispatch"},
+    ("merge-verdict.yml", "contract"): {
+        "workflow_run",
+        "check_run",
+        "schedule",
+        "workflow_dispatch",
+    },
 }
 #: The one publishing permission a workflow other than release.yml may hold, by workflow and job:
 #: release-push-proof.yml runs release.yml's own image push to a scratch package no release names,
@@ -1035,6 +1045,15 @@ def _only_the_release_controller_publishes(root: Path) -> list[str]:
                 found.append(
                     f"{name}:{job_name} names the main-only environment {named!r} in a workflow "
                     f"that runs on {sorted(set(_triggers(wf)) - runs_on)}"
+                )
+            elif (
+                (name, job_name) in _LISTENER_ONLY
+                and "workflow_dispatch" in _triggers(wf)
+                and _ON_MAIN not in str(job.get("if", ""))
+            ):
+                found.append(
+                    f"{name}:{job_name} names the main-only environment {named!r} on a dispatch"
+                    " its condition does not hold to main"
                 )
     return found
 
@@ -1512,13 +1531,20 @@ NO_CANDIDATE_JOB_HOLDS_A_WRITE_OR_A_SECRET = Row(
 #: The workflow that runs main's CI contract over a head's definitions (#4584 step 4). It runs the
 #: head's code, so it holds nothing worth taking and writes nothing another run reads.
 _CONTRACT_YML = "contract.yml"
+#: The one job of contract.yml that may hold a permission of its own: ``wake``, which, once the
+#: contract has run, dispatches the poster on main for the head. It holds ``actions: write``
+#: alone and runs nothing of the head: no action (so no checkout), no git, uv or python.
+_CONTRACT_WAKE, _CONTRACT_WAKE_HOLDS = "wake", {"actions": "write"}
+_RUNS_THE_HEAD = re.compile(r"\b(?:git|uv|uvx|python3?|pip|make|npm|npx|node)\b")
 #: Actions that save to the Actions cache when their step ends.
 _CACHE_SAVERS = ("actions/cache@", "actions/cache/save@")
 
 
 def _contract_run_holds_nothing(root: Path) -> list[str]:
     """contract.yml holds ``contents: read`` and nothing else, reads no secret, deploys to no
-    environment and saves nothing to the Actions cache (a restore is fine)."""
+    environment and saves nothing to the Actions cache (a restore is fine). Its one exception is
+    ``wake`` (:data:`_CONTRACT_WAKE`), which holds ``actions: write`` alone and runs nothing of
+    the head."""
     path = root / _WORKFLOWS / _CONTRACT_YML
     if not path.is_file():
         return [f"{_CONTRACT_YML} is missing, so nothing pins what main's contract run holds"]
@@ -1532,8 +1558,17 @@ def _contract_run_holds_nothing(root: Path) -> list[str]:
     for job_id, job in (data.get("jobs") or {}).items():
         if not isinstance(job, dict):
             continue
-        if "permissions" in job:
+        if "permissions" in job and (job_id, job["permissions"]) != (
+            _CONTRACT_WAKE,
+            _CONTRACT_WAKE_HOLDS,
+        ):
             bad.append(f"{_CONTRACT_YML} job {job_id} sets its own permissions")
+        elif "permissions" in job:
+            steps = [st for st in job.get("steps") or [] if isinstance(st, dict)]
+            if any("uses" in st for st in steps) or "uses" in job:
+                bad.append(f"{_CONTRACT_YML} job {job_id} holds actions: write and runs an action")
+            if any(_RUNS_THE_HEAD.search(str(st.get("run", ""))) for st in steps):
+                bad.append(f"{_CONTRACT_YML} job {job_id} holds actions: write and runs a tool")
         if "environment" in job:
             bad.append(f"{_CONTRACT_YML} job {job_id} deploys to an environment")
         for step in job.get("steps") or []:
@@ -1568,6 +1603,20 @@ def _contract_scaffold(root: Path) -> None:
 
 _CONTRACT_STEPS = "    steps:\n"
 _UV_NO_CACHE = "        with:\n          enable-cache: false\n"
+_CONTRACT_WAKE_JOB = (
+    "    needs: contract\n    runs-on: ubuntu-24.04\n    permissions:\n      actions: write\n"
+    "    steps:\n"
+    '      - run: gh workflow run merge-verdict.yml --ref main -f head="$HEAD_SHA"\n'
+)
+
+
+def _add_contract_job(job_id: str, text: str) -> Callable[[Path], None]:
+    def plant(root: Path) -> None:
+        path = root / _WORKFLOWS / _CONTRACT_YML
+        path.write_text(path.read_text(encoding="utf-8") + f"  {job_id}:\n{text}", encoding="utf-8")
+
+    return plant
+
 
 CONTRACT_RUN_HOLDS_NOTHING = Row(
     name="main's contract run holds nothing worth taking and saves no cache",
@@ -1629,6 +1678,44 @@ CONTRACT_RUN_HOLDS_NOTHING = Row(
         ),
         Control(
             "the workflow gone fails", lambda root: (root / _WORKFLOWS / _CONTRACT_YML).unlink()
+        ),
+        Control(
+            "a wake job holding actions: write alone, running only its dispatch, passes",
+            _add_contract_job(_CONTRACT_WAKE, _CONTRACT_WAKE_JOB),
+            fails=False,
+        ),
+        Control(
+            "a wake job holding contents: write too fails",
+            _add_contract_job(
+                _CONTRACT_WAKE,
+                _CONTRACT_WAKE_JOB.replace(
+                    "      actions: write\n", "      actions: write\n      contents: write\n"
+                ),
+            ),
+        ),
+        Control(
+            "a wake job that checks out fails",
+            _add_contract_job(
+                _CONTRACT_WAKE,
+                _CONTRACT_WAKE_JOB.replace(
+                    "    steps:\n",
+                    "    steps:\n"
+                    "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n",
+                ),
+            ),
+        ),
+        Control(
+            "a wake job that runs python fails",
+            _add_contract_job(
+                _CONTRACT_WAKE,
+                _CONTRACT_WAKE_JOB.replace(
+                    "      - run: gh", "      - run: python -m tools.ci x; gh"
+                ),
+            ),
+        ),
+        Control(
+            "another job holding actions: write fails",
+            _add_contract_job("rerun", _CONTRACT_WAKE_JOB),
         ),
     ),
 )
@@ -1714,10 +1801,25 @@ ONLY_THE_RELEASE_CONTROLLER_PUBLISHES = Row(
             _merge_verdict("    types: [completed]\n", "    types: [completed]\n  pull_request:\n"),
         ),
         Control(
-            "the controller's environment on a poster that also runs on a dispatch fails",
+            "the controller's environment on a poster that also runs on a pull_request fails",
+            _merge_verdict("    types: [completed]\n", "    types: [completed]\n  pull_request:\n"),
+        ),
+        Control(
+            "the controller's environment on a poster's dispatch its job holds to main passes",
+            _merge_verdict(
+                "    types: [completed]\npermissions:\n  contents: read\njobs:\n  post:\n",
+                "    types: [completed]\n  workflow_dispatch:\npermissions:\n  contents: read\n"
+                "jobs:\n  post:\n    if: github.ref == 'refs/heads/main'\n",
+            ),
+            fails=False,
+        ),
+        Control(
+            "the controller's environment on a poster's dispatch its job does not hold to main"
+            " fails",
             _merge_verdict(
                 "    types: [completed]\n", "    types: [completed]\n  workflow_dispatch:\n"
             ),
+            expect="on a dispatch its condition does not hold to main",
         ),
         Control(
             "the controller's environment on another job of the poster fails",
