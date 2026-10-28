@@ -8,7 +8,13 @@ from unittest.mock import patch
 
 import pytest
 
-from personalclaw.sandbox import _probe_sandbox_exec, reset_backend, wrap_argv
+from personalclaw.sandbox import (
+    UNCHECKED,
+    _probe_sandbox_exec,
+    detect_backend,
+    reset_backend,
+    wrap_argv,
+)
 
 _MAC_VER_26_PLUS = ("26.4.1", ("", "", ""), "")
 
@@ -91,9 +97,14 @@ def test_sandbox_exec_fails_returns_false(mock_run, mock_which):
 
 @patch("personalclaw.sandbox.sys.platform", "darwin")
 @patch("personalclaw.sandbox.shutil.which", return_value="/usr/bin/sandbox-exec")
-@patch("personalclaw.sandbox.subprocess.run", side_effect=OSError("timeout"))
-def test_subprocess_exception_returns_false(mock_run, mock_which):
-    assert _probe_sandbox_exec() is False
+@patch("personalclaw.sandbox.subprocess.run", side_effect=OSError("cannot start sandbox-exec"))
+def test_a_probe_that_raises_is_unknown_never_kept_and_never_a_no(mock_run, mock_which):
+    """A probe that could not be made answers unknown (``None``), never no: a no turns the sandbox
+    off for the process (``detect_backend`` is "none", and every command runs unwrapped)."""
+    assert _probe_sandbox_exec() is None
+    assert _probe_sandbox_exec() is None
+    assert mock_run.call_count == 2, "an unknown answer was kept"
+    assert detect_backend("auto") == UNCHECKED
 
 
 @patch("personalclaw.sandbox.sys.platform", "darwin")
