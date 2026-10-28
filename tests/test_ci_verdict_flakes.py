@@ -373,6 +373,63 @@ def test_an_end_to_end_flake_beside_another_changed_spec_still_passes() -> None:
     assert _judge([_record(ONE, _test(E2E_TEST), argv=ALONE)], changed=changed).green
 
 
+# ── A browser leg's flake, beside the merges of every leg ─────────────────────────────────────
+#
+# A shard leg red for one flake used to stop before its home run, so `e2e` and `ui-quality` went
+# red merging a leg with no blob, and `e2e` went red again on the merged report's retried pass:
+# two reds no rerun explains. run-job now runs the leg's other homes after its failed tests, and
+# assert-one-run names a retried pass rather than redding on it, so both merges are green and the
+# leg is the one red key, judged by its own rerun alone.
+
+LEG_ONE, LEG_TWO = "e2e-shard (1/2)", "e2e-shard (2/2)"
+LEGS = [LEG_ONE, LEG_TWO, "e2e-pinned", "e2e", "ui-quality"]
+#: The leg's record: its shared run red, its idle home's run and its pass-through after it green.
+LEG_EXITS = (1, 0, 0)
+
+
+def _judge_legs(records: Sequence[str], failed: Sequence[str] = (LEG_ONE,)) -> verdict.Verdict:
+    keyed = {json.loads(r)["key"] for r in records}
+    texts = list(records) + [_record(k) for k in LEGS if k not in keyed]
+    results = verdict.from_needs(_needs(), CANDIDATE) + verdict.from_job_records(texts)
+    listed = [_job(n, "failure" if n in failed else "success") for n in ("tree-check", *LEGS)]
+    listed.append(_job("results", None, status="in_progress"))
+    page = {"total_count": len(listed), "jobs": listed}
+    jobs = verdict.read_jobs(json.dumps([page]), run_id=RUN, attempt=1)
+    return verdict.decide(LEGS, results, CANDIDATE, run_id=RUN, changed=CHANGED, jobs=jobs)
+
+
+def test_a_legs_flake_its_alone_rerun_passed_beside_green_merges_is_green_and_named() -> None:
+    judged = _judge_legs([_record(LEG_ONE, _test(E2E_TEST), argv=ALONE, exits=LEG_EXITS)])
+    assert judged.green, judged.flake_rule
+    assert [(t.key, t.test) for t in judged.flakes] == [(LEG_ONE, E2E_TEST)]
+    assert f"{E2E_TEST} ({LEG_ONE})" in verdict.flake_notices(judged)
+
+
+def test_a_legs_flake_whose_alone_rerun_failed_is_red() -> None:
+    test = _test(E2E_TEST, verdict.REPEATED_FAILURE, "failed again, alone")
+    record = _record(LEG_ONE, test, argv=ALONE, exits=LEG_EXITS, rerun_exit=1)
+    _red(_judge_legs([record]))
+
+
+def test_a_legs_security_marked_failure_is_red_alone_and_beside_a_flake() -> None:
+    """Never rerun, so never a flake: alone it leaves the rule nothing to pass, and beside one it
+    is named as what keeps the leg red."""
+    guarded = _test(E2E_TEST, None, NEVER_RERUN)
+    _red(_judge_legs([_record(LEG_ONE, guarded, argv=ALONE, exits=LEG_EXITS)]))
+    flake = _test("web/e2e/settings.spec.ts::it saves [chromium]")
+    record = _record(LEG_ONE, flake, guarded, argv=ALONE, exits=LEG_EXITS)
+    _red(_judge_legs([record]), f"`{E2E_TEST}` is not classified")
+
+
+def test_a_legs_flake_beside_a_red_merge_is_red() -> None:
+    """As before run-job ran the leg's other homes on: `e2e` red merging a leg with no blob."""
+    records = [
+        _record(LEG_ONE, _test(E2E_TEST), argv=ALONE, exits=(1,)),
+        _record("e2e", exits=(1, 0, 0)),
+    ]
+    _red(_judge_legs(records, failed=(LEG_ONE, "e2e")), "`e2e`")
+
+
 def test_a_job_that_failed_in_two_steps_is_red() -> None:
     _red(_judge([_record(ONE, _test(FLAKY), exits=(1, 1))]), "one step that exited 1 alone")
 

@@ -2775,6 +2775,13 @@ known failure.
   the job's time running out, a signal, the credential tripwire, a program that is not pytest);
   and a step whose report is missing, older than the job or not XML. Their record's `rerun` is
   null. A test stopped by its own per-test `--timeout` is a failed test, and is rerun.
+- **The job's other steps run on:** after the first step whose one fault is failed tests its own
+  report names (its rerun had tests to classify), the job is red and its other steps still run,
+  inside the same time, so what they leave is there for a later job. A browser leg's idle and
+  stateful homes still leave the blobs `e2e` and `ui-quality` merge: before, a flake in a shard's
+  first run left a leg with no blob, and both merges went red on their own, which no flake
+  explains. Only that step is diagnosed. Any other fault stops the job, and so does a second red
+  step: the record holds one rerun, and a job red in two steps is never a flake.
 
 `tests/test_ci_jobs_rerun.py` plants a suite in a temporary repository and runs it through
 `run-job`'s step path: a test that fails then passes, one that fails twice, one that times out
