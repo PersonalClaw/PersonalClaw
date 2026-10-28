@@ -335,7 +335,10 @@ verdict says all it must fix:
     `action_required` job does not count), the
     head is not behind `main` and changes a definition, and it has no contract run or branch at
     `main`'s tip yet. It reads only the run's repository, path, event, status, head and attempt,
-    nothing a fork's author names, and posts nothing. A re-run's start starts nothing.
+    nothing a fork's author names, and posts nothing. A re-run's start starts nothing. GitHub
+    sends a run's `in_progress` again as its jobs start (13 times for #5640's Merge run), so the
+    poster's concurrency group keys on the event's action as well as the run: a run's starts
+    collapse to one running and one pending, and its completion never queues behind them.
   - **When the run completes,** as before, when no contract ran for the head at this tip, and only
     if the attempt it completed ran a job on a runner: a fork's run reported completed with
     `action_required` starts nothing.
