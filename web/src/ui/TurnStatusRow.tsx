@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { bindingLabel, matchBinding } from '../app/keymap'
 import { prefersReducedMotion } from '../design/motion'
 import { WORK_PHASE_LOOKS, phaseLabel, type WorkPhase } from '../lib/workPhase'
@@ -107,7 +107,10 @@ export function TurnStatusRow({ running, phase, line, startedAt, usage, onStop, 
 
   const shownCb = useRef(onShown)
   shownCb.current = onShown
-  useEffect(() => { if (shown) shownCb.current?.() }, [shown])
+  // In the commit that shows it, before the browser paints: from a passive effect, which ran after
+  // the paint, the row could appear over the transcript's end for a frame before the transcript
+  // made room for it (the history peek's head did the same, #5619's and #5651's web-unit red).
+  useLayoutEffect(() => { if (shown) shownCb.current?.() }, [shown])
 
   // The clock, once a second while it shows.
   useEffect(() => {
