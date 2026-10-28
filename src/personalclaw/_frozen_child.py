@@ -3,10 +3,10 @@
 Wherever PersonalClaw runs from an interpreter, the gateway starts some of its children as
 ``<interpreter> -m <module> …``: the resource-ceiling shim in front of every tool command, MCP
 server, app backend and worker it starts (``sandbox.spawn_shim_argv``), the computer-use driver
-(``computer_use.service``), an evaluation cell (``evals.runner``) and the content scan's child
-(``uploads.content_scan``). In the desktop app that interpreter is the frozen bundle's own
-executable, and its entry script is the CLI, so each of those commands reached the CLI's parser and
-was refused at once.
+(``computer_use.service``), an evaluation cell (``evals.runner``), the content scan's child
+(``uploads.content_scan``) and the Linux sandbox's namespace probe (``sandbox._namespaces_take``).
+In the desktop app that interpreter is the frozen bundle's own executable, and its entry script is
+the CLI, so each of those commands reached the CLI's parser and was refused at once.
 
 So the bundle's entry script (``personalclaw/__main__.py``) asks :func:`child_module` before it
 starts the CLI. A frozen process whose command line is ``-m <module> …``, naming one of
@@ -44,6 +44,7 @@ BOOTLOADER_PREFIX = "_PYI_"
 #: this list).
 CHILD_MODULES: tuple[str, ...] = (
     "personalclaw._spawn_exec_shim",
+    "personalclaw._namespace_probe",
     "personalclaw.computer_use.driver_host",
     "personalclaw.evals.child",
     "personalclaw.uploads.scan_child",

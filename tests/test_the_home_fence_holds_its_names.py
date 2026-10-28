@@ -166,7 +166,10 @@ def _linux_sandbox_works() -> bool:
         return False
     from personalclaw.sandbox import _probe_unshare
 
-    return _probe_unshare()
+    works = _probe_unshare()
+    if works is None:  # never a skip: an unanswered check would hide the test
+        raise RuntimeError("the sandbox's namespace check did not answer")
+    return works
 
 
 def _launch(home: Path, command: str) -> subprocess.CompletedProcess:

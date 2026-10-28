@@ -211,6 +211,7 @@ _GATEWAY_ENV: dict[str, str] = {
     "session_pid.py::_is_managed_agent_process::subprocess.check_output": "managed-process probe",
     "subagent.py::_total_memory_gb::subprocess.check_output": "total RAM probe",
     "sandbox.py::_probe_sandbox_exec::subprocess.run": "sandbox-exec availability probe",
+    "sandbox.py::_namespaces_take::subprocess.run": "Linux namespace availability probe",
     "sandbox.py::_ssh_supports_accept_new::subprocess.run": "ssh version probe",
     "sandbox_providers/docker.py::_daemon_ping::subprocess.run": "docker daemon probe",
     "sandbox_providers/docker.py::_DockerHandle.cleanup::subprocess.run": (

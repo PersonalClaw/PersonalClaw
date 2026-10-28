@@ -498,6 +498,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "sandbox.py::_probe_sandbox_exec::subprocess.run": (
         "host-fact: sandbox-exec availability probe"
     ),
+    "sandbox.py::_namespaces_take::subprocess.run": "host-fact: Linux namespace availability probe",
     "sandbox.py::_ssh_supports_accept_new::subprocess.run": "host-fact: ssh version probe",
     # The docker provider's daemon probe — same class as the sandbox-exec/ssh probes
     # above: a fixed ``docker version`` argv that reads a host fact (is the daemon answering),

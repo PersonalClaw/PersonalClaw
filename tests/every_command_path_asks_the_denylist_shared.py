@@ -154,6 +154,7 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "providers/availability.py::AvailabilityBoard._probe::asyncio.create_subprocess_exec": _PROBE,
     "restart_request.py::start::os.execve": "PersonalClaw's own gateway, restarted",
     "sandbox.py::_probe_sandbox_exec::subprocess.run": _PROBE,
+    "sandbox.py::_namespaces_take::subprocess.run": _PROBE,
     "sandbox.py::_ssh_supports_accept_new::subprocess.run": _PROBE,
     "sandbox.py::create_subprocess_limited::asyncio.create_subprocess_exec": (
         "the spawner itself: runs the argv its caller hands it"

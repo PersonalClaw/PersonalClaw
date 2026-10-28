@@ -88,7 +88,17 @@ def _on_this_computer(mode: str, *, subject: str) -> dict[str, object]:
     (``"the commands it runs"``)."""
     from personalclaw import sandbox
 
-    if sandbox.detect_backend(config_mode=mode) == "none":
+    backend = sandbox.detect_backend(config_mode=mode)
+    if backend == sandbox.UNCHECKED:
+        return {
+            "confined": True,
+            "label": "Sandbox not checked",
+            "said": (
+                "PersonalClaw's check of whether this computer can sandbox them has not answered "
+                f"yet, so {subject} are refused until it does: each one checks again."
+            ),
+        }
+    if backend == "none":
         return {
             "confined": False,
             "label": "Not sandboxed",
