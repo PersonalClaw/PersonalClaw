@@ -30,10 +30,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -52,6 +54,13 @@ def contract_rails(main: Path) -> list[str]:
     return sorted(found)
 
 
+#: The list of every test's own timeout mark, with its cap and why (``tests/timeout_marks.py``
+#: reads it). It names the head's tests as well as the contract's, so the overlay writes a list of
+#: its own: :func:`overlaid_marks`.
+MARKS = "tests/timeout-marks.toml"
+_MARK = re.compile(r"^\[\[mark\]\]\n", re.M)
+
+
 def helpers(main: Path) -> list[str]:
     """``main``'s test helpers: every Python file under ``tests/`` that is not a test module,
     conftest files included, and what pytest and the rails read beside them."""
@@ -62,20 +71,54 @@ def helpers(main: Path) -> list[str]:
             continue
         if not path.name.startswith("test_"):
             out.append(rel)
-    for extra in ("tests/timeout-marks.toml",):
+    for extra in (MARKS,):
         if (main / extra).is_file():
             out.append(extra)
     return out
 
 
+def _mark_entries(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """A marks list's header, and each ``[[mark]]`` entry as written, by the file it names."""
+    starts = [m.start() for m in _MARK.finditer(text)]
+    entries = []
+    for start, end in zip(starts, [*starts[1:], len(text)]):
+        entry = text[start:end].strip() + "\n"
+        [mark] = tomllib.loads(entry)["mark"]
+        if not isinstance(mark["site"], str):
+            raise ValueError(f"a mark's site is not a path: {mark['site']!r}")
+        entries.append((mark["site"].partition("::")[0], entry))
+    return text[: starts[0]] if starts else text, entries
+
+
+def overlaid_marks(main_list: str, head_list: str | None, written: set[str]) -> str:
+    """The marks list the contract runs with: ``main``'s entries for the sites in ``written`` (the
+    files the overlay puts there, so ``main``'s rails are listed at ``main``'s caps, whatever the
+    head's list says of them), then the head's entries for every other site, its own tests. A
+    head's list that does not read adds nothing, so the head's own marks read as unlisted."""
+    header, ours = _mark_entries(main_list)
+    theirs: list[tuple[str, str]] = []
+    if head_list is not None:
+        try:
+            theirs = _mark_entries(head_list)[1]
+        except (tomllib.TOMLDecodeError, KeyError, TypeError, ValueError):
+            theirs = []
+    kept = [e for f, e in ours if f in written] + [e for f, e in theirs if f not in written]
+    return (header.rstrip("\n") + "\n\n" if header.strip() else "") + "\n".join(kept)
+
+
 def overlay(main: Path, head: Path) -> list[str]:
-    """Put ``main``'s contract rails and helpers over the head's tree; the paths written."""
-    written: list[str] = []
-    for rel in [*contract_rails(main), *helpers(main)]:
+    """Put ``main``'s contract rails and helpers over the head's tree; the paths written. The marks
+    list is the one file both trees speak for: :func:`overlaid_marks` writes it."""
+    written = [*contract_rails(main), *helpers(main)]
+    for rel in written:
         source, target = main / rel, head / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
-        written.append(rel)
+        if rel == MARKS:
+            head_list = target.read_text(encoding="utf-8") if target.is_file() else None
+            text = overlaid_marks(source.read_text(encoding="utf-8"), head_list, set(written))
+            target.write_text(text, encoding="utf-8")
+        else:
+            shutil.copyfile(source, target)
     return written
 
 

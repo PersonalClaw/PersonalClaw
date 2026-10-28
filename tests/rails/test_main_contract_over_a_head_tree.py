@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import timeout_marks
 from rails_repo import REPO
 
 from tools.ci import contract
@@ -29,6 +30,10 @@ _SECURITY_TEST = "test_the_tree_holds_the_rule"
 #: names, and its one test that does, so a word the action's list does not hold reds there.
 _STEPS_RAIL = "tests/rails/test_ci_tier_workflow_steps_tree.py"
 _PROGRAMS_TEST = "test_each_listed_program_the_path_lacks_comes_from_the_runners_package_manager"
+#: The row that reads every timeout mark in the tree against the marks list, and its own entry.
+_CONTRACT_RAIL = "tests/rails/test_ci_contract.py"
+_MARKS_ROW = "every-timeout-mark-is-listed-with-its-reason"
+_MARKS_ROW_SITE = f"{_CONTRACT_RAIL}::ROW_TIMEOUTS[{_MARKS_ROW}]"
 
 
 def _security(head: Path) -> int:
@@ -78,7 +83,14 @@ def test_the_overlay_puts_main_copies_over_the_heads(tmp_path: Path) -> None:
     (head / "tests/rails/test_ci_heads_own.py").write_text("def test_it():\n    pass\n")
     written = contract.overlay(REPO, head)
     for rel in written:
-        assert (head / rel).read_bytes() == (REPO / rel).read_bytes(), rel
+        if rel != contract.MARKS:
+            assert (head / rel).read_bytes() == (REPO / rel).read_bytes(), rel
+    # The marks list holds main's entries for the files the overlay wrote, and the head's own (it
+    # has none) for the rest.
+    ours, _ = timeout_marks.listed(REPO)
+    overlaid = {s: v for s, v in ours.items() if s.partition("::")[0] in written}
+    assert _MARKS_ROW_SITE in overlaid
+    assert timeout_marks.listed(head) == (overlaid, [])
     # A rail main does not hold is the head's, and is not run: the run names main's list alone.
     assert "tests/rails/test_ci_heads_own.py" not in written
 
@@ -139,6 +151,93 @@ def test_a_head_whose_tools_ci_exits_0_on_import_is_red(head: Path) -> None:
     init = head / "tools/ci/__init__.py"
     init.write_text(init.read_text(encoding="utf-8") + "import os\nos._exit(0)\n", "utf-8")
     assert _security(head) != 0
+
+
+def _marks_row(head: Path) -> int:
+    return contract.run(REPO, head, workers="0", subset=[_CONTRACT_RAIL], only=_MARKS_ROW)
+
+
+def _listed(head: Path) -> dict[str, timeout_marks.Cap]:
+    return {site: cap for site, (cap, _) in timeout_marks.listed(head)[0].items()}
+
+
+@_TREE
+def test_a_head_that_lists_a_marked_test_of_its_own_passes(head: Path) -> None:
+    """The head's own tests are its own to list: main's list names none of them."""
+    site = "tests/test_a_planted_slow_test.py::test_it_is_slow"
+    (head / "tests/test_a_planted_slow_test.py").write_text(
+        "import pytest\n\n\n@pytest.mark.timeout(45)\ndef test_it_is_slow():\n    pass\n", "utf-8"
+    )
+    # The control: unlisted, the row reads the head's mark and is red.
+    assert _marks_row(head) != 0
+    with (head / contract.MARKS).open("a", encoding="utf-8") as marks:
+        marks.write(f'\n[[mark]]\nsite = "{site}"\ncap = 45\nreason = "the head\'s own"\n')
+    assert _marks_row(head) == 0
+    assert _listed(head)[site] == 45
+
+
+@_TREE
+def test_a_head_that_raises_a_contract_rails_mark_is_judged_at_mains_cap(head: Path) -> None:
+    """The rail is main's again, and so is its entry: the head's raise is overlaid in both."""
+    ours = _listed(REPO)[_MARKS_ROW_SITE]
+    raised = ours * 10
+    _edit(
+        head,
+        _CONTRACT_RAIL,
+        f'    "{_MARKS_ROW}": pytest.mark.timeout({ours}),\n',
+        f'    "{_MARKS_ROW}": pytest.mark.timeout({raised}),\n',
+    )
+    _edit(
+        head,
+        contract.MARKS,
+        f'site = "{_MARKS_ROW_SITE}"\ncap = {ours}\n',
+        f'site = "{_MARKS_ROW_SITE}"\ncap = {raised}\n',
+    )
+    assert _listed(head)[_MARKS_ROW_SITE] == raised
+    # Read by the head's list, main's rail would be red at its own cap; the overlay's list is green.
+    assert _marks_row(head) == 0
+    assert _listed(head)[_MARKS_ROW_SITE] == ours
+    assert (head / _CONTRACT_RAIL).read_bytes() == (REPO / _CONTRACT_RAIL).read_bytes()
+
+
+_ENTRY = '[[mark]]\nsite = "{site}"\ncap = {cap}\nreason = "{why}"\n'
+
+
+def _marks(*entries: tuple[str, int, str]) -> str:
+    head = "# the list's own header\n\n"
+    return head + "\n".join(_ENTRY.format(site=s, cap=c, why=w) for s, c, w in entries)
+
+
+def test_the_marks_list_is_mains_for_what_the_overlay_writes_and_the_heads_for_the_rest() -> None:
+    main_list = _marks(
+        ("tests/rails/test_ci_a.py::test_x", 60, "main's rail"),
+        ("tests/test_b.py::test_y", 40, "main's copy of a test the head holds its own copy of"),
+    )
+    head_list = _marks(
+        ("tests/rails/test_ci_a.py::test_x", 600, "the head's raise of main's rail"),
+        ("tests/test_b.py::test_y", 45, "the head's own"),
+        ("tests/test_c.py::test_z", 90, "the head's new test"),
+    )
+    merged = contract.overlaid_marks(main_list, head_list, {"tests/rails/test_ci_a.py"})
+    assert merged == _marks(
+        ("tests/rails/test_ci_a.py::test_x", 60, "main's rail"),
+        ("tests/test_b.py::test_y", 45, "the head's own"),
+        ("tests/test_c.py::test_z", 90, "the head's new test"),
+    )
+
+
+@pytest.mark.parametrize(
+    "head_list",
+    [None, "[[mark]]\nsite = \n", "[[mark]]\ncap = 9\n", "[[mark]]\nsite = 1\ncap = 9\n"],
+    ids=["no list", "a list that does not parse", "an entry with no site", "a site not a name"],
+)
+def test_a_head_list_that_does_not_read_adds_none_of_its_entries(head_list: str | None) -> None:
+    main_list = _marks(
+        ("tests/rails/test_ci_a.py::test_x", 60, "main's rail"),
+        ("tests/test_b.py::test_y", 40, "main's copy"),
+    )
+    merged = contract.overlaid_marks(main_list, head_list, {"tests/rails/test_ci_a.py"})
+    assert merged == _marks(("tests/rails/test_ci_a.py::test_x", 60, "main's rail"))
 
 
 def _report(tmp_path: Path, *cases: str, suite: str = 'name="pytest"') -> Path:

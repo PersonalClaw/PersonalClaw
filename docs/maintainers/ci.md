@@ -308,7 +308,10 @@ verdict says all it must fix:
   (`tests/rails/test_ci_*.py` and the workflow rails `tools/ci/contract.py` lists) and their
   helpers, run against the head's tree: the head's `tools/ci`, catalogue and workflows are what
   is tested, and its own copy of the contract is replaced before anything runs, so editing it
-  cannot help. A change that alters a contract row lands in two merges: the row first, passing
+  cannot help. The timeout marks list (`tests/timeout-marks.toml`) names the head's own tests as
+  well as the contract's, so the contract writes one of its own: `main`'s entries for the files
+  it put there, at `main`'s caps, and the head's entries for every other test. A change that
+  alters a contract row lands in two merges: the row first, passing
   `main`'s old row, then its use (the `docker` word: #5510, then #5507). Relaxing a row is
   narrowing a check, and goes to core review.
 
