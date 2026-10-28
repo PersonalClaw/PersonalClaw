@@ -45,7 +45,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from personalclaw.env import gateway_env
@@ -560,21 +560,28 @@ def login_left_out_note(output: str, *, installer: str) -> str:
 #: The child module that answers whether this host lets a new process take namespaces.
 _NAMESPACE_PROBE = "personalclaw._namespace_probe"
 
-#: How long a namespace probe's child may take before the host reads as unable to give them.
-_NAMESPACE_PROBE_TIMEOUT = 10.0
+#: How long a namespace probe's child may take to answer. It starts in about 0.1 s (a median of
+#: 90 ms one at a time and at most 180 ms sixteen at once, on a host at load 8, 2026-10-28), and an
+#: unanswered probe costs the command that asked a refusal, so the bound is far past any start.
+_NAMESPACE_PROBE_TIMEOUT = 30.0
 
 
-def _namespaces_take(*names: str) -> bool:
+def _namespaces_take(*names: str) -> bool | None:
     """Whether a new process can take the namespaces *names* (``_namespace_probe.NAMESPACES``),
-    with one ``unshare`` call each, in the order given.
+    with one ``unshare`` call each, in the order given: ``True``, ``False`` when the host refused
+    a call, or ``None`` when that is not known.
 
     Asked of a child started fresh (``subprocess`` with no ``preexec_fn``, so nothing of this
     process's runs in it before it execs), never of a fork of this one: the gateway and a test
     worker have other threads, and a forked copy that ran Python inherited every lock one of them
     held at the fork, with no thread left to release it. A copy that waited on one never exited,
-    and the probe waited on it with no bound (#5638). A child that has not answered within
-    :data:`_NAMESPACE_PROBE_TIMEOUT` reads as no.
+    and the probe waited on it with no bound (#5638).
+
+    Only the child's own refusal (``_namespace_probe.REFUSED``) is a no. A child that does not
+    answer within :data:`_NAMESPACE_PROBE_TIMEOUT`, cannot be started, is killed, or exits any
+    other way is unknown, and an unknown is never read as no: that would turn the sandbox off.
     """
+    from personalclaw._namespace_probe import REFUSED, TAKEN
     from personalclaw.self_update import python_child_argv
 
     try:
@@ -586,14 +593,39 @@ def _namespaces_take(*names: str) -> bool:
             timeout=_NAMESPACE_PROBE_TIMEOUT,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("The sandbox's namespace check did not answer: %s", exc)
+        return None
+    if done.returncode == TAKEN:
+        return True
+    if done.returncode == REFUSED:
         return False
-    return done.returncode == 0
+    logger.warning("The sandbox's namespace check ended with exit %d", done.returncode)
+    return None
 
 
-@functools.lru_cache(maxsize=1)
-def _probe_unshare() -> bool:
-    """Return True if user + mount namespaces work (Linux).
+class _HostFact:
+    """A host-fact probe, kept for the process once it has answered yes or no. An unknown
+    (``None``) is not kept: the next call asks again. ``cache_clear`` forgets the answer, as
+    ``functools.lru_cache``'s does."""
+
+    def __init__(self, probe: Callable[[], bool | None]) -> None:
+        self._probe = probe
+        self._known: bool | None = None
+        functools.update_wrapper(self, probe)
+
+    def __call__(self) -> bool | None:
+        if self._known is None:
+            self._known = self._probe()
+        return self._known
+
+    def cache_clear(self) -> None:
+        self._known = None
+
+
+@_HostFact
+def _probe_unshare() -> bool | None:
+    """Return True if user + mount namespaces work (Linux), and None when that is not known.
 
     Mirrors the SEQUENCE the real launcher uses: ``unshare(NEWUSER)`` first, then
     a SEPARATE ``unshare(NEWNS)``. This matters — some hardened kernels (Ubuntu
@@ -615,9 +647,10 @@ def _probe_unshare() -> bool:
     return _namespaces_take("user", "mount")
 
 
-@functools.lru_cache(maxsize=1)
-def _probe_unshare_net() -> bool:
-    """Return True if the launcher can give a command a network namespace of its own (Linux).
+@_HostFact
+def _probe_unshare_net() -> bool | None:
+    """Return True if the launcher can give a command a network namespace of its own (Linux), and
+    None when that is not known.
 
     The steps the launcher takes for a command whose run gives it no network, in its order:
     ``unshare(NEWUSER)``, then ``unshare(NEWNS)``, then ``unshare(NEWNET)``. A host can allow the
@@ -661,7 +694,8 @@ class SandboxEnforcementUnavailable(RuntimeError):
     case (the capability probe requires *both* binaries), so it is the floor for a direct call.
     For :func:`namespace_argv`, the desktop app cannot start the launcher on a Linux host whose
     namespaces work, and :func:`wrap_argv` raises it: the caller refuses the command with this
-    message and never runs it unwrapped. ``str()`` is the sentence the owner reads.
+    message and never runs it unwrapped. So it does while the Linux namespace check has not
+    answered (:data:`UNCHECKED`), for that call only. ``str()`` is the sentence the owner reads.
     """
 
 
@@ -1566,11 +1600,25 @@ def sandbox_exec_argv(
 _backend: str | None = None  # "namespace", "sandbox-exec", "none"
 _backend_config_mode: str | None = None  # config mode when backend was cached
 
+#: What :func:`detect_backend` answers while the host's namespace check has not answered
+#: (:func:`_probe_unshare` is ``None``). Never cached: the next call asks again.
+UNCHECKED = "unchecked"
+
+#: The sentence a command is refused with while the sandbox's check has not answered.
+UNCHECKED_REFUSAL = (
+    "This command was not run: PersonalClaw's check of whether this computer can sandbox it did "
+    "not answer in time, so it could not be run in its sandbox. Try it again."
+)
+
 
 def detect_backend(config_mode: str = "auto") -> str:
     """Detect the best available sandbox backend.
 
-    Cached after first call; cache is invalidated if *config_mode* changes.
+    Cached after first call; cache is invalidated if *config_mode* changes. While the Linux
+    namespace check has not answered (:func:`_probe_unshare` is ``None``) the answer is
+    :data:`UNCHECKED`, which is not cached and is never ``"none"``: a command that would be
+    sandboxed is refused for that call (:data:`UNCHECKED_REFUSAL`), never run without its sandbox,
+    and the next call checks again.
 
     *config_mode* is :func:`wrap_argv`'s ``mode``, and it is the ONLY input to this
     decision. It arrives from a per-provider option (``sandbox_mode``) or a literal at
@@ -1587,7 +1635,9 @@ def detect_backend(config_mode: str = "auto") -> str:
         _backend_config_mode = config_mode
     if config_mode == "off":
         _backend = "none"
-    elif _probe_unshare():
+    elif (namespaces := _probe_unshare()) is None:
+        return UNCHECKED
+    elif namespaces:
         _backend = "namespace"
     elif _probe_sandbox_exec():
         _backend = "sandbox-exec"
@@ -1616,8 +1666,9 @@ def wrap_refusal(mode: str = "auto") -> str:
 
     The sentence :func:`wrap_argv` raises with, asked before anything is built, so a tool can
     refuse the call in its pre-flight: the command's run gives it no network and the sandbox
-    cannot take the network away here, or the desktop app cannot start the Linux namespace
-    launcher (:func:`namespace_argv`) on a host whose namespaces work."""
+    cannot take the network away here, the desktop app cannot start the Linux namespace
+    launcher (:func:`namespace_argv`) on a host whose namespaces work, or the check of whether the
+    namespaces work has not answered (:data:`UNCHECKED_REFUSAL`)."""
     from personalclaw.net.policy import no_network_for_commands
 
     if (held := no_network_for_commands()) and (cannot := _cannot_take_the_network(mode)):
@@ -1626,7 +1677,10 @@ def wrap_refusal(mode: str = "auto") -> str:
         return ""
     from personalclaw import python_children
 
-    if python_children.available() or detect_backend(config_mode=mode) != "namespace":
+    backend = detect_backend(config_mode=mode)
+    if backend == UNCHECKED:
+        return UNCHECKED_REFUSAL
+    if python_children.available() or backend != "namespace":
         return ""
     return python_children.refusal(NAMESPACE_REFUSAL)
 
@@ -1659,8 +1713,9 @@ def wrap_argv(argv: list[str], mode: str = "auto") -> tuple[list[str], str | Non
         SandboxEnforcementUnavailable: the host's sandbox cannot be applied here (the desktop
             app on a Linux host, :func:`namespace_argv`), or the command's run gives it no
             network and the sandbox cannot take the network away (it is off, or this host has
-            none that can). The caller refuses the command with the message, and never runs it
-            without the sandbox, or with the network its run does not give it.
+            none that can), or the check of whether this host's namespaces work has not answered
+            (:data:`UNCHECKED_REFUSAL`). The caller refuses the command with the message, and
+            never runs it without the sandbox, or with the network its run does not give it.
     """
     from personalclaw.net.policy import no_network_for_commands
 
@@ -1749,6 +1804,8 @@ def _wrapped(argv: list[str], mode: str, *, network: bool) -> tuple[list[str], s
     level = wrap_level(mode)
     backend = detect_backend(config_mode=mode)
 
+    if backend == UNCHECKED:
+        raise SandboxEnforcementUnavailable(UNCHECKED_REFUSAL)
     if backend == "namespace":
         wrapped = namespace_argv(argv, level, network=network)
         # The launcher script is argv[1] — caller should clean it up
@@ -1769,8 +1826,14 @@ def _cannot_take_the_network(mode: str) -> str:
     if mode == "off":
         return "its sandbox is set to off"
     backend = detect_backend(config_mode=mode)
-    if backend == "sandbox-exec" or (backend == "namespace" and _probe_unshare_net()):
+    network = _probe_unshare_net() if backend == "namespace" else None
+    if backend == "sandbox-exec" or network:
         return ""
+    if backend == UNCHECKED or (backend == "namespace" and network is None):
+        return (
+            "PersonalClaw's check of whether this computer can take a command's network away did "
+            "not answer in time (try it again)"
+        )
     if sys.platform.startswith("linux"):
         return (
             "this machine does not let PersonalClaw give a command a network of its own (on "

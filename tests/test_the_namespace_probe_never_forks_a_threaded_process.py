@@ -7,6 +7,11 @@ log's lock mid-write. A copy that needed such a lock never exited, and the probe
 no bound. That fits both hangs of #5638's first Merge run, which were on Linux, the one platform
 the probe forked on. The probe now asks a new process (``_namespace_probe``) and waits for it at
 most ``_NAMESPACE_PROBE_TIMEOUT``.
+
+A child that does not answer is not a no. A no turns the sandbox off for the process (the backend
+is ``none`` and commands run unwrapped), so only the child's own refusal is one. A child that
+times out, cannot start, is killed or exits any other way leaves the answer unknown: the command
+that asked is refused, never run unwrapped, and the next one asks again.
 """
 
 from __future__ import annotations
@@ -81,7 +86,7 @@ def test_a_probe_answers_in_time_while_the_security_logs_writer_holds_its_lock(
         text=True,
         start_new_session=True,
     )
-    bound = sandbox._NAMESPACE_PROBE_TIMEOUT * 2
+    bound = 20.0  # the probes answer in about a second; a fork stuck on the lock never does
     try:
         out, err = child.communicate(timeout=bound)
     except subprocess.TimeoutExpired:
@@ -123,27 +128,104 @@ def test_each_probe_asks_a_new_process_for_the_launchers_namespaces_in_its_order
         assert how.get("preexec_fn") is None
 
 
-@pytest.mark.parametrize(
-    "answer",
-    [
-        subprocess.TimeoutExpired(["probe"], sandbox._NAMESPACE_PROBE_TIMEOUT),
-        OSError("no interpreter"),
-        subprocess.CompletedProcess(["probe"], 1),
-    ],
-    ids=["no answer in time", "no child", "a namespace refused"],
-)
-def test_a_probe_child_that_does_not_say_yes_reads_as_no(
-    monkeypatch: pytest.MonkeyPatch, answer: object
-) -> None:
-    def run(argv: list[str], **how: object) -> object:
+def _child(answer: object):
+    """A ``subprocess.run`` whose namespace probe child answers *answer*: an exit code, or the
+    exception the wait raised. It keeps each command it was asked to start."""
+    asked: list[list[str]] = []
+
+    def run(argv: list[str], **how: object) -> subprocess.CompletedProcess[bytes]:
+        asked.append(argv)
         if isinstance(answer, BaseException):
             raise answer
-        return answer
+        assert isinstance(answer, int)
+        return subprocess.CompletedProcess(argv, answer)
 
+    return run, asked
+
+
+_UNKNOWN = {
+    "no answer in time": subprocess.TimeoutExpired(["probe"], sandbox._NAMESPACE_PROBE_TIMEOUT),
+    "no child": OSError("no interpreter"),
+    "the interpreter could not import the probe": 1,
+    "the probe could not ask": _namespace_probe.UNASKED,
+    "killed": -9,
+}
+
+
+@pytest.fixture
+def linux_probes(monkeypatch: pytest.MonkeyPatch):
+    """A host the probes treat as Linux, with no sandbox-exec, and every cached answer forgotten
+    before and after."""
     monkeypatch.setattr(sys, "platform", "linux")
-    monkeypatch.setattr(sandbox.subprocess, "run", run)
+    monkeypatch.setattr(sandbox, "_probe_sandbox_exec", sandbox._HostFact(lambda: False))
+    sandbox.reset_backend()
+    yield monkeypatch
+    sandbox.reset_backend()
+
+
+def test_only_the_childs_own_refusal_is_a_no(linux_probes: pytest.MonkeyPatch) -> None:
+    run, _ = _child(_namespace_probe.REFUSED)
+    linux_probes.setattr(sandbox.subprocess, "run", run)
     assert sandbox._probe_unshare.__wrapped__() is False
     assert sandbox._probe_unshare_net.__wrapped__() is False
+    for what, answer in _UNKNOWN.items():
+        run, _ = _child(answer)
+        linux_probes.setattr(sandbox.subprocess, "run", run)
+        assert sandbox._probe_unshare.__wrapped__() is None, what
+        assert sandbox._probe_unshare_net.__wrapped__() is None, what
+
+
+@pytest.mark.parametrize("answer", list(_UNKNOWN.values()), ids=list(_UNKNOWN))
+def test_a_command_is_refused_while_the_check_has_not_answered_and_the_next_asks_again(
+    linux_probes: pytest.MonkeyPatch, answer: object
+) -> None:
+    run, asked = _child(answer)
+    linux_probes.setattr(sandbox.subprocess, "run", run)
+    for _ in range(2):
+        with pytest.raises(sandbox.SandboxEnforcementUnavailable) as refused:
+            sandbox.wrap_argv(["echo", "hi"], "auto")
+        assert str(refused.value) == sandbox.UNCHECKED_REFUSAL
+    assert len(asked) == 2, "an unknown answer was kept"
+    assert sandbox.wrap_refusal("auto") == sandbox.UNCHECKED_REFUSAL
+    assert sandbox.detect_backend("auto") == sandbox.UNCHECKED != "none"
+
+    from personalclaw.dashboard.chat_boundary import _on_this_computer
+
+    reading = _on_this_computer("auto", subject="the commands it runs")
+    assert reading["label"] == "Sandbox not checked" and reading["confined"] is True
+
+
+def test_a_refusing_host_falls_back_as_before_and_is_asked_once(
+    linux_probes: pytest.MonkeyPatch,
+) -> None:
+    run, asked = _child(_namespace_probe.REFUSED)
+    linux_probes.setattr(sandbox.subprocess, "run", run)
+    assert sandbox.wrap_argv(["echo", "hi"], "auto") == (["echo", "hi"], None)
+    assert sandbox.wrap_argv(["echo", "hi"], "auto") == (["echo", "hi"], None)
+    assert sandbox.detect_backend("auto") == "none"
+    assert len(asked) == 1, "a no is asked once for the process"
+
+
+def test_a_command_with_no_network_is_refused_while_the_network_check_has_not_answered(
+    linux_probes: pytest.MonkeyPatch,
+) -> None:
+    asked: list[list[str]] = []
+
+    def run(argv: list[str], **how: object) -> subprocess.CompletedProcess[bytes]:
+        asked.append(argv)
+        if "net" in argv:
+            raise subprocess.TimeoutExpired(argv, sandbox._NAMESPACE_PROBE_TIMEOUT)
+        return subprocess.CompletedProcess(argv, _namespace_probe.TAKEN)
+
+    linux_probes.setattr(sandbox.subprocess, "run", run)
+    linux_probes.setattr(
+        "personalclaw.net.policy.no_network_for_commands", lambda *a: "its run takes it away"
+    )
+    for _ in range(2):
+        with pytest.raises(sandbox.SandboxEnforcementUnavailable) as refused:
+            sandbox.wrap_argv(["curl", "example.com"], "auto")
+        assert "take a command's network away did not answer in time" in str(refused.value)
+    assert [argv[-1] for argv in asked] == ["mount", "net", "net"], "the network's unknown was kept"
 
 
 class _Libc:
@@ -165,10 +247,10 @@ def test_the_child_calls_unshare_once_each_in_order_and_stops_at_a_refusal(
     flags = _namespace_probe.NAMESPACES
     granted = _Libc(set())
     monkeypatch.setattr(_namespace_probe.ctypes, "CDLL", lambda *a, **k: granted)
-    assert _namespace_probe.main(["user", "mount", "net"]) == 0
+    assert _namespace_probe.main(["user", "mount", "net"]) == _namespace_probe.TAKEN
     assert granted.calls == [flags["user"], flags["mount"], flags["net"]]
 
     refused = _Libc({flags["mount"]})
     monkeypatch.setattr(_namespace_probe.ctypes, "CDLL", lambda *a, **k: refused)
-    assert _namespace_probe.main(["user", "mount", "net"]) == 1
+    assert _namespace_probe.main(["user", "mount", "net"]) == _namespace_probe.REFUSED
     assert refused.calls == [flags["user"], flags["mount"]]
