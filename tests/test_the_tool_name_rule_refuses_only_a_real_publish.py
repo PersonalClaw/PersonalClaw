@@ -16,7 +16,11 @@ loosening the rule fails it.
 from __future__ import annotations
 
 import json
+import os
 import shlex
+import signal
+import subprocess
+import sys
 
 import cpu_budget
 import pytest
@@ -286,21 +290,84 @@ def test_a_title_that_is_its_command_is_still_refused_when_the_command_is_a_push
 
 MEGABYTE = 1_000_000
 
+#: The CPU seconds a 1 MB line may take, set by the regression it guards, not by a runner. The
+#: quadratic search (the push pattern's leading ``.*`` kept) takes about 1400 s on a 1 MB line that
+#: holds no push, on a bare-metal Mac (2.3 s at 40 KB, four times that at each doubling): 280 times
+#: this bar. The linear rule takes 0.17 s there, and read 1.21 s on a loaded macOS virtual machine
+#: (#5643's run, python-suite-macos 2/5): a bar of one second failed it on the runner's speed.
+BAR = 5.0
+
+_READ = f"cat .{GIT}hub/workflows/ci.yml | grep {PUSH} " + "a" * MEGABYTE
+
 
 @pytest.mark.parametrize(
     ("line", "refused"),
     [
-        (f"cat .{GIT}hub/workflows/ci.yml | grep {PUSH} " + "a" * MEGABYTE, False),
+        (_READ, False),
         (f'{GIT} commit -m "' + f"{PUSH} " * (MEGABYTE // 5) + '"', False),
         ("a" * MEGABYTE + f" ; {GIT} {PUSH} origin main", True),
     ],
     ids=["a-read-with-one-long-word", "a-long-commit-message", "a-push-at-the-end"],
 )
-def test_a_one_megabyte_line_is_judged_in_under_a_second(line, refused):
+def test_a_one_megabyte_line_is_judged_within_the_bar(line, refused):
     """🔴 Red before: the push pattern's leading `.*` made the search quadratic, and a 1 MB read
     took minutes. Measured on the push rule alone (`_may_push`), the part this rule adds, as the CPU
     time of its work, a tracer's set aside (`tests/cpu_budget.py`): other processes on a loaded
-    machine stretch the wall clock without adding any work, and coverage's tracer adds its own."""
+    machine stretch the wall clock without adding any work, and coverage's tracer adds its own.
+    The bar is :data:`BAR`, and why it is that number is said there."""
     took = cpu_budget.seconds(lambda: security._may_push(line))
     assert security._may_push(line) is refused
-    assert took < 1.0, f"{took:.2f}s"
+    assert took < BAR, f"{took:.2f}s"
+
+
+#: The child the plant below starts: the push rule with its pattern's leading ``.*`` put back, on
+#: the line it reads from stdin, with the CPU it may use capped at what its start used plus
+#: :data:`BAR` (``RLIMIT_CPU`` counts whole seconds of the process's CPU, so rounded up). Killed by
+#: the kernel's ``SIGXCPU``, the search used the whole bar; done, it prints ``done``.
+_QUADRATIC_CHILD = """
+import math, re, resource, sys
+from personalclaw import security
+from personalclaw.shell_denylist import GIT_PUSH_BASELINE_PATTERN
+line = sys.stdin.read()
+if sys.argv[1] == "quadratic":
+    security._BASELINE_PUSH_RE = re.compile(GIT_PUSH_BASELINE_PATTERN, re.IGNORECASE)
+used = sum(resource.getrusage(resource.RUSAGE_SELF)[:2])
+cap = math.ceil(used + float(sys.argv[2]))
+resource.setrlimit(resource.RLIMIT_CPU, (cap, cap + 5))
+security._may_push(line)
+print("done")
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="RLIMIT_CPU and SIGXCPU are POSIX")
+def test_the_quadratic_search_it_guards_against_does_not_finish_within_the_bar(tmp_path):
+    """The bar still catches the regression: with the push pattern's leading `.*` put back, the
+    1 MB read uses all of :data:`BAR` in CPU and is stopped there, while the rule as it is finishes
+    on the same line in the same child. A child, so a search that would run for minutes is cut at
+    the bar by the kernel, with a home of its own as the real-home guard requires. It runs about
+    6.5 s on a bare-metal Mac (the bar's 5 s of CPU, the linear child and two starts), under the
+    suite's 30 s default cap: about 4.6 times its time, so a hang here costs its leg little."""
+    from personalclaw.shell_denylist import GIT_PUSH_BASELINE_PATTERN
+
+    assert GIT_PUSH_BASELINE_PATTERN.startswith(".*"), "premise: the pattern has the leading .*"
+    env = {k: v for k, v in os.environ.items() if k != "PERSONALCLAW_HOME"}
+    env["HOME"] = str(tmp_path / "home")
+
+    def run(which: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [sys.executable, "-c", _QUADRATIC_CHILD, which, str(BAR)],
+            input=_READ,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=100,
+            check=False,
+        )
+
+    linear = run("linear")
+    assert (linear.returncode, linear.stdout.strip()) == (0, "done"), linear.stderr[-2000:]
+    quadratic = run("quadratic")
+    assert quadratic.returncode == -signal.SIGXCPU, (
+        f"the quadratic search exited {quadratic.returncode} within {BAR}s of CPU:"
+        f" {quadratic.stdout.strip()!r} {quadratic.stderr[-2000:]}"
+    )

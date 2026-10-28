@@ -51,6 +51,7 @@ from __future__ import annotations
 import itertools
 import random
 import re
+import statistics
 import string
 import time
 
@@ -511,10 +512,14 @@ _NOT_LINEAR = 8.0
 _TICKS = 100
 
 
+#: How many rounds :func:`_growth` measures, each a sample of the small input and then the large.
+_ROUNDS = 5
+
+
 def _cpu_cost(redact, text: str, clock=time.thread_time, resolution: float | None = None) -> float:
-    """The least CPU time this thread spent in one run of *redact* over *text*, of three samples.
-    Each sample repeats the run until *clock* has advanced :data:`_TICKS` of its *resolution*
-    (the thread clock's own by default), and divides by the runs it made.
+    """The CPU time this thread spent in one run of *redact* over *text*: one sample, which repeats
+    the run until *clock* has advanced :data:`_TICKS` of its *resolution* (the thread clock's own by
+    default), and divides by the runs it made.
 
     CPU time, not wall time. On a CI runner whose 4 CPUs ran 4 workers, the three runs of the
     large scp input, back to back, sat inside one stretch with no CPU for them (run 40477167976),
@@ -523,22 +528,31 @@ def _cpu_cost(redact, text: str, clock=time.thread_time, resolution: float | Non
     CPU, or for the GIL behind another thread, and counts the work, which a quadratic reading
     still multiplies by 16 (``test_a_quadratic_redactor_fails_the_bound``)."""
     least = _TICKS * (resolution or time.get_clock_info("thread_time").resolution)
-    best = float("inf")
-    for _ in range(3):
-        runs, started = 0, clock()
-        while True:
-            redact(text)
-            runs += 1
-            spent = clock() - started
-            if spent >= least:
-                break
-        best = min(best, spent / runs)
-    return best
+    runs, started = 0, clock()
+    while True:
+        redact(text)
+        runs += 1
+        spent = clock() - started
+        if spent >= least:
+            return spent / runs
 
 
 def _growth(redact, small: str, large: str, **clock) -> float:
-    """How many times *large* costs *small* in CPU time (:func:`_cpu_cost`, given *clock*)."""
-    return _cpu_cost(redact, large, **clock) / max(_cpu_cost(redact, small, **clock), 1e-6)
+    """How many times *large* costs *small* in CPU time: the median, over :data:`_ROUNDS` rounds,
+    of a sample of the large input over a sample of the small one taken just before it
+    (:func:`_cpu_cost`, given *clock*).
+
+    In rounds, not each input's samples back to back: on a CI runner the three samples of the
+    large input, one run each and taken in one stretch of about 85 ms, each cost twice what a run
+    did around them, while the small input's, taken after, did not, and a linear cost read ×8.0
+    (run 40746112284, python-suite 1/3 on Linux). A stretch like that falls on one round, or
+    across two, and the median leaves it out; a quadratic cost reads ×16 in every round."""
+    ratios = []
+    for _ in range(_ROUNDS):
+        cheap = _cpu_cost(redact, small, **clock)
+        dear = _cpu_cost(redact, large, **clock)
+        ratios.append(dear / max(cheap, 1e-6))
+    return statistics.median(ratios)
 
 
 class TestTheCostTracksNothingQuadratic:
@@ -662,6 +676,28 @@ class TestTheReadingsPastTheAuthorityStayLinear:
         small, large = self._scp_inputs()
         ratio = _growth(stalled, small, large)
         assert ratio < _NOT_LINEAR, f"a stalled runner grew ×{ratio:.1f}: the stall was counted"
+
+    def test_a_stretch_that_bills_three_runs_double_does_not_fail_a_linear_reading(self):
+        """🔴 Red before (each input's samples back to back): the CI failure's shape (run
+        40746112284), a stretch in which three runs in a row, from the first of the large input,
+        cost the thread twice their CPU. Here a stand-in redactor spends 10 ns of a fake thread
+        clock per character, and 20 in the stretch, so its cost is otherwise exactly linear. With
+        the three large samples back to back, all three fell in the stretch and a linear cost read
+        ×8.0; in rounds it falls on one round's large sample and the next round's two, and the
+        median reads ×4."""
+        small, large = self._scp_inputs()
+        now, calls, stretch = [0.0], [0], []
+
+        def spend(text: str) -> None:
+            calls[0] += 1
+            if len(text) > len(small) and not stretch:
+                stretch.append(calls[0])
+            dear = bool(stretch) and stretch[0] <= calls[0] < stretch[0] + 3
+            now[0] += len(text) * (2e-8 if dear else 1e-8)
+
+        ratio = _growth(spend, small, large, clock=lambda: now[0], resolution=1e-9)
+        assert stretch, "premise: the large input was measured"
+        assert 3.9 < ratio < 4.1, f"a linear cost read ×{ratio:.2f} across a stretch billed double"
 
     def test_a_clock_coarser_than_a_run_still_reads_a_linear_cost_as_four_times(self):
         """🔴 Red before (one run a sample): on a thread clock that ticks every 15.6 ms, as
