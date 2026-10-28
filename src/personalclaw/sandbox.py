@@ -699,6 +699,12 @@ class SandboxEnforcementUnavailable(RuntimeError):
     """
 
 
+class SandboxCheckUnanswered(SandboxEnforcementUnavailable):
+    """The check of whether this host's sandbox works has not answered (:data:`UNCHECKED`), so a
+    command that would run in it is refused for this call. The next call checks again.
+    ``str()`` is :data:`UNCHECKED_REFUSAL`."""
+
+
 def _system_utility_path() -> str:
     """The POSIX standard utility path, independent of ``$PATH``.
 
@@ -725,9 +731,15 @@ def _resolve_enforcement_bin(name: str) -> str | None:
     return shutil.which(name, path=_system_utility_path())
 
 
-@functools.lru_cache(maxsize=1)
-def _probe_sandbox_exec() -> bool:
-    """Return True if macOS ``sandbox-exec`` actually works.
+#: How long the ``sandbox-exec`` probe may take to answer. It runs in about 20 ms (a median of
+#: 20 ms one at a time and at most 78 ms sixteen at once, on a host at load 12, 2026-10-28), and an
+#: unanswered probe costs the command that asked a refusal, so the bound is far past any run.
+_SANDBOX_EXEC_PROBE_TIMEOUT = 30.0
+
+
+@_HostFact
+def _probe_sandbox_exec() -> bool | None:
+    """Return True if macOS ``sandbox-exec`` actually works, and None when that is not known.
 
     Uses a file-based profile and runs what a real ``sandbox_exec_argv()`` wrap runs first, the
     resolved ``env`` (``env -i`` prints nothing and exits 0), so the check is of the wrap itself.
@@ -739,6 +751,12 @@ def _probe_sandbox_exec() -> bool:
     :func:`_resolve_enforcement_bin` — the system utility path, never ``$PATH`` — for the
     same reason the wrap itself does: an agent-influenceable ``$PATH`` must not be able to
     point the *capability probe* at a stand-in either.
+
+    A missing binary, or a ``sandbox-exec`` that ran and exited non-zero, is a no, kept for the
+    process, and the backend falls back as it always has. A probe that could not be made or did
+    not finish (a timeout, a child that cannot start or was killed, a profile it could not write)
+    is unknown: never kept and never read as no, which would turn the sandbox off
+    (:func:`detect_backend`).
     """
     if sys.platform != "darwin":
         return False
@@ -757,15 +775,22 @@ def _probe_sandbox_exec() -> bool:
             _system_utility_path(),
         )
         return False
-    fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="personalclaw_probe_")
+    try:
+        fd, profile_path = tempfile.mkstemp(suffix=".sb", prefix="personalclaw_probe_")
+    except OSError as exc:
+        logger.warning("The sandbox-exec check could not write its profile: %s", exc)
+        return None
     try:
         os.write(fd, b"(version 1)(allow default)")
         os.close(fd)
         r = subprocess.run(
             [sb, "-f", profile_path, env_bin, "-i"],
             capture_output=True,
-            timeout=5,
+            timeout=_SANDBOX_EXEC_PROBE_TIMEOUT,
         )
+        if r.returncode < 0:
+            logger.warning("The sandbox-exec check was ended by signal %d", -r.returncode)
+            return None
         if r.returncode != 0:
             from personalclaw.security import mask_child_output
 
@@ -776,8 +801,8 @@ def _probe_sandbox_exec() -> bool:
             )
         return r.returncode == 0
     except Exception as exc:
-        logger.debug("sandbox-exec probe failed: %s", exc)
-        return False
+        logger.warning("The sandbox-exec check did not answer: %s", exc)
+        return None
     finally:
         try:
             os.unlink(profile_path)
@@ -1600,8 +1625,9 @@ def sandbox_exec_argv(
 _backend: str | None = None  # "namespace", "sandbox-exec", "none"
 _backend_config_mode: str | None = None  # config mode when backend was cached
 
-#: What :func:`detect_backend` answers while the host's namespace check has not answered
-#: (:func:`_probe_unshare` is ``None``). Never cached: the next call asks again.
+#: What :func:`detect_backend` answers while a check of the host's sandbox has not answered
+#: (:func:`_probe_unshare` or :func:`_probe_sandbox_exec` is ``None``). Never cached: the next
+#: call asks again.
 UNCHECKED = "unchecked"
 
 #: The sentence a command is refused with while the sandbox's check has not answered.
@@ -1614,8 +1640,8 @@ UNCHECKED_REFUSAL = (
 def detect_backend(config_mode: str = "auto") -> str:
     """Detect the best available sandbox backend.
 
-    Cached after first call; cache is invalidated if *config_mode* changes. While the Linux
-    namespace check has not answered (:func:`_probe_unshare` is ``None``) the answer is
+    Cached after first call; cache is invalidated if *config_mode* changes. While a check has
+    not answered (:func:`_probe_unshare` or :func:`_probe_sandbox_exec` is ``None``) the answer is
     :data:`UNCHECKED`, which is not cached and is never ``"none"``: a command that would be
     sandboxed is refused for that call (:data:`UNCHECKED_REFUSAL`), never run without its sandbox,
     and the next call checks again.
@@ -1639,7 +1665,9 @@ def detect_backend(config_mode: str = "auto") -> str:
         return UNCHECKED
     elif namespaces:
         _backend = "namespace"
-    elif _probe_sandbox_exec():
+    elif (seatbelt := _probe_sandbox_exec()) is None:
+        return UNCHECKED
+    elif seatbelt:
         _backend = "sandbox-exec"
     else:
         _backend = "none"
@@ -1805,7 +1833,7 @@ def _wrapped(argv: list[str], mode: str, *, network: bool) -> tuple[list[str], s
     backend = detect_backend(config_mode=mode)
 
     if backend == UNCHECKED:
-        raise SandboxEnforcementUnavailable(UNCHECKED_REFUSAL)
+        raise SandboxCheckUnanswered(UNCHECKED_REFUSAL)
     if backend == "namespace":
         wrapped = namespace_argv(argv, level, network=network)
         # The launcher script is argv[1] — caller should clean it up

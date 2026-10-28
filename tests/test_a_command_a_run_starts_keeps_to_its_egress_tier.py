@@ -132,9 +132,10 @@ def _os_sandbox_takes_the_network() -> bool:
     or Linux user and mount namespaces that allow a network namespace too."""
     sandbox.reset_backend()
     backend = sandbox.detect_backend("auto")
-    if backend == "namespace":
-        return getattr(sandbox, "_probe_unshare_net", sandbox._probe_unshare)()
-    return backend == "sandbox-exec"
+    takes = sandbox._probe_unshare_net() if backend == "namespace" else backend == "sandbox-exec"
+    if backend == sandbox.UNCHECKED or takes is None:  # never a skip: it would hide the test
+        raise RuntimeError("the sandbox's check did not answer")
+    return takes
 
 
 needs_the_os_sandbox = pytest.mark.skipif(

@@ -254,3 +254,91 @@ def test_the_child_calls_unshare_once_each_in_order_and_stops_at_a_refusal(
     monkeypatch.setattr(_namespace_probe.ctypes, "CDLL", lambda *a, **k: refused)
     assert _namespace_probe.main(["user", "mount", "net"]) == _namespace_probe.REFUSED
     assert refused.calls == [flags["user"], flags["mount"]]
+
+
+# ── macOS: the sandbox-exec probe answers the same three ways ─────────────────────────────────
+
+
+@pytest.fixture
+def mac_probes(monkeypatch: pytest.MonkeyPatch):
+    """A host the probes treat as a Mac whose ``sandbox-exec`` and ``env`` are both present, with
+    every cached answer forgotten before and after."""
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(sandbox, "_resolve_enforcement_bin", lambda name: f"/usr/bin/{name}")
+    sandbox.reset_backend()
+    yield monkeypatch
+    sandbox.reset_backend()
+
+
+def _seatbelt(answer: object):
+    """A ``subprocess.run`` whose ``sandbox-exec`` probe answers *answer*: an exit code, or the
+    exception the wait raised. It keeps each command it was asked to start."""
+    asked: list[list[str]] = []
+
+    def run(argv: list[str], **how: object) -> subprocess.CompletedProcess[bytes]:
+        asked.append(argv)
+        if isinstance(answer, BaseException):
+            raise answer
+        assert isinstance(answer, int)
+        return subprocess.CompletedProcess(argv, answer, b"", b"refused")
+
+    return run, asked
+
+
+_SEATBELT_UNKNOWN = {
+    "no answer in time": subprocess.TimeoutExpired(["sandbox-exec"], 30),
+    "no child": OSError("cannot start sandbox-exec"),
+    "killed": -9,
+}
+
+
+@pytest.mark.parametrize("answer", list(_SEATBELT_UNKNOWN.values()), ids=list(_SEATBELT_UNKNOWN))
+def test_a_mac_command_is_refused_while_its_check_has_not_answered_and_the_next_asks_again(
+    mac_probes: pytest.MonkeyPatch, answer: object
+) -> None:
+    run, asked = _seatbelt(answer)
+    mac_probes.setattr(sandbox.subprocess, "run", run)
+    for _ in range(2):
+        with pytest.raises(sandbox.SandboxCheckUnanswered) as refused:
+            sandbox.wrap_argv(["echo", "hi"], "auto")
+        assert str(refused.value) == sandbox.UNCHECKED_REFUSAL
+    assert len(asked) == 2, "an unknown answer was kept"
+    assert sandbox.detect_backend("auto") == sandbox.UNCHECKED
+
+
+def test_a_mac_check_that_cannot_write_its_profile_is_unknown(
+    mac_probes: pytest.MonkeyPatch,
+) -> None:
+    def no_room(*args: object, **kwargs: object) -> tuple[int, str]:
+        raise OSError("no space left on device")
+
+    mac_probes.setattr(sandbox.tempfile, "mkstemp", no_room)
+    with pytest.raises(sandbox.SandboxCheckUnanswered):
+        sandbox.wrap_argv(["echo", "hi"], "auto")
+
+
+def test_a_mac_whose_sandbox_exec_refuses_falls_back_as_before_and_is_asked_once(
+    mac_probes: pytest.MonkeyPatch,
+) -> None:
+    run, asked = _seatbelt(1)
+    mac_probes.setattr(sandbox.subprocess, "run", run)
+    assert sandbox.wrap_argv(["echo", "hi"], "auto") == (["echo", "hi"], None)
+    assert sandbox.wrap_argv(["echo", "hi"], "auto") == (["echo", "hi"], None)
+    assert sandbox.detect_backend("auto") == "none"
+    assert len(asked) == 1, "a no is asked once for the process"
+
+
+def test_a_program_the_none_provider_starts_says_the_check_did_not_answer(
+    linux_probes: pytest.MonkeyPatch,
+) -> None:
+    """An agent CLI, a terminal, a second opinion: their refusal names the unanswered check, not
+    the desktop app's missing launcher, and the program is not started on the host."""
+    from personalclaw.sandbox_providers import SandboxSpec, SandboxUnavailableError
+    from personalclaw.sandbox_providers.none import NoneSandboxProvider
+
+    run, _ = _child(subprocess.TimeoutExpired(["probe"], sandbox._NAMESPACE_PROBE_TIMEOUT))
+    linux_probes.setattr(sandbox.subprocess, "run", run)
+    with pytest.raises(SandboxUnavailableError) as refused:
+        NoneSandboxProvider().wrap(SandboxSpec(workspace_dir="/tmp", env={}), ["bash", "-l"])
+    assert "did not answer" in refused.value.why
+    assert "desktop app" not in refused.value.why

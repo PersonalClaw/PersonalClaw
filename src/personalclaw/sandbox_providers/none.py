@@ -78,6 +78,13 @@ class NoneSandboxProvider(SandboxProvider):
         (``sandbox.wrap_program_argv``): an agent CLI reaches its model itself."""
         try:
             wrapped, cleanup_path = sandbox.wrap_program_argv(list(argv), mode=spec.mode)
+        except sandbox.SandboxCheckUnanswered as exc:
+            raise SandboxUnavailableError(
+                what="This command was not run",
+                why="PersonalClaw's check of whether this computer can sandbox it did not answer "
+                "in time.",
+                fix="try it again.",
+            ) from exc
         except sandbox.SandboxEnforcementUnavailable as exc:
             from personalclaw.python_children import INSTALL_COMMAND
 
