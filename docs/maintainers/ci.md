@@ -613,8 +613,11 @@ Every entry declares:
 - `toolchain` and `cache`;
 - `security`: `security` when its result is security evidence, else `ordinary`. A `security`
   job is never selected out; the job's result is never rerun or reused, and a security-marked
-  test is never rerun; an ordinary failed test inside it gets one diagnostic rerun, recorded
-  only (see "The diagnostic rerun" under "The quarantine");
+  test is never rerun; an ordinary failed test inside it gets one diagnostic rerun (see "The
+  diagnostic rerun" under "The quarantine"). On a pull request's run the verdict's flake rule
+  reads that same attempt's own rerun and may pass ordinary flakes only: a security-marked
+  failure is never rerun, so it stays red, and the job is passed only when every security-marked
+  test in it passed on attempt 1. No result is reused across heads;
 - `timeout_min`, 2 or more, since a local run stops a job a minute before its cap.
 
 An entry may also set `platform`, `python`, `live`, `reuse`, `env`, `workers`, `workers_env`,
@@ -1035,9 +1038,32 @@ tests: on a failure, each test `run-job`'s diagnostic rerun classified `flake` o
 failure`, or left `not classified` (a rail, a security-marked test, a rerun that said nothing of
 it), with the record's reason; on a pass, each `quarantined` failure an entry of
 `tests/quarantine.toml` waived. The verdict lists every one, by job, attempt and test, after its
-reasons, and reads them for nothing else: the first result is the result. So a job whose only
-failure is a flake reads red as a `failure`, with the flake listed, and the same failure under a
-valid quarantine entry is a pass that reads green, with the quarantined failure listed. A test's
+reasons. A job whose only failure is a flake reads red as a `failure`, with the flake listed,
+unless the flake rule below passes it, and the same failure under a valid quarantine entry is a
+pass that reads green, with the quarantined failure listed.
+
+**The flake rule.** Given a pull request's changed paths (`--changed`, NUL-separated) and its
+run's jobs on the attempt (`--jobs`, as `gh api --paginate --slurp` lists them), a run whose only
+failures are flakes reads green, and the verdict names each one, when all of these hold:
+
+- each failing job failed one way only: on attempt 1, one step exited 1 and every other exited 0,
+  the diagnostic rerun ran alone in a new process and exited 0, and every test its record names
+  is a `flake`. A rail, a security-marked test and a test the rerun skipped are never classified,
+  so a job that names one stays red; so does a repeated failure beside a flake;
+- the pull request changes no file the test's run reads: for pytest its own file, every
+  `conftest.py` above it and `pyproject.toml`; for Vitest its own file, `web/vitest.config.ts`,
+  `web/vite.config.ts` and `web/src/test/`. A test the pull request adds or edits is never
+  passed, and nor is one under a conftest or configuration it changes;
+- the run holds at most two such tests;
+- nothing else in the run fell short: every other planned key is green, and every job of the
+  attempt that did not pass is a failing key's, failed in its run-job line alone.
+
+A cancelled or timed-out shard is never a flake: it has no rerun, or no record, and its other
+tests never ran. An end-to-end test is never passed: Playwright's own retry runs beside the other
+workers, not alone. Without a changed list, or with an empty one, the rule passes nothing, and a
+push's run is never given one. The verdict writes one `::notice` titled `flake passed` per test
+it passes, and the merge controller names them in its green title. Each passed flake reaches the
+per-test history (#3948) with the tested push's history, whose pull request run it was. A test's
 id is the suite's text, so each one is written on its own line inside one code span: a backtick
 reads as a quote, and a line break or any other character that is not printable as its escape.
 GitHub refuses a step summary over 1 MiB whole, the reasons with it, so the step summary lists
@@ -2604,7 +2630,8 @@ and nothing else went wrong, its failed tests are read from the step's own JUnit
 and rerun once, alone, in a fresh process (`-n 0` when the step ran workers; a step that names no
 worker count ran in one process already, and its pytest may have no xdist), with the step's
 per-test `--timeout` and inside the job's remaining time. It classifies only: the job stays red
-whatever the rerun shows, since the first result is the result and only an entry here waives a
+whatever the rerun shows. On a pull request's run, the verdict's flake rule may pass a run whose
+only failures it classified `flake` (see "The flake rule"); otherwise only an entry here waives a
 known failure.
 
 - **Which test a case names:** pytest names a case from its own rootdir, which can be a
@@ -2618,9 +2645,11 @@ known failure.
   security-marked test still starts one, which collects its module and deselects it (exit 5),
   so the test itself never runs again.
 - **A security-posture job:** the job's result is never rerun or reused, and a security-marked
-  test is never rerun; an ordinary failed test inside it gets one diagnostic rerun, recorded
-  only. The suite jobs (`python-suite`, `python-suite-macos`) are such jobs, so their ordinary
-  failures are classified while the job stays red.
+  test is never rerun; an ordinary failed test inside it gets one diagnostic rerun. The suite
+  jobs (`python-suite`, `python-suite-macos`) are such jobs, so their ordinary failures are
+  classified, and the job stays red unless the flake rule passes them: it reads the same
+  attempt's own rerun, passes ordinary flakes only, and only when every security-marked test in
+  the job passed on attempt 1.
 - **Recorded three ways:** each failed test as `flake` (it passed alone) or `repeated failure`
   (it failed again), or null with the reason it was not rerun, in the job record's `rerun` field;
   as a `rerun_result` property on its case in the job's report, which the telemetry collector

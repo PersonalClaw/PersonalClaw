@@ -139,11 +139,32 @@ class FakeApi:
 
     def jobs(self, attempt: int, *jobs: tuple[str, str, str | None]) -> None:
         listed = [
-            {"name": n, "status": s, "conclusion": c, "labels": ["ubuntu-24.04"]}
-            for n, s, c in jobs
+            {
+                "id": 100 * attempt + i,
+                "name": n,
+                "status": s,
+                "conclusion": c,
+                "labels": ["ubuntu-24.04"],
+            }
+            for i, (n, s, c) in enumerate(jobs)
         ]
         path = f"/repos/{REPO}/actions/runs/{RUN}/attempts/{attempt}/jobs?per_page=100&page=1"
         self.answers[path] = {"total_count": len(listed), "jobs": listed}
+        # The results job's annotations: none, unless a case plants the flakes it passed.
+        for job in listed:
+            if job["name"] == "results":
+                self.answers.setdefault(self.notes_path(attempt), [])
+
+    def notes_path(self, attempt: int) -> str:
+        path = f"/repos/{REPO}/actions/runs/{RUN}/attempts/{attempt}/jobs?per_page=100&page=1"
+        [job] = [j for j in self.answers[path]["jobs"] if j["name"] == "results"]
+        return f"/repos/{REPO}/check-runs/{job['id']}/annotations?per_page=100&page=1"
+
+    def flakes(self, attempt: int, *messages: str, title: str = "flake passed") -> None:
+        """Plant the notices the results job wrote for each flake the rule passed."""
+        self.answers[self.notes_path(attempt)] = [
+            {"annotation_level": "notice", "title": title, "message": m} for m in messages
+        ]
 
     def tree(
         self,
@@ -253,6 +274,67 @@ def test_a_results_job_still_running_posts_failure() -> None:
     api = FakeApi()
     api.jobs(1, ("results", "in_progress", None))
     assert "is 'in_progress'" in _red(api).output["title"]
+
+
+# ── The flakes the verdict passed (tools/ci/verdict.py's flake rule) ───────────────────────────
+
+FLAKE = "tests/test_timing.py::test_it_answers_in_time (python-suite (1/3))"
+
+
+def test_a_green_run_names_the_flakes_its_verdict_passed() -> None:
+    api = FakeApi()
+    api.flakes(1, FLAKE)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success"
+    assert found.output["title"] == (
+        f"Green: every planned job passed on this head · passed 1 flake: {FLAKE}"
+    )
+    assert "the flake rule passed 1 failed test(s)" in found.output["summary"]
+    assert f"`{FLAKE}`" in found.output["summary"]
+    # The receipt is unchanged: the flakes are said, never a field a reader holds a head to.
+    receipt = merge_verdict.read_receipt(mc.check_body(found.body()))
+    assert receipt.evidence_digests == {"ci-record-unit": DIGEST}
+
+
+def test_a_long_flake_name_is_cut_in_the_title_and_whole_in_the_summary() -> None:
+    api = FakeApi()
+    name = "tests/test_timing.py::test_it[" + "x" * 200 + "] (python-suite (1/3))"
+    api.flakes(1, name, FLAKE)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success"
+    assert " · passed 2 flakes: " in found.output["title"]
+    assert name not in found.output["title"] and name in found.output["summary"]
+
+
+def test_notices_the_verdict_does_not_write_are_not_flakes() -> None:
+    """run-job's own warnings name its classifications in the stage jobs; only the results job's
+    `flake passed` notices are the verdict's."""
+    api = FakeApi()
+    api.flakes(1, FLAKE, title="flake")
+    found = _decide(api)
+    assert isinstance(found, mc.Posting)
+    assert found.output["title"] == "Green: every planned job passed on this head"
+
+
+@pytest.mark.parametrize(
+    ("messages", "says"),
+    [
+        pytest.param((FLAKE, FLAKE + "2", FLAKE + "3"), "names 3 flakes passed", id="three"),
+        pytest.param(("  ",), "with no test", id="a notice with no test"),
+    ],
+)
+def test_a_results_job_naming_what_the_rule_never_passes_is_red(
+    messages: tuple[str, ...], says: str
+) -> None:
+    api = FakeApi()
+    api.flakes(1, *messages)
+    assert says in _red(api).output["title"]
+
+
+def test_unreadable_annotations_are_red() -> None:
+    api = FakeApi()
+    del api.answers[api.notes_path(1)]
+    assert "annotations" in _red(api).output["title"]
 
 
 def test_a_red_on_an_earlier_attempt_is_never_rerun_into_green() -> None:

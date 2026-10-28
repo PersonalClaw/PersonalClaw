@@ -97,7 +97,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import merge_verdict, trust, workflows
+from . import merge_verdict, trust, verdict, workflows
 
 #: The run that brings a verdict: merge.yml, by its path in this repository.
 MERGE_WORKFLOW = f".github/workflows/{workflows.MERGE}"
@@ -255,6 +255,50 @@ def results_reasons(get: Get, repo: str, run: Run) -> tuple[list[str], list[str]
         raw = job.get("labels")
         labels = [str(x) for x in raw] if isinstance(raw, list) else []
     return reasons, labels
+
+
+def passed_flakes(get: Get, repo: str, run: Run) -> list[str]:
+    """The tests the flake rule passed in the run, each as its ``results`` job names it: one
+    ``::notice`` titled ``verdict.FLAKE_NOTICE`` per test, read from that job's annotations on
+    every attempt. Names more than ``verdict.MAX_FLAKES`` on one attempt, a notice with no text,
+    or annotations that cannot be read, are unread: the controller names what main's verdict
+    passed, and a results job that says more is not main's verdict."""
+    names: list[str] = []
+    for attempt in range(1, run.attempt + 1):
+        jobs = _pages(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/{attempt}/jobs", "jobs")
+        found = [j for j in jobs if j.get("name") == RESULTS_JOB]
+        job_id = _int(found[0].get("id")) if len(found) == 1 else None
+        if job_id is None:
+            raise Unread(f"attempt {attempt} has no one `{RESULTS_JOB}` job to read flakes from")
+        notes = _all_pages(get, f"/repos/{repo}/check-runs/{job_id}/annotations")
+        these = [
+            n.get("message")
+            for n in notes
+            if n.get("title") == verdict.FLAKE_NOTICE and n.get("annotation_level") == "notice"
+        ]
+        if len(these) > verdict.MAX_FLAKES:
+            raise Unread(
+                f"attempt {attempt}'s `{RESULTS_JOB}` names {len(these)} flakes passed, more than"
+                f" the {verdict.MAX_FLAKES} the flake rule passes"
+            )
+        if not all(isinstance(m, str) and m.strip() for m in these):
+            raise Unread(f"attempt {attempt}'s `{RESULTS_JOB}` names a flake passed with no test")
+        names += [str(m).strip() for m in these]
+    return names
+
+
+#: The most of one flake's name a green title holds: the summary holds it whole.
+_FLAKE_TITLE_CHARS = 120
+
+
+def flakes_note(names: list[str]) -> str:
+    """The green title's note of the flakes it passed: empty for none."""
+    if not names:
+        return ""
+    short = [
+        n if len(n) <= _FLAKE_TITLE_CHARS else n[: _FLAKE_TITLE_CHARS - 1] + "…" for n in names
+    ]
+    return f" · passed {len(names)} flake{'s' if len(names) > 1 else ''}: {'; '.join(short)}"
 
 
 # ── The trees ─────────────────────────────────────────────────────────────────────────────────
@@ -884,6 +928,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         records = evidence(get, repo, run) if not reasons else {}
         if not reasons and not records:
             reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
+        flakes = passed_flakes(get, repo, run) if not reasons else []
     except (Unread, trust.Refused) as exc:
         return Outcome(posting=_red(run, [*reasons, f"unread: {exc}"], head))
     # A head that changes a definition: its contract run is started once, at main's tip, and its
@@ -930,10 +975,21 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             "- its dependency review passed",
             "- CodeQL analysed every language main has, and found no alert it brings",
             f"- {len(records)} job records, their digests in the receipt below",
+            *(
+                [
+                    f"- the flake rule passed {len(flakes)} failed test(s), each of which passed"
+                    " alone in a new process, in a file this head does not change: "
+                    + ", ".join(f"`{n}`" for n in flakes)
+                ]
+                if flakes
+                else []
+            ),
         ]
     )
     output = merge_verdict.render_output(
-        receipt, title="Green: every planned job passed on this head", summary=summary
+        receipt,
+        title="Green: every planned job passed on this head" + flakes_note(flakes),
+        summary=summary,
     )
     posting = Posting(head, "success", output, run.url, f"{run.id}/{run.attempt}")
     return Outcome(posting=posting, cleanup=cleanup)

@@ -12556,6 +12556,23 @@ if ! [[ "$apps" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 echo "apps-partner=$apps" | tee -a "$GITHUB_OUTPUT"
 """,  # noqa: E501
+        "the pull request's changed paths, for the flake rule": r"""
+set -uo pipefail
+out="$RUNNER_TEMP/changed-paths/changed.z"
+mkdir -p "$RUNNER_TEMP/changed-paths"
+parents=$(git cat-file -p HEAD | sed -n 's/^parent //p' | tr '\n' ' ')
+read -r main head extra <<< "$parents"
+if [ -z "${head:-}" ] || [ -n "${extra:-}" ] || [ "$head" != "$PR_HEAD" ]; then
+  echo "::warning title=no changed list::the checkout is not this pull request's test merge, so the flake rule passes no flake"
+  exit 0
+fi
+if git fetch --no-tags --depth=1 origin "$main" \
+   && git diff --name-only -z --no-renames "$main" HEAD > "$out" && [ -s "$out" ]; then
+  echo "ok=true" >> "$GITHUB_OUTPUT"
+else
+  echo "::warning title=no changed list::the test merge's changed paths could not be read, so the flake rule passes no flake"
+fi
+""",  # noqa: E501
         "the changed paths, against main's tip": r"""
 set -uo pipefail
 listed="$RUNNER_TEMP/changed.json"
@@ -12731,6 +12748,49 @@ python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.
   ${proof:+--superseded "$proof"} \
   --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
 """,  # noqa: E501
+        # The flake rule's lists (tools/ci/verdict.py), on a pull request's run: the verdict step
+        # reads its inputs, then the two lists, then calls main's verdict with them. Listed before
+        # the workflows run it (#4584 step 4): until they do, the step above stands.
+        "the verdict's inputs, read": r"""
+set -u
+judge="$RUNNER_TEMP/verdict.py"
+if ! gh api -H "Accept: application/vnd.github.raw" \
+     "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=${JUDGE:-main}" > "$judge"; then
+  echo "::error title=no verdict::main's tools/ci/verdict.py could not be read, so nothing judged this run. Re-run the job."
+  exit 1
+fi
+printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
+printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
+printf '%s' "${KEY_PARTNERS:-"{}"}" > "$RUNNER_TEMP/key-partners.json"
+mkdir -p "$RUNNER_TEMP/records"
+proof=""
+if [ -f "$RUNNER_TEMP/superseded.json" ]; then
+  proof="$RUNNER_TEMP/superseded.json"
+fi
+""",  # noqa: E501
+        "the flake rule's two lists, on a pull request only": r"""
+# The flake rule's two lists, on a pull request only: its changed paths, and this run's
+# jobs on this attempt. Without both, the verdict passes no flake.
+flakes=()
+if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
+  if gh api --paginate --slurp \
+       "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+       > "$RUNNER_TEMP/jobs.json"; then
+    flakes=(--changed "$RUNNER_TEMP/changes/changed.z" --jobs "$RUNNER_TEMP/jobs.json")
+  else
+    echo "::warning title=no jobs list::this run's jobs could not be listed, so the flake rule passes no flake"
+  fi
+fi
+""",  # noqa: E501
+        "main's verdict.py, given the flake rule's lists": r"""
+python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
+  --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
+  --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
+  --key-partners "$RUNNER_TEMP/key-partners.json" \
+  ${proof:+--superseded "$proof"} \
+  ${flakes[@]+"${flakes[@]}"} \
+  --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
+""",  # noqa: E501
         "main's superseded.py, over the suite shards a newer push to main replaced": r"""
 set -u
 check="$RUNNER_TEMP/superseded.py"
@@ -12748,10 +12808,18 @@ fi
 #: Each orchestration job's steps, as the blocks of :data:`_TIER_LINES` each one runs, in
 #: order: a step runs exactly its blocks' lines, in that order, so a reorder that keeps every
 #: line (publishing a plan before the check that refuses it) fails as an extra line does.
+#: The verdict step that gives main's verdict the flake rule's two lists.
+_FLAKE_VERDICT = (
+    "the verdict's inputs, read",
+    "the flake rule's two lists, on a pull request only",
+    "main's verdict.py, given the flake rule's lists",
+)
+_PLAIN_VERDICT = ("main's verdict.py, over the plan's keys, needs and the run's records",)
 _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
     _PLAN_JOB: (
         ("the runner's identity",),
         ("the apps repository's head, read once for the run, or no partner",),
+        ("the pull request's changed paths, for the flake rule",),
         (
             "the changed paths, against main's tip",
             "main's tools/ci, archived beside the checkout, or no plan",
@@ -12775,6 +12843,7 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("the runner's identity",),
         ("main's superseded.py, over the suite shards a newer push to main replaced",),
         ("main's verdict.py, over the plan's keys, needs and the run's records",),
+        _FLAKE_VERDICT,
     ),
 }
 
@@ -12806,7 +12875,18 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
 #: when it runs. A step a row names lands in two merges (#4584 step 4): these rows first, then the
 #: workflow. merge.yml's push replay in shadow (#3919 (b1)) is one.
 _TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {
-    _PLAN_JOB: frozenset({("the push's replay, in shadow, beside the tree check (merge.yml's)",)}),
+    _PLAN_JOB: frozenset(
+        {
+            ("the push's replay, in shadow, beside the tree check (merge.yml's)",),
+            ("the pull request's changed paths, for the flake rule",),
+        }
+    ),
+    _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT}),
+}
+#: Listed steps of which each tier workflow's job runs exactly one: its results job's verdict,
+#: with the flake rule's lists or without them (merge.yml's moves to them in its own merge).
+_TIER_ONE_OF: dict[str, frozenset[tuple[str, ...]]] = {
+    _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT}),
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
@@ -12854,6 +12934,7 @@ def tier_lines_violations(root: Path) -> list[str]:
     workflows = _tier_workflows(root)
     bad: list[str] = []
     ran: dict[str, set[tuple[str, ...]]] = {job: set() for job in _TIER_LINES}
+    ran_in: dict[tuple[str, str], list[tuple[str, ...]]] = {}
     stage_steps: list[tuple[str, list[Any]]] = []
     for name, workflow in workflows.items():
         if not workflow:
@@ -12890,6 +12971,7 @@ def tier_lines_violations(root: Path) -> list[str]:
                         " does not hold"
                     )
                 matched = [blocks for blocks, want in listed.items() if want == lines]
+                ran_in.setdefault((name, job_id), []).extend(matched)
                 if matched:
                     ran[job_id].update(matched)
                 elif not unknown:
@@ -12904,6 +12986,13 @@ def tier_lines_violations(root: Path) -> list[str]:
                     f"this row lists the step {' + '.join(blocks)!r} for the {job_id} job, and no"
                     f" tier workflow's {job_id} runs it"
                 )
+    for (name, job_id), steps in ran_in.items():
+        one_of = _TIER_ONE_OF.get(job_id, frozenset())
+        count = sum(1 for blocks in steps if blocks in one_of)
+        if one_of and count != 1:
+            bad.append(
+                f"{name} job {job_id} runs {count} of its verdict steps: it runs exactly one"
+            )
     if stage_steps:
         first_where, first = stage_steps[0]
         for where, steps in stage_steps[1:]:
@@ -12963,6 +13052,76 @@ _REPLAY_SHADOW_STEP = """      - name: the push's replay, in shadow, beside the 
           fi
 """  # noqa: E501
 _CATALOGUE_CHECK_STEP = "      - name: main's tools/ci checks this run's catalogue\n"
+
+
+def _tier_run(block: str) -> str:
+    """A listed block as a tier workflow's ``run: |`` spells it, ten spaces in."""
+    return "".join(
+        f"          {line}" if line.strip() else line
+        for line in block.lstrip("\n").splitlines(True)
+    )
+
+
+#: The verdict step's call as the workflows run it today, and the flake rule's lists and call
+#: that replace it (the flake rule's wiring), each as the workflows spell them.
+_PLAIN_CALL = _tier_run(
+    _TIER_LINES[_RESULTS_JOB][
+        "main's verdict.py, over the plan's keys, needs and the run's records"
+    ][
+        _TIER_LINES[_RESULTS_JOB][
+            "main's verdict.py, over the plan's keys, needs and the run's records"
+        ].index('python3 -I "$judge"') :
+    ]
+)
+_FLAKE_CALL = _tier_run(
+    _TIER_LINES[_RESULTS_JOB]["the flake rule's two lists, on a pull request only"]
+) + _tier_run(_TIER_LINES[_RESULTS_JOB]["main's verdict.py, given the flake rule's lists"])
+_PARTNER_STEP = "      - name: the partner heads the run tests against\n"
+#: merge.yml's changes step for the flake rule, as the wiring adds it.
+_CHANGED_STEP = (
+    "      - name: the pull request's changed paths, for the flake rule\n"
+    "        id: changed\n"
+    "        if: ${{ github.event_name == 'pull_request' }}\n"
+    "        env:\n"
+    "          PR_HEAD: ${{ github.event.pull_request.head.sha }}\n"
+    "        run: |\n"
+    + _tier_run(_TIER_LINES[_PLAN_JOB]["the pull request's changed paths, for the flake rule"])
+)
+
+
+def _wired(text: str) -> str:
+    """merge.yml's text with the flake rule's wiring, whether the tree already runs it or not."""
+    if _PLAIN_CALL in text:
+        text = text.replace(_PLAIN_CALL, _FLAKE_CALL, 1)
+    if _CHANGED_STEP.splitlines(True)[0] not in text:
+        assert _PARTNER_STEP in text, f"no {_PARTNER_STEP!r} to add the changed-paths step before"
+        text = text.replace(_PARTNER_STEP, _CHANGED_STEP + _PARTNER_STEP, 1)
+    assert _FLAKE_CALL in text, "merge.yml runs neither form of the verdict step"
+    return text
+
+
+def _with_a_line_of_its_own(text: str) -> str:
+    text = _wired(text)
+    assert "          flakes=()\n" in text
+    return text.replace("          flakes=()\n", "          flakes=()\n          rm -rf ~\n", 1)
+
+
+def _no_verdict_call(text: str) -> str:
+    """The workflow's verdict step without its call, in whichever form it runs."""
+    for call in (_PLAIN_CALL, _FLAKE_CALL):
+        if call in text:
+            return text.replace(call, "", 1)
+    raise AssertionError("the workflow runs neither form of the verdict step")
+
+
+def _edited(rel: str, edit: Callable[[str], str]) -> Callable[[Path], None]:
+    """A plant that rewrites one file's text with ``edit``."""
+
+    def plant(root: Path) -> None:
+        _write(root, rel, edit((root / rel).read_text(encoding="utf-8")))
+
+    return plant
+
 
 THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
     name="the-tier-workflows-run-only-their-closed-lists-of-lines",
@@ -13042,6 +13201,24 @@ THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
                      "      - name: the partner heads the run tests against\n        id: partners\n"
                      "        run: |\n          set -uo pipefail\n" + _PARTNER_PUBLISH),
                 ), expect="merge.yml job changes step 'the partner heads the run tests against'"),
+        # The flake rule's wiring (tools/ci/verdict.py): its changes step and its verdict step
+        # are listed before merge.yml runs them, and each results job runs one verdict step.
+        # Each holds whether the tree's merge.yml runs the wiring yet or not.
+        Control("merge.yml running the flake rule's wiring, as listed, passes",
+                _edited(_MERGE_YML, _wired), fails=False),
+        Control("the flake rule's lists with a line of their own",
+                _edited(_MERGE_YML, _with_a_line_of_its_own),
+                expect="merge.yml job results runs 'rm -rf ~'"),
+        Control("a results job running no verdict step", _edited(_PR_YML, _no_verdict_call),
+                expect="pr.yml job results runs 0 of its verdict steps"),
+        _plants("a results job running both verdict steps", _MERGE_YML, (
+                    ("      - name: the verdict over the plan's keys and the run's records\n",
+                     "      - name: the flake rule's verdict, beside the plain one\n"
+                     "        run: |\n"
+                     + _tier_run(_TIER_LINES[_RESULTS_JOB]["the verdict's inputs, read"])
+                     + _FLAKE_CALL
+                     + "      - name: the verdict over the plan's keys and the run's records\n"),
+                ), expect="merge.yml job results runs 2 of its verdict steps"),
     ),
 )  # fmt: skip
 

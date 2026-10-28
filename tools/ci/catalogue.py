@@ -85,7 +85,10 @@ TIER_TEXT: dict[str, tuple[str, str]] = {
 #: A job's security posture. ``security``: its result is security evidence (it runs
 #: security-marked or fail-closed checks), so it is never selected out, the job's result is never
 #: rerun or reused, and a security-marked test is never rerun; an ordinary failed test inside it
-#: gets one diagnostic rerun, recorded only (``tools/ci/jobs.py``'s ``diagnose``).
+#: gets one diagnostic rerun (``tools/ci/jobs.py``'s ``diagnose``). On a pull request's run the
+#: verdict's flake rule reads that same attempt's own rerun, and may pass ordinary flakes only:
+#: a security-marked failure is never rerun, so it stays red, and a job is passed only when every
+#: security-marked test in it passed on attempt 1. No result is reused across heads.
 SECURITY: tuple[str, ...] = ("ordinary", "security")
 
 #: What a job installs before its steps run.
