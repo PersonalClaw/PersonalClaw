@@ -17,11 +17,16 @@ closed; a red names every rule the head fails, so one verdict says all it must f
    works as written; and ``main``'s CI contract over its definitions, which shows it weakens
    nothing ``main``'s contract holds CI to, whatever its own copy of the contract says
    (``tools/ci/contract.py``). The contract is run only from the head's own ``pull_request``
-   run, completed: that run passed the fork approval gate, so no head's code runs in the base
-   repository without the approval its own run needed. Until the contract run reports, the head
-   is a red that waits on it, which a required check reads as not passed. The poster dispatches
-   it with the job's token, whose events start no workflow, so its completion wakes nothing: the
-   schedule's sweep of waiting reds judges the head again and posts its verdict.
+   run once that run has passed the fork approval gate, so no head's code runs in the base
+   repository without the approval its own run needed: when the run has started a job on a
+   runner (``decide --start``, beside the run, read from the jobs API), and otherwise when it
+   completes, if the attempt it completed ran a job on a runner. The contract's verdict is its
+   run's ``contract`` job's, not the run's, so a failing ``wake`` never reads as a failed
+   contract. Until the contract run reports, the head is a red that waits on it, which a
+   required check reads as not passed. The poster dispatches it with the job's token, whose
+   events start no workflow, so its completion raises no ``workflow_run``: the contract run's
+   own last job dispatches the poster for the head (``decide --head``, the same judge), and the
+   schedule's sweep of waiting reds stays behind it.
 3. The head is not behind ``main``, so the squash commit lands the tree the run tested, and the
    contract judged the head against the ``main`` it would land on. A head that is behind is
    red whatever else holds, and its definitions are not compared: against ``main``'s tip, a head
@@ -121,6 +126,8 @@ CONTRACT_WORKFLOW = ".github/workflows/contract.yml"
 CONTRACT_PREFIX = "contract-run/"
 #: What contract.yml's ``run-name`` names each run: the head it judges.
 CONTRACT_TITLE = "Contract {head}"
+#: contract.yml's job that runs main's contract: its conclusion is the contract's.
+CONTRACT_JOB = "contract"
 #: The old path's trusted-run branches, which the sweep still deletes.
 TRUSTED_PREFIX = "trusted-run/"
 #: A reason that waits, on CodeQL to finish or to process or on the head's contract run to
@@ -476,11 +483,23 @@ def contract_run(get: Get, repo: str, head: str, base: str) -> Contract | None:
     if not ours:
         return None
     newest = max(ours, key=lambda r: int(r["id"]))
-    conclusion = newest.get("conclusion")
+    run_id, attempt = int(newest["id"]), _int(newest.get("run_attempt"))
+    if attempt is None or attempt < 1:
+        raise Unread(f"contract run {run_id} names no attempt")
+    # Its `contract` job's state, not the run's: the run's last job, `wake`, can fail after a
+    # green contract, and a contract judged by the run would then read as failed.
+    jobs = _pages(get, f"/repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
+    found = [j for j in jobs if j.get("name") == CONTRACT_JOB]
+    url = str(newest.get("html_url") or "")
+    if not found and newest.get("status") != "completed":
+        return Contract(run_id, url, str(newest.get("status")), None)
+    if len(found) != 1:
+        raise Unread(f"contract run {run_id} has {len(found)} `{CONTRACT_JOB}` jobs, not one")
+    conclusion = found[0].get("conclusion")
     return Contract(
-        int(newest["id"]),
-        str(newest.get("html_url") or ""),
-        str(newest.get("status")),
+        run_id,
+        url,
+        str(found[0].get("status")),
         str(conclusion) if conclusion is not None else None,
     )
 
@@ -657,6 +676,117 @@ def rejudge(get: Get, repo: str, head: str, controller_revision: str) -> Outcome
     if own is None:
         return Outcome(why=f"{head} has no completed Merge run of its own to judge yet")
     return decide(get, repo, own, controller_revision)
+
+
+# ── A Merge run that has started: its contract beside it ──────────────────────────────────────
+
+#: Every field of the run :func:`start_contract` reads, from the API by the run's id. Nothing of
+#: the event's payload is read, and of a fork's run nothing its author names (its branch, its
+#: repository, its pull requests).
+START_READS = frozenset({"repository", "path", "event", "status", "head_sha", "run_attempt"})
+#: A run's or a job's states once it runs: one that waits (for a maintainer's approval, or an
+#: environment's) or is only queued is neither.
+_RUNNING = frozenset({"in_progress", "completed"})
+
+
+def started(get: Get, repo: str, run_id: int, attempt: int) -> str:
+    """Why the run's ``attempt`` has not passed the approval gate, or ``""`` when it has: one of
+    its jobs ran on a runner (a ``runner_id`` and a ``runner_name``, a ``started_at``, running or
+    done). A run from a fork that waits for a maintainer's approval runs no job on a runner, so
+    one that did is the gate passed. It is read from the jobs API, never from the event: a job
+    that waits, a queued one (which may carry a ``started_at``), or one ``skipped`` or
+    ``action_required`` does not count."""
+    jobs = _pages(get, f"/repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
+    for job in jobs:
+        runner_id, runner, at = (
+            _int(job.get("runner_id")),
+            job.get("runner_name"),
+            job.get("started_at"),
+        )
+        if (
+            job.get("status") in _RUNNING
+            and job.get("conclusion") not in ("skipped", "action_required")
+            and runner_id is not None
+            and runner_id > 0
+            and isinstance(runner, str)
+            and runner
+            and isinstance(at, str)
+            and at
+        ):
+            return ""
+    return (
+        f"attempt {attempt} of run {run_id} ran no job on a runner, so it may wait for a"
+        " maintainer's approval"
+    )
+
+
+def start_contract(get: Get, repo: str, run_id: int) -> Outcome:
+    """A pull request's Merge run that has started: start main's contract over the head's
+    definitions beside it, so the verdict at the run's completion does not wait for it. It never
+    posts: only a completed run is judged (:func:`decide`), and that run still starts the contract
+    when none ran for the head at main's tip. It starts one only when all of these hold, each read
+    through the API by the run's id (only :data:`START_READS` of the run):
+
+    1. the run is this repository's merge.yml, on ``pull_request``, attempt 1, running or done
+       (a re-run's start starts nothing: its completion does, if no contract ran);
+    2. a job of attempt 1 ran on a runner (:func:`started`), so the head's own run passed the
+       approval gate, as the contract has always needed;
+    3. the head is not behind main, and it changes a CI definition against main's tip;
+    4. the head has no contract run at main's tip, and its contract branch is not already there
+       (another poster run is starting one)."""
+    raw = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
+    if not isinstance(raw, Mapping):
+        raise Unread(f"run {run_id} is not an object")
+    run = {key: raw.get(key) for key in START_READS}
+    repository = run["repository"]
+    owner = repository.get("full_name") if isinstance(repository, Mapping) else None
+    if owner != repo or run["path"] != MERGE_WORKFLOW:
+        return Outcome(why=f"run {run_id} is not {repo}'s {MERGE_WORKFLOW}")
+    if run["event"] != "pull_request":
+        return Outcome(
+            why=f"run {run_id} is a {run['event']!r} run: a contract starts only from a pull"
+            " request's own run"
+        )
+    if _int(run["run_attempt"]) != 1:
+        return Outcome(
+            why=f"run {run_id} is attempt {run['run_attempt']!r}: a re-run starts no contract,"
+            " and its completion starts one only if none ran"
+        )
+    if run["status"] not in _RUNNING:
+        return Outcome(why=f"run {run_id} is {run['status']!r}, not started")
+    head = run["head_sha"]
+    if not isinstance(head, str) or not _SHA.fullmatch(head):
+        raise Unread(f"run {run_id} names no head")
+    gate = started(get, repo, run_id, 1)
+    if gate:
+        return Outcome(why=gate)
+    base = main_tip(get, repo)
+    if behind_by(get, repo, base, head):
+        return Outcome(why=f"{head} is behind main: no contract runs for it until it updates")
+    _, head_tree = api_tree(get, repo, head)
+    _, base_tree = api_tree(get, repo, base)
+    if trust.compare_trees(base_tree, head_tree, base=base, head=head).trusted:
+        return Outcome(why=f"{head} changes no CI definition, so it needs no contract")
+    if contract_run(get, repo, head, base) is not None:
+        return Outcome(why=f"{head} already has a contract run at main's tip {base}")
+    branch = CONTRACT_PREFIX + head
+    if (branch, base) in _branches(get, repo, CONTRACT_PREFIX):
+        return Outcome(why=f"{branch} is already at main's tip: its contract run is starting")
+    return Outcome(
+        why=f"{head} changes a CI definition: its contract starts beside its run",
+        dispatch=head,
+        base=base,
+    )
+
+
+def wake(get: Get, repo: str, head: str, controller_revision: str) -> Outcome:
+    """A contract run's ``wake`` job: judge its head again, by the one judge a Merge run's
+    completion calls (:func:`rejudge`, then :func:`decide`). ``wake`` runs after the contract job
+    has completed, and the contract is judged by that job (:func:`contract_run`), so nothing is
+    waited for. The head is only which one to judge: everything is read again through the API."""
+    if not _SHA.fullmatch(head):
+        return Outcome(why=f"{head!r} is not a full commit id")
+    return rejudge(get, repo, head, controller_revision)
 
 
 def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome:
@@ -891,6 +1021,8 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
     head = run.head_sha
     changed: list[str] = []
     contract: Contract | None = None
+    # Why main's contract is not started from this run, though it has none yet (:func:`started`).
+    gate = ""
     # Every reason that holds, so one verdict names all a head must fix.
     reasons: list[str] = []
     try:
@@ -919,6 +1051,8 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         reasons += codeql_reasons(get, repo, head)
         if changed:
             contract = contract_run(get, repo, head, base)
+            if contract is None:
+                gate = started(get, repo, run.id, run.attempt)
             if contract is not None and contract.status == "completed":
                 if contract.conclusion != "success":
                     reasons.append(
@@ -936,10 +1070,12 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
     # Until it reports, the head is a red that waits on it: a contract run dispatched with the
     # job's token raises no workflow_run when it completes, so the schedule's sweep, which judges
     # every waiting red again, is what posts the head's verdict once it has.
-    start = head if changed and contract is None else None
+    start = head if changed and contract is None and not gate else None
     judged = changed and contract is not None and contract.status == "completed"
     cleanup = CONTRACT_PREFIX + head if judged else None
-    if changed and not judged:
+    if changed and contract is None and gate:
+        reasons.append(f"main's CI contract over its definitions is not started from it: {gate}")
+    elif changed and not judged:
         running = (
             "is started"
             if contract is None
@@ -1151,6 +1287,16 @@ def main(
     which.add_argument("--run-id", type=int, help="a completed run of Merge or Dependency review")
     which.add_argument("--check-run-id", type=int, help="a completed CodeQL check run")
     which.add_argument(
+        "--start",
+        type=int,
+        metavar="RUN_ID",
+        help="a pull request's Merge run that has started: start its head's contract beside it;"
+        " posts nothing",
+    )
+    which.add_argument(
+        "--head", help="a head whose contract run has reported (its wake): judge it again"
+    )
+    which.add_argument(
         "--waiting", action="store_true", help="judge again every open head whose red still waits"
     )
     one.add_argument(
@@ -1181,12 +1327,28 @@ def main(
     token = os.environ.get("GH_TOKEN", "")
     reader = get or merge_verdict.github_get(API, token)
     writer = api or github_api(token)
+    if args.command == "decide" and args.start is not None:
+        # A run that has started: at most its contract's dispatch. Nothing is posted, nothing is
+        # swept and no waiting head is judged again here: only a completed run is judged.
+        try:
+            started = start_contract(reader, args.repo, args.start)
+        except (Unread, trust.Refused) as exc:
+            print(f"::warning title=no contract started::{exc}")
+            started = Outcome(why=f"unread: {exc}")
+        print(started.why)
+        _output("dispatch", started.dispatch or "")
+        _output("base", started.base or "")
+        _output("cleanup", "")
+        _output("post", "false")
+        return 0
     if args.command == "decide":
         if args.waiting and not args.controller_app_id:
             parser.error("--waiting needs --controller-app-id")
         try:
             if args.run_id is not None:
                 outcomes = [judge(reader, args.repo, args.run_id, args.controller_revision)]
+            elif args.head is not None:
+                outcomes = [wake(reader, args.repo, args.head, args.controller_revision)]
             elif args.check_run_id is not None:
                 outcomes = [
                     judge_check(reader, args.repo, args.check_run_id, args.controller_revision)
