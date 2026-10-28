@@ -579,6 +579,8 @@ addopts = [
     "--color=yes",
 ]
 testpaths = ["tests"]
+# Scratch, for diagnosis only: a test still running at 120 s dumps every thread's stack.
+faulthandler_timeout = 120
 markers = [
     "security: proves a security or fail-closed boundary; never rerun, quarantined or selected out. tests/security_census.py names the modules that must carry it.",
 ]
