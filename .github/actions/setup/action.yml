@@ -28,7 +28,9 @@ runs:
   using: composite
   steps:
     # The one uv release pyproject's [tool.uv] required-version names, with its cache pruned
-    # before it is saved (tests/rails/test_ci_uv_cache_is_pruned.py).
+    # before it is saved, and with the managed Python uv sync installs kept beside it: uncached,
+    # 2 to 4 of a merge run's 23 fetches took 20 to 215 s, inside the job's budget
+    # (tests/rails/test_ci_uv_cache_is_pruned.py). No release workflow uses this action.
     - name: Install uv
       if: inputs.python-version != ''
       uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -37,6 +39,7 @@ runs:
         python-version: ${{ inputs.python-version }}
         enable-cache: true
         prune-cache: true
+        cache-python: true
     - name: Install Node
       if: inputs.node == 'true'
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

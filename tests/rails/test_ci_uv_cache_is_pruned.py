@@ -22,6 +22,7 @@ The planted workflows below show the rule fails on a caching step with no ``prun
 from __future__ import annotations
 
 import copy
+import fnmatch
 
 import local_actions
 import pytest
@@ -447,3 +448,156 @@ def test_a_step_of_another_action_is_not_read():
         "jobs": {"build": {"steps": [{"uses": "actions/setup-node@x", "with": {"cache": "npm"}}]}}
     }
     assert setup_uv_steps(workflow) == [] and unpruned_caches("planted.yml", workflow) == []
+
+
+# -- managed Python in the cache ---------------------------------------------------------------
+#
+# ``cache-python: true`` saves the interpreter uv installed (``UV_PYTHON_INSTALL_DIR``) to the
+# Actions cache with uv's own, and restores it in the next job. That puts a binary in the cache,
+# so a step may cache it only where it keeps uv's cache by its own say (``enable-cache: true``:
+# ``auto`` caches for whichever events setup-uv picks), and never on the release path: a release
+# workflow, a workflow a release tag's push starts, or one either calls. The release path builds
+# and publishes what users run, so it restores no interpreter a pull request's or main's run left
+# behind.
+
+
+#: A release tag, as release.yml's own filter (``v*``) takes it. A rehearsal's tag
+#: (``rehearsal-v*``, which starts breadth on the candidate) is not one: breadth tests, and builds
+#: and publishes nothing.
+_RELEASE_TAG = "v0.0.0"
+
+
+def release_path(workflows: dict[str, dict]) -> set[str]:
+    """The workflows a release runs: each named ``release*``, each whose tag filter a release tag's
+    push matches, and each one of those calls (``jobs.<id>.uses: ./.github/workflows/<name>``),
+    however deep."""
+    found = set()
+    for name, wf in workflows.items():
+        on = wf.get("on", wf.get(True)) or {}
+        push = on.get("push") if isinstance(on, dict) else None
+        tags = push.get("tags") if isinstance(push, dict) else None
+        released = any(fnmatch.fnmatchcase(_RELEASE_TAG, str(tag)) for tag in tags or [])
+        if name.startswith("release") or released:
+            found.add(name)
+    queue = list(found)
+    while queue:
+        for job in (workflows[queue.pop()].get("jobs") or {}).values():
+            called = str((job or {}).get("uses", ""))
+            if called.startswith("./.github/workflows/"):
+                name = called.removeprefix("./.github/workflows/").split("@")[0]
+                if name in workflows and name not in found:
+                    found.add(name)
+                    queue.append(name)
+    return found
+
+
+def python_caches(
+    name: str, workflow: dict, actions: dict | None = None, release: frozenset[str] = frozenset()
+) -> list[str]:
+    """One problem line for each setup-uv step that caches managed Python where it may not."""
+    problems = []
+    for job_id, step in setup_uv_steps(workflow, actions):
+        given = step.get("with") or {}
+        if _flag(given.get("cache-python", "false")) == "false":
+            continue
+        where = f"{name} {job_id} {step.get('name') or step['uses'].split('@')[0]!r}"
+        enabled = _flag(given.get("enable-cache", "auto"))
+        if enabled != "true":
+            problems.append(
+                f"{where}: caches managed Python with enable-cache: {enabled}: keep uv's cache by"
+                " the step's own say (enable-cache: true) to cache the interpreter beside it"
+            )
+        if name in release:
+            problems.append(
+                f"{where}: caches managed Python on the release path, which restores no"
+                " interpreter another run left in the cache"
+            )
+    return problems
+
+
+def _python_problems(workflows: dict[str, dict], actions: dict) -> list[str]:
+    release = frozenset(release_path(workflows))
+    return [line for n, wf in workflows.items() for line in python_caches(n, wf, actions, release)]
+
+
+def test_managed_python_is_cached_only_where_uv_s_cache_is_and_never_on_the_release_path():
+    workflows, actions = _workflows(), _actions()
+    assert _python_problems(workflows, actions) == []
+    # Not vacuous: the setup action's step caches it, for the tier workflows' stage jobs.
+    caching = {
+        name
+        for name, wf in workflows.items()
+        for _job, step in setup_uv_steps(wf, actions)
+        if _flag((step.get("with") or {}).get("cache-python", "false")) == "true"
+    }
+    assert {"merge.yml", "pr.yml"} <= caching, caching
+    # And the path is the tree's: a release calls the artifacts build, and a tag push starts one.
+    assert {"release.yml", "release-artifacts.yml", "release-rehearsal.yml"} <= release_path(
+        workflows
+    )
+    assert "breadth.yml" not in release_path(workflows)
+    assert not caching & release_path(workflows), caching & release_path(workflows)
+
+
+def _with_step_input(workflow: dict, **given: object) -> dict:
+    """*workflow* with each direct setup-uv step's ``with:`` given *given* as well."""
+    planted = copy.deepcopy(workflow)
+    for job in (planted.get("jobs") or {}).values():
+        for step in (job or {}).get("steps") or []:
+            if str(step.get("uses", "")).startswith("astral-sh/setup-uv@"):
+                step.setdefault("with", {}).update(
+                    {key.replace("_", "-"): value for key, value in given.items()}
+                )
+    return planted
+
+
+def test_a_release_build_that_caches_managed_python_fails():
+    workflows, actions = _workflows(), _actions()
+    workflows["release-artifacts.yml"] = _with_step_input(
+        workflows["release-artifacts.yml"], enable_cache=True, cache_python=True
+    )
+    problems = _python_problems(workflows, actions)
+    assert problems and all("release-artifacts.yml" in p for p in problems), problems
+    assert any("on the release path" in p for p in problems), problems
+
+
+def test_a_release_job_that_sets_up_through_the_setup_action_fails():
+    """The setup action caches managed Python, so a release workflow job that calls it does."""
+    workflows, actions = _workflows(), _actions()
+    call = {"uses": _ACTION_NAME, "with": {"python-version": "3.12.15"}}
+    workflows["release.yml"] = copy.deepcopy(workflows["release.yml"])
+    workflows["release.yml"]["jobs"]["planted"] = {"runs-on": "ubuntu-24.04", "steps": [call]}
+    problems = _python_problems(workflows, actions)
+    assert any(p.startswith("release.yml planted") and "release path" in p for p in problems)
+
+
+def test_a_workflow_a_release_calls_is_on_its_path():
+    workflows = {
+        "release-x.yml": {"jobs": {"build": {"uses": "./.github/workflows/inner.yml"}}},
+        "inner.yml": {"jobs": {"deep": {"uses": "./.github/workflows/deeper.yml"}}},
+        "deeper.yml": {"jobs": {}},
+        "tagged.yml": {"on": {"push": {"tags": ["v*"]}}, "jobs": {}},
+        "merge.yml": {"on": {"push": {"branches": ["main"]}}, "jobs": {}},
+        # A rehearsal tag starts a test of the candidate, not a release.
+        "breadth.yml": {"on": {"push": {"tags": ["rehearsal-v*"]}}, "jobs": {}},
+    }
+    assert release_path(workflows) == {"release-x.yml", "inner.yml", "deeper.yml", "tagged.yml"}
+
+
+@pytest.mark.parametrize(
+    ("inputs", "shown"),
+    [
+        ({"cache_python": True, "enable_cache": None}, "enable-cache: auto"),
+        ({"cache_python": "true", "enable_cache": "auto"}, "enable-cache: auto"),
+        ({"cache_python": True, "enable_cache": False}, "enable-cache: false"),
+    ],
+    ids=["enable-cache left out", "enable-cache auto", "enable-cache false"],
+)
+def test_managed_python_cached_without_uv_s_own_cache_on_fails(inputs, shown):
+    problems = python_caches("planted.yml", _planted(prune_cache=True, **inputs))
+    assert any(shown in p and "caches managed Python" in p for p in problems), problems
+
+
+def test_managed_python_cached_beside_uv_s_cache_passes():
+    planted = _planted(enable_cache=True, prune_cache=True, cache_python=True)
+    assert python_caches("planted.yml", planted) == []
