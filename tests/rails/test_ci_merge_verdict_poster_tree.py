@@ -106,6 +106,10 @@ _WAKES_BY_SHAPE = {_AFTER: _WAKES, _BESIDE: _WAKES_BESIDE}
 #: What the beside shape's concurrency group keys a dispatch on: the head it names, empty for any
 #: other event (a context the concurrency row models, unlike ``inputs``).
 _HEAD_KEY = "${{ github.event.inputs.head }}"
+#: And what it keys a run's start apart from its completion on: GitHub sends a run's
+#: ``in_progress`` again as its jobs start, and a completion that shared their group would queue
+#: behind them.
+_ACTION_KEY = "${{ github.event.action }}"
 _CONTRACT_IF_BY_SHAPE = {_AFTER: _CONTRACT_IF, _BESIDE: _CONTRACT_IF_BESIDE}
 #: The beside shape's decision: a started run is decided by ``--start`` alone, before anything
 #: else, and a wake by ``--head``.
@@ -224,6 +228,11 @@ def _problems(text: str) -> list[str]:
             found.append(
                 "a wake's runs share one concurrency group, or one cancels another: the group"
                 f" must key on {_HEAD_KEY} and never cancel"
+            )
+        if _ACTION_KEY not in str(group.get("group")):
+            found.append(
+                "a run's start and its completion share one concurrency group: the group must"
+                f" key on {_ACTION_KEY}"
             )
     return found
 
@@ -966,7 +975,8 @@ _TO_BESIDE = (
     ),
     (
         "-check-${{ github.event.check_run.id }}\n",
-        "-check-${{ github.event.check_run.id }}-head-${{ github.event.inputs.head }}\n",
+        "-check-${{ github.event.check_run.id }}-on-${{ github.event.action }}"
+        "-head-${{ github.event.inputs.head }}\n",
     ),
     (
         "          CHECK_RUN_ID: ${{ github.event.check_run.id }}\n",
@@ -1027,6 +1037,44 @@ def _beside_contract() -> str:
 def test_the_beside_shape_keeps_its_trust_shape() -> None:
     assert _problems(_beside_poster()) == []
     assert _contract_workflow_problems(_beside_contract()) == []
+
+
+_EXPR = re.compile(r"\$\{\{\s*([\w.]+)\s*\}\}")
+
+
+def _group_for(group: str, event_name: str, event: dict[str, Any]) -> str:
+    """The concurrency group as GitHub renders it for an event: each ``${{ github.<path> }}`` is
+    that path of the event's context, a missing one empty."""
+    context = {"github": {"event_name": event_name, "event": event}}
+
+    def value(match: re.Match[str]) -> str:
+        here: Any = context
+        for part in match.group(1).split("."):
+            here = here.get(part) if isinstance(here, dict) else None
+        return "" if here is None else str(here)
+
+    return _EXPR.sub(value, group)
+
+
+def test_a_runs_start_and_its_completion_never_share_a_group() -> None:
+    group = str(yaml.safe_load(_beside_poster())["concurrency"]["group"])
+
+    def run(run_id: int, action: str, key: str = group) -> str:
+        payload = {"workflow_run": {"id": run_id, "run_attempt": 1}, "action": action}
+        return _group_for(key, "workflow_run", payload)
+
+    def wake(head: str) -> str:
+        return _group_for(group, "workflow_dispatch", {"inputs": {"head": head}})
+
+    # A run's starts share one group, and its completion has its own.
+    assert run(7, "in_progress") == run(7, "in_progress") != run(7, "completed")
+    # The control: it is the action that keys them apart.
+    alike = group.replace(f"-on-{_ACTION_KEY}", "")
+    assert alike != group and run(7, "in_progress", alike) == run(7, "completed", alike)
+    # Another run's start is its own, and a wake keys on its head, apart from the schedule's.
+    assert run(8, "in_progress") != run(7, "in_progress")
+    assert wake("a" * 40) != wake("b" * 40) != _group_for(group, "schedule", {})
+    assert wake("a" * 40) == wake("a" * 40)
 
 
 def test_the_folded_conditions_read_as_the_expressions() -> None:
@@ -1101,6 +1149,12 @@ def test_the_folded_conditions_read_as_the_expressions() -> None:
             "-head-${{ github.event.inputs.head }}\n",
             "\n",
             "a wake's runs share one concurrency group",
+        ),
+        # A start and its run's completion in one group: the completion queues behind the starts.
+        (
+            "-on-${{ github.event.action }}-head-",
+            "-head-",
+            "a run's start and its completion share one concurrency group",
         ),
         (
             "  cancel-in-progress: false\n",

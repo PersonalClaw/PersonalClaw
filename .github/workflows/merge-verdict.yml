@@ -74,9 +74,12 @@ on:
 # One post per Merge run and attempt, never cancelled: each run's verdict is its own check run,
 # and verify-check-run reads the newest. A wake (a dispatch on main) keys on the head it names, so
 # two heads' wakes, and a wake and the schedule, never replace each other's pending run. It is
-# `github.event.inputs.head`, which every other event leaves empty.
+# `github.event.inputs.head`, which every other event leaves empty. The run's start and its
+# completion key apart too, by the event's action: GitHub sends a run's `in_progress` again as
+# its jobs start, so its starts collapse to one running and one pending, and its completion never
+# queues behind them.
 concurrency:
-  group: merge-verdict-run-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}-check-${{ github.event.check_run.id }}-head-${{ github.event.inputs.head }}
+  group: merge-verdict-run-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}-check-${{ github.event.check_run.id }}-on-${{ github.event.action }}-head-${{ github.event.inputs.head }}
   cancel-in-progress: false
 
 permissions:
