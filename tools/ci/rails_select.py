@@ -36,8 +36,9 @@ other run is never read. ``--map`` reads files instead, a leg's record or severa
   or it is not in this checkout), every rail that listed its folder or walked a root holding it:
   a rail sees a new path only by listing its folder or asking for it by name, and the second is
   the read above. A path in a folder the commit did not hold counts against the nearest folder
-  it did hold. When the commit is not in this clone, every path counts as added or removed, and
-  its folder is the nearest one some rail reads;
+  it did hold. When the commit is not in this clone, the command refuses (exit 2) and names
+  ``git fetch origin``; with ``--allow-fallback`` every path counts as added or removed, and its
+  folder is the nearest one some rail reads;
 - a path the harness reads selects every rail. The harness is the run's own setup, which every
   rail runs under: conftest, the plugin and guard modules it loads from ``tests/``, the files they
   read, ``pyproject.toml`` and ``uv.lock``. A package module the harness imports (conftest's
@@ -682,6 +683,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--root", default=".")
     parser.add_argument("--why", action="store_true", help="each rail with why it was selected")
+    parser.add_argument(
+        "--allow-fallback",
+        action="store_true",
+        help="select from a record of a commit this clone does not have, every path counting as"
+        " added or removed, rather than refusing",
+    )
     args = parser.parse_args(argv)
     root = Path(args.root)
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -712,6 +719,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         why_none = f"the record cannot be read: {exc}"
         record = None
     tree = _tree(root, record.commit) if record is not None else None
+    if record is not None and tree is None and not args.allow_fallback:
+        # A clone that has not fetched the record's commit reads a record of a main it does not
+        # hold, every path counted as added or removed, and the list it printed (14 of 251 rails
+        # on one pull request) said so only in its last stderr line, which a lane read past.
+        print(
+            f"rails select: the record is of {record.commit[:12]}, which this clone does not"
+            " have, so no changed path can be told added from changed. Fetch it"
+            " (`git fetch origin`) and select again, or pass --allow-fallback to select with every"
+            " path counted as added or removed",
+            file=sys.stderr,
+        )
+        return 2
     chosen = select(
         paths,
         rails,

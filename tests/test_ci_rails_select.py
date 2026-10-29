@@ -582,3 +582,88 @@ def test_the_walk_follows_main_s_first_parents_newest_first() -> None:
     assert record is not None and record.commit == COMMIT, notes
     assert notes == [f"commit {tip[:12]}: 0 pull requests were merged as it, not 1"]
     assert not any(side in a for a in gh.asked)
+
+
+# ── A record of a commit this clone does not have ─────────────────────────────────────────────
+
+
+def _clone(tmp_path) -> tuple[Any, str]:
+    """A checkout holding the three planted rails and a file they read, committed: its root, and
+    its commit."""
+    import subprocess
+
+    root = tmp_path / "clone"
+    for rel in (*RAILS, "src/pkg/a.py"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x = 1\n" if rel.endswith("a.py") else "def test_it():\n    pass\n")
+    env = {
+        "GIT_AUTHOR_NAME": "Planted",
+        "GIT_AUTHOR_EMAIL": "planted@example.invalid",
+        "GIT_COMMITTER_NAME": "Planted",
+        "GIT_COMMITTER_EMAIL": "planted@example.invalid",
+        "GIT_CONFIG_GLOBAL": "/dev/null",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "PATH": __import__("os").environ.get("PATH", ""),
+    }
+    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "planted"]):
+        subprocess.run(["git", "-C", str(root), *args], env=env, check=True, capture_output=True)
+    head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return root, head
+
+
+def _run_main(root, record: dict[str, Any], tmp_path, *extra: str, capsys) -> tuple[int, str, str]:
+    path = tmp_path / "record.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    code = rails_select.main(
+        ["--paths", "src/pkg/a.py", "--map", str(path), "--root", str(root), *extra]
+    )
+    out = capsys.readouterr()
+    return code, out.out, out.err
+
+
+def _recent() -> str:
+    now = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)
+    return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def test_a_record_of_a_commit_the_clone_lacks_is_refused_and_names_the_fetch(
+    tmp_path, capsys
+) -> None:
+    """It printed the rails it chose and said why only on its last stderr line; a lane that
+    read the list ran 14 of 251 rails. Now it prints none and exits 2."""
+    root, _ = _clone(tmp_path)
+    record = _record(
+        {A: _reads(files=["src/pkg/a.py"]), B: _reads()}, recorded_at=_recent(), commit="c" * 40
+    )
+    code, out, err = _run_main(root, record, tmp_path, capsys=capsys)
+    assert code == 2, err
+    assert out == ""
+    assert "git fetch origin" in err and "--allow-fallback" in err and "cccccccccccc" in err
+
+
+def test_asked_for_the_fallback_selects_and_says_so(tmp_path, capsys) -> None:
+    root, _ = _clone(tmp_path)
+    record = _record(
+        {A: _reads(files=["src/pkg/a.py"]), B: _reads()}, recorded_at=_recent(), commit="c" * 40
+    )
+    code, out, err = _run_main(root, record, tmp_path, "--allow-fallback", capsys=capsys)
+    assert code == 0, err
+    assert set(out.split()) == {A, CONTRACT}
+    assert "not in this clone" in err
+
+
+def test_a_record_of_a_commit_the_clone_has_selects_as_before(tmp_path, capsys) -> None:
+    root, head = _clone(tmp_path)
+    record = _record(
+        {A: _reads(files=["src/pkg/a.py"]), B: _reads()}, recorded_at=_recent(), commit=head
+    )
+    code, out, err = _run_main(root, record, tmp_path, capsys=capsys)
+    assert code == 0, err
+    assert set(out.split()) == {A, CONTRACT}
+    assert "not in this clone" not in err
