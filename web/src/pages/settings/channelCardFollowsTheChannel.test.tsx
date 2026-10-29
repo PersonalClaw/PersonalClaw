@@ -19,7 +19,7 @@ import { noteInputForTests } from '../../lib/useVisiblePoll'
 const TOKEN_REJECTED = 'Inbound STOPPED — Telegram rejected the bot token (401 Unauthorized), so the long-poll receiver stopped.'
 
 const ext: SettingsProvider = {
-  name: 'telegram-channel', displayName: 'Telegram Channel', enabled: true, managed: true,
+  name: 'telegram-channel', id: 'channel', displayName: 'Telegram Channel', enabled: true, managed: true,
   provider: { type: 'channel', capabilities: ['messaging'], hasConfigSchema: true },
   availability: { state: 'available', reason: '', checkedAt: 1 },
 }

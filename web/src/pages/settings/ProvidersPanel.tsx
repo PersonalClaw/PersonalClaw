@@ -204,7 +204,7 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
         return (
           <EntitySection key={type} icon={meta.icon} label={meta.label} hint={meta.hint} count={exts.length}>
             {type === 'agent' && exts.map((ext) => (
-              <ProviderCard key={ext.name} ext={ext} runtime={runtimeByExt.get(ext.name)} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onSignIn={onSignIn}
+              <ProviderCard key={ext.key ?? ext.name} ext={ext} runtime={runtimeByExt.get(ext.name)} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onSignIn={onSignIn}
                 onTest={(rt) => testRuntime(ext.displayName || ext.name, rt.provider_id || rt.name)} />
             ))}
 
@@ -216,8 +216,8 @@ export function ProvidersPanel({ query, setQuery }: Pick<RouteProps, 'query' | '
                 (MCP/OpenAI tools, …); a singleton is a plain toggle+config card. */}
             {type !== 'agent' && type !== 'model' && type !== 'action' && exts.map((ext) => (
               ext.provider?.multiInstance
-                ? <MultiInstanceCard key={ext.name} ext={ext} onChanged={reload} />
-                : <ProviderCard key={ext.name} ext={ext} channel={type === 'channel' ? channelByApp.get(ext.name) : undefined}
+                ? <MultiInstanceCard key={ext.key ?? ext.name} ext={ext} onChanged={reload} />
+                : <ProviderCard key={ext.key ?? ext.name} ext={ext} channel={type === 'channel' ? channelByApp.get(ext.name) : undefined}
                     search={type === 'search' ? searchByApp.get(ext.name) : undefined}
                     searchUnread={type === 'search' && !!searchError} onSearchRetry={refreshSearch}
                     open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={reload} onChannelChanged={() => invalidateKeys('settings:channels', true)} />
@@ -328,7 +328,7 @@ function ModelEntitySection({ exts, availableByProvider, openProvider, openCfg, 
                 )}
               </div>
             ))}
-            {otherNative.map((ext) => <ProviderCard key={ext.name} ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />)}
+            {otherNative.map((ext) => <ProviderCard key={ext.key ?? ext.name} ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />)}
           </div>
         </div>
       )}
@@ -355,7 +355,7 @@ function ActionGroups({ exts, openProvider, openCfg, onChanged }: { exts: Settin
         <div key={entity}>
           <div data-type="caption" className="mb-2 text-on-surface-low uppercase tracking-wide">{ACTION_ENTITY_LABELS[entity] ?? 'Other actions'}</div>
           <div className="flex flex-col gap-2">
-            {(byEntity.get(entity) ?? []).map((ext) => <ProviderCard key={ext.name} ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />)}
+            {(byEntity.get(entity) ?? []).map((ext) => <ProviderCard key={ext.key ?? ext.name} ext={ext} open={openProvider === ext.name} onOpenChange={openCfg(ext.name)} onChanged={onChanged} />)}
           </div>
         </div>
       ))}

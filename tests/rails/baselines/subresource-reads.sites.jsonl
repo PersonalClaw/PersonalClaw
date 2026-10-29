@@ -60,10 +60,10 @@
 {"site": "GET /api/projects/{project_id}/export", "reason": "project store resolves the project before export"}
 {"site": "GET /api/projects/{project_id}/linked", "reason": "project store resolves the project before linked work"}
 {"site": "GET /api/projects/{project_id}/work", "reason": "project store resolves the project before board projection"}
+{"site": "GET /api/providers/{name}/capabilities/{capability}", "reason": "the registry reads the one exact <app>/<id> record, so a ghost app, an id the app does not declare and another app's id under its name are each a 404, never an empty answer; this is child detail (driven in test_provider_routes_name_each_capability.py)", "added": "2026-10-29"}
 {"site": "GET /api/providers/{name}/config", "reason": "provider registry resolves the extension before config"}
 {"site": "GET /api/providers/{name}/instances", "reason": "provider registry resolves the extension before instances"}
 {"site": "GET /api/providers/{name}/instances/{id}", "reason": "provider registry and then the exact instance are both resolved; this is child detail"}
-{"site": "GET /api/providers/{name}/schema", "reason": "provider registry resolves the extension before schema"}
 {"site": "GET /api/rooms/{room_id}/export", "reason": "rooms.store.require_room resolves the room before any transcript read, so a ghost room is room_not_found rather than an empty export (asserted in test_rooms_api.py)"}
 {"site": "GET /api/session/archive/{name}", "reason": "plain archive-file detail; file read rejects absence"}
 {"site": "GET /api/sessions/{id}/agents/{agent_id}", "reason": "read_result requires the exact session/agent result; this is child detail"}

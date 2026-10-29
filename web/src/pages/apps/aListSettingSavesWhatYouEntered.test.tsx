@@ -191,7 +191,7 @@ describe('Settings › Providers refuses the same save', () => {
       },
     }))
     const { ProviderConfigForm } = await import('../settings/ProviderConfigForm')
-    render(<ProviderConfigForm name="chat-app" />)
+    render(<ProviderConfigForm name="chat-app" capability="channel" />)
     const editor = await screen.findByRole('textbox', { name: 'Reactions' })
 
     fireEvent.change(editor, { target: { value: '{"seen": ' } })

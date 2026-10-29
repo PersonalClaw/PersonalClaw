@@ -78,6 +78,8 @@ pytestmark = pytest.mark.security
 
 
 ALPHA = "probe-alpha"
+#: The capability id of each fixture app's one tool provider, which declares none: its type's.
+CAPABILITY = "tools"
 BRAVO = "probe-bravo"
 #: The first-party MCP Tool Servers app's name (`providers/mcp_instances.MCP_TOOLS_EXTENSION`).
 MCP_TOOLS = "mcp-tools"
@@ -471,7 +473,7 @@ def _ok(answers: list[tuple[int, str]]) -> list[Any]:
 #: accepts. Railed below against the route census, so a route added tomorrow must be listed here.
 PROVIDER_ROUTES: list[tuple[str, str, str, Any]] = [
     ("GET", "/api/providers/{name}", "settings", None),
-    ("GET", "/api/providers/{name}/schema", "settings", None),
+    ("GET", "/api/providers/{name}/capabilities/{capability}", "settings", None),
     ("GET", "/api/providers/{name}/config", "settings", None),
     ("PATCH", "/api/providers/{name}/config", "settings", {"endpoint": ATTACKER}),
     ("POST", "/api/providers/{name}/availability", "settings", None),
@@ -513,6 +515,7 @@ def _another_apps(method: str, template: str, body: Any, shape: str):
     async def run(r: Row) -> None:
         (instance_id,) = _ids(BRAVO) if "{id}" in template else ("",)
         path = template.replace("{name}", BRAVO).replace("{id}", instance_id)
+        path = path.replace("{capability}", CAPABILITY)
         built = list(r.gw.wire.built)
         assert _serving(BRAVO) == BRAVO_SERVES[shape], "Bravo runs as you configured it"
         before = home_files(r.home)
@@ -679,7 +682,11 @@ async def _an_app_reconfigures_its_own_provider(r: Row) -> None:
         assert status == 200, f"{way}: {text}"
         status, text = await r.gw.call("GET", f"{path}/config", **sent)
         assert status == 200 and json.loads(text)["config"]["endpoint"] == at, f"{way}: {text}"
-        for method, sub in (("GET", ""), ("GET", "/schema"), ("POST", "/availability")):
+        for method, sub in (
+            ("GET", ""),
+            ("GET", f"/capabilities/{CAPABILITY}"),
+            ("POST", "/availability"),
+        ):
             status, text = await r.gw.call(method, f"{path}{sub}", **sent)
             assert status < 300, f"{way} {method} {sub}: {text}"
         assert _stored(ALPHA)["endpoint"] == at

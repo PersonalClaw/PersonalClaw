@@ -8,8 +8,9 @@ show is the actual claim, which is about an app the core has never heard of:
 * the transport arrives as an `app.json` + a Python file INSIDE the app's own directory —
   nothing in `src/personalclaw` names it, so "zero core changes" is a property of the
   fixture rather than an assertion about it;
-* its settings are read and written through `/api/providers/{name}/schema` + `/config`, the
-  same routes every other provider type uses — no durability-specific config endpoint;
+* its settings are read and written through `/api/providers/{name}/capabilities/{id}` +
+  `/config`, the same routes every other provider type uses — no durability-specific config
+  endpoint;
 * and then it actually SYNCS: `service.run_sync_job()` resolves it by name and a real cycle
   pushes objects into the store it owns.
 
@@ -205,10 +206,10 @@ async def test_it_configures_through_the_standard_provider_routes(registered):
     async with TestClient(TestServer(_providers_app())) as client:
         listed = await client.get("/api/providers?type=sync")
         assert listed.status == 200
-        names = [p["name"] for p in (await listed.json())["providers"]]
-        assert APP_NAME in names, "a third-party sync app is invisible to the providers list"
+        rows = [p for p in (await listed.json())["providers"] if p["name"] == APP_NAME]
+        assert rows, "a third-party sync app is invisible to the providers list"
 
-        schema = await client.get(f"/api/providers/{APP_NAME}/schema")
+        schema = await client.get(f"/api/providers/{APP_NAME}/capabilities/{rows[0]['id']}")
         assert schema.status == 200
         props = (await schema.json())["schema"]["properties"]
         assert "folder" in props, "the app's own settings schema did not survive the route"

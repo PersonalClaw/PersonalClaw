@@ -107,7 +107,7 @@ function stubPanel(conflicts: () => Promise<DurabilityConflicts>) {
     last_drill: { ran: false, ok: null, at: 0, detail: '', archive: '', on_disk: null },
   })
   vi.spyOn(api, 'settingsProviders').mockResolvedValue([
-    { name: 'git-sync', displayName: 'Git sync', enabled: true, provider: { type: 'sync', hasConfigSchema: true } },
+    { name: 'git-sync', id: 'sync', displayName: 'Git sync', enabled: true, provider: { type: 'sync', hasConfigSchema: true } },
   ])
   vi.spyOn(api, 'durabilityConflicts').mockImplementation(conflicts)
   resolveCall = vi.spyOn(api, 'resolveDurabilityConflict').mockResolvedValue({

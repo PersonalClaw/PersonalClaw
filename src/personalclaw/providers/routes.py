@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 def register_routes(app: web.Application) -> None:
     app.router.add_get("/api/providers", handle_list_extensions)
     app.router.add_get("/api/providers/{name}", handle_get_extension)
-    app.router.add_get("/api/providers/{name}/schema", handle_get_schema)
+    app.router.add_get("/api/providers/{name}/capabilities/{capability}", handle_get_capability)
     app.router.add_get("/api/providers/{name}/config", handle_get_config)
     app.router.add_patch("/api/providers/{name}/config", handle_patch_config)
     app.router.add_post("/api/providers/{name}/availability", handle_recheck_availability)
@@ -65,6 +65,11 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
         result.append(
             {
                 "name": ext.name,
+                # The capability this row is (#3841): an app with two shows two rows, told apart
+                # by these, and `GET /api/providers/{name}/capabilities/{id}` reads one.
+                "id": ext.capability,
+                "key": ext.key,
+                "label": ext.provider_config.label,
                 "displayName": ext.manifest.displayName,
                 "description": ext.manifest.description,
                 "version": ext.manifest.version,
@@ -80,6 +85,7 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
                 "managed": not is_native(ext.name),
                 "provider": {
                     "type": ext.provider_config.type,
+                    "description": ext.provider_config.description,
                     "entity": ext.provider_config.entity,
                     "capabilities": ext.provider_config.capabilities,
                     "multiInstance": ext.provider_config.multiInstance,
@@ -108,6 +114,9 @@ async def handle_list_extensions(request: web.Request) -> web.Response:
         result.append(
             {
                 "name": "personalclaw-filesystem",
+                "id": "tools",
+                "key": "personalclaw-filesystem/tools",
+                "label": "",
                 "displayName": "Filesystem & Shell Tools",
                 "description": "The always-on platform tools — read/write/edit/list/glob/grep/repo_map, "  # noqa: E501
                 "bash, and full-result retrieval. Required by the agent; can't be disabled.",
@@ -154,16 +163,30 @@ async def handle_get_extension(request: web.Request) -> web.Response:
     )
 
 
-async def handle_get_schema(request: web.Request) -> web.Response:
-    name = request.match_info["name"]
-    registry = get_provider_registry()
-    ext = registry.get(name)
-    if not ext:
-        return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+async def handle_get_capability(request: web.Request) -> web.Response:
+    """One capability of the app: what it is, whether it runs, and its settings form.
 
+    Each capability an app declares has its own (#3841). Its settings are still the app's
+    (``/api/providers/{name}/config``, until #3842), so this carries the form and no values."""
+    name = request.match_info["name"]
+    capability = request.match_info["capability"]
+    ext = get_provider_registry().get(name, capability)
+    if not ext:
+        return web.json_response(
+            {"error": f"{name!r} has no capability {capability!r}"}, status=404
+        )
+    availability = get_availability_board().read(ext.name, ext.provider_config.implementation)
     return web.json_response(
         {
-            "name": name,
+            "name": ext.name,
+            "id": ext.capability,
+            "key": ext.key,
+            "label": ext.provider_config.label,
+            "description": ext.provider_config.description,
+            "enabled": ext.enabled,
+            "error": ext.error,
+            "availability": availability.to_wire(),
+            "provider": ext.provider_config.to_dict(),
             "schema": ext.provider_config.settingsSchema,
         }
     )

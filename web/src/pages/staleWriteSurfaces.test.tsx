@@ -736,7 +736,7 @@ const SURFACES: Surface[] = [
       return () => save.mock.calls
     },
     edit: async () => {
-      render(<ProviderConfigForm name="telegram-channel" />)
+      render(<ProviderConfigForm name="telegram-channel" capability="channel" />)
       fireEvent.change(await screen.findByLabelText('Greeting'), { target: { value: 'hello' } })
       ;(stubs.__meanwhile as () => void)()
       await click(screen.getByRole('button', { name: 'Save' }))

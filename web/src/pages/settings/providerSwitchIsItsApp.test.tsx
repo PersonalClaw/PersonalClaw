@@ -16,7 +16,7 @@ import { api, type SettingsProvider } from '../../lib/api'
 
 function ext(over: Partial<SettingsProvider> = {}): SettingsProvider {
   return {
-    name: 'boot-probe', displayName: 'Boot Probe', enabled: true, managed: true,
+    name: 'boot-probe', id: 'tools', displayName: 'Boot Probe', enabled: true, managed: true,
     provider: { type: 'tool', capabilities: [] }, availability: { state: 'available', reason: '', checkedAt: 1 },
     ...over,
   }
