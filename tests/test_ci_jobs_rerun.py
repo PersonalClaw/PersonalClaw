@@ -1544,3 +1544,55 @@ def test_a_step_that_failed_for_another_reason_stops_the_job(tmp_path):
     assert outcome.code == run.RED, outcome.reasons
     assert not after.exists()
     assert _record(outcome)["rerun"] is None
+
+
+def test_a_job_whose_time_runs_out_before_a_planned_step_says_so_in_its_record(
+    tmp_path, monkeypatch
+):
+    """The flake's step is diagnosed and the job runs on; its time runs out after the next step
+    and before the third begins, so the record names one planned step that never started, and
+    the flake rule passes no flake of it. The clock run-job reads jumps past the job's time as
+    the second step ends, so no step is cut short: the third simply never starts."""
+    import time as real_time
+    import types
+
+    root, _, _ = _suite(tmp_path)
+    clock = {"offset": 0.0}
+    monkeypatch.setattr(
+        jobs,
+        "time",
+        types.SimpleNamespace(
+            monotonic=lambda: real_time.monotonic() + clock["offset"],
+            time=real_time.time,
+            strftime=real_time.strftime,
+        ),
+    )
+    real_run_job = jobs.run.run_job
+
+    def run_job(argv, **kw):
+        result = real_run_job(argv, **kw)
+        if list(argv)[-1:] == ["second"]:
+            clock["offset"] = 10_000.0
+        return result
+
+    monkeypatch.setattr(jobs.run, "run_job", run_job)
+    flaky = _job("tests/test_flaky.py")
+    second = Step((PY, "-c", "pass", "second"))
+    third = Step((PY, "-c", "pass", "third"))
+    outcome = _run(root, _job(command=(*flaky.command, second, third)), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    assert any("ran out before step 3" in r for r in outcome.reasons), outcome.reasons
+    record = _record(outcome)
+    assert record["schema"] == "personalclaw.ci.job-record/4"
+    assert [s["exit"] for s in record["steps"]] == [1, 0]
+    assert record["unstarted_steps"] == 1
+    assert _by_test(record)[FLAKY]["rerun_result"] == "flake"
+    [read] = verdict.from_job_records([outcome.record.read_text()])
+    assert read.unstarted_steps == 1
+
+
+def test_a_job_that_starts_every_planned_step_says_none_never_started(tmp_path):
+    root, _, _ = _suite(tmp_path)
+    outcome = _run(root, _job("tests/test_flaky.py"), tmp_path)
+    assert outcome.code == run.RED, outcome.reasons
+    assert _record(outcome)["unstarted_steps"] == 0
