@@ -1,6 +1,7 @@
 """Core handlers — page serving, branding, STT transcribe, config, SEL, auth, session workspace."""
 
 import asyncio
+import contextlib
 import hmac
 import json
 import logging
@@ -45,6 +46,7 @@ from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import bool_field, json_object_body, require_bool
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import SUSPICIOUS_BASH_PATTERNS
+from personalclaw.sel import sel_log_async
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
@@ -713,20 +715,17 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
         try:
             agent = await mutate_config_async(_apply)
         except ConfigWriteError as exc:
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="config.update",
                 outcome="error",
                 error=type(exc).__name__,
             )
             return config_write_refusal(exc)
-        _sel().log_api_access(
-            caller=caller,
-            operation="config.update",
-            outcome="ok",
-            resources=",".join(applied),
-        )
-        # Regenerate or clean up orchestrator skill on toggle.
+        # Regenerate or clean up orchestrator skill on toggle, in the same step as the write and
+        # before the row: the row is written in a worker thread, and a toggle back landing while
+        # it is written must not find this one's skill change still to come.
         if "orchestrator_skill" in applied:
             if agent.get("orchestrator_skill"):
                 from personalclaw.dashboard.handlers.agents import _regen_orchestrator  # noqa: F811
@@ -744,6 +743,13 @@ async def api_personalclaw_config(request: web.Request) -> web.Response:
                             p.unlink()
                 except Exception:
                     logger.exception("Failed to clean up orchestrator skill")
+        await sel_log_async(
+            _sel().log_api_access,
+            caller=caller,
+            operation="config.update",
+            outcome="ok",
+            resources=",".join(applied),
+        )
         return web.json_response({"ok": True})
 
     full = AppConfig.load().to_dict()
@@ -810,6 +816,61 @@ def _value_in_effect(path_key: str) -> object:
     ``to_dict()``), which is what lets a write's base be compared against it.
     """
     return _lookup(AppConfig.load().to_dict(), path_key)[1]
+
+
+async def _apply_yolo_live(state: DashboardState | None, value: object) -> None:
+    """``agent.yolo`` applied to the running instance as the PATCH just saved it, under the
+    posture lock the PATCH holds.
+
+    YOLO is an authorization control with a live runtime mechanism (trust_mode),
+    and this config field's only other reader is the startup seed — so this PATCH
+    used to change the file while the running instance kept its previous posture.
+    The OFF direction is the security-relevant one: a user revoking the bypass got
+    a UI reading false while approvals stayed bypassed until restart (#672).
+    """
+    if state is None:
+        logger.warning("agent.yolo patched with no dashboard state; live apply skipped")
+    elif value:
+        # Mirror the startup path exactly: the grant is SEL-audit-GATED (an
+        # unauditable permission change is refused, config stays saved for the
+        # restart path) and permanent (from_config — the same semantics this
+        # same key produces at boot, deliberately unlike the chat pill's TTL).
+        try:
+            from personalclaw.sel import sel
+
+            await sel_log_async(
+                sel().log_api_access,
+                caller="dashboard:config",
+                operation="mode_change:yolo",
+                outcome="enabled",
+                resources="config:agent.yolo",
+            )
+        except Exception:
+            logger.error(
+                "SEL audit failed; config saved but YOLO NOT enabled live "
+                "(matches the startup path's refusal)",
+                exc_info=True,
+            )
+        else:
+            state.enable_yolo(from_config=True)
+    else:
+        # Revocation is deliberately NOT audit-gated: a broken audit sink must
+        # never keep the bypass alive. disable_yolo() runs the trust_mode
+        # on-disable callback, clearing untrusted per-session auto-approve
+        # policies exactly like a TTL expiry would.
+        state.disable_yolo()
+        try:
+            from personalclaw.sel import sel
+
+            await sel_log_async(
+                sel().log_api_access,
+                caller="dashboard:config",
+                operation="mode_change:yolo",
+                outcome="disabled",
+                resources="config:agent.yolo",
+            )
+        except Exception:
+            logger.warning("SEL audit failed for YOLO disable via config patch", exc_info=True)
 
 
 async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
@@ -895,7 +956,8 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     app_name = request.get("app", "")
     refused = app_write_refusal(path_key, spec, app_name)
     if refused:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=f"app:{app_name}",
             operation="config.patch",
             outcome="denied",
@@ -1033,18 +1095,26 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
     # through a JSON writer that did its own mkstemp+rename, and with that bypass every config
     # change made from Settings landed on disk without reaching the `config` state-history root,
     # so "roll back my settings" had nothing to roll back to.
-    try:
-        await mutate_config_async(_apply)
-    except RefusedInConfigTransaction as stopped:
-        return stopped.answer()
-    except ConfigWriteError as exc:
-        _log_sel("error", f"{path_key}={type(exc).__name__}")
-        return config_write_refusal(exc)
-    except OSError:
-        _log_sel("error", f"{path_key}=write_failed")
-        return web.json_response({"error": "failed to write config file"}, status=500)
+    # A YOLO write is a change to the approval posture: its config write, its audit and its live
+    # change happen under the posture lock (`DashboardState.posture_lock`), so two of them back to
+    # back, or one beside the chat's mode switch, land on disk, live and in the log in one order.
+    state = request.app.get("state")
+    yolo = path_key == "agent.yolo"
+    async with state.posture_lock if yolo and state is not None else contextlib.nullcontext():
+        try:
+            await mutate_config_async(_apply)
+        except RefusedInConfigTransaction as stopped:
+            return stopped.answer()
+        except ConfigWriteError as exc:
+            _log_sel("error", f"{path_key}={type(exc).__name__}")
+            return config_write_refusal(exc)
+        except OSError:
+            _log_sel("error", f"{path_key}=write_failed")
+            return web.json_response({"error": "failed to write config file"}, status=500)
 
-    _log_sel("success", f"{path_key}={value}")
+        _log_sel("success", f"{path_key}={value}")
+        if yolo:
+            await _apply_yolo_live(state, value)
 
     # The owner turning the Git push switch on or off is a security event of its own, so the
     # security log names it as one, not only as a config write.
@@ -1079,55 +1149,6 @@ async def api_personalclaw_config_patch(request: web.Request) -> web.Response:
             apply_log_level(value)
         except Exception:
             logger.warning("Failed to apply log level live after config patch", exc_info=True)
-
-    # YOLO is an authorization control with a live runtime mechanism (trust_mode),
-    # and this config field's only other reader is the startup seed — so this PATCH
-    # used to change the file while the running instance kept its previous posture.
-    # The OFF direction is the security-relevant one: a user revoking the bypass got
-    # a UI reading false while approvals stayed bypassed until restart (#672).
-    if path_key == "agent.yolo":
-        state = request.app.get("state")
-        if state is None:
-            logger.warning("agent.yolo patched with no dashboard state; live apply skipped")
-        elif value:
-            # Mirror the startup path exactly: the grant is SEL-audit-GATED (an
-            # unauditable permission change is refused, config stays saved for the
-            # restart path) and permanent (from_config — the same semantics this
-            # same key produces at boot, deliberately unlike the chat pill's TTL).
-            try:
-                from personalclaw.sel import sel
-
-                sel().log_api_access(
-                    caller="dashboard:config",
-                    operation="mode_change:yolo",
-                    outcome="enabled",
-                    resources="config:agent.yolo",
-                )
-            except Exception:
-                logger.error(
-                    "SEL audit failed; config saved but YOLO NOT enabled live "
-                    "(matches the startup path's refusal)",
-                    exc_info=True,
-                )
-            else:
-                state.enable_yolo(from_config=True)
-        else:
-            # Revocation is deliberately NOT audit-gated: a broken audit sink must
-            # never keep the bypass alive. disable_yolo() runs the trust_mode
-            # on-disable callback, clearing untrusted per-session auto-approve
-            # policies exactly like a TTL expiry would.
-            state.disable_yolo()
-            try:
-                from personalclaw.sel import sel
-
-                sel().log_api_access(
-                    caller="dashboard:config",
-                    operation="mode_change:yolo",
-                    outcome="disabled",
-                    resources="config:agent.yolo",
-                )
-            except Exception:
-                logger.warning("SEL audit failed for YOLO disable via config patch", exc_info=True)
 
     # Orchestrator skill toggle: generate the always-loaded routing skill when
     # enabled, or remove it (incl. the pre-rename conductor/ dir) when disabled —
@@ -1309,7 +1330,8 @@ async def api_token_local(request: web.Request) -> web.Response:
     import personalclaw.dashboard.handlers as _h  # noqa: F811
 
     if not _h.is_loopback(request.remote or ""):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=request.remote or "unknown",
             operation="token.local",
             outcome="denied",
@@ -1323,7 +1345,8 @@ async def api_token_local(request: web.Request) -> web.Response:
         return web.json_response({"error": "not available"}, status=503)
     provided = request.headers.get("X-Local-Secret", "")
     if not provided or not hmac.compare_digest(expected, provided):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=request.remote or "unknown",
             operation="token.local",
             outcome="denied",
@@ -1336,7 +1359,8 @@ async def api_token_local(request: web.Request) -> web.Response:
     if ttl_param:
         parsed = parse_duration(ttl_param)
         if parsed is None or parsed > MAX_SESSION_TTL_SECS:
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=request.remote or "unknown",
                 operation="token.local",
                 outcome="denied",
@@ -1350,7 +1374,8 @@ async def api_token_local(request: web.Request) -> web.Response:
             return json_error("token_ttl_too_long", message=lifetimes.too_long(parsed), status=400)
         ttl = parsed
     minted = mint_session("local-app", ttl, issuer=ISSUER_TOKEN)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.remote or "unknown",
         operation="token.local",
         outcome="success",
@@ -1386,7 +1411,8 @@ async def api_session_agents_list(request: web.Request) -> web.Response:
     from personalclaw.session_workspace import list_results  # noqa: F811
 
     results = list_results(session_id)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="session.agents.list",
         outcome="ok",
@@ -1409,7 +1435,8 @@ async def api_session_agent_result(request: web.Request) -> web.Response:
 
     content, _ = redact_exfiltration_urls(content)
     content, _ = redact_credentials(content)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="session.agent.result",
         outcome="ok",
@@ -1423,7 +1450,8 @@ async def api_session_agent_stream(request: web.Request) -> web.StreamResponse:
     """GET /api/sessions/{id}/agents/{agent_id}/stream — SSE stream of result file."""
     session_id = request.match_info["id"]
     agent_id = request.match_info["agent_id"]
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="session.agent.stream",
         outcome="ok",
@@ -1478,7 +1506,8 @@ async def api_logout(request: web.Request) -> web.Response:
     from personalclaw.dashboard.token_auth import revoke_all_sessions  # noqa: F811
 
     if not _h.is_loopback(request.remote or ""):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=request.remote or "unknown",
             operation="logout",
             outcome="denied",
@@ -1490,7 +1519,8 @@ async def api_logout(request: web.Request) -> web.Response:
     expected = request.app.get("local_secret", "")
     provided = request.headers.get("X-Local-Secret", "")
     if not expected or not provided or not hmac.compare_digest(expected, provided):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=request.remote or "unknown",
             operation="logout",
             outcome="denied",
@@ -1500,7 +1530,8 @@ async def api_logout(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid secret"}, status=403)
 
     revoke_all_sessions()
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.remote or "unknown",
         operation="logout",
         outcome="success",
