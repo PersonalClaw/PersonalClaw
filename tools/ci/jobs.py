@@ -24,7 +24,8 @@ result, the head it ran on, the partner revisions it read, the run and its attem
 ``$GITHUB_RUN_ID`` and ``$GITHUB_RUN_ATTEMPT``, either refused before any step when it cannot be
 read; locally, no run and attempt 1), the diagnostic rerun (below), which quarantined tests
 failed, what it ran on (:func:`runner_of`: the catalogue's label, the image and the machine) and
-its toolchain's identities, as a key reads them, and each step's argv, exit and seconds. A record
+its toolchain's identities, as a key reads them, each step's argv, exit and seconds, and how many
+of its planned steps never started (job-record/4: one its time ran out before). A record
 is left only when the checkout was
 clean, at the same head, before and after the job, and each partner checkout the job reads was
 at the same head before and after it: otherwise the head or partner revision it would name is
@@ -1713,6 +1714,9 @@ def run_one(
     interrupted = False
     rerun: dict[str, object] | None = None
     peaks: list[int] = []
+    # The planned steps begun: the record says how many never were (job-record/4), and the flake
+    # rule passes a failing job only when every one began.
+    begun = 0
 
     def bounded(
         n: int, ran: list[tuple[list[str], int, float]], words: Sequence[str], bound: float
@@ -1748,6 +1752,7 @@ def run_one(
             reasons.append(f"the job's {total:g}s ran out before step {n} ({' '.join(argv)})")
             code = run.RED
             break
+        begun += 1
         if n < first_command and tuple(argv) == INSTALL_ARGV["chromium"]:
             ran: list[tuple[list[str], int, float]] = []
             code, more, interrupted = install_chromium(functools.partial(bounded, n, ran))
@@ -1925,6 +1930,7 @@ def run_one(
         workers=_local_workers(job, options, host),
         runner=runner_of(job, host),
         toolchain=toolchain,
+        unstarted_steps=len(planned) - begun,
     )
     out = work / "records" / f"{slug}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
