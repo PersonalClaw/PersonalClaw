@@ -913,6 +913,32 @@ dropped it and whether the app `declared` it retired), and a read of it
 that declares a declared-retired id again is refused; an id left out without saying so may come
 back, which clears its tombstone.
 
+**An app's settings come in two parts** (#3842, `apps/account_settings.py`): the **account**
+settings every capability shares (a token, a server, a region), declared in a top-level `settings`
+schema and entered once, and each **capability's own**, declared in its provider's
+`settingsSchema`. The account's live where an app's settings always did, `data/config.json`, and a
+capability's in `data/capabilities/<id>.json`. A factory gets one dict, the account's merged with
+its capability's (`ProviderSettings.load(app, capability)`); `ProviderSettings.load_account(app)`
+reads the account's, and `GET`/`PUT /api/apps/{name}/config` and
+`/api/apps/{name}/capabilities/{id}/config` read and write each part, with the same `revision`
+rules. Saving the account's rebuilds every capability that is on, and saving a capability's rebuilds
+that one. A capability's secrets are stored under its own owner, nested under the app's
+(`secret_refs.capability_owner`), so `ProviderSettings.remove_capability` deletes exactly its keys
+and the app still owns them all. Each setting is the account's or exactly one capability's:
+`validate` refuses a capability setting named like an account one or like another capability's,
+`settings` beside `setup.configSchema`, and `settings` without `account-settings` in
+`requiresCoreFeatures`, which a core that keeps one settings file lacks, so it refuses the app rather
+than running it without its capabilities' settings.
+
+An app that declares no `settings` keeps one file: all of its settings are shared, so all of them
+are the account's, where they always were, and `ProviderSettings.load(app)` returns them, merged
+with any capability's, as it always did. That keeps the released core working on the same home:
+nothing an app stored before is moved or re-keyed. For an app that declares `settings`, a one-time
+pass at gateway start (`providers/capability_settings_move.py`) carries each capability's
+setting out of the shared file into that capability's, writing the capability's file
+first and the shared file last, so a stop half way is finished by the next start. `load(app)`
+with no capability and `setup.configSchema` go at the v0.4.0 cut (#5665).
+
 A tool provider is registered under its app's name, and every tool it lists passes the tool
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see

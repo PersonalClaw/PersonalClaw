@@ -91,6 +91,26 @@ def validate_config(values: dict[str, Any], schema: dict[str, Any]) -> list[str]
     return errors
 
 
+def write_capability_config(
+    name: str, capability: str, values: dict[str, Any], schema: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate then persist one capability's own settings (#3842), as :func:`write_config` does
+    the account's: unknown keys refused, each secret stored under the capability's owner. Raises
+    :class:`AppConfigError` on invalid input; returns the saved values on success."""
+    from personalclaw.providers.settings import ProviderSettings
+
+    if not isinstance(values, dict):
+        raise AppConfigError("config must be a JSON object")
+    errors = validate_config(values, schema)
+    if errors:
+        raise AppConfigError("; ".join(errors))
+    try:
+        ProviderSettings.save_capability(name, capability, values)
+    except ValueError as exc:
+        raise AppConfigError(str(exc)) from exc
+    return values
+
+
 def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
     """Validate then persist an app's config. Raises :class:`AppConfigError` on
     invalid input — a reference to a credential another owner holds included, with the

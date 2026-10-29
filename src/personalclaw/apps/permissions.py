@@ -934,6 +934,13 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
         "reads the app's own settings, its credentials masked", owns=_OWN_APP
     ),
     "PUT /api/apps/{name}/config": AppMay(_WRITES_OWN_SETTINGS, owns=_OWN_APP),
+    "GET /api/apps/{name}/capabilities/{capability}/config": AppMay(
+        "reads one capability of the app's own, its own settings, its credentials masked",
+        owns=_OWN_APP,
+    ),
+    "PUT /api/apps/{name}/capabilities/{capability}/config": AppMay(
+        _WRITES_OWN_SETTINGS, owns=_OWN_APP
+    ),
     "POST /api/apps/message": AppMay(
         "the app-to-app broker — the target must be in the sender's `appMessaging`"
     ),

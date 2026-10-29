@@ -1638,6 +1638,7 @@ _KNOWN_FIELDS = frozenset(
         "provider",
         "providers",
         "retiredCapabilities",
+        "settings",
         # Connector-pack parse-only source scripts.
         "sources",
         "native",
@@ -1819,8 +1820,15 @@ class AppManifest:
     #: is never declared again and a reference to it can say it was removed.
     retiredCapabilities: list[str] = field(default_factory=list)  # noqa: N815
 
+    #: The account settings every capability shares, as a JSON schema (#3842): a token, a server,
+    #: a region, entered once. A capability's ``settingsSchema`` holds only its own. Declared, it
+    #: replaces ``setup.configSchema`` (``apps.account_settings``).
+    settings: dict[str, Any] = field(default_factory=dict)
+
     not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
     not_lists: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
+    #: A field that must be a JSON schema and is not, as written, so ``validate`` names it.
+    not_schemas: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     # -----------------------------------------------------------------
     # Validation
@@ -2231,9 +2239,10 @@ class AppManifest:
         """Each provider's own refusals, then the ones for the ids and labels that tell them
         apart."""
         errors = [e for prov in self.all_providers() for e in prov.validate()]
+        from personalclaw.apps.account_settings import settings_refusals
         from personalclaw.apps.capability_ids import capability_refusals
 
-        return errors + capability_refusals(self)
+        return errors + capability_refusals(self) + settings_refusals(self)
 
     def _capabilities_to_dict(self) -> dict[str, Any]:
         """The manifest's providers and retired capability ids, as written."""
@@ -2246,6 +2255,8 @@ class AppManifest:
             d["providers"] = providers_d
         if self.retiredCapabilities:
             d["retiredCapabilities"] = list(self.retiredCapabilities)
+        if self.settings:
+            d["settings"] = self.settings
         return d
 
     def core_compatibility(self, host: str | None = None) -> CoreCompatibility:
@@ -2459,6 +2470,7 @@ class AppManifest:
                 if isinstance(data.get("retiredCapabilities", []), list)
                 else []
             ),
+            settings=dict(data["settings"]) if isinstance(data.get("settings"), dict) else {},
             sources=[
                 PackSourceEntry.from_dict(s)
                 for s in data.get("sources", [])
@@ -2477,6 +2489,8 @@ class AppManifest:
         )
         manifest.not_booleans = _not_booleans(data, "native")
         manifest.not_lists = _not_lists(data, "retiredCapabilities")
+        if "settings" in data and not isinstance(data["settings"], dict):
+            manifest.not_schemas = {"settings": data["settings"]}
         return manifest
 
     @classmethod

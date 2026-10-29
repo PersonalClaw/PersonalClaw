@@ -2285,6 +2285,14 @@
   },
   "kind": "class",
   "members": {
+   "capability_path": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"}
+    ],
+    "returns": "Path"
+   },
    "config_path": {
     "kind": "staticmethod",
     "params": [
@@ -2295,9 +2303,25 @@
    "load": {
     "kind": "staticmethod",
     "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "capability"}
+    ],
+    "returns": "dict[str, Any]"
+   },
+   "load_account": {
+    "kind": "staticmethod",
+    "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"}
     ],
     "returns": "dict[str, Any]"
+   },
+   "remove_capability": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"}
+    ],
+    "returns": "int"
    },
    "save": {
     "kind": "staticmethod",
@@ -2307,10 +2331,36 @@
     ],
     "returns": "None"
    },
+   "save_capability": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"},
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "config"}
+    ],
+    "returns": "None"
+   },
    "update": {
     "kind": "staticmethod",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"}
+    ],
+    "returns": "dict[str, Any]"
+   },
+   "update_account": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"}
+    ],
+    "returns": "dict[str, Any]"
+   },
+   "update_capability": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"},
      {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"}
     ],
     "returns": "dict[str, Any]"
@@ -4984,12 +5034,13 @@
    }
   }
  },
+ "personalclaw.sdk.features.ACCOUNT_SETTINGS": {"kind": "value", "type": "str", "value": "'account-settings'"},
  "personalclaw.sdk.features.ADAPTIVE_THINKING": {"kind": "value", "type": "str", "value": "'adaptive-thinking'"},
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
  "personalclaw.sdk.features.CAPABILITY_IDS": {"kind": "value", "type": "str", "value": "'capability-ids'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
  "personalclaw.sdk.features.CLOSING_STREAMS": {"kind": "value", "type": "str", "value": "'closing-streams'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'adaptive-thinking', 'approval-answers', 'capability-ids', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-clients', 'guarded-download', 'links-name-their-channel', 'message-instructions', 'messages-run-once', 'model-efforts', 'paired-owner', 'pre-tool-hooks', 'running-list', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked', 'waiting-list'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'account-settings', 'adaptive-thinking', 'approval-answers', 'capability-ids', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-clients', 'guarded-download', 'links-name-their-channel', 'message-instructions', 'messages-run-once', 'model-efforts', 'paired-owner', 'pre-tool-hooks', 'running-list', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked', 'waiting-list'})"},
  "personalclaw.sdk.features.CUT_OFF_ANSWERS": {"kind": "value", "type": "str", "value": "'cut-off-answers'"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_CLIENTS": {"kind": "value", "type": "str", "value": "'guarded-clients'"},
@@ -5684,7 +5735,8 @@
     {"annotation": "list[LaunchedProgram]", "default": "<factory>", "kind": "positional_or_keyword", "name": "launches"},
     {"annotation": "list[ExternalWrite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "writes"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requiresCoreFeatures"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "retiredCapabilities"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "retiredCapabilities"},
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "settings"}
    ],
    "returns": "None"
   },

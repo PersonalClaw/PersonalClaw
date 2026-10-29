@@ -59,6 +59,8 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `GET /api/apps/{name}` — full manifest + status + saved config.
 - `POST /api/apps/{name}/agent-run` — start a background agent task.
 - `GET /api/apps/{name}/agent-run/{run_id}` — poll a background agent task.
+- `GET /api/apps/{name}/capabilities/{capability}/config` — One capability's own settings, its credentials masked.
+- `PUT /api/apps/{name}/capabilities/{capability}/config` — Save one capability's own settings, and apply them to that capability alone.
 - `GET /api/apps/{name}/config` — an app's settings, with its credentials masked.
 - `PUT /api/apps/{name}/config` — save an app's settings, and apply them to its providers.
 - `POST /api/apps/{name}/disable` — _(no summary)_

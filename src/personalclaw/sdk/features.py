@@ -11,6 +11,11 @@ app relies on, and a build offers the name exactly when it offers the contract.
 * Ask :func:`core_has` about a feature your app can do without, and say so when it is missing rather
   than quietly doing less.
 
+``ACCOUNT_SETTINGS``: an app's settings come in two parts, a top-level ``settings`` schema for
+the account every capability shares and each capability's own ``settingsSchema``, read with
+``ProviderSettings.load(app, capability)`` and ``ProviderSettings.load_account(app)``
+(``personalclaw.sdk.settings``). An app that declares ``settings`` declares it.
+
 ``ADAPTIVE_THINKING``: a model app on a wire of its own asks which models take adaptive thinking
 (``personalclaw.sdk.model.thinks_adaptively``), by the rule PersonalClaw's own Anthropic-compatible
 wire asks a model by. A model app that imports it declares it.
@@ -107,6 +112,7 @@ app that reads the list declares it, with ``/api/waiting`` in its manifest.
 """
 
 from personalclaw.apps.core_features import (
+    ACCOUNT_SETTINGS,
     ADAPTIVE_THINKING,
     APPROVAL_ANSWERS,
     CAPABILITY_IDS,
@@ -132,6 +138,7 @@ from personalclaw.apps.core_features import (
 )
 
 __all__ = [
+    "ACCOUNT_SETTINGS",
     "ADAPTIVE_THINKING",
     "APPROVAL_ANSWERS",
     "CAPABILITY_IDS",

@@ -234,7 +234,7 @@ def test_every_refusing_route_is_one_the_dashboard_sends_a_base_to_and_back() ->
     guarded, mismatches = census(gateway_routes(), API_TS.read_text(encoding="utf-8"))
     assert mismatches == []
     # The floors: the census read a real router and a real client, a wrapper and a union among them.
-    assert len(guarded) == 32, sorted(h.__qualname__ for h in guarded)
+    assert len(guarded) == 33, sorted(h.__qualname__ for h in guarded)
     names = {n for writes in guarded.values() for n in writes}
     assert {"savePrompt", "saveMemoryDoc", "updateSchedule", "saveProviderConfig"} <= names
 

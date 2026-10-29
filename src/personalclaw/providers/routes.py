@@ -219,6 +219,9 @@ async def handle_get_config(request: web.Request) -> web.Response:
     ext = registry.get(name)
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+    # The registry's own name for it from here on, never the request's: every file this reads or
+    # writes is named by what the gateway registered, not by what a request typed.
+    name = ext.name
     refusal = _configured_per_instance(ext)
     if refusal is not None:
         return refusal
@@ -252,6 +255,9 @@ async def handle_patch_config(request: web.Request) -> web.Response:
     ext = registry.get(name)
     if not ext:
         return web.json_response({"error": f"Extension {name!r} not found"}, status=404)
+    # The registry's own name for it from here on, never the request's: every file this reads or
+    # writes is named by what the gateway registered, not by what a request typed.
+    name = ext.name
     refusal = _configured_per_instance(ext)
     if refusal is not None:
         return refusal
@@ -308,8 +314,10 @@ async def handle_patch_config(request: web.Request) -> web.Response:
     )
 
 
-async def apply_saved_settings(name: str) -> None:
-    """Make an app's just-saved settings take effect now, without a gateway restart.
+async def apply_saved_settings(name: str, capability: str | None = None) -> None:
+    """Make an app's just-saved settings take effect now, without a gateway restart: after its
+    account settings, every capability that is on; after one *capability*'s own, that one alone
+    (#3842).
 
     A provider instance is built from its settings at enable-time and cached in the typed
     registry, so a saved change (a new API key, a new bot token) reached nothing until a
@@ -339,9 +347,10 @@ async def apply_saved_settings(name: str) -> None:
     from personalclaw.channel_transports import settled
 
     registry = get_provider_registry()
-    ext = registry.get(name)
+    one = (capability,) if capability else ()
+    ext = registry.get(name, *one)
     if ext is not None and ext.enabled:
-        registry.rebuild(name)
+        registry.rebuild(name, *one)
     elif (
         ext is not None
         and ext.error
@@ -349,7 +358,7 @@ async def apply_saved_settings(name: str) -> None:
         and ext.manifest.core_compatibility().admits
         and not python_children.app_refusal(ext.manifest)
     ):
-        registry.enable(name)
+        registry.enable(name, *one)
     # A rebuilt tool provider offers what its new settings make it offer (a different endpoint
     # answers a different tool list), so its names are read again before this answers.
     await admit_tool_names()
