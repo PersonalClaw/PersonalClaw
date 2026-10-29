@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from types import SimpleNamespace
 
@@ -162,17 +163,34 @@ async def test_a_send_does_not_wait_past_the_budget_and_routes_by_hints(
     ]
 
 
+async def _asked(server, text: str) -> None:
+    """Until a request carrying *text* has reached the model."""
+    ends = time.monotonic() + 10
+    while not server.asked(text):
+        assert time.monotonic() < ends, f"{text!r} never reached the model"
+        await asyncio.sleep(0.01)
+
+
 @pytest.mark.asyncio
 async def test_a_send_embeds_no_specialty_and_the_next_routes_by_meaning(server, gateway, index):
     """🔴 Red before: the first send embedded the message and then each specialty, one request
-    each, before it answered."""
+    each, before it answered.
+
+    The model answers nothing until the first send has (``server.held``). A send that waited on
+    it would never answer, so the send answering while the specialties' embed is still
+    outstanding proves it waited on none: by order, where a bound on its time failed on a slow
+    runner."""
     state, app = gateway
     dba, devops = _text(*DBA), _text(*DEVOPS)
     server.answers = {MEANT: [0.0, 1.0], dba: [1.0, 0.0], devops: [0.0, 1.0]}
     server.secs = 0.5
+    server.held = threading.Event()
     async with TestClient(TestServer(app)) as client:
-        first, took = await _send(client, state, "chat-1", MEANT)
-        assert took < 0.4, f"the first send waited {took:.2f}s on the embedding model"
+        try:
+            first, _ = await asyncio.wait_for(_send(client, state, "chat-1", MEANT), 10)
+            await _asked(server, dba)  # outstanding: the held model answers nothing
+        finally:
+            server.held.set()
         assert "routing_suggestion" not in first, "no hint matches, and meaning is not ready"
         assert index.drain(timeout=10)
         assert [r for r in server.requests if dba in r or devops in r] == [

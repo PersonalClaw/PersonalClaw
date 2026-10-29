@@ -22,6 +22,9 @@ class EmbeddingServer:
         self.secs = 0.3
         #: The vector a text is answered with; any other text gets :func:`vector`'s.
         self.answers: dict[str, list[float]] = {}
+        #: While this is an event not yet set, each request waits for it before it answers: a
+        #: test that holds the model can tell what answered before it by order, not by a clock.
+        self.held: threading.Event | None = None
         self._lock = threading.Lock()
 
     async def start(self) -> None:
@@ -30,6 +33,9 @@ class EmbeddingServer:
     async def embed(self, inputs: list[str]) -> list[list[float]]:
         with self._lock:
             self.requests.append(list(inputs))
+        held = self.held
+        if held is not None:
+            await asyncio.get_running_loop().run_in_executor(None, held.wait)
         await asyncio.sleep(self.secs)
         return [self.answers.get(text) or vector(text) for text in inputs]
 
