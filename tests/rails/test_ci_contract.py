@@ -16,13 +16,17 @@ control is one edit of one of them.
 from __future__ import annotations
 
 import ast
+import contextlib
 import fnmatch
 import functools
 import itertools
 import json
+import os
 import re
 import shlex
-import shutil
+import stat
+import subprocess
+import sys
 import tomllib
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -32,6 +36,7 @@ from typing import Any
 import ci_masking
 import count_ratchet_census
 import getsource_census
+import laid_tree
 import local_actions
 import private_walkers
 import pytest
@@ -6251,16 +6256,23 @@ ROWS: tuple[Row, ...] = (
 )
 
 
-def run_row(row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest) -> None:
-    """One row: its scaffold holds, each control fails or passes as it says, and the tree
-    holds. Every contract table's test is this body."""
+def run_controls(row: Row, subtests, tmp_path: Path) -> None:
+    """A row's scaffold holds, and each control fails or passes as it says. The scaffold is laid
+    out once (:class:`laid_tree.Laid`): each control runs on it put back as it was, not on a copy
+    of its own (a copy per control was 34,090 files over the contract's 795 controls, and a
+    loaded disk took one past its cap). It runs under a folder named for the control, as a copy
+    did: the suite keeps bytecode in one folder per run by each source's path
+    (``tests/pycache_guard.py``), so a module a plant edited is never read for the next one's."""
+    root, laid = tmp_path / "scaffold", None
     with subtests.test("the scaffold satisfies the check"):
-        row.scaffold(tmp_path / "scaffold")
-        assert row.check(tmp_path / "scaffold") == []
+        row.scaffold(root)
+        laid = laid_tree.Laid.take(root)  # as it was built, before the check reads it
+        assert row.check(root) == []
     for index, control in enumerate(row.controls):
         with subtests.test(control.name):
-            root = tmp_path / f"control-{index}"
-            shutil.copytree(tmp_path / "scaffold", root)
+            assert laid is not None, "the scaffold was never laid out"
+            root = root.rename(tmp_path / f"control-{index}")
+            laid.reset(root)
             control.plant(root)
             found = row.check(root)
             if control.fails:
@@ -6268,11 +6280,195 @@ def run_row(row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest) 
                 assert any(control.expect in v for v in found), "\n".join(found)
             else:
                 assert found == [], "\n".join(found)
+
+
+def run_row(row: Row, subtests, tmp_path: Path, request: pytest.FixtureRequest) -> None:
+    """One row: its scaffold holds, each control fails or passes as it says
+    (:func:`run_controls`), and the tree holds. Every contract table's test is this body."""
+    run_controls(row, subtests, tmp_path)
     with subtests.test("the tree"):
         violations = row.check(REPO)
         assert violations == [], "\n".join(violations)
     if row.on_tree is not None:
         row.on_tree(request)
+
+
+# ── Each control runs on the scaffold as it was laid out ────────────────────────────────────
+
+_LAID_MODULE = "VALUE = 1\n"
+_LAID_ENTRIES = ["a.txt", "laid_module.py", "link", "run.sh", "sub", "sub/b.txt"]
+_IMPORTS = (
+    "import sys; sys.path.insert(0, sys.argv[1]); import laid_module; print(laid_module.VALUE)"
+)
+
+
+def _laid_scaffold(root: Path) -> None:
+    """One of each kind of thing a plant changes: a file, a file in a folder, an executable, a
+    link, and a module the check imports."""
+    _write(root, "a.txt", "a\n")
+    _write(root, "sub/b.txt", "b\n")
+    _write(root, "run.sh", "#!/bin/sh\n")
+    (root / "run.sh").chmod(0o755)
+    (root / "link").symlink_to("a.txt")
+    _write(root, "laid_module.py", _LAID_MODULE)
+
+
+def _imported(root: Path) -> str:
+    """The module's value as a child that imports it reads, its bytecode kept beside its source as
+    Python keeps it by default: not in the suite's own per-run folder (``tests/pycache_guard.py``,
+    which a control's own folder name keeps apart anyway), and written."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"PYTHONPYCACHEPREFIX", "PYTHONDONTWRITEBYTECODE"}
+    }
+    argv = [sys.executable, "-c", _IMPORTS, str(root)]
+    return subprocess.run(argv, capture_output=True, text=True, check=True, env=env).stdout.strip()
+
+
+def _as_laid(root: Path) -> list[str]:
+    """How *root* differs from :func:`_laid_scaffold`: what it holds, then what a child that
+    imports its module reads."""
+    found = []
+    entries = sorted(p.relative_to(root).as_posix() for p in root.rglob("*"))
+    if entries != _LAID_ENTRIES:
+        found.append(f"the tree holds {entries}")
+    if (root / "a.txt").read_text(encoding="utf-8") != "a\n":
+        found.append("a.txt was changed")
+    if stat.S_IMODE((root / "run.sh").stat().st_mode) != 0o755:
+        found.append("run.sh is no longer executable")
+    if os.readlink(root / "link") != "a.txt":
+        found.append("link points elsewhere")
+    if (value := _imported(root)) != "1":
+        found.append(f"laid_module.py runs as VALUE = {value}")
+    return found
+
+
+def _changes_one_of_each(root: Path) -> None:
+    """Changes one of each in the shared scaffold, and imports a same-size edit of its module
+    stamped with the laid file's own second, as an edit made and run within the second the
+    scaffold was laid in is: its bytecode, kept beside it, matches the laid file put back by time
+    and size, so a reset that kept it would run the edit again."""
+    module = root / "laid_module.py"
+    laid = module.stat().st_mtime_ns
+    _write(root, "a.txt", "changed\n")
+    (root / "sub" / "b.txt").unlink()
+    _write(root, "new/added.txt", "added\n")
+    (root / "run.sh").chmod(0o644)
+    (root / "link").unlink()
+    (root / "link").symlink_to("sub")
+    _write(root, "laid_module.py", _LAID_MODULE.replace("1", "2"))
+    os.utime(module, ns=(laid, laid))
+    assert _imported(root) == "2", "premise: the edit runs"
+    assert (root / "__pycache__").is_dir(), "premise: its bytecode is kept beside it"
+
+
+_LAID_ROW = Row(
+    name="each control runs on the scaffold as it was laid out",
+    check=_as_laid,
+    scaffold=_laid_scaffold,
+    controls=(
+        Control("a plant that changes one of each and runs a same-size edit", _changes_one_of_each),
+        Control(
+            "the control after it, planting nothing, finds the scaffold as laid", _nothing, False
+        ),
+    ),
+)
+
+
+class _Recorded:
+    """A ``subtests`` stand-in that records each failing subtest's message by its name."""
+
+    def __init__(self) -> None:
+        self.failed: dict[str, str] = {}
+
+    @contextlib.contextmanager
+    def test(self, msg: str = "", **_kwargs: Any) -> Iterator[None]:
+        try:
+            yield
+        except AssertionError as exc:
+            self.failed[msg] = str(exc)
+
+
+def test_a_control_runs_on_the_scaffold_as_it_was_laid_out(subtests, tmp_path: Path) -> None:
+    """The controls share one laid-out scaffold (:func:`run_controls`): a plant that changes one
+    of each kind of thing in it, a compiled same-size edit of its module included, reaches none
+    of the control after it."""
+    run_controls(_LAID_ROW, subtests, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("kept", "control", "said"),
+    [("nothing", 1, "the tree holds"), ("__pycache__", 0, "premise: the edit runs")],
+    ids=["no reset", "a reset that keeps what an import wrote"],
+)
+def test_without_a_whole_reset_a_control_runs_on_what_another_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kept: str, control: int, said: str
+) -> None:
+    """The mutants. With no reset, the control after the plant finds what it left. With one that
+    keeps a ``__pycache__``, the bytecode the scaffold's check wrote for the laid module, in the
+    second it was laid, is kept, and the plant's same-size edit runs that instead of itself: a
+    module other than the one on disk runs, the hazard a reset that kept bytecode would leave."""
+    real = laid_tree.Laid.reset
+
+    def reset(laid: laid_tree.Laid, root: Path) -> list[str]:
+        if kept == "nothing":
+            return []
+        aside = root.parent / "kept"
+        if (root / kept).exists():
+            (root / kept).rename(aside)
+        undone = real(laid, root)
+        if aside.exists():
+            aside.rename(root / kept)
+        return undone
+
+    monkeypatch.setattr(laid_tree.Laid, "reset", reset)
+    recorded = _Recorded()
+    run_controls(_LAID_ROW, recorded, tmp_path)
+    name = _LAID_ROW.controls[control].name
+    assert said in recorded.failed.get(name, ""), recorded.failed
+
+
+def _links_outside(outside: Path) -> Callable[[Path], None]:
+    def plant(root: Path) -> None:
+        (root / "a.txt").unlink()
+        os.link(outside, root / "a.txt")
+
+    return plant
+
+
+@pytest.mark.parametrize("through", [False, True], ids=["the reset", "an in-place write"])
+def test_a_reset_never_writes_through_a_link_a_plant_left_to_a_file_outside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, through: bool
+) -> None:
+    """A plant that puts a hard link to a file outside the scaffold at a laid path: the reset
+    after it puts the laid bytes back as a file of the tree's own, and the outside file is as it
+    was. The mutant writes the laid bytes in place, through the link, into the outside file."""
+    outside = tmp_path / "outside.txt"
+    outside.write_text("not the scaffold's\n", encoding="utf-8")
+    if through:
+
+        def in_place(path: Path, laid: Any) -> None:
+            path.write_bytes(laid.data)
+
+        monkeypatch.setattr(laid_tree.Laid, "_write", staticmethod(in_place))
+    row = Row(
+        name="a reset never writes through a link a plant left",
+        check=_as_laid,
+        scaffold=_laid_scaffold,
+        controls=(
+            Control("a plant that links an outside file at a laid path", _links_outside(outside)),
+            Control("the control after it finds the laid bytes", _nothing, False),
+        ),
+    )
+    recorded = _Recorded()
+    run_controls(row, recorded, tmp_path / "rows")
+    if through:
+        assert outside.read_text(encoding="utf-8") == "a\n", "premise: the mutant writes through"
+    else:
+        assert recorded.failed == {}, recorded.failed
+        assert outside.read_text(encoding="utf-8") == "not the scaffold's\n"
+        assert (tmp_path / "rows" / "control-1" / "a.txt").stat().st_nlink == 1
 
 
 # ── A closed pull request's runs are cancelled ──────────────────────────────────────────────

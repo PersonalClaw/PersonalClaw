@@ -5,8 +5,9 @@ and install in every test, once per route. :class:`SharedApp` installs the app o
 (once per xdist worker), keeps a copy of the home as the install left it, and runs each row of a
 table on that copy. Nothing one row did reaches the next:
 
-- **the home** is put back to the copy before every row, and its digest is checked against the
-  copy's before the row runs, so a row never sees another row's grant, install, setting or file;
+- **the home** is put back to the copy before every row, only what a row changed written again
+  (:class:`laid_tree.Laid`), and its digest is checked against the copy's before the row runs, so
+  a row never sees another row's grant, install, setting or file;
 - **sessions** are all signed out before every row, and the row gets a gateway of its own, an
   owner token of its own and an app token minted for it;
 - **the Security Event Log rows** are read from a recorder made for the row, empty when it starts:
@@ -35,6 +36,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from laid_tree import Laid
 from state_leak_guard import fenced_state
 from table_rows import row
 
@@ -157,6 +159,8 @@ class SharedApp:
     _home: Path | None = None
     _copy: Path | None = None
     _digest: str = ""
+    #: The home as the install left it, read once: what :meth:`restore` puts back.
+    _laid: Laid | None = None
     #: What :meth:`run` resets before every row after the first. :func:`planted_rows` takes one
     #: away to show that the check behind it fails the row after the one that left a change.
     resets: frozenset[str] = RESETS
@@ -175,6 +179,7 @@ class SharedApp:
                     await self.prepare(gw, self._home)
             shutil.copytree(self._home, self._copy, symlinks=True)
             self._digest = digest(self._copy)
+            self._laid = Laid.take(self._copy)
         self._point_at(mp)
         return self._home
 
@@ -187,10 +192,10 @@ class SharedApp:
         mp.setattr(manager, "config_dir", lambda: home)
 
     def restore(self) -> None:
-        """The home as the install left it."""
-        assert self._home is not None and self._copy is not None
-        shutil.rmtree(self._home)
-        shutil.copytree(self._copy, self._home, symlinks=True)
+        """The home as the install left it: put back as it was laid out (:class:`laid_tree.Laid`),
+        writing only what a row changed, not removed and copied whole for every row."""
+        assert self._home is not None and self._laid is not None
+        self._laid.reset(self._home)
 
     async def run(
         self,
@@ -272,7 +277,12 @@ async def planted_rows(
     from personalclaw.tool_providers import registry as tools
 
     async def leaves_a_grant(r: Row) -> None:
-        (r.home / "apps" / shared.name / "planted-grant.json").write_text("{}", encoding="utf-8")
+        app = r.home / "apps" / shared.name
+        (app / "planted-grant.json").write_text("{}", encoding="utf-8")
+        # And a change to each of two files the install wrote, which the reset writes back.
+        with (app / "installed.json").open("a", encoding="utf-8") as installed:
+            installed.write("\n")
+        (app / "app.json").unlink()
 
     async def leaves_a_row(r: Row) -> None:
         from personalclaw import sel
