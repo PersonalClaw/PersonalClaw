@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AgentOrb } from '../../../ui/AgentOrb'
 import { cx } from '../../../ui/cx'
 import { prefersReducedMotion } from '../../../design/motion'
@@ -63,7 +63,10 @@ export function TurnHead({ running, phase, line, ending, onShown, className }: {
   }, [running, stage])
 
   const shown = stage !== 'hidden'
-  useEffect(() => { if (shown) onShown?.() }, [shown]) // eslint-disable-line react-hooks/exhaustive-deps -- once per appearance, whichever callback is current
+  // In the commit that shows it, before the browser paints: a passive effect ran after the paint,
+  // so the head could be painted out of view for a frame and then jump in, and anything looking
+  // at the page in between (a test's `waitFor` under load, about 1 in 100) saw it unscrolled.
+  useLayoutEffect(() => { if (shown) onShown?.() }, [shown]) // eslint-disable-line react-hooks/exhaustive-deps -- once per appearance, whichever callback is current
 
   if (!shown) return null
   // The line is the turn's polite live region while the turn runs. Its ending is said once, by the
