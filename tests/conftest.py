@@ -88,6 +88,15 @@ git_helper_guard = importlib.import_module("git_helper_guard")
 # it cannot see: tests/container_runtime.py. Proof: tests/test_container_runtime_census.py.
 container_runtime = importlib.import_module("container_runtime")
 
+# ── The sandbox's check of this computer is asked once ──────────────────
+# Asked for real here, before anything is collected, and put back as it answered before every
+# test (`_the_sandbox_check_answers_as_the_worker_found_it`): a test that fakes the global
+# `subprocess.run` is never the check's runner, whichever tests ran before it in its worker. A
+# test about the check clears it itself. Mechanism: tests/sandbox_host_facts.py. Proof:
+# tests/test_a_test_that_fakes_subprocess_gets_the_sandbox_check_as_settled.py.
+sandbox_host_facts = importlib.import_module("sandbox_host_facts")
+sandbox_host_facts.settle()
+
 # ── The programs a test starts keep their files in the test's own folder ─
 # black's cache, npm's cache and logs, mise's cache and state, a shell's history, and what the
 # libraries PersonalClaw loads are told (`personalclaw.library_env`): each set for the test's own
@@ -517,6 +526,13 @@ def _no_test_signs_git_in_with_the_machines_helper():
     refused = git_helper_guard.GUARD.take()
     if refused:
         pytest.fail(git_helper_guard.failure(refused), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _the_sandbox_check_answers_as_the_worker_found_it():
+    """Start the test with the sandbox's check of this computer answered as it was when the worker
+    started, whatever the test before it cleared or faked (tests/sandbox_host_facts.py)."""
+    sandbox_host_facts.restore()
 
 
 @pytest.fixture(autouse=True)
