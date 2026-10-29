@@ -44,6 +44,7 @@ from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.providers.provider_bridge import agent_model_problem
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import confirm_granted
+from personalclaw.sel import sel_log_async
 from personalclaw.stale_write import (
     claimed_revision,
     refusal_outcome,
@@ -657,7 +658,8 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                     f.unlink()
                     state: DashboardState = request.app["state"]
                     state.push_refresh("agents")
-                    _sel().log_api_access(
+                    await sel_log_async(
+                        _sel().log_api_access,
                         caller=request.get("user", "dashboard"),
                         operation="agent.detail_delete",
                         outcome="success",
@@ -711,7 +713,8 @@ async def api_agent_detail(request: web.Request) -> web.Response:
                         atomic_json_write(f, data)
                     state = request.app["state"]
                     state.push_refresh("agents")
-                    _sel().log_api_access(
+                    await sel_log_async(
+                        _sel().log_api_access,
                         caller=request.get("user", "dashboard"),
                         operation="agent.detail_update",
                         outcome="success",
@@ -1412,7 +1415,8 @@ async def _do_agents_sync(request: web.Request, body: dict) -> web.Response:
     if synced:
         state: DashboardState = request.app["state"]
         state.push_refresh("agents")
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="agents.sync",
         outcome="success",
@@ -1503,7 +1507,8 @@ async def api_personalclaw_agents_create(request: web.Request) -> web.Response:
         return refused.answer()
     except ConfigWriteError as exc:
         return config_write_refusal(exc)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="agent.create",
         outcome="success",
@@ -1610,7 +1615,8 @@ async def api_personalclaw_agent_update(request: web.Request) -> web.Response:
     # trip makes the one the next read reports. Not re-read: a read after the transaction could
     # hand out the revision of a later writer's change this page never saw.
     saved = _agent_record(name, agent)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="agent.update",
         outcome="success",
@@ -1686,7 +1692,8 @@ async def api_personalclaw_agent_delete(request: web.Request) -> web.Response:
     except ConfigWriteError as exc:
         return config_write_refusal(exc)
     _agent_edited(request, name, removed.provider_agent, is_default=False)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="agent.delete",
         outcome="success",
@@ -1736,7 +1743,8 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
     caller = request.get("user", "")
     if not caller:
         try:
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller="anonymous",
                 operation="agent_metadata.put",
                 outcome="denied",
@@ -1782,7 +1790,8 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
         stale = stale_write_refusal(request, stored, what=f"the routing note for {name!r}")
         if stale is not None:
             try:
-                _sel().log_api_access(
+                await sel_log_async(
+                    _sel().log_api_access,
                     caller=caller,
                     operation="agent_metadata.put",
                     outcome=refusal_outcome(stale),
@@ -1802,8 +1811,15 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
     else:
         save(name, content)
     _regen_orchestrator()
+    # As stored NOW, not as sent: with the orchestrator skill on, `_regen_orchestrator` re-seeds
+    # a missing note from the agent's description, so a cleared note can already hold text
+    # again, and the editor must show — and next save over — what is actually there. Read
+    # before the audit row's await, in the same step as the write: read after it, the answer
+    # could hand out a later writer's note and revision this editor never saw.
+    now = load(name)
     try:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="agent_metadata.put",
             outcome="ok",
@@ -1811,10 +1827,6 @@ async def api_agent_metadata_put(request: web.Request) -> web.Response:
         )
     except Exception:
         logger.warning("SEL logging failed", exc_info=True)
-    # As stored NOW, not as sent: with the orchestrator skill on, `_regen_orchestrator` re-seeds
-    # a missing note from the agent's description, so a cleared note can already hold text
-    # again, and the editor must show — and next save over — what is actually there.
-    now = load(name)
     return web.json_response(
         {"ok": True, "name": name, "content": now, "revision": revision_of(now)}
     )
@@ -1825,7 +1837,8 @@ async def api_agent_metadata_delete(request: web.Request) -> web.Response:
     caller = request.get("user", "")
     if not caller:
         try:
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller="anonymous",
                 operation="agent_metadata.delete",
                 outcome="denied",
@@ -1846,7 +1859,8 @@ async def api_agent_metadata_delete(request: web.Request) -> web.Response:
         # SEL audit log for a delete that deleted nothing — `not_found` is the registered
         # outcome word for exactly this (sel.py's `failed` family).
         try:
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=caller,
                 operation="agent_metadata.delete",
                 outcome="not_found",
@@ -1859,8 +1873,12 @@ async def api_agent_metadata_delete(request: web.Request) -> web.Response:
         )
     _regen_orchestrator()
     try:
-        _sel().log_api_access(
-            caller=caller, operation="agent_metadata.delete", outcome="ok", resources=name
+        await sel_log_async(
+            _sel().log_api_access,
+            caller=caller,
+            operation="agent_metadata.delete",
+            outcome="ok",
+            resources=name,
         )
     except Exception:
         logger.warning("SEL logging failed", exc_info=True)

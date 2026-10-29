@@ -286,6 +286,54 @@ class TestRoutingNotes:
             assert await _refusal(resp) == "stale_write"
         assert agent_metadata.load(AGENT) == "reads papers"
 
+    @pytest.mark.asyncio
+    async def test_a_save_answers_with_its_own_note_while_its_row_is_written(
+        self, agents_home
+    ) -> None:
+        # The save's `ok` row is written in the log's own thread, awaited (#5605). A later save
+        # that lands while that row is written must not become this save's answer: it reports
+        # the note it stored, and that note's revision, so its editor saves over its own copy.
+        import threading
+        from unittest.mock import MagicMock, patch
+
+        from personalclaw import agent_metadata
+
+        held, release = threading.Event(), threading.Event()
+
+        def log_api_access(**row):
+            if row.get("outcome") == "ok" and not held.is_set():
+                held.set()
+                release.wait(5)
+
+        log = MagicMock(log_api_access=log_api_access)
+        try:
+            with patch("personalclaw.dashboard.handlers.sel", return_value=log):
+                async with TestClient(TestServer(_notes_app())) as c:
+                    url = f"/api/agent-metadata/{AGENT}"
+                    first = asyncio.ensure_future(c.put(url, json={"content": "the first note"}))
+                    assert await asyncio.to_thread(held.wait, 5), "the first row was never written"
+                    later = asyncio.ensure_future(
+                        c.put(
+                            url,
+                            json={"content": "a later note"},
+                            headers=_based_on(revision_of("the first note")),
+                        )
+                    )
+                    for _ in range(100):  # the later save stores its note, then waits its row
+                        if agent_metadata.load(AGENT) == "a later note":
+                            break
+                        await asyncio.sleep(0.05)
+                    assert agent_metadata.load(AGENT) == "a later note"
+                    release.set()
+                    answer = await first
+                    assert answer.status == 200, await answer.text()
+                    body = await answer.json()
+                    assert (await later).status == 200
+            assert body["content"] == "the first note"
+            assert body["revision"] == revision_of("the first note")
+        finally:
+            release.set()
+
 
 # ── Themes: PUT /api/themes/{slug} ──────────────────────────────────────────────────────────────
 
