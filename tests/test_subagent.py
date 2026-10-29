@@ -576,6 +576,163 @@ class TestSubagentReaper:
                 await manager._force_reap("dead0002", info, _TIMEOUT_SECS + 120)
 
     @pytest.mark.asyncio
+    async def test_a_reap_cancelled_while_its_row_is_written_still_finishes(self) -> None:
+        """The reap's row is awaited (#5605), and a cancel can land on that await: an owner's
+        Stop runs under its request, and a closed tab cancels it. The reap is already committed
+        there, so the rest still happens: the row is written, the session released, the
+        Activity view told it is done, and the parent given its child's ending, once each."""
+        import threading
+
+        from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
+
+        sessions = _mock_sessions()
+        done_events: list[object] = []
+        on_done = AsyncMock()
+
+        async def on_event(etype: str, info: object, extra: dict) -> None:
+            if etype == "subagent_done":
+                done_events.append(info)
+
+        manager = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=on_done,
+            on_event=on_event,
+            is_yolo=lambda: True,
+        )
+        info = SubagentInfo(
+            id="dead0003",
+            task="stuck task",
+            started=time.time() - _TIMEOUT_SECS - 120,
+        )
+        manager._agents["dead0003"] = info
+        manager._running_count = 1
+        held, release, written = threading.Event(), threading.Event(), threading.Event()
+
+        def log_tool_invocation(**row):
+            if row.get("tool_name") == "reaper_force_kill":
+                held.set()
+                release.wait(5)
+                written.set()
+
+        try:
+            with (
+                patch("personalclaw.subagent.Stats"),
+                patch("personalclaw.subagent.sel") as mock_sel,
+            ):
+                mock_sel.return_value.log_tool_invocation = log_tool_invocation
+                reap = asyncio.ensure_future(
+                    manager._force_reap("dead0003", info, _TIMEOUT_SECS + 120)
+                )
+                assert await asyncio.to_thread(held.wait, 5), "the reap's row was never written"
+                reap.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await reap
+                assert info.reaped and manager._running_count == 0
+                release.set()
+                assert await asyncio.to_thread(written.wait, 5), "the reap's row was dropped"
+                for _ in range(100):  # the reap's tail runs on, in a task the manager holds
+                    if not manager._reaps_finishing:
+                        break
+                    await asyncio.sleep(0.02)
+                await manager.flush_deliveries()
+            sessions.release.assert_called_once_with("subagent:dead0003", cleanup=True)
+            assert done_events == [info]
+            on_done.assert_awaited_once_with([info])
+        finally:
+            release.set()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_reap_row_still_raises_once_the_rest_has_run(self) -> None:
+        """Not best effort, and not a reap left half done: the row's failure reaches the reaper
+        loop after the session is released, the done event fired and the ending delivered."""
+        from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
+
+        sessions = _mock_sessions()
+        done_events: list[object] = []
+        on_done = AsyncMock()
+
+        async def on_event(etype: str, info: object, extra: dict) -> None:
+            if etype == "subagent_done":
+                done_events.append(info)
+
+        manager = SubagentManager(
+            sessions=sessions,
+            ctx_builder=_mock_ctx_builder(),
+            on_done=on_done,
+            on_event=on_event,
+            is_yolo=lambda: True,
+        )
+        info = SubagentInfo(
+            id="dead0004",
+            task="stuck task",
+            started=time.time() - _TIMEOUT_SECS - 120,
+        )
+        manager._agents["dead0004"] = info
+        manager._running_count = 1
+
+        with patch("personalclaw.subagent.Stats"), patch("personalclaw.subagent.sel") as mock_sel:
+            mock_sel().log_tool_invocation.side_effect = OSError("read-only file system")
+            with pytest.raises(OSError, match="read-only file system"):
+                await manager._force_reap("dead0004", info, _TIMEOUT_SECS + 120)
+            await manager.flush_deliveries()
+        sessions.release.assert_called_once_with("subagent:dead0004", cleanup=True)
+        assert done_events == [info]
+        on_done.assert_awaited_once_with([info])
+
+    @pytest.mark.asyncio
+    async def test_a_failed_row_whose_caller_was_cancelled_is_logged(self, caplog) -> None:
+        """With its caller gone, the tail's failure has no one to raise to: it is logged."""
+        import logging
+        import threading
+
+        from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
+
+        manager = SubagentManager(
+            sessions=_mock_sessions(),
+            ctx_builder=_mock_ctx_builder(),
+            is_yolo=lambda: True,
+        )
+        info = SubagentInfo(
+            id="dead0005",
+            task="stuck task",
+            started=time.time() - _TIMEOUT_SECS - 120,
+        )
+        manager._agents["dead0005"] = info
+        manager._running_count = 1
+        held, release = threading.Event(), threading.Event()
+
+        def log_tool_invocation(**row):
+            held.set()
+            release.wait(5)
+            raise OSError("read-only file system")
+
+        try:
+            with (
+                caplog.at_level(logging.ERROR, logger="personalclaw.subagent"),
+                patch("personalclaw.subagent.Stats"),
+                patch("personalclaw.subagent.sel") as mock_sel,
+            ):
+                mock_sel.return_value.log_tool_invocation = log_tool_invocation
+                reap = asyncio.ensure_future(
+                    manager._force_reap("dead0005", info, _TIMEOUT_SECS + 120)
+                )
+                assert await asyncio.to_thread(held.wait, 5), "the reap's row was never written"
+                reap.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await reap
+                release.set()
+                for _ in range(100):
+                    if not manager._reaps_finishing:
+                        break
+                    await asyncio.sleep(0.02)
+                await asyncio.sleep(0)  # the done callback runs on the loop's next step
+        finally:
+            release.set()
+        said = [r for r in caplog.records if "reap ended with an error" in r.getMessage()]
+        assert said and "read-only file system" in str(said[0].exc_info[1]), caplog.text
+
+    @pytest.mark.asyncio
     async def test_reaper_skips_completed_subagents(self) -> None:
         """Reaper does not touch subagents already marked done."""
         from personalclaw.subagent import _TIMEOUT_SECS, SubagentInfo
