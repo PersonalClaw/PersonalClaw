@@ -209,7 +209,7 @@ _GATEWAY_ENV: dict[str, str] = {
     "mcp_core.py::_get_ppid::subprocess.check_output": "ppid probe",
     "mcp_shared.py::_resolve_excluded_tools._get_ppid::subprocess.check_output": "ppid probe",
     "session_pid.py::_is_managed_agent_process::subprocess.check_output": "managed-process probe",
-    "subagent.py::_total_memory_gb::subprocess.check_output": "total RAM probe",
+    "subagent_sizing.py::_total_memory_gb::subprocess.check_output": "total RAM probe",
     "sandbox.py::_probe_sandbox_exec::subprocess.run": "sandbox-exec availability probe",
     "sandbox.py::_namespaces_take::subprocess.run": "Linux namespace availability probe",
     "sandbox.py::_ssh_supports_accept_new::subprocess.run": "ssh version probe",
