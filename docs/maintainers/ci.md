@@ -2174,6 +2174,11 @@ runs them beside its own tests rather than all of `tests/rails` (#3920).
 - **What is always selected:** `tests/rails/test_ci_contract.py`, a rail that starts a child
   (nothing a child reads is recorded), a rail the record does not hold or left unrecorded, and
   every rail when no commit of the last day has a record or it is older than a day.
+- **A record of a commit this clone does not have** is refused: the command prints no rail,
+  exits 2 and names `git fetch origin`, since without that commit's tree no path can be told
+  added from changed. `--allow-fallback` selects anyway, every path counted as added or removed,
+  and says so. It once printed 14 of 251 rails for a pull request in a clone that had not
+  fetched, with the reason on its last stderr line alone. No CI job runs the command.
 
 ## Local runs
 
