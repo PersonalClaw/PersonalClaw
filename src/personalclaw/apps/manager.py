@@ -15,7 +15,7 @@ import logging
 import os
 import stat
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -272,6 +272,13 @@ class InstalledApp:
     # "" means "installed before this field existed"; readers fall back to the tier the
     # app's ``origin`` earns (``app_manager.trust_tier_of``), never to ``builtin`` (#2627).
     tier: str = ""
+    #: Each capability id an update dropped, with its last label, the version that dropped it and
+    #: whether the author ``declared`` it retired (``apps.capability_lifecycle``): a read of it says
+    #: what it was, and a declared one is never declared again.
+    retiredCapabilities: dict[str, dict[str, Any]] = field(default_factory=dict)  # noqa: N815
+    #: Each capability an update renamed, ``{old: {"to": new, "in": version}}``: moved once. While
+    #: a mover has failed it, the move also lists those movers' names under ``pending``.
+    capabilityMoves: dict[str, dict[str, Any]] = field(default_factory=dict)  # noqa: N815
     schemaVersion: int = 2  # noqa: N815  — schema version for future migrations
 
     def validate_fields(self) -> list[str]:
@@ -309,6 +316,8 @@ class InstalledApp:
             resources=str(data.get("resources", "gateway")),
             lifecycle=str(data.get("lifecycle", "gateway")),
             tier=str(data.get("tier", "")),
+            retiredCapabilities=_capability_marks(data.get("retiredCapabilities")),
+            capabilityMoves=_capability_marks(data.get("capabilityMoves")),
             schemaVersion=int(data.get("schemaVersion", 1)),
         )
         errors = inst.validate_fields()
@@ -329,6 +338,26 @@ class InstalledApp:
             if inst.tier and inst.tier not in _VALID_TIER:
                 inst.tier = ""
         return inst
+
+
+def _capability_marks(raw: Any) -> dict[str, dict[str, Any]]:
+    """An installed record's per-capability marks, as written: text, a yes or no, or a list of
+    names. Anything else is none."""
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(cid): {str(k): _mark_value(v) for k, v in mark.items()}
+        for cid, mark in raw.items()
+        if isinstance(mark, dict)
+    }
+
+
+def _mark_value(value: Any) -> Any:
+    if isinstance(value, (bool, str)):
+        return value
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return str(value)
 
 
 def _now_iso() -> str:

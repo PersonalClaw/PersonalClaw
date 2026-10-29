@@ -899,6 +899,20 @@ settings form. A capability has a path segment of its own so it never takes the 
 added under `/api/providers/{name}` later. An app's settings are still one document,
 `/api/providers/{name}/config`, until #3842 gives each capability its own.
 
+What happens to an installed app's capabilities later is `apps/capability_lifecycle.py`'s. An app an
+older core installed with two providers of one type and no ids is **held off**: startup and its
+enable refuse it with the sentence naming the field, its files untouched, until an update names
+each one. An update that **renames** a capability declares the old id in `renamedFrom`; each store
+keyed by capability registers a mover, which carries `<app>/<old>` to `<app>/<new>` once, and
+`installed.json` keeps the move (`capabilityMoves`), so it never runs twice. A move a mover fails
+stays `pending` with that mover's name, and the gateway runs only the movers still pending again
+when it next starts its apps, so a mover must be idempotent. An id an update **drops** stays in
+`installed.json` as a tombstone (`retiredCapabilities`, with its last label, the version that
+dropped it and whether the app `declared` it retired), and a read of it
+(`GET /api/providers/{name}/capabilities/{id}`) says what it was and when it went. A later version
+that declares a declared-retired id again is refused; an id left out without saying so may come
+back, which clears its tombstone.
+
 A tool provider is registered under its app's name, and every tool it lists passes the tool
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see
