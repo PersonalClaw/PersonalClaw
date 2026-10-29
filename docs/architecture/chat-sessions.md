@@ -1303,6 +1303,35 @@ What `ChatPage.tsx` keeps is the routing (`ChatPage`, `RoomsRedirect`) and
 `ChatSession`'s composition: it calls the controllers in order, hands each the
 others' pieces it needs, and lays the regions out.
 
+## The turn's typed model
+
+A chat is still stored as rows, and a turn now has a backend type as well
+(shared contracts §3.3-§3.5): `turns.py` defines messages that own ordered,
+typed parts, one state machine per part (`turns.advance`, the only writer of
+a part's `state`, held to it by `tests/rails/test_part_state_has_one_writer_tree.py`),
+the §3.5 definitions (`may_have_run`, `completed_side_effect`, …) and
+`ending_summary`. `make turns-schema` writes `schemas/turns.schema.json` and
+`web/src/lib/generated/turns.ts` from it, and
+`tests/test_turns_schema_current.py` fails until both match.
+
+`dashboard/turn_rows.py`'s `from_rows(rows, session_key=…, declared=…)` reads today's rows as
+those messages (§3.10's mapping): turns from `turn_source.by_turn`, a steer as a
+user message with `steered_into`, Regenerate's `variants` as attempts of one
+parent, each call's rows as one tool part in the state they say it reached, and
+the turn's ending from its rows. A call's effect and risk are what its row
+recorded when it was made (`meta.effect`, `meta.risk`), else what its approval
+card or its tool's declaration says, else `unchecked` and a write. Ids are
+`ids.stable_id`s of the rows, the same on every read. `tool_families.family_of`
+sorts each call into §3.3.1's families. `turns.dialogue(messages)` gives the
+messages back as text, and over `tests/fixtures/transcripts/` it equals
+`history.model_view(rows, None)` entry for entry (`tests/test_turn_rows.py`),
+except an earlier version of an answer of several rows switched back in, which
+it reads as the attempt it is.
+
+The first reader is the run-again question (`dashboard/repeated_steps.py`): it
+reads the replaced attempt's tool parts and asks before running a turn again
+over a write that completed or failed.
+
 ## Prompt entities
 
 `prompt_providers/` is the prompt-catalog subsystem (bundled use-case prompts

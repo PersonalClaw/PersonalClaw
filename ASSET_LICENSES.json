@@ -1098,6 +1098,23 @@
       ]
     },
     {
+      "id": "chat-transcript-corpus",
+      "source": "Project-authored chat transcripts of every row shape a chat keeps, for tests/test_turn_rows.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/transcripts/chat.jsonl",
+        "tests/fixtures/transcripts/dispatch.jsonl",
+        "tests/fixtures/transcripts/endings.jsonl",
+        "tests/fixtures/transcripts/files.jsonl",
+        "tests/fixtures/transcripts/imported.jsonl",
+        "tests/fixtures/transcripts/switched_variant.jsonl",
+        "tests/fixtures/transcripts/tools.jsonl"
+      ]
+    },
+    {
       "id": "reply-style-snapshots",
       "source": "Project-authored: what a turn sends the model under each reply style, written by tests/reply_style_snapshots.py from a temporary home, for tests/test_reply_style_reaches_the_model.py; natural-voice-on-main.json is what natural voice sent before reply styles existed",
       "version": "repository-revision",

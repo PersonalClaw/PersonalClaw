@@ -1,0 +1,20 @@
+{"role": "user", "content": "Draft the summary", "ts": "2026-10-03T08:00:00+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "assistant", "content": "Drafting the", "ts": "2026-10-03T08:00:04+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "error", "content": "@INTERRUPTED@", "cls": "msg msg-err", "ts": "2026-10-03T08:00:05+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "Try the build", "ts": "2026-10-03T08:01:00+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "error", "content": "The model was busy; trying again.", "cls": "msg msg-err", "ts": "2026-10-03T08:01:01+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "tool", "content": "bash", "ts": "2026-10-03T08:01:02+00:00", "source_thread": "dashboard", "source_user": "dashboard", "meta": {"tool_call_id": "e1", "input": "{\"command\": \"make build\"}", "done": true, "risk": "caution", "effect": "write"}}
+{"role": "error", "content": "The model provider failed: 500 Internal Server Error", "cls": "msg msg-err", "ts": "2026-10-03T08:01:03+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "Write it all out", "ts": "2026-10-03T08:02:00+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "assistant", "content": "Here is the first part", "ts": "2026-10-03T08:02:03+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "system", "content": "{\"kind\": \"stop_event\", \"id\": \"stop-1\", \"state\": \"stopped\", \"outcome\": \"stopped\", \"ts_start\": \"2026-10-03T08:02:04+00:00\"}", "cls": "{\"kind\": \"stop_event\", \"id\": \"stop-1\", \"state\": \"stopped\", \"outcome\": \"stopped\", \"ts_start\": \"2026-10-03T08:02:04+00:00\"}", "ts": "2026-10-03T08:02:04+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "Keep going", "ts": "2026-10-03T08:03:00+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "tool", "content": "write_file", "ts": "2026-10-03T08:03:01+00:00", "source_thread": "dashboard", "source_user": "dashboard", "meta": {"tool_call_id": "e2", "input": "{\"path\": \"out.md\"}", "done": true, "risk": "caution", "effect": "write"}}
+{"role": "error", "content": "@CUT_SHORT@", "cls": "msg msg-err", "ts": "2026-10-03T08:03:02+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "Say hello", "ts": "2026-10-03T08:04:00+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "system", "content": "Prompt blocked — a secret was found in it.", "cls": "msg msg-info", "ts": "2026-10-03T08:04:01+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "notice", "content": "Carried on with the earlier answer.", "cls": "msg msg-notice", "ts": "2026-10-03T08:04:02+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "assistant", "content": "Hello.", "ts": "2026-10-03T08:04:03+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "queued", "content": "One more thing", "cls": "{\"queue_id\": \"qq1\"}", "ts": "2026-10-03T08:04:04+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "Check the record", "ts": "2026-10-03T08:05:00+00:00", "source_thread": "dashboard", "source_user": "dashboard", "meta": {"turn": {"outcome": "interrupted"}}}
+{"role": "assistant", "content": "Checking", "ts": "2026-10-03T08:05:02+00:00", "source_thread": "dashboard", "source_user": "dashboard"}

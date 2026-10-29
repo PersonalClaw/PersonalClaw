@@ -307,3 +307,99 @@ async def test_the_page_that_asks_gets_the_question_rather_than_a_failure(state,
     assert resp.headers.get(CONSENT_ASKED_HEADER) == "1"
     assert data["error"]["code"] == "retry_repeats_steps"
     assert runs.messages == []
+
+
+# ── what a call's own rows say of it ────────────────────────────────────────────────────────────
+# Each runs through the route, so the real `repeated_steps._finished_changes` reads the rows, and
+# the declarations it falls back on are the agent's tool surface, as once the runtime is gone.
+
+
+@pytest.mark.asyncio
+async def test_a_call_recorded_as_a_write_is_asked_about_though_its_tool_now_declares_a_read(
+    state, runs, audit
+):
+    # read_file declares it only reads; what the call's row recorded when it ran wins.
+    _turn(
+        state,
+        (
+            "read_file",
+            _call("c1", "read_file", {"path": "notes/plan.md"}, risk="caution", effect="write"),
+        ),
+    )
+
+    resp, data = await _post(state)
+
+    assert resp.status == 409, data
+    assert data["error"]["detail"]["steps"] == [{"tool": "read_file", "target": "notes/plan.md"}]
+    assert runs.messages == []
+
+
+@pytest.mark.asyncio
+async def test_a_call_recorded_as_a_read_is_not_asked_about_though_its_tool_now_declares_nothing(
+    state, runs, audit
+):
+    # team_post declares nothing now (it is on no surface), which would count it as a change; its
+    # gate read the call as safe when it ran, and its row says so.
+    _turn(
+        state,
+        (
+            "team_post",
+            _call("c1", "team_post", {"channel": "#plans"}, risk="safe", effect="read"),
+        ),
+    )
+
+    resp, data = await _post(state)
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ended", ["expired", "cancelled"])
+async def test_a_call_whose_approval_ended_unanswered_did_not_run(ended, state, runs, audit):
+    unanswered = json.dumps({"request_id": "c1", "tool_call_id": "c1", "resolved": ended})
+    _turn(
+        state,
+        ("write_file", _call("c1", "write_file", {"path": "a.md", "content": "x"})),
+        rows=[("permission", "write_file", unanswered)],
+    )
+
+    resp, data = await _post(state)
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_a_call_a_gate_said_was_not_run_is_not_asked_about(state, runs, audit):
+    from personalclaw.dashboard.step_notes import ABOUT_CALL, NOT_RUN, NOTE
+
+    why = f"{NOT_RUN}the chat's task mode is Ask."
+    _turn(
+        state,
+        ("write_file", _call("c1", "write_file", {"path": "a.md", "content": "x"})),
+        (f"write_file — {why}", {ABOUT_CALL: "c1", NOTE: why}),
+    )
+
+    resp, data = await _post(state)
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_a_call_its_approval_card_established_as_a_read_is_not_asked_about(
+    state, runs, audit
+):
+    # team_post declares nothing; the card that asked about this call said it only reads.
+    card = json.dumps({"request_id": "c1", "tool_call_id": "c1", "is_read_only": "1"})
+    _turn(
+        state,
+        ("team_post", _call("c1", "team_post", {"channel": "#plans"})),
+        rows=[("permission", "team_post", card)],
+    )
+
+    resp, data = await _post(state)
+
+    assert resp.status == 200, data
+    assert runs.messages == [QUESTION]
