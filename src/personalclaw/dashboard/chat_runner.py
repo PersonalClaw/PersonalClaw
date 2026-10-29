@@ -186,7 +186,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 from personalclaw.session_pid import tie_to_session
 from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
@@ -1857,7 +1857,8 @@ async def _apply_screen_frame(session: _ChatSession, client: object, message: st
         return message
 
     if not AppConfig.load().dashboard.screen_share_enabled:
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.screen_frame_drop",
             outcome="denied",
@@ -1880,7 +1881,8 @@ async def _apply_screen_frame(session: _ChatSession, client: object, message: st
         # pixels to something that will drop them.
         if callable(stage) and stage(frame.data_url()):
             _mark_screen_context(session, True)
-            sel().log_api_access(
+            await sel_log_async(
+                sel().log_api_access,
                 caller="dashboard",
                 operation="chat.screen_frame_deliver",
                 outcome="success",
@@ -1894,7 +1896,8 @@ async def _apply_screen_frame(session: _ChatSession, client: object, message: st
         # No vision binding of any kind: nothing can read this frame. It is already
         # drained, so it is simply gone — and the composer's control was rendered
         # disabled with this reason, so the user was told before they tried.
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.screen_frame_drop",
             outcome="denied",
@@ -1910,7 +1913,8 @@ async def _apply_screen_frame(session: _ChatSession, client: object, message: st
         logger.warning("screen-frame description failed", exc_info=True)
         description = ""
     if not description:
-        sel().log_api_access(
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.screen_frame_drop",
             outcome="failure",
@@ -1929,7 +1933,8 @@ async def _apply_screen_frame(session: _ChatSession, client: object, message: st
         transformation_path="describe",
     )
     _mark_screen_context(session, "described")
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.screen_frame_deliver",
         outcome="success",
@@ -2554,7 +2559,8 @@ async def run_chat(
                 f"@{name}", state, session, turn_row=_turn_row, invocation_words=3
             )
             if status == "ok":
-                sel().log_tool_invocation(
+                await sel_log_async(
+                    sel().log_tool_invocation,
                     session_key="",
                     agent=_agent_label(session),
                     source="dashboard",
@@ -2566,7 +2572,8 @@ async def run_chat(
                 # Re-enter run_chat with the expanded message (depth=1, no further expansion)
                 await run_chat(state, session, expanded, _prompt_depth=1)
             elif status == "blocked":
-                sel().log_tool_invocation(
+                await sel_log_async(
+                    sel().log_tool_invocation,
                     session_key="",
                     agent=_agent_label(session),
                     source="dashboard",
@@ -2580,7 +2587,8 @@ async def run_chat(
                 )
                 _answered_locally()
             elif status == "too_large":
-                sel().log_tool_invocation(
+                await sel_log_async(
+                    sel().log_tool_invocation,
                     session_key="",
                     agent=_agent_label(session),
                     source="dashboard",
@@ -2596,7 +2604,8 @@ async def run_chat(
                 )
                 _answered_locally()
             else:
-                sel().log_tool_invocation(
+                await sel_log_async(
+                    sel().log_tool_invocation,
                     session_key="",
                     agent=_agent_label(session),
                     source="dashboard",
@@ -2630,7 +2639,8 @@ async def run_chat(
         text, _ = redact_credentials(text)
         text, _ = redact_exfiltration_urls(text)
         session.append("assistant", text, "msg msg-a")
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key="",
             agent=_agent_label(session),
             source="dashboard",
@@ -3074,7 +3084,8 @@ async def run_chat(
             original = message
             message, _status = _expand_prompt_mention(message, state, session, turn_row=_turn_row)
             if _status == "ok":
-                sel().log_tool_invocation(
+                await sel_log_async(
+                    sel().log_tool_invocation,
                     session_key=session_key,
                     agent=_agent_label(session),
                     source="dashboard",
@@ -3084,7 +3095,8 @@ async def run_chat(
                     metadata={"mention": original.split()[0], "session": session.key},
                 )
             elif _status in ("blocked", "too_large"):
-                sel().log_tool_invocation(
+                await sel_log_async(
+                    sel().log_tool_invocation,
                     session_key=session_key,
                     agent=_agent_label(session),
                     source="dashboard",
@@ -3102,7 +3114,8 @@ async def run_chat(
                 state.push_sessions_update()
                 return
             elif _status == "not_found":
-                sel().log_tool_invocation(
+                await sel_log_async(
+                    sel().log_tool_invocation,
                     session_key=session_key,
                     agent=_agent_label(session),
                     source="dashboard",
@@ -3118,7 +3131,8 @@ async def run_chat(
         _context_fed: dict[str, str] = {}
         if is_command:
             full_message = message
-            sel().log_tool_invocation(
+            await sel_log_async(
+                sel().log_tool_invocation,
                 session_key=session_key,
                 agent=_agent_label(session),
                 source="dashboard",
@@ -4039,7 +4053,8 @@ async def run_chat(
                         if _waived
                         else unasked_reason(_tmeta)
                     )
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4163,7 +4178,8 @@ async def run_chat(
                         )
                         session._last_turn_errored = True
                         try:
-                            sel().log_tool_invocation(
+                            await sel_log_async(
+                                sel().log_tool_invocation,
                                 session_key=session_key,
                                 agent=_agent_label(session),
                                 source="dashboard",
@@ -4244,7 +4260,8 @@ async def run_chat(
                 if _tm_deny:
                     await _refuse_call(event, why=_tm_deny)
                     note_refusal(session, event, _tm_deny)
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4291,7 +4308,8 @@ async def run_chat(
                     # A control of the shell's own (its denylist, a credential path) is a
                     # `refused` row naming the control and its rule.
                     _control = tool_result.audit()
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4321,7 +4339,8 @@ async def run_chat(
                 except ValueError as e:
                     await _refuse_call(event, why=f"invalid tool name: {e}")
                     note_refusal(session, event, f"its tool name is invalid ({e})")
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4348,7 +4367,8 @@ async def run_chat(
                 if _hooks_said.refused:
                     await _refuse_call(event, why=_hooks_said.refusal, kind="hook")
                     note_refusal(session, event, _hooks_said.note)
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4382,7 +4402,8 @@ async def run_chat(
                             "text": f"Auto-approved: {_tool_title}",
                         },
                     )
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4462,7 +4483,8 @@ async def run_chat(
                             else None
                         ),
                     )
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4495,7 +4517,8 @@ async def run_chat(
                 ):
                     await _let_through(event)
                     _tool_title = _broadcast_auto_tool(state, session, event)
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4556,7 +4579,8 @@ async def run_chat(
                         "resolved": refused_as,
                     }
                     session.append("permission", _title, json.dumps(perm_meta))
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4787,7 +4811,8 @@ async def run_chat(
                             else None
                         ),
                     )
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
@@ -4832,7 +4857,8 @@ async def run_chat(
                         _you_denied = True
                         _declined = declined_step(event.title, event.tool_input)
                         session._last_turn_declined.append(_declined)
-                    sel().log_tool_invocation(
+                    await sel_log_async(
+                        sel().log_tool_invocation,
                         session_key=session_key,
                         agent=_agent_label(session),
                         source="dashboard",
