@@ -57,6 +57,7 @@ def _record(
     attempt: int = 1,
     head: str = HEAD,
     argv: Sequence[str] = RERUN,
+    unstarted: int | None = None,
 ) -> str:
     """A shard's record: green when it names no test and no exit, else failed, with its tests
     rerun."""
@@ -77,6 +78,7 @@ def _record(
         attempt=attempt,
         run_id=RUN,
         rerun=rerun,
+        unstarted_steps=unstarted,
     )
 
 
@@ -428,6 +430,32 @@ def test_a_legs_flake_beside_a_red_merge_is_red() -> None:
         _record("e2e", exits=(1, 0, 0)),
     ]
     _red(_judge_legs(records, failed=(LEG_ONE, "e2e")), "`e2e`")
+
+
+def test_a_flake_whose_job_never_started_a_planned_step_is_red() -> None:
+    """run-job ran the job's other steps on after the flake's step, and the job's time ran out
+    before its third began: the two that ran read one red step alone, and a step never ran."""
+    record = _record(ONE, _test(FLAKY), exits=(0, 1), unstarted=1)
+    _red(_judge([record]), "never started 1 of its planned steps")
+
+
+def test_a_flake_whose_job_started_every_planned_step_reads_as_its_version_3_record() -> None:
+    """A job-record/4 record naming no unstarted step is judged as the same job's version-3
+    record: the flake passes, named alike."""
+    four = _record(ONE, _test(FLAKY), exits=(0, 1), unstarted=0)
+    three = _record(ONE, _test(FLAKY), exits=(0, 1))
+    assert json.loads(four)["schema"] == "personalclaw.ci.job-record/4"
+    judged, before = _judge([four]), _judge([three])
+    assert judged.green and before.green
+    assert judged.flakes == before.flakes
+
+
+def test_a_flake_in_a_record_that_does_not_say_is_read_as_before() -> None:
+    """A job-record/3 record, from a run-job before version 4, names no count: its steps alone
+    are read, as they were."""
+    record = _record(ONE, _test(FLAKY), exits=(0, 1))
+    assert json.loads(record)["schema"] == "personalclaw.ci.job-record/3"
+    assert _judge([record]).green
 
 
 def test_a_job_that_failed_in_two_steps_is_red() -> None:

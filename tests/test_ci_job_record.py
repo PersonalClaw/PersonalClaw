@@ -66,6 +66,24 @@ def test_a_version_2_record_is_still_read_and_names_neither() -> None:
     assert (result.runner, result.toolchain) == (None, None)
 
 
+def test_a_version_4_record_says_how_many_planned_steps_never_started() -> None:
+    """run-job counts each planned step it never started (#5655's leftover): the flake rule holds
+    a failing job to every planned step having run. A version-3 record does not say, and reads
+    None, as before."""
+    failed = dict(result=verdict.FAILURE, steps=[(["uv", "run", "pytest"], 1, 1.5)])
+    data = json.loads(_record(unstarted_steps=2, **failed))
+    assert data["schema"] == "personalclaw.ci.job-record/4"
+    assert data["unstarted_steps"] == 2
+    [four] = verdict.from_job_records([_record(unstarted_steps=2, **failed)])
+    assert four.unstarted_steps == 2
+    [whole] = verdict.from_job_records([_record(unstarted_steps=0)])
+    assert whole.unstarted_steps == 0
+    three = json.loads(_record(**failed))
+    assert three["schema"] == "personalclaw.ci.job-record/3" and "unstarted_steps" not in three
+    [old] = verdict.from_job_records([_record(**failed)])
+    assert old.unstarted_steps is None
+
+
 def test_a_record_reads_back_as_the_result_it_names() -> None:
     [result] = verdict.from_job_records([_record(attempt=2)])
     # A record names the partners its own job read, so it is judged against those alone.
@@ -185,6 +203,24 @@ def test_a_record_with_seconds_that_are_no_number_is_never_written(seconds: floa
         # A version-3 record without them, and a version-2 record with them.
         (_without("runner"), "must hold exactly"),
         (_with(schema="personalclaw.ci.job-record/2"), "must hold exactly"),
+        # How many planned steps never started: only version 4 says, as a whole number from 0,
+        # and a success started every one.
+        (_with(schema="personalclaw.ci.job-record/4"), "must hold exactly"),
+        (_with(unstarted_steps=0), "must hold exactly"),
+        (_with(schema="personalclaw.ci.job-record/4", unstarted_steps=-1), "a whole number from 0"),
+        (
+            _with(schema="personalclaw.ci.job-record/4", unstarted_steps=1.0),
+            "a whole number from 0",
+        ),
+        (
+            _with(schema="personalclaw.ci.job-record/4", unstarted_steps=True),
+            "a whole number from 0",
+        ),
+        (
+            _with(schema="personalclaw.ci.job-record/4", unstarted_steps=None),
+            "a whole number from 0",
+        ),
+        (_with(schema="personalclaw.ci.job-record/4", unstarted_steps=1), "never started"),
     ],
 )
 def test_a_record_it_cannot_read_is_refused(text: str, why: str) -> None:

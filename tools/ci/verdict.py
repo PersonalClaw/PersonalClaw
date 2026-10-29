@@ -166,6 +166,10 @@ class JobResult:
     #: The rerun's argv, as its record names it (empty when none ran): an end-to-end test passes
     #: as a flake only when it shows the rerun ran alone (:data:`E2E_ALONE`).
     rerun_argv: tuple[str, ...] = ()
+    #: How many of the job's planned steps never started (job-record/4), or None for a record
+    #: that does not say (an older schema's) and a ``needs`` result. A job whose time ran out
+    #: between a passed rerun and its next step names one or more, and passes no flake.
+    unstarted_steps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -494,7 +498,8 @@ def _pass_flakes(
 
     - its job failed one way only: on attempt 1, one step exited 1 and every other exited 0, a
       rerun ran, alone in a new process, and exited 0, and every test the record names is a
-      ``flake`` (a rail, a security-marked test or a test the rerun skipped is never one);
+      ``flake`` (a rail, a security-marked test or a test the rerun skipped is never one); and a
+      record that says (job-record/4) started every one of its planned steps;
     - the pull request changes no file its run reads (:func:`_reads`), so a test it adds or
       edits, or a conftest or runner configuration it changes, is never passed;
     - the run holds at most :data:`MAX_FLAKES` of them;
@@ -530,6 +535,11 @@ def _pass_flakes(
             return (), f"`{_inline(key)}`: {fault[0]} ({fault[1]})"
         if sorted(rec.step_exits) != [0] * (len(rec.step_exits) - 1) + [1]:
             return (), f"`{_inline(key)}` did not fail in one step that exited 1 alone"
+        if rec.unstarted_steps:
+            return (), (
+                f"`{_inline(key)}` never started {rec.unstarted_steps} of its planned steps, so"
+                " not every step's exit is there to read"
+            )
         if not rec.reran or rec.rerun_exit != 0 or not rec.tests:
             return (), f"`{_inline(key)}`'s failed tests were not passed by a rerun alone"
         for t in rec.tests:
@@ -792,9 +802,12 @@ def from_needs(text: str, identity: Identity, attempt: int = 1) -> list[JobResul
 
 #: The per-job record ``python -m tools.ci run-job`` writes: its schema name, and its fields.
 #: Version 3 adds what the job ran on and its toolchain (#3919), which a push to main holds a
-#: replayed pass to; a version-2 record is still read, and names neither.
+#: replayed pass to; a version-2 record is still read, and names neither. Version 4 adds how many
+#: of the job's planned steps never started (``unstarted_steps``), which the flake rule holds a
+#: failing job to; a version-3 record is still read, and does not say.
 JOB_RECORD_SCHEMA = "personalclaw.ci.job-record/3"
 _SCHEMA_2 = "personalclaw.ci.job-record/2"
+_SCHEMA_4 = "personalclaw.ci.job-record/4"
 _RECORD_KEYS_2 = frozenset(
     {
         "schema",
@@ -812,6 +825,7 @@ _RECORD_KEYS_2 = frozenset(
     }
 )
 _RECORD_KEYS = _RECORD_KEYS_2 | {"runner", "toolchain"}
+_RECORD_KEYS_4 = _RECORD_KEYS | {"unstarted_steps"}
 #: What a record's ``runner`` names: the catalogue's runner label the job ran under, the image it
 #: ran on (``<ImageOS>/<ImageVersion>`` on a GitHub-hosted runner, the container image for a job
 #: in one, empty for a bare host that names none), and the OS and architecture.
@@ -850,6 +864,7 @@ def job_record(
     workers: int | None = None,
     runner: Mapping[str, str] | None = None,
     toolchain: Mapping[str, str] | None = None,
+    unstarted_steps: int | None = None,
 ) -> str:
     """One job's (or one shard's) result as the JSON :func:`from_job_records` reads.
 
@@ -864,9 +879,11 @@ def job_record(
     ``workers`` a worker count a local run set in place of the catalogue's. ``runner`` is what the
     job ran on (:data:`RUNNER_KEYS`) and ``toolchain`` its toolchain's identities; either is
     written null when not given, and a record that names none is never replayed on a push.
+    ``unstarted_steps``, when given, is how many of the job's planned steps never started, and
+    the record is job-record/4; when not, it is job-record/3 and does not say.
     """
     record: dict[str, object] = {
-        "schema": JOB_RECORD_SCHEMA,
+        "schema": JOB_RECORD_SCHEMA if unstarted_steps is None else _SCHEMA_4,
         "key": key,
         "result": result,
         "head_sha": identity.head_sha,
@@ -887,6 +904,8 @@ def job_record(
             for argv, code, seconds in steps
         ],
     }
+    if unstarted_steps is not None:
+        record["unstarted_steps"] = unstarted_steps
     # Written as JSON a reader in any language takes (no NaN or Infinity), then read back: a
     # record this module would refuse is never written.
     try:
@@ -968,13 +987,20 @@ def _one_record(text: str, n: int) -> JobResult:
         raise Refused(f"{where} is not JSON: {exc}") from None
     if not isinstance(data, dict):
         raise Refused(f"{where} must be an object, got {type(data).__name__}")
-    # A version-2 record holds version 2's fields; any other is held to this version's.
+    # A version-2 or version-4 record holds its version's fields; any other is held to version 3's.
     schema = data.get("schema")
-    keys = _RECORD_KEYS_2 if schema == _SCHEMA_2 else _RECORD_KEYS
+    keys = (
+        _RECORD_KEYS_2
+        if schema == _SCHEMA_2
+        else _RECORD_KEYS_4 if schema == _SCHEMA_4 else _RECORD_KEYS
+    )
     if set(data) != keys:
         raise Refused(f"{where} must hold exactly {sorted(keys)}, got {sorted(data)}")
-    if schema not in (JOB_RECORD_SCHEMA, _SCHEMA_2):
-        raise Refused(f"{where} has schema {schema!r}, not {JOB_RECORD_SCHEMA!r} or {_SCHEMA_2!r}")
+    if schema not in (JOB_RECORD_SCHEMA, _SCHEMA_2, _SCHEMA_4):
+        raise Refused(
+            f"{where} has schema {schema!r}, not {JOB_RECORD_SCHEMA!r}, {_SCHEMA_2!r} or"
+            f" {_SCHEMA_4!r}"
+        )
     key = data["key"]
     if not isinstance(key, str) or not key:
         raise Refused(f"{where} names no job key")
@@ -1020,6 +1046,13 @@ def _one_record(text: str, n: int) -> JobResult:
             raise Refused(f"{where}: a step's seconds must be a number, finite and 0 or more")
     if data["result"] == SUCCESS and any(step["exit"] != 0 for step in steps):
         raise Refused(f"{where} says success, and a step exited non-zero")
+    unstarted: int | None = None
+    if schema == _SCHEMA_4:
+        unstarted = data["unstarted_steps"]
+        if not _whole(unstarted) or unstarted < 0:
+            raise Refused(f"{where}: unstarted_steps must be a whole number from 0")
+    if data["result"] == SUCCESS and unstarted:
+        raise Refused(f"{where} says success, and {unstarted} of its planned steps never started")
     runner = data.get("runner")
     if runner is not None and (
         not isinstance(runner, dict)
@@ -1058,6 +1091,7 @@ def _one_record(text: str, n: int) -> JobResult:
         rerun.get("argv") is not None,
         rerun.get("exit"),
         tuple(rerun.get("argv") or ()),
+        unstarted,
     )
 
 
