@@ -15,6 +15,7 @@ tests/rails/test_process_environment_writes_census_tree.py
 tests/rails/test_provider_instance_secrets_tree.py
 tests/rails/test_session_acquisition_census.py
 tests/rails/test_session_key_census_tree.py
+tests/rails/test_shared_contracts_doc_tree.py
 tests/rails/test_spawn_env_audit_tree.py
 tests/rails/test_structural_baseline_tree.py
 tests/rails/test_wire_error_envelope_census.py

@@ -33,6 +33,24 @@ _FILE_PATH = re.compile(
     r"`((?:src/)?personalclaw/[\w/.-]+\.py|web/src/[\w/.-]+\.(?:tsx?|css|mjs|js))`"
 )
 
+#: A section, from its heading to the next heading of any level.
+_SECTION = re.compile(r"(?m)^(?=#{1,6} )")
+
+
+def _claims(text: str) -> str:
+    """*text* less every section whose first line is ``Status: planned``.
+
+    Such a section (the shared contracts' convention, its §0.3) says what is still to be built,
+    so a file it names is the plan's, not a claim about the tree. The change that builds the
+    section removes the line, and from then on the files it names are held to the tree.
+    """
+    kept = []
+    for section in _SECTION.split(text):
+        head, _, body = section.partition("\n")
+        if not (head.startswith("#") and body.lstrip("\n").startswith("Status: planned\n")):
+            kept.append(section)
+    return "".join(kept)
+
 
 def test_the_security_doc_states_the_denylists_real_size():
     """The security doc's denylist count is the count the gateway enforces.
@@ -70,7 +88,7 @@ def test_every_file_an_architecture_doc_names_is_in_the_tree():
     named: list[tuple[str, str]] = []
     docs = [p for p in source_index.docs_files() if p.parent == DOCS_DIR and p.suffix == ".md"]
     for doc in docs:
-        named += [(doc.name, m) for m in _FILE_PATH.findall(source_index.text(doc))]
+        named += [(doc.name, m) for m in _FILE_PATH.findall(_claims(source_index.text(doc)))]
     # A pattern that stopped matching would pass this leg while checking nothing.
     assert len(named) >= 40, f"the scan found only {len(named)} file paths in the docs"
     missing = [
@@ -79,3 +97,12 @@ def test_every_file_an_architecture_doc_names_is_in_the_tree():
         if not (REPO_ROOT / ("src/" + rel if rel.startswith("personalclaw/") else rel)).is_file()
     ]
     assert not missing, "a doc names a file the tree does not have:\n" + "\n".join(missing)
+
+
+def test_a_planned_section_may_name_a_file_still_to_be_built():
+    """The same name is a claim in a built section and the plan's in a planned one."""
+    named = "See `personalclaw/not_yet_built.py`.\n"
+    built = "### 1.1 Built\n\n" + named
+    planned = "### 1.2 Planned\n\nStatus: planned\n\n" + named
+    assert _FILE_PATH.findall(_claims(built + planned)) == ["personalclaw/not_yet_built.py"]
+    assert _FILE_PATH.findall(_claims(planned)) == []
