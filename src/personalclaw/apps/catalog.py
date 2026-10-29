@@ -356,6 +356,19 @@ _ORIGIN_TO_SOURCE_KIND: dict[str, str] = {
 }
 
 
+def _provider_fields(m: AppManifest) -> dict[str, Any]:
+    """A card's provider fields, from the app's first provider however it was declared: the
+    singular ``provider`` or the first of ``providers[]`` (#3841)."""
+    first = m.first_provider()
+    if first is None:
+        return {"isProvider": False, "providerType": "", "providerCapabilities": []}
+    return {
+        "isProvider": True,
+        "providerType": first.type,
+        "providerCapabilities": list(first.capabilities),
+    }
+
+
 def precedence_rank(source_kind: str) -> int:
     """Where *source_kind* sits on :data:`SOURCE_PRECEDENCE` — lower wins a collision.
 
@@ -1163,9 +1176,7 @@ def _scan_git_source(url: str, *, now: float, deadline: float | None = None) -> 
                     author=m.author,
                     source=url,
                     sourceKind="git",
-                    isProvider=bool(m.provider),
-                    providerType=(m.provider.type if m.provider else ""),
-                    providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
+                    **_provider_fields(m),
                     tags=list(m.tags),
                     quality=(m.quality.to_dict() if m.quality else {}),
                     pointer=f"{url}#{entry.name}",
@@ -1623,9 +1634,7 @@ def _scan_local_sources() -> list[CatalogEntry]:
                     author=m.author,
                     source=str(entry),
                     sourceKind=kind,
-                    isProvider=bool(m.provider),
-                    providerType=(m.provider.type if m.provider else ""),
-                    providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
+                    **_provider_fields(m),
                     tags=list(m.tags),
                     quality=(m.quality.to_dict() if m.quality else {}),
                     consentKnown=True,
@@ -1677,9 +1686,7 @@ def available_bundled() -> list[CatalogEntry]:
                 author=m.author,
                 source=str(entry),
                 sourceKind="native",
-                isProvider=bool(m.provider),
-                providerType=(m.provider.type if m.provider else ""),
-                providerCapabilities=(list(m.provider.capabilities) if m.provider else []),
+                **_provider_fields(m),
                 tags=list(m.tags),
                 quality=(m.quality.to_dict() if m.quality else {}),
                 consentKnown=True,

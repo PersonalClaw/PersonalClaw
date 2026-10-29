@@ -215,6 +215,13 @@ def _runs_a_sidecar(manifest: dict[str, Any]) -> bool:
     return any(isinstance(p, dict) and p.get("execution") == EXECUTION_SIDECAR for p in declared)
 
 
+def _first_provider_raw(manifest: dict[str, Any]) -> dict[str, Any]:
+    """The raw manifest's first provider, however it was declared: the singular ``provider`` or
+    the first of ``providers[]`` (#3841, ``AppManifest.first_provider``). ``{}`` for none."""
+    declared = [manifest.get("provider"), *(manifest.get("providers") or [])]
+    return next((p for p in declared if isinstance(p, dict) and p), {})
+
+
 def _quality_wire(raw: Any) -> dict[str, Any]:
     """The DECLARED quality axes, and only those.
 
@@ -273,7 +280,8 @@ async def api_apps_list(request: web.Request) -> web.Response:
         # A provider app's settings live in Settings > Providers; a non-provider
         # app's settings (setup.configSchema) are aggregated in Settings > Apps.
         # Surface both signals so each surface can filter without an N+1 fetch.
-        is_provider = bool(manifest.get("provider"))
+        provider_block = _first_provider_raw(manifest)
+        is_provider = bool(provider_block)
         # `hasConfig` = does the app have ANY settings surface. Mirror
         # `_effective_config_schema`: an explicit setup.configSchema OR a provider
         # app's provider.settingsSchema. Reading only setup.configSchema wrongly
@@ -281,7 +289,6 @@ async def api_apps_list(request: web.Request) -> web.Response:
         # provider.settingsSchema (e.g. native-vector-memory/tasks/skills/
         # notifications) — so the Apps UI hid their Configure action.
         config_schema = (manifest.get("setup", {}) or {}).get("configSchema") or {}
-        provider_block = manifest.get("provider", {}) or {}
         provider_schema = provider_block.get("settingsSchema") or {}
         # A multi-instance provider's settingsSchema describes an INSTANCE, not the app: its
         # settings surface is its instance list in Settings → Providers, and there is no
@@ -340,20 +347,14 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 "uiRevision": ui_revision(name, manifest.get("ui", {}) or {}),
                 "uiCapabilities": [str(c) for c in (manifest.get("uiCapabilities") or []) if c],
                 "isProvider": is_provider,
-                "providerType": (
-                    (manifest.get("provider") or {}).get("type", "") if is_provider else ""
-                ),
+                "providerType": provider_block.get("type", ""),
                 # The provider's DECLARED capabilities — the field the Store catalog already
                 # carries for an app that is not installed yet. `providerType` alone cannot tell
                 # a chat model from a speech one (faster-whisper and piper-tts are both `model`),
                 # so a surface that sorts installed apps by what they do needs this to sort them
                 # the way it sorts installable ones: onboarding's lanes, which used to lose an
                 # installed speech app entirely and offer "Install" for it again.
-                "providerCapabilities": (
-                    [str(c) for c in (manifest.get("provider") or {}).get("capabilities") or []]
-                    if is_provider
-                    else []
-                ),
+                "providerCapabilities": [str(c) for c in provider_block.get("capabilities") or []],
                 "hasConfig": has_config,
                 "configuredPerInstance": per_instance,
                 # A provider of it runs its engine in a child process with its own Python
@@ -843,8 +844,7 @@ async def _provider_errors(name: str) -> list[str]:
     from personalclaw.providers.routes import admit_tool_names
 
     await admit_tool_names()
-    ext = get_provider_registry().get(name)
-    return [rec.error for rec in ext.chain() if rec.error] if ext is not None else []
+    return [rec.error for rec in get_provider_registry().list_for_app(name) if rec.error]
 
 
 async def api_app_enable(request: web.Request) -> web.Response:
@@ -964,8 +964,9 @@ async def api_app_uninstall_preview(request: web.Request) -> web.Response:
 
 def _effective_config_schema(manifest) -> dict[str, Any]:
     """The schema that drives an app's config UI: an explicit ``setup.configSchema``
-    if declared, else a provider app's ``provider.settingsSchema`` (where a
-    pluggable provider declares its user-configurable settings). Lets a
+    if declared, else its first provider's ``settingsSchema`` (where a pluggable
+    provider declares its user-configurable settings), declared singular or first
+    in ``providers[]``. Lets a
     provider-only app expose its settings without duplicating the schema.
 
     A MULTI-INSTANCE provider's ``settingsSchema`` describes one of its INSTANCES, not
@@ -974,10 +975,11 @@ def _effective_config_schema(manifest) -> dict[str, Any]:
     schema = manifest.setup.configSchema
     if schema:
         return schema
-    if manifest.provider and manifest.provider.settingsSchema:
-        if manifest.provider.multiInstance:
+    first = manifest.first_provider()
+    if first and first.settingsSchema:
+        if first.multiInstance:
             return {}
-        return manifest.provider.settingsSchema
+        return first.settingsSchema
     return {}
 
 
@@ -990,7 +992,8 @@ def _configured_per_instance(manifest) -> str | None:
     restart. Nothing reads app-level config for a multi-instance provider, so there is no
     such thing to save — only instances, managed in Settings → Providers.
     """
-    if manifest.setup.configSchema or not manifest.provider or not manifest.provider.multiInstance:
+    first = manifest.first_provider()
+    if manifest.setup.configSchema or not first or not first.multiInstance:
         return None
     who = manifest.displayName or manifest.name
     return (

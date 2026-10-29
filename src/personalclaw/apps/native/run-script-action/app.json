@@ -9,38 +9,42 @@
     "action",
     "bundled"
   ],
-  "provider": {
-    "type": "action",
-    "entity": "script",
-    "implementation": "personalclaw.action_providers.run_script_provider:create_provider",
-    "capabilities": [
-      "execute"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "required": [
-        "script"
+  "providers": [
+    {
+      "id": "action",
+      "label": "Run a sandboxed script on a schedule",
+      "type": "action",
+      "entity": "script",
+      "implementation": "personalclaw.action_providers.run_script_provider:create_provider",
+      "capabilities": [
+        "execute"
       ],
-      "properties": {
-        "script": {
-          "type": "string",
-          "x-meta": {
-            "label": "Script",
-            "help": "Script ref as file.py[:func], relative to ~/.personalclaw/crons/."
-          }
-        },
-        "timeout": {
-          "type": "integer",
-          "x-meta": {
-            "label": "Timeout (s)",
-            "help": "Optional timeout in seconds (0 = default 30s).",
-            "tags": [
-              "advanced"
-            ]
+      "settingsSchema": {
+        "type": "object",
+        "required": [
+          "script"
+        ],
+        "properties": {
+          "script": {
+            "type": "string",
+            "x-meta": {
+              "label": "Script",
+              "help": "Script ref as file.py[:func], relative to ~/.personalclaw/crons/."
+            }
+          },
+          "timeout": {
+            "type": "integer",
+            "x-meta": {
+              "label": "Timeout (s)",
+              "help": "Optional timeout in seconds (0 = default 30s).",
+              "tags": [
+                "advanced"
+              ]
+            }
           }
         }
       }
     }
-  },
+  ],
   "native": true
 }

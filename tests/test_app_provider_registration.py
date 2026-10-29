@@ -243,7 +243,8 @@ _MULTI_PROVIDER_PY = textwrap.dedent("""
 
 def _multi_provider_app(tmp_path: Path) -> Path:
     """One app that registers TWO providers of the SAME kind (search) — via the
-    singular `provider` plus the plural `providers` list."""
+    singular `provider` plus the plural `providers` list, each named by its id (#3841): two of
+    one kind with no ids cannot be told apart."""
     d = tmp_path / "src" / "multi-app"
     d.mkdir(parents=True)
     (d / "app.json").write_text(
@@ -255,12 +256,16 @@ def _multi_provider_app(tmp_path: Path) -> Path:
                 "description": "registers multiple providers",
                 "provider": {
                     "type": "search",
+                    "id": "primary",
+                    "label": "Search the primary index",
                     "implementation": "provider:make_primary",
                     "capabilities": ["search"],
                 },
                 "providers": [
                     {
                         "type": "search",
+                        "id": "secondary",
+                        "label": "Search the secondary index",
                         "implementation": "provider:make_secondary",
                         "capabilities": ["search"],
                     },
@@ -298,6 +303,7 @@ async def test_app_registers_multiple_providers(tmp_path):
     assert len(multi) == 2
     impls = {e.provider_config.implementation for e in multi}
     assert impls == {"provider:make_primary", "provider:make_secondary"}
+    assert {e.key for e in multi} == {"multi-app/primary", "multi-app/secondary"}
 
     # Disable tears down BOTH.
     assert app_manager.disable("multi-app")

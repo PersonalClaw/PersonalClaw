@@ -85,7 +85,7 @@ def _offline_census() -> list[str]:
             mf = d / "app.json"
             if mf.exists():
                 manifest = AppManifest.from_json_file(mf)
-                if manifest.provider:
+                if manifest.all_providers():
                     reg.register(manifest, enabled=True)
         tools = asyncio.run(tool_reg.list_all_tools())
         names = [t.name for t in tools]

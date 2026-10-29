@@ -65,13 +65,15 @@ def _from_its_app(provider: str) -> str:
     origin = action_origin(provider)
     if origin is None:
         return ""
-    primary = get_provider_registry().get(origin.app)
+    registry = get_provider_registry()
+    primary = registry.get(origin.app)
     if primary is None:
         return (
             f"The “{origin.app_label}” app that provides its “{origin.label}” action is not "
             "installed. Install it again from the Store, or change what it runs."
         )
-    records = [r for r in primary.chain() if r.provider_config.type == "action"] or [primary]
+    records = [r for r in registry.list_for_app(origin.app) if r.provider_config.type == "action"]
+    records = records or [primary]
     app = f"The “{primary.manifest.displayName or origin.app_label}” app"
     action = f"its “{origin.label}” action"
     if any(r.error for r in records):

@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_workflows_provider",
-    "capabilities": [
-      "workflows"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Tools to author and run workflows",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.registry:create_workflows_provider",
+      "capabilities": [
+        "workflows"
+      ]
+    }
+  ],
   "native": true
 }

@@ -56,7 +56,7 @@ def registered_tools():
             if not mf.exists():
                 continue
             manifest = AppManifest.from_json_file(mf)
-            if manifest.provider:
+            if manifest.all_providers():
                 reg.register(manifest, enabled=True)
 
         from personalclaw import mcp_core

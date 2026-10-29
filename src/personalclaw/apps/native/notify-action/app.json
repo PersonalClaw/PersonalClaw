@@ -10,49 +10,53 @@
     "bundled",
     "native"
   ],
-  "provider": {
-    "type": "action",
-    "entity": "notification",
-    "implementation": "personalclaw.action_providers.notify_provider:create_provider",
-    "capabilities": [
-      "execute"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "required": [
-        "title_template"
+  "providers": [
+    {
+      "id": "action",
+      "label": "Raise a notification on agent events",
+      "type": "action",
+      "entity": "notification",
+      "implementation": "personalclaw.action_providers.notify_provider:create_provider",
+      "capabilities": [
+        "execute"
       ],
-      "properties": {
-        "title_template": {
-          "type": "string",
-          "x-meta": {
-            "label": "Title",
-            "help": "Notification title. Supports $EVENT, $CONTEXT, and $<payload-key>."
-          }
-        },
-        "body_template": {
-          "type": "string",
-          "x-meta": {
-            "label": "Body",
-            "help": "Optional notification body. Supports the same placeholders."
-          }
-        },
-        "kind": {
-          "type": "string",
-          "enum": [
-            "info",
-            "success",
-            "warning",
-            "error"
-          ],
-          "default": "info",
-          "x-meta": {
-            "label": "Kind",
-            "help": "Notification severity."
+      "settingsSchema": {
+        "type": "object",
+        "required": [
+          "title_template"
+        ],
+        "properties": {
+          "title_template": {
+            "type": "string",
+            "x-meta": {
+              "label": "Title",
+              "help": "Notification title. Supports $EVENT, $CONTEXT, and $<payload-key>."
+            }
+          },
+          "body_template": {
+            "type": "string",
+            "x-meta": {
+              "label": "Body",
+              "help": "Optional notification body. Supports the same placeholders."
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "info",
+              "success",
+              "warning",
+              "error"
+            ],
+            "default": "info",
+            "x-meta": {
+              "label": "Kind",
+              "help": "Notification severity."
+            }
           }
         }
       }
     }
-  },
+  ],
   "native": true
 }

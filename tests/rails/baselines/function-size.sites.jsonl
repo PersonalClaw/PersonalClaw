@@ -11,7 +11,6 @@
 {"site": "src/personalclaw/agents/native/builtin_tools.py::NativeBuiltinToolProvider._t_knowledge_get._get", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 90, "complexity": 39}
 {"site": "src/personalclaw/agents/native/builtin_tools.py::NativeBuiltinToolProvider._t_knowledge_update", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 109, "complexity": 35}
 {"site": "src/personalclaw/apps/app_manager.py::update", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 241, "complexity": 38}
-{"site": "src/personalclaw/apps/manifest.py::AppManifest.to_dict", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 83, "complexity": 32}
 {"site": "src/personalclaw/apps/manifest.py::AppManifest.validate", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 276, "complexity": 69}
 {"site": "src/personalclaw/apps/native/ollama-models/provider.py::OllamaProvider._complete_chat", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 138, "complexity": 32}
 {"site": "src/personalclaw/artifacts/native.py::NativeArtifactProvider.update", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 181, "complexity": 60}
@@ -39,7 +38,6 @@
 {"site": "src/personalclaw/dashboard/chat_persistence.py::save_session_to_history", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 331, "complexity": 67}
 {"site": "src/personalclaw/dashboard/chat_regenerate.py::api_chat_session_edit_resend", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 187, "complexity": 38}
 {"site": "src/personalclaw/dashboard/chat_runner.py::run_chat", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 3665, "complexity": 593}
-{"site": "src/personalclaw/dashboard/handlers/apps.py::api_apps_list", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 247, "complexity": 31}
 {"site": "src/personalclaw/dashboard/handlers/core.py::api_personalclaw_config_patch", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 395, "complexity": 71}
 {"site": "src/personalclaw/dashboard/handlers/core.py::api_stt_transcribe", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 147, "complexity": 31}
 {"site": "src/personalclaw/dashboard/handlers/files.py::api_file_search", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 202, "complexity": 43}

@@ -9,19 +9,23 @@
     "prompt",
     "bundled"
   ],
-  "provider": {
-    "type": "prompt",
-    "implementation": "personalclaw.prompt_providers.native_provider:create_provider",
-    "capabilities": [
-      "list",
-      "read",
-      "write",
-      "render"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "properties": {}
+  "providers": [
+    {
+      "id": "prompts",
+      "label": "Prompt templates you save",
+      "type": "prompt",
+      "implementation": "personalclaw.prompt_providers.native_provider:create_provider",
+      "capabilities": [
+        "list",
+        "read",
+        "write",
+        "render"
+      ],
+      "settingsSchema": {
+        "type": "object",
+        "properties": {}
+      }
     }
-  },
+  ],
   "native": true
 }

@@ -122,7 +122,7 @@ def _providers_section() -> dict[str, Any]:
     """``providers{}`` — the extension-provider taxonomy + registered instances,
     from :func:`providers.registry.get_provider_registry` and ``PROVIDER_TYPES``.
     """
-    from personalclaw.apps.manifest import PROVIDER_TYPES
+    from personalclaw.apps.provider_config import PROVIDER_TYPES
     from personalclaw.providers.registry import get_provider_registry
 
     reg = get_provider_registry()

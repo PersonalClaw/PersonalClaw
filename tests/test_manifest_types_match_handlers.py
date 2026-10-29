@@ -67,15 +67,15 @@ def test_manifest_types_match_handlers() -> None:
 
     assert not registered_not_declared, (
         "these provider types have a registered handler but are missing from "
-        f"apps/manifest.PROVIDER_TYPES: {registered_not_declared}. "
+        f"apps/provider_config.PROVIDER_TYPES: {registered_not_declared}. "
         "ProviderConfig.validate() will reject every app manifest declaring one of them, so "
         "installing or updating such an app fails — while a NATIVE provider of the same type "
         "keeps working, because native providers are auto-seeded and skip install-time "
         "validation. Add the type to PROVIDER_TYPES in the same commit as its handler."
     )
     assert not declared_not_registered, (
-        "these provider types are declared in apps/manifest.PROVIDER_TYPES but no handler is "
-        f"registered for them: {declared_not_registered}. An app declaring one would pass "
+        "these provider types are declared in apps/provider_config.PROVIDER_TYPES but no handler "
+        f"is registered for them: {declared_not_registered}. An app declaring one would pass "
         "install-time validation and then find nothing able to enable it. Register the "
         "handler in providers/registry.py in the same commit as the declaration."
     )

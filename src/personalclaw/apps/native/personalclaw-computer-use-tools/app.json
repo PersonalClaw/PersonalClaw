@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_computer_use_provider",
-    "capabilities": [
-      "desktop_automation"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Drive your desktop apps",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.registry:create_computer_use_provider",
+      "capabilities": [
+        "desktop_automation"
+      ]
+    }
+  ],
   "native": true
 }

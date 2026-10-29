@@ -153,8 +153,8 @@ def home(tmp_path, monkeypatch) -> Iterator[Path]:
     registry_module.reset_provider_registry()
     yield tmp_path
     registry = registry_module.get_provider_registry()
-    for name in list(registry._extensions):
-        registry.disable(name)
+    for ext in registry.list_extensions():
+        registry.disable(ext.name, ext.capability)
     registry_module.reset_provider_registry()
     for name, module in list(sys.modules.items()):  # the probe's own modules, in any version
         if str(getattr(module, "__file__", None) or "").startswith(str(tmp_path)):

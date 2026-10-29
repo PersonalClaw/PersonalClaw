@@ -871,6 +871,28 @@ its typed `ToolTypeHandler` — model providers, transports, search providers,
 inbox sources, actions, prompts, skills. Provider REST surfaces live in
 `providers/routes.py` / `entity_routes.py` / `instance_routes.py`.
 
+**Each provider an app declares is a capability with an id and a label** (#3841). The registry
+(`providers/registry.py`) keeps one record per capability under `<app>/<id>`, so one is listed,
+enabled, disabled and rebuilt without the others (`enable(app, id)`, `list_for_app(app)`), and an
+app may declare two providers of one type when it gives them ids. The id is kebab-case and stable
+across versions; the label says what the capability does in plain words, and is never the id or a
+bare type name. `renamedFrom` lists the ids a capability had before, and `retiredCapabilities` the
+ones the app dropped, so neither is declared again; each is a list, and an old id moves to one
+capability.
+
+Old manifests keep working. The singular `provider` is read as the first capability, ahead of
+`providers[]`, and a provider without an `id` gets one from its type
+(`capability_ids.DERIVED_CAPABILITY_IDS`: `channel`, `triggers`, `tools`, `automations`, …). A manifest
+whose capabilities cannot be told apart that way, two providers of one type with no ids, registers
+none, and `validate` says to give each an id. A flat per-type registry (search, sync, channels…)
+still keeps an instance under the app's name unless the app declares that type twice, then under
+`<app>/<id>`: only duty gates, trigger stores, memory providers and vector stores take that name,
+and none puts it in a URL path, a file name or a config key. A model or a trigger source always
+keeps the app's name, since bindings and automations name it, so two of one type in one app may not
+share a use or an event, and an app has one local-model capability (the local-model registry
+refuses a second when it registers: only the provider can say it is local). The 36 native bundles declare `providers[]` with ids and labels;
+first-party apps keep the singular field until both repositories drop it together (#5665).
+
 A tool provider is registered under its app's name, and every tool it lists passes the tool
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see

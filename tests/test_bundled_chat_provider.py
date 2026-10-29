@@ -1259,11 +1259,11 @@ def test_the_manifest_and_the_module_agree_on_every_shared_name(rail) -> None:
     manifest = json.loads((_BUNDLE / "app.json").read_text(encoding="utf-8"))
     assert manifest["name"] == rail.APP_NAME
     assert manifest["native"] is True
-    assert manifest["provider"]["providerType"] == rail.PROVIDER_TYPE
-    assert manifest["provider"]["implementation"] == "provider:create_provider"
-    assert manifest["provider"]["capabilities"] == ["chat"]
+    assert manifest["providers"][0]["providerType"] == rail.PROVIDER_TYPE
+    assert manifest["providers"][0]["implementation"] == "provider:create_provider"
+    assert manifest["providers"][0]["capabilities"] == ["chat"]
     assert callable(rail.create_provider)
-    schema = manifest["provider"]["settingsSchema"]["properties"]
+    schema = manifest["providers"][0]["settingsSchema"]["properties"]
     # Every schema field the provider reads, and nothing it ignores: a key that renders in the
     # form and never reaches the provider is the silent-drop bug the ollama factory documents.
     assert set(schema) == {

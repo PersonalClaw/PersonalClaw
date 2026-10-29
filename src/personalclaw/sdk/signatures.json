@@ -4975,9 +4975,10 @@
  },
  "personalclaw.sdk.features.ADAPTIVE_THINKING": {"kind": "value", "type": "str", "value": "'adaptive-thinking'"},
  "personalclaw.sdk.features.APPROVAL_ANSWERS": {"kind": "value", "type": "str", "value": "'approval-answers'"},
+ "personalclaw.sdk.features.CAPABILITY_IDS": {"kind": "value", "type": "str", "value": "'capability-ids'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
  "personalclaw.sdk.features.CLOSING_STREAMS": {"kind": "value", "type": "str", "value": "'closing-streams'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'adaptive-thinking', 'approval-answers', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-clients', 'guarded-download', 'links-name-their-channel', 'message-instructions', 'messages-run-once', 'model-efforts', 'paired-owner', 'pre-tool-hooks', 'running-list', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked', 'waiting-list'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'adaptive-thinking', 'approval-answers', 'capability-ids', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-clients', 'guarded-download', 'links-name-their-channel', 'message-instructions', 'messages-run-once', 'model-efforts', 'paired-owner', 'pre-tool-hooks', 'running-list', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked', 'waiting-list'})"},
  "personalclaw.sdk.features.CUT_OFF_ANSWERS": {"kind": "value", "type": "str", "value": "'cut-off-answers'"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_CLIENTS": {"kind": "value", "type": "str", "value": "'guarded-clients'"},
@@ -5671,7 +5672,8 @@
     {"annotation": "list[Prerequisite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requires"},
     {"annotation": "list[LaunchedProgram]", "default": "<factory>", "kind": "positional_or_keyword", "name": "launches"},
     {"annotation": "list[ExternalWrite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "writes"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requiresCoreFeatures"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requiresCoreFeatures"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "retiredCapabilities"}
    ],
    "returns": "None"
   },
@@ -5682,12 +5684,22 @@
     "params": [],
     "returns": "list[ProviderConfig]"
    },
+   "capability_ids": {
+    "kind": "method",
+    "params": [],
+    "returns": "list[str]"
+   },
    "core_compatibility": {
     "kind": "method",
     "params": [
      {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "host"}
     ],
     "returns": "CoreCompatibility"
+   },
+   "first_provider": {
+    "kind": "method",
+    "params": [],
+    "returns": "ProviderConfig | None"
    },
    "from_dict": {
     "kind": "classmethod",
@@ -6243,7 +6255,11 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "providerType"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "entity"},
     {"annotation": "AutonomyConfig", "default": "<factory>", "kind": "positional_or_keyword", "name": "autonomy"},
-    {"annotation": "str", "default": "'in-process'", "kind": "positional_or_keyword", "name": "execution"}
+    {"annotation": "str", "default": "'in-process'", "kind": "positional_or_keyword", "name": "execution"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "id"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "label"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "description"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "renamedFrom"}
    ],
    "returns": "None"
   },

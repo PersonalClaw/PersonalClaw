@@ -10,9 +10,11 @@ to work unchanged.
 """
 
 import logging
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import dataclass
 from typing import Any
 
+from personalclaw.apps.capability_ids import derived_capability_id
 from personalclaw.apps.manifest import AppManifest, ProviderConfig
 
 logger = logging.getLogger(__name__)
@@ -20,14 +22,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RegisteredProvider:
-    """Runtime state for ONE provider an extension contributes.
+    """Runtime state for ONE capability an app contributes: one provider of its manifest.
 
-    An app may register several providers (of the same or different kinds). Each
-    is its own ``RegisteredProvider`` record: the app's FIRST provider is the
-    primary, stored in the registry under the app name; any additional ones live
-    in the primary's :attr:`extra` list and are enabled/disabled/listed alongside
-    it. All share the same ``name`` (the app name) + ``manifest``; they differ in
-    ``provider_config`` (and thus type/implementation/instance)."""
+    Each is its own record, kept under its key ``<app>/<capability>`` (#3841), so one capability
+    is listed, enabled, disabled and rebuilt without the others, and an app may contribute two
+    providers of one type. All of an app's records share its ``name`` and ``manifest``; they
+    differ in ``capability`` and ``provider_config``."""
 
     name: str
     manifest: AppManifest
@@ -35,25 +35,56 @@ class RegisteredProvider:
     provider_instance: Any = None
     enabled: bool = False
     error: str = ""
-    # Additional providers this same app contributes (empty for a single-provider
-    # app). Only set on the PRIMARY record; an extra record's own list stays empty.
-    extra: list["RegisteredProvider"] = field(default_factory=list)
+    #: The capability's id within the app: declared, or derived from its type
+    #: (:meth:`AppManifest.capability_ids`).
+    capability: str = ""
+    #: The name a flat per-type registry keeps the instance under when the instance names none:
+    #: the app's, as it always was, unless the app declares this type more than once, then the
+    #: record's key. So a name a setting or an automation already uses stays as it was.
+    registry_name: str = ""
 
-    def chain(self) -> list["RegisteredProvider"]:
-        """This record followed by its extras — the full provider set for the app."""
-        return [self, *self.extra]
+    def __post_init__(self) -> None:
+        if not self.capability:
+            self.capability = self.provider_config.id or derived_capability_id(
+                self.provider_config.type
+            )
+        if not self.registry_name:
+            self.registry_name = self.name
+
+    @property
+    def key(self) -> str:
+        """``<app>/<capability>``: what the registry keeps this record under."""
+        return f"{self.name}/{self.capability}"
+
+
+#: Types whose records keep the app's name however many the app declares. A trigger source's name
+#: is the namespace of its events, ``app:<app>:<event>``, which automations match; a model's is the
+#: provider half of every ``provider:model`` binding and the local-model registry's key.
+_NAMED_BY_THE_APP = frozenset({"model", "trigger_source"})
+
+
+def _flat_name(ext: Any) -> str:
+    """The name a flat per-type registry keeps *ext*'s instance under when the instance names
+    none: its record's ``registry_name``. A first-party app's own tests drive a handler with a
+    stand-in record that carries only ``name``, or with ``None``; those keep their name, or none.
+    """
+    if ext is None:
+        return ""
+    return getattr(ext, "registry_name", "") or getattr(ext, "name", "")
 
 
 class ProviderRegistry:
-    """Central registry tracking all extensions that provide pluggable providers.
+    """Central registry tracking every capability that apps contribute.
 
     Lifecycle:
-    1. ``register()`` — Records extension metadata (called during startup scan)
-    2. ``enable()`` — Loads the provider implementation and registers with per-type registry
-    3. ``disable()`` — Deregisters from per-type registry and drops the instance
+    1. ``register()`` — Records each of an app's capabilities (called during startup scan)
+    2. ``enable()`` — Loads a capability's implementation and registers it with its per-type
+       registry: one capability, or every capability of the app
+    3. ``disable()`` — Deregisters from the per-type registry and drops the instance
     """
 
     def __init__(self) -> None:
+        # Keyed by ``<app>/<capability>``, in registration order (an app's capabilities together).
         self._extensions: dict[str, RegisteredProvider] = {}
         self._type_handlers: dict[str, "_TypeHandler"] = {}
 
@@ -61,31 +92,63 @@ class ProviderRegistry:
         self._type_handlers[provider_type] = handler
 
     def register(self, manifest: AppManifest, *, enabled: bool = False) -> None:
+        """Record one capability per provider *manifest* declares, replacing what the app had.
+
+        A manifest whose capabilities cannot be told apart (two providers of one type with no
+        ids) registers none, and says why in the log: an update to one leaves none of the app's
+        earlier records behind."""
         provider_configs = manifest.all_providers()
         if not provider_configs:
             return
-        primary = RegisteredProvider(
-            name=manifest.name,
-            manifest=manifest,
-            provider_config=provider_configs[0],
-            enabled=False,
-        )
-        # Additional providers this same app contributes hang off the primary.
-        primary.extra = [
+        try:
+            ids = manifest.capability_ids()
+        except ValueError as exc:
+            logger.warning("app %s registers no providers: %s", manifest.name, exc)
+            self._put(manifest.name, [])
+            return
+        per_type = Counter(cfg.type for cfg in provider_configs)
+        records = [
             RegisteredProvider(
                 name=manifest.name,
                 manifest=manifest,
                 provider_config=cfg,
                 enabled=False,
+                capability=cid,
+                registry_name=(
+                    f"{manifest.name}/{cid}"
+                    if per_type[cfg.type] > 1 and cfg.type not in _NAMED_BY_THE_APP
+                    else manifest.name
+                ),
             )
-            for cfg in provider_configs[1:]
+            for cfg, cid in zip(provider_configs, ids)
         ]
-        self._extensions[manifest.name] = primary
+        self._put(manifest.name, records)
         if enabled:
             self.enable(manifest.name)
 
+    def _put(self, app: str, records: list[RegisteredProvider]) -> None:
+        """Replace *app*'s records with *records*, where its records were (or at the end)."""
+        out: dict[str, RegisteredProvider] = {}
+        placed = False
+        for key, rec in self._extensions.items():
+            if rec.name == app:
+                if not placed:
+                    out.update((r.key, r) for r in records)
+                    placed = True
+                continue
+            out[key] = rec
+        if not placed:
+            out.update((r.key, r) for r in records)
+        self._extensions = out
+
+    def _selected(self, app: str, capability: str | None) -> list[RegisteredProvider]:
+        if capability is None:
+            return self.list_for_app(app)
+        rec = self._extensions.get(f"{app}/{capability}")
+        return [rec] if rec is not None else []
+
     def _enable_one(self, ext: RegisteredProvider) -> bool:
-        """Enable a single provider record (one entry in an app's chain)."""
+        """Enable a single capability's record."""
         if ext.enabled:
             return True
         handler = self._type_handlers.get(ext.provider_config.type)
@@ -102,26 +165,26 @@ class ProviderRegistry:
                 handler.register(ext, instance)
             ext.provider_instance = instance
             ext.enabled = True
-            logger.info("Enabled extension %s (type=%s)", ext.name, ext.provider_config.type)
+            logger.info("Enabled extension %s (type=%s)", ext.key, ext.provider_config.type)
             return True
         except Exception as exc:
             ext.error = str(exc)
-            logger.exception("Failed to enable extension %s", ext.name)
+            logger.exception("Failed to enable extension %s", ext.key)
             return False
 
-    def enable(self, name: str) -> bool:
-        primary = self._extensions.get(name)
-        if not primary:
+    def enable(self, name: str, capability: str | None = None) -> bool:
+        """Enable one capability of app *name*, or every one when *capability* is ``None``."""
+        records = self._selected(name, capability)
+        if not records:
             logger.warning("Cannot enable unknown extension: %s", name)
             return False
-        # Enable every provider in the app's chain — attempt ALL (one failing must
-        # not skip the rest); success = all enabled. Materialize before reducing so
-        # short-circuit can't drop an enable.
-        results = [self._enable_one(rec) for rec in primary.chain()]
+        # Attempt ALL (one failing must not skip the rest); success = all enabled. Materialize
+        # before reducing so short-circuit can't drop an enable.
+        results = [self._enable_one(rec) for rec in records]
         return all(results)
 
     def _disable_one(self, ext: RegisteredProvider) -> None:
-        """Tear down a single provider record's live instance."""
+        """Tear down a single capability's live instance."""
         if not ext.enabled:
             return
         handler = self._type_handlers.get(ext.provider_config.type)
@@ -129,61 +192,64 @@ class ProviderRegistry:
             try:
                 handler.deregister(ext, ext.provider_instance)
             except Exception:
-                logger.exception("Error deregistering extension %s", ext.name)
+                logger.exception("Error deregistering extension %s", ext.key)
         ext.provider_instance = None
         ext.enabled = False
-        logger.info("Disabled extension %s (type=%s)", ext.name, ext.provider_config.type)
+        logger.info("Disabled extension %s (type=%s)", ext.key, ext.provider_config.type)
 
-    def disable(self, name: str) -> bool:
-        primary = self._extensions.get(name)
-        if not primary:
-            return True
-        for rec in primary.chain():
+    def disable(self, name: str, capability: str | None = None) -> bool:
+        """Disable one capability of app *name*, or every one when *capability* is ``None``."""
+        for rec in self._selected(name, capability):
             self._disable_one(rec)
         return True
 
-    def rebuild(self, name: str) -> None:
-        """Re-create an enabled app's live provider instances from its CURRENT settings.
+    def rebuild(self, name: str, capability: str | None = None) -> None:
+        """Re-create an enabled app's live provider instances from its CURRENT settings: one
+        capability, or every one when *capability* is ``None``.
 
         An instance is built from its settings once, at enable, and cached here, so a saved
         setting (a new API key, a new bot token) reaches nothing until the instance is rebuilt.
         What an instance runs follows it: a channel's receiver moves to the rebuilt transport
         because the transport registry's change reconciles the receivers
         (``channel_transports.reconcile_inbound``). A disabled or unknown app has nothing live
-        to rebuild.
+        to rebuild, and neither has a capability switched off: only the ones running are rebuilt.
         """
-        primary = self._extensions.get(name)
-        if primary is None or not primary.enabled:
-            return
-        self.disable(name)
-        self.enable(name)
+        # All off before any comes back, as it always was: an app's capability may find another
+        # of its own at create (a trigger source finding the app's transport).
+        running = [rec for rec in self._selected(name, capability) if rec.enabled]
+        for rec in running:
+            self._disable_one(rec)
+        for rec in running:
+            self._enable_one(rec)
 
     def deregister(self, name: str) -> bool:
-        """Disable AND forget an extension entirely (for uninstall).
+        """Disable AND forget every capability of an app (for uninstall).
 
-        ``disable`` only tears down the live instance but keeps the registration
+        ``disable`` only tears down the live instances but keeps the registration
         so it can be re-enabled; an uninstalled app must vanish from the registry
         completely, else it lingers as a disabled ghost in the providers list
         until the next gateway restart. Returns True if it was present."""
-        if name not in self._extensions:
+        records = self.list_for_app(name)
+        if not records:
             return False
         self.disable(name)
-        del self._extensions[name]
+        for rec in records:
+            del self._extensions[rec.key]
         logger.info("Deregistered extension %s", name)
         return True
 
-    def get(self, name: str) -> RegisteredProvider | None:
-        """The app's PRIMARY provider record (its first). Additional providers
-        the app contributes are reachable via the record's ``extra``/``chain()``."""
-        return self._extensions.get(name)
+    def get(self, name: str, capability: str | None = None) -> RegisteredProvider | None:
+        """One capability's record of app *name*; with no *capability*, the app's first."""
+        records = self._selected(name, capability)
+        return records[0] if records else None
+
+    def list_for_app(self, name: str) -> list[RegisteredProvider]:
+        """Every capability app *name* contributes, in its manifest's order."""
+        return [rec for rec in self._extensions.values() if rec.name == name]
 
     def list_extensions(self) -> list[RegisteredProvider]:
-        """Every registered provider — each app's full chain flattened, so an app
-        that contributes multiple providers surfaces one entry per provider."""
-        out: list[RegisteredProvider] = []
-        for primary in self._extensions.values():
-            out.extend(primary.chain())
-        return out
+        """Every registered capability, one entry each."""
+        return list(self._extensions.values())
 
     def list_by_type(self, provider_type: str) -> list[RegisteredProvider]:
         return [ext for ext in self.list_extensions() if ext.provider_config.type == provider_type]
@@ -422,7 +488,7 @@ class SearchTypeHandler(_TypeHandler):
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.search_providers.registry import unregister_provider
 
-        unregister_provider(getattr(instance, "name", ext.name))
+        unregister_provider(getattr(instance, "name", _flat_name(ext)))
 
 
 def _app_action_type_key(app_name: str, action_name: str) -> str:
@@ -553,7 +619,7 @@ class DutyGateTypeHandler(_TypeHandler):
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.triggers.calendar import register_duty_gate
 
-        name = getattr(instance, "name", "") or ext.name
+        name = getattr(instance, "name", "") or _flat_name(ext)
         gate = getattr(instance, "on_duty", None)
         if not callable(gate):
             raise ValueError(
@@ -564,7 +630,7 @@ class DutyGateTypeHandler(_TypeHandler):
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.triggers.calendar import _DUTY_GATES
 
-        _DUTY_GATES.pop(getattr(instance, "name", "") or ext.name, None)
+        _DUTY_GATES.pop(getattr(instance, "name", "") or _flat_name(ext), None)
 
 
 class ChannelTypeHandler(_TypeHandler):
@@ -594,7 +660,7 @@ class ChannelTypeHandler(_TypeHandler):
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.channel_transports import unregister_transport
 
-        unregister_transport(getattr(instance, "name", ext.name))
+        unregister_transport(getattr(instance, "name", _flat_name(ext)))
 
 
 class SyncTypeHandler(_TypeHandler):
@@ -625,7 +691,7 @@ class SyncTypeHandler(_TypeHandler):
 
         # Fallback computed without a getattr default so ``ext`` is not dereferenced
         # when the instance already carries a name (ext may be absent in tests).
-        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        name = getattr(instance, "name", None) or _flat_name(ext)
         if name:
             unregister_transport(name)
 
@@ -669,7 +735,7 @@ class TriggerSourceTypeHandler(_TypeHandler):
         from personalclaw.trigger_sources import register_source
         from personalclaw.trigger_sources.parking import _default_store, unpark_for_app
 
-        name = getattr(instance, "name", "") or ext.name
+        name = getattr(instance, "name", "") or _flat_name(ext)
         # Contract validated at REGISTER time, naming what is missing — the `DutyGateTypeHandler`
         # precedent. A source registered without a usable `start` would sit in the registry looking
         # live and emit nothing, so the app would appear installed-and-working while producing no
@@ -693,7 +759,7 @@ class TriggerSourceTypeHandler(_TypeHandler):
 
         # Fallback computed without a getattr default so ``ext`` is not dereferenced
         # when the instance already carries a name (ext may be absent in tests).
-        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        name = getattr(instance, "name", None) or _flat_name(ext)
         if not name:
             return
         self._stop(instance, name)
@@ -814,7 +880,7 @@ class TriggerTypeHandler(_TypeHandler):
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.triggers.registry import register_trigger_store
 
-        name = getattr(instance, "name", "") or ext.name
+        name = getattr(instance, "name", "") or _flat_name(ext)
         # Contract validated at REGISTER time, naming what is missing — the `DutyGateTypeHandler`
         # precedent. `load` is the ONE method the read path calls, so a store without it would sit
         # in the registry looking live while every list and every arm pass silently skipped it: the
@@ -832,7 +898,7 @@ class TriggerTypeHandler(_TypeHandler):
         # Fallback computed without a getattr default so ``ext`` is not dereferenced when the
         # instance already carries a name (ext may be absent in tests) — the
         # `TriggerSourceTypeHandler` precedent.
-        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        name = getattr(instance, "name", None) or _flat_name(ext)
         if not name:
             return
         unregister_trigger_store(name)
@@ -867,7 +933,7 @@ class SandboxTypeHandler(_TypeHandler):
 
         # Fallback computed without a getattr default so ``ext`` is not dereferenced
         # when the instance already carries a name (ext may be absent in tests).
-        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        name = getattr(instance, "name", None) or _flat_name(ext)
         if name:
             unregister_provider(name)
 
@@ -901,7 +967,7 @@ class OcrTypeHandler(_TypeHandler):
 
         # Name computed without a getattr default so ``ext`` is not dereferenced when the
         # instance already carries one (ext may be absent in tests) — mirrors SandboxTypeHandler.
-        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        name = getattr(instance, "name", None) or _flat_name(ext)
         if name:
             unregister_provider(name)
 
@@ -945,13 +1011,13 @@ class MemoryTypeHandler(_TypeHandler):
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.memory_providers.registry import register_provider
 
-        provider_name = getattr(instance, "name", ext.name)
+        provider_name = getattr(instance, "name", _flat_name(ext))
         register_provider(provider_name, instance)
 
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.memory_providers.registry import unregister_provider
 
-        provider_name = getattr(instance, "name", ext.name)
+        provider_name = getattr(instance, "name", _flat_name(ext))
         unregister_provider(provider_name)
 
 
@@ -979,7 +1045,7 @@ class VectorStoreTypeHandler(_TypeHandler):
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.vector_stores.registry import register_provider
 
-        register_provider(getattr(instance, "name", "") or ext.name, instance)
+        register_provider(getattr(instance, "name", "") or _flat_name(ext), instance)
         self._backfill_corpus()
 
     @staticmethod
@@ -1015,7 +1081,7 @@ class VectorStoreTypeHandler(_TypeHandler):
     def deregister(self, ext: RegisteredProvider, instance: Any) -> None:
         from personalclaw.vector_stores.registry import unregister_provider
 
-        unregister_provider(getattr(instance, "name", "") or ext.name)
+        unregister_provider(getattr(instance, "name", "") or _flat_name(ext))
 
 
 class KnowledgeTypeHandler(_TypeHandler):
@@ -1055,7 +1121,7 @@ class KnowledgeTypeHandler(_TypeHandler):
         # Prefer the provider's own name; fall back to the extension name. Computed
         # without a getattr default so ``ext`` is not dereferenced when the instance
         # already carries a name (ext may be absent in direct handler tests).
-        name = getattr(instance, "name", None) or (getattr(ext, "name", "") if ext else "")
+        name = getattr(instance, "name", None) or _flat_name(ext)
         if name:
             unregister_provider(name)
 
@@ -1108,7 +1174,7 @@ class InboxTypeHandler(_TypeHandler):
         # back to the extension name. Computed without a getattr default so ``ext`` is
         # not dereferenced when the instance already carries a name (ext may be absent
         # in direct handler tests) — the KnowledgeTypeHandler pattern.
-        name = getattr(instance, "source_name", None) or (getattr(ext, "name", "") if ext else "")
+        name = getattr(instance, "source_name", None) or _flat_name(ext)
         if name:
             unregister_source(str(name))
 
@@ -1157,7 +1223,7 @@ class NotificationTypeHandler(_TypeHandler):
         # to the extension name. Computed without a getattr default so ``ext`` is not
         # dereferenced when the instance already carries a name (ext may be absent in direct
         # handler tests) — the InboxTypeHandler pattern.
-        name = getattr(instance, "delivery_name", None) or (getattr(ext, "name", "") if ext else "")
+        name = getattr(instance, "delivery_name", None) or _flat_name(ext)
         if name:
             unregister_provider(str(name))
 
@@ -1255,13 +1321,16 @@ class ModelTypeHandler(_TypeHandler):
 
         locals_ = [p for p in providers if is_local_model_provider(p, capabilities=caps)]
         if locals_:
-            reg_local(locals_[-1], capabilities=caps, name=ext.name)
+            # Keyed by the app, so an app has one local-model capability: the registry refuses a
+            # second, naming both (a stand-in record without a capability names none).
+            owner = getattr(ext, "capability", "")
+            reg_local(locals_[-1], capabilities=caps, name=ext.name, owner=owner)
 
     @staticmethod
     def _deregister_local(ext: RegisteredProvider) -> None:
         from personalclaw.local_models.registry import unregister_provider as unreg_local
 
-        unreg_local(ext.name)
+        unreg_local(ext.name, owner=getattr(ext, "capability", ""))
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
         caps = ext.provider_config.capabilities

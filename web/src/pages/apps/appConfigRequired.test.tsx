@@ -225,7 +225,10 @@ describe('the shipped apps this affects', () => {
     for (const dir of readdirSync(root)) {
       let manifest: Record<string, unknown>
       try { manifest = JSON.parse(readFileSync(join(root, dir, 'app.json'), 'utf8')) } catch { continue }
-      const provider = manifest.provider as { settingsSchema?: { required?: string[] } } | undefined
+      // A native declares `providers[]` (#3841); an older manifest, the singular `provider`.
+      const provider = (manifest.provider ?? (manifest.providers as unknown[] | undefined)?.[0]) as
+        | { settingsSchema?: { required?: string[] } }
+        | undefined
       const setup = manifest.setup as { configSchema?: { required?: string[] } } | undefined
       const schema = setup?.configSchema?.required ? setup.configSchema : provider?.settingsSchema
       if (schema?.required?.length) found.push(dir)

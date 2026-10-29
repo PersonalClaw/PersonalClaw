@@ -10,55 +10,59 @@
     "bundled",
     "native"
   ],
-  "provider": {
-    "type": "action",
-    "entity": "inbox",
-    "implementation": "personalclaw.action_providers.inbox_op_provider:create_provider",
-    "capabilities": [
-      "execute",
-      "reverse"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "required": [
-        "op",
-        "item_id"
+  "providers": [
+    {
+      "id": "action",
+      "label": "Act on an Inbox item on agent events",
+      "type": "action",
+      "entity": "inbox",
+      "implementation": "personalclaw.action_providers.inbox_op_provider:create_provider",
+      "capabilities": [
+        "execute",
+        "reverse"
       ],
-      "properties": {
-        "op": {
-          "type": "string",
-          "enum": [
-            "archive",
-            "mark_read",
-            "mute_thread",
-            "dismiss",
-            "reply_draft"
-          ],
-          "default": "archive",
-          "x-meta": {
-            "label": "Operation",
-            "help": "What to do to the item. Archive, mark read and mute are the reversible everyday ones; dismiss removes it from the surface; reply_draft writes a draft and never sends."
-          }
-        },
-        "item_id": {
-          "type": "string",
-          "x-meta": {
-            "label": "Inbox Item",
-            "help": "The inbox item id to operate on. Supports $<payload-key> so a trigger can pass the item that fired it."
-          }
-        },
-        "draft": {
-          "type": "string",
-          "x-meta": {
-            "label": "Draft Reply",
-            "help": "The text to write as the item's draft. Leave it empty to have the reply drafted in your voice, as the Inbox's Draft does. Only used by reply_draft, and never sent.",
-            "tags": [
-              "advanced"
-            ]
+      "settingsSchema": {
+        "type": "object",
+        "required": [
+          "op",
+          "item_id"
+        ],
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "archive",
+              "mark_read",
+              "mute_thread",
+              "dismiss",
+              "reply_draft"
+            ],
+            "default": "archive",
+            "x-meta": {
+              "label": "Operation",
+              "help": "What to do to the item. Archive, mark read and mute are the reversible everyday ones; dismiss removes it from the surface; reply_draft writes a draft and never sends."
+            }
+          },
+          "item_id": {
+            "type": "string",
+            "x-meta": {
+              "label": "Inbox Item",
+              "help": "The inbox item id to operate on. Supports $<payload-key> so a trigger can pass the item that fired it."
+            }
+          },
+          "draft": {
+            "type": "string",
+            "x-meta": {
+              "label": "Draft Reply",
+              "help": "The text to write as the item's draft. Leave it empty to have the reply drafted in your voice, as the Inbox's Draft does. Only used by reply_draft, and never sent.",
+              "tags": [
+                "advanced"
+              ]
+            }
           }
         }
       }
     }
-  },
+  ],
   "native": true
 }

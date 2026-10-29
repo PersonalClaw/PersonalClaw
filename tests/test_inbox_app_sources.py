@@ -185,7 +185,7 @@ def test_bundled_filesystem_inbox_is_a_live_consumer_of_this_path():
     from personalclaw.providers.loader import BUNDLED_DIR
 
     manifest = _json.loads((BUNDLED_DIR / "filesystem-inbox" / "app.json").read_text())
-    assert manifest["provider"]["type"] == "inbox"
+    assert manifest["providers"][0]["type"] == "inbox"
     assert create_provider().source_name == "filesystem"
 
 

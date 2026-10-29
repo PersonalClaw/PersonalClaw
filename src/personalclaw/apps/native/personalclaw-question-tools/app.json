@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.ask_user:create_question_tools_provider",
-    "capabilities": [
-      "questions"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Ask you a question with choices",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.ask_user:create_question_tools_provider",
+      "capabilities": [
+        "questions"
+      ]
+    }
+  ],
   "native": true
 }

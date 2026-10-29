@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_automation_provider",
-    "capabilities": [
-      "automation_management"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Tools to set up automations in chat",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.registry:create_automation_provider",
+      "capabilities": [
+        "automation_management"
+      ]
+    }
+  ],
   "native": true
 }

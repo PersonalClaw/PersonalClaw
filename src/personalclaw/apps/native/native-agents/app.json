@@ -9,17 +9,21 @@
     "agent",
     "bundled"
   ],
-  "provider": {
-    "type": "agent",
-    "implementation": "personalclaw.agents.marketplace:create_provider",
-    "capabilities": [
-      "crud",
-      "acp"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "properties": {}
+  "providers": [
+    {
+      "id": "agent",
+      "label": "Agents you define",
+      "type": "agent",
+      "implementation": "personalclaw.agents.marketplace:create_provider",
+      "capabilities": [
+        "crud",
+        "acp"
+      ],
+      "settingsSchema": {
+        "type": "object",
+        "properties": {}
+      }
     }
-  },
+  ],
   "native": true
 }

@@ -201,7 +201,7 @@ def _card(monkeypatch):
     from personalclaw.apps.native_contract import NATIVE_DIR
 
     manifest = AppManifest.from_json_file(NATIVE_DIR / "mcp-tools" / "app.json")
-    ext = types.SimpleNamespace(provider_config=manifest.provider)
+    ext = types.SimpleNamespace(provider_config=manifest.first_provider())
     registry = types.SimpleNamespace(get=lambda name: ext if name == "mcp-tools" else None)
     monkeypatch.setattr("personalclaw.providers.registry.get_provider_registry", lambda: registry)
     monkeypatch.setattr(

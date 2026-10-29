@@ -69,7 +69,8 @@ _PROVIDERS = {**{k: None for k in _NATIVE_KEYS}, "webhook": None}
 def _manifest_props(key: str) -> set[str]:
     path, _ = _provider_paths(key)
     data = json.loads(path.read_text())
-    schema = (data.get("provider", data) or {}).get("settingsSchema", {}) or {}
+    first = data.get("provider") or (data.get("providers") or [data])[0]
+    schema = (first or {}).get("settingsSchema", {}) or {}
     return set((schema.get("properties") or {}).keys())
 
 

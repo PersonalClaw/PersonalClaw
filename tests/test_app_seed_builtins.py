@@ -217,8 +217,8 @@ def test_startup_registers_a_native_app_once_and_a_stray_bundled_manifest_never(
         assert listed == ["brave-search"], listed
     finally:
         registry = get_provider_registry()
-        for name in list(registry._extensions):
-            registry.disable(name)
+        for ext in registry.list_extensions():
+            registry.disable(ext.name, ext.capability)
         reset_provider_registry()
 
 

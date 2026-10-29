@@ -19,6 +19,7 @@ from personalclaw.sdk import features
 from personalclaw.sdk.features import (
     ADAPTIVE_THINKING,
     APPROVAL_ANSWERS,
+    CAPABILITY_IDS,
     CHAT_TRUST,
     CLOSING_STREAMS,
     CORE_FEATURES,
@@ -48,6 +49,7 @@ pytestmark = pytest.mark.security
 OFFERED_ONCE = {
     "adaptive-thinking",
     "approval-answers",
+    "capability-ids",
     "chat-trust",
     "closing-streams",
     "cut-off-answers",
@@ -72,6 +74,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert set(features.__all__) == {
         "ADAPTIVE_THINKING",
         "APPROVAL_ANSWERS",
+        "CAPABILITY_IDS",
         "CHAT_TRUST",
         "CLOSING_STREAMS",
         "CORE_FEATURES",
@@ -94,6 +97,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     }
     assert ADAPTIVE_THINKING == "adaptive-thinking"
     assert APPROVAL_ANSWERS == "approval-answers"
+    assert CAPABILITY_IDS == "capability-ids"
     assert CHAT_TRUST == "chat-trust"
     assert CLOSING_STREAMS == "closing-streams"
     assert CUT_OFF_ANSWERS == "cut-off-answers"
@@ -865,6 +869,50 @@ def _model_efforts_hold() -> None:
     }
 
 
+def _capability_ids_hold() -> None:
+    """Each provider an app declares is a capability kept under ``<app>/<id>`` with its label: two
+    of one type, told apart by their ids, are two records, and one is switched off without the
+    other (#3841)."""
+    from personalclaw.apps.manifest import AppManifest
+    from personalclaw.providers.registry import ProviderRegistry
+
+    class _Handler:
+        def create(self, ext):
+            return object()
+
+        def register(self, ext, instance):
+            return None
+
+        def deregister(self, ext, instance):
+            return None
+
+    registry = ProviderRegistry()
+    registry.register_type_handler("sync", _Handler())  # type: ignore[arg-type]
+    registry.register(
+        AppManifest.from_dict(
+            {
+                "name": "witness",
+                "version": "1.0.0",
+                "displayName": "Witness",
+                "description": "Two transports.",
+                "requiresCoreFeatures": [CAPABILITY_IDS],
+                "providers": [
+                    {"type": "sync", "implementation": "a:make", "id": "git", "label": "Git"},
+                    {"type": "sync", "implementation": "b:make", "id": "box", "label": "Box"},
+                ],
+            }
+        ),
+        enabled=True,
+    )
+    records = registry.list_for_app("witness")
+    assert [(r.key, r.provider_config.label) for r in records] == [
+        ("witness/git", "Git"),
+        ("witness/box", "Box"),
+    ]
+    registry.disable("witness", "box")
+    assert [r.enabled for r in records] == [True, False]
+
+
 def _adaptive_thinking_holds() -> None:
     """The SDK says which models think adaptively, as core's Anthropic-compatible wire asks them:
     a Claude line that takes adaptive thinking in each form a listing names it by, and no older
@@ -1087,6 +1135,7 @@ def _running_list_holds() -> None:
 WITNESSES = {
     ADAPTIVE_THINKING: _adaptive_thinking_holds,
     APPROVAL_ANSWERS: _approval_answers_hold,
+    CAPABILITY_IDS: _capability_ids_hold,
     CHAT_TRUST: _chat_trust_holds,
     CLOSING_STREAMS: _closing_streams_hold,
     CUT_OFF_ANSWERS: _cut_off_answers_hold,

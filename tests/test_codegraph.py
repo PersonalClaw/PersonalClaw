@@ -667,8 +667,8 @@ class TestCodeMapTool:
         )
         data = json.loads(manifest.read_text())
         assert data["name"] == "personalclaw-code-map"
-        assert data["provider"]["type"] == "tool"
-        assert data["provider"]["implementation"].endswith(":create_code_map_provider")
+        assert data["providers"][0]["type"] == "tool"
+        assert data["providers"][0]["implementation"].endswith(":create_code_map_provider")
         assert data["native"] is True
 
 

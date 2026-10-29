@@ -299,7 +299,7 @@ def test_create_task_manifest_schema_exposes_every_honored_field():
         / "create-task-action"
         / "app.json"
     )
-    schema = json.loads(src_manifest.read_text())["provider"]["settingsSchema"]
+    schema = json.loads(src_manifest.read_text())["providers"][0]["settingsSchema"]
     schema_fields = set(schema.get("properties", {}))
     # The full set the executor reads from action_config (title/body are templated).
     honored = {

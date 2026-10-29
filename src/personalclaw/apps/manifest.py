@@ -23,6 +23,17 @@ from personalclaw.apps.core_version import (
     app_version_problem,
     check_core_compatibility,
 )
+from personalclaw.apps.provider_config import (  # noqa: F401 — callers import them from here
+    EXECUTION_IN_PROCESS,
+    EXECUTION_MODES,
+    EXECUTION_SIDECAR,
+    PROVIDER_TYPES,
+    AutonomyConfig,
+    ProviderConfig,
+    _not_booleans,
+    _not_lists,
+    _refusals,
+)
 from personalclaw.safety_flags import strict_bool, yes_or_no
 
 # ---------------------------------------------------------------------------
@@ -47,19 +58,6 @@ ICON_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
 # reads each with ``safety_flags.strict_bool``, the word it spells or else the field's safe value,
 # so one bad value never takes a Store listing out, and keeps every other value in the type's
 # ``not_booleans`` (never declared, constructed or on the wire), which ``validate`` refuses.
-
-
-def _not_booleans(data: dict[str, Any], *keys: str) -> dict[str, Any]:
-    """Each of *keys* that *data* declares as something other than ``true`` or ``false``."""
-    return {key: data[key] for key in keys if key in data and not isinstance(data[key], bool)}
-
-
-def _refusals(prefix: str, record: dict[str, Any]) -> list[str]:
-    """The install refusal of each boolean in *record*: its name, and its value as JSON."""
-    return [
-        f"{prefix}{key} must be true or false, got {json.dumps(value, default=str)[:60]}"
-        for key, value in record.items()
-    ]
 
 
 @dataclass
@@ -1500,257 +1498,6 @@ class PackSourceEntry:
         )
 
 
-# ---------------------------------------------------------------------------
-# Provider declaration (extension system)
-# ---------------------------------------------------------------------------
-
-PROVIDER_TYPES = frozenset(
-    {
-        "model",
-        "agent",
-        "task",
-        "channel",
-        "inbox",
-        "skills",
-        "knowledge",
-        "memory",
-        "notification",
-        "tool",
-        "workflow",
-        "search",
-        "action",
-        "prompt",
-        # An app-contributed is-the-user-on-duty predicate. Its
-        # `DutyGateTypeHandler` lands in the same commit.
-        "duty_gate",
-        # An app-contributed sync transport (git-sync, dir-sync). Its
-        # `SyncTypeHandler` lands in the same commit.
-        "sync",
-        # An app-contributed sandbox provider (container/VM isolation
-        # tier). Its `SandboxTypeHandler` lands in the same commit. The `none`
-        # provider is a core builtin, not an app.
-        "sandbox",
-        # An app-contributed ORIGIN of trigger events. The app emits
-        # typed events onto the one event bus under a namespaced source (`app:<name>:<event>`),
-        # which `kind: event` triggers match with the existing `{source, pattern}` spec — no new
-        # trigger kind. Its `TriggerSourceTypeHandler` lands in the same commit.
-        "trigger_source",
-        # An app-contributed OCR ENGINE — reads text out of
-        # pixels with NO model bound. Deliberately not the `model` type: an OCR engine takes no
-        # prompt and must be byte-stable for the same input, which the model seam does not
-        # promise. Its `OcrTypeHandler` lands in the same commit.
-        "ocr",
-        # An app-contributed STORE of trigger ROWS — a shared or
-        # team trigger backend. NOT `trigger_source` above: that supplies the STIMULUS (live
-        # observer, pushes events), this supplies the RULE (passive store, serves definitions).
-        # Rows only, never execution: the local TriggerService fires, and only rows whose `author`
-        # is the owner. Its `TriggerTypeHandler` lands in the same commit.
-        "trigger",
-        # An app-contributed EXTERNAL chunk-vector index —
-        # the user's own Qdrant/pgvector/Chroma serving knowledge vector search in place of the
-        # bundled sqlite-vec/vec0 index. NOT the `memory` type: that supplies a memory RECORD
-        # store (records plus their own vector layer); this supplies only the chunk-vector INDEX
-        # for the knowledge library, and the chunk rows themselves stay local. Its
-        # `VectorStoreTypeHandler` lands in the same commit.
-        "vector_store",
-    }
-)
-# NOTE: this set MUST equal the runtime type-handler registry
-# (providers/registry.py register_type_handler(...) calls). ``prompt`` was a
-# registered handler (PromptTypeHandler) but was missing here — so
-# ProviderConfig.validate() rejected any prompt provider manifest, blocking
-# reinstall/update + third-party prompt providers.
-# native-prompts is native (auto-seeded, bypasses install-time validation), which
-# masked it. test_manifest_types_match_handlers guards this equality going forward.
-
-_HOOK_OR_ENTRYPOINT_RE = re.compile(
-    r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*:[a-zA-Z_][a-zA-Z0-9_]*$"
-)
-
-# Where a provider's heavy work runs. This is a field on
-# the EXISTING ``model`` type, deliberately NOT a new provider type: PROVIDER_TYPES above
-# and the ``_TypeHandler`` set are untouched, so ``test_manifest_types_match_handlers``
-# stays green by construction and every registration seam is unchanged.
-EXECUTION_IN_PROCESS = "in-process"
-EXECUTION_SIDECAR = "sidecar"
-#: In-process is the DEFAULT and stays it. A sidecar is earned by a crash history
-#: (there is no blanket sidecar migration): flipping the default would silently change the
-#: runtime of every provider already installed on every machine.
-EXECUTION_MODES = frozenset({EXECUTION_IN_PROCESS, EXECUTION_SIDECAR})
-
-
-@dataclass
-class AutonomyConfig:
-    """An app-contributed action's declared autonomy bounds.
-
-    ``floor`` is the rung the action starts at; ``ceiling`` is the rung it can never pass
-    however much track record accrues. Both name a rung from
-    ``guardrails.autonomy.RUNGS`` (``draft_only`` → ``one_tap`` → ``auto_with_undo`` →
-    ``autonomous``). Empty means UNDECLARED, and an undeclared action behaves exactly as it
-    did before this block existed — the block is purely additive, and a manifest without
-    one round-trips byte-identically.
-
-    Two things this deliberately does NOT let an app say:
-
-    * **``leaves_machine``.** Core derives it from the app's own ``permissions.network``
-      declaration. An app that could self-certify "my action stays on this machine" would
-      be self-certifying its way to the top of the ladder.
-    * **``autonomous`` for an action that reaches the network.** ``ceiling`` is clamped to
-      ``clamp_untrusted_ceiling``'s bound at registration, LOUDLY (a log line and a SEL
-      row naming both the declared and the granted ceiling). A manifest's claim has had no
-      in-tree review, and a silent downgrade is a recorded finding in this codebase.
-    """
-
-    floor: str = ""
-    ceiling: str = ""
-
-    def validate(self) -> list[str]:
-        from personalclaw.guardrails.autonomy import RUNGS
-
-        errors: list[str] = []
-        for label, value in (("floor", self.floor), ("ceiling", self.ceiling)):
-            if value and value not in RUNGS:
-                errors.append(
-                    f"provider.autonomy.{label} must be one of {list(RUNGS)}, got: {value!r}"
-                )
-        if self.floor and self.ceiling and self.floor in RUNGS and self.ceiling in RUNGS:
-            if RUNGS.index(self.ceiling) < RUNGS.index(self.floor):
-                errors.append(
-                    f"provider.autonomy.ceiling {self.ceiling!r} is below its floor {self.floor!r}"
-                )
-        return errors
-
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {}
-        if self.floor:
-            d["floor"] = self.floor
-        if self.ceiling:
-            d["ceiling"] = self.ceiling
-        return d
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AutonomyConfig":
-        return cls(floor=str(data.get("floor", "")), ceiling=str(data.get("ceiling", "")))
-
-
-@dataclass
-class ProviderConfig:
-    """Declares that this extension provides a pluggable provider implementation.
-
-    ``type`` identifies the entity class (model, agent, task, etc.).
-    ``implementation`` is a Python entry point in ``module.path:factory_fn``
-    format, resolved relative to the extension's directory.  The factory
-    receives the extension's current config dict and returns a provider instance.
-    ``settingsSchema`` is a JSON Schema (Draft-07 + x-meta) describing
-    user-configurable settings for this provider.
-    """
-
-    type: str = ""
-    implementation: str = ""
-    multiInstance: bool = False  # noqa: N815
-    settingsSchema: dict[str, Any] = field(default_factory=dict)  # noqa: N815
-    capabilities: list[str] = field(default_factory=list)
-    # The CONCRETE provider type this model app registers into the LLM registry
-    # (e.g. "bedrock", "openai", "google") — distinct from ``type`` above, which is
-    # the entity CLASS ("model"). Used by the Add-instance UI to submit the right
-    # type. Empty for non-model providers (agent/task/…) that don't register an
-    # LLM provider type.
-    providerType: str = ""  # noqa: N815
-    # Optional entity sub-grouping within a provider type. Hook providers, for
-    # example, are all ``type: "hook"`` but each acts on a distinct entity
-    # (task, agent, comms, …). The Settings UI sub-groups cards of one type by
-    # this value so "Create Task Hook" sits under a "Task Hook Provider" group.
-    # Empty → the UI treats the provider as belonging to its type's default group.
-    entity: str = ""
-    # The rung bounds for an ``action`` provider, keyed
-    # ``app:<app>.<action>`` when it registers. Additive and optional — a manifest with no
-    # ``autonomy`` block declares no action type, and its action keeps exactly the
-    # pre-ladder behaviour (denylist + capability fence + creation-time grant).
-    autonomy: AutonomyConfig = field(default_factory=AutonomyConfig)
-    # Where this provider's heavy work RUNS.
-    # ``in-process`` (the default, and what every existing app keeps) imports the
-    # provider into the gateway. ``sidecar`` runs it in a child process with its own
-    # venv (``local_models/sidecar.py``), so a native-lib crash kills the child instead
-    # of the gateway. Deliberately NOT a new ``type``: ``PROVIDER_TYPES`` and the
-    # ``_TypeHandler`` set are untouched, so registration, the app-name registry key and
-    # the duck-typed local-model contract all still hold.
-    execution: str = EXECUTION_IN_PROCESS
-    not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
-
-    def validate(self) -> list[str]:
-        errors: list[str] = _refusals("provider.", self.not_booleans)
-        if self.execution not in EXECUTION_MODES:
-            errors.append(
-                f"provider.execution must be one of {sorted(EXECUTION_MODES)}, "
-                f"got: {self.execution!r}"
-            )
-        if not self.type:
-            errors.append("provider.type is required")
-        elif self.type not in PROVIDER_TYPES:
-            errors.append(
-                f"provider.type must be one of {sorted(PROVIDER_TYPES)}, got: {self.type!r}"
-            )
-        if not self.implementation:
-            errors.append("provider.implementation is required")
-        elif not _HOOK_OR_ENTRYPOINT_RE.match(self.implementation):
-            errors.append(
-                f"provider.implementation must be 'module.path:factory_fn', "
-                f"got: {self.implementation!r}"
-            )
-        errors.extend(self.autonomy.validate())
-        return errors
-
-    def to_dict(self) -> dict[str, Any]:
-        d: dict[str, Any] = {}
-        if self.type:
-            d["type"] = self.type
-        if self.implementation:
-            d["implementation"] = self.implementation
-        if self.multiInstance:
-            d["multiInstance"] = True
-        if self.settingsSchema:
-            d["settingsSchema"] = self.settingsSchema
-        if self.capabilities:
-            d["capabilities"] = self.capabilities
-        if self.entity:
-            d["entity"] = self.entity
-        if self.providerType:
-            d["providerType"] = self.providerType
-        autonomy_d = self.autonomy.to_dict()
-        if autonomy_d:
-            d["autonomy"] = autonomy_d
-        # Only emitted when it is NOT the default, so an in-process manifest round-trips
-        # byte-identically and no existing app.json grows a key it never declared.
-        if self.execution != EXECUTION_IN_PROCESS:
-            d["execution"] = self.execution
-        return d
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ProviderConfig":
-        autonomy_raw = data.get("autonomy", {})
-        provider = cls(
-            type=str(data.get("type", "")),
-            implementation=str(data.get("implementation", "")),
-            multiInstance=strict_bool(data.get("multiInstance"), field="multiInstance"),
-            settingsSchema=dict(data.get("settingsSchema", {})),  # noqa: N815
-            capabilities=[str(c) for c in data.get("capabilities", [])],
-            entity=str(data.get("entity", "")),
-            providerType=str(data.get("providerType", "")),  # noqa: N815
-            autonomy=(
-                AutonomyConfig.from_dict(autonomy_raw)
-                if isinstance(autonomy_raw, dict)
-                else AutonomyConfig()
-            ),
-            execution=str(data.get("execution", EXECUTION_IN_PROCESS) or EXECUTION_IN_PROCESS),
-        )
-        provider.not_booleans = _not_booleans(data, "multiInstance")
-        return provider
-
-
-# ---------------------------------------------------------------------------
-# Declared quality bar
-# ---------------------------------------------------------------------------
-
 #: The values ``quality.designSystem`` may take. ``"v2"`` is the only one that CLAIMS
 #: adherence to the current design system; ``"legacy"`` and ``"n/a"`` are honest
 #: non-claims (predates the system / ships no frontend), so neither is verified.
@@ -1890,6 +1637,7 @@ _KNOWN_FIELDS = frozenset(
         "writes",
         "provider",
         "providers",
+        "retiredCapabilities",
         # Connector-pack parse-only source scripts.
         "sources",
         "native",
@@ -2067,7 +1815,12 @@ class AppManifest:
     # Kept as written, so ``validate`` reports an entry that is not a name.
     requiresCoreFeatures: list[str] = field(default_factory=list)  # noqa: N815
 
+    #: The capability ids an earlier version had and this one dropped: a tombstone each, so the id
+    #: is never declared again and a reference to it can say it was removed.
+    retiredCapabilities: list[str] = field(default_factory=list)  # noqa: N815
+
     not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
+    not_lists: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
     # -----------------------------------------------------------------
     # Validation
@@ -2270,8 +2023,7 @@ class AppManifest:
             errors += _refusals(f"backend route {r.op!r}: ", r.not_booleans)
 
         # Provider validation — the single ``provider`` and each of ``providers``.
-        for prov in self.all_providers():
-            errors.extend(prov.validate())
+        errors.extend(self._validate_providers())
 
         errors.extend(self.dependencies.validate(self.all_providers()))
         errors.extend(self._validate_requires())
@@ -2452,11 +2204,49 @@ class AppManifest:
         followed by ``providers`` — so callers iterate one list regardless of how
         the manifest declared them. An app may register multiple providers of the
         same or different kinds."""
-        out: list[ProviderConfig] = []
-        if self.provider:
-            out.append(self.provider)
-        out.extend(self.providers)
+        return [p for _path, p in self._provider_paths()]
+
+    def first_provider(self) -> ProviderConfig | None:
+        """The app's first provider, however it was declared: the one a reader that shows an app by
+        one provider (its Store card, its settings form) reads."""
+        found = self.all_providers()
+        return found[0] if found else None
+
+    def _provider_paths(self) -> list[tuple[str, ProviderConfig]]:
+        """Each provider with the manifest path that names it in a refusal: the one order
+        :meth:`all_providers` and :meth:`capability_ids` both read, so an id is never paired with
+        another provider."""
+        out = [("provider", self.provider)] if self.provider else []
+        out.extend((f"providers[{i}]", p) for i, p in enumerate(self.providers))
         return out
+
+    def capability_ids(self) -> list[str]:
+        """Each provider's capability id, in :meth:`all_providers` order
+        (:func:`~personalclaw.apps.capability_ids.capability_ids`)."""
+        from personalclaw.apps.capability_ids import capability_ids
+
+        return capability_ids(self)
+
+    def _validate_providers(self) -> list[str]:
+        """Each provider's own refusals, then the ones for the ids and labels that tell them
+        apart."""
+        errors = [e for prov in self.all_providers() for e in prov.validate()]
+        from personalclaw.apps.capability_ids import capability_refusals
+
+        return errors + capability_refusals(self)
+
+    def _capabilities_to_dict(self) -> dict[str, Any]:
+        """The manifest's providers and retired capability ids, as written."""
+        d: dict[str, Any] = {}
+        provider_d = self.provider.to_dict() if self.provider else {}
+        if provider_d:
+            d["provider"] = provider_d
+        providers_d = [p for p in (p.to_dict() for p in self.providers) if p]
+        if providers_d:
+            d["providers"] = providers_d
+        if self.retiredCapabilities:
+            d["retiredCapabilities"] = list(self.retiredCapabilities)
+        return d
 
     def core_compatibility(self, host: str | None = None) -> CoreCompatibility:
         """Whether the running core can host this app: its ``minPersonalClawVersion`` and the
@@ -2528,15 +2318,7 @@ class AppManifest:
         platform_d = self.platform.to_dict()
         if platform_d:
             d["platform"] = platform_d
-        if self.provider:
-            provider_d = self.provider.to_dict()
-            if provider_d:
-                d["provider"] = provider_d
-        if self.providers:
-            providers_d = [p.to_dict() for p in self.providers]
-            providers_d = [p for p in providers_d if p]
-            if providers_d:
-                d["providers"] = providers_d
+        d.update(self._capabilities_to_dict())
         if self.sources:
             d["sources"] = [s.to_dict() for s in self.sources]
         if self.quality is not None:
@@ -2672,6 +2454,11 @@ class AppManifest:
             platform=platform_cfg,
             provider=provider_cfg,
             providers=providers_cfg,
+            retiredCapabilities=(
+                [str(x) for x in data.get("retiredCapabilities", [])]
+                if isinstance(data.get("retiredCapabilities", []), list)
+                else []
+            ),
             sources=[
                 PackSourceEntry.from_dict(s)
                 for s in data.get("sources", [])
@@ -2689,6 +2476,7 @@ class AppManifest:
             extra=extra,
         )
         manifest.not_booleans = _not_booleans(data, "native")
+        manifest.not_lists = _not_lists(data, "retiredCapabilities")
         return manifest
 
     @classmethod

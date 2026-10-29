@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.agents.native.builtin_tools:create_tasks_tools_provider",
-    "capabilities": [
-      "task"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Tools for your tasks",
+      "type": "tool",
+      "implementation": "personalclaw.agents.native.builtin_tools:create_tasks_tools_provider",
+      "capabilities": [
+        "task"
+      ]
+    }
+  ],
   "native": true
 }

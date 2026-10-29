@@ -295,14 +295,11 @@ def _running() -> dict[str, Any]:
     from personalclaw.llm.registry import get_default_registry
     from personalclaw.tool_providers.registry import get_provider
 
-    primary = registry_module.get_provider_registry().get(APP)
+    records = registry_module.get_provider_registry().list_for_app(APP)
     worker = get_worker_supervisor().get(APP, "worker")
     uses = [prompt_registry.get(u) for u in prompt_registry.use_cases()]
     return {
-        "providers": sorted(
-            (r.provider_config.type, r.enabled, r.error)
-            for r in (primary.chain() if primary else [])
-        ),
+        "providers": sorted((r.provider_config.type, r.enabled, r.error) for r in records),
         "tool": getattr(get_provider(APP), "version", None),
         "model type": MODEL_TYPE in get_default_registry()._factories,
         "channel": channel_transports.get_transport(APP) is not None,

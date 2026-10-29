@@ -9,17 +9,21 @@
     "inbox",
     "bundled"
   ],
-  "provider": {
-    "type": "inbox",
-    "implementation": "personalclaw.inbox_providers.filesystem_source:create_provider",
-    "capabilities": [
-      "approvals",
-      "inputs"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "properties": {}
+  "providers": [
+    {
+      "id": "inbox",
+      "label": "Approval requests and system notices",
+      "type": "inbox",
+      "implementation": "personalclaw.inbox_providers.filesystem_source:create_provider",
+      "capabilities": [
+        "approvals",
+        "inputs"
+      ],
+      "settingsSchema": {
+        "type": "object",
+        "properties": {}
+      }
     }
-  },
+  ],
   "native": true
 }

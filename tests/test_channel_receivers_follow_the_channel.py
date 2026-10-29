@@ -184,8 +184,8 @@ def home(tmp_path, monkeypatch, unset_env):
     # Disabled, not just forgotten: a reset registry deregisters nothing, and a transport left in
     # the process-wide transport registry would be the next test's channel at its boot.
     registry = registry_module.get_provider_registry()
-    for name in list(registry._extensions):
-        registry.disable(name)
+    for ext in registry.list_extensions():
+        registry.disable(ext.name, ext.capability)
     registry_module.reset_provider_registry()
 
 

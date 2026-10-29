@@ -9,15 +9,19 @@
     "task",
     "bundled"
   ],
-  "provider": {
-    "type": "task",
-    "implementation": "personalclaw.tasks.native:create_provider",
-    "capabilities": [
-      "crud",
-      "comments",
-      "labels",
-      "dependencies"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tasks",
+      "label": "Your tasks",
+      "type": "task",
+      "implementation": "personalclaw.tasks.native:create_provider",
+      "capabilities": [
+        "crud",
+        "comments",
+        "labels",
+        "dependencies"
+      ]
+    }
+  ],
   "native": true
 }

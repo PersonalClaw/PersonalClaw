@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.calendar_events:create_calendar_tools_provider",
-    "capabilities": [
-      "calendar"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Tools to read your calendars",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.calendar_events:create_calendar_tools_provider",
+      "capabilities": [
+        "calendar"
+      ]
+    }
+  ],
   "native": true
 }

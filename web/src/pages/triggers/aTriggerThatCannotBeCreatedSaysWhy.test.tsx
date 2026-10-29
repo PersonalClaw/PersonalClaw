@@ -51,7 +51,7 @@ beforeEach(() => {
   PROVIDERS.length = 0
   PROVIDERS.push({
     name: 'run-workflow', display_name: 'Run Workflow', internal: false, supports_blocking: false,
-    settingsSchema: MANIFEST.provider.settingsSchema,
+    settingsSchema: MANIFEST.providers[0].settingsSchema,
   })
 })
 

@@ -9,14 +9,18 @@
     "skills",
     "bundled"
   ],
-  "provider": {
-    "type": "skills",
-    "implementation": "personalclaw.skills.native:create_provider",
-    "capabilities": [
-      "crud",
-      "triggers",
-      "auto_generation"
-    ]
-  },
+  "providers": [
+    {
+      "id": "skills",
+      "label": "Skills you define",
+      "type": "skills",
+      "implementation": "personalclaw.skills.native:create_provider",
+      "capabilities": [
+        "crud",
+        "triggers",
+        "auto_generation"
+      ]
+    }
+  ],
   "native": true
 }

@@ -52,11 +52,11 @@ def _records(names: list[str]) -> tuple[list["RegisteredProvider"], list[str]]:
     found: list["RegisteredProvider"] = []
     missing: list[str] = []
     for name in names:
-        primary = registry.get(name)
-        if primary is None:
+        records = registry.list_for_app(name)
+        if not records:
             missing.append(name)
         else:
-            found.extend(primary.chain())
+            found.extend(records)
     return found, missing
 
 

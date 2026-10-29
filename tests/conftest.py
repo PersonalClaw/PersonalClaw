@@ -1941,11 +1941,14 @@ def _restore_local_model_registry() -> object:
 
     providers = dict(_local_models._providers)
     capabilities = dict(_local_models._capabilities)
+    owners = dict(_local_models._owners)
     yield
     _local_models._providers.clear()
     _local_models._providers.update(providers)
     _local_models._capabilities.clear()
     _local_models._capabilities.update(capabilities)
+    _local_models._owners.clear()
+    _local_models._owners.update(owners)
 
 
 @pytest.fixture(autouse=True)

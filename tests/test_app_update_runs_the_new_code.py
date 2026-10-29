@@ -476,7 +476,7 @@ def home(tmp_path, monkeypatch, wire) -> Iterator[Path]:
     registry_module.reset_provider_registry()
     yield tmp_path
     registry = registry_module.get_provider_registry()
-    for name in list(registry._extensions):
+    for name in {r.name for r in registry.list_extensions()}:
         registry.disable(name)
     registry_module.reset_provider_registry()
     get_worker_supervisor().stop(APP)

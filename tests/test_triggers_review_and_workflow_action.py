@@ -182,7 +182,7 @@ def _history(home, tid: str) -> list[dict[str, Any]]:
 def test_the_run_workflow_form_asks_for_the_workflow_and_its_inputs():
     """🔴 Red on main: no manifest, so the form's schema was `{}` and it rendered nothing."""
     manifest = json.loads((NATIVE / "run-workflow-action" / "app.json").read_text())
-    schema = manifest["provider"]["settingsSchema"]
+    schema = manifest["providers"][0]["settingsSchema"]
     assert schema["required"] == ["workflow"]
     assert schema["properties"]["workflow"]["x-meta"]["widget"] == "workflow"
     assert schema["properties"]["inputs"]["x-meta"]["widget"] == "workflow-inputs"

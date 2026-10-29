@@ -29,7 +29,7 @@ import { categoryLabel } from './AppsSection'
 // are asserted below, because a fix for one that breaks the other is not a fix.
 
 const CORE_ROOT = join(process.cwd(), '..')
-const MANIFEST_PY = join(CORE_ROOT, 'src/personalclaw/apps/manifest.py')
+const PROVIDER_CONFIG_PY = join(CORE_ROOT, 'src/personalclaw/apps/provider_config.py')
 
 describe('a category label never reads as a machine identifier', () => {
   it('renders the acronym tags that four of sixteen rail entries used', () => {
@@ -81,7 +81,7 @@ describe('every provider type the backend accepts has a human label', () => {
   // Python handler registry, so a new type cannot ship without a handler — but nothing pinned it to
   // this map, which is how `trigger`, `trigger_source` and `duty_gate` each reached the UI unlabelled.
   // Parsing the Python set is deliberate: a hand-copied list here would drift the same way.
-  const py = readFileSync(MANIFEST_PY, 'utf8')
+  const py = readFileSync(PROVIDER_CONFIG_PY, 'utf8')
   const block = py.match(/PROVIDER_TYPES = frozenset\(\s*\{([\s\S]*?)\n\s*\}\s*\)/)?.[1] ?? ''
   const types = [...new Set([...block.matchAll(/^\s*"([a-z_]+)",/gm)].map((m) => m[1]))]
 
@@ -91,7 +91,7 @@ describe('every provider type the backend accepts has a human label', () => {
 
   it('parsed both sides — otherwise the assertion below is vacuous', () => {
     // A regex that matched nothing would make an empty-set comparison pass forever.
-    expect(types.length, 'PROVIDER_TYPES parsed from manifest.py').toBeGreaterThanOrEqual(15)
+    expect(types.length, 'PROVIDER_TYPES parsed from provider_config.py').toBeGreaterThanOrEqual(15)
     expect(labelled.size, 'PROVIDER_ENTITY_LABEL entries parsed from AppsSection').toBeGreaterThanOrEqual(15)
   })
 
