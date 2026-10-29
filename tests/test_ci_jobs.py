@@ -747,6 +747,12 @@ def test_a_pytest_step_out_of_time_lists_its_live_group_before_it_is_stopped(rep
     assert len(listed) == 1
     err = capfd.readouterr().err
     assert "possible xdist hang" in err and f"{listed[0]} python" in err
+    # Then where each thread of the step's process waits, read from outside it before the stop.
+    assert "where each thread of each waits:" in err
+    if sys.platform == "linux":
+        assert f"process {listed[0]} (python" in err and f"  thread {listed[0]} (" in err, err
+    else:
+        assert f"process {listed[0]}: no /proc on {sys.platform}" in err
 
 
 def test_a_step_that_is_not_pytest_out_of_time_lists_nothing(repo, tmp_path, capfd):

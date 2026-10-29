@@ -113,6 +113,7 @@ from . import (
     admission,
     capabilities,
     catalogue,
+    hung,
     plan,
     run,
     sandbox_host,
@@ -609,6 +610,10 @@ def _list_group(pgid: int) -> list[str]:
 
 
 def _hang_report(host: Host) -> Callable[[int], None]:
+    """What a pytest step out of time says before its group is stopped: each process of the group
+    still alive, then where each thread of each waits (:func:`hung.group`), read from outside it,
+    since a process blocked in native code holding the GIL can say nothing of itself."""
+
     def report(pgid: int) -> None:
         lister = host.lister or _list_group
         try:
@@ -622,6 +627,9 @@ def _hang_report(host: Host) -> Callable[[int], None]:
         )
         for line in alive:
             print(f"  {line}", file=sys.stderr)
+        pids = [int(words[0]) for words in map(str.split, alive) if words and words[0].isdigit()]
+        if pids:
+            print(f"where each thread of each waits:\n{hung.group(pids)}", file=sys.stderr)
 
     return report
 
