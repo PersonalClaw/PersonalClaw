@@ -552,8 +552,20 @@ class SleptSteps(UserWarning):
 #: around the count, lie inside the CPU time and outside the count.
 _COUNT_SLACK = 0.001
 
+#: How much further macOS's count of the process's time ready may run past the window when the
+#: loop thread is the process's only thread, so the count is its own. The kernel brings the count
+#: up to date on the scheduler's turns, not when it is read, so each read can lag by up to one
+#: 10 ms timeshare quantum. Measured on a Mac, one thread spinning in 0.15 s steps under a crowd:
+#: each step's count ran from 8.7 ms short of the window less its CPU to 6.3 ms past it outside
+#: the background band, and within 0.4 ms inside it. On a CI runner the starved-step plant's step
+#: ran 3 ms past, and was counted 0.208 s in wall time for it (run 40855070354). With threads
+#: beside, the loop's share is the count less what they could account for, so a share past the
+#: window says those credits were wrong, and only :data:`_COUNT_SLACK` is allowed: an answer whose
+#: share ran 10.1 ms past hid a block of 0.2 s (run 40518880630).
+_A_LONE_THREADS_COUNT_LAG = 0.010
 
-def _believed(wall: float, cpu: float, waited: float) -> float:
+
+def _believed(wall: float, cpu: float, waited: float, slack: float = _COUNT_SLACK) -> float:
     """What a window of *wall* seconds, in which the loop thread used *cpu*, may leave out of the
     *waited* its count says the loop spent ready with no CPU: all of it, or nothing. The loop thread
     cannot have been ready for longer than the window less the time it ran, so a count that says it
@@ -561,8 +573,10 @@ def _believed(wall: float, cpu: float, waited: float) -> float:
     the process's count over a health check's answer held more than its three threads could have
     been ready for, one of them blocked 0.2 s in it: given the surplus, the loop's share came to the
     whole answer, which was counted 0.008 s of its 1.967 s, and the block was lost (run
-    40518880630). A count that says less than that, however wrong, is not caught here."""
-    return waited if waited <= wall - cpu + _COUNT_SLACK else 0.0
+    40518880630). A count that says less than that, however wrong, is not caught here. *slack* is
+    how far past the window a count may run and still be the window's
+    (:data:`_A_LONE_THREADS_COUNT_LAG`)."""
+    return waited if waited <= wall - cpu + slack else 0.0
 
 
 def _held_to_its_steps(waited: float, steps_left_out: float, outside: float) -> float:
@@ -623,7 +637,7 @@ class _Window:
     def end(self, *, counted_from: float = 0.0) -> tuple[float, float, float]:
         """The window's wall time, its CPU time and the time ready left out of it. On macOS that
         is read only for a window of *counted_from* or longer (a shorter one is wall time)."""
-        waited = 0.0
+        waited, slack = 0.0, _COUNT_SLACK
         if self.own is not None:
             # The wall time ends, then Linux's count is read beside it: a wait at the count's own
             # call is after both, so outside the window and outside the count.
@@ -643,13 +657,19 @@ class _Window:
             ended = then.ready_at
             waited = self.no_cpu.waited(self.first, then, self.threads)
             self.read = True
+            # macOS: the process's count is the loop thread's own when it is the only thread. A
+            # Linux count is each thread's own, brought up to date as it is read: no lag.
+            listed = getattr(self.first, "threads", {}).keys() | getattr(then, "threads", {}).keys()
+            lone = listed and listed <= self.threads
+            if lone and self.no_cpu.source.startswith("macOS"):
+                slack += _A_LONE_THREADS_COUNT_LAG
         else:
             ended = time.monotonic()
         # The CPU clock last: its call is outside the window.
         wall, cpu = ended - self.began, time.thread_time() - self.cpu
         #: What the count said, before :func:`_believed` judged it.
         self.said = waited
-        waited = _believed(wall, cpu, waited)
+        waited = _believed(wall, cpu, waited, slack)
         #: What the window would count were all of the process's time ready the loop's, as much
         #: as the window less the loop's CPU can hold: the least it can be, and what a runner that
         #: reads no instruction counts cannot rule out (:meth:`_Probe.undecided`).
@@ -1956,15 +1976,16 @@ class _VmReads(_NoCpu):
     """macOS as a virtual machine that reads no instruction counts gives it, driven as
     :class:`_LinuxReads` is: the process's count of time ready, and two threads beside the loop's,
     a hasher running or ready and a worker waiting, each credited its whole window less the CPU it
-    used (:meth:`_NoCpu.accounts`). Each :meth:`spend` takes *wall* seconds, the loop thread
-    using *cpu* of them, the process's count rising *ready*, and the threads beside using
-    *beside* of CPU. No read costs any time."""
+    used (:meth:`_NoCpu.accounts`), or none when *alone*. Each :meth:`spend` takes *wall*
+    seconds, the loop thread using *cpu* of them, the process's count rising *ready*, and the
+    threads beside using *beside* of CPU. No read costs any time."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, alone: bool = False) -> None:
         super().__init__()
         self.source = "macOS: the process's, less what its other threads could account for"
         self.t = self.cpu = self.ready = 0.0
         self.beside = (0.0, 0.0)
+        self.alone = alone
 
     def open(self) -> None:
         pass
@@ -1983,11 +2004,9 @@ class _VmReads(_NoCpu):
 
     def snapshot(self) -> SimpleNamespace:
         hasher, worker = self.beside
-        threads = {
-            threading.get_native_id(): (self.cpu, 1, None),
-            1: (hasher, 1, None),
-            2: (worker, 3, None),
-        }
+        threads = {threading.get_native_id(): (self.cpu, 1, None)}
+        if not self.alone:
+            threads.update({1: (hasher, 1, None), 2: (worker, 3, None)})
         return SimpleNamespace(
             at=self.t,
             ready_at=self.t,
@@ -2839,6 +2858,85 @@ def test_a_count_the_window_can_hold_is_left_out_whole(over):
     runner gave no CPU needs."""
     wall, cpu = 0.5, 0.04
     assert _believed(wall, cpu, wall - cpu + over) == wall - cpu + over
+
+
+#: Run 40855070354's longest step, python-suite-macos (3/5) on a macOS virtual machine: the
+#: starved-step plant's, 0.208 s in wall time with 0.005 s of CPU, the loop thread the process's
+#: only thread, and its count 0.206 s ready, 3 ms past the window less its CPU.
+_CI_LONE_STEP = (0.208, 0.005, 0.206, 0, (0.0, 0.0))
+
+
+def test_a_lone_threads_count_a_quantum_past_its_window_is_left_out():
+    """🔴 Red before (a count past the window less its CPU by more than 1 ms left nothing out):
+    the CI runner's starved step, its count 3 ms past, was counted 0.208 s in wall time, over the
+    bound, for a step the runner took (run 40855070354). The loop thread was the process's only
+    thread, so the count was its own, which lags by up to a quantum: it is left out, and the step
+    is counted for its CPU."""
+    probe = _probed(_VmReads(alone=True), _CI_LONE_STEP)
+    assert probe.worst_step == pytest.approx(0.005), probe.says()
+    assert probe.worst_step < _BOUND, probe.says()
+
+
+def test_without_the_lag_the_ci_runners_lone_step_is_counted_in_wall_time(monkeypatch):
+    """The mutant: with no lag allowed, the CI runner's starved step is counted over the bound
+    again, so the plant above fails on it."""
+    monkeypatch.setattr(sys.modules[__name__], "_A_LONE_THREADS_COUNT_LAG", 0.0)
+    probe = _probed(_VmReads(alone=True), _CI_LONE_STEP)
+    assert probe.worst_step >= _BOUND, probe.says()
+
+
+class _LinuxSnapshots(_VmReads):
+    """Linux's counts read through snapshots, as a window reads them when the loop thread's own
+    file is not open: each thread's own count, the loop thread alone, driven as :class:`_VmReads`
+    is."""
+
+    def __init__(self) -> None:
+        super().__init__(alone=True)
+        self.source = "Linux: each thread's own"
+
+    def snapshot(self) -> SimpleNamespace:
+        threads = {threading.get_native_id(): self.ready}
+        return SimpleNamespace(
+            at=self.t,
+            ready_at=self.t,
+            ready=0.0,
+            threads=threads,
+            ended=0,
+            ending=False,
+            done=self.t,
+        )
+
+
+def test_a_linux_count_a_few_ms_past_its_window_still_leaves_nothing_out():
+    """The lag is macOS's alone: a Linux thread's count is brought up to date as it is read, so
+    the CI runner's lone step, its count 3 ms past, read through Linux's snapshots, leaves nothing
+    out and is counted in wall time."""
+    reads = _LinuxSnapshots()
+    with (
+        patch.object(time, "monotonic", reads.monotonic),
+        patch.object(time, "thread_time", reads.thread_time),
+    ):
+        window = _Window(reads, {threading.get_native_id()})
+        reads.spend(*_CI_LONE_STEP)
+        wall, cpu, waited = window.end(counted_from=_COUNTED)
+    assert window.said == pytest.approx(0.206), "premise: the count ran 3 ms past"
+    assert waited == 0.0 and wall == pytest.approx(0.208)
+
+
+@pytest.mark.parametrize(
+    ("alone", "step"),
+    [
+        pytest.param(False, (1.967, 0.0083, 1.9688 + 2 * 1.967, 0, (0.0, 0.0)), id="a share"),
+        pytest.param(True, (0.318, 0.04, 0.485, 0, (0.0, 0.0)), id="a lone count far past"),
+    ],
+)
+def test_a_count_past_its_window_by_more_than_its_own_lag_still_leaves_nothing_out(alone, step):
+    """The lag's other side. With threads beside, the loop's share 10.1 ms past the window is
+    still taken as wrong, as the CI answer's was over a block of 0.2 s (run 40518880630). A lone
+    thread's count of 0.485 s in a 0.318 s step, past it by more than a quantum, is too (as a
+    local run of the starved plant's once read)."""
+    probe = _probed(_VmReads(alone=alone), step)
+    assert probe.worst_step == pytest.approx(step[0]), probe.says()
 
 
 # ── a reading the runner cannot place is measured again ─────────────────────────────────────
