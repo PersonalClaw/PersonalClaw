@@ -430,22 +430,64 @@ def test_the_runtime_exposes_the_dispatcher_s_turn_end_steer_seam():
     assert rt.undelivered_steers() == ["owed"]
 
 
-def test_a_new_turn_does_not_replay_the_previous_turn_s_owed_steers():
-    """`stream` clears `_steer_pending` at turn start, structurally pinned.
+class _Prose:
+    """A model that answers each request with the next of *answers* and no tool call; *during*
+    runs while the first answer streams (a steer sent while the model writes)."""
+
+    supports_tools = True
+    _model = "prose"
+
+    def __init__(self, answers: list[str], during=None) -> None:
+        self._answers = answers
+        self._during = during
+        self.seen: list[list[dict]] = []
+
+    async def complete(self, messages, *, tools=None, model=None, reasoning_effort=""):
+        from personalclaw.llm.events import EVENT_COMPLETE, EVENT_TEXT_CHUNK, AgentEvent
+
+        self.seen.append(list(messages))
+        answer = self._answers[min(len(self.seen), len(self._answers)) - 1]
+        yield AgentEvent(kind=EVENT_TEXT_CHUNK, text=answer)
+        if len(self.seen) == 1 and self._during is not None:
+            self._during()
+        yield AgentEvent(kind=EVENT_COMPLETE, input_tokens=3, output_tokens=2)
+
+
+async def _prose_runtime(model: _Prose):
+    from personalclaw.agents.native.runtime import NativeAgentRuntime
+    from personalclaw.agents.provider import AgentRuntimeDefinition
+
+    rt = NativeAgentRuntime(
+        definition=AgentRuntimeDefinition(name="T", provider="native", model="prose"),
+        model_provider=model,
+        tool_providers=[],
+    )
+    await rt.start()
+    return rt
+
+
+@pytest.mark.asyncio
+async def test_a_new_turn_does_not_replay_the_previous_turn_s_owed_steers():
+    """A turn starts with nothing owed from the turn before (`_steer_pending` cleared).
 
     The dispatcher requeues the remainder at the END of a turn. If the runtime also kept
     it, the next turn would inject a second copy of a steer already visible in the queue
-    strip — the same text delivered twice, from two owners.
+    strip — the same text delivered twice, from two owners. So a turn that opens with one
+    left over neither sends it to the model nor takes it, and owes nothing at its end.
     """
-    import inspect
+    from personalclaw.llm.events import EVENT_STEER
 
-    from personalclaw.agents.native.runtime import NativeAgentRuntime
+    model = _Prose(["Done."])
+    rt = await _prose_runtime(model)
+    rt.set_steer_source(lambda: [])
+    rt._steer_pending = ["left over from the last turn"]
 
-    src = inspect.getsource(NativeAgentRuntime.stream)
-    assert "self._steer_pending.clear()" in src
-    clear_at = src.index("self._steer_pending.clear()")
-    first_append = src.index('self._messages.append({"role": "user"')
-    assert clear_at < first_append, "the reset must precede the turn's first message"
+    events = [ev async for ev in rt.stream("the next question")]
+
+    assert len(model.seen) == 1
+    assert "left over" not in str(model.seen) and "left over" not in str(rt._messages)
+    assert [ev for ev in events if ev.kind == EVENT_STEER] == []
+    assert rt.undelivered_steers() == []
 
 
 def test_drain_never_raises_when_the_source_does():
@@ -459,22 +501,27 @@ def test_drain_never_raises_when_the_source_does():
     assert rt._messages == []
 
 
-def test_a_no_tool_turn_reaches_the_drain_before_returning():
-    """Defect 4, pinned structurally.
+@pytest.mark.asyncio
+async def test_a_no_tool_turn_reaches_the_drain_before_returning():
+    """Defect 4: a steer sent while a plain-prose answer streams is taken.
 
-    The drain used to live ONLY after the tool batch, so the `if not tool_calls`
-    early return fired first and a plain-prose turn discarded the steer. The source
-    must call the drain BEFORE that return, or steering silently fails on the most
-    common turn shape.
+    The drain used to live ONLY after the tool batch, so the turn with no tool calls ended
+    first and discarded the steer, on the most common turn shape. Now the turn takes it
+    before it ends, and the model answers once more with it in the history.
     """
-    import inspect
+    from personalclaw.llm.events import EVENT_COMPLETE, EVENT_STEER
 
-    from personalclaw.agents.native.runtime import NativeAgentRuntime
+    queued: list[str] = []
+    model = _Prose(["A long answer.", "Short."], during=lambda: queued.append("Shorter, please."))
+    rt = await _prose_runtime(model)
+    rt.set_steer_source(lambda: [queued.pop(0)] if queued else [])
 
-    src = inspect.getsource(NativeAgentRuntime.stream)
-    drain_at = src.index("_take_steers")
-    stop_at = src.index("if not tool_calls or self._cancelled:")
-    assert drain_at < stop_at, "the steer drain must precede the no-tool-call return"
+    events = [ev async for ev in rt.stream("Explain it.")]
+
+    assert [ev.text for ev in events if ev.kind == EVENT_STEER] == ["Shorter, please."]
+    assert len(model.seen) == 2, "the steer was taken before the turn ended, and answered"
+    assert "Shorter, please." in str(model.seen[1][-1]["content"])
+    assert events[-1].kind == EVENT_COMPLETE and events[-1].num_turns == 2
 
 
 # ── The ACP delivery path ────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ tests/rails/test_ci_plan_tree.py
 tests/rails/test_digests_have_one_canonical_form.py
 tests/rails/test_each_tree_check_runs_in_one_place.py
 tests/rails/test_every_model_call_writes_its_usage_row_tree.py
+tests/rails/test_function_size_tree.py
 tests/rails/test_http_error_codes_append_only_tree.py
 tests/rails/test_keychain_namespace_census.py
 tests/rails/test_model_reach_census_tree.py

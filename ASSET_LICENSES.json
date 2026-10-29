@@ -1115,6 +1115,32 @@
       ]
     },
     {
+      "id": "native-loop-goldens",
+      "source": "Project-authored: what the native loop yields, asks the model and keeps for each scripted turn, recorded from the loop before #4015 split it into phases by running tests/test_native_loop_phases.py as a script, for tests/test_native_loop_phases.py",
+      "version": "repository-revision",
+      "license": "MIT",
+      "ownership": "project-owned",
+      "required_notice": "LICENSE",
+      "files": [
+        "tests/fixtures/native_loop_golden/approval_allowed.jsonl",
+        "tests/fixtures/native_loop_golden/approval_denied.jsonl",
+        "tests/fixtures/native_loop_golden/compaction.jsonl",
+        "tests/fixtures/native_loop_golden/fails_over_at_the_first_step.jsonl",
+        "tests/fixtures/native_loop_golden/given_up.jsonl",
+        "tests/fixtures/native_loop_golden/overflow_compacts_and_retries.jsonl",
+        "tests/fixtures/native_loop_golden/owed_reply.jsonl",
+        "tests/fixtures/native_loop_golden/plain_answer.jsonl",
+        "tests/fixtures/native_loop_golden/retried.jsonl",
+        "tests/fixtures/native_loop_golden/steer_after_a_tool.jsonl",
+        "tests/fixtures/native_loop_golden/steer_while_answering.jsonl",
+        "tests/fixtures/native_loop_golden/step_limit.jsonl",
+        "tests/fixtures/native_loop_golden/stop_during_a_tool.jsonl",
+        "tests/fixtures/native_loop_golden/stop_while_answering.jsonl",
+        "tests/fixtures/native_loop_golden/tool_definition_rejected.jsonl",
+        "tests/fixtures/native_loop_golden/tool_wave.jsonl"
+      ]
+    },
+    {
       "id": "reply-style-snapshots",
       "source": "Project-authored: what a turn sends the model under each reply style, written by tests/reply_style_snapshots.py from a temporary home, for tests/test_reply_style_reaches_the_model.py; natural-voice-on-main.json is what natural voice sent before reply styles existed",
       "version": "repository-revision",

@@ -23,7 +23,7 @@ EXEMPT = {
     ("dashboard/chat_utils.py", "stream_slash_command"): (
         "yields the chat turn's own events to the turn, which writes the turn's row"
     ),
-    ("agents/native/runtime.py", "NativeAgentRuntime.stream"): (
+    ("agents/native/loop_phases.py", "LoopPhases._answer"): (
         "the native loop's own inference: the turn's complete event carries its usage and its "
         "call ids to whoever writes the turn's row"
     ),
@@ -88,6 +88,11 @@ SPENT_EXEMPT = {
     ("sdk/provider_helpers.py", "BrandedCatalog._probe_completion"): (
         "a connection test that writes no row at all"
     ),
+    ("agents/native/loop_phases.py", "LoopPhases._answer"): (
+        "one step's inference inside the native turn: the turn says its EVENT_SPENT itself, from "
+        "NativeAgentRuntime.stream (LoopState.spent) when it ends in an error, to whoever writes "
+        "the turn's row (tests/test_native_loop_phases.py, the given_up golden)"
+    ),
 }
 
 
@@ -111,3 +116,50 @@ def test_every_site_writes_its_row_for_a_turn_that_ends_in_an_error():
 def test_every_spent_exemption_still_names_a_site_that_reads_none():
     stale = sorted(set(SPENT_EXEMPT) - set(_spent_census()))
     assert not stale, f"the site reads EVENT_SPENT now, drop the exemption: {stale}"
+
+
+def test_the_native_turn_says_what_it_spent_when_it_ends_in_an_error():
+    """The floor under the native loop's exemption above: its inference reads no ``EVENT_SPENT``
+    because the turn says it, once, around every phase. ``NativeAgentRuntime.stream`` handles an
+    error by yielding its record's ``spent`` event and raising again, and ``LoopState.spent``
+    builds an ``EVENT_SPENT``."""
+    import ast
+
+    import source_index
+
+    def _function(rel: str, qualname: str) -> ast.AST:
+        tree = source_index.tree(SRC / rel)
+        cls, _, name = qualname.partition(".")
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name == cls:
+                for fn in node.body:
+                    if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and fn.name == name:
+                        return fn
+        raise AssertionError(f"{rel} has no {qualname}")
+
+    stream = _function("agents/native/runtime.py", "NativeAgentRuntime.stream")
+    handlers = [
+        h
+        for h in ast.walk(stream)
+        if isinstance(h, ast.ExceptHandler)
+        and isinstance(h.type, ast.Name)
+        and h.type.id == "Exception"
+    ]
+    said = [
+        h
+        for h in handlers
+        if any(
+            isinstance(node, ast.Yield)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Attribute)
+            and node.value.func.attr == "spent"
+            for node in ast.walk(h)
+        )
+        and isinstance(h.body[-1], ast.Raise)
+        and h.body[-1].exc is None
+    ]
+    assert said, "NativeAgentRuntime.stream no longer says what an erroring turn spent"
+    spent = _function("agents/native/loop_state.py", "LoopState.spent")
+    assert any(
+        isinstance(node, ast.Name) and node.id == "EVENT_SPENT" for node in ast.walk(spent)
+    ), "LoopState.spent no longer builds an EVENT_SPENT"
