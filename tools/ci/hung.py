@@ -302,7 +302,10 @@ class Overdue:
     line, and into the job's log.
 
     A line is acted on only once two looks have read it the same, so never one half written, and
-    each look reads at most every published file of the step's report folder."""
+    only in a file written since the watch was made, as its step began: a worker of an earlier step
+    that died mid-test (killed, or crashed) leaves its line behind, and the pid it names may be a
+    process of this step's group by now. Each look reads at most every published file of the
+    step's report folder."""
 
     def __init__(
         self,
@@ -314,6 +317,7 @@ class Overdue:
         end: Callable[[int, int], None] = os.kill,
         read: Callable[[int], str] = threads,
         log: IO[str] | None = None,
+        since: int | None = None,
     ) -> None:
         self.folder = folder
         self.pattern = f"hard-deadline-{leg}-*{ARMED}"
@@ -323,6 +327,9 @@ class Overdue:
         self._read = read
         self._log = log
         self._seen: dict[Path, str] = {}
+        #: When the watch was made, by the clock a file's time is stamped by, in nanoseconds: a
+        #: worker of its step starts a second or more after that, so all it writes is later.
+        self._since = time.time_ns() if since is None else since
 
     @classmethod
     def beside(cls, junit: Path, **kw) -> Overdue:
@@ -340,6 +347,8 @@ class Overdue:
 
     def _look(self, path: Path, pgid: int) -> None:
         try:
+            if path.stat().st_mtime_ns < self._since:
+                return
             line = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             return

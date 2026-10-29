@@ -268,10 +268,10 @@ def _publish(folder: Path, pid: int, *, began: float, deadline: float, worker: s
 def test_a_worker_past_its_tests_deadline_is_read_written_and_ended(tmp_path):
     child = _sleeper()
     try:
-        now = time.monotonic()
-        armed = _publish(tmp_path, child.pid, began=now - 125, deadline=now - 35)
         log = io.StringIO()
         watch = hung.Overdue(tmp_path, "leg", read=lambda pid: f"the threads of {pid}\n", log=log)
+        now = time.monotonic()
+        armed = _publish(tmp_path, child.pid, began=now - 125, deadline=now - 35)
         watch(child.pid)
         assert child.poll() is None, "one look is never enough: the line may be half written"
         watch(child.pid)
@@ -289,12 +289,15 @@ def test_a_worker_past_its_tests_deadline_is_read_written_and_ended(tmp_path):
     assert not armed.exists(), "a worker it ended is never looked at again"
 
 
-def _ended(tmp_path: Path, pgid: int, **kw) -> list[tuple[int, int]]:
-    """What the watch signals over two looks, with nothing really signalled."""
+def _ended(tmp_path: Path, pgid: int) -> list[tuple[int, int]]:
+    """What the watch signals over two looks, with nothing really signalled. Every file here is
+    taken for its step's own, whenever it was written."""
     ended: list[tuple[int, int]] = []
-    watch = hung.Overdue(
-        tmp_path, "leg", end=lambda pid, sig: ended.append((pid, sig)), read=str, log=io.StringIO()
-    )
+
+    def end(pid: int, sig: int) -> None:
+        ended.append((pid, sig))
+
+    watch = hung.Overdue(tmp_path, "leg", end=end, read=str, log=io.StringIO(), since=0)
     for _ in range(2):
         watch(pgid)
     return ended
@@ -326,6 +329,31 @@ def test_a_line_is_acted_on_only_once_two_looks_read_it_the_same(tmp_path):
             watch(child.pid)
         assert ended == []
         watch(child.pid)
+        assert ended == [child.pid]
+    finally:
+        child.kill()
+        child.wait(10)
+
+
+def test_a_line_an_earlier_step_left_is_never_acted_on_though_its_pid_is_in_this_group(tmp_path):
+    """A worker of an earlier step that died mid-test left its line, and the pid it names is a
+    live process of this step's group by now. The watch, made as this step began, leaves it alone.
+    The same line, written by this step's worker, is acted on."""
+    child = _sleeper()
+    try:
+        now = time.monotonic()
+        armed = _publish(tmp_path, child.pid, began=now - 200, deadline=now - 100)
+        ended: list[int] = []
+        watch = hung.Overdue(
+            tmp_path, "leg", end=lambda pid, sig: ended.append(pid), read=str, log=io.StringIO()
+        )
+        for _ in range(3):
+            watch(child.pid)
+        assert ended == []
+        time.sleep(0.05)  # past the watch's start by the file system's coarser clock too
+        armed.write_text(armed.read_text(encoding="utf-8"), encoding="utf-8")
+        for _ in range(2):
+            watch(child.pid)
         assert ended == [child.pid]
     finally:
         child.kill()
