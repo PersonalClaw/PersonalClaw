@@ -1,6 +1,8 @@
 """Tests for chat_tags — tag vocabulary CRUD, session tag assignment, sidebar columns, drag-drop."""
 
-from unittest.mock import patch
+import asyncio
+import threading
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
@@ -665,6 +667,81 @@ class TestDrop:
 
 
 # ── load_tags safety: do not overwrite a present-but-corrupt tags.json ──
+
+
+class TestAnAnswerIsItsOwnWhileItsRowIsWritten:
+    """Each write's audit row is written in the log's own thread, awaited (#5605). An edit that
+    lands while that row is written must not become this write's answer: each answers with what
+    it stored, taken before the await."""
+
+    @staticmethod
+    def _held_log(operation: str):
+        held, release = threading.Event(), threading.Event()
+
+        def log_api_access(**row):
+            if row.get("operation") == operation and not held.is_set():
+                held.set()
+                release.wait(5)
+
+        return MagicMock(log_api_access=log_api_access), held, release
+
+    @staticmethod
+    async def _until(check) -> None:
+        for _ in range(100):
+            if check():
+                return
+            await asyncio.sleep(0.05)
+        assert check()
+
+    @pytest.mark.asyncio
+    async def test_a_rename_answers_with_its_own_name(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        log, held, release = self._held_log("chat.tag_update")
+        try:
+            async with TestClient(TestServer(_make_tags_app(state))) as client:
+                tag = await (await client.post("/api/chat/tags", json={"name": "T"})).json()
+                with patch("personalclaw.dashboard.chat_tags.sel", return_value=log):
+                    url = f"/api/chat/tags/{tag['id']}"
+                    first = asyncio.ensure_future(client.patch(url, json={"name": "First"}))
+                    assert await asyncio.to_thread(held.wait, 5), "the first row was never written"
+                    later = asyncio.ensure_future(client.patch(url, json={"name": "Second"}))
+                    await self._until(lambda: state._tags[-1]["name"] == "Second")
+                    release.set()
+                    answer = await first
+                    assert answer.status == 200, await answer.text()
+                    assert (await answer.json())["name"] == "First"
+                    assert (await later).status == 200
+        finally:
+            release.set()
+
+    @pytest.mark.asyncio
+    async def test_a_tag_added_answers_with_the_tags_it_stored(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        state = _make_state(tmp_path)
+        log, held, release = self._held_log("chat.session_tags")
+        try:
+            async with TestClient(TestServer(_make_tags_app(state))) as client:
+                t1 = await (await client.post("/api/chat/tags", json={"name": "T1"})).json()
+                t2 = await (await client.post("/api/chat/tags", json={"name": "T2"})).json()
+                session = _ChatSession("s1")
+                state._sessions["s1"] = session
+                with (
+                    patch("personalclaw.dashboard.chat_tags.save_session_to_history"),
+                    patch("personalclaw.dashboard.chat_tags.sel", return_value=log),
+                ):
+                    url = "/api/chat/sessions/s1/tags"
+                    first = asyncio.ensure_future(client.put(url, json={"add": [t1["id"]]}))
+                    assert await asyncio.to_thread(held.wait, 5), "the first row was never written"
+                    later = asyncio.ensure_future(client.put(url, json={"add": [t2["id"]]}))
+                    await self._until(lambda: session.tags == [t1["id"], t2["id"]])
+                    release.set()
+                    answer = await first
+                    assert answer.status == 200, await answer.text()
+                    assert (await answer.json())["tags"] == [t1["id"]]
+                    assert (await later).status == 200
+        finally:
+            release.set()
 
 
 class TestLoadTagsSafety:

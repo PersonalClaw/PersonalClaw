@@ -7,6 +7,7 @@ set of tags (any/all/none mode). Dragging a session card between columns that
 carry a single status tag as filter reassigns the card's status tag.
 """
 
+import copy
 import logging
 import re
 import uuid
@@ -27,7 +28,7 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,9 @@ async def api_chat_tag_create(request: web.Request) -> web.Response:
     if tag is None:
         return web.json_response({"error": "name required"}, status=400)
     state.push_sessions_update()
-    sel().log_api_access(
+    tag = copy.deepcopy(tag)  # as made: a rename while the row is written is not this answer
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.tag_create",
         outcome="allowed",
@@ -173,7 +176,9 @@ async def api_chat_tag_update(request: web.Request) -> web.Response:
         tag["status"] = status
     state.save_tags()
     state.push_sessions_update()
-    sel().log_api_access(
+    tag = copy.deepcopy(tag)  # as saved: another edit while the row is written is not this one
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.tag_update",
         outcome="allowed",
@@ -207,7 +212,8 @@ async def api_chat_tag_delete(request: web.Request) -> web.Response:
         state.save_tag_boards()
     state.save_tags()
     state.push_sessions_update()
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.tag_delete",
         outcome="allowed",
@@ -281,14 +287,16 @@ async def api_chat_session_tags(request: web.Request) -> web.Response:
     session.tags = new_tags
     save_session_to_history(state, session, force=True)
     state.push_sessions_update()
-    sel().log_api_access(
+    tags = list(session.tags)  # as stored by this write, not by one landing during its row
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.session_tags",
         outcome="allowed",
         source="dashboard",
         resources=name,
     )
-    return web.json_response({"ok": True, "tags": session.tags})
+    return web.json_response({"ok": True, "tags": tags})
 
 
 # ── Sidebar columns (Trello-style filtered lanes) ──────────────────────────
@@ -357,7 +365,9 @@ async def api_chat_tag_column_create(request: web.Request) -> web.Response:
     column["id"] = uuid.uuid4().hex[:12]
     state._tag_boards.append(column)
     state.save_tag_boards()
-    sel().log_api_access(
+    column = copy.deepcopy(column)  # as made, not as an edit landing during its row leaves it
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.tag_column_create",
         outcome="allowed",
@@ -386,7 +396,9 @@ async def api_chat_tag_column_update(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid column payload"}, status=400)
     column.update(merged)
     state.save_tag_boards()
-    sel().log_api_access(
+    column = copy.deepcopy(column)  # as saved, not as an edit landing during its row leaves it
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.tag_column_update",
         outcome="allowed",
@@ -404,7 +416,8 @@ async def api_chat_tag_column_delete(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     state._tag_boards = [c for c in state._tag_boards if c.get("id") != cid]
     state.save_tag_boards()
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.tag_column_delete",
         outcome="allowed",
@@ -437,7 +450,8 @@ async def api_chat_tag_columns_reorder(request: web.Request) -> web.Response:
             next_order += 1
     state._tag_boards.sort(key=lambda c: c.get("order", 0))
     state.save_tag_boards()
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.tag_columns_reorder",
         outcome="allowed",
@@ -479,7 +493,9 @@ async def api_chat_session_drop(request: web.Request) -> web.Response:
         # unambiguous status to assign on drop, so this is a visual no-op
         # (covers both the unfiltered and the multi-status filter cases).
         # Audit the rejected drop so the SEL trail captures every attempt.
-        sel().log_api_access(
+        tags = list(session.tags)
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="chat.session_drop",
             outcome="rejected",
@@ -488,18 +504,20 @@ async def api_chat_session_drop(request: web.Request) -> web.Response:
             error="column is not a status lane",
         )
         return web.json_response(
-            {"ok": False, "reason": "column is not a status lane", "tags": session.tags}
+            {"ok": False, "reason": "column is not a status lane", "tags": tags}
         )
     target_id = status_tags[0]["id"]
     kept = [t for t in session.tags if t in tag_index and not tag_index[t].get("status")]
     session.tags = kept + [target_id]
     save_session_to_history(state, session, force=True)
     state.push_sessions_update()
-    sel().log_api_access(
+    tags = list(session.tags)
+    await sel_log_async(
+        sel().log_api_access,
         caller="dashboard",
         operation="chat.session_drop",
         outcome="allowed",
         source="dashboard",
         resources=f"{name}->{column_id}",
     )
-    return web.json_response({"ok": True, "tags": session.tags})
+    return web.json_response({"ok": True, "tags": tags})
