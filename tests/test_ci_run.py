@@ -799,6 +799,34 @@ def test_before_stop_is_not_called_for_a_job_that_ends_in_time(tmp_path):
     assert seen == []
 
 
+#: A job that writes its pid to the file its first argument names, then runs for a second.
+_A_SECOND = "import os, sys, time; open(sys.argv[1], 'w').write(str(os.getpid())); time.sleep(1)"
+
+
+def test_watch_is_given_the_jobs_group_again_and_again_while_it_runs(tmp_path, monkeypatch):
+    monkeypatch.setattr(run, "WATCH_S", 0.1)
+    pid = tmp_path / "pid"
+    seen: list[int] = []
+    result = _run(tmp_path, [sys.executable, "-c", _A_SECOND, str(pid)], watch=seen.append)
+    assert result.code == run.OK
+    assert len(seen) >= 3 and set(seen) == {int(pid.read_text())}, seen
+
+
+def test_a_watch_that_raises_is_said_once_and_the_job_runs_on(tmp_path, monkeypatch, capfd):
+    monkeypatch.setattr(run, "WATCH_S", 0.1)
+    calls: list[int] = []
+
+    def watch(pgid: int) -> None:
+        calls.append(pgid)
+        raise OSError("the watch broke")
+
+    result = _run(tmp_path, [sys.executable, "-c", _A_SECOND, str(tmp_path / "pid")], watch=watch)
+    assert result.code == run.OK, result.violations
+    assert len(calls) == 1
+    err = capfd.readouterr().err
+    assert err.count("run: the job's watch raised OSError: the watch broke") == 1, err
+
+
 def _gone_now(pgid: int) -> bool:
     """One look: whether group *pgid* holds no process the test can signal."""
     try:

@@ -1,21 +1,26 @@
-"""``tools/ci/hung.py``: where each thread of a hung worker waits, read from outside it.
+"""``tools/ci/hung.py``: where each thread of a hung worker waits, read from outside it, and the
+worker past its test's own deadline ended there.
 
 The reader runs on a planted ``/proc`` everywhere, and on a real child on Linux: one thread in a
 read on a pipe, one waiting on a mutex with the GIL held, so no Python thread of it can say a
-thing.
+thing. The watch runs on planted published lines and real children in groups of their own.
 """
 
 from __future__ import annotations
 
+import io
 import os
 import queue
+import signal
 import subprocess
 import sys
 import textwrap
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import hard_deadline
 import pytest
 
 from tools.ci import hung
@@ -242,3 +247,133 @@ def test_a_thread_in_a_read_and_one_waiting_on_a_mutex_with_the_gil_are_both_nam
     thread = _lines(capture)
     assert "in futex" in thread[child.pid], capture
     assert "in read" in thread[reader], capture
+
+
+# ── the watch ────────────────────────────────────────────────────────────────────────────────
+
+
+def _sleeper() -> subprocess.Popen:
+    """A child in a group of its own, sleeping."""
+    return subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True
+    )
+
+
+def _publish(folder: Path, pid: int, *, began: float, deadline: float, worker: str = "gw0") -> Path:
+    path = folder / f"hard-deadline-leg-{worker}{hung.ARMED}"
+    path.write_text(f"{pid}\t{began:.3f}\t{deadline:.3f}\ttest_x.py::test_hangs\n", "utf-8")
+    return path
+
+
+def test_a_worker_past_its_tests_deadline_is_read_written_and_ended(tmp_path):
+    child = _sleeper()
+    try:
+        now = time.monotonic()
+        armed = _publish(tmp_path, child.pid, began=now - 125, deadline=now - 35)
+        log = io.StringIO()
+        watch = hung.Overdue(tmp_path, "leg", read=lambda pid: f"the threads of {pid}\n", log=log)
+        watch(child.pid)
+        assert child.poll() is None, "one look is never enough: the line may be half written"
+        watch(child.pid)
+        assert child.wait(10) == -signal.SIGKILL
+    finally:
+        child.kill()
+        child.wait(10)
+    dump = (tmp_path / "hard-deadline-leg-gw0.txt").read_text(encoding="utf-8")
+    assert dump.startswith(
+        "hard deadline, from outside: test_x.py::test_hangs was still running 125."
+    ), dump
+    assert "past its deadline" in dump and f"(pid {child.pid})" in dump
+    assert dump.endswith(f"the threads of {child.pid}\n")
+    assert log.getvalue() == dump + "\n"
+    assert not armed.exists(), "a worker it ended is never looked at again"
+
+
+def _ended(tmp_path: Path, pgid: int, **kw) -> list[tuple[int, int]]:
+    """What the watch signals over two looks, with nothing really signalled."""
+    ended: list[tuple[int, int]] = []
+    watch = hung.Overdue(
+        tmp_path, "leg", end=lambda pid, sig: ended.append((pid, sig)), read=str, log=io.StringIO()
+    )
+    for _ in range(2):
+        watch(pgid)
+    return ended
+
+
+def test_a_test_short_of_its_deadline_and_the_grace_after_it_is_left_alone(tmp_path):
+    child = _sleeper()
+    try:
+        now = time.monotonic()
+        _publish(tmp_path, child.pid, began=now - 100, deadline=now - hung.PAST + 5)
+        assert _ended(tmp_path, child.pid) == []
+        _publish(tmp_path, child.pid, began=now - 100, deadline=now - hung.PAST - 5)
+        assert _ended(tmp_path, child.pid) == [(child.pid, signal.SIGKILL)]
+    finally:
+        child.kill()
+        child.wait(10)
+
+
+def test_a_line_is_acted_on_only_once_two_looks_read_it_the_same(tmp_path):
+    child = _sleeper()
+    try:
+        now = time.monotonic()
+        ended: list[int] = []
+        watch = hung.Overdue(
+            tmp_path, "leg", end=lambda pid, sig: ended.append(pid), read=str, log=io.StringIO()
+        )
+        for n in range(3):  # a new test each look: never the same line twice
+            _publish(tmp_path, child.pid, began=now - 200 + n, deadline=now - 100)
+            watch(child.pid)
+        assert ended == []
+        watch(child.pid)
+        assert ended == [child.pid]
+    finally:
+        child.kill()
+        child.wait(10)
+
+
+def test_a_published_pid_outside_the_steps_group_is_never_signalled(tmp_path):
+    step, other = _sleeper(), _sleeper()
+    try:
+        now = time.monotonic()
+        for n, pid in enumerate((other.pid, os.getpid(), 1)):
+            _publish(tmp_path, pid, began=now - 200, deadline=now - 100, worker=f"gw{n}")
+        assert _ended(tmp_path, step.pid) == []
+    finally:
+        for child in (step, other):
+            child.kill()
+            child.wait(10)
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["", "123\t1\t2\ttest_x.py::t", "abc\t1\t2\ttest_x.py::t\n", "1\t2\t3\t\n", "1\t2\n", "\n"],
+    ids=["empty", "no newline", "no pid", "no test", "too few fields", "a newline alone"],
+)
+def test_a_line_that_is_not_whole_is_never_acted_on(tmp_path, line):
+    assert hung.parse(line) is None
+    (tmp_path / f"hard-deadline-leg-gw0{hung.ARMED}").write_text(line, encoding="utf-8")
+    assert _ended(tmp_path, os.getpgid(0)) == []
+
+
+def test_what_the_hard_deadline_publishes_is_what_the_watch_reads(tmp_path):
+    """The two sides of one file, which ``tools/ci`` may not import from ``tests``: where the
+    watchdog publishes its test and writes its dump for a report, the watch for that report
+    finds them, and it reads the line the watchdog wrote."""
+    junit = tmp_path / "reports" / "junit-test-shard-2.xml"
+    config = SimpleNamespace(option=SimpleNamespace(xmlpath=str(junit)), rootpath=tmp_path)
+    dump = hard_deadline.dump_path(config, "gw1")
+    watchdog = hard_deadline.Watchdog(dump, end=lambda status: None)
+    watchdog.arm("tests/test_x.py::test_y[a\\tb]", 30.0, 30.0)
+    armed = hard_deadline.armed_path(dump)
+    try:
+        watch = hung.Overdue.beside(junit)
+        assert sorted(watch.folder.glob(watch.pattern)) == [armed]
+        assert armed.with_suffix(".txt") == dump
+        pid, began, deadline, nodeid = hung.parse(armed.read_text(encoding="utf-8"))
+        assert (pid, nodeid) == (os.getpid(), "tests/test_x.py::test_y[a\\tb]")
+        assert deadline - began == pytest.approx(90.0, abs=0.002)
+        assert abs(began - time.monotonic()) < 60, "both read the system's monotonic clock"
+    finally:
+        watchdog.disarm()
+    assert armed.read_text(encoding="utf-8") == "", "between tests, nothing is published"

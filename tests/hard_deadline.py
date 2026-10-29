@@ -25,7 +25,11 @@ that test's report.
 The watchdog holds the GIL to read the stacks (``sys._current_frames``), never faulthandler's
 dump: that writes them from its own thread without the GIL, while execnet's threads run, and it
 crashed xdist workers that were not hung (#5255, reverted in 7ead7cebf). A process blocked in
-native code that holds the GIL is beyond any Python thread, this one included.
+native code that holds the GIL is beyond any Python thread, this one included. So each process
+also publishes the test it runs and its deadline, as it arms the watchdog, in a file of its own
+beside the dump (:func:`armed_path`), and run-job, which started it, reads that from outside: past
+the deadline, it reads where each thread of the process waits, writes that to the dump, and ends
+the process (``tools/ci/hung.py``).
 """
 
 from __future__ import annotations
@@ -97,6 +101,24 @@ def dump_path(config: pytest.Config, worker: str) -> Path:
     return Path(tempfile.gettempdir()) / f"pytest-hard-deadline-{tag}-{worker}.txt"
 
 
+def armed_path(dump: Path) -> Path:
+    """Where the process whose dump is *dump* publishes the test it runs:
+    ``hard-deadline-<leg>-<worker>.armed`` beside it, which ``tools.ci.hung`` reads."""
+    return dump.with_suffix(".armed")
+
+
+def _published(path: Path) -> int | None:
+    """The file the test in flight is published in, made empty; None where it cannot be."""
+    if not hasattr(os, "pwrite"):
+        return None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
+        return os.open(path, flags, 0o600)
+    except OSError:
+        return None
+
+
 def stacks() -> str:
     """Every thread's stack and every asyncio task not done, with what it awaits."""
     names = {thread.ident: thread.name for thread in threading.enumerate()}
@@ -127,19 +149,37 @@ class Watchdog:
         #: The test in flight: its nodeid, start, deadline, timeout and grace.
         self._armed: tuple[str, float, float, float, float] | None = None
         self._changed = threading.Condition()
+        #: The file the test in flight is published in (:func:`armed_path`), opened once.
+        self._armed_fd = _published(armed_path(path))
         self._thread = threading.Thread(target=self._wait, name="hard-deadline", daemon=True)
         self._thread.start()
 
     def arm(self, nodeid: str, timeout: float, grace: float) -> None:
         with self._changed:
             began = self._clock()
-            self._armed = (nodeid, began, began + timeout * 2 + grace, timeout, grace)
+            deadline = began + timeout * 2 + grace
+            self._armed = (nodeid, began, deadline, timeout, grace)
             self._changed.notify()
+        self._publish(f"{os.getpid()}\t{began:.3f}\t{deadline:.3f}\t{nodeid}\n")
 
     def disarm(self) -> None:
         with self._changed:
             self._armed = None
             self._changed.notify()
+        self._publish("")
+
+    def _publish(self, line: str) -> None:
+        """*line* as the published file's whole content: written over its start, then cut to its
+        length. A reader that catches it between the two never acts on what it read: it acts
+        only on a line two of its looks read the same (``tools.ci.hung``)."""
+        if self._armed_fd is None:
+            return
+        data = line.encode("utf-8", "replace")
+        try:
+            os.pwrite(self._armed_fd, data, 0)
+            os.ftruncate(self._armed_fd, len(data))
+        except OSError:
+            pass
 
     def _wait(self) -> None:
         with self._changed:

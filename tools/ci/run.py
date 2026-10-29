@@ -90,6 +90,9 @@ _FIELD = 200
 #: How often the runner looks at the job, its group and the signals it noted while it waits.
 _POLL = 0.05
 
+#: How often :func:`run_job` calls its *watch* while the job runs, in seconds.
+WATCH_S = 5.0
+
 #: The credential helper git runs before any the job names. It records only the action, protocol
 #: and host of what git asked, reads the rest of the request (a store or erase carries the
 #: password) and drops it, and answers nothing.
@@ -266,19 +269,39 @@ def _reaped(proc: subprocess.Popen[bytes], peaks: list[int]) -> bool:
     return True
 
 
+def _watched(watch: Callable[[int], None], pgid: int) -> Callable[[int], None] | None:
+    """*watch* called with the job's group, and kept; or, once it raises, said and dropped: a
+    watch looks on, and the job runs on whatever it does."""
+    try:
+        watch(pgid)
+    except Exception as exc:  # noqa: BLE001 - the job goes on whatever the watch does
+        print(f"run: the job's watch raised {type(exc).__name__}: {exc}", file=sys.stderr)
+        return None
+    return watch
+
+
 def _wait(
-    proc: subprocess.Popen[bytes], timeout: float, noted: _Noted, peaks: list[int] | None = None
+    proc: subprocess.Popen[bytes],
+    timeout: float,
+    noted: _Noted,
+    peaks: list[int] | None = None,
+    watch: Callable[[int], None] | None = None,
 ) -> bool:
-    """Wait until the job ends, *timeout* seconds pass or the runner is signalled. Whether the
-    time ran out."""
+    """Wait until the job ends, *timeout* seconds pass or the runner is signalled, calling *watch*
+    with the job's group every :data:`WATCH_S` seconds meanwhile. Whether the time ran out."""
     deadline = time.monotonic() + timeout
     kept = [] if peaks is None else peaks
+    looked = time.monotonic()
     while not noted.signals:
         if _reaped(proc, kept):
             return False
-        left = deadline - time.monotonic()
+        now = time.monotonic()
+        left = deadline - now
         if left <= 0:
             return not _reaped(proc, kept)
+        if watch is not None and now - looked >= WATCH_S:
+            looked = now
+            watch = _watched(watch, proc.pid)
         time.sleep(min(left, _POLL))
     return False
 
@@ -373,6 +396,7 @@ def run_job(
     before_stop: Callable[[int], None] | None = None,
     budget: float | None = None,
     output: Path | None = None,
+    watch: Callable[[int], None] | None = None,
 ) -> Result:
     """Run *argv* in *cwd* with :func:`job_env`, in a process group of its own, and say how it
     ended.
@@ -389,7 +413,9 @@ def run_job(
 
     *before_stop*, when given, is called with the group's id once the job has run out of time,
     before the group is stopped, so a caller can say what was still running; what it raises is
-    the caller's, and the group is stopped all the same.
+    the caller's, and the group is stopped all the same. *watch*, when given, is called with the
+    group's id every :data:`WATCH_S` seconds while the job runs; one that raises is said once in
+    the runner's log and not called again, and the job runs on.
 
     Only the main thread can take SIGINT and SIGTERM, so on any other thread this raises
     :class:`RuntimeError` and starts nothing, as it does when :func:`real_home` can't be told.
@@ -440,7 +466,7 @@ def run_job(
             )
             copier.start()
         try:
-            timed_out = _wait(proc, timeout, noted, peaks)
+            timed_out = _wait(proc, timeout, noted, peaks, watch)
             if timed_out and before_stop is not None and proc.poll() is None:
                 try:
                     before_stop(proc.pid)

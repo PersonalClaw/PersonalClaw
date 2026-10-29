@@ -634,6 +634,16 @@ def _hang_report(host: Host) -> Callable[[int], None]:
     return report
 
 
+def _overdue(argv: Sequence[str], cwd: Path) -> Callable[[int], None] | None:
+    """For a pytest step that writes a JUnit report, the watch that ends a worker past its test's
+    own deadline from outside it (:class:`hung.Overdue`), reading where the hard deadline's dump
+    for that report goes; None for any other step."""
+    junit = _junit_arg(argv)
+    if "pytest" not in argv or junit is None:
+        return None
+    return hung.Overdue.beside(cwd / junit)
+
+
 def skipped_tests(path: Path) -> list[str]:
     """The tests a JUnit report says were skipped: each case pytest recorded as skipped, but for
     an expected failure (``xfail``) and a quarantined case, which :func:`quarantined_failures`
@@ -972,6 +982,7 @@ def diagnose(
             env=env,
             grace=grace,
             before_stop=_hang_report(host),
+            watch=_overdue(rerun_argv, cwd),
         )
         code, interrupted = result.returncode, result.interrupted
         other = [v for v in result.violations if not v.startswith("the job exited")]
@@ -1787,6 +1798,7 @@ def run_one(
             # The reason names the job's budget, not what was left of it as this step started.
             budget=total,
             output=kept,
+            watch=_overdue(argv, host.root / workdir),
         )
         steps.append((argv, result.returncode, time.monotonic() - began))
         if result.peak_mb is not None:

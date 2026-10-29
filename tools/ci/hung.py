@@ -1,5 +1,5 @@
 """A pytest worker no thread of its own can end: where each of its threads waits, read from outside
-it.
+it, and its process ended there.
 
 A worker blocked in native code that holds the GIL is beyond every Python thread in it:
 pytest-timeout's alarm, the hard deadline's watchdog (``tests/hard_deadline.py``) and anything else
@@ -16,15 +16,26 @@ may read every process of a step's group. :func:`threads` reads one process's th
 gives. Off Linux there is no ``/proc``, and each says so. A pytest step that runs out of time has
 every process of its group still alive read this way before run-job stops the group.
 
+Each process that runs tests publishes the deadline of the test it runs, beside the hard
+deadline's dump (``tests/hard_deadline.py``'s ``armed_path``). :class:`Overdue`, which run-job calls
+while a pytest step runs, ends a worker still running its test :data:`PAST` seconds after that
+deadline: its own watchdog ends it at the deadline, so by then no Python thread of it can run. It
+reads the worker's threads first, and writes them where the watchdog's own dump goes. xdist's
+controller attaches that file to the test's report as it names the worker crashed. So a hang of
+this kind is a red test with its waits two minutes in, not a shard lost at the job's limit.
+
 Standard library only, like every ``tools/ci`` module.
 """
 
 from __future__ import annotations
 
 import os
+import signal
 import sys
-from collections.abc import Iterable
+import time
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import IO
 
 #: Where the kernel lists each process.
 PROC = Path("/proc")
@@ -246,3 +257,118 @@ def group(pids: Iterable[int], *, proc: Path = PROC, machine: str | None = None)
     if len(pids) > _PROCESSES:
         out.append(f"... and {len(pids) - _PROCESSES} more process(es), not read\n")
     return _capped("".join(out), GROUP_LIMIT)
+
+
+#: The suffix of the file a process that runs tests publishes the test it runs in, beside the hard
+#: deadline's dump (``tests/hard_deadline.py``): one line, ``<pid>\t<began>\t<deadline>\t<nodeid>``,
+#: both times by the system's monotonic clock, or nothing between tests.
+ARMED = ".armed"
+
+#: Seconds past a test's own deadline before its worker is ended from outside. Its own watchdog
+#: ends it at the deadline, once it has written every thread's stack, which a loaded runner may
+#: take seconds to do. For a test with the suite's 30 s timeout, whose deadline is 90 s in, that is
+#: 120 s in, as faulthandler dumps its Python stacks.
+PAST = 30.0
+
+
+def parse(line: str) -> tuple[int, float, float, str] | None:
+    """A published line's pid, start, deadline and test, or None for one that is not whole."""
+    if not line.endswith("\n"):
+        return None
+    parts = line[:-1].split("\t", 3)
+    if len(parts) != 4 or not parts[3]:
+        return None
+    try:
+        return int(parts[0]), float(parts[1]), float(parts[2]), parts[3]
+    except ValueError:
+        return None
+
+
+def _in_group(pid: int, pgid: int) -> bool:
+    """Whether *pid* is a process of group *pgid*, and not this one: never a process outside the
+    step's group, whatever a published line names."""
+    if pid <= 1 or pid == os.getpid():
+        return False
+    try:
+        return os.getpgid(pid) == pgid
+    except OSError:
+        return False
+
+
+class Overdue:
+    """Called with a pytest step's group id while it runs (``run.run_job``'s *watch*): ends each
+    process of the group whose test is :data:`PAST` seconds past its own deadline, once it has
+    read its threads and written them where the hard deadline's dump goes, beside the published
+    line, and into the job's log.
+
+    A line is acted on only once two looks have read it the same, so never one half written, and
+    each look reads at most every published file of the step's report folder."""
+
+    def __init__(
+        self,
+        folder: Path,
+        leg: str,
+        *,
+        past: float = PAST,
+        clock: Callable[[], float] = time.monotonic,
+        end: Callable[[int, int], None] = os.kill,
+        read: Callable[[int], str] = threads,
+        log: IO[str] | None = None,
+    ) -> None:
+        self.folder = folder
+        self.pattern = f"hard-deadline-{leg}-*{ARMED}"
+        self.past = past
+        self._clock = clock
+        self._end = end
+        self._read = read
+        self._log = log
+        self._seen: dict[Path, str] = {}
+
+    @classmethod
+    def beside(cls, junit: Path, **kw) -> Overdue:
+        """For the run whose JUnit report is *junit*: its leg as the hard deadline names it, from
+        ``junit-<leg>.xml``."""
+        return cls(junit.parent, junit.stem.removeprefix("junit-") or "run", **kw)
+
+    def __call__(self, pgid: int) -> None:
+        try:
+            published = sorted(self.folder.glob(self.pattern))
+        except OSError:
+            return
+        for path in published:
+            self._look(path, pgid)
+
+    def _look(self, path: Path, pgid: int) -> None:
+        try:
+            line = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return
+        twice = self._seen.get(path) == line
+        self._seen[path] = line
+        armed = parse(line) if twice else None
+        if armed is None:
+            return
+        pid, began, deadline, nodeid = armed
+        now = self._clock()
+        if now < deadline + self.past or not _in_group(pid, pgid):
+            return
+        text = (
+            f"hard deadline, from outside: {nodeid} was still running {now - began:.1f}s after it"
+            f" started, {now - deadline:.1f}s past its deadline, and nothing in its process"
+            f" (pid {pid}) had ended it, so run-job read its threads and ended it.\n\n"
+            f"{self._read(pid)}"
+        )
+        try:
+            path.with_suffix(".txt").write_text(text, encoding="utf-8")
+        except OSError:
+            pass
+        print(text, file=self._log or sys.stderr, flush=True)
+        try:
+            self._end(pid, signal.SIGKILL)
+        except OSError:
+            pass
+        self._seen.pop(path, None)
+        try:
+            path.unlink()
+        except OSError:
+            pass

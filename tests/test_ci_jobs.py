@@ -12,6 +12,7 @@ import os
 import pwd
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -753,6 +754,36 @@ def test_a_pytest_step_out_of_time_lists_its_live_group_before_it_is_stopped(rep
         assert f"process {listed[0]} (python" in err and f"  thread {listed[0]} (" in err, err
     else:
         assert f"process {listed[0]}: no /proc on {sys.platform}" in err
+
+
+#: A pytest step's worker that publishes a test past its deadline, as the hard deadline does
+#: (tests/hard_deadline.py), and never ends: its pid, a start and a deadline long gone. No braces:
+#: a step's words are filled in where they name a placeholder.
+_OVERDUE = (
+    "import os, pathlib, time\n"
+    "folder = pathlib.Path('reports'); folder.mkdir(exist_ok=True)\n"
+    "now = time.monotonic()\n"
+    "line = '%d\\t%.3f\\t%.3f\\t' % (os.getpid(), now - 200, now - 100)\n"
+    "line += 'tests/test_x.py::test_held\\n'\n"
+    "(folder / 'hard-deadline-held-gw0.armed').write_text(line)\n"
+    "time.sleep(60)\n"
+)
+
+
+def test_a_pytest_steps_worker_past_its_tests_deadline_is_read_and_ended_from_outside(
+    repo, tmp_path, capfd, monkeypatch
+):
+    monkeypatch.setattr(run, "WATCH_S", 0.1)
+    step = Step((PY, "-c", _OVERDUE, "pytest", "--junitxml=reports/junit-held.xml"))
+    began = time.monotonic()
+    outcome = _run(repo, _job("held", steps=(step,)), tmp_path, deadline_s=30, grace=0.5)
+    assert outcome.code == run.RED
+    assert outcome.reasons == [f"step 1: the job exited {-signal.SIGKILL}"], outcome.reasons
+    assert time.monotonic() - began < 20, "ended at its test's deadline, not the job's"
+    err = capfd.readouterr().err
+    assert "hard deadline, from outside: tests/test_x.py::test_held was still running" in err
+    dump = (repo / "reports" / "hard-deadline-held-gw0.txt").read_text(encoding="utf-8")
+    assert dump.startswith("hard deadline, from outside: tests/test_x.py::test_held")
 
 
 def test_a_step_that_is_not_pytest_out_of_time_lists_nothing(repo, tmp_path, capfd):
