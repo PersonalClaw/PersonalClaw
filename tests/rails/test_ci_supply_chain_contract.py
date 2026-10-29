@@ -12,8 +12,6 @@ from __future__ import annotations
 import datetime
 import functools
 import json
-import os
-import shutil
 import sys
 import tomllib
 from collections.abc import Callable
@@ -21,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import laid_tree
 import pytest
 from test_ci_contract import (
     _BREADTH,
@@ -161,41 +160,13 @@ def _supply_row(name: str, rules: tuple[str, ...], controls: tuple[Control, ...]
     )
 
 
-def _files(root: Path) -> dict[str, bytes]:
-    """Every file under *root*, by its path relative to *root*, with its bytes."""
-    return {
-        path.relative_to(root).as_posix(): path.read_bytes()
-        for path in sorted(root.rglob("*"))
-        if path.is_file()
-    }
-
-
-def _put_back(root: Path, scaffold: dict[str, bytes]) -> None:
-    """*root* as its *scaffold* was, after a control's plant: each file the plant changed or
-    removed written back, each file and folder it added removed. It compares every file, not the
-    tree the check reads: a plant can take a file out of that tree (a script's shebang)."""
-    folders = {parent.as_posix() for rel in scaffold for parent in Path(rel).parents}
-    for folder, _dirs, files in os.walk(root, topdown=False):
-        here = Path(folder)
-        for name in files:
-            rel = (here / name).relative_to(root).as_posix()
-            if rel not in scaffold:
-                (here / name).unlink()
-            elif (here / name).read_bytes() != scaffold[rel]:
-                (here / name).write_bytes(scaffold[rel])
-        if here.relative_to(root).as_posix() not in folders:
-            here.rmdir()
-    for rel, data in scaffold.items():
-        if not (root / rel).is_file():
-            (root / rel).parent.mkdir(parents=True, exist_ok=True)
-            (root / rel).write_bytes(data)
-
-
 def _run_supply_row(
     row: _SupplyRow, subtests, tmp_path: Path, request: pytest.FixtureRequest
 ) -> None:
     """``run_row``'s body for a supply-chain row, on one tree: the scaffold is written once, and
-    each control is planted in it, checked, and put back (:func:`_put_back`).
+    each control is planted in it, checked, and put back as it was laid out
+    (:class:`laid_tree.Laid`), every file compared, not only the tree the check reads: a plant can
+    take a file out of that tree (a script's shebang).
 
     run_row copies the scaffold for each control, and those copies were most of a row's time:
     68 files a copy, 101 copies in ``run-install``. The check still reads the planted tree for
@@ -205,7 +176,7 @@ def _run_supply_row(
     root = tmp_path / "scaffold"
     with subtests.test("the scaffold satisfies the check"):
         row.scaffold(root)
-        scaffold = _files(root)
+        laid = laid_tree.Laid.take(root)
         assert check_tree(supply_chain.read_tree(root)) == []
     for control in row.controls:
         with subtests.test(control.name):
@@ -213,7 +184,7 @@ def _run_supply_row(
                 control.plant(root)
                 found = check_tree(supply_chain.read_tree(root))
             finally:
-                _put_back(root, scaffold)
+                laid.reset(root)
             if control.fails:
                 assert found, f"the planted violation went unseen: {control.name}"
                 assert any(control.expect in v for v in found), "\n".join(found)
@@ -2263,15 +2234,15 @@ def test_a_plant_is_put_back_whatever_it_changed(tmp_path: Path) -> None:
     root = tmp_path / "scaffold"
     for rel in ("a/changed.yml", "a/removed.sh", "b/only.txt", "kept.json"):
         _write(root, rel, f"{rel}\n")
-    scaffold = _files(root)
+    laid = laid_tree.Laid.take(root)
     _write(root, "a/changed.yml", "planted\n")
     (root / "a/removed.sh").unlink()
     (root / "b/only.txt").unlink()
     (root / "b").rmdir()
     _write(root, "a/added.yml", "planted\n")
     _write(root, "new/folder/added.sh", "planted\n")
-    _put_back(root, scaffold)
-    assert _files(root) == scaffold
+    laid.reset(root)
+    assert laid_tree.Laid.take(root) == laid
     assert sorted(p.relative_to(root).as_posix() for p in root.rglob("*")) == [
         "a",
         "a/changed.yml",
@@ -2306,10 +2277,11 @@ def test_a_row_dated_the_day_before_its_check_runs_still_reads_its_dated_plants(
         _waived("31 days out", expires, f"expires = {_days(31)}\n", expect="more than 30 days"),
         _waived("expires on the rows' day", expires, f"expires = {_days(0)}\n", fails=False),
     )
-    row.scaffold(tmp_path / "scaffold")
-    for index, control in enumerate(controls):
-        root = tmp_path / f"control-{index}"
-        shutil.copytree(tmp_path / "scaffold", root)
+    root = tmp_path / "scaffold"
+    row.scaffold(root)
+    laid = laid_tree.Laid.take(root)
+    for control in controls:
+        laid.reset(root)
         control.plant(root)
         found = row.check(root)
         if control.fails:
