@@ -1091,7 +1091,11 @@ main's verdict. Neither step can fail its job, and a push's run writes neither.
 - each failing job failed one way only: on attempt 1, one step exited 1 and every other exited 0,
   the diagnostic rerun ran alone in a new process and exited 0, and every test its record names
   is a `flake`. A rail, a security-marked test and a test the rerun skipped are never classified,
-  so a job that names one stays red; so does a repeated failure beside a flake;
+  so a job that names one stays red; so does a repeated failure beside a flake. A record that
+  says how many of its planned steps never started (`unstarted_steps`, `job-record/4`) must name
+  none: a job whose time ran out after its rerun passed and before its next step began holds no
+  exit for that step, so it stays red. A `job-record/3` record does not say, and is read as
+  before;
 - the pull request changes no file the test's run reads: for pytest its own file, every
   `conftest.py` above it and `pyproject.toml`; for Vitest its own file, `web/vitest.config.ts`,
   `web/vite.config.ts` and `web/src/test/`. A test the pull request adds or edits is never
