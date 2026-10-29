@@ -1,17 +1,23 @@
 """``python -m tools.ci contract``: main's CI contract judges a head's definitions (#4584 step 4).
 
-Each plant lays out this checkout's committed tree as a head, edits it, and runs the real overlay
+Each plant takes this checkout's committed tree as a head, edits it, and runs the real overlay
 and the real pytest run on it with the one rail its edit trips, and runs that rail on the tree
 before the edit as its control, so it stays a test and not a CI run: each runs in seconds. The
 whole contract over an unedited tree is what the contract job runs.
+
+The tree is laid out once for the module's plants, and each starts from it as it was laid out
+(:func:`_lay_out_again`): a worktree per plant wrote its 9,239 files every time, which a loaded
+disk took long enough to put a plant past its cap.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -40,22 +46,89 @@ def _security(head: Path) -> int:
     return contract.run(REPO, head, workers="0", subset=[_SECURITY_RAIL], only=_SECURITY_TEST)
 
 
-def _git(*args: str) -> None:
-    # Named explicitly, so a GIT_DIR or index a calling hook exported does not redirect it.
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, check=True, env=env)
+#: What points a git at a repository, which a calling hook can export: never inherited, so each
+#: git here works on the folder it is named. The suite's own git settings (no system file, a global
+#: file of the test's, no credential helper: ``tests/git_helper_guard.py``) are kept.
+_REPOSITORY_VARIABLES = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_PREFIX",
+        "GIT_CONFIG_PARAMETERS",
+    }
+)
+
+
+def _git(where: Path, *args: str) -> str:
+    env = {k: v for k, v in os.environ.items() if k not in _REPOSITORY_VARIABLES}
+    argv = ["git", "-C", str(where), *args]
+    return subprocess.run(argv, capture_output=True, check=True, env=env, text=True).stdout
+
+
+@dataclass(frozen=True)
+class _Laid:
+    """The module's head: where it is, the commit it was laid out at, and every ref it saw then
+    (a stash included)."""
+
+    where: Path
+    sha: str
+    refs: str
+
+
+def _refs(where: Path) -> str:
+    return _git(where, "for-each-ref", "--format=%(refname) %(objectname)")
+
+
+@pytest.fixture(scope="module")
+def _laid_head(tmp_path_factory: pytest.TempPathFactory) -> Iterator[_Laid]:
+    """This checkout's committed tree, laid out once as a head the way the contract job lays one
+    out: a detached worktree at the commit, since the rails read what git tracks. It is a
+    worktree of a clone of this checkout's repository that borrows its objects, so what a plant
+    commits, and any ref or stash it makes, never reaches this checkout or its other worktrees."""
+    root = tmp_path_factory.mktemp("laid-head")
+    sha = _git(REPO, "rev-parse", "HEAD").strip()
+    _git(root, "clone", "--quiet", "--shared", "--no-checkout", str(REPO), "repo")
+    _git(root / "repo", "worktree", "add", "--quiet", "--detach", str(root / "head"), sha)
+    try:
+        yield _Laid(root / "head", sha, _refs(root / "head"))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _assert_as_laid(laid: _Laid) -> None:
+    """The head is at the commit it was laid out at, holds no ref or stash it did not hold then,
+    and holds what git tracks there and nothing else."""
+    at = _git(laid.where, "rev-parse", "HEAD").strip()
+    assert at == laid.sha, f"the head is at {at}, not the {laid.sha} it was laid out at"
+    refs = _refs(laid.where)
+    assert refs == laid.refs, f"a plant left refs or a stash: {refs!r}, not {laid.refs!r}"
+    status = _git(laid.where, "status", "--porcelain", "--ignored", "--untracked-files=all")
+    assert status == "", f"the head holds what its commit does not:\n{status}"
+
+
+def _lay_out_again(laid: _Laid) -> None:
+    """The head as it was laid out, whatever the plant before did in it: back at the recorded
+    commit (never its own HEAD, which a plant that commits moves), with every file git tracks
+    there as it is there, and every other file gone, ignored ones and bytecode included."""
+    _git(laid.where, "reset", "--quiet", "--hard", laid.sha)
+    _git(laid.where, "clean", "-ffdxq")
+    _assert_as_laid(laid)
 
 
 @pytest.fixture
-def head(tmp_path: Path) -> Iterator[Path]:
-    """This checkout's committed tree, laid out as a head the way the contract job lays one out:
-    a detached worktree, since the rails read what git tracks."""
-    where = tmp_path / "head"
-    _git("worktree", "add", "--detach", str(where), "HEAD")
-    try:
-        yield where
-    finally:
-        _git("worktree", "remove", "--force", str(where))
+def head(_laid_head: _Laid, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The module's head as it was laid out (:func:`_lay_out_again`), and a bytecode folder of the
+    plant's own for the children it runs. The suite keeps bytecode in one folder per run, by each
+    source's path (``tests/pycache_guard.py``), and every plant's head is at the same path: a
+    same-size edit a plant's child compiled within the second would otherwise run in the next."""
+    _lay_out_again(_laid_head)
+    monkeypatch.setenv("PYTHONPYCACHEPREFIX", str(tmp_path / "bytecode"))
+    return _laid_head.where
 
 
 def _edit(head: Path, rel: str, old: str, new: str, count: int = 1) -> None:
@@ -63,6 +136,73 @@ def _edit(head: Path, rel: str, old: str, new: str, count: int = 1) -> None:
     text = path.read_text(encoding="utf-8")
     assert old in text, f"{rel} no longer holds {old!r}: re-point the plant"
     path.write_text(text.replace(old, new, count), encoding="utf-8")
+
+
+#: Plumbing commits run no hook; an identity of their own, so none is read from the machine.
+_PLANTER = ("-c", "user.name=a plant", "-c", "user.email=plant@example.invalid")
+
+
+def _commit_everything(head: Path) -> str:
+    """What the plant changed in *head*, committed and made its HEAD; the commit."""
+    _git(head, "add", "--all")
+    tree = _git(head, "write-tree").strip()
+    parent = _git(head, "rev-parse", "HEAD").strip()
+    commit = _git(head, *_PLANTER, "commit-tree", tree, "-p", parent, "-m", "a plant").strip()
+    _git(head, "update-ref", "--no-deref", "HEAD", commit)
+    return commit
+
+
+def _changes_one_of_each(head: Path) -> None:
+    _edit(head, "tools/ci/catalogue.toml", '  "security",\n', "")
+    (head / "AGENTS.md").unlink()
+    (head / "tools/ci/__init__.py").chmod(0o755)
+    (head / "planted").mkdir()
+    (head / "planted/added.txt").write_text("added\n", encoding="utf-8")
+    (head / "tools/ci/__pycache__").mkdir(exist_ok=True)
+    (head / "tools/ci/__pycache__/planted.cpython-313.pyc").write_bytes(b"ignored\n")
+
+
+def test_a_plant_that_commits_in_the_head_leaves_the_next_at_the_laid_out_commit(
+    _laid_head: _Laid, head: Path, tmp_path: Path
+) -> None:
+    """The plants share one head (:func:`_laid_head`): one that edits, removes, adds and ignores
+    files in it and commits them, moving its HEAD, leaves the next at the commit the head was
+    laid out at, holding that commit's files and nothing else."""
+    _changes_one_of_each(head)
+    assert _commit_everything(head) != _laid_head.sha
+    _lay_out_again(_laid_head)
+    for rel in ("tools/ci/catalogue.toml", "AGENTS.md", "tools/ci/__init__.py"):
+        assert (head / rel).read_text(encoding="utf-8") == _git(
+            head, "show", f"{_laid_head.sha}:{rel}"
+        ), rel
+    assert not (head / "tools/ci/__init__.py").stat().st_mode & 0o111
+    assert not (head / "planted").exists()
+    assert not (head / "tools/ci/__pycache__/planted.cpython-313.pyc").exists()
+    bytecode = Path(os.environ["PYTHONPYCACHEPREFIX"])
+    assert bytecode.parent == tmp_path and not bytecode.exists(), "a plant's children share none"
+
+
+def test_a_head_off_its_commit_or_with_a_ref_or_stash_of_its_own_is_never_planted_in(
+    _laid_head: _Laid, head: Path
+) -> None:
+    """The check each plant's head passes first bites: a head put back to its own HEAD after a
+    commit, one holding a branch a plant made, and one holding a stash, are each refused."""
+    _changes_one_of_each(head)
+    _commit_everything(head)
+    _git(head, "reset", "--quiet", "--hard", "HEAD")  # the plant's commit, not the laid-out one
+    with pytest.raises(AssertionError, match="it was laid out at"):
+        _assert_as_laid(_laid_head)
+    _lay_out_again(_laid_head)
+    _git(head, "branch", "a-plants-branch")
+    with pytest.raises(AssertionError, match="left refs or a stash"):
+        _assert_as_laid(_laid_head)
+    _git(head, "branch", "--delete", "--force", "a-plants-branch")
+    (head / "AGENTS.md").write_text("stashed\n", encoding="utf-8")
+    _git(head, *_PLANTER, "stash", "push", "--quiet")
+    with pytest.raises(AssertionError, match="left refs or a stash"):
+        _assert_as_laid(_laid_head)
+    _git(head, "stash", "drop", "--quiet")
+    _lay_out_again(_laid_head)
 
 
 def test_the_contract_is_main_list_and_not_vacuous() -> None:
