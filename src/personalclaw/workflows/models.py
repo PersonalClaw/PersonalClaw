@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from personalclaw.workref import work_ref
+
 # ── identity + format ────────────────────────────────────────────────────────
 
 #: A def name: lowercase, hyphen-separated, filesystem-safe (it becomes a directory).
@@ -1213,7 +1215,7 @@ def run_work_id(run_id: str) -> str:
     """How a trigger's history row names the workflow run its fire started
     (`ActionResult.work_id`), so the row can say how that run ended when it does
     (`triggers.settle.settle_workflow_run`)."""
-    return f"workflow:{run_id}"
+    return work_ref("workflow", run_id)
 
 
 @dataclass

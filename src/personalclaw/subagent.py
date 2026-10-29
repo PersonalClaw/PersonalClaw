@@ -85,6 +85,7 @@ from personalclaw.textfmt import extract_options
 from personalclaw.turn_streams import closing_stream
 from personalclaw.usage_ledger import spent_rows
 from personalclaw.validation import _AGENT_NAME_RE
+from personalclaw.workref import work_ref
 
 if TYPE_CHECKING:
     from personalclaw.agents.native.runtime import NativeAgentRuntime
@@ -230,8 +231,9 @@ def tool_approval_id(agent_id: str, request_id: object) -> str:
 
 def agent_work_id(agent_id: str) -> str:
     """How a trigger's history row names the agent its fire started (`ActionResult.work_id`), so
-    the row can say how that agent's run ended when it does."""
-    return session_keys.SUBAGENT.key(agent_id)
+    the row can say how that agent's run ended when it does. The same string is the agent's
+    session key (`session_keys.SUBAGENT`), which `memory_writes.asked_for_work` reads it as."""
+    return work_ref("subagent", agent_id)
 
 
 def approval_subagent_id(approval_id: str) -> str:
