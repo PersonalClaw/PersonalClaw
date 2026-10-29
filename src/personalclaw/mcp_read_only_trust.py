@@ -12,14 +12,14 @@ showed them.
 **The digest** of a tool is the SHA-256, written as lowercase hex, of its definition serialized
 canonically: the JSON object with exactly the keys ``name``, ``description``, ``inputSchema`` and
 ``annotations``, every object's keys in sorted order at every depth, no whitespace between tokens,
-and text other than ASCII written as itself in UTF-8 (``json.dumps(value, sort_keys=True,
-separators=(",", ":"), ensure_ascii=False).encode("utf-8")``). The values are as the server listed
-them, with nothing normalized: ``name`` and ``description`` are strings (no description is ``""``),
-and ``inputSchema`` and ``annotations`` are objects (a tool listed with no input schema has the
-client's own ``{"type": "object", "properties": {}}``, and one with no labels has ``{}``). Arrays
-keep their order. Nothing else in a listing is in it. The description, the input schema and the
-labels are each digested alone as well (their JSON value, serialized the same way), so the page can
-say what changed in a tool, not only that it did.
+and text other than ASCII written as itself in UTF-8. That is ``ledger.hashing.canonical_digest``,
+the form every digest a yes is bound to takes (shared contracts §2.4). The values are as the server
+listed them, with nothing normalized: ``name`` and ``description`` are strings (no description is
+``""``), and ``inputSchema`` and ``annotations`` are objects (a tool listed with no input schema has
+the client's own ``{"type": "object", "properties": {}}``, and one with no labels has ``{}``).
+Arrays keep their order. Nothing else in a listing is in it. The description, the input schema and
+the labels are each digested alone as well (their JSON value, serialized the same way), so the page
+can say what changed in a tool, not only that it did.
 
 **Where it is kept.** ``<home>/grants/mcp_read_only.json``: ``{"version": 1, "servers": {server:
 {"at": <when it was trusted or last reviewed, UTC>, "tools": {tool: {"digest", "description",
@@ -53,8 +53,6 @@ rewrite them to hide one.
 from __future__ import annotations
 
 import fcntl
-import hashlib
-import json
 import logging
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
@@ -63,6 +61,7 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw import record_files
+from personalclaw.ledger.hashing import canonical_digest
 
 logger = logging.getLogger(__name__)
 
@@ -118,26 +117,15 @@ def definition(tool: Any) -> Definition:
     )
 
 
-def _canonical(value: Any) -> bytes:
-    """*value* serialized the one way a digest is taken of it (see the module docstring)."""
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
 def digest(tool: Any) -> str:
     """The digest of *tool*'s definition: what the owner's trust in it is sealed to."""
-    return _sha256(_canonical(definition(tool).as_listed()))
+    return canonical_digest(definition(tool).as_listed())
 
 
 def part_digests(tool: Any) -> dict[str, str]:
     """The digest of each of *tool*'s description, input schema and labels, alone."""
     listed = definition(tool).as_listed()
-    return {part: _sha256(_canonical(listed[part])) for part in PARTS}
+    return {part: canonical_digest(listed[part]) for part in PARTS}
 
 
 def is_digest(value: object) -> bool:
@@ -471,7 +459,7 @@ def _note_descriptions(server: str, defs: list[Definition]) -> tuple[str, ...]:
     """Keep each listed tool's description digest as the one last seen of *server*, and return the
     tools whose description differs from the one seen before. A tool seen for the first time has
     nothing to differ from; one no longer listed keeps what was seen of it."""
-    current = {d.name: _sha256(_canonical(d.description)) for d in defs}
+    current = {d.name: canonical_digest(d.description) for d in defs}
     try:
         held = _servers(SEEN_RECORD, strict=True).get(server)
     except record_files.Unreadable:

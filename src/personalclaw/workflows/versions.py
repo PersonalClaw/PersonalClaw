@@ -26,13 +26,13 @@ by nobody here.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from personalclaw.atomic_write import atomic_write
+from personalclaw.ledger.hashing import canonical_digest
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.workflows import store
 from personalclaw.workflows.models import WorkflowDef, valid_name
@@ -243,8 +243,7 @@ def digest(spec: dict[str, Any]) -> str:
         body["metadata"] = {
             k: v for k, v in metadata.items() if k not in _NOT_WHAT_RUNS_IN_METADATA
         }
-    text = json.dumps(body, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return canonical_digest(body)
 
 
 def holding(name: str, wanted: str) -> VersionRecord | None:
