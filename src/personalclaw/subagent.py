@@ -54,6 +54,7 @@ from personalclaw.sel import sel
 from personalclaw.session import SessionManager
 from personalclaw.stats import Stats
 from personalclaw.subagent_ask import spawn_ask, spawn_refusal
+from personalclaw.subagent_endings import _timeout_context
 from personalclaw.subagent_kill import sigkill_session
 from personalclaw.subagent_persistence import (
     ASKING,
@@ -182,19 +183,6 @@ def _fanout_key(info: "SubagentInfo") -> str:
     lone spawn, which shares the ``""`` lane (bounded by the global cap regardless).
     """
     return info.parent_run or info.parent_session_key or ""
-
-
-def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> str:
-    """The agent's own counters at a time-limit stop, for the log line beside it. Never part of
-    its error: a turn count against a limit of 0 and an elapsed figure counted from the spawn
-    request are this module's bookkeeping, and the error is what a person reads."""
-    parts = [f"turn {info.turns}/{info.max_turns}"]
-    if info.last_tool:
-        parts.append(f"last tool: {_redact(info.last_tool)}")
-    if include_elapsed:
-        elapsed = info.elapsed if info.elapsed > 0 else (time.time() - info.started)
-        parts.append(f"elapsed: {int(elapsed)}s")
-    return " | ".join(parts)
 
 
 def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> tuple[bool, float]:

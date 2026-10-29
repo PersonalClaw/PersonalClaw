@@ -1479,7 +1479,8 @@ class TestTimeoutContext:
     """Tests for _timeout_context() helper."""
 
     def test_basic_with_elapsed(self) -> None:
-        from personalclaw.subagent import SubagentInfo, _timeout_context
+        from personalclaw.subagent import SubagentInfo
+        from personalclaw.subagent_endings import _timeout_context
 
         info = SubagentInfo(id="t1", task="test", turns=5, max_turns=30, started=time.time() - 60)
         ctx = _timeout_context(info)
@@ -1487,7 +1488,8 @@ class TestTimeoutContext:
         assert "elapsed: 60s" in ctx
 
     def test_no_elapsed(self) -> None:
-        from personalclaw.subagent import SubagentInfo, _timeout_context
+        from personalclaw.subagent import SubagentInfo
+        from personalclaw.subagent_endings import _timeout_context
 
         info = SubagentInfo(id="t1", task="test", turns=5, max_turns=30, started=time.time())
         ctx = _timeout_context(info, include_elapsed=False)
@@ -1495,7 +1497,8 @@ class TestTimeoutContext:
         assert "elapsed" not in ctx
 
     def test_last_tool_included(self) -> None:
-        from personalclaw.subagent import SubagentInfo, _timeout_context
+        from personalclaw.subagent import SubagentInfo
+        from personalclaw.subagent_endings import _timeout_context
 
         info = SubagentInfo(
             id="t1", task="test", turns=3, max_turns=30, started=time.time() - 10, last_tool="shell"
@@ -1504,14 +1507,16 @@ class TestTimeoutContext:
         assert "last tool: shell" in ctx
 
     def test_no_last_tool(self) -> None:
-        from personalclaw.subagent import SubagentInfo, _timeout_context
+        from personalclaw.subagent import SubagentInfo
+        from personalclaw.subagent_endings import _timeout_context
 
         info = SubagentInfo(id="t1", task="test", turns=3, max_turns=30, started=time.time() - 10)
         ctx = _timeout_context(info)
         assert "last tool" not in ctx
 
     def test_stored_elapsed_preferred(self) -> None:
-        from personalclaw.subagent import SubagentInfo, _timeout_context
+        from personalclaw.subagent import SubagentInfo
+        from personalclaw.subagent_endings import _timeout_context
 
         info = SubagentInfo(
             id="t1", task="test", turns=1, max_turns=30, started=time.time() - 999, elapsed=42.0
@@ -1522,7 +1527,8 @@ class TestTimeoutContext:
     def test_redaction_called(self) -> None:
         from unittest.mock import patch as _patch
 
-        from personalclaw.subagent import SubagentInfo, _timeout_context
+        from personalclaw.subagent import SubagentInfo
+        from personalclaw.subagent_endings import _timeout_context
 
         info = SubagentInfo(
             id="t1",
@@ -1532,7 +1538,9 @@ class TestTimeoutContext:
             started=time.time(),
             last_tool="some_tool",
         )
-        with _patch("personalclaw.subagent._redact", return_value="[REDACTED]") as mock_redact:
+        with _patch(
+            "personalclaw.subagent_endings._masked", return_value="[REDACTED]"
+        ) as mock_redact:
             ctx = _timeout_context(info, include_elapsed=False)
         mock_redact.assert_called_once_with("some_tool")
         assert "last tool: [REDACTED]" in ctx
