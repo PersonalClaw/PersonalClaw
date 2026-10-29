@@ -722,8 +722,9 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
                 status=503,
             )
 
-        # The program that sent it, not the dashboard: this conversation and the client's id.
-        session.append("user", prompt, "msg msg-u", source=arrived_on(key, client_id))
+        # The program that sent it, not the dashboard: this conversation and the client's id. Taken
+        # in the one way a message enters a chat; the chat is idle (`_busy` refused it otherwise).
+        session.take_in_at_door(state, prompt, source=arrived_on(key, client_id))
         task = asyncio.create_task(runner(state, session, prompt))
         session.task = task
         with _quiet():

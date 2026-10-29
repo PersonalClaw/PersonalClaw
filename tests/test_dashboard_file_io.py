@@ -4,6 +4,7 @@ import json
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import door_fakes
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -594,8 +595,8 @@ class TestSendMessage:
     async def test_send_message_session_origin(self, tmp_path, monkeypatch):
         """session='origin' injects into the cron's originating session and triggers a turn."""
         state = _mock_state()
-        # Mock a session that the cron originated from
-        mock_session = MagicMock()
+        # Mock a session that the cron originated from, with the door a message enters it by
+        mock_session = door_fakes.give(MagicMock())
         mock_session.running = False
         mock_session.task = None
         mock_session.key = "chat-1-1712793600"
@@ -649,7 +650,7 @@ class TestSendMessage:
     async def test_send_message_session_origin_queued(self, tmp_path, monkeypatch):
         """Queues the message when the target session is already running."""
         state = _mock_state()
-        mock_session = MagicMock()
+        mock_session = door_fakes.give(MagicMock())
         mock_session.running = True
         mock_session._queue = []
         mock_session.queue_append = lambda content: (
@@ -702,7 +703,7 @@ class TestSendMessage:
         # Simulate cold-start: session not loaded in memory yet.
         state.get_session = MagicMock(return_value=None)
         # Rehydrate helper returns a session reconstructed from persisted history.
-        mock_session = MagicMock()
+        mock_session = door_fakes.give(MagicMock())
         mock_session.running = False
         mock_session.task = None
         mock_session.key = "chat-1-1712793600"

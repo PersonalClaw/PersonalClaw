@@ -595,6 +595,17 @@
      {"annotation": "Mapping[str, str] | None", "default": "None", "kind": "keyword_only", "name": "source"}
     ],
     "returns": "str"
+   },
+   "take_in_at_door": {
+    "kind": "method",
+    "params": [
+     {"annotation": "Any", "kind": "positional_or_keyword", "name": "state"},
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "message"},
+     {"annotation": "str", "default": "'user'", "kind": "positional_or_keyword", "name": "role"},
+     {"annotation": "str", "default": "'msg msg-u'", "kind": "positional_or_keyword", "name": "cls"},
+     {"annotation": "Any", "kind": "var_keyword", "name": "fields"}
+    ],
+    "returns": "Any"
    }
   }
  },

@@ -3,8 +3,10 @@
 The bug: a user turn sent live this session has no ts (the server skips
 broadcasting the user echo — "FE adds optimistically"), so Edit & resend's
 by-ts lookup found nothing and the endpoint 400'd "index or ts required". The
-fix is a graceful cascade (ts → index → last user message) + a client-supplied
-ts stored on the (re-)appended message so a repeat edit still matches.
+fix is a graceful cascade (ts → index → last user message). The message sent in
+the edited one's place is a new one, taken in the one way a message enters a chat:
+its row keeps its id, and its time is when the chat took it in, which the answer's
+receipt says (``accepted_at``), so a repeat edit locates it by that time.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _make_state
 
+from personalclaw import ids
 from personalclaw.dashboard.chat import api_chat_session_edit_resend
 
 
@@ -58,38 +61,44 @@ class TestEditResend:
         assert users[0]["content"] == "edited question"
 
     @pytest.mark.asyncio
-    async def test_client_ts_stored_enables_repeat_edit(self, tmp_path, monkeypatch):
-        """A client_ts is stored on the re-appended message, so an immediate SECOND
-        edit-resend locates it by ts (the live-turn case that used to 400)."""
+    async def test_the_receipts_time_enables_repeat_edit(self, tmp_path, monkeypatch):
+        """The re-appended message's time is when the chat took it in, which the answer's
+        receipt says, so an immediate SECOND edit-resend locates it by that ts (the live-turn
+        case that used to 400). A time the page sends of its own is not the row's."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         state = _make_state(tmp_path)
         session = state.get_or_create_session("s1")
         session.append("user", "q1", "msg msg-u")
+        first, second = ids.new_id("msg"), ids.new_id("msg")
 
         async with TestClient(TestServer(_make_app(state))) as client:
             r1 = await client.post(
                 "/api/chat/sessions/s1/edit-resend",
-                json={"content": "q2", "client_ts": "2026-06-30T05:00:00+00:00"},
+                json={
+                    "content": "q2",
+                    "client_message_id": first,
+                    "client_ts": "2026-06-30T05:00:00+00:00",
+                },
             )
             assert r1.status == 200
-            # the re-appended message carries the client ts verbatim
-            assert [m for m in session.messages if m["role"] == "user"][-1][
-                "ts"
-            ] == "2026-06-30T05:00:00+00:00"
+            receipt = await r1.json()
+            assert receipt["message_id"] == first and receipt["disposition"] == "started"
+            # the re-appended message is the one the answer names, at the receipt's time
+            row = [m for m in session.messages if m["role"] == "user"][-1]
+            assert row["meta"]["message_id"] == first
+            assert row["ts"] == receipt["accepted_at"] != "2026-06-30T05:00:00+00:00"
 
             # a SECOND edit, now locating by that ts, succeeds (the original bug)
             r2 = await client.post(
                 "/api/chat/sessions/s1/edit-resend",
-                json={
-                    "content": "q3",
-                    "ts": "2026-06-30T05:00:00+00:00",
-                    "client_ts": "2026-06-30T05:01:00+00:00",
-                },
+                json={"content": "q3", "ts": receipt["accepted_at"], "client_message_id": second},
             )
             assert r2.status == 200
+            again = await r2.json()
             users = [m for m in session.messages if m["role"] == "user"]
             assert len(users) == 1 and users[0]["content"] == "q3"
-            assert users[0]["ts"] == "2026-06-30T05:01:00+00:00"
+            assert users[0]["meta"]["message_id"] == second
+            assert users[0]["ts"] == again["accepted_at"]
 
     @pytest.mark.asyncio
     async def test_stale_ts_falls_through_to_last_user(self, tmp_path, monkeypatch):

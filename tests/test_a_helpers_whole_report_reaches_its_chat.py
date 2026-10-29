@@ -26,6 +26,7 @@ import types
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import door_fakes
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
@@ -101,7 +102,7 @@ def _gateway() -> Any:
         orch = GatewayOrchestrator(cfg)
     orch.sessions = MagicMock()
     orch.ctx_builder = MagicMock()
-    session = MagicMock(running=False, task=None, title="Retry libraries")
+    session = door_fakes.give(MagicMock(running=False, task=None, title="Retry libraries"))
     orch.dashboard_state = MagicMock(_sessions={}, _background_tasks=set())
     orch.dashboard_state.get_session = MagicMock(
         side_effect=lambda name: session if name == CHAT else None

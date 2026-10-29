@@ -1453,14 +1453,16 @@ turn_not_steerable {kind}`: `compact` (a `/compact` its runtime runs) or `comman
 runtime runs itself), with a review and a turn whose result schema the steer does not carry joining as
 they are built. Without it (scripts), today's rule holds.
 
-**Every door takes a message in one way.** `chat_intake.take_in(state, session, body, *, door) -> Receipt
-| Refusal` records every message any door puts into a chat (the dashboard, a channel's intake, a scheduled
-notice's injection, a reply to an agent's Inbox item, plan mode's next turn, edit-and-resend, a helper's
-report, a goal loop's cycle, a review and a ways start, a background command's report, a request made in a
-voice call (`call`, with `queue_mode: followup` for every request), the chat-completions door, a delegated
-chat, the journal's continuation and a re-sent queue item), decides the disposition with today's rules,
-and checks for a duplicate and records in one synchronous step, so two identical sends racing record one
-message. A send whose agent mention cannot hand off answers `409 handoff_refused` and records nothing
+**Every door takes a message in one way.** `chat_intake.take_in(state, session, intake) -> Receipt
+| Refusal`, the `Intake` saying what the door read of the message, records every message any door puts
+into a chat, decides the disposition with today's rules, and checks for a duplicate and records in one
+synchronous step, so two identical sends racing record one message. The dashboard and edit-and-resend
+name their message (`client_message_id`); a channel's intake, a scheduled notice's injection, a reply to
+an agent's Inbox item and a heartbeat's result (`enqueue_or_run_prompt`), plan mode's next turn, a
+helper's report, a loop's cycle and the chat-completions door take theirs in under an id the gateway
+mints (`_ChatSession.take_in_at_door`). The doors still to come join the same way: a review and a ways
+start, a background command's report, a request made in a voice call (`call`, with `queue_mode:
+followup` for every request), a delegated chat, the journal's continuation and a re-sent queue item. A send whose agent mention cannot hand off answers `409 handoff_refused` and records nothing
 (§3.3).
 
 **Receipt** (WS mode: the 200 body; SSE mode: the first event, named `receipt`, of a message that starts a
@@ -1613,7 +1615,7 @@ Status: planned
 | No `cls` remains | the record and the log reject unknown keys; a rail fails on `"cls"` under `dashboard/` |
 | A save appends | no write path opens a transcript for rewrite; a test asserts that saving one turn of a long chat writes only that turn's events |
 | A repeated send runs nothing, after a restart too | `test_a_repeated_send_answers_its_receipt_and_runs_nothing` |
-| Every door takes a message in one way | `test_every_door_takes_messages_in_one_way` (a census of appends, queue writes and steers outside `chat_intake.py`) |
+| Every door takes a message in one way | `tests/rails/test_every_door_takes_messages_in_one_way_tree.py` (a census of turn-start appends, queue writes and steers outside `chat_intake.py`, `chat_queue.py`, `running_turn.py` and `side.py`, and a site baseline of the appends there whose role is a value, each judged) |
 | A stop that names an ended turn stops nothing | `test_a_stop_for_an_ended_turn_stops_nothing` |
 | Reasoning never reaches the store | `test_reasoning_is_live_only` |
 | Every turn frame names its conversation | `tests/test_apps_see_only_their_own_conversations.py` extended to the three frames |

@@ -22,6 +22,7 @@ import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import door_fakes
 import pytest
 
 from personalclaw.config.loader import AppConfig
@@ -179,7 +180,7 @@ def _gateway() -> Any:
         orch = GatewayOrchestrator(cfg)
     orch.sessions = MagicMock()
     orch.ctx_builder = MagicMock()
-    session = MagicMock(running=False, task=None, title="Retry ceiling")
+    session = door_fakes.give(MagicMock(running=False, task=None, title="Retry ceiling"))
     orch.dashboard_state = MagicMock(_sessions={}, _background_tasks=set())
     orch.dashboard_state.get_session = MagicMock(
         side_effect=lambda name: session if name == "chat-a" else None

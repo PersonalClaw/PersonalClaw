@@ -87,7 +87,6 @@ import asyncio
 import functools
 import logging
 from collections import OrderedDict
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from personalclaw import received
@@ -427,22 +426,29 @@ async def _route_to_session(
     # them to tell the owner's words from those of anyone else the door let in.
     source = arrived_on(thread_key, msg.sender, provider)
 
-    if getattr(session, "running", False):
-        # Queued the way a message typed in the dashboard mid-turn is: the queue adds it to
-        # the chat when it runs it. Adding it here too put it in the chat twice.
-        queue_id = (
-            session.queue_append(text, channel=provider, files=paths, source=source)
-            if paths
-            else session.queue_append(text, channel=provider, source=source)
-        )
+    # Taken in the one way a message enters a chat (`chat_intake.take_in`): queued while the chat's
+    # turn runs, the way a message typed in the dashboard mid-turn is (the queue adds it to the chat
+    # when it runs it), else its row, which shows it masked. The channel's door told the delivery
+    # new (`admit`), so its id is the gateway's.
+    taken = session.take_in_at_door(
+        state,
+        text,
+        shown=safe,
+        meta={"files": paths} if paths else None,
+        source=source,
+        channel=provider,
+        files=paths,
+    )
+    if taken.disposition != "started":
         if broadcast is not None:
             broadcast(
                 "queue_push",
                 {
                     "session": session.key,
                     "content": safe,
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "queue_id": queue_id,
+                    "ts": taken.accepted_at,
+                    "queue_id": session._queue[-1]["id"],
+                    "message_id": taken.message_id,
                 },
             )
         # One more message waits behind the chat's turn, which its run state carries.
@@ -453,10 +459,6 @@ async def _route_to_session(
             push()
         return
 
-    if paths:
-        session.append("user", safe, "msg msg-u", meta={"files": paths}, source=source)
-    else:
-        session.append("user", safe, "msg msg-u", source=source)
     # ``Session.append`` skips the global broadcast for role="user" because the
     # dashboard frontend adds its OWN sends optimistically — but this user line
     # originated in a channel, so no frontend has it. Broadcast it explicitly, and
@@ -467,7 +469,13 @@ async def _route_to_session(
     if broadcast is not None:
         broadcast(
             "chat_message",
-            {"session": session.key, "role": "user", "content": safe, "cls": "msg msg-u"},
+            {
+                "session": session.key,
+                "role": "user",
+                "content": safe,
+                "cls": "msg msg-u",
+                "message_id": taken.message_id,
+            },
         )
     if push is not None:
         push()

@@ -1326,6 +1326,21 @@ same words (`chat_intake.body_digest`: the text as sent, the agent, the
 with `duplicate: true` and runs nothing: a double click, a flaky network, a
 script's retry. The same id with other words is `409 message_id_conflict`.
 
+Every other door takes a message in the same way: edit-and-resend, which names
+the message it sends in its place (`client_message_id`), so a resend sent twice
+runs once, and, under an id the gateway mints (`_ChatSession.take_in_at_door`),
+a channel's message, a scheduled notice, a prompt run on the chat (an Inbox
+reply, a heartbeat's result), plan mode's next turn, a helper's report, a loop's
+cycle and the chat-completions door. Each is queued while a turn runs and else
+written as the row its turn starts with, with its id and receipt.
+`tests/rails/test_every_door_takes_messages_in_one_way_tree.py` holds every door
+to it: outside `chat_intake.py` and what it hands a message to (`chat_queue.py`,
+`running_turn.py`) and the side conversation (`side.py`), nothing writes a row a
+turn starts with, queues a message or steers one. A row written there with its role
+as a value (a variable, a helper's parameter) is no literal to read, so each is
+listed in `tests/rails/baselines/rows-whose-role-is-a-value.sites.jsonl` with why it
+is no door (most are a chat's file read back), and a new one fails until it is judged.
+
 A steer may name the turn it is for (`expected_message_id`, which the page sends
 with every steer). It is refused, and nothing of it is written or queued, when no
 turn runs (`409 no_running_turn`: the page offers to send it), another turn runs

@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import door_fakes
 import pytest
 
 from personalclaw.approval_grants import ToolDecision
@@ -1526,6 +1527,7 @@ class TestSubagentDone:
         session.mode = ""
         session._owed_subagent_endings = []
         session.queue_append = MagicMock()
+        door_fakes.give(session)
         orch.dashboard_state.get_session = MagicMock(return_value=session)
 
         info = MagicMock(title="", trigger_id="")

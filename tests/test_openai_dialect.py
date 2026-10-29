@@ -35,6 +35,7 @@ import json
 import os
 from pathlib import Path
 
+import door_fakes
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -132,6 +133,8 @@ def _token() -> str:
 
 class _FakeSession:
     """The parts of ``_ChatSession`` the dialect touches, and nothing else."""
+
+    take_in_at_door = door_fakes.take_in_at_door  # the one way a message enters a chat
 
     def __init__(self, key: str, agent: str = "") -> None:
         self.key = key
