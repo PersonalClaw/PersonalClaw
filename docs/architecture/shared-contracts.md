@@ -945,6 +945,7 @@ Status: planned
 | `review`, `ways`, `comments`, `fix` | user | `{scope, focus}`; `{group}`; `{count, kinds}`; `{review, findings}` | a review's scope; a ways group; a message composed from the owner's comments; a message asking to fix findings (§17.7) |
 | `call`, `heard` | user | message id; str (at most 1,000 characters) | on a call request: the call message; what the owner said, transcribed |
 | `from_outside` | user | `{source, source_type, source_id, what}` | words taken in from outside (the record `turn_source.FROM_OUTSIDE` keeps on a row today), and an imported conversation's messages, so a restore passes them through the outside-text door again |
+| `asked_for_by` | user | `{source_thread, source_user, source_channel}` | on a helper's report: whoever asked for the work it carries on, when it was not the owner (`turn_source.ASKED_FOR_BY`, which `turn_source.asked_by` reads) |
 | `input_flagged` | user | bool | the door's screen flagged the words that started the turn (`outside_text.Admitted.flagged`): no setting answers its calls |
 | `memory_citations` | assistant | as today's | `chat_runner.py:1113` |
 | `context_fed` | assistant | `{kind: context \| context_without_memory, text}`: the footer line's kind and sentence | `chat_session_map.CONTEXT_FED_KEY` (`chat_session_map.py:122`) |
@@ -1570,10 +1571,10 @@ the conversion is the id the converted record keeps.
 | `user`, `inject`, `subagent`, `nudge` | a user message with that `dispatch` (`user` → `message`, `nudge` → `goal`) |
 | any row of a chat whose record names `imported_from` (a conversation imported before this release) | its messages carry `facts.from_outside {what: "A conversation brought over from <tool>", source: "import:<source>", source_type: "import", source_id: <its session there>}`, as an import writes today, so every history hands them to a model through the outside-text door and memory learns nothing from them |
 | a row's `meta.from_outside` | `facts.from_outside` |
-| `user` with the `auto-go` class (the gateway's turn on its helpers' failures, `gateway.py:3815`) | a user message with `dispatch: subagent` |
+| `user` with the `auto-go` class (the gateway's turn on its helpers' failures, written before helper reports had a row of their own) | a user message with `dispatch: message`, as its saved row reads once the class is gone; today's history hands it to a model as the owner's |
 | a user row's `meta.files` | an entry under an attachment folder: a `file` part (`direction: in`, `ref.kind: attachment`); any other entry, a workspace file the owner picked: a `mention` part (`target: file`, `outcome: attached`) |
 | a user row's `meta.knowledge`, `meta.artifacts` | `mention` parts (`target` `knowledge` or `artifact`, `label` the id, `tokens: null`, `outcome: attached`) |
-| a turn row's `meta.steers`; a merged row's `meta.queued_from`; an `inject` row's `cls.cronLabel`; `meta.original`, `meta.ui_label`, `meta.file_changes` | one steer message each, with `steered_into`; the facts of §3.3 of the same meaning |
+| a `user` row with `meta.steered` (a steer the running turn took); a merged row's `meta.queued_from`; an `inject` row's `cls.cronLabel`; a `subagent` row's `meta.asked_for_by`; `meta.original`, `meta.ui_label`, `meta.file_changes` | a steer message, with `steered_into` and `after_step` (how many of the answer's text parts came before it, since a row records no step); the facts of §3.3 of the same meaning |
 | `assistant` (with `variants`, `variant_idx`) | assistant attempts of one parent, `shown` from `variant_idx` |
 | `tool` with `meta.tool_call_id` | a tool part: `done` and `ok` not false → `completed`; `ok: false` → `failed`; not done in a turn that ended → `unknown` when its risk is not known to be safe, else `cancelled`; risk not recorded → `unchecked`, `effect: write` (fail closed). It has no `step`, and its `result.text` is the 8,000 characters the row kept, `received_length: null` |
 | a `learned` stamp's items | `facts.learned` items with `state: kept` |
@@ -1581,7 +1582,7 @@ the conversion is the id the converted record keeps.
 | `tool` without an id (a line about a step) | the named call's `notes`, or a `notice` |
 | `permission` | an `approval` part, its `state` from `cls.resolved` |
 | `file` (a file a tool delivered) | a `file` part on that turn's assistant message (`direction: out`, `ref: {kind: path, id: <the outbox path>}`) |
-| `error` | the turn's last one is `Message.error`; earlier ones are `warn` notices |
+| `error` | one in the chat runner's words for a turn the gateway ended (`TURN_INTERRUPTED_NOTICES`): an `interrupted` notice of an `interrupted` turn; one in its words for a reply cut short (`TURN_CUT_SHORT_NOTICE`): a `cut_short` notice of a `stopped` turn; of the others, the turn's last one is `Message.error` (`turn_failed`), and earlier ones are `warn` notices |
 | `notice`, `system` | notices (`stopped`, `prompt_blocked`, or `info`) |
 | `queued` | dropped: a transient placeholder |
 | `rewound` tails | the kept messages behind a `messages_rewound` event |
@@ -1589,6 +1590,9 @@ the conversion is the id the converted record keeps.
 The converter keeps each chat's `<safe_key>.summary.json`; a backfill deletes every one after the
 converter has run, since the chat's compaction record stands for them (the change that makes one
 compaction depends on the typed record).
+One shape reads differently as text (§3.12): an answer of several rows with an earlier version
+switched back in. A chat that holds one has its summary recomputed, and the conversion's report names
+it as that shape, since the summary's digest was taken over the rows' text.
 
 ### 3.11 Invariants
 
@@ -1617,7 +1621,8 @@ Status: planned
 - It does not change what a text reader is given. An agent CLI started fresh and every text reader read
   the fold as text (`turns.dialogue`), entry for entry what today's history gives (a steer the runtime took
   is now in it, because the runtime that answered had it), with the chat's latest compaction standing for
-  its span. A native runtime that starts fresh (a restart, a model or agent switch, a fork, a rebuild) is
+  its span. One shape differs: an earlier version of an answer of several rows switched back in, which
+  today's history reads in place of the newest version's first row, is read as the attempt it is. A native runtime that starts fresh (a restart, a model or agent switch, a fork, a rebuild) is
   restored from the typed record, its tool calls and results included, within a token budget, every call
   paired with exactly one result (decision 33). A call with no result is restored as "outcome unknown, verify first"
   (`personalclaw.sdk.model.OUTCOME_UNKNOWN_IN_HISTORY` for a model app with its own wire).

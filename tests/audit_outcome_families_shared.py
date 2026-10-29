@@ -44,6 +44,7 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
         "accepted",
         "archived",
         "cancelled",
+        "complete",
         "continue",
         "created",
         "delivered",
@@ -74,6 +75,8 @@ _NO_FAMILY: dict[str, tuple[str, ...]] = {
     # `sel.archive_expired`). `imported` is a legacy trigger file's rows brought over, switched off
     # and waiting for review (`trigger.import`, #3691): it records that an import happened, and
     # the rows' own grant decisions are audited separately (`trigger.grant`).
+    # `complete` is how a chat turn ended (`turns.Outcome`), as an earlier answer Regenerate kept
+    # reads (`dashboard.turn_rows`): its turn ran to its end, which says nothing was refused.
     # `absent` is an app setup step deleting a credential that was not stored (`app_cli`'s
     # `removed if removed else absent`): nothing to delete, nothing refused, nothing broke.
     "the work did not need doing, so nothing ran: a no-op is not a success, not a refusal of "

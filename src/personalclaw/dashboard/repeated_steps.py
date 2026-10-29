@@ -17,16 +17,18 @@ it again on its own: it says so, with Retry, which asks. A turn whose finished c
 that finished none, is run again unasked. The gateway's own re-sends after a lost connection or an
 empty reply send only a turn that made no call at all (``chat_runner.run_chat``).
 
-Which calls may have changed something is read from what each call's tool DECLARES, the
-declaration its approval gate reads (``task_modes.reads_only``): a tool that declares it only
-reads, or a shell command screened read-only, is a read, and every other call may have changed
-something, a tool that declares nothing included. The declaration comes from where the turn's own
-gate took it: the chat's runtime while it is up; PersonalClaw's own tools where an agent CLI ran
-the turn, whose own tools declare nothing; the agent's tool surface once the runtime is gone. The
-external MCP servers are not listed for that (it would start every one), so their calls count as
-changes. A call its approval refused, or that a gate's line on its card says was not run, is not
-one of them. Any other call that failed is: the transcript keeps that it failed, not whether it
-ran before it did, so it may have changed something, and the question says it failed.
+Which calls may have changed something is read from the attempt's tool parts
+(``turn_rows.from_rows``): the effect a call's row recorded when it was made, else what its tool
+DECLARES, the declaration its approval gate reads (``task_modes.reads_only``). A tool that declares
+it only reads, or a shell command screened read-only, is a read, and every other call may have
+changed something, a tool that declares nothing included. The declaration comes from where the
+turn's own gate took it: the chat's runtime while it is up; PersonalClaw's own tools where an
+agent CLI ran the turn, whose own tools declare nothing; the agent's tool surface once the runtime
+is gone. The external MCP servers are not listed for that (it would start every one), so their
+calls count as changes. A call its approval refused, or that a gate's line on its card says was
+not run, is not one of them. Any other call that failed is: the transcript keeps that it failed,
+not whether it ran before it did, so it may have changed something, and the question says it
+failed.
 
 The question names those calls, and the yes that answers it carries the question's digest
 (``confirm``), so a yes answers the steps it was shown: a turn that changed since is asked about
@@ -41,19 +43,17 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
-from personalclaw.dashboard.approval_state import UNANSWERED_OUTCOMES
-from personalclaw.dashboard.chat_utils import _history_key_for, strip_status_sentinel
-from personalclaw.dashboard.step_notes import ABOUT_CALL, NOT_RUN, NOTE
+from personalclaw.dashboard import turn_rows
+from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.declined_calls import declined_step, said
 from personalclaw.http_errors import CONSENT_QUESTION, json_error
 from personalclaw.sel import sel
-from personalclaw.task_modes import reads_only
+from personalclaw.turns import ToolPart, completed_side_effect, failed_side_effect
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -63,9 +63,6 @@ logger = logging.getLogger(__name__)
 #: The wire code of the question, and of the refusal a door that cannot ask it gets.
 REPEATS_STEPS = "retry_repeats_steps"
 
-#: How a call's approval ended when it did not run: a Deny, and the two endings nobody answered.
-_NOT_RUN_ENDINGS = frozenset({"rejected", *UNANSWERED_OUTCOMES})
-
 #: How many of the steps the question shows; the rest it counts.
 _SHOWN = 12
 
@@ -74,7 +71,7 @@ _SHOWN = 12
 _SURFACE_WAIT_SECS = 5.0
 
 #: Reads the declaration of one call: ``(title, tool_kind, tool_input) -> declared``.
-Declared = Callable[[str, str, object], object]
+Declared = turn_rows.Declared
 
 
 @dataclass(frozen=True)
@@ -95,22 +92,6 @@ class FinishedStep:
         return {"tool": self.tool, "names": [self.target] if self.target else []}
 
 
-@dataclass
-class _Call:
-    title: str = ""
-    kind: str = ""
-    tool_input: str = ""
-    detail: str = ""
-    done: bool = False
-    failed: bool = False
-
-    def target(self) -> str:
-        """What the call's card names beside its tool: the refined line an agent CLI sent, else
-        the first value its input carries."""
-        names = declined_step(self.title, self.detail or _readable(self.tool_input))["names"]
-        return names[0] if names else ""
-
-
 #: The first value of a JSON object whose text was cut where the transcript keeps it (a call's
 #: input is kept to its first few thousand characters, and a file write's content runs past that).
 _FIRST_VALUE = re.compile(r'^\s*\{\s*"(?:[^"\\]|\\.)*"\s*:\s*("(?:[^"\\]|\\.)*")')
@@ -128,54 +109,6 @@ def _readable(tool_input: str) -> str:
         first = _FIRST_VALUE.match(text)
         return json.loads(first.group(1)) if first else ""
     return tool_input
-
-
-def _cls(row: dict[str, Any]) -> dict[str, Any]:
-    """A permission row's record, which travels in its ``cls`` as JSON."""
-    try:
-        data = json.loads(row.get("cls") or "{}")
-    except (TypeError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _calls(rows: list[dict[str, Any]]) -> tuple[dict[str, _Call], set[str], set[str]]:
-    """The attempt's calls by id, with what its rows say of each: the ones a gate refused before
-    they ran, and the ones their approval card established as reads.
-
-    A call can have more than one row with its id (its card, and a row its approval wrote), so
-    they are read as one: the first title, the latest input, and done once any says so."""
-    calls: dict[str, _Call] = {}
-    refused: set[str] = set()
-    read_by_card: set[str] = set()
-    for row in rows:
-        role = row.get("role")
-        raw = row.get("meta")
-        meta: dict[str, Any] = raw if isinstance(raw, dict) else {}
-        if role == "tool":
-            call_id = str(meta.get("tool_call_id") or "")
-            if not call_id:
-                about = str(meta.get(ABOUT_CALL) or "")
-                if about and str(meta.get(NOTE) or "").startswith(NOT_RUN):
-                    refused.add(about)
-                continue
-            call = calls.setdefault(call_id, _Call())
-            call.title = call.title or strip_status_sentinel(str(row.get("content") or ""))
-            call.kind = str(meta.get("kind") or "") or call.kind
-            call.tool_input = str(meta.get("input") or "") or call.tool_input
-            call.detail = str(meta.get("detail") or "") or call.detail
-            call.done = call.done or bool(meta.get("done"))
-            call.failed = call.failed or meta.get("ok") is False
-        elif role == "permission":
-            record = _cls(row)
-            call_id = str(record.get("tool_call_id") or "")
-            if not call_id:
-                continue
-            if record.get("resolved") in _NOT_RUN_ENDINGS:
-                refused.add(call_id)
-            if record.get("is_read_only") == "1":
-                read_by_card.add(call_id)
-    return calls, refused, read_by_card
 
 
 async def _surface_declarations() -> dict[str, object]:
@@ -222,34 +155,46 @@ async def _declarations(state: DashboardState, session: _ChatSession) -> Declare
     return lambda title, _kind, _input: declared.get(title, "")
 
 
+def _target(call: ToolPart) -> str:
+    """What the call's card names beside its tool: the refined line an agent CLI sent, else the
+    first value its input carries."""
+    names = declined_step(call.title, call.detail or _readable(call.input))["names"]
+    return names[0] if names else ""
+
+
+def _changes(
+    session: _ChatSession, rows: list[dict[str, Any]], declared: Declared | None
+) -> list[ToolPart]:
+    """The calls in *rows* that finished, completed or failed, as writes, each once, in the order
+    they were made (``turn_rows.from_rows``, which reads a call no declaration vouches for as a
+    write)."""
+    found: dict[str, ToolPart] = {}
+    for message in turn_rows.from_rows(rows, session_key=session.key, declared=declared):
+        for part in message.parts:
+            if isinstance(part, ToolPart) and (
+                completed_side_effect(part) or failed_side_effect(part)
+            ):
+                found.setdefault(part.tool_call_id, part)
+    return list(found.values())
+
+
 async def _finished_changes(
     state: DashboardState, session: _ChatSession, rows: list[dict[str, Any]]
 ) -> list[FinishedStep]:
     """The calls in *rows*, the attempt running the turn again replaces, that finished and may
-    have changed something, in the order they were made."""
-    calls, refused, read_by_card = _calls(rows)
-    finished = {
-        call_id: call
-        for call_id, call in calls.items()
-        if call.done and call_id not in refused and call_id not in read_by_card
-    }
-    if not finished:
+    have changed something, in the order they were made. The declarations are read only when a
+    call that finished could be one."""
+    if not _changes(session, rows, None):
         return []
     declared_by = await _declarations(state, session)
     return [
         FinishedStep(
-            call_id=call_id,
+            call_id=call.tool_call_id,
             tool=declined_step(call.title, "")["tool"],
-            target=call.target(),
-            failed=call.failed,
+            target=_target(call),
+            failed=call.state == "failed",
         )
-        for call_id, call in finished.items()
-        if not reads_only(
-            call.title,
-            call.kind,
-            call.tool_input,
-            declared_by(call.title, call.kind, call.tool_input),
-        )
+        for call in _changes(session, rows, declared_by)
     ]
 
 

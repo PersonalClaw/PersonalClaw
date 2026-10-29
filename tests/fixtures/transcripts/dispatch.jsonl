@@ -1,0 +1,19 @@
+{"role": "user", "content": "Start the report", "ts": "2026-10-04T07:00:00+00:00", "source_thread": "dashboard", "source_user": "dashboard", "meta": {"message_id": "msg_01jab3c4d5e6f7g8h9jkmnpqrs"}}
+{"role": "assistant", "content": "Working on it.", "ts": "2026-10-04T07:00:02+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "tool", "content": "read_file", "ts": "2026-10-04T07:00:03+00:00", "source_thread": "dashboard", "source_user": "dashboard", "meta": {"tool_call_id": "d1", "input": "{\"path\": \"data.csv\"}", "done": true, "risk": "safe", "effect": "read"}}
+{"role": "user", "content": "Only the totals", "ts": "2026-10-04T07:00:01+00:00", "source_thread": "dashboard", "source_user": "dashboard", "meta": {"steered": true, "pastes": [{"seq": 1, "lines": 1, "content": "totals"}]}}
+{"role": "assistant", "content": "Totals only, then.", "ts": "2026-10-04T07:00:05+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "inject", "content": "Daily digest: three new items.", "cls": "{\"cronLabel\": \"Daily digest\"}", "ts": "2026-10-04T08:00:00+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "assistant", "content": "Three items came in.", "ts": "2026-10-04T08:00:03+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "subagent", "content": "Helper report: the survey is summarized.", "ts": "2026-10-04T09:00:00+00:00", "source_thread": "dashboard", "source_user": "dashboard", "meta": {"asked_for_by": {"source_thread": "T042", "source_user": "U0JONAS", "source_channel": "team-chat"}}}
+{"role": "assistant", "content": "The helper finished the survey.", "ts": "2026-10-04T09:00:04+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "Your helpers failed: the survey could not be read.", "cls": "msg msg-u auto-go", "ts": "2026-10-04T09:30:00+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "assistant", "content": "I'll read it another way.", "ts": "2026-10-04T09:30:03+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "nudge", "content": "Keep going toward the goal.", "ts": "2026-10-04T10:00:00+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "assistant", "content": "Next step done.", "ts": "2026-10-04T10:00:05+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "Two notes\n\nand a third", "ts": "2026-10-04T11:00:00+00:00", "meta": {"queued_from": [{"source_thread": "dashboard", "source_user": "dashboard"}, {"source_thread": "T042", "source_user": "U0JONAS", "source_channel": "team-chat"}]}}
+{"role": "assistant", "content": "Both noted.", "ts": "2026-10-04T11:00:02+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "The nightly run found two failing checks.", "ts": "2026-10-04T12:00:00+00:00", "source_thread": "dashboard", "source_user": "dashboard", "meta": {"from_outside": {"what": "A scheduled run's result", "source": "schedule:nightly", "source_type": "schedule", "source_id": "run-7"}}}
+{"role": "assistant", "content": "I see two failing checks.", "ts": "2026-10-04T12:00:03+00:00", "source_thread": "dashboard", "source_user": "dashboard"}
+{"role": "user", "content": "what's on today?", "ts": "2026-10-04T13:00:00+00:00", "source_thread": "T042", "source_user": "U0JONAS", "source_channel": "team-chat"}
+{"role": "assistant", "content": "Two meetings.", "ts": "2026-10-04T13:00:02+00:00", "source_thread": "T042", "source_user": "U0JONAS", "source_channel": "team-chat"}

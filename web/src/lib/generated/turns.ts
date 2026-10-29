@@ -277,6 +277,7 @@ export interface MessageFacts {
   mode?: "" | "full" | "inspect_only"
   goal?: Record<string, unknown> | null
   from_outside?: Record<string, unknown> | null
+  asked_for_by?: Record<string, unknown> | null
   input_flagged?: boolean
   memory_citations?: unknown[]
   context_fed?: Record<string, unknown> | null

@@ -1505,6 +1505,10 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # ── a chat's bookmarks (dashboard/chat_bookmarks.py) ──
     # 400: a bookmark asked for a message the owner did not send in this conversation.
     "unknown_message": "The request names a message this conversation does not hold.",
+    # ── a chat turn's terminal error (turns.MessageError, turn_rows.from_rows) ──
+    # Not an HTTP status of its own: the code a turn that ended in an error carries on its answer,
+    # with the error's own words as its message.
+    "turn_failed": "The turn ended in an error before it finished; the message says what failed.",
 }
 
 

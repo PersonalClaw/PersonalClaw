@@ -6,7 +6,7 @@ turn and an assistant message answers it. A message owns ordered, typed parts, o
 :func:`advance`, along §3.4's edges, and the approval, question, sign-in and helper parts move
 through the same function by their own tables. :func:`may_have_run` and its siblings are §3.5's
 definitions, written once, and :func:`ending_summary` is what every surface that says what survived
-a turn reads.
+a turn reads. :func:`dialogue` gives a chat's messages back as the text a text reader is handed.
 
 Every type is a frozen dataclass. ``to_dict()`` leaves out an optional field that holds its empty
 default, and ``from_dict()`` refuses a key the type does not have, naming it, so a field written by
@@ -26,10 +26,12 @@ from __future__ import annotations
 import dataclasses
 import types
 import typing
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, Union
 
 from personalclaw.instants import utc_now_iso
+from personalclaw.turn_source import ASKED_FOR_BY, FROM_OUTSIDE, QUEUED_FROM, SOURCE_FIELDS
 
 Role = Literal["user", "assistant"]
 #: What started a turn (§3.3). ``goal`` is a goal loop's cycle; goal loops replace Auto-nudge.
@@ -247,6 +249,9 @@ class MessageFacts(_Typed):
     mode: Literal["", "full", "inspect_only"] = ""
     goal: dict[str, Any] | None = None
     from_outside: dict[str, Any] | None = None
+    #: On a helper's report: the source of whoever asked for the work it carries on, when it was
+    #: not the owner (``turn_source.ASKED_FOR_BY``).
+    asked_for_by: dict[str, Any] | None = None
     input_flagged: bool = False
     # On an assistant message.
     memory_citations: tuple[Any, ...] = ()
@@ -787,3 +792,73 @@ def ending_summary(message: Message) -> EndingSummary:
         reads=sum(1 for p in tools if p.state == "completed" and p.effect == "read"),
         wrote_text=any(isinstance(p, TextPart) and p.text.strip() for p in message.parts),
     )
+
+
+# ── the chat as text ───────────────────────────────────────────────────────────────────────────
+
+
+def dialogue(messages: Iterable[Message]) -> list[dict[str, Any]]:
+    """*messages*, a chat in order, as a text reader is handed it: ``{role, content}`` with where
+    each came from (``turn_source.provenance``'s keys), for each message sent as a message
+    (``dispatch: message``, its text parts joined) and for each text part of each turn's shown
+    answer, with each steer where its turn took it (``facts.after_step``: after that many of the
+    answer's text parts). A turn an automation, a helper's report or a goal cycle started gives its
+    answer and not its message.
+
+    For the rows ``dashboard.turn_rows.from_rows`` read the messages from, this is what
+    ``history.model_view`` gives with no summary, entry for entry, so a summary's digest and every
+    history built from it stay the same. One shape differs: an earlier version of an answer of
+    several rows switched back in, which today's view reads in place of the newest version's first
+    row and this reads as the attempt it is (``tests/test_turn_rows.py``)."""
+    messages = list(messages)
+    shown: dict[str, Message] = {}
+    steers: dict[str, list[Message]] = {}
+    for message in messages:
+        if message.role == "assistant" and message.shown and message.parent_id:
+            shown.setdefault(message.parent_id, message)
+        elif message.role == "user" and message.facts.steered_into:
+            steers.setdefault(message.facts.steered_into, []).append(message)
+    said: list[dict[str, Any]] = []
+    for message in messages:
+        if message.role == "user" and not message.facts.steered_into:
+            if message.dispatch == "message":
+                said.append(_line(message))
+            said += _answer(shown.get(message.id), steers.get(message.id, []))
+        elif message.role == "assistant" and message.shown and not message.parent_id:
+            said += _answer(message, [])
+    return said
+
+
+def _answer(answer: Message | None, steers: list[Message]) -> list[dict[str, Any]]:
+    """A turn's shown *answer*, one entry per text part, with its *steers* in their places."""
+    texts = [p for p in answer.parts if isinstance(p, TextPart)] if answer else []
+    waiting = sorted(steers, key=lambda steer: steer.facts.after_step)
+    out: list[dict[str, Any]] = []
+    for taken, part in enumerate(texts):
+        while waiting and waiting[0].facts.after_step <= taken:
+            out.append(_line(waiting.pop(0)))
+        out.append(_entry("assistant", part.text, typing.cast(Message, answer)))
+    return out + [_line(steer) for steer in waiting]
+
+
+def _line(message: Message) -> dict[str, Any]:
+    text = "".join(p.text for p in message.parts if isinstance(p, TextPart))
+    return _entry(message.role, text, message)
+
+
+def _entry(role: str, content: str, message: Message) -> dict[str, Any]:
+    """One entry: *role* and *content*, with what *message* records of where it came from, under
+    the keys a row records it by (``turn_source.provenance``)."""
+    entry: dict[str, Any] = {"role": role, "content": content}
+    entry.update({f: v for f in SOURCE_FIELDS if (v := getattr(message.source, f))})
+    facts = message.facts
+    meta: dict[str, Any] = {}
+    if facts.merged:
+        meta[QUEUED_FROM] = [dict(item.get("source") or {}) for item in facts.merged]
+    if facts.from_outside is not None:
+        meta[FROM_OUTSIDE] = dict(facts.from_outside)
+    if facts.asked_for_by:
+        meta[ASKED_FOR_BY] = dict(facts.asked_for_by)
+    if meta:
+        entry["meta"] = meta
+    return entry

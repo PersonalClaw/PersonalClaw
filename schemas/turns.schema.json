@@ -1309,6 +1309,16 @@
             }
           ]
         },
+        "asked_for_by": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "input_flagged": {
           "type": "boolean"
         },
