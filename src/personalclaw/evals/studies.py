@@ -59,6 +59,7 @@ from typing import Awaitable, Callable, Sequence
 from personalclaw.evals import store
 from personalclaw.evals.judge_bench import JudgeCall, JudgeCaller, live_judge_caller
 from personalclaw.evals.matrix import FAILED, PASSED, VERIFIER_ABSENT
+from personalclaw.ledger.hashing import canonical_digest
 from personalclaw.workflows.judge_contract import DEFAULT_JUDGE_SAMPLES, parse_judge_json
 
 logger = logging.getLogger(__name__)
@@ -317,7 +318,7 @@ class StudyRegistration:
 
     def sha256(self) -> str:
         """The registration's own hash — the study's identity in the results ledger."""
-        return digest(canonical_json(self.to_dict()))
+        return canonical_digest(self.to_dict())
 
     def blinding_leak_tokens(self) -> tuple[str, ...]:
         """Strings whose appearance in a judge prompt would un-blind it.
