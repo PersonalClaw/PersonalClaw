@@ -565,6 +565,19 @@ def _believed(wall: float, cpu: float, waited: float) -> float:
     return waited if waited <= wall - cpu + _COUNT_SLACK else 0.0
 
 
+def _held_to_its_steps(waited: float, steps_left_out: float, outside: float) -> float:
+    """What an answer whose count says it was *waited* ready may leave out: no more than the
+    steps inside it whose time ready was read left out (*steps_left_out*), and its time outside
+    them (*outside*), so it is counted no less than those steps were. Its count and theirs read
+    the same stretches of the loop thread's time, so where the answer's leaves out more, one of
+    them is wrong, and the probe takes the one that leaves out less. The same on every platform.
+    On a CI runner, a macOS virtual machine that reads no instruction counts, the answer around a
+    planted 0.2 s wait to read was the step that held it and 0.105 s more, yet its count left the
+    loop 0.372 s more ready than the step's did: the step was counted 0.334 s, the answer 0.068 s,
+    and the answer missed the block (run 40633805032)."""
+    return min(waited, steps_left_out + outside)
+
+
 class _Window:
     """One stretch of the loop thread's time, a step or a health check's answer: its wall time, its
     CPU time, and the time the loop thread spent in it ready to run with no CPU (:class:`_NoCpu`).
@@ -600,6 +613,9 @@ class _Window:
         #: time ready its count gave the window, before :func:`_believed` judged it.
         self.slept = False
         self.ready = 0.0
+        #: Whether the window's time ready was read: macOS reads none in a window shorter than
+        #: :meth:`end`'s *counted_from*, which is wall time.
+        self.read = False
         if self.own is None:
             self.first = no_cpu.snapshot()
             self.began = self.first.ready_at
@@ -616,6 +632,7 @@ class _Window:
             # The step that ends :meth:`_Probe.during` closes the file before it ends: it is
             # counted in wall time.
             waited = max(0.0, now - self.own) if now is not None else 0.0
+            self.read = now is not None
             slept_to = self.no_cpu.loop_slept()
             self.slept = self._slept_from is not None and slept_to is not None
             self.slept = self.slept and slept_to > self._slept_from
@@ -625,6 +642,7 @@ class _Window:
             self.then = then = self.no_cpu.snapshot()
             ended = then.ready_at
             waited = self.no_cpu.waited(self.first, then, self.threads)
+            self.read = True
         else:
             ended = time.monotonic()
         # The CPU clock last: its call is outside the window.
@@ -659,7 +677,8 @@ class _Probe:
     waiting on anything, and a step's own waits are never in that count. A step is never counted
     as less than the CPU time the loop thread used in it. A health check's answer leaves out the
     same: the time the loop thread spent ready with no CPU, never another thread's, and it too is
-    never counted as less than the loop thread's CPU time over it. The wall
+    never counted as less than the loop thread's CPU time over it, nor than the steps inside it
+    were (:func:`_held_to_its_steps`). The wall
     times are reported beside (:attr:`worst_step_wall`, :attr:`slowest_answer_wall`).
 
     A 10 ms tick is kept beside it, and its longest gap (:attr:`worst_gap`) is reported: that gap
@@ -708,6 +727,11 @@ class _Probe:
         self.slept_ready = 0.0
         self.worst_step_ruled = self.worst_step_unruled = 0.0
         self.slowest_answer_ruled = self.slowest_answer_unruled = 0.0
+        #: The wall time of the steps whose time ready was read (:attr:`_Window.read`), and the
+        #: time ready they left out read both ways, in all: what holds an answer to its steps
+        #: (:func:`_held_to_its_steps`).
+        self.stepped = 0.0
+        self.left_out_ruled = self.left_out_unruled = 0.0
         #: macOS: the snapshots taken, and whether any read a thread's instruction count
         #: (:attr:`reads_no_instructions`).
         self.snapshots = 0
@@ -763,6 +787,10 @@ class _Probe:
                     probe.slept_ready += window.ready
                 probe.worst_step_ruled = max(probe.worst_step_ruled, wall - ruled, cpu)
                 probe.worst_step_unruled = max(probe.worst_step_unruled, wall - unruled, cpu)
+                if window.read:
+                    probe.stepped += wall
+                    probe.left_out_ruled += wall - max(wall - ruled, cpu)
+                    probe.left_out_unruled += wall - max(wall - unruled, cpu)
                 waited = ruled if _SLEPT_STEPS_EXCUSE_NOTHING else unruled
                 took = max(wall - waited, cpu)
                 probe.worst_step_wall = max(probe.worst_step_wall, wall)
@@ -835,13 +863,22 @@ class _Probe:
     async def _timed_answer(self, answer) -> None:
         """One health check's answer, *answer* awaited, counted as :meth:`during` counts each: in
         a window whose reads of the time ready lie inside its wall time (:class:`_Window`), less
-        the loop thread's own time ready, never less than its CPU time."""
+        the loop thread's own time ready, never less than its CPU time, nor than the steps inside
+        it were counted (:func:`_held_to_its_steps`)."""
         window = _Window(self.no_cpu, {threading.get_native_id()})
         slept_before = self.slept_ready
+        stepped, ruled_before, unruled_before = (
+            self.stepped,
+            self.left_out_ruled,
+            self.left_out_unruled,
+        )
         await answer()
         wall, cpu, unruled = window.end()
         # The steps inside it that slept had their time ready counted in this window's too.
         ruled = max(0.0, unruled - (self.slept_ready - slept_before))
+        outside = max(0.0, wall - (self.stepped - stepped))
+        ruled = _held_to_its_steps(ruled, self.left_out_ruled - ruled_before, outside)
+        unruled = _held_to_its_steps(unruled, self.left_out_unruled - unruled_before, outside)
         self.slowest_answer_ruled = max(self.slowest_answer_ruled, wall - ruled, cpu)
         self.slowest_answer_unruled = max(self.slowest_answer_unruled, wall - unruled, cpu)
         waited = ruled if _SLEPT_STEPS_EXCUSE_NOTHING else unruled
@@ -1915,11 +1952,79 @@ _CI_SLEPT_STEP = (0.284, 0.0, 0.192, 1)
 _CI_SLEPT_ANSWER = (0.474, 0.003, 0.381)
 
 
-def _probed(reads: _LinuxReads, step: tuple, answer: tuple | None = None) -> _Probe:
-    """A probe over *reads* that ran one *step* (wall, CPU, ready, voluntary switches), inside an
-    answer of *answer* (wall, CPU, ready, the rest beside the step's) when one is given, its
-    rest a wait in the loop's selector (one voluntary switch). Driven by hand, as :func:`_answered`
-    drives its answer."""
+class _VmReads(_NoCpu):
+    """macOS as a virtual machine that reads no instruction counts gives it, driven as
+    :class:`_LinuxReads` is: the process's count of time ready, and two threads beside the loop's,
+    a hasher running or ready and a worker waiting, each credited its whole window less the CPU it
+    used (:meth:`_NoCpu.accounts`). Each :meth:`spend` takes *wall* seconds, the loop thread
+    using *cpu* of them, the process's count rising *ready*, and the threads beside using
+    *beside* of CPU. No read costs any time."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.source = "macOS: the process's, less what its other threads could account for"
+        self.t = self.cpu = self.ready = 0.0
+        self.beside = (0.0, 0.0)
+
+    def open(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def loop_waited(self) -> None:
+        return None
+
+    def monotonic(self) -> float:
+        return self.t
+
+    def thread_time(self) -> float:
+        return self.cpu
+
+    def snapshot(self) -> SimpleNamespace:
+        hasher, worker = self.beside
+        threads = {
+            threading.get_native_id(): (self.cpu, 1, None),
+            1: (hasher, 1, None),
+            2: (worker, 3, None),
+        }
+        return SimpleNamespace(
+            at=self.t,
+            ready_at=self.t,
+            ready=self.ready,
+            threads=threads,
+            ended=0,
+            ending=False,
+            done=self.t,
+        )
+
+    def spend(
+        self, wall: float, cpu: float, ready: float, _slept: int = 0, beside=(0.0, 0.0)
+    ) -> None:
+        self.t += wall
+        self.cpu += cpu
+        self.ready += ready
+        self.beside = (self.beside[0] + beside[0], self.beside[1] + beside[1])
+
+
+#: Run 40633805032's longest step, python-suite-macos (1/5) on a virtual machine that reads no
+#: instruction counts: 4.421 s in wall time and 0.001 s of CPU, holding the plant's 0.2 s wait to
+#: read, the process's count 12.922 s ready over it, and the hasher and asyncio's worker using
+#: 0.006178 s and 0.001020 s of CPU. The loop's share came to 4.087 s, and the step was counted
+#: 0.334 s.
+_VM_STEP = (4.421, 0.001, 12.922, 0, (0.006178, 0.001020))
+#: Its slowest answer, around that step: 4.526 s in wall time and 0.003 s of CPU, the process's
+#: count 13.503 s ready, and the threads beside using 0.006971 s and 0.001062 s. The loop's share
+#: came to 4.458 s, and the answer was counted 0.068 s.
+_VM_ANSWER = (4.526, 0.003, 13.503, (0.006971, 0.001062))
+
+
+def _probed(reads, step: tuple, answer: tuple | None = None) -> _Probe:
+    """A probe over *reads* (:class:`_LinuxReads`, :class:`_VmReads`) that ran one *step*
+    (wall, CPU, ready, voluntary switches, and the CPU of the threads beside), inside an answer
+    of *answer* (wall, CPU, ready, and the CPU beside, the rest beside the step's) when one is
+    given, its rest a wait in the loop's selector (one voluntary switch). Driven by hand, as
+    :func:`_answered` drives its answer."""
     probe = _Probe(None, asking=False, no_cpu=reads)
     probe.took = step[0] if answer is None else answer[0]
     handle = SimpleNamespace()
@@ -1928,8 +2033,9 @@ def _probed(reads: _LinuxReads, step: tuple, answer: tuple | None = None) -> _Pr
     async def answered() -> None:
         run(handle)
         if answer is not None:
-            wall, cpu, ready = answer
-            reads.spend(wall - step[0], cpu - step[1], ready - step[2], 1)
+            wall, cpu, ready, *beside = answer
+            rest = [tuple(a - b for a, b in zip(beside[0], step[4]))] if beside else []
+            reads.spend(wall - step[0], cpu - step[1], ready - step[2], 1, *rest)
 
     with (
         patch.object(time, "monotonic", reads.monotonic),
@@ -2017,6 +2123,43 @@ def test_without_the_rule_the_ci_runners_step_is_counted_under_the_bound(monkeyp
     monkeypatch.setattr(sys.modules[__name__], "_SLEPT_STEPS_EXCUSE_NOTHING", False)
     probe = _probed(_LinuxReads(), _CI_SLEPT_STEP, _CI_SLEPT_ANSWER)
     assert probe.worst_step < _BOUND and probe.slowest_answer < _BOUND, probe.says()
+
+
+def test_an_answer_is_counted_no_less_than_the_steps_inside_it():
+    """🔴 Red before (an answer left out all its count gave it): on a macOS virtual machine that
+    reads no instruction counts, the answer around the plant's 0.2 s wait to read was counted
+    0.068 s of 4.526 s, and the step that held the wait 0.334 s, so the answer missed the block
+    (run 40633805032). The answer was that step and 0.105 s more, yet its count left the loop
+    0.372 s more ready than the step's. It now leaves out no more than the step did and its time
+    outside it, and is counted as the step was."""
+    probe = _probed(_VmReads(), _VM_STEP, _VM_ANSWER)
+    assert probe.worst_step == pytest.approx(0.334, abs=0.001), probe.says()
+    assert probe.slowest_answer >= _BOUND, f"the answer missed the block; {probe.says()}"
+    assert probe.slowest_answer == pytest.approx(probe.worst_step), probe.says()
+
+
+@pytest.mark.parametrize(
+    ("step", "answer"),
+    [
+        pytest.param((0.05, 0.01, 0.0, 0), (0.5, 0.011, 0.44), id="outside its step"),
+        pytest.param((0.3, 0.01, 0.25, 0), (0.5, 0.012, 0.44), id="its step's and outside it"),
+    ],
+)
+def test_an_answer_leaving_out_what_its_steps_did_and_its_time_outside_them_passes(step, answer):
+    """The rule's other side: what the runner held the loop thread from a CPU for between steps,
+    once woken in its selector, and what a step's own count left out of it, an answer leaves out
+    as before, all its count gives it."""
+    probe = _probed(_LinuxReads(), step, answer)
+    assert probe.slowest_answer == pytest.approx(answer[0] - answer[2]), probe.says()
+    assert probe.slowest_answer < _BOUND, probe.says()
+
+
+def test_without_the_rule_the_virtual_machines_answer_is_counted_under_the_bound(monkeypatch):
+    """The mutant: with an answer no longer held to its steps, the virtual machine's answer reads
+    under the bound again, so the plant above fails on it."""
+    monkeypatch.setattr(sys.modules[__name__], "_held_to_its_steps", lambda waited, *_: waited)
+    probe = _probed(_VmReads(), _VM_STEP, _VM_ANSWER)
+    assert probe.slowest_answer < _BOUND, probe.says()
 
 
 def test_an_exception_in_the_probes_own_work_still_runs_the_loops_callback():
