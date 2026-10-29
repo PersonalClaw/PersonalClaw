@@ -1,8 +1,18 @@
-"""PersonalClaw — personal AI agent with pluggable LLM providers."""
+"""PersonalClaw — personal AI agent with pluggable LLM providers.
 
-import asyncio
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as _pkg_version
+Every ``python -m personalclaw.<module>`` child runs this file first, the sandbox's spawn shim
+(``personalclaw._spawn_exec_shim``) on each command an agent runs included, so it imports
+nothing at module level: asyncio and the installed-version read cost a child about 50 ms
+before the shim's few lines run. Each is imported where it is used.
+"""
+
+from __future__ import annotations
+
+import functools
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import asyncio
 
 # Version single-sourcing: pyproject.toml is the single source of
 # truth. An installed package reports its version via importlib.metadata; a raw
@@ -10,10 +20,31 @@ from importlib.metadata import version as _pkg_version
 # without `pip install -e .`) falls back to the literal below. The consistency
 # test (tests/test_version_consistency.py) asserts the three agree at release time.
 _FALLBACK_VERSION = "0.3.0"
-try:
-    __version__ = _pkg_version("personalclaw")
-except PackageNotFoundError:  # running from an uninstalled source tree
-    __version__ = _FALLBACK_VERSION
+
+
+@functools.cache
+def _version() -> str:
+    """The installed version, read once, on the first ``__version__`` a caller asks for."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("personalclaw")
+    except PackageNotFoundError:  # running from an uninstalled source tree
+        return _FALLBACK_VERSION
+
+
+if TYPE_CHECKING:
+    __version__: str
+else:
+    # Only at run time: mypy never sees this ``__getattr__``, so a misspelled
+    # ``personalclaw.<name>`` stays an error there and ``__version__`` stays a ``str``.
+    def __getattr__(name: str) -> str:
+        if name == "__version__":
+            return _version()
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    def __dir__() -> list[str]:
+        return sorted({*globals(), "__version__"})
 
 
 class _ShutdownEvent:
@@ -43,6 +74,8 @@ class _ShutdownEvent:
 
         Raises ``RuntimeError`` when called without a running event loop.
         """
+        import asyncio
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError as exc:

@@ -56,6 +56,45 @@ def test_shim_imports_no_other_core_module():
     assert out == "[]", f"shim import pulled in extra core modules: {out}"
 
 
+#: What the package root once imported for every child: about 50 ms a child, the shim's included.
+_WHAT_A_CHILD_PAID_FOR = ("asyncio", "importlib.metadata")
+
+
+def test_the_package_root_imports_neither_asyncio_nor_the_version_reader():
+    """🔴 ``-m personalclaw.<module>`` runs the package root first. It imported asyncio and read
+    the installed version, about 50 ms of each spawned child's start before the shim ran."""
+    code = (
+        "import sys, personalclaw;"
+        f"print(repr([m for m in {_WHAT_A_CHILD_PAID_FOR!r} if m in sys.modules]))"
+    )
+    env = {**os.environ, "PYTHONPATH": _SRC}
+    out = subprocess.check_output([sys.executable, "-P", "-c", code], env=env, text=True).strip()
+    assert out == "[]", f"importing the package root imported {out}"
+
+
+def test_the_shim_a_spawn_runs_imports_neither():
+    """The shim as ``spawn_shim_argv`` runs it, with ``-X importtime`` naming each module its
+    interpreter imports before it hands over to the command: the package root, which ``-m``
+    runs first, among them."""
+    cel = ResourceCeilings(nofile=1024, max_pids=256, max_rss_mb=0)
+    wrapped = spawn_shim_argv([sys.executable, "-c", "pass"], PROFILE_BUILD, ceilings=cel)
+    assert wrapped[1:4] == ["-P", "-m", "personalclaw._spawn_exec_shim"]
+    env = {**os.environ, "PYTHONPATH": _SRC}
+    done = subprocess.run(
+        [wrapped[0], "-X", "importtime", *wrapped[1:]], env=env, capture_output=True, text=True
+    )
+    assert done.returncode == 0, done.stderr
+    imported = {
+        line.rsplit("|", 1)[1].strip()
+        for line in done.stderr.splitlines()
+        if line.startswith("import time:") and line.count("|") == 2
+    }
+    assert "personalclaw" in imported, "the package root's imports were never read"
+    assert not imported & set(_WHAT_A_CHILD_PAID_FOR), sorted(
+        imported & set(_WHAT_A_CHILD_PAID_FOR)
+    )
+
+
 def test_shim_source_imports_only_stdlib():
     """The shim source references no ``personalclaw.*`` import (belt-and-braces AST check)."""
     import ast
