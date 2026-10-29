@@ -88,6 +88,7 @@ async def _delete_source(port: int, url: str) -> list[str]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("shipped_app_sources")
 async def test_first_run_boot_seeds_the_registry_as_a_removable_default(boot_home):
     """Booting a fresh home writes the registry row — and the Store can remove it."""
     runner, port = await _boot()
@@ -114,6 +115,7 @@ async def test_first_run_boot_seeds_the_registry_as_a_removable_default(boot_hom
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("shipped_app_sources")
 async def test_a_removal_made_in_the_store_survives_the_next_boot(boot_home):
     """The failure this change exists to prevent: a default that silently comes back."""
     runner, port = await _boot()

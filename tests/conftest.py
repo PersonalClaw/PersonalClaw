@@ -78,6 +78,17 @@ port_guard = importlib.import_module("port_guard")
 # it is imported. Proof: tests/test_no_test_git_reaches_the_machines_credential_helper.py.
 git_helper_guard = importlib.import_module("git_helper_guard")
 
+# ── No test reaches a remote repository ─────────────────────────────────
+# From here on a git that would reach a remote over the network (a clone of GitHub, a fetch of a
+# remote named by a URL) is refused before it starts, and the test that started it fails by name
+# (`_no_test_reaches_a_remote_git_repository`). Each test's own global git file sends github.com
+# nowhere, so a git a child of a test starts fails at once too. The shipped app sources, the
+# network sources a new home has, are off in every test
+# (`_no_test_lists_the_shipped_app_sources`).
+# Mechanism, the census mode and what it cannot see: tests/remote_git_guard.py.
+remote_git_guard = importlib.import_module("remote_git_guard")
+remote_git_guard.seal(os.environ["GIT_CONFIG_GLOBAL"])
+
 # ── The machine's container runtime stays out ───────────────────────────
 # From here on a container runtime, or the VM one runs in, that a test starts (docker, finch,
 # podman, nerdctl, limactl and the rest) is refused before it starts unless the run sets
@@ -411,6 +422,7 @@ def pytest_sessionfinish(session):
 def pytest_unconfigure(config):
     _LET_THE_KEYCHAIN_BACK_IN()
     git_helper_guard.close()
+    remote_git_guard.GUARD.undo()
     container_runtime.GUARD.undo()
     while _PUT_THE_PROGRAMS_BACK:
         _PUT_THE_PROGRAMS_BACK.pop()()
@@ -536,6 +548,41 @@ def _the_sandbox_check_answers_as_the_worker_found_it():
 
 
 @pytest.fixture(autouse=True)
+def _no_test_reaches_a_remote_git_repository():
+    """Fail the test that started a git that would reach a remote over the network. The git itself
+    was refused before it started: tests/remote_git_guard.py. In its census run
+    (``PCLAW_REMOTE_GIT=report``) nothing is refused, and each test that started one is listed in
+    ``reports/remote-git-<worker>.txt`` instead."""
+    yield
+    charged = remote_git_guard.GUARD.take()
+    if charged and remote_git_guard.reporting():
+        worker = os.environ.get("PYTEST_XDIST_WORKER", "main")
+        with open(Path("reports") / f"remote-git-{worker}.txt", "a", encoding="utf-8") as out:
+            out.writelines(f"{line}\n" for line in charged)
+    elif charged:
+        pytest.fail(remote_git_guard.failure(charged), pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_test_lists_the_shipped_app_sources(request, monkeypatch):
+    """The shipped app sources (``apps.bundled_source_enabled``'s PersonalClawApps and the
+    registry ``apps.registry_source_enabled`` seeds) are off in every test: listing either reaches
+    GitHub. A test about them asks for ``shipped_app_sources``, and still reaches no remote
+    (tests/remote_git_guard.py)."""
+    if "shipped_app_sources" not in request.fixturenames and not remote_git_guard.reporting():
+        from personalclaw.apps import catalog
+
+        monkeypatch.setattr(catalog, "bundled_source_enabled", lambda: False)
+        monkeypatch.setattr(catalog, "registry_source_enabled", lambda: False)
+
+
+@pytest.fixture
+def shipped_app_sources():
+    """The shipped app sources listed as a new home lists them, for a test about them. A remote
+    git is still refused (tests/remote_git_guard.py)."""
+
+
+@pytest.fixture(autouse=True)
 def _no_test_drives_the_container_runtime_unasked():
     """Fail the test that started a container runtime in a run that did not opt in. The runtime
     itself was refused before it started: tests/container_runtime.py."""
@@ -547,11 +594,14 @@ def _no_test_drives_the_container_runtime_unasked():
 
 @pytest.fixture(autouse=True)
 def _a_git_configuration_of_its_own(monkeypatch):
-    """This test's own global git file, in place of the developer's ``~/.gitconfig``: git makes it
-    on the first write, so a test that never writes one leaves nothing behind. A fixture that needs
-    a global setting of its own (an ssh stand-in) writes it to the file ``GIT_CONFIG_GLOBAL``
-    names, or points ``GIT_CONFIG_GLOBAL`` at its own."""
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", git_helper_guard.own_global_config())
+    """This test's own global git file, in place of the developer's ``~/.gitconfig``. It starts
+    by sending github.com to a folder that is not there (``remote_git_guard.seal``), in the
+    suite's own temporary folder. A fixture that needs a global setting of its own (an ssh
+    stand-in) writes it to the file ``GIT_CONFIG_GLOBAL`` names, or points ``GIT_CONFIG_GLOBAL``
+    at its own."""
+    monkeypatch.setenv(
+        "GIT_CONFIG_GLOBAL", remote_git_guard.seal(git_helper_guard.own_global_config())
+    )
 
 
 @pytest.fixture

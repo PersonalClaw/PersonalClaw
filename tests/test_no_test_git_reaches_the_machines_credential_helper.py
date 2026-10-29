@@ -96,7 +96,12 @@ def test_every_tests_git_reads_no_configuration_of_the_machines(tmp_path):
     ).stdout.splitlines()
 
     assert listed, "git listed nothing at all: the check below would be vacuous"
-    assert [line for line in listed if not line.startswith("command line:")] == [], listed
+    # The test's own global file holds only the seal that sends github.com nowhere
+    # (tests/remote_git_guard.py): the test's, never the machine's.
+    sealed = [line for line in listed if line.split("\t", 1)[0] == f"file:{own}"]
+    assert all("no-test-reaches-github" in line for line in sealed), sealed
+    rest = [line for line in listed if not line.startswith("command line:") and line not in sealed]
+    assert rest == [], listed
     helpers = _helpers(tmp_path)
     assert helpers and _effective(helpers) == [], helpers
 

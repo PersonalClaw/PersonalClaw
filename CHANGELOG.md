@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **When the browser suite's gateway stops answering, its log says where: after 20 s with no answer from its event loop, the gateway writes every thread's stack into `gateway.log`, and a failed run keeps that log with the reports CI uploads. A Python test still running at 120 s dumps every thread's stack too.**
 - **A test that fakes `subprocess.run` gets the sandbox check its worker found, whichever tests ran before it. The check of whether this computer can sandbox a command is asked once, as the suite starts, and put back as it answered before every test. A test that faked `subprocess.run` with a function that raises, and ran a command through the sandbox before any other test in its worker had asked, became the check's own runner: the check did not answer, and the command was refused. A test about the check clears it and asks again.**
+- **No test's git reaches a remote repository over the network. Every test runs with the shipped app sources off, so `available_catalog()` no longer clones GitHub's PersonalClawApps on its own (it timed a catalog test out at 30 s); a test that needs them turns them on with the `shipped_app_sources` fixture. A git the suite starts that would fetch, clone or push off this machine is refused before it starts and fails its test by name, and each test's global git file sends github.com to a folder that is not there, so a git a child program starts fails at once too. A test that needs a remote plants one on disk.**
 
 ## [0.3.0] — 2026-10-26
 

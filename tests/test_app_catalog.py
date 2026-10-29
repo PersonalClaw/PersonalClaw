@@ -84,6 +84,7 @@ def test_missing_native_app_resurfaces_as_available(tmp_path):
     assert "brave-search" in _store_available()
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_default_first_party_git_source_present():
     """The published first-party apps repo ships as a Store default (so a plain
     pip install surfaces first-party apps, uninstalled). It is not user-removable."""
@@ -354,6 +355,7 @@ def test_same_repo_with_and_without_dot_git_is_one_source(tmp_path):
     assert not [s for s in catalog.list_git_sources() if "cool-app" in s]
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_published_default_source_is_not_duplicated_by_a_user_add():
     """POST /api/apps/sources with the published repo
     URL typed WITHOUT '.git' appended a SECOND source for the same repo — a full extra
@@ -1162,6 +1164,7 @@ def _registry_fixture_repo(root: Path, *, app_name: str = "fixture-registry-app"
     return str(repo)
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_registry_source_seeds_only_behind_the_config_flag(tmp_path, monkeypatch):
     """The flag gates SEEDING: off ⇒ no source and NO marker (so a later on still seeds)."""
     monkeypatch.setattr(catalog, "_DEFAULT_GIT_SOURCES", ())
@@ -1186,6 +1189,7 @@ def test_registry_source_seeds_only_behind_the_config_flag(tmp_path, monkeypatch
     assert catalog.list_git_sources().count(url) == 1
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_registry_source_seeds_on_a_fresh_home_with_no_config_file(tmp_path, monkeypatch):
     """A fresh install has no `apps` key at all — absence must take the shipped default (on).
 
@@ -1196,6 +1200,7 @@ def test_registry_source_seeds_on_a_fresh_home_with_no_config_file(tmp_path, mon
     assert catalog.seed_default_git_sources() == [catalog._REGISTRY_GIT_SOURCE]
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_unreadable_flag_value_resolves_to_the_shipped_default(tmp_path, monkeypatch):
     """MEASURED platform behaviour, pinned so nobody re-derives it wrong.
 
@@ -1214,6 +1219,7 @@ def test_unreadable_flag_value_resolves_to_the_shipped_default(tmp_path, monkeyp
     assert catalog.seed_default_git_sources() == [catalog._REGISTRY_GIT_SOURCE]
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_removing_the_seeded_registry_source_survives_a_restart(tmp_path, monkeypatch):
     """Remove it, then RESTART: it must stay gone.
 
@@ -1247,6 +1253,7 @@ def test_removing_the_seeded_registry_source_survives_a_restart(tmp_path, monkey
     assert url not in out["listed"]
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_seeded_registry_is_a_default_the_user_may_remove(tmp_path, monkeypatch):
     """The two labelling bits the Store renders: "Default" yes, "unremovable" no."""
     url = catalog._REGISTRY_GIT_SOURCE
@@ -1259,6 +1266,7 @@ def test_seeded_registry_is_a_default_the_user_may_remove(tmp_path, monkeypatch)
     assert bundled in catalog.builtin_git_sources()
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_the_seeded_registry_source_is_actually_consulted(tmp_path, monkeypatch):
     """The Store fetches the seeded source's index and lists what it publishes.
 
@@ -1284,6 +1292,7 @@ def test_the_seeded_registry_source_is_actually_consulted(tmp_path, monkeypatch)
     assert "fixture-registry-app" in [e["name"] for e in cat["remoteApps"]]
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_seed_marker_survives_unrelated_source_edits(tmp_path, monkeypatch):
     """Every write path round-trips the marker. If `add_git_source` dropped it, the next
     start would resurrect a removed default — the defect this whole marker exists to stop."""
@@ -1297,6 +1306,7 @@ def test_seed_marker_survives_unrelated_source_edits(tmp_path, monkeypatch):
     assert catalog.seed_default_git_sources() == []
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_a_registry_listed_app_still_hits_the_scanner_gate(tmp_path, monkeypatch):
     """No new install path: an app the SEEDED REGISTRY lists installs through the one
     scanner-gated chokepoint, and a dangerous verdict is terminal even with confirm=True.
@@ -1439,6 +1449,7 @@ def _seed_registry_publishing(index_name: str, tmp_path, monkeypatch) -> list[st
     return [e["name"] for e in catalog.available_catalog().get("remoteApps", [])]
 
 
+@pytest.mark.usefixtures("shipped_app_sources")
 def test_the_seeded_registry_lists_only_under_cores_index_filename(tmp_path, monkeypatch):
     """The seeded default lists a registry-shaped row, and only when the index is named
     what core reads. The negative half is the measured gap; the positive half is what
