@@ -1,0 +1,1601 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A chat message and its parts (generated from personalclaw.turns)",
+  "$ref": "#/$defs/Message",
+  "$defs": {
+    "TextPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "text"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "ReasoningPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "reasoning"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "Ref": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "attachment",
+            "artifact",
+            "path",
+            "uri"
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "Block": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "image",
+            "audio",
+            "resource_link",
+            "resource"
+          ]
+        },
+        "ref": {
+          "$ref": "#/$defs/Ref"
+        },
+        "name": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "additionalProperties": false
+    },
+    "Withheld": {
+      "type": "object",
+      "properties": {
+        "by": {
+          "enum": [
+            "screen",
+            "policy",
+            "account_recovery"
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "held_ref": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "by",
+        "reason",
+        "held_ref"
+      ],
+      "additionalProperties": false
+    },
+    "ToolResult": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "received_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "raw_ref": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "original_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "structured": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "recovery_hints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "withheld": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Withheld"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "ToolPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "tool"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "family": {
+          "enum": [
+            "read",
+            "edit",
+            "command",
+            "search",
+            "fetch",
+            "browse",
+            "delegate",
+            "send",
+            "other"
+          ]
+        },
+        "input": {
+          "type": "string"
+        },
+        "risk": {
+          "enum": [
+            "safe",
+            "caution",
+            "destructive",
+            "unchecked"
+          ]
+        },
+        "effect": {
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "failed",
+            "refused",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        },
+        "tool_kind": {
+          "type": "string"
+        },
+        "via": {
+          "type": "string"
+        },
+        "input_obj": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_cut": {
+          "type": "boolean"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "why": {
+          "enum": [
+            "",
+            "stopped",
+            "steered"
+          ]
+        },
+        "decided_by": {
+          "type": "string"
+        },
+        "refused_by": {
+          "type": "string"
+        },
+        "refused_rule": {
+          "type": "string"
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "approval_part_id": {
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readiness": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "view": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ungated": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "tool_call_id",
+        "tool",
+        "title",
+        "family",
+        "input",
+        "risk",
+        "effect",
+        "state",
+        "started_at",
+        "ended_at"
+      ],
+      "additionalProperties": false
+    },
+    "ApprovalPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "approval"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "ask": {
+          "enum": [
+            "call",
+            "owner_allow"
+          ]
+        },
+        "tool_part_id": {
+          "type": "string"
+        },
+        "brief": {
+          "type": "object"
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "queued": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "approved",
+            "rejected",
+            "expired",
+            "cancelled"
+          ]
+        },
+        "grant_agent": {
+          "type": "string"
+        },
+        "deny_effect": {
+          "type": "string"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "decided_by": {
+          "enum": [
+            "",
+            "you",
+            "nobody"
+          ]
+        },
+        "grant_id": {
+          "type": "string"
+        },
+        "ended": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "request_id",
+        "ask",
+        "tool_part_id",
+        "brief",
+        "answers",
+        "queued",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "QuestionPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "question"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "question_id": {
+          "type": "string"
+        },
+        "tool_part_id": {
+          "type": "string"
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "asked_by": {
+          "type": "string"
+        },
+        "answerable": {
+          "type": "boolean"
+        },
+        "note": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "answered",
+            "skipped",
+            "expired",
+            "cancelled"
+          ]
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "ended": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "question_id",
+        "tool_part_id",
+        "questions",
+        "answerable",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "SignInPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "sign_in"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        },
+        "need": {
+          "enum": [
+            "sign_in",
+            "more_access"
+          ]
+        },
+        "subject": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tool_part_id": {
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "signed_in",
+            "skipped",
+            "expired",
+            "cancelled"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "request_id",
+        "need",
+        "subject",
+        "label",
+        "scopes",
+        "tool_part_id",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "NoticePart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "notice"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "notice": {
+          "enum": [
+            "stopped",
+            "cut_short",
+            "interrupted",
+            "lost_after_steps",
+            "retrying",
+            "agent_switched",
+            "model_switched",
+            "carried_on",
+            "prompt_blocked",
+            "continued",
+            "output_continued",
+            "context_full",
+            "info"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "level": {
+          "enum": [
+            "info",
+            "warn"
+          ]
+        },
+        "settings": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "notice",
+        "text",
+        "level"
+      ],
+      "additionalProperties": false
+    },
+    "FilePart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "file"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "ref": {
+          "$ref": "#/$defs/Ref"
+        },
+        "direction": {
+          "enum": [
+            "in",
+            "out"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "mime": {
+          "type": "string"
+        },
+        "size": {
+          "type": "integer"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "ref",
+        "direction",
+        "name",
+        "mime",
+        "size"
+      ],
+      "additionalProperties": false
+    },
+    "MentionPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "mention"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "target": {
+          "enum": [
+            "file",
+            "knowledge",
+            "prompt",
+            "artifact",
+            "skill",
+            "tool",
+            "app",
+            "agent"
+          ]
+        },
+        "ref": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "attached",
+            "reduced",
+            "refused",
+            "not_found",
+            "handed_off"
+          ]
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "target",
+        "ref",
+        "label",
+        "tokens",
+        "outcome"
+      ],
+      "additionalProperties": false
+    },
+    "PlanPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "plan"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "source": {
+          "enum": [
+            "native",
+            "acp"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "entries",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "HelperPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "helper"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "work": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "batch",
+            "background",
+            "cli"
+          ]
+        },
+        "state": {
+          "enum": [
+            "queued",
+            "waiting_on_owner",
+            "running",
+            "waiting_on_limit",
+            "completed",
+            "failed",
+            "stopped",
+            "declined",
+            "timed_out",
+            "step_limit",
+            "interrupted"
+          ]
+        },
+        "wait": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "type": "integer"
+        },
+        "again_of": {
+          "type": "string"
+        },
+        "follows_up": {
+          "type": "string"
+        },
+        "child_of": {
+          "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ended_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_activity": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "work",
+        "agent",
+        "task",
+        "mode",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "CompactionPart": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "compaction"
+        },
+        "id": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "trigger": {
+          "enum": [
+            "auto",
+            "owner",
+            "rebuild",
+            "idle"
+          ]
+        },
+        "form": {
+          "enum": [
+            "summary",
+            "digest"
+          ]
+        },
+        "model_ref": {
+          "type": "string"
+        },
+        "check": {
+          "enum": [
+            "",
+            "passed",
+            "retried",
+            "failed",
+            "skipped"
+          ]
+        },
+        "summarized": {
+          "type": "integer"
+        },
+        "head_through": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "through": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kept": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "text": {
+          "type": "string"
+        },
+        "account": {
+          "type": "array",
+          "items": {}
+        },
+        "sections": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "focus": {
+          "type": "string"
+        },
+        "restored": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pruned": {
+          "type": "integer"
+        },
+        "before_chars": {
+          "type": "integer"
+        },
+        "after_chars": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "at",
+        "updated_at",
+        "trigger",
+        "form",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "Source": {
+      "type": "object",
+      "properties": {
+        "source_thread": {
+          "type": "string"
+        },
+        "source_user": {
+          "type": "string"
+        },
+        "source_channel": {
+          "type": "string"
+        },
+        "source_address": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "input_tokens": {
+          "type": "integer"
+        },
+        "output_tokens": {
+          "type": "integer"
+        },
+        "cache_read_tokens": {
+          "type": "integer"
+        },
+        "cache_creation_tokens": {
+          "type": "integer"
+        },
+        "audio_input_tokens": {
+          "type": "integer"
+        },
+        "audio_output_tokens": {
+          "type": "integer"
+        },
+        "cost_usd": {
+          "type": "number"
+        },
+        "priced": {
+          "type": "boolean"
+        },
+        "local": {
+          "type": "boolean"
+        },
+        "duration_ms": {
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "MessageError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "settings": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "retry_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "additionalProperties": false
+    },
+    "MessageFacts": {
+      "type": "object",
+      "properties": {
+        "input_origin": {
+          "enum": [
+            "",
+            "typed",
+            "voice",
+            "call"
+          ]
+        },
+        "own_words": {
+          "type": "string"
+        },
+        "ran_prompt": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "original": {
+          "type": "string"
+        },
+        "ui_label": {
+          "type": "string"
+        },
+        "injected_label": {
+          "type": "string"
+        },
+        "pastes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "skills_used": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "image_delivery": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_delivery_reason": {
+          "type": "string"
+        },
+        "receipt": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "continues": {
+          "type": "string"
+        },
+        "merged": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "steered_into": {
+          "type": "string"
+        },
+        "after_step": {
+          "type": "integer"
+        },
+        "caused_by": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "root": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mode": {
+          "enum": [
+            "",
+            "full",
+            "inspect_only"
+          ]
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "from_outside": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input_flagged": {
+          "type": "boolean"
+        },
+        "memory_citations": {
+          "type": "array",
+          "items": {}
+        },
+        "context_fed": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "learned": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "turn_telemetry": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "finish_reason": {
+          "enum": [
+            "",
+            "length",
+            "incomplete"
+          ]
+        },
+        "model_substitution": {
+          "type": "string"
+        },
+        "file_changes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "step_models": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "read_untrusted": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "read_private": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "handed_off": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "checkpoint_turn": {
+          "type": "integer"
+        },
+        "checks": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instructions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "Message": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant"
+          ]
+        },
+        "ts": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/Source"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Part"
+          }
+        },
+        "dispatch": {
+          "enum": [
+            "",
+            "message",
+            "inject",
+            "subagent",
+            "goal",
+            "continue"
+          ]
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "attempt": {
+          "type": "integer"
+        },
+        "shown": {
+          "type": "boolean"
+        },
+        "settled_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "enum": [
+                "complete",
+                "stopped",
+                "error",
+                "interrupted"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "agent": {
+          "type": "string"
+        },
+        "model_ref": {
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MessageError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "facts": {
+          "$ref": "#/$defs/MessageFacts"
+        }
+      },
+      "required": [
+        "id",
+        "session",
+        "role",
+        "ts",
+        "source",
+        "parts"
+      ],
+      "additionalProperties": false
+    },
+    "EndingSummary": {
+      "type": "object",
+      "properties": {
+        "completed": {
+          "type": "integer"
+        },
+        "failed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolPart"
+          }
+        },
+        "unknown": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolPart"
+          }
+        },
+        "reads": {
+          "type": "integer"
+        },
+        "wrote_text": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "completed",
+        "failed",
+        "unknown",
+        "reads",
+        "wrote_text"
+      ],
+      "additionalProperties": false
+    },
+    "Part": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextPart"
+        },
+        {
+          "$ref": "#/$defs/ReasoningPart"
+        },
+        {
+          "$ref": "#/$defs/ToolPart"
+        },
+        {
+          "$ref": "#/$defs/ApprovalPart"
+        },
+        {
+          "$ref": "#/$defs/QuestionPart"
+        },
+        {
+          "$ref": "#/$defs/SignInPart"
+        },
+        {
+          "$ref": "#/$defs/NoticePart"
+        },
+        {
+          "$ref": "#/$defs/FilePart"
+        },
+        {
+          "$ref": "#/$defs/MentionPart"
+        },
+        {
+          "$ref": "#/$defs/PlanPart"
+        },
+        {
+          "$ref": "#/$defs/HelperPart"
+        },
+        {
+          "$ref": "#/$defs/CompactionPart"
+        }
+      ]
+    }
+  }
+}

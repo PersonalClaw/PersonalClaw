@@ -37,7 +37,7 @@ PYI_BUNDLE_DIR  := dist/personalclaw-backend
 
 .PHONY: help format lock lint test selection-map check gate test-e2e test-visual build clean harness-validate gates \
         asset-licenses asset-licenses-built \
-        mutation-check bundled-model sdk-snapshot apps-contract \
+        mutation-check bundled-model sdk-snapshot turns-schema apps-contract \
         serve serve-lan serve-fresh serve-web \
         web-build spa-check backend-build pyinstaller \
         desktop desktop-dist desktop-dist-linux \
@@ -211,6 +211,12 @@ asset-licenses-built:
 ## reviewed diff; it refuses a parameter whose type changed in place (see the script).
 sdk-snapshot:
 	$(PYTHON) scripts/sdk_signature_snapshot.py
+
+## turns-schema: rewrite schemas/turns.schema.json from src/personalclaw/turns.py, and
+## web/src/lib/generated/turns.ts from the schema. tests/test_turns_schema_current.py fails until you
+## do, so a change to a chat turn's shape is a reviewed diff in all three.
+turns-schema:
+	$(PYTHON) scripts/generate_turn_types.py
 
 ## apps-contract: run the first-party apps' SDK contract checks against this tree — what CI's
 ## `apps-contract` job runs on an SDK change. APPS_DIR is a PersonalClawApps checkout; BASE is the
