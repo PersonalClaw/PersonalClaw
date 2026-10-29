@@ -81,3 +81,75 @@ def test_the_cron_pair_passes_alone_in_a_new_process(tmp_path: Path) -> None:
         timeout=25,  # inside the suite's 30 s cap; about 3 s on a Mac
     )
     assert done.returncode == 0, done.stdout[-4000:] + done.stderr[-2000:]
+
+
+#: Loaded early (``-p``), before conftest: the user database names ``PC_PLANTED_REAL_HOME`` as this
+#: account's home, so the real-home guard watches it, and the sandbox reads this computer as Linux,
+#: so the settle runs Linux's namespace check, which starts a PersonalClaw child.
+_LINUX_UNDER_A_PLANTED_HOME = """
+import os, pwd, sys
+
+_real = pwd.getpwuid
+
+
+def _planted(uid):
+    fields = list(_real(uid))
+    fields[5] = os.environ["PC_PLANTED_REAL_HOME"]
+    return pwd.struct_passwd(fields)
+
+
+pwd.getpwuid = _planted
+
+from personalclaw import sandbox
+
+
+class _Linux:
+    platform = "linux"
+
+    def __getattr__(self, name):
+        return getattr(sys, name)
+
+
+sandbox.sys = _Linux()
+"""
+
+
+def test_the_settle_runs_where_home_is_the_real_one(tmp_path: Path) -> None:
+    """Main's CI contract runs the suite with ``$HOME`` the runner's own, and there the real-home
+    guard refused the settle's namespace child, so conftest did not import (run 40825648136). As
+    there: ``$HOME`` is what the user database names, ``PERSONALCLAW_HOME`` is unset, and the
+    contract's ``GITHUB_ACTIONS`` and ``CI`` are set; and the sandbox reads the computer as Linux.
+    """
+    real = tmp_path / "real-home"
+    real.mkdir()
+    plugins = tmp_path / "plugins"
+    plugins.mkdir()
+    (plugins / "pc_linux_under_a_planted_home.py").write_text(_LINUX_UNDER_A_PLANTED_HOME)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("PYTEST_", "PERSONALCLAW_"))}
+    env.update(
+        HOME=str(real),
+        PC_PLANTED_REAL_HOME=str(real),
+        GITHUB_ACTIONS="true",
+        CI="true",
+        PYTHONPATH=os.pathsep.join([str(plugins), str(_ROOT / "src"), str(_ROOT)]),
+    )
+    done = subprocess.run(
+        [
+            *nested_pytest.argv(tmp_path),
+            "-q",
+            "--color=no",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "pc_linux_under_a_planted_home",
+            "--collect-only",
+            "tests/test_workref.py",
+        ],
+        cwd=_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=25,
+    )
+    assert done.returncode == 0, done.stdout[-4000:] + done.stderr[-2000:]
+    assert not (real / ".personalclaw").exists()

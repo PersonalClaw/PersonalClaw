@@ -17,10 +17,20 @@ whatever the test before it cleared or faked. A test about the check itself clea
 
 An answer the settle could not get (the check did not answer in time) is put back as unknown, so
 the next call asks again, as it does outside the suite.
+
+Linux's check starts a PersonalClaw child (``python -m personalclaw._namespace_probe``), and the
+real-home guard refuses one given no home of its own (``real_home_guard``'s ``isolates``). No test
+has made one yet when the settle runs, and main's CI contract runs the head's suite with ``$HOME``
+the runner's own, so there the settle stopped conftest's import (run 40825648136). The settle gives
+the children it starts a scratch home of its own, as ``git_helper_guard.cores_git_refusal`` does,
+and puts ``PERSONALCLAW_HOME`` back as it found it.
 """
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 import time
 
 from personalclaw import sandbox
@@ -37,12 +47,22 @@ def settle() -> float:
     the seconds it took."""
     global _backend
     started = time.monotonic()
-    sandbox.reset_backend()
-    for name in FACTS:
-        fact = getattr(sandbox, name)
-        _answers[fact] = fact()
-    sandbox.detect_backend()
-    _backend = (sandbox._backend, sandbox._backend_config_mode)
+    chosen = os.environ.get("PERSONALCLAW_HOME")
+    home = tempfile.mkdtemp(prefix="pclaw-tests-settle-")
+    os.environ["PERSONALCLAW_HOME"] = home
+    try:
+        sandbox.reset_backend()
+        for name in FACTS:
+            fact = getattr(sandbox, name)
+            _answers[fact] = fact()
+        sandbox.detect_backend()
+        _backend = (sandbox._backend, sandbox._backend_config_mode)
+    finally:
+        if chosen is None:
+            os.environ.pop("PERSONALCLAW_HOME", None)
+        else:
+            os.environ["PERSONALCLAW_HOME"] = chosen
+        shutil.rmtree(home, ignore_errors=True)
     return time.monotonic() - started
 
 
