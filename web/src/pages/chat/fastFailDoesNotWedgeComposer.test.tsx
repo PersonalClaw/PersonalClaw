@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { runState, runningState } from '../../test/runState'
+import { receiptFor } from '../../test/chatReceipt'
 
 // ── A fast-failing FIRST turn wedged the composer on Stop, forever ────────────────────────────
 //
@@ -123,7 +124,7 @@ beforeEach(async () => {
   }
   FakeSocket.last = null
   h.detailCalls.length = 0
-  h.sendChat.mockReset().mockResolvedValue({ ok: true, session: 'chat-6-x' })
+  h.sendChat.mockReset().mockImplementation(receiptFor('started'))
   // Every detail read is parked; the test decides what it answers and WHEN.
   h.chatSessionDetail.mockReset().mockImplementation(
     () => new Promise((resolve) => { h.detailCalls.push({ resolve }) }),
@@ -235,9 +236,9 @@ describe('a mid-stream send the server ran as a fresh turn', () => {
     await waitFor(() => expect(primaryAction()).toBe('Steer — send into the running turn'))
 
     // The server gates on ITS OWN `session.running`. When the turn is already over it
-    // ignores the steer and dispatches a normal turn, answering with neither `steered`
-    // nor `queued` — the shape the client used to render nowhere.
-    h.sendChat.mockResolvedValue({ ok: true, session: 'chat-6-x' })
+    // ignores the steer and dispatches a normal turn, whose receipt says `started` — the
+    // outcome the client used to render nowhere.
+    h.sendChat.mockImplementation(receiptFor('started'))
     await user.click(screen.getByRole('button', { name: 'Steer — send into the running turn' }))
 
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())

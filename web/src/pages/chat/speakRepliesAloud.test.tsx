@@ -236,14 +236,16 @@ describe('Speak replies aloud', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: 'Queue — sent when this turn ends' }))
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
-    const ts = String(h.sendChat.mock.calls[0][2]?.client_ts)
+    const [, sentTo, , , , ids] = h.sendChat.mock.calls[0]
     view.unmount()
-    // Queued. The answer names no session, and the chat that sent the message has closed.
-    await act(async () => { answerTheSend({ ok: true, queued: true }) })
+    // Queued, and the chat that sent the message has closed before its receipt came back.
+    await act(async () => {
+      answerTheSend({ session: sentTo, message_id: ids.messageId, accepted_at: '2026-10-29T10:00:00+00:00', disposition: 'queued', turn_message_id: ids.messageId, duplicate: false })
+    })
     // Back on the chat, the queued message's own turn is running, and its reply finishes.
     await openWith({}, {
       run_state: runningState(), stream_seq: 0,
-      messages: [...earlier, { role: 'assistant', content: 'An earlier answer.' }, { role: 'user', content: 'And then this.', ts }],
+      messages: [...earlier, { role: 'assistant', content: 'An earlier answer.' }, { role: 'user', content: 'And then this.', ts: '2026-10-29T10:00:00+00:00', meta: { message_id: ids.messageId } }],
     })
     streamTheReply()
     await waitFor(() => expect(h.voiceSynthesize).toHaveBeenCalledWith(ANSWER, SESSION, expect.any(String)))

@@ -3,6 +3,7 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { hydrateTurns, turnText, type HistMsg } from './chatTypes'
 import { runState, runningState } from '../../test/runState'
+import { receiptFor } from '../../test/chatReceipt'
 
 // ── What she pasted goes with her message, whichever way it leaves the page ───────────────────
 //
@@ -96,7 +97,7 @@ beforeEach(async () => {
   localStorage.clear()
   FakeSocket.last = null
   h.detailCalls.length = 0
-  h.sendChat.mockReset().mockResolvedValue({ ok: true, steered: true })
+  h.sendChat.mockReset().mockImplementation(receiptFor('steered'))
   h.editResend.mockReset().mockResolvedValue({ ok: true, rewound: 2 })
   h.cancelQueued.mockReset().mockResolvedValue({ ok: true })
   h.chatSessionDetail.mockReset().mockImplementation(
@@ -170,9 +171,9 @@ describe('a message she sends into a running turn', () => {
     expect(await screen.findByText(`Steering into this answer: ${DRAFTED}`)).toBeTruthy()
 
     // The turn takes it: her bubble shows the block as its chip, as the chat shows it read back.
-    const ts = (meta as { client_ts: string }).client_ts
+    const ts = '2026-10-04T09:30:05.000Z'
     pushFrame('chat_segment', {})
-    pushFrame('chat_user_message', { content: SENT, ts, steer: true, pastes: PASTES })
+    pushFrame('chat_user_message', { content: SENT, ts, steer: true, pastes: PASTES, message_id: h.sendChat.mock.calls[0][5].messageId })
     expect(await screen.findByTitle(CHIP)).toBeTruthy()
     expect(screen.queryByText(/partition\("="\)/)).toBeNull()
     expect(readBack({ ...PASTED_ROW, ts, meta: { pastes: PASTES, steered: true } })).toBe(DRAFTED)
@@ -180,7 +181,7 @@ describe('a message she sends into a running turn', () => {
 
   it('a queued send carries what she pasted; the queue shows her words, and her bubble the chip', async () => {
     const user = userEvent.setup()
-    h.sendChat.mockResolvedValue({ ok: true, queued: true })
+    h.sendChat.mockImplementation(receiptFor('queued'))
     page({ seed: TYPED })
     await answerDetail({ messages: [ASKED_ROW], run_state: runningState({ steerable: false }) })
     pasteIntoComposer(PASTE)
@@ -204,7 +205,7 @@ describe('a message she sends into a running turn', () => {
   it('the queue editor gives her message back with its paste, beside the draft she is writing', async () => {
     const user = userEvent.setup()
     const DRAFT = 'And rename the module.'
-    h.sendChat.mockResolvedValue({ ok: true, queued: true })
+    h.sendChat.mockImplementation(receiptFor('queued'))
     page({ seed: DRAFT })
     await answerDetail({ messages: [ASKED_ROW], run_state: runningState({ steerable: false }) })
     pushFrame('queue_push', { content: SENT, ts: '2026-10-04T09:31:00.000Z', queue_id: 'q-1', pastes: PASTES })
@@ -227,7 +228,7 @@ describe('a message she sends into a running turn', () => {
     const user = userEvent.setup()
     const DRAFT = 'And this query too: '
     const QUERY = 'SELECT name\nFROM parsers\nWHERE broken\nORDER BY name;'
-    h.sendChat.mockResolvedValue({ ok: true, queued: true })
+    h.sendChat.mockImplementation(receiptFor('queued'))
     page({ seed: DRAFT })
     await answerDetail({ messages: [ASKED_ROW], run_state: runningState({ steerable: false }) })
     pasteIntoComposer(QUERY)

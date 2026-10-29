@@ -460,14 +460,14 @@ Status: planned
 - **Errors** use the envelope of §1.1. **Successes on new routes** take one shape: a collection answers `{items: [...], next_cursor: str |
   null}`; every time is a UTC instant field named `*_at`; a lifecycle is `state`; how one operation ended
   is `outcome`. Existing routes keep their shapes unless a section here changes them.
-- **The API version.** `API_VERSION` and `MIN_SUPPORTED_API_VERSION` are both 1
-  (`src/personalclaw/api_version.py:70, :75`), negotiated through `X-PersonalClaw-API-Version` (`:81`),
-  with the bump rule at `:15-42`. The typed turn removes socket frames and changes the session detail's
-  `messages`, and receipts remove `meta.client_ts`: the first change of this release that breaks the wire bumps
-  `API_VERSION` to 2, and raises `MIN_SUPPORTED_API_VERSION` to 2 in the same change
-  (the dashboard ships with its gateway). Later breaking changes in the same release do not bump again;
-  each says so in its CHANGELOG headline. A new route, a new optional field or an appended enum member
-  never bumps.
+- **The API version.** `API_VERSION` and `MIN_SUPPORTED_API_VERSION` (`src/personalclaw/api_version.py`),
+  negotiated through `X-PersonalClaw-API-Version`, with the bump rule in that module's docstring. Version 2
+  shipped in 0.3.0 with the run state. Receipts (§3.9) are this release's first change that breaks the
+  wire: they replace `POST /api/chat`'s answers and remove `meta.client_ts`, and set both numbers to 3 in
+  the same change (the dashboard ships with its gateway). The typed turn's removal of socket frames and its
+  change to the session detail's `messages` come later in the same release and do not bump again; each
+  says so in its CHANGELOG headline. A new route, a new optional field or an appended enum member never
+  bumps.
 - **Socket frames** are `{type, data}` on the one `/api/ws` socket (`web/src/lib/useChatSocket.ts:4, :14-38`).
   New frame types are `lowercase_snake`, as every frame today is; dotted names belong to the app platform
   events of #3857, a different vocabulary. Every frame about one conversation names it in `data.session`
@@ -935,7 +935,7 @@ Status: planned
 | `image_delivery`, `image_delivery_reason` | user | `{<name>: image \| text}`, str | `meta.image_delivery` (`chat_runner.py:1441`) |
 | `receipt` | user | `{accepted_at, disposition, body_digest}` | none (§3.9) |
 | `continues` | user | message id | none (§5.5) |
-| `merged` | user | `[{message_id, source}]` | the queued messages one turn ran, on the message a merge drain made: `meta.queued_from` |
+| `merged` | user | `[{message_id, source}]` | the queued messages one turn ran, on the message a merge drain made: `meta.merged` (`meta.queued_from` on a row written before it) |
 | `steered_into` | user | message id | on a steer, the user message of the turn it joined (the landed steer fix writes a steer row where the turn took it) |
 | `after_step` | user | int | on a steer, the step it joined after; on a compaction part's turn, where it sat (§3.6) |
 | `caused_by` | user | `{work, message_id}` | on a turn the owner did not type (a helper's report, an inject, a goal cycle, a continuation, a trigger's run, a door's turn): the work and message that caused it, set from the spawner's running turn (`turn_lineage.current()`), never from a tool argument |
@@ -1443,13 +1443,15 @@ from which the gateway composes the user message's text and `facts.comments` or 
 and `widget_error {slug, title, error}`, a widget's failure sent for the agent to fix.
 
 Delivery stays `queue_mode` (`steer`, `followup`, `collect`, `interrupt`, with the mid-turn policy as the
-default, `chat_handlers.py:298-307`); the composer's queue-or-steer choice sends it (decision 19). A steer
-carries `expected_message_id`, the running turn's user message as the page shows it
-(`run_state.turn.message_id`). With it, `take_in` answers, recording nothing: no turn running, `409
-no_running_turn` (the page offers Send); another turn running, `409 turn_not_current` with `error_extra
-{expected, actual}` (the page offers Queue); a turn that takes no steer (`/compact`, a review, a command the
-runtime runs, a turn whose result schema the steer does not carry), `409 turn_not_steerable {kind}`.
-Without it (scripts), today's rule holds.
+default, `chat_handlers.api_chat`); the composer's queue-or-steer choice sends it (decision 19). A steer
+carries `expected_message_id`, the user message that started the running turn as the page knows it (the
+receipt's `turn_message_id`, a row's `meta.message_id`, a `chat_user_message` frame's `message_id`;
+`run_state.turn.message_id` once §4 serves it). With it, `take_in` answers, recording nothing: no turn
+running, `409 no_running_turn` (the page offers Send); another turn running, `409 turn_not_current` with
+`error_extra {expected, actual}` (the page offers Queue); a turn that takes no steer, `409
+turn_not_steerable {kind}`: `compact` (a `/compact` its runtime runs) or `command` (a slash word its
+runtime runs itself), with a review and a turn whose result schema the steer does not carry joining as
+they are built. Without it (scripts), today's rule holds.
 
 **Every door takes a message in one way.** `chat_intake.take_in(state, session, body, *, door) -> Receipt
 | Refusal` records every message any door puts into a chat (the dashboard, a channel's intake, a scheduled
@@ -1461,7 +1463,8 @@ and checks for a duplicate and records in one synchronous step, so two identical
 message. A send whose agent mention cannot hand off answers `409 handoff_refused` and records nothing
 (§3.3).
 
-**Receipt** (WS mode: the 200 body; SSE mode: the first event, named `receipt`):
+**Receipt** (WS mode: the 200 body; SSE mode: the first event, named `receipt`, of a message that starts a
+turn, and the 200 body of one that does not):
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -1475,10 +1478,14 @@ message. A send whose agent mention cannot hand off answers `409 handoff_refused
 
 **Duplicates** (decision 6): the id is unique in the chat for its life, so a repeat is found in the chat
 itself (its user messages, its steers, its queue, its merged messages and its withdrawn queue items), with
-no store of its own. Same id, same body digest (`canonical_digest({message, agent, queue_mode, meta})`,
-§2.4, over the text as sent and the client's meta): `200` with the original receipt and
-`duplicate: true`, and nothing runs. Same id, other digest: `409 message_id_conflict`. A malformed id:
-`400 invalid_message_id`.
+no store of its own. The chat's rows, steers and queue are read once, when it is first sent to, and every
+take-in after that is kept beside the chat while the gateway runs, which is what keeps a withdrawn queue
+item taken; a message still queued when the gateway restarts is lost with the queue (§3.7 keeps it), and a
+repeat of it after the restart runs as new. Same id, same body digest (`canonical_digest({message, agent,
+queue_mode, meta})`, §2.4, over the text as sent, before the dictation note, `queue_mode` as sent, and the
+client's meta as the door keeps it: less `client_ts`, `own_words`, `ran_prompt` and `steered`, with
+`pastes` as validated): `200` with the original receipt and `duplicate: true`, and nothing runs. Same id,
+other digest: `409 message_id_conflict`. A malformed id: `400 invalid_message_id`.
 
 **The turn document** (`GET /api/chat/sessions/{session}/turns/{message_id}`; `404 turn_not_found`; a
 steer's or a merged message's id answers the turn it ran in):
@@ -1574,7 +1581,7 @@ the conversion is the id the converted record keeps.
 | `user` with the `auto-go` class (the gateway's turn on its helpers' failures, written before helper reports had a row of their own) | a user message with `dispatch: message`, as its saved row reads once the class is gone; today's history hands it to a model as the owner's |
 | a user row's `meta.files` | an entry under an attachment folder: a `file` part (`direction: in`, `ref.kind: attachment`); any other entry, a workspace file the owner picked: a `mention` part (`target: file`, `outcome: attached`) |
 | a user row's `meta.knowledge`, `meta.artifacts` | `mention` parts (`target` `knowledge` or `artifact`, `label` the id, `tokens: null`, `outcome: attached`) |
-| a `user` row with `meta.steered` (a steer the running turn took); a merged row's `meta.queued_from`; an `inject` row's `cls.cronLabel`; a `subagent` row's `meta.asked_for_by`; `meta.original`, `meta.ui_label`, `meta.file_changes` | a steer message, with `steered_into` and `after_step` (how many of the answer's text parts came before it, since a row records no step); the facts of §3.3 of the same meaning |
+| a `user` row with `meta.steered` (a steer the running turn took); a merged row's `meta.merged` (`meta.queued_from` on one written before it); a row's `meta.receipt`; an `inject` row's `cls.cronLabel`; a `subagent` row's `meta.asked_for_by`; `meta.original`, `meta.ui_label`, `meta.file_changes` | a steer message, with `steered_into` and `after_step` (how many of the answer's text parts came before it, since a row records no step); the facts of §3.3 of the same meaning |
 | `assistant` (with `variants`, `variant_idx`) | assistant attempts of one parent, `shown` from `variant_idx` |
 | `tool` with `meta.tool_call_id` | a tool part: `done` and `ok` not false → `completed`; `ok: false` → `failed`; not done in a turn that ended → `unknown` when its risk is not known to be safe, else `cancelled`; risk not recorded → `unchecked`, `effect: write` (fail closed). It has no `step`, and its `result.text` is the 8,000 characters the row kept, `received_length: null` |
 | a `learned` stamp's items | `facts.learned` items with `state: kept` |

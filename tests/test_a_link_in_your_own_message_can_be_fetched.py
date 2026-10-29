@@ -462,7 +462,7 @@ async def test_a_message_you_send_while_a_turn_runs_grants_its_link(tmp_path):
             resp = await client.post(
                 "/api/chat?ws=1", json={"session": "busy", "message": f"then read {url}"}
             )
-            assert (await resp.json()).get("queued") is True
+            assert (await resp.json())["disposition"] == "queued"
         out = await web_fetch(url, session_key=_turn_key("busy"))
         assert site.hits == ["/releases"], out.error
     session.task.cancel()

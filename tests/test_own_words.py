@@ -244,7 +244,7 @@ async def test_a_send_that_replaces_the_running_answer_keeps_her_words(tmp_path,
         with patch("personalclaw.dashboard.chat_handlers.sel", MagicMock()):
             async with TestClient(TestServer(_make_app(state))) as client:
                 resp = await client.post("/api/chat", json={"session": "s1", **body})
-                assert (await resp.json()).get("cancelled_and_replaced") is True
+                assert (await resp.json())["disposition"] == "replaced"
     finally:
         session.task.cancel()
 

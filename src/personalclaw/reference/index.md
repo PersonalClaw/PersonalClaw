@@ -1,6 +1,6 @@
 # PersonalClaw Agent Reference
 
-Offline API/tool reference for PersonalClaw (manifest apiVersion 2). Generated from the live registries — the same source as `GET /api/manifest`. Load the `pclaw-api` skill for the driving methodology; this reference is the exact-signature lookup it points to.
+Offline API/tool reference for PersonalClaw (manifest apiVersion 3). Generated from the live registries — the same source as `GET /api/manifest`. Load the `pclaw-api` skill for the driving methodology; this reference is the exact-signature lookup it points to.
 
 ## How to use this (orient, then drill)
 

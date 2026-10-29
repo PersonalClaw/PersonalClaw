@@ -351,13 +351,19 @@ async def test_a_superseded_turn_ends_stopped(tmp_path, monkeypatch):
     state = _stop_state(tmp_path, "soft")
     state.broadcast_ws = MagicMock()
     session = state.get_or_create_session("superseded-turn")
+    session.task = asyncio.ensure_future(asyncio.sleep(999))  # its turn runs
 
-    with patch.object(chat_handlers, "sel", MagicMock()):
-        resp = await chat_handlers._maybe_cancel_and_replace(
-            state, session, "do this instead", None
-        )
+    try:
+        with patch.object(chat_handlers, "sel", MagicMock()):
+            async with TestClient(TestServer(_make_app(state))) as client:
+                resp = await client.post(
+                    "/api/chat?ws=1", json={"message": "do this instead", "session": session.key}
+                )
+                assert resp.status == 200, await resp.text()
+                assert (await resp.json())["disposition"] == "replaced"
+    finally:
+        session.task.cancel()
 
-    assert resp is not None
     [done] = _frames(state, "chat_done")
     assert done["outcome"] == "stopped"
     assert done["superseded"] is True

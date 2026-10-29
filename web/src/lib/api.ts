@@ -13,6 +13,7 @@ import type { WorkPhase } from './workPhase'
 import { isSignedOutRefusal, reportSignedOut, signedOutState } from './signedOut'
 import { basedOn, type Revisioned } from './staleWrite'
 import { activePersonaTheme } from '../design/personalities'
+import { newMessageId } from './messageIds'
 
 // Every request helper below spreads `SK`, so folding the API-version declaration
 // into it is the SPA's ONE declaration site: the number lives only in
@@ -1499,6 +1500,19 @@ export interface RoutingSuggestion {
   specialty: string
   score: number
   method: string
+}
+/** What a message sent into a chat became (`POST /api/chat`, `dashboard/chat_intake.py`): the
+ *  message's id, when the chat took it in, what became of it, and the message whose turn it runs
+ *  in (its own, or the running turn's for a steer). `duplicate` is true when the chat already took
+ *  this id with the same words: nothing ran again. */
+export interface ChatReceipt {
+  session: string
+  message_id: string
+  accepted_at: string
+  disposition: 'started' | 'steered' | 'queued' | 'replaced'
+  turn_message_id: string
+  duplicate: boolean
+  routing_suggestion?: RoutingSuggestion
 }
 /** A chat's run state: what its turn is doing and how its last one ended — the last `work_phase`
  *  payload the gateway sent it (`dashboard/chat_phase.py`), served as `run_state` on the chat list
@@ -9445,9 +9459,15 @@ export const api = {
   // BY this send remounts ChatSession (closing its socket) before the frame arrives — so
   // the WS copy is unreachable exactly on a new chat's first message (issue 569). A
   // response is causally after its request, so this copy cannot be raced.
-  sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string) => {
+  //
+  // Every send names its message (`ids.messageId`, minted when the caller names none), and a steer
+  // the turn it is for (`ids.expectedMessageId`): the gateway runs a message once per id, and a
+  // steer whose turn is no longer the running one is refused with nothing kept (`no_running_turn`,
+  // `turn_not_current`, `turn_not_steerable`).
+  sendChat: (message: string, session: string, meta?: object, queue_mode?: string, input_origin?: string, ids?: { messageId?: string; expectedMessageId?: string }) => {
     const color_theme = activePersonaTheme()
-    return post<{ ok: boolean; session?: string; queued?: boolean; steered?: boolean; routing_suggestion?: RoutingSuggestion }>('/api/chat?ws=1', { message, session, meta, ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}), ...(color_theme ? { color_theme } : {}) })
+    const client_message_id = ids?.messageId ?? newMessageId()
+    return post<ChatReceipt>('/api/chat?ws=1', { message, session, meta, client_message_id, ...(ids?.expectedMessageId ? { expected_message_id: ids.expectedMessageId } : {}), ...(queue_mode ? { queue_mode } : {}), ...(input_origin ? { input_origin } : {}), ...(color_theme ? { color_theme } : {}) })
   },
   // Cancel a still-pending queued message (mid-stream FIFO) by its queue id.
   cancelQueued: (session: string, queueId: string) => del(`/api/chat/sessions/${encodeURIComponent(session)}/queue/${encodeURIComponent(queueId)}`),

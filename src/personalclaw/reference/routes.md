@@ -142,7 +142,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `DELETE /api/channels/{name}/owner/pairing` — cancel the outstanding owner code.
 - `POST /api/channels/{name}/owner/pairing` — mint the owner's code and return it once.
 - `POST /api/channels/{name}/test` — active probe (e.g. Slack auth.test).
-- `POST /api/chat` — send message to a session, stream response via SSE.
+- `POST /api/chat` — send a message to a chat; answered by its receipt, then its turn's stream.
 - `GET /api/chat/boundary` — the sandbox and the reach of a chat's next turn.
 - `GET /api/chat/folders` — list all project folders.
 - `POST /api/chat/folders` — create a project folder.

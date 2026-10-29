@@ -84,6 +84,6 @@ describe('the live send path (source-asserted — ChatPage is not mountable here
   it('sends the MACHINE text to the model, never the label', () => {
     // `llmText` is the content the backend stores and the model reads. If this became
     // `uiLabel`, the transcript would look right and the agent would receive a bare label.
-    expect(chatSource).toContain('await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)')
+    expect(chatSource).toContain('await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin, { messageId })')
   })
 })

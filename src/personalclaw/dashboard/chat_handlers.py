@@ -7,7 +7,6 @@ import logging
 import os
 import time
 import uuid
-from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,7 +23,7 @@ from personalclaw.config.loader import (
     resolve_agent_bindings,
     resolve_session_workspace,
 )
-from personalclaw.dashboard import chat_phase, headless_run, running_turn
+from personalclaw.dashboard import chat_intake, chat_phase, headless_run, running_turn
 from personalclaw.dashboard.approval_state import (
     SESSION_APPROVAL_ACTIONS,
     _mark_permission_resolved,
@@ -118,7 +117,20 @@ async def _run_chat_scoped(state: DashboardState, session: _ChatSession, message
 
 
 async def api_chat(request: web.Request) -> web.StreamResponse:
-    """POST /api/chat — send message to a session, stream response via SSE."""
+    """POST /api/chat — send a message to a chat; answered by its receipt, then its turn's stream.
+
+    The message names its id (``client_message_id``: ``msg_`` and 26 letters and digits; the
+    gateway mints one when it names none), and the chat takes it in once
+    (``chat_intake.take_in``). The answer is its receipt, ``{session, message_id, accepted_at,
+    disposition, turn_message_id, duplicate, routing_suggestion?}``: the 200 body with ``?ws=1``
+    or for a message that starts no turn, else a stream's first event (``event: receipt``). A send
+    of an id the chat took, with the same words, answers that receipt with ``duplicate: true`` and
+    runs nothing; with other words, ``409 message_id_conflict``. Any other shape of id is ``400
+    invalid_message_id``. A steer (``queue_mode: steer``) may name the turn it is for
+    (``expected_message_id``), and is refused, keeping nothing, when that turn is not the one
+    running: ``409 no_running_turn``, ``turn_not_current`` (with ``expected`` and ``actual``) or
+    ``turn_not_steerable`` (with ``kind``).
+    """
     state: DashboardState = request.app["state"]
     try:
         body = await request.json()
@@ -137,26 +149,24 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         # converges on rather than the one it is retiring.
         return json_error("invalid_request", message="message must be a string", status=400)
     message = raw_message.strip()
+    # The message's id, and for a steer the turn it is for: a shape that is no message id is
+    # refused before anything of the send is kept (`chat_intake`).
+    message_id = chat_intake.message_id_of(body)
+    if isinstance(message_id, chat_intake.Refusal):
+        return message_id.response()
+    expected = chat_intake.expected_id_of(body)
+    if isinstance(expected, chat_intake.Refusal):
+        return expected.response()
     agent = body.get("agent", "")
     session_name = body.get("session")
     color_theme = body.get("color_theme", "")
     user_meta = body.get("meta")  # knowledge/files/pastes metadata from frontend
     if not isinstance(user_meta, dict):
         user_meta = None
-    # Client-supplied message timestamp: the FE stamps its optimistic user turn with
-    # this and we store the SAME ts here, so the turn's ts matches the persisted
-    # message immediately (we don't broadcast the user echo). Without it a live turn
-    # has no ts until reload, which broke Edit & resend's by-ts lookup. Validate as
-    # ISO-8601; pop it so it doesn't linger in persisted meta.
-    client_ts = ""
     if user_meta:
-        _raw_ts = user_meta.pop("client_ts", "")
-        if isinstance(_raw_ts, str) and _raw_ts:
-            try:
-                datetime.fromisoformat(_raw_ts)
-                client_ts = _raw_ts
-            except (ValueError, TypeError):
-                client_ts = ""  # malformed → fall back to server-stamped ts
+        # A row's time is when the chat took its message in, which its receipt says; a page's own
+        # clock for it is not kept (the page keys its row by the message's id).
+        user_meta.pop("client_ts", None)
         # Which of a row's words its sender typed, the saved prompt that ran in their place, and
         # that a running turn took it as a steer, are said by the code that composes the row, never
         # by the send: from a client they would let a message teach what it does not say, or show
@@ -178,6 +188,8 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         return json_error("paste_not_expanded", status=400, error_extra={"paste": _unsent})
     # The words she typed or said, before the dictation note below is added to them.
     said = message
+    # What this send said, as a repeat of it is told apart from another message of the same id.
+    digest = chat_intake.body_digest(said, str(agent), str(body.get("queue_mode") or ""), user_meta)
     # A dictated turn is honest about where it came from.
     # ``input_origin`` is a closed set of one: anything else is treated as typed.
     # The disclaimer goes on the message the runner sees (so the model
@@ -251,6 +263,29 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     # already held to the app's own by the permission middleware (`ROUTE_AUTHZ["POST /api/chat"]`),
     # before anything above loaded it.
     session = state.get_or_create_session(session_name, created_by_app=request.get("app", ""))
+    # A message the chat took already is answered as it was, and changes nothing here; one that a
+    # send still on its way is taking in is answered once that send is (`chat_intake.repeat_of`).
+    if (_repeat := await chat_intake.repeat_of(session, message_id, digest)) is not None:
+        return _repeat.response()
+    if not message:
+        return web.json_response({"error": "message is required"}, status=400)
+
+    # The pasted blocks as the message holds them — read before the redaction below rewrites
+    # the meta copy — so routing and learning can tell what was typed from what was pasted.
+    _pasted = pasted_blocks(user_meta)
+    # And as her row keeps them, masked as the meta of a message sent between turns is, for a
+    # message that steers the running turn or waits in its queue: her bubble shows each as its chip.
+    _kept_pastes = _redact_meta({PASTES: pastes_of(user_meta)})[PASTES]
+    # Her own words, recorded on the turn's row only when the message holds more than them (a
+    # pasted block, the dictation note): what every learning path reads of it (``own_words``).
+    _own = typed_text(said, _pasted)
+    _own_recorded = _own if _own != message else None
+    heard = (user_meta or {}).get("input_origin") == "voice"
+    _labelled = bool((user_meta or {}).get("ui_label"))
+    if user_meta:
+        user_meta = _redact_meta(user_meta)
+    if _own_recorded is not None:
+        user_meta = {**(user_meta or {}), OWN_WORDS: _own_recorded}
 
     if session.agent not in (None, ""):
         # Session already has an agent — only reject explicit mismatches (non-empty different agent).  # noqa: E501
@@ -270,114 +305,85 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
                 {"error": "cannot set agent on running session"},
                 status=409,
             )
-        await running_turn.move_to_agent(state, session, agent)
-        _emit_agent_assignment(session.key, agent)
+        # The one wait before the message is taken in: a repeat sent meanwhile waits for this send.
+        release = chat_intake.hold(session, message_id, digest)
+        try:
+            await running_turn.move_to_agent(state, session, agent)
+            _emit_agent_assignment(session.key, agent)
+        except BaseException:
+            release()
+            raise
     else:
         # No agent on session, no agent in request — nothing to enforce.
         pass
 
+    # How a message sent while a turn runs joins it: the request wins over the policy, which only
+    # supplies the default for a request that states none (steer: at the running turn's next model
+    # boundary, when its runtime takes steers; followup and collect: queued after it). Under
+    # `cancel_and_replace` a rapid follow-up stops the running turn instead, and runs next.
+    running = session.running
+    mode = str(body.get("queue_mode") or (_default_mid_turn_mode() if running else ""))
+    taken = chat_intake.take_in(
+        state,
+        session,
+        chat_intake.Intake(
+            message=message,
+            message_id=message_id,
+            body_digest=digest,
+            queue_mode=mode.strip().lower(),
+            expected_message_id=expected,
+            replaces=running and _replaces(session),
+            meta=user_meta,
+            own_words=_own_recorded,
+            pastes=_kept_pastes,
+            heard=heard,
+        ),
+    )
+    if isinstance(taken, chat_intake.Refusal) or taken.duplicate:
+        return taken.response()
+    # What a message the chat took sets, once, however it joins the chat: the look and reply style
+    # its send chose, and its links, the user's for this chat's web_fetch (not a widget action's).
     if "color_theme" in body:
         session.color_theme = color_theme
     if reply_style is not None:
         session.reply_style = reply_style
-
-    # The user's message is taken in here, whether it runs now, steers the running turn or waits
-    # in the queue: the links written or pasted into it are the user's for this chat's web_fetch.
-    # Not a widget action's: its payload is what the agent's widget wrote, sent under a label.
-    if message and not (user_meta or {}).get("ui_label"):
+    if not _labelled:
         take_in_the_users_links(request.get("app", ""), session.key, message)
-
-    # The pasted blocks as the message holds them — read before the redaction below rewrites
-    # the meta copy — so routing and learning can tell what was typed from what was pasted.
-    _pasted = pasted_blocks(user_meta)
-    # And as her row keeps them, masked as the meta of a message sent between turns is, for a
-    # message that steers the running turn or waits in its queue: her bubble shows each as its chip.
-    _kept_pastes = _redact_meta({PASTES: pastes_of(user_meta)})[PASTES]
-    # Her own words, recorded on the turn's row only when the message holds more than them (a
-    # pasted block, the dictation note): what every learning path reads of it (``own_words``).
-    _own = typed_text(said, _pasted)
-    _own_recorded = _own if _own != message else None
-
-    if session.running:
-        # Cancel-and-replace: when the resolved mid-turn
-        # policy is cancel_and_replace, a rapid follow-up to this interactive session
-        # cancels the in-flight answer and the new message is delivered as the next
-        # turn via the EXISTING queue-drain-on-turn-end path — no new dispatch. The
-        # webui chat is always an interactive origin, so eligibility reduces to policy
-        # + a debounce guard (a burst produces ONE cancel + the last message). Returns
-        # a response when it handled the message; None to fall through to steer/queue.
-        if message:
-            _cr = await _maybe_cancel_and_replace(
-                state, session, message, _own_recorded, pastes=_kept_pastes
-            )
-            if _cr is not None:
-                return _cr
-        # Mid-run handling — 4 modes:
-        #   steer: inject at the next model boundary of the RUNNING turn (only when
-        #     that turn's runtime exposes the drain seam); followup: queue for after
-        #     the turn; collect: queue (coalesced later); interrupt: /interrupt.
-        #
-        # The request wins over the policy: an explicit `queue_mode`
-        # is honored as sent, and `mid_turn_policy` only supplies the DEFAULT for a
-        # request that doesn't state one. So the platform default is a floor, never
-        # an override.
-        mode = str(body.get("queue_mode") or _default_mid_turn_mode()).strip().lower()
-        # Her row is written when the turn takes it (`running_turn.take_steer`), with the time she
-        # sent it and what this send says of her words: heard or typed, and which she typed.
-        if (
-            message
-            and mode == "steer"
-            and running_turn.steer(
-                state,
-                session,
-                message,
-                ts=client_ts,
-                own_words=_own_recorded,
-                heard=(user_meta or {}).get("input_origin") == "voice",
-                pastes=_kept_pastes,
-            )
-        ):
-            _c, _ = redact_exfiltration_urls(message)
-            _c, _ = redact_credentials(_c)
-            state.broadcast_ws(
-                "activity_event",
-                {
-                    "session": session.key,
-                    "kind": STEER_ACTIVITY_KIND,
-                    "text": f"Steering: {_redact_for_display(_c)[:80]}",
-                },
-            )
-            return web.json_response({"ok": True, "steered": True})
-        # followup / collect / steer-when-not-native → queue as before.
-        if message:
-            qid = session.queue_append(
-                message, own_words=_own_recorded, pastes=_kept_pastes, attended=True
-            )
-            state.broadcast_ws(
-                "queue_push",
-                {
-                    "session": session.key,
-                    **shown(session.queued(qid)),
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "queue_id": qid,
-                },
-            )
-            chat_phase.restate(state, session)  # one more message waits behind the turn
-        return web.json_response({"ok": True, "queued": True})
-
-    if not message:
-        return web.json_response({"error": "message is required"}, status=400)
+    if taken.disposition == chat_intake.REPLACED:
+        chat_phase.restate(state, session)  # one more message waits behind the turn
+        return (await _replace(state, session, taken)).response()
+    if taken.disposition == chat_intake.STEERED_IN:
+        _c, _ = redact_exfiltration_urls(message)
+        _c, _ = redact_credentials(_c)
+        state.broadcast_ws(
+            "activity_event",
+            {
+                "session": session.key,
+                "kind": STEER_ACTIVITY_KIND,
+                "text": f"Steering: {_redact_for_display(_c)[:80]}",
+            },
+        )
+        return taken.response()
+    if taken.disposition == chat_intake.QUEUED:
+        qid = session._queue[-1]["id"]
+        state.broadcast_ws(
+            "queue_push",
+            {
+                "session": session.key,
+                **shown(session.queued(qid)),
+                "ts": taken.accepted_at,
+                "queue_id": qid,
+                "message_id": taken.message_id,
+            },
+        )
+        chat_phase.restate(state, session)  # one more message waits behind the turn
+        return taken.response()
 
     # WS mode: return JSON immediately, chunks delivered via WebSocket
     ws_mode = request.query.get("ws") == "1"
 
     # Outside WS mode this request's stream drains the turn's rows, chunks and end from `_pending`.
     session._has_reader = not ws_mode
-    if user_meta:
-        user_meta = _redact_meta(user_meta)
-    if _own_recorded is not None:
-        user_meta = {**(user_meta or {}), OWN_WORDS: _own_recorded}
-    session.append("user", message, "msg msg-u", ts=client_ts, meta=user_meta)
 
     # ── AutoNudge: user input defers any pending nudge (user wins). Lazy import + fail-open
     # kept deliberately: this is a hot path and a broken nudge service must never block a send.
@@ -444,18 +450,9 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
         logger.debug("routing suggestion hook failed", exc_info=True)
 
     if ws_mode:
-        # Built as a LITERAL at the call site, not assembled into a name above: the wire
-        # envelope census (tests/rails/test_wire_error_envelope_census.py) reads response shapes
-        # statically, and `json_response(_body)` hides this one from it. The suggestion key
-        # is absent rather than null when there is nothing to suggest — the frontend keys
-        # the chip off the field's presence.
-        return web.json_response(
-            {
-                "ok": True,
-                "session": session.key,
-                **({"routing_suggestion": _routing} if _routing is not None else {}),
-            }
-        )
+        # The receipt, with the agent it suggests: the suggestion key is absent rather than null
+        # when there is nothing to suggest — the frontend keys the chip off the field's presence.
+        return taken.response(_routing)
 
     resp = web.StreamResponse()
     resp.content_type = "text/event-stream"
@@ -464,6 +461,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
     await resp.prepare(request)
 
     try:
+        await resp.write(taken.event())  # the receipt first, then the turn
         while True:
             pending = session.drain()
             for msg in pending:
@@ -506,28 +504,13 @@ def _default_mid_turn_mode() -> str:
         return "queue"
 
 
-async def _maybe_cancel_and_replace(
-    state: "DashboardState",
-    session: "_ChatSession",
-    message: str,
-    own_words: str | None,
-    *,
-    pastes: Sequence[Mapping[str, Any]] = (),
-) -> "web.Response | None":
-    """Cancel-and-replace decision for a follow-up sent mid-turn.
-    Returns a JSON response when it HANDLED the message (cancelled the in-flight
-    turn + queued the new one, which the turn-end drain delivers as the next turn), or
-    ``None`` to fall through to the normal steer/queue path.
-
-    Eligibility: the resolved mid-turn policy is ``cancel_and_replace`` AND the
-    in-flight turn is an interactive origin (webui) AND the per-session debounce window
-    has elapsed. Everything is best-effort — any failure returns ``None`` (queue), so a
-    broken check never blocks a message.
-
-    ``own_words`` are the words of the message its sender typed when it holds more than them
-    (``None`` when it is all theirs), and ``pastes`` the blocks she pasted into it
-    (``own_words.PASTES``), queued with it as the queue path queues them.
-    """
+def _replaces(session: "_ChatSession") -> bool:
+    """Whether a message sent while *session*'s turn runs stops that turn and runs next instead
+    (cancel-and-replace): the resolved mid-turn policy is ``cancel_and_replace``, the running turn
+    is an interactive origin (webui), and the per-session debounce window has elapsed, so a burst
+    stops one turn and the rest queue. Any failure answers False (queue), so a broken check never
+    blocks a message. Decided before the message is taken in (``chat_intake.take_in``), which
+    queues it; :func:`_replace` then stops the turn."""
     import time as _time
 
     from personalclaw.config.loader import AppConfig
@@ -536,7 +519,7 @@ async def _maybe_cancel_and_replace(
     try:
         cfg = AppConfig.load().resilience
         if cfg.mid_turn_policy != "cancel_and_replace":
-            return None
+            return False
         key = session.key
         tracker = get_tracker()
         job = tracker.get(key) or tracker.get(f"dashboard:{key}")
@@ -544,26 +527,36 @@ async def _maybe_cancel_and_replace(
         # from under itself by a user message. A webui session with no tracked
         # job (racing the register) is still webui, so treat it as cancellable.
         if job is not None and not is_cancellable_origin(job.origin):
-            return None
-        now = _time.time()
-        if tracker.within_debounce(key, cfg.cancel_replace_min_interval_secs, now=now):
-            return None  # a cancel just fired — coalesce: fall through to queue
-        tracker.mark_cancel(key, now=now)
+            return False
+        # A cancel just fired: coalesce, and queue this one.
+        return not tracker.within_debounce(
+            key, cfg.cancel_replace_min_interval_secs, now=_time.time()
+        )
     except Exception:
         logger.debug("cancel-and-replace check failed", exc_info=True)
-        return None
+        return False
 
-    # Soft-cancel the in-flight turn (preserve the queue so earlier follow-ups
-    # survive), tell the FE the partial answer was superseded (it dims the bubble
-    # instead of leaving a ghost), then queue the new message — the existing
-    # turn-end queue-drain re-dispatches it as a fresh turn.
+
+async def _replace(
+    state: "DashboardState", session: "_ChatSession", taken: chat_intake.Receipt
+) -> chat_intake.Receipt:
+    """Stop the turn running on *session* for the message *taken* queued to replace it, which the
+    turn-end drain then runs as the next turn. Returns its receipt: queued instead, when the turn
+    could not be stopped (``chat_intake.not_replaced``).
+
+    The stop is soft and keeps the queue, so earlier follow-ups survive, and the page is told the
+    partial answer was superseded (it dims the bubble instead of leaving a ghost). The message is
+    queued before the stop, so a turn that ends while it stops still finds it."""
+    import time as _time
+
+    from personalclaw.resilience.active_jobs import get_tracker
+
+    get_tracker().mark_cancel(session.key, now=_time.time())
+    qid = next(i["id"] for i in session._queue if i.get(chat_intake.MESSAGE_ID) == taken.message_id)
     try:
         outcome = await state.sessions.stop_turn(
             _history_key_for(session.key), force=False, preserve_queue=True
         )
-        qid = session.queue_append(message, own_words=own_words, pastes=pastes, attended=True)
-        # One more message waits behind the turn, said before its page hears the turn is over.
-        chat_phase.restate(state, session)
         # The superseded turn was stopped by the message that replaced it.
         state.broadcast_ws(
             "chat_done",
@@ -585,10 +578,10 @@ async def _maybe_cancel_and_replace(
             outcome=str(outcome),
             metadata={"session": session.key, "queue_id": qid},
         )
-        return web.json_response({"ok": True, "cancelled_and_replaced": True})
+        return taken
     except Exception:
         logger.warning("cancel-and-replace stop_turn failed", exc_info=True)
-        return None
+        return chat_intake.not_replaced(session, taken)
 
 
 def _origin_of(name: str, app: str = "") -> tuple[str, str]:

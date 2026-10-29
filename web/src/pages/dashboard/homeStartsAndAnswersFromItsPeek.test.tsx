@@ -69,7 +69,7 @@ describe('Start something', () => {
     await userEvent.type(start(), 'Plan the garden for spring{Enter}')
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('chat/chat-new-1'))
     expect(createChatSession).toHaveBeenCalledWith()
-    expect(sendChat).toHaveBeenCalledWith('Plan the garden for spring', 'chat-new-1', expect.objectContaining({ client_ts: expect.any(Number) }))
+    expect(sendChat).toHaveBeenCalledWith('Plan the garden for spring', 'chat-new-1')
   })
 
   it('sends nothing while the owner types, or when the field is left without Enter', async () => {

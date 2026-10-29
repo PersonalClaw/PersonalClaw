@@ -1509,6 +1509,25 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # Not an HTTP status of its own: the code a turn that ended in an error carries on its answer,
     # with the error's own words as its message.
     "turn_failed": "The turn ended in an error before it finished; the message says what failed.",
+    # ── a message sent into a chat (dashboard/chat_intake.py, shared contracts §3.9) ──
+    # 400: the send's `client_message_id` (or a steer's `expected_message_id`) is not a message id.
+    "invalid_message_id": (
+        "A message id must be `msg_` followed by 26 letters and digits; nothing was sent."
+    ),
+    # 409: the chat took a message of this id that said something else.
+    "message_id_conflict": (
+        "That message id was already sent in this chat with different text, so nothing was "
+        "sent again."
+    ),
+    # 409: the turn a request names is not the one running; the error names both (`expected`,
+    # `actual`). Each door passes its own sentence of what was not done.
+    "turn_not_current": "That turn is no longer running, so nothing was stopped.",
+    # 409: a steer arrived with no turn running.
+    "no_running_turn": "No turn is running in this chat, so the steer was not taken.",
+    # 409: the running turn takes no steer; the error names its `kind` (`compact`, `command`).
+    "turn_not_steerable": (
+        "The running turn takes no steer; the message says why. Nothing was taken."
+    ),
 }
 
 
