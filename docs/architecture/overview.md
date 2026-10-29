@@ -214,6 +214,7 @@ holds every GET route to this.
 
 | Subsystem | Doc | Core modules |
 |---|---|---|
+| Shared contracts | [shared-contracts.md](shared-contracts.md) | `ids.py`, `workref.py`, `ledger/hashing.py` |
 | Provider boundary | [provider-boundary.md](provider-boundary.md) | `llm/`, `sdk/`, `media_catalogs.py` |
 | Chat & sessions | [chat-sessions.md](chat-sessions.md) | `session.py`, `dashboard/chat_*.py`, `history.py`, `context.py` |
 | Work phases | [work-phases.md](work-phases.md) | `work_phase.py`, `workref.py`, `dashboard/chat_phase.py`, `web/src/lib/workPhase.ts` |
