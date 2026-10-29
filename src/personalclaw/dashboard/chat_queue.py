@@ -11,6 +11,8 @@ import uuid
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from personalclaw import ids
+from personalclaw.dashboard.chat_intake import MESSAGE_ID, RECEIPT
 from personalclaw.own_words import OWN_WORDS, PASTES
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.turn_source import ASKED_FOR_BY, DASHBOARD_SOURCE, source_of
@@ -45,6 +47,8 @@ class ChatQueue:
         on_record: bool = False,
         pastes: Sequence[Mapping[str, Any]] = (),
         attended: bool = False,
+        message_id: str = "",
+        receipt: Mapping[str, Any] | None = None,
     ) -> str:
         """Append a message to the queue. Returns the generated queue ID.
 
@@ -59,9 +63,14 @@ class ChatQueue:
         ``on_record`` says its row is in the chat already (:data:`ON_RECORD`).
         ``pastes`` are the blocks pasted into it (``own_words.PASTES``), which its row keeps.
         ``attended`` says the owner typed it where they are (:data:`ATTENDED`).
+        ``message_id`` is the message's id, which the row it runs as keeps (one is minted when its
+        door gave none), and ``receipt`` what its send was answered (``chat_intake.RECEIPT``).
         """
         qid = uuid.uuid4().hex[:12]
         item: dict[str, Any] = {"id": qid, "content": content, **source_of(source)}
+        item[MESSAGE_ID] = message_id or ids.new_id("msg")
+        if receipt:
+            item[RECEIPT] = dict(receipt)
         if channel:
             item["channel"] = channel
         if files:

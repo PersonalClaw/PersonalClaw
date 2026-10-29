@@ -364,6 +364,9 @@ export interface ChatTurn {
   role: 'user' | 'assistant'
   segments: Segment[]     // user turns are a single text segment
   ts?: string             // source message timestamp (for edit-resend by ts)
+  // A user turn's message id (`meta.message_id`, a frame's `message_id`, or the id this page sent
+  // it under): what a repeat of the send is told apart by, and what a steer names its turn by.
+  messageId?: string
   // Episodic memory citations surfaced into THIS assistant turn. The reply
   // cites facts inline as `[Memory N]`; the Markdown renderer resolves each token
   // against this list into a deep-link to the episode. Absent on turns with no
@@ -494,6 +497,21 @@ export function imageDeliveryOf(meta: HistMsg['meta'] | undefined): ImageDeliver
 /** Convenience: a user turn from plain text. `optimized` records the optimized
  *  variant sent to the model when the original was rewritten before sending. */
 export const userTurn = (text: string, ts?: string, pastes?: ChatTurn['pastes'], files?: string[], optimized?: string): ChatTurn => ({ role: 'user', segments: [{ kind: 'text', text }], ts, pastes, files: files?.length ? files : undefined, optimized: optimized || undefined })
+
+/** *turns* with the user's sent *turn* after them, unless a turn of the same message is there
+ *  already: a message sent twice is drawn once. */
+export function withSent(turns: ChatTurn[], turn: ChatTurn): ChatTurn[] {
+  return turn.messageId && turns.some((t) => t.messageId === turn.messageId) ? turns : [...turns, turn]
+}
+
+/** The id of the message that started the turn now running, as *turns* show it (the last user
+ *  turn that is not a steer), or `undefined` when they do not know it. */
+export function runningTurnId(turns: ChatTurn[]): string | undefined {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    if (turns[i].role === 'user' && !turns[i].steered) return turns[i].messageId
+  }
+  return undefined
+}
 /** Convenience: an assistant turn seeded with (optional) text. */
 export const assistantTurn = (text = ''): ChatTurn => ({ role: 'assistant', segments: text ? [{ kind: 'text', text }] : [] })
 
@@ -594,7 +612,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], sources: chatSources(turns) }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; message_id?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
 
 /** The blocks a sent message of hers carries (`meta.pastes` on its row, `pastes` on a frame that
  *  tells a page of it), or undefined when it carries none. */
@@ -772,6 +790,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       const ran = ranPromptOf(m.meta?.ran_prompt)
       if (ran) ut.ranPrompt = ran
       if (m.meta?.steered === true) ut.steered = true
+      if (typeof m.meta?.message_id === 'string') ut.messageId = m.meta.message_id
       joinedSkills = joinedSkillsOf(m)
       ut.visibleIndex = visible
       turns.push(ut)

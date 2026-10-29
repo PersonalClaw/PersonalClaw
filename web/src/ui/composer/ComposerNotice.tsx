@@ -15,6 +15,10 @@ import { IconButton } from '../IconButton'
  *  reports on can take it down when that action next succeeds — a "text-to-speech is switched
  *  off" line stayed under the chat while the reply it said could not be spoken played aloud — and
  *  only that action: a notice another action raised is not its to clear.
+ *
+ *  An error may offer what to do instead (`action`): a steer whose turn is over offers to send it
+ *  as a message, one whose turn is not the running one to queue it. The offer is a button on the
+ *  line, and taking it takes the line down.
  */
 export type ComposerNoticeTone = 'error' | 'info'
 
@@ -23,6 +27,13 @@ export interface ComposerNotice {
   tone: ComposerNoticeTone
   /** What raised it, when a later success of that same action should take it down. */
   source?: string
+  /** What the user can do instead, offered as a button. */
+  action?: ComposerNoticeAction
+}
+
+export interface ComposerNoticeAction {
+  label: string
+  run: () => void
 }
 
 /** How long an informational notice shows before it clears itself. */
@@ -30,8 +41,9 @@ export const INFO_NOTICE_MS = 4000
 
 export interface ComposerNoticeState {
   notice: ComposerNotice | null
-  /** Show what failed, raised by *source* if given. It stays until {@link ComposerNoticeState.clear}. */
-  showError: (text: string, source?: string) => void
+  /** Show what failed, raised by *source* if given, offering *action* if given. It stays until
+   *  {@link ComposerNoticeState.clear}. */
+  showError: (text: string, source?: string, action?: ComposerNoticeAction) => void
   /** Show what just happened; it clears itself after {@link INFO_NOTICE_MS}. */
   showInfo: (text: string) => void
   /** Take the notice down: the user dismissed it, sent again, or it no longer holds. Given a
@@ -50,9 +62,9 @@ export function useComposerNotice(): ComposerNoticeState {
   }, [])
   useEffect(() => stopTimer, [stopTimer])
 
-  const showError = useCallback((text: string, source?: string) => {
+  const showError = useCallback((text: string, source?: string, action?: ComposerNoticeAction) => {
     stopTimer()
-    setNotice(source ? { text, tone: 'error', source } : { text, tone: 'error' })
+    setNotice({ text, tone: 'error', ...(source ? { source } : {}), ...(action ? { action } : {}) })
   }, [stopTimer])
   const showInfo = useCallback((text: string) => {
     stopTimer()
@@ -95,6 +107,12 @@ export function ComposerNoticeLine({ notice, onDismiss, className = 'mb-2' }: {
       style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, transparent)', color: 'var(--color-danger)' }}>
       <AlertTriangle size={13} className="mt-0.5 shrink-0" />
       <span className="min-w-0 flex-1 break-words">{notice.text}</span>
+      {notice.action && (
+        <button type="button" className="shrink-0 rounded px-1.5 font-medium underline-offset-2 hover:underline"
+          onClick={() => { notice.action?.run(); onDismiss() }}>
+          {notice.action.label}
+        </button>
+      )}
       <IconButton icon={X} label="Dismiss" onClick={() => onDismiss()} size={20} iconSize={12}
         className="shrink-0 opacity-70 hover:opacity-100" />
     </div>

@@ -87,10 +87,13 @@ async def test_a_message_that_replaces_the_running_turn_is_counted(chat):
         patch.object(AppConfig, "load", staticmethod(lambda *a, **k: policy)),
         patch.object(chat_handlers, "sel", MagicMock()),
     ):
-        replaced = await chat_handlers._maybe_cancel_and_replace(
-            chat.state, chat.session, "do this instead", None
-        )
-    assert replaced is not None
+        async with TestClient(TestServer(_make_app(chat.state))) as http:
+            resp = await http.post(
+                "/api/chat?ws=1", json={"message": "do this instead", "session": CHAT}
+            )
+            assert resp.status == 200, await resp.text()
+            replaced = await resp.json()
+    assert replaced["disposition"] == "replaced", replaced
     await chat.counts(1)
     # Said while the turn it replaces still runs, before the page hears that turn is over.
     order = [

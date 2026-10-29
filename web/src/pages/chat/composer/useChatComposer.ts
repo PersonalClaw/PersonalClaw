@@ -20,7 +20,8 @@ import { buildOptimizerContext } from '../optimizerContext'
 import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, pruneBlocks, asSent, takeIn } from '../pasteBlocks'
 import type { TurnPaste } from '../PasteChip'
 import type { RoutingSuggestion } from '../RoutingChip'
-import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText } from '../chatTypes'
+import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, withSent, runningTurnId } from '../chatTypes'
+import { newMessageId } from '../../../lib/messageIds'
 import { readCachedDetail, writeCachedDetail, type ChatDetail, type ChatStream } from '../useChatStream'
 import { contextReport } from '../../../ui/composer/ContextDisclosure'
 import { repliesToSpeak } from '../useChatVoice'
@@ -414,6 +415,17 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     }
   }
 
+  // The id of the message being sent, kept until a send of it is answered: the same words sent
+  // again before then (a double submit, a retry after a failure) are the same message.
+  const sending = useRef<{ text: string; id: string } | null>(null)
+  function idFor(text: string): string {
+    if (sending.current?.text !== text) sending.current = { text, id: newMessageId() }
+    return sending.current.id
+  }
+  function forgetId(text: string) {
+    if (sending.current?.text === text) sending.current = null
+  }
+
   async function send(
     text = input,
     opts?: { original?: string; inputOrigin?: string; uiLabel?: string },
@@ -481,75 +493,73 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     // does too: a button that says Steer and sends `followup` — or says Steer over a turn
     // that cannot take one — is a lie either way.
     //
-    // The server decides and says which it did: `{steered:true}` when the running
-    // turn has a live drain path, `{queued:true}` when it does not (an ACP-backed
-    // turn, or a turn that just ended). Either of those two OUTCOMES drops nothing —
-    // a queued message still echoes `queue_push`, so the strip above the composer
-    // shows it with its cancel affordance. We render the outcome rather than
-    // assuming one.
+    // The server decides and says which it did, in the message's receipt: `steered` when the
+    // running turn has a live drain path, `queued` when it does not (an ACP-backed turn), and
+    // `replaced` when the mid-turn policy stops the turn for it. None of those drops anything —
+    // a queued message still echoes `queue_push`, so the strip above the composer shows it with
+    // its cancel affordance, and a replacing one runs next, its bubble drawn as the queue drains.
+    // We render the outcome rather than assuming one.
     //
-    // 🔴 BUT THERE IS A THIRD OUTCOME, AND IT USED TO DESTROY THE USER'S TEXT. The
-    // sentence above says "either way nothing is dropped", and that was true of the
-    // two SUCCESS shapes and false on REJECTION — which the `.catch(() => {})` hid.
-    // `setInput('')` ran BEFORE the request, so a failed steer (gateway restart, a
-    // 500, a dropped connection) emptied the composer, never pushed a `steered`
-    // chip, and showed no error. The text was then nowhere: not on screen, not in
-    // `queued`, not on the server. Nothing to copy and nothing to retry, while the
-    // model kept streaming the answer the user was trying to correct.
+    // 🔴 BUT THERE IS A THIRD OUTCOME, AND IT USED TO DESTROY THE USER'S TEXT: a rejection.
+    // `setInput('')` ran BEFORE the request, so a failed steer (gateway restart, a 500, a dropped connection) emptied the
+    // composer, never pushed a `steered` chip, and showed no error. The text was then nowhere:
+    // not on screen, not in `queued`, not on the server.
     //
-    // 🪤 THE DRAFT IS CLEARED ON SUCCESS, AND ONLY IF THE USER HAS NOT TYPED SINCE.
-    // Moving `setInput('')` into the success path unconditionally would swap one
-    // data-loss bug for another: the request is in flight for a round trip, and a
-    // user who starts their next message during it would have it wiped. The
-    // functional setter compares against exactly what was sent, so an untouched
-    // composer clears and a re-typed one is left alone.
+    // 🪤 THE DRAFT IS CLEARED ON SUCCESS, AND ONLY IF THE USER HAS NOT TYPED SINCE. The request
+    // is in flight for a round trip, and a user who starts their next message during it would
+    // have it wiped. The functional setter compares against exactly what was sent, so an
+    // untouched composer clears and a re-typed one is left alone. A failure is reported where
+    // the user is looking (`reportActionFailure`, this file's convention for a user-initiated
+    // write), and the text is still in the composer to send again, under the same id.
     //
-    // `reportActionFailure` is this file's own convention for a user-initiated write
-    // (11 other uses), and it is what `DesignCockpitPage.sendNudge` does for the
-    // same shape — a rule `loops/loopActionReported.test.ts` states in prose as
-    // "the nudge KEEPS its text on failure".
+    // 🔑 A STEER NAMES ITS TURN. The page's belief that a turn is running can be stale: the turn
+    // may have ended, or another started, since the button said Steer. The steer carries the id
+    // of the message that started the turn it is for (`expected_message_id`), and the gateway
+    // refuses one whose turn is not the running one, keeping nothing of it. The page then says
+    // so and offers what to do instead: Send when no turn runs, Queue when another does or the
+    // running one takes no steer. It used to land in a turn the user never saw.
     //
-    // 🔴 AND THERE IS A FOURTH OUTCOME — THE SERVER RAN IT AS A FRESH TURN. The two
-    // success shapes above are the only ones this branch used to render, and the server
-    // gates on ITS OWN `session.running`, not on our `queue_mode`: when the turn is
-    // already over it ignores the steer, persists the message and dispatches a NORMAL
-    // turn, answering `{ok, session}` with neither `steered` nor `queued`. On that path
-    // the backend also suppresses its own user echo, on the standing contract that the
-    // FE adds the bubble optimistically — which this branch does not. So a message sent
-    // on a stale belief that a turn was running was accepted, persisted and RUNNING,
-    // with nothing on screen anywhere: the composer cleared and the text was gone
-    // (measured: `queue: []`, a persisted `user` row, no bubble, no reply). The server
-    // needs no change — it already refuses to queue into a session that is not running.
-    // The client has to believe what it answered.
-    //
-    // 🔑 This is the floor UNDER the streaming-claim fixes, not a duplicate of them.
-    // The snapshot replay (a terminal frame that lands during a read replays AFTER it) stops
-    // one stale claim being made and `resolveStalledStream` heals a claim that outlived its
-    // turn — but both are corrections to a belief, and any
-    // remaining way for `streamingRef` to be stale re-opens this branch. Nothing here
-    // should lose a message even when the belief IS wrong.
+    // 🔴 AND A FOURTH OUTCOME — THE SERVER RAN IT AS A FRESH TURN. A followup sent when the turn
+    // was already over is taken in as a new turn (`started`), and the gateway does not echo the
+    // user's own row (the page draws it), so this branch draws what the normal send path would:
+    // the user's bubble, then a stream for its reply. Unrendered, the message ran with nothing
+    // on screen anywhere.
     if (isStreaming) {
-      // Stamped for the same reason the normal send path stamps one: the server stores
-      // the ts we send, and Edit & resend locates a message by it.
-      const steerTs = new Date().toISOString()
-      const meta = turnPastes.length ? { client_ts: steerTs, pastes: turnPastes } : { client_ts: steerTs }
-      ensureSession()
-        .then((s) => api.sendChat(llmText, s, meta, takesSteersRef.current ? 'steer' : 'followup').then((r) => [s, r] as const))
-        .then(([s, r]) => {
-          setInput((cur) => (cur === t ? '' : cur))
-          if (r?.steered) { setSteered((prev) => [...prev, { text: t, ts: steerTs }]); return }
-          // Queued or dispatched fresh, it gets a reply of its own; a steer does not. Owed in the
-          // session it was sent to: a queued answer names none, and this chat may have closed.
-          oweSpokenReply(r?.session || s)
-          if (r?.queued) return  // the paired queue_push frame renders the strip card
-          // Dispatched as a fresh turn. Render exactly what the normal send path would:
-          // the user's bubble, then arm streaming so its reply has somewhere to land.
-          followNewTurn()
-          setTurns((prev) => [...prev, userTurn(t, steerTs, turnPastes.length ? turnPastes : undefined)])
-          markStreaming(true)
-          dropTextRun()
-        })
-        .catch(reportActionFailure('steer this turn'))
+      const messageId = idFor(llmText)
+      const meta = turnPastes.length ? { pastes: turnPastes } : undefined
+      const deliver = (mode: string | undefined, expectedMessageId: string | undefined) => {
+        ensureSession()
+          .then((s) => api.sendChat(llmText, s, meta, mode, undefined, { messageId, expectedMessageId }).then((r) => [s, r] as const))
+          .then(([s, r]) => {
+            forgetId(llmText)
+            setInput((cur) => (cur === t ? '' : cur))
+            if (r.disposition === 'steered') {
+              setSteered((prev) => (prev.some((x) => x.id === r.message_id) ? prev : [...prev, { text: t, id: r.message_id }]))
+              return
+            }
+            // Queued, replacing or run fresh, it gets a reply of its own; a steer does not. Owed in
+            // the session it was sent to: a queued answer names none, and this chat may have closed.
+            oweSpokenReply(r.session || s)
+            if (r.disposition !== 'started' || r.duplicate) return  // its frames draw it
+            followNewTurn()
+            setTurns((prev) => withSent(prev, { ...userTurn(t, r.accepted_at, turnPastes.length ? turnPastes : undefined), messageId: r.message_id }))
+            markStreaming(true)
+            dropTextRun()
+          })
+          .catch((e) => {
+            const said = (e as Error)?.message || ''
+            if (hasApiCode(e, 'no_running_turn')) {
+              notice.showError(said, 'steer', { label: 'Send', run: () => deliver(undefined, undefined) })
+              return
+            }
+            if (hasApiCode(e, 'turn_not_current') || hasApiCode(e, 'turn_not_steerable')) {
+              notice.showError(said, 'steer', { label: 'Queue', run: () => deliver('followup', undefined) })
+              return
+            }
+            reportActionFailure('steer this turn')(e)
+          })
+      }
+      deliver(takesSteersRef.current ? 'steer' : 'followup', takesSteersRef.current ? runningTurnId(turns) : undefined)
       return
     }
     // Held while a file it carries uploads (`uploadHold`) — whichever way this send came: the
@@ -563,10 +573,12 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     }
     // meta.files = @-mentioned workspace files + uploaded attachments.
     const files = [...mentionedFiles, ...attachedPaths]
-    // Stamp a client ts and pass it to the backend so it stores the SAME ts on the
-    // user message. The server otherwise skips broadcasting the user echo ("FE adds
-    // optimistically"), leaving a live turn's ts undefined until a reload — which
-    // broke Edit & resend (it locates the message by ts → "index or ts required").
+    // The message's id, which its bubble is keyed by and its send carries: sent again (a double
+    // submit, a retry after a dropped connection), it is the same message, so the gateway runs it
+    // once and the page draws one bubble. The bubble's time is this page's clock until the
+    // receipt says when the chat took it in, which is the row's: Edit & resend locates a message
+    // by it.
+    const messageId = idFor(llmText)
     const clientTs = new Date().toISOString()
     // When optimized: bubble shows `original` as primary + `t` (optimized) collapsed.
     // When this turn came from a genui widget action, `uiLabel` is the dual
@@ -577,7 +589,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     const uiLabel = opts?.uiLabel?.trim() || undefined
     // Sending is asking for the outcome: follow the new turn wherever the view was.
     followNewTurn()
-    setTurns((prev) => [...prev, userTurn(uiLabel ?? original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined)])
+    setTurns((prev) => withSent(prev, { ...userTurn(uiLabel ?? original ?? t, clientTs, turnPastes.length ? turnPastes : undefined, files, original ? t : undefined), messageId }))
     // A widget action is not something the user TYPED, so it never joins ↑-history —
     // replaying a machine payload as a prompt is not an affordance anyone wants.
     if (!uiLabel) setPromptHistory((prev) => { const h = original ?? t; return withPrompt([...prev], { text: h, pastes: pruneBlocks(h, pasteBlocks).map(({ seq, lines, content }) => ({ seq, lines, content })) }).slice(-50) })
@@ -594,7 +606,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     setInput(''); setPreOptimize(null); markStreaming(true); dropTextRun()
     setPasteBlocks([]); setMentionedFiles([]); setAttachedPaths([]); setMentionedKnowledge([]); setMentionedArtifacts([])
     try {
-      const meta: Record<string, unknown> = { client_ts: clientTs }
+      const meta: Record<string, unknown> = {}
       if (files.length) meta.files = files
       if (knowledgeIds.length) meta.knowledge = knowledgeIds
       if (artifactSlugs.length) meta.artifacts = artifactSlugs
@@ -611,7 +623,7 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       // On a brand-new chat, seed the instant-paint cache with THIS user message so
       // the post-create remount paints it immediately (no skeleton over the user's
       // own words) — mirrors the persisted history shape hydrateTurns expects.
-      const seed: HistMsg[] = [{ role: 'user', content: llmText, ts: clientTs, meta: meta as HistMsg['meta'] }]
+      const seed: HistMsg[] = [{ role: 'user', content: llmText, ts: clientTs, meta: { ...meta, message_id: messageId } as HistMsg['meta'] }]
       const sid = await ensureSession(seed)
       // Frame-on-send: capture ONE frame at the instant the question is asked,
       // so the model sees the screen the user was looking at when they asked — not a
@@ -619,7 +631,9 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
       // Awaited before sendChat so the slot is staged when the runner drains it.
       if (screenShare.sharing) await screenShare.captureAndStage(sid)
       oweSpokenReply(sid)
-      const sent = await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin)
+      const sent = await api.sendChat(llmText, sid, meta, undefined, opts?.inputOrigin, { messageId })
+      forgetId(llmText)
+      if (sent?.accepted_at) setTurns((prev) => prev.map((x) => (x.messageId === messageId ? { ...x, ts: sent.accepted_at } : x)))
       // Agent routing (569): the server emits its suggestion among the FIRST frames of the
       // send, which on a chat created BY this send is before the remounted ChatSession's
       // socket has finished reconnecting — so the WS copy reaches nobody and the chip

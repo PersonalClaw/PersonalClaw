@@ -853,7 +853,8 @@ def _entry(role: str, content: str, message: Message) -> dict[str, Any]:
     entry.update({f: v for f in SOURCE_FIELDS if (v := getattr(message.source, f))})
     facts = message.facts
     meta: dict[str, Any] = {}
-    if facts.merged:
+    if facts.merged and not any(getattr(message.source, f) for f in SOURCE_FIELDS):
+        # Whose each merged message was, said only where the row records no source of its own.
         meta[QUEUED_FROM] = [dict(item.get("source") or {}) for item in facts.merged]
     if facts.from_outside is not None:
         meta[FROM_OUTSIDE] = dict(facts.from_outside)

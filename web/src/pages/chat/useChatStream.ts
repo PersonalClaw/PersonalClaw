@@ -299,10 +299,10 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // Messages the server confirmed it will STEER into the running turn, until the turn takes
   // each: then it is her bubble in the transcript, where the turn took it (the `steer` flavour
   // of `chat_user_message`), and its line here goes. Distinct from `queued`: a steered message
-  // has no queue id and nothing to cancel. Keyed by the stamp it was sent with, which the
-  // gateway's row and frames carry; one the turn ends without taking is queued (`queue_push`
-  // names it by `steer_ts`), and whatever is left goes when the turn ends.
-  const [steered, setSteered] = useState<{ text: string; ts: string }[]>([])
+  // has no queue id and nothing to cancel. Keyed by the message's id, which the gateway's row
+  // and frames carry; one the turn ends without taking is queued (`queue_push` names it by its
+  // `message_id`), and whatever is left goes when the turn ends.
+  const [steered, setSteered] = useState<{ text: string; id: string }[]>([])
   // Async subagents (fire-and-forget) spawned this turn — live cards driven by
   // the subagent_spawn / subagent_tool / subagent_done WS events (`foldSubagentEvent`). The
   // report of one that ran starts its own turn once the parent turn finishes (backend-injected);
@@ -1007,7 +1007,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         const id = String(d.queue_id ?? '')
         if (id) setQueued((prev) => (prev.some((q) => q.id === id) ? prev : [...prev, queuedMessage(id, String(d.content ?? ''), d.pastes)]))
         // A steer the turn ended without taking, queued to run next: it is in the strip now.
-        if (d.steer_ts) setSteered((prev) => prev.filter((s) => s.ts !== d.steer_ts))
+        if (d.message_id) setSteered((prev) => prev.filter((s) => s.id !== d.message_id))
         break
       }
       case 'queue_pop':
@@ -1083,13 +1083,13 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         if (d.ts && adoptedUserTs.current.has(String(d.ts))) break
         // Her bubble shows each block she pasted as its chip, as the chat does read back.
         const pastes = pastesOf(d.pastes)
-        const sentTurn = userTurn(shownText(content, pastes), d.ts ? String(d.ts) : undefined, pastes)
+        const sentTurn = { ...userTurn(shownText(content, pastes), d.ts ? String(d.ts) : undefined, pastes), ...(d.message_id ? { messageId: String(d.message_id) } : {}) }
         // Her steer, which the running turn has just taken: her bubble goes here, below what the
         // answer said so far (settled by the `chat_segment` before this frame), and the answer
         // goes on below it. Nothing ends or starts: it is the same turn, and it is running.
         if (d.steer) {
           endTextRun()
-          setSteered((prev) => prev.filter((s) => s.ts !== d.ts))
+          setSteered((prev) => prev.filter((s) => s.id !== d.message_id))
           setTurns((prev) => [...prev, { ...sentTurn, steered: true }])
           markStreaming(true)
           break

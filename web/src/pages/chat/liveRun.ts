@@ -51,9 +51,12 @@ export function streamingAtMount(liveRun: string, open: string | null): boolean 
  *  After it, the snapshot holds the message and, because the gateway appends the message and
  *  starts the turn in one step, a `running: false` there means that turn has already ENDED —
  *  its `chat_done` went out before this instance was listening. Identity is the
- *  message's client stamp, which the gateway stores verbatim. */
+ *  message's id, which the page named it by and the gateway keeps on its row (a seed written
+ *  before ids, by its stamp). */
 export function snapshotPredatesSend(seed: readonly HistMsg[] | null | undefined, snapshot: readonly HistMsg[]): boolean {
   const sent = seed ? [...seed].reverse().find((m) => m.role === 'user') : undefined
+  const id = sent?.meta?.message_id
+  if (id) return !snapshot.some((m) => m.role === 'user' && m.meta?.message_id === id)
   if (!sent?.ts) return false
   return !snapshot.some((m) => m.role === 'user' && m.ts === sent.ts)
 }

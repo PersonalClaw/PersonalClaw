@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { STREAM_HEAL_WARNING, STREAM_SETTLED_GRACE_MS } from './streamStall'
 import { runState, runningState } from '../../test/runState'
+import { receiptFor } from '../../test/chatReceipt'
 
 // ── A streamed answer renders ONCE and WHOLE, whatever React batches and whenever it reloads ──
 //
@@ -125,7 +126,7 @@ beforeEach(async () => {
   FakeSocket.last = null
   FakeSocket.holdClosed = false
   h.detailCalls.length = 0
-  h.sendChat.mockReset().mockResolvedValue({ ok: true, session: SESSION })
+  h.sendChat.mockReset().mockImplementation(receiptFor('started'))
   h.chatSessionDetail.mockReset().mockImplementation(
     () => new Promise((resolve) => { h.detailCalls.push({ resolve }) }),
   )
@@ -291,24 +292,24 @@ function Routed({ start, query, onNavigate }: { start: string; query: Record<str
 }
 
 /** Send the first message from a new chat, which remounts the page on the created key as the
- *  send navigates to it. Returns the send's client stamp. */
+ *  send navigates to it. Returns the meta its row holds once the gateway has it: its id. */
 async function sendFromNewChat(onNavigate?: () => void) {
   const user = userEvent.setup()
   render(<Routed start="new" query={{ seed: 'Count, please.' }} onNavigate={onNavigate} />)
   await waitFor(() => expect(primaryAction()).toBe('Send message'))
   await user.click(screen.getByRole('button', { name: 'Send message' }))
   await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
-  return String(h.sendChat.mock.calls[0][2]?.client_ts)
+  return { message_id: String(h.sendChat.mock.calls[0][5]?.messageId) }
 }
 
 describe("a new chat's first turn across the session-create remount", () => {
   it('settles a turn that ended while the remount replaced the chat', async () => {
     // The whole turn — its chunks and its `chat_done` — reached the instance the remount replaced
     // (#3575: a lost terminal frame on ~23% of first turns before the stall heal existed).
-    const ts = await sendFromNewChat()
+    const meta = await sendFromNewChat()
     await answerRead(0, {
       run_state: runState(), stream_seq: 8,
-      messages: [{ role: 'user', content: 'Count, please.', ts }, { role: 'assistant', content: WHOLE }],
+      messages: [{ role: 'user', content: 'Count, please.', meta }, { role: 'assistant', content: WHOLE }],
     })
     await waitFor(() => expect(primaryAction()).toBe('Send message'))
     expect(screen.getAllByText(WHOLE)).toHaveLength(1)
@@ -376,7 +377,7 @@ const paintUntil = (assert: () => void, timeout: number) =>
 describe('a session read slower than the hold', () => {
   it('lets the answer flow live, and repaints it once when the late snapshot lands', async () => {
     // The first turn of a new chat, which paints from its seed while the remount's read is out.
-    const ts = await sendFromNewChat()
+    const meta = await sendFromNewChat()
     await waitFor(() => expect(h.detailCalls).toHaveLength(1))
     for (const f of chunks(WHOLE, 1)) act(() => { deliver(f) })
     // The read outlasts the hold, so the hold runs out and the frames flow live: the answer paints
@@ -391,7 +392,7 @@ describe('a session read slower than the hold', () => {
     // included, are applied again on top of it.
     await answerRead(0, {
       run_state: runningState(), stream_seq: 4,
-      messages: [{ role: 'user', content: 'Count, please.', ts }, { role: 'streaming', content: PARTIAL }],
+      messages: [{ role: 'user', content: 'Count, please.', meta }, { role: 'streaming', content: PARTIAL }],
     })
     expect(screen.getAllByText(WHOLE), 'the late repaint lost or doubled the answer').toHaveLength(1)
     expect(primaryAction(), 'the late snapshot revived a turn that had ended').toBe('Send message')
@@ -399,19 +400,19 @@ describe('a session read slower than the hold', () => {
 
   it('the stall reconciler never reads while a session read is out, and its own read holds nothing', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const ts = await sendFromNewChat()
+    const meta = await sendFromNewChat()
     await waitFor(() => expect(h.detailCalls).toHaveLength(1))
     // Streaming, silent, and the mount read unanswered: two reconciler ticks pass.
     await wait(PAST_THE_HOLD_MS)
     expect(h.detailCalls, 'the reconciler read while a session read was in flight').toHaveLength(1)
-    await answerRead(0, { run_state: runningState(), stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', ts }] })
+    await answerRead(0, { run_state: runningState(), stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', meta }] })
     // Still silent: the reconciler reads now — once.
     await waitFor(() => expect(h.detailCalls).toHaveLength(2), { timeout: 5_000 })
     for (const f of chunks(PARTIAL, 1)) act(() => { deliver(f) })
     paintFrames()
     expect(screen.getByText(PARTIAL.trim()), 'the reconciler’s read held the stream').toBeTruthy()
     // It answers with a snapshot older than the frames that arrived meanwhile: not a stall.
-    await answerRead(1, { run_state: runState(), stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', ts }] })
+    await answerRead(1, { run_state: runState(), stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', meta }] })
     expect(screen.getByText(PARTIAL.trim())).toBeTruthy()
     expect(primaryAction()).toBe('Stop')
     expect(warn.mock.calls.flat().join(' ')).not.toContain('terminal frame never reached')

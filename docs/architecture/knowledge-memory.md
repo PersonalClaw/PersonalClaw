@@ -1110,7 +1110,7 @@ item vector).
 - Memory changes only on the owner's word. A turn someone else asked for (the row
   that started it, by the same rule: `turn_source.asked_by`; a row several queued
   messages run as is asked for by everyone who sent one, which it records under
-  `meta.queued_from`) names who asked once its row is known
+  `meta.merged`, or `meta.queued_from` on a row written before it) names who asked once its row is known
   (`memory_writes.asked_for`, said by the turn engine), and a channel that runs a
   conversation itself names it around each turn (`turn_asked_by`, the
   `turns-name-who-asked` core feature). `memory_writes.asker` is then the answer

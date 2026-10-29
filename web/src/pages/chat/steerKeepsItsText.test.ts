@@ -93,14 +93,14 @@ describe('a failed mid-stream steer keeps the text the user typed', () => {
     const fn = steerBranch()
     expect(fn, 'an empty catch is the defect').not.toMatch(/\.catch\(\(\) => \{\s*\}\)/)
     expect(fn, "and it uses this file's own convention for a user-initiated write")
-      .toMatch(/\.catch\(reportActionFailure\(/)
+      .toMatch(/\.catch\(\(e\) => \{[\s\S]*reportActionFailure\('steer this turn'\)\(e\)/)
   })
 
   it('the steered chip still only appears when the server said it steered', () => {
-    // The other half: the fix must not start claiming a steer landed when the server said
-    // `queued` — or when it said neither and ran the message as a fresh turn.
+    // The other half: the fix must not start claiming a steer landed when the receipt said
+    // `queued` — or `started`, the message run as a fresh turn.
     const fn = steerBranch()
-    expect(fn).toMatch(/if \(r\?\.steered\)\s*\{?\s*setSteered\(/)
+    expect(fn).toMatch(/if \(r\.disposition === 'steered'\)\s*\{?\s*setSteered\(/)
   })
 
   it('the branch slice really does span the whole handler (not vacuously green)', () => {
@@ -130,8 +130,7 @@ describe("the file no longer claims a safety it does not have", () => {
       .toMatch(/THIRD OUTCOME/)
     // 🔑 And the FOURTH, found the same way — by driving it. The server gates on its own
     // `session.running`, not on our `queue_mode`, so a steer sent into a turn that has
-    // already ended is dispatched as a fresh turn (`{ok, session}`, neither `steered` nor
-    // `queued`). That path suppresses the server's user echo on the standing "the FE adds
+    // already ended is dispatched as a fresh turn (its receipt says `started`). That path suppresses the server's user echo on the standing "the FE adds
     // it optimistically" contract, so an unrendered outcome is a LOST message, not a
     // cosmetic gap. Behaviour is pinned in `fastFailDoesNotWedgeComposer.test.tsx`.
     expect(CHAT, 'the fresh-turn outcome must be named too')

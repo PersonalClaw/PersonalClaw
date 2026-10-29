@@ -850,7 +850,7 @@ function StartSomething({ navigate }: { navigate: RouteProps['navigate'] }) {
     setFailed('')
     try {
       const chat = await api.createChatSession()
-      await api.sendChat(line, chat.key, { client_ts: Date.now() / 1000 })
+      await api.sendChat(line, chat.key)
       setText('')
       navigate(`chat/${encodeURIComponent(chat.key)}`)
     } catch (err) {

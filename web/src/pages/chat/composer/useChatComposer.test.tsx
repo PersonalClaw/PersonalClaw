@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { runState } from '../../../test/runState'
 import { userTurn, assistantTurn, turnText, type ChatTurn } from '../chatTypes'
 import type { ChatStream } from '../useChatStream'
+import { receiptFor } from '../../../test/chatReceipt'
 
 // ── The composer's controller ───────────────────────────────────────────────────────────────────
 //
@@ -71,7 +72,7 @@ function mount({ sessionId = null as string | null, turns: initial = [] as ChatT
 beforeEach(async () => {
   for (const f of Object.values(h)) f.mockReset()
   h.createChatSession.mockResolvedValue({ key: NEW_KEY })
-  h.sendChat.mockResolvedValue({ ok: true, session: NEW_KEY })
+  h.sendChat.mockImplementation(receiptFor('started'))
   h.setApprovalMode.mockResolvedValue({})
   h.setSessionReplyStyle.mockResolvedValue({ ok: true, reply_style: 'terse', reply_style_effective: 'terse', reply_style_source: 'conversation' })
   ;({ useChatComposer } = await import('./useChatComposer'))
@@ -87,7 +88,7 @@ describe('useChatComposer sends', () => {
     expect(m.setLiveRun).toHaveBeenCalledWith(NEW_KEY)
     expect(m.setLiveRun.mock.invocationCallOrder[0]).toBeLessThan(m.navigate.mock.invocationCallOrder[0])
     expect(m.navigate).toHaveBeenCalledWith(`chat/${NEW_KEY}`, { replace: true })
-    expect(h.sendChat).toHaveBeenCalledWith('Why does the feed refetch?', NEW_KEY, expect.objectContaining({ client_ts: expect.any(String) }), undefined, undefined)
+    expect(h.sendChat).toHaveBeenCalledWith('Why does the feed refetch?', NEW_KEY, {}, undefined, undefined, { messageId: expect.stringMatching(/^msg_[0-9a-hjkmnp-tv-z]{26}$/) })
     expect(m.oweSpokenReply).toHaveBeenCalledWith(NEW_KEY)
     expect(m.followNewTurn).toHaveBeenCalled()
     expect(m.result.current.c.input).toBe('')
@@ -107,11 +108,11 @@ describe('useChatComposer sends', () => {
   })
 
   it('steers a running turn that takes one, and shows the steer until the turn takes it', async () => {
-    h.sendChat.mockResolvedValue({ ok: true, steered: true })
+    h.sendChat.mockImplementation(receiptFor('steered'))
     const m = mount({ sessionId: NEW_KEY, turns: [userTurn('Fix it'), assistantTurn('Working…')], streaming: true, takesSteers: true })
     act(() => m.result.current.c.setInput('use the ETag too'))
     await act(async () => { await m.result.current.c.send() })
-    expect(h.sendChat).toHaveBeenCalledWith('use the ETag too', NEW_KEY, expect.objectContaining({ client_ts: expect.any(String) }), 'steer')
+    expect(h.sendChat).toHaveBeenCalledWith('use the ETag too', NEW_KEY, undefined, 'steer', undefined, expect.objectContaining({ messageId: expect.stringMatching(/^msg_/) }))
     expect(m.setSteered).toHaveBeenCalled()
     expect(m.result.current.c.input).toBe('')
     expect(m.markStreaming, 'a steer starts no turn').not.toHaveBeenCalled()

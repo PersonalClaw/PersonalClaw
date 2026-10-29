@@ -13,6 +13,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from personalclaw import ids
 from personalclaw.dashboard.chat import api_chat_session_queue_cancel
 from personalclaw.dashboard.sse import SseHub
 from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -30,8 +31,11 @@ class TestQueueHelpers:
         assert isinstance(qid, str)
         assert len(qid) == 12
         assert len(session._queue) == 1
-        # A message queued here records the dashboard as where it came from, for its row.
-        assert session._queue[0] == {"id": qid, "content": "hello", **_FROM_THE_DASHBOARD}
+        # A message queued here records the dashboard as where it came from, for its row, and is
+        # given a message id when its door gave none.
+        item = session._queue[0]
+        assert ids.is_id("msg", item.pop("message_id"))
+        assert item == {"id": qid, "content": "hello", **_FROM_THE_DASHBOARD}
 
     def test_queue_append_unique_ids(self):
         session = _ChatSession("s1")
@@ -58,6 +62,7 @@ class TestQueueHelpers:
         session = _ChatSession("s1")
         qid = session.queue_append("msg")
         item = session.queue_pop(0)
+        assert ids.is_id("msg", item.pop("message_id"))
         assert item == {"id": qid, "content": "msg", **_FROM_THE_DASHBOARD}
         assert len(session._queue) == 0
 

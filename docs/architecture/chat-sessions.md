@@ -1303,6 +1303,49 @@ What `ChatPage.tsx` keeps is the routing (`ChatPage`, `RoomsRedirect`) and
 `ChatSession`'s composition: it calls the controllers in order, hands each the
 others' pieces it needs, and lays the regions out.
 
+## A message's id and its receipt
+
+Every message sent into a chat has an id (shared contracts §3.9): `POST /api/chat`
+takes `client_message_id`, `msg_` and 26 letters and digits, which the dashboard
+mints for each send (`web/src/lib/messageIds.ts`) and the gateway mints when a
+send names none. Any other shape is refused with `400 invalid_message_id` before
+anything of the send is kept. The chat takes the message in one way,
+`dashboard/chat_intake.take_in`, in one step with no wait in it: it looks the id
+up among the messages the chat took, decides what becomes of it by the rules a
+send already had, and records it. So two identical sends racing run one turn.
+
+The send is answered with its receipt, `{session, message_id, accepted_at,
+disposition, turn_message_id, duplicate}`: WS mode's 200 body, and a stream's
+first event (`event: receipt`). `disposition` is `started` (nothing ran, so its
+turn starts), `steered` (the running turn takes it as a steer, and
+`turn_message_id` names that turn's message), `queued` (it waits behind the
+running turn) or `replaced` (the `cancel_and_replace` mid-turn policy stops the
+running turn for it, and it runs next). A send of an id the chat took, with the
+same words (`chat_intake.body_digest`: the text as sent, the agent, the
+`queue_mode` and the meta the door keeps), is answered that message's receipt
+with `duplicate: true` and runs nothing: a double click, a flaky network, a
+script's retry. The same id with other words is `409 message_id_conflict`.
+
+A steer may name the turn it is for (`expected_message_id`, which the page sends
+with every steer). It is refused, and nothing of it is written or queued, when no
+turn runs (`409 no_running_turn`: the page offers to send it), another turn runs
+(`409 turn_not_current`, naming both: the page offers to queue it) or the running
+turn is a slash word its runtime runs itself (`409 turn_not_steerable`, `kind`
+`compact` or `command`). A steer that names no turn is taken in as before.
+
+The rows keep the ids. A row that starts a turn holds `meta.message_id` and
+`meta.receipt {accepted_at, disposition, body_digest}`, and its `ts` is the
+receipt's `accepted_at`; a row that starts a turn and came through another door is
+given an id as it is written (`chat_intake.with_message_id`, from
+`_ChatSession.append`). A steer's row adds `meta.steered_into`. A queued message
+keeps its id and receipt on its queue item, and the row it runs as keeps them; a
+row several queued messages run as names each, with where it came from, in
+`meta.merged`, in place of `meta.queued_from`. A steer its turn never took is
+queued under the same id. What a chat took is read from its rows, steers and queue
+when it is first sent to, and kept beside the chat from then on, so a message
+withdrawn from the queue stays taken; a message still queued when the gateway
+restarts is lost with the queue, and a repeat of it after the restart runs as new.
+
 ## The turn's typed model
 
 A chat is still stored as rows, and a turn now has a backend type as well
@@ -1320,8 +1363,10 @@ user message with `steered_into`, Regenerate's `variants` as attempts of one
 parent, each call's rows as one tool part in the state they say it reached, and
 the turn's ending from its rows. A call's effect and risk are what its row
 recorded when it was made (`meta.effect`, `meta.risk`), else what its approval
-card or its tool's declaration says, else `unchecked` and a write. Ids are
-`ids.stable_id`s of the rows, the same on every read. `tool_families.family_of`
+card or its tool's declaration says, else `unchecked` and a write. A message's id
+is its row's `meta.message_id`, else an `ids.stable_id` of the row, the same on
+every read; its receipt and the messages a merged row names are its
+`facts.receipt` and `facts.merged`. `tool_families.family_of`
 sorts each call into §3.3.1's families. `turns.dialogue(messages)` gives the
 messages back as text, and over `tests/fixtures/transcripts/` it equals
 `history.model_view(rows, None)` entry for entry (`tests/test_turn_rows.py`),

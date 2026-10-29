@@ -54,6 +54,12 @@ SOURCE_FIELDS = ("source_thread", "source_user", "source_channel")
 #: row records no source of its own (:func:`shared_source`), so this is what says whose they were.
 QUEUED_FROM = "queued_from"
 
+#: The ``meta`` key of a row several queued messages run as: each message's id and the source it
+#: records, in order (``dashboard.chat_intake.carried``). It takes the place of :data:`QUEUED_FROM`,
+#: which a row written before it keeps, and its sources say whose the messages were when the row
+#: records no source of its own.
+MERGED = "merged"
+
 #: The ``meta`` key of a row whose words PersonalClaw took in from outside as they came, which no
 #: model of the conversation wrote: a scheduled run's result opened as a chat
 #: (``dashboard.schedule_inject``). It holds what a model is told they are and where they came
@@ -183,11 +189,17 @@ def sent_by_someone_else(row: object) -> bool:
 
 
 def _queued(row: object) -> list[dict[str, str]] | None:
-    """The sources a row several queued messages run as records for them (:data:`QUEUED_FROM`),
-    or ``None`` for any other row."""
+    """The sources a row several queued messages from different places run as records for them
+    (:data:`QUEUED_FROM`, or :data:`MERGED` on a row that records no source of its own), or
+    ``None`` for any other row."""
     meta = row.get("meta") if isinstance(row, Mapping) else None
     queued = meta.get(QUEUED_FROM) if isinstance(meta, Mapping) else None
-    return [source_of(s) for s in queued] if isinstance(queued, list) else None
+    if isinstance(queued, list):
+        return [source_of(s) for s in queued]
+    merged = meta.get(MERGED) if isinstance(meta, Mapping) else None
+    if not isinstance(merged, list) or source_of(row):
+        return None
+    return [source_of(m.get("source")) for m in merged if isinstance(m, Mapping)]
 
 
 def _asked_for(row: object) -> dict[str, str]:

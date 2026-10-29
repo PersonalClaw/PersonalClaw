@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 from personalclaw.config.loader import AppConfig, resolve_session_workspace
 from personalclaw.dashboard import chat_phase, repeated_steps, turn_endings
+from personalclaw.dashboard.chat_intake import MESSAGE_ID, RECEIPT, STEERED_INTO
 from personalclaw.dashboard.chat_queue import shown
 from personalclaw.dashboard.chat_utils import (
     _history_key_for,
@@ -184,6 +185,9 @@ def steer(
     own_words: str | None = None,
     heard: bool = False,
     pastes: Sequence[Mapping[str, Any]] = (),
+    message_id: str = "",
+    receipt: Mapping[str, Any] | None = None,
+    steered_into: str = "",
 ) -> bool:
     """Send *message* into the turn running on *session*: True when that turn takes steers, so it
     will (``SessionManager.add_steer``); False when the caller queues it instead.
@@ -192,7 +196,9 @@ def steer(
     (:func:`take_steer`): when she sent it (*ts*), the words of it she typed when it holds more
     (*own_words*, ``own_words.OWN_WORDS``), that it was dictated (*heard*), and the blocks she
     pasted into it (*pastes*, ``own_words.PASTES``), which the message holds in their markers'
-    place and her row shows as their chips."""
+    place and her row shows as their chips. So are its id (*message_id*), what its send was
+    answered (*receipt*) and the message whose turn it joins (*steered_into*), which the row keeps
+    (``chat_intake``) and a requeue carries."""
     if not state.sessions.add_steer(_history_key_for(session.key), message):
         return False
     meta: dict[str, Any] = {"input_origin": "voice"} if heard else {}
@@ -200,6 +206,9 @@ def steer(
         meta[OWN_WORDS] = own_words
     if pastes:
         meta[PASTES] = [dict(p) for p in pastes]
+    if message_id:
+        meta.update({MESSAGE_ID: message_id, RECEIPT: dict(receipt or {})})
+        meta[STEERED_INTO] = steered_into
     session._steers.append({"text": message.strip(), "ts": ts, "meta": meta})
     return True
 
@@ -225,6 +234,8 @@ def take_steer(state: DashboardState, session: _ChatSession, text: str) -> dict[
             "content": _redact_for_display(words),
             "ts": row["ts"],
             "steer": True,
+            # Its id, so a page shows it as the message it sent rather than as another.
+            **({"message_id": meta[MESSAGE_ID]} if meta.get(MESSAGE_ID) else {}),
             # The blocks she pasted into it, so her bubble shows each as its chip, as on a reload.
             **({PASTES: meta[PASTES]} if meta.get(PASTES) else {}),
         },
@@ -280,6 +291,8 @@ def end_steers(
                 on_record=on_record,
                 pastes=said.get(PASTES) or (),
                 attended=True,  # the owner's steer, typed where they are
+                message_id=said.get(MESSAGE_ID, ""),  # still the message its send was answered for
+                receipt=said.get(RECEIPT),
             )
         except Exception:
             logger.warning("failed to requeue an undelivered steer", exc_info=True)
@@ -293,7 +306,7 @@ def end_steers(
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "queue_id": qid,
                 # Which steer of hers it is, so the page's note that it is on its way goes.
-                "steer_ts": record.get("ts", ""),
+                "message_id": session.queued(qid)[MESSAGE_ID],
             },
         )
         # WARNING, not info: the HTTP caller was already told `{"steered": true}`, so this is a

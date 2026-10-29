@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **A message you send runs once, however many times it is sent. A double click, a dropped connection or a script's retry sends the same message again, and it used to run again; now each message carries an id, and a repeat is answered as the first send was and runs nothing. A message typed to steer an answer that has just finished no longer lands in the next one: the chat says the turn is over and offers to send it as a message, or to queue it when another turn is running. For API clients, the dashboard API is version 3, and a client built for version 2 is refused with the version check's sentence: `POST /api/chat` takes `client_message_id` and answers with the message's receipt, `{session, message_id, accepted_at, disposition, turn_message_id, duplicate}` (`disposition`: started, steered, queued or replaced), in place of `{ok, session}`, `{ok, steered}`, `{ok, queued}` and `{ok, cancelled_and_replaced}`; a stream sends it first, as `event: receipt`. `meta.client_ts` is no longer read.**
+
 ### Fixed
 
 - **On a new chat, the message composer no longer springs for about a second when it moves while the page loads. Its outer box already took its place at once, but the box inside it still sprang to a move made while the composer alone was redrawn, and the page kept asking for animation frames after it looked still. The composer still flies down into its place under the conversation when the chat starts, and in a look that lifts it on focus, it still lifts.**
@@ -17,6 +21,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A security event is still written when the request that caused it is given up, and a burst of them no longer holds up the gateway's other background work. The writes ran on the threads the gateway shares with file reads and uploads, so writes waiting on a slow disk could take every one of them, and a write still waiting when its request was cancelled was dropped. They now run one at a time, in the order asked, on a thread of the log's own.**
 - **Checking whether the sandbox works no longer risks hanging the gateway or turning the sandbox off. On Linux the check forked the gateway, and a forked copy could wait forever on a lock another thread held, with the gateway waiting on the copy: it now runs in a new process. On Linux and macOS, a check that does not answer no longer reads as no sandbox here: the command that asked is refused, never run without it, and the next one checks again.**
 - **A provider added or removed while a Knowledge search, a task lookup, or the list of image, video or diarization providers is being read no longer ends that call with an error. Each read the live set of providers while it waited on one of them, so a provider coming or going meanwhile broke the read off; each now reads the providers as they stood when it started.**
+- **With mid-turn messages set to Replace (Settings → Chat), a message that stops the running answer now runs as soon as that answer stops. It was queued only after the stop finished, and an answer that ended during the stop had already looked for a next message and found none, so the message waited until something else was sent.**
 
 ### For maintainers
 

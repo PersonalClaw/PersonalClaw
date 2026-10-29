@@ -16,7 +16,7 @@
 // carries the number and none can be forgotten.
 
 /** The wire shape this bundle speaks. Mirrors `api_version.API_VERSION`. */
-export const CLIENT_API_VERSION = 2
+export const CLIENT_API_VERSION = 3
 
 /** Mirrors `api_version.VERSION_HEADER`. */
 export const API_VERSION_HEADER = 'X-PersonalClaw-API-Version'

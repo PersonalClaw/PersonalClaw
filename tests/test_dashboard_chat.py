@@ -2968,7 +2968,7 @@ class TestApiChatAgentPassing:
                 },
             )
             data = await resp.json()
-            assert data["ok"] is True
+            assert data["disposition"] == "started", data
             assert state._sessions["external-my-skill"].agent == "my-custom-agent"
 
     @pytest.mark.asyncio
@@ -2998,7 +2998,7 @@ class TestApiChatAgentPassing:
             )
             assert resp.status == 200
             data = await resp.json()
-            assert data["ok"] is True
+            assert data["disposition"] == "started", data
 
     @pytest.mark.asyncio
     async def test_invalid_agent_name_rejected(self, tmp_path, monkeypatch):

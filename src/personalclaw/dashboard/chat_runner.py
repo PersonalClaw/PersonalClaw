@@ -40,6 +40,7 @@ from personalclaw.context_engine import assemble_context, check_headroom, headro
 from personalclaw.context_headroom import HeadroomState, resolve_window
 from personalclaw.context_parts import assembly_parts
 from personalclaw.dashboard import (
+    chat_intake,
     chat_phase,
     chat_questions,
     chat_refusals,
@@ -192,12 +193,10 @@ from personalclaw.skills.allocation import SkillLoadState
 from personalclaw.stats import Stats
 from personalclaw.turn_source import (
     ASKED_FOR_BY,
-    QUEUED_FROM,
     asked_by,
     by_turn,
     named,
     shared_source,
-    source_of,
     taught_by,
 )
 from personalclaw.turn_streams import close_stream
@@ -5751,11 +5750,10 @@ async def run_chat(
                 # And the blocks pasted into them, which the row shows as their chips.
                 if _pasted := queued_pastes(consumed):
                     queued_meta[PASTES] = _pasted
-                # Messages from different places record no source of their own, so the row says
-                # whose each one was: who asked for its turn (`turn_source.asked_by`).
+                # Each message keeps its id and receipt: one alone as the row's, several named in it
+                # with where each came from (whose each was: `turn_source.asked_by`).
                 _queued_source = shared_source(consumed)
-                if len(consumed) > 1 and not _queued_source:
-                    queued_meta[QUEUED_FROM] = [source_of(item) for item in consumed]
+                queued_meta.update(chat_intake.carried(consumed))
                 # A subagent's report runs alone, as asked for by whoever asked for its work, and
                 # its row says so, as a message's says who sent it.
                 carried = next((i[ASKED_FOR_BY] for i in consumed if i.get(ASKED_FOR_BY)), None)
@@ -5786,6 +5784,7 @@ async def run_chat(
                             "session": session.key,
                             "content": _disp,
                             "ts": session.messages[-1].get("ts", ""),
+                            "message_id": session.messages[-1]["meta"][chat_intake.MESSAGE_ID],
                             **({PASTES: _pasted} if _pasted else {}),
                         },
                     )

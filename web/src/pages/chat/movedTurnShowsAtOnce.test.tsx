@@ -3,6 +3,7 @@ import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { hydrateTurns, type HistMsg } from './chatTypes'
 import { runningState } from '../../test/runState'
+import { receiptFor } from '../../test/chatReceipt'
 
 // ── A chat moved to another agent mid-turn kept showing the turn that no longer existed ─────
 //
@@ -92,7 +93,7 @@ beforeEach(async () => {
   }
   FakeSocket.last = null
   h.detailCalls.length = 0
-  h.sendChat.mockReset().mockResolvedValue({ ok: true, queued: true })
+  h.sendChat.mockReset().mockImplementation(receiptFor('queued'))
   h.chatSessionDetail.mockReset().mockImplementation(
     () => new Promise((resolve) => { h.detailCalls.push({ resolve }) }),
   )

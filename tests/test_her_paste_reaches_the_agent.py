@@ -27,6 +27,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _api_app
 
+from personalclaw import ids
 from personalclaw.agents.native.runtime import _MAX_STEERS_PER_TURN, NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.config import loader as config_loader
@@ -142,16 +143,16 @@ class _World:
         assert resp.status == 200, await resp.text()
         return await resp.json()
 
-    async def her_message(
-        self, client: TestClient, key: str, mode: str, text: str = SENT, ts: str = SENT_TS
-    ) -> dict:
-        """What the composer sends for a message with a paste typed while the turn runs."""
+    async def her_message(self, client: TestClient, key: str, mode: str, text: str = SENT) -> dict:
+        """What the composer sends for a message with a paste typed while the turn runs: its
+        receipt."""
         return await self.send(
             client,
             text,
             session=key,
             queue_mode=mode,
-            meta={"client_ts": ts, "pastes": PASTES},
+            client_message_id=ids.new_id("msg"),
+            meta={"pastes": PASTES},
         )
 
     async def settled(self, key: str):
@@ -199,7 +200,7 @@ async def test_a_steer_with_a_paste_reaches_the_model_and_her_row_keeps_the_bloc
     async with world.client() as client:
         key = (await world.send(client, ASKED))["session"]
         await asyncio.wait_for(world.model.answering.wait(), timeout=10)
-        assert await world.her_message(client, key, "steer") == {"ok": True, "steered": True}
+        assert (await world.her_message(client, key, "steer"))["disposition"] == "steered"
         world.model.go_on.set()
         session = await world.settled(key)
 
@@ -221,7 +222,7 @@ async def test_a_queued_send_with_a_paste_reaches_the_model_and_her_row_keeps_th
     async with world.client() as client:
         key = (await world.send(client, ASKED))["session"]
         await asyncio.wait_for(world.model.answering.wait(), timeout=10)
-        assert await world.her_message(client, key, "followup") == {"ok": True, "queued": True}
+        assert (await world.her_message(client, key, "followup"))["disposition"] == "queued"
         # The queue strip is told the block with it, live and when the page reads the chat.
         (pushed,) = world.frames_of("queue_push")
         assert pushed["pastes"] == PASTES and pushed["content"] == SENT
@@ -248,22 +249,16 @@ async def test_a_steer_the_turn_never_takes_keeps_its_paste_when_it_runs(tmp_pat
         key = (await world.send(client, ASKED))["session"]
         await asyncio.wait_for(world.model.answering.wait(), timeout=10)
         for n in range(_MAX_STEERS_PER_TURN):
-            ts = f"2026-10-04T09:30:0{n}+00:00"
-            await world.send(
-                client,
-                f"Also check case {n}.",
-                session=key,
-                queue_mode="steer",
-                meta={"client_ts": ts},
-            )
-        assert await world.her_message(client, key, "steer") == {"ok": True, "steered": True}
+            await world.send(client, f"Also check case {n}.", session=key, queue_mode="steer")
+        hers = await world.her_message(client, key, "steer")
+        assert hers["disposition"] == "steered"
         world.model.go_on.set()
         session = await world.settled(key)
 
     owed = _her_rows(session.messages)[-1]
     _kept_as_sent(owed)
     (pushed,) = world.frames_of("queue_push")
-    assert pushed["pastes"] == PASTES and pushed["steer_ts"] == SENT_TS
+    assert pushed["pastes"] == PASTES and pushed["message_id"] == hers["message_id"]
     assert BLOCK in world.model.read(len(world.model.requests) - 1)
 
 
@@ -279,10 +274,8 @@ async def test_a_message_that_replaces_the_running_turn_keeps_its_paste(tmp_path
     async with world.client() as client:
         key = (await world.send(client, ASKED))["session"]
         await asyncio.wait_for(world.model.answering.wait(), timeout=10)
-        answer = await world.send(
-            client, SENT, session=key, meta={"client_ts": SENT_TS, "pastes": PASTES}
-        )
-        assert answer == {"ok": True, "cancelled_and_replaced": True}
+        answer = await world.send(client, SENT, session=key, meta={"pastes": PASTES})
+        assert answer["disposition"] == "replaced"
         world.model.go_on.set()
         session = await world.settled(key)
 

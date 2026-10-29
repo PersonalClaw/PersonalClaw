@@ -7,8 +7,8 @@ nothing of hers in it, and learning, which reads the chat, never saw them.
 
 Now the turn that takes a steer says so in its stream (``EVENT_STEER``), and the chat writes it in
 the one place a steer becomes a row (``running_turn.take_steer``): after what the answer said
-before it, before what it says next, in her words, with the time she sent it. A steer the turn
-does not take runs next from the queue and is written then, once.
+before it, before what it says next, in her words, with the time the chat took it in and its
+message id. A steer the turn does not take runs next from the queue and is written then, once.
 
 Driven through the real chat handler, the real turn engine, the real session manager and a real
 native runtime answered by a scripted model. The model's first answer pauses after its first words
@@ -28,6 +28,7 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from chat_test_helpers import _api_app
 
+from personalclaw import ids
 from personalclaw.agents.native.runtime import _MAX_STEERS_PER_TURN, NativeAgentRuntime
 from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.config import loader as config_loader
@@ -113,6 +114,7 @@ class _World:
             (kind, dict(data or {}))
         )
         self.state.push_sessions_update = lambda *a, **k: None
+        self.receipts: list[dict] = []
 
     @asynccontextmanager
     async def client(self):
@@ -128,11 +130,13 @@ class _World:
         assert resp.status == 200, await resp.text()
         return await resp.json()
 
-    async def steer(self, client: TestClient, key: str, text: str, ts: str = STEER_TS) -> dict:
-        """What the composer sends for a message typed while the turn runs."""
-        return await self.send(
-            client, text, session=key, queue_mode="steer", meta={"client_ts": ts}
+    async def steer(self, client: TestClient, key: str, text: str) -> dict:
+        """What the composer sends for a message typed while the turn runs: its receipt."""
+        receipt = await self.send(
+            client, text, session=key, queue_mode="steer", client_message_id=ids.new_id("msg")
         )
+        self.receipts.append(receipt)
+        return receipt
 
     async def settled(self, key: str):
         """The chat, once it has answered everything it was sent."""
@@ -164,14 +168,14 @@ async def _reopened(log: ConversationLog, key: str) -> list[dict]:
         return (await resp.json())["messages"]
 
 
-async def _a_turn_she_steers(world: _World, *steers: tuple[str, str]) -> Any:
-    """She asks, and while the first answer is being written sends each of *steers* (its words
-    and the time she sent it) into the running turn. Returns the chat once all is answered."""
+async def _a_turn_she_steers(world: _World, *steers: str) -> Any:
+    """She asks, and while the first answer is being written sends each of *steers* into the
+    running turn (their receipts are ``world.receipts``). Returns the chat once all is answered."""
     async with world.client() as client:
         key = (await world.send(client, ASKED))["session"]
         await asyncio.wait_for(world.model.answering.wait(), timeout=10)
-        for text, ts in steers:
-            assert await world.steer(client, key, text, ts) == {"ok": True, "steered": True}
+        for text in steers:
+            assert (await world.steer(client, key, text))["disposition"] == "steered"
         world.model.go_on.set()
         return await world.settled(key)
 
@@ -182,7 +186,7 @@ async def _a_turn_she_steers(world: _World, *steers: tuple[str, str]) -> Any:
 @pytest.mark.asyncio
 async def test_a_steer_the_turn_takes_is_her_row_where_she_sent_it_and_after_a_restart(tmp_path):
     world = _World(tmp_path, FIRST, SECOND)
-    session = await _a_turn_she_steers(world, (STEER, STEER_TS))
+    session = await _a_turn_she_steers(world, STEER)
 
     # The premise: the running turn took it, so the model read it inside the same answer.
     assert len(world.model.requests) == 2
@@ -192,24 +196,32 @@ async def test_a_steer_the_turn_takes_is_her_row_where_she_sent_it_and_after_a_r
     conversation = [("user", ASKED), ("assistant", FIRST), ("user", STEER), ("assistant", SECOND)]
     assert _conversation(session.messages) == conversation
     row = next(m for m in session.messages if m.get("role") == "user" and m["content"] == STEER)
-    assert row["ts"] == STEER_TS, "her row keeps the time she sent it"
+    (sent,) = world.receipts
+    assert row["ts"] == sent["accepted_at"], "her row keeps the time the chat took it in"
+    assert row["meta"]["message_id"] == sent["message_id"]
     assert own_words(row) == STEER, "the row holds her words, not the runtime's label for them"
 
     # And a page that reads the chat again after a restart finds them in the same place.
     reread = await _reopened(world.log, session.key)
     assert _conversation(reread) == conversation
     kept = next(m for m in reread if m["role"] == "user" and m["content"] == STEER)
-    assert kept["ts"] == STEER_TS
+    assert kept["ts"] == sent["accepted_at"]
     assert kept["meta"]["steered"] is True
 
 
 @pytest.mark.asyncio
 async def test_open_pages_are_told_her_steer_after_the_words_it_follows(tmp_path):
     world = _World(tmp_path, FIRST, SECOND)
-    session = await _a_turn_she_steers(world, (STEER, STEER_TS))
+    session = await _a_turn_she_steers(world, STEER)
 
     assert world.frames_of("chat_user_message") == [
-        {"session": session.key, "content": STEER, "ts": STEER_TS, "steer": True}
+        {
+            "session": session.key,
+            "content": STEER,
+            "ts": world.receipts[0]["accepted_at"],
+            "steer": True,
+            "message_id": world.receipts[0]["message_id"],
+        }
     ]
     # The answer so far is settled first, so a page shows her message below it, not inside it,
     # and what the answer says next streams after it.
@@ -238,7 +250,7 @@ async def test_a_steer_sent_without_a_mode_under_the_steer_policy_is_the_same_ro
     async with world.client() as client:
         key = (await world.send(client, ASKED))["session"]
         await asyncio.wait_for(world.model.answering.wait(), timeout=10)
-        assert await world.send(client, STEER, session=key) == {"ok": True, "steered": True}
+        assert (await world.send(client, STEER, session=key))["disposition"] == "steered"
         world.model.go_on.set()
         session = await world.settled(key)
 
@@ -286,7 +298,7 @@ def memory(tmp_path, monkeypatch) -> MemoryService:
 async def test_learning_reads_her_steer_as_her_own_words(tmp_path, memory):
     correction = "that's not what I asked, use tabs"
     world = _World(tmp_path, FIRST, SECOND)
-    session = await _a_turn_she_steers(world, (correction, STEER_TS))
+    session = await _a_turn_she_steers(world, correction)
 
     # The turn's own review learns the correction she steered it with, in her words.
     lessons = [str(json.loads(row["value_json"])) for row in memory.get_lessons()]
@@ -307,7 +319,7 @@ async def test_a_steer_past_the_turns_cap_runs_next_as_one_row(tmp_path):
     """One turn takes at most a few steers. The rest wait in the queue for the next turn, and
     each is written once: the ones the turn took where it took them, the one it did not when it
     runs."""
-    steers = [(f"Also check case {n}.", f"2026-10-04T09:30:0{n}+00:00") for n in range(5)]
+    steers = [f"Also check case {n}." for n in range(5)]
     assert len(steers) == _MAX_STEERS_PER_TURN + 1, "the fixture must overflow the cap"
     world = _World(tmp_path, FIRST, SECOND, "Case 4 is fine too.")
     session = await _a_turn_she_steers(world, *steers)
@@ -316,14 +328,16 @@ async def test_a_steer_past_the_turns_cap_runs_next_as_one_row(tmp_path):
     assert _conversation(session.messages) == [
         ("user", ASKED),
         ("assistant", FIRST),
-        *[("user", text) for text, _ts in taken],
+        *[("user", text) for text in taken],
         ("assistant", SECOND),
-        ("user", owed[0]),
+        ("user", owed),
         ("assistant", "Case 4 is fine too."),
     ]
-    # The page's queue strip is told the waiting message is the steer she sent at that time.
+    # The page's queue strip is told the waiting message is that steer of hers, by its id.
     pushes = world.frames_of("queue_push")
-    assert [(p["content"], p["steer_ts"]) for p in pushes] == [owed]
+    assert [(p["content"], p["message_id"]) for p in pushes] == [
+        (owed, world.receipts[-1]["message_id"])
+    ]
 
 
 @pytest.mark.asyncio
@@ -472,7 +486,7 @@ async def test_a_steer_taken_after_a_tool_call_is_her_row_after_that_call(tmp_pa
     async with world.client() as client:
         await world.send(client, ASKED, session=chat.key)
         await asyncio.wait_for(world.model.answering.wait(), timeout=10)
-        assert await world.steer(client, chat.key, STEER) == {"ok": True, "steered": True}
+        assert (await world.steer(client, chat.key, STEER))["disposition"] == "steered"
         world.model.go_on.set()
         session = await world.settled(chat.key)
 

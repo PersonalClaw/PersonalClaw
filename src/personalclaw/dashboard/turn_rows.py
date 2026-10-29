@@ -57,6 +57,7 @@ from personalclaw.tool_families import family_of
 from personalclaw.turn_source import (
     ASKED_FOR_BY,
     FROM_OUTSIDE,
+    MERGED,
     QUEUED_FROM,
     by_turn,
     provenance,
@@ -359,7 +360,11 @@ class _Reader:
         meta, words = _meta(row), self.words
         at = _instant(row.get("ts"))
         kept = _meta(provenance(row))
-        merged = kept.get(QUEUED_FROM)
+        # Each merged message with its id (`chat_intake.carried`), or a row written before them,
+        # the sources of messages from different places alone.
+        merged = [dict(m) for m in _items(meta, MERGED) if isinstance(m, Mapping)] or [
+            {"source": s} for s in kept.get(QUEUED_FROM) or ()
+        ]
         facts = turns.MessageFacts(
             input_origin=_closed(meta.get("input_origin"), _FACT_TYPES["input_origin"]) or "",
             own_words=_str(meta, words.own_words),
@@ -377,7 +382,8 @@ class _Reader:
             ),
             image_delivery=_obj(meta, "image_delivery"),
             image_delivery_reason=_str(meta, "image_delivery_reason"),
-            merged=tuple({"source": s} for s in merged) if isinstance(merged, list) else (),
+            receipt=_obj(meta, "receipt"),
+            merged=tuple(merged),
             steered_into=steered_into,
             after_step=after_step,
             from_outside=kept.get(FROM_OUTSIDE),

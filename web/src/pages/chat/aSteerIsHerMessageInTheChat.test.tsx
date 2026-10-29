@@ -21,9 +21,10 @@ const FIRST = "I'll indent it with four spaces."
 const SECOND = 'Switching to tabs, as you asked.'
 const STEER_TS = '2026-10-04T09:30:05.000Z'
 const STEERED = 'Steered into the answer'
+const ASKED_ID = 'msg_01jaa0000000000000000000ab'
 
 const HISTORY = [
-  { role: 'user', content: ASKED, ts: '2026-10-04T09:30:00.000Z' },
+  { role: 'user', content: ASKED, ts: '2026-10-04T09:30:00.000Z', meta: { message_id: ASKED_ID } },
   { role: 'assistant', content: FIRST, ts: '2026-10-04T09:30:02.000Z' },
   { role: 'user', content: STEER, ts: STEER_TS, meta: { steered: true } },
   { role: 'assistant', content: SECOND, ts: '2026-10-04T09:30:09.000Z' },
@@ -113,7 +114,9 @@ beforeEach(async () => {
   }
   FakeSocket.last = null
   h.detailCalls.length = 0
-  h.sendChat.mockReset().mockResolvedValue({ ok: true, steered: true })
+  // The gateway's receipt for a steer the running turn takes.
+  h.sendChat.mockReset().mockImplementation((_m: string, session: string, _meta: unknown, _mode: unknown, _origin: unknown, ids: { messageId: string }) =>
+    Promise.resolve({ session, message_id: ids.messageId, accepted_at: STEER_TS, disposition: 'steered', turn_message_id: ASKED_ID, duplicate: false }))
   h.chatSessionDetail.mockReset().mockImplementation(
     () => new Promise((resolve) => { h.detailCalls.push({ resolve }) }),
   )
@@ -168,16 +171,18 @@ describe('a steer she sends while the answer streams', () => {
     await user.click(await screen.findByRole('button', { name: 'Steer — send into the running turn' }))
 
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
-    const [text, , meta, mode] = h.sendChat.mock.calls[0]
+    const [text, , , mode, , ids] = h.sendChat.mock.calls[0]
     expect([text, mode]).toEqual([STEER, 'steer'])
-    const ts = (meta as { client_ts: string }).client_ts
+    // It names the turn it is for: the message that started the running turn.
+    expect(ids.expectedMessageId).toBe(ASKED_ID)
+    const id = ids.messageId
     // Accepted: until the turn takes it, the line above the composer says it is on its way.
     expect(await screen.findByText(`Steering into this answer: ${STEER}`)).toBeTruthy()
     expect(screen.queryByText(STEERED)).toBeNull()
 
     // The turn takes it: the answer so far is settled, then her row is written where it now is.
     pushFrame('chat_segment', {})
-    pushFrame('chat_user_message', { content: STEER, ts, steer: true })
+    pushFrame('chat_user_message', { content: STEER, ts: STEER_TS, steer: true, message_id: id })
     pushFrame('chat_chunk', { content: SECOND, seq: 2 })
 
     await waitFor(() => expect(screen.queryByText(`Steering into this answer: ${STEER}`)).toBeNull())
@@ -196,11 +201,11 @@ describe('a steer she sends while the answer streams', () => {
     await answerDetail({ messages: [HISTORY[0]], run_state: runningState({ steerable: true }) })
     await user.click(await screen.findByRole('button', { name: 'Steer — send into the running turn' }))
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
-    const ts = (h.sendChat.mock.calls[0][2] as { client_ts: string }).client_ts
+    const id = h.sendChat.mock.calls[0][5].messageId
     expect(await screen.findByText(`Steering into this answer: ${STEER}`)).toBeTruthy()
 
     // The turn ended first: the gateway queues it for the next turn and says which steer it is.
-    pushFrame('queue_push', { content: STEER, ts: '2026-10-04T09:30:20.000Z', queue_id: 'q-1', steer_ts: ts })
+    pushFrame('queue_push', { content: STEER, ts: '2026-10-04T09:30:20.000Z', queue_id: 'q-1', message_id: id })
 
     await waitFor(() => expect(screen.queryByText(`Steering into this answer: ${STEER}`)).toBeNull())
     expect(screen.queryByText(STEERED)).toBeNull()
