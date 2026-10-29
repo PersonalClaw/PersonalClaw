@@ -210,6 +210,31 @@ an app may see), the suggestions and an attachment's reading as `refresh` frames
 waits for (`web/src/lib/useLatestRead.ts`). `tests/rails/test_no_get_route_waits_on_a_model_rail.py`
 holds every GET route to this.
 
+### The native loop: five phases over one record
+
+A native agent's turn (`NativeAgentRuntime.stream`) is one record and a loop. The record,
+`agents/native/loop_state.py`'s `LoopState`, holds what the turn carries from step to step: the
+steps taken, the tools on offer, the model it started on and the ones it fell back to, its one retry,
+the reply it still owes, the steers it took, and its usage totals. `stream` builds one at each call
+and keeps none. Each step then runs five phases over it (`agents/native/loop_phases.py`):
+
+1. **compact**: a stop between steps ends the turn, else the step counts, and the history is
+   compacted when it crossed the threshold;
+2. **infer**: one answer from the model, with the turn's one retry, an overflow's compaction and the
+   first step's failover;
+3. **end**: an answer with no tool calls ends the turn, unless a steer or the reply it owes asks for
+   another step;
+4. **dispatch**: the step's tool calls run, in waves (`dispatch_plan`);
+5. **steer**: what the user sent meanwhile is taken.
+
+Each phase says what comes next (`Next`): the next phase, the next step, or the end it has already
+said. So a change to the loop (a limit, a retry, a model change at the next step) changes one phase.
+`tests/test_native_loop_phases.py` replays recorded turns against it event for event.
+
+No function in core grows past 300 lines or a cyclomatic complexity of 30
+(`tests/function_size.py`). The ones over when the rule came are listed, one line each, in
+`tests/rails/baselines/function-size.sites.jsonl`, a list that only shrinks.
+
 ## Subsystem index
 
 | Subsystem | Doc | Core modules |

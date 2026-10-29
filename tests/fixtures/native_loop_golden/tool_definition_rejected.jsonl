@@ -1,0 +1,4 @@
+{"model_call": {"effort": "", "messages": [{"content": "Do the task.", "role": "user"}], "model": "golden-1", "n": 1, "tools": ["ask", "big", "echo", "read_file"]}}
+{"raised": {"exception": "ToolSchemaRejected", "words": "The model provider rejected PersonalClaw's definition of the \"echo\" tool, so this turn could not run — that is a bug in PersonalClaw, not something you did; turn that tool off on the Tools page and send your message again to keep going until it is fixed."}}
+{"history": [{"content": "Do the task.", "role": "user"}]}
+{"after": {"served_model_ref": "scripted:golden-1", "stop_report": {"children_escaped": 0, "children_reaped": 0, "model_request_aborted": false, "reason": "", "subagents_stopped": 0, "tool_calls_dropped": 0}, "undelivered_steers": []}}
