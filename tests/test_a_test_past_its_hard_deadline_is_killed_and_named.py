@@ -1,5 +1,6 @@
 """A test still running past its hard deadline is killed, and named with its stacks
-(tests/hard_deadline.py).
+(tests/hard_deadline.py), from inside its process or, where nothing in it can run, from outside
+(tools/ci/hung.py).
 
 Each plant is a pytest run of its own, under xdist as CI runs the suite, with the deadline's grace
 at 1 s so it comes in seconds: twice the test's timeout, and 1 s.
@@ -7,9 +8,12 @@ at 1 s so it comes in seconds: twice the test's timeout, and 1 s.
 
 from __future__ import annotations
 
+import io
 import os
 import re
+import signal
 import subprocess
+import sys
 import textwrap
 import threading
 import time
@@ -18,6 +22,8 @@ from pathlib import Path
 import hard_deadline
 import nested_pytest
 import pytest
+
+from tools.ci import hung
 
 TESTS = Path(__file__).resolve().parent
 
@@ -34,9 +40,9 @@ def pytest_configure(config):
 """
 
 
-def _run(tmp_path: Path, tests: str, *args: str) -> tuple[subprocess.CompletedProcess, str, float]:
-    """The planted *tests* run with the suite's registration, under xdist, with a JUnit report;
-    what it printed, its report, and how long it took."""
+def _planted(tmp_path: Path, tests: str, *args: str) -> tuple[list[str], Path, dict[str, str]]:
+    """The command that runs the planted *tests* with the suite's registration, under xdist, with
+    a JUnit report; the folder it runs in, and its environment."""
     root = tmp_path / "planted"
     root.mkdir()
     (root / "conftest.py").write_text(_CONFTEST, encoding="utf-8")
@@ -44,23 +50,24 @@ def _run(tmp_path: Path, tests: str, *args: str) -> tuple[subprocess.CompletedPr
     junit = tmp_path / "junit-planted.xml"
     env = {**os.environ, "PYTHONPATH": str(TESTS)}
     env.pop("PYTEST_TIMEOUT", None)
+    argv = [
+        *nested_pytest.argv(tmp_path),
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "-o",
+        "asyncio_mode=strict",
+    ] + ["-o", "hard_deadline_grace=1", f"--junitxml={junit}", *args]
+    return argv, root, env
+
+
+def _run(tmp_path: Path, tests: str, *args: str) -> tuple[subprocess.CompletedProcess, str, float]:
+    """The planted *tests* run (:func:`_planted`): what it printed, its report, and how long it
+    took."""
+    argv, root, env = _planted(tmp_path, tests, *args)
+    junit = tmp_path / "junit-planted.xml"
     began = time.monotonic()
-    ran = subprocess.run(
-        [
-            *nested_pytest.argv(tmp_path),
-            "-p",
-            "no:cacheprovider",
-            "-q",
-            "-o",
-            "asyncio_mode=strict",
-        ]
-        + ["-o", "hard_deadline_grace=1", f"--junitxml={junit}", *args],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=25,
-    )
+    ran = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True, timeout=25)
     report = junit.read_text(encoding="utf-8") if junit.exists() else ""
     return ran, report, time.monotonic() - began
 
@@ -296,3 +303,104 @@ def test_a_test_that_patches_the_clock_never_moves_the_deadline(tmp_path, monkey
     watchdog.disarm()  # takes the watchdog's lock: once it is waiting again, or done ending
     assert ended == [], dump.read_text(encoding="utf-8")[:500]
     assert not dump.exists()
+
+
+#: A test that waits on a mutex a thread of its own holds while that thread waits in a read that
+#: never returns. Its wait is through ``ctypes.PyDLL``, whose calls keep the GIL, so no Python
+#: thread of its process runs again: not pytest-timeout's alarm, not the hard deadline's watchdog.
+_HOLDS_THE_GIL = """
+    import ctypes
+    import os
+    import threading
+
+
+    def test_that_waits_on_a_mutex_with_the_gil():
+        libc = ctypes.CDLL(None)
+        mutex = ctypes.create_string_buffer(128)
+        assert libc.pthread_mutex_init(mutex, None) == 0
+        r, _ = os.pipe()
+        locked = threading.Event()
+
+        def holds_it_and_reads():
+            libc.pthread_mutex_lock(mutex)
+            locked.set()
+            os.read(r, 1)
+
+        threading.Thread(target=holds_it_and_reads, daemon=True).start()
+        locked.wait()
+        ctypes.PyDLL(None).pthread_mutex_lock(mutex)
+
+
+    def test_that_finishes():
+        assert True
+"""
+
+_GIL_TEST = "test_planted.py::test_that_waits_on_a_mutex_with_the_gil"
+
+
+def _published(armed: Path, nodeid: str, within: float) -> tuple[int, float, float, str]:
+    """The line the planted run's worker publishes for *nodeid* (``hung.parse``'s fields), once
+    it is there."""
+    ends = time.monotonic() + within
+    while time.monotonic() < ends:
+        try:
+            line = hung.parse(armed.read_text(encoding="utf-8"))
+        except OSError:
+            line = None
+        if line is not None and line[3] == nodeid:
+            return line
+        time.sleep(0.05)
+    raise AssertionError(f"the worker never published {nodeid} in {armed}")
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_a_worker_that_holds_the_gil_in_native_code_is_read_and_ended_from_outside(tmp_path):
+    """🔴 Red before: the Linux shards' hang. Nothing in the worker ends it, so it held its shard
+    until the job's limit. Its own watchdog's deadline passes and the worker runs on (the
+    control). Then the watch run-job keeps on a pytest step (``hung.Overdue``) reads where its
+    threads wait and ends it: xdist names the test it crashed in, with that reading in its report,
+    and the other test still runs."""
+    argv, root, env = _planted(tmp_path, _HOLDS_THE_GIL, "-n", "1", "--timeout=1")
+    out = tmp_path / "out.txt"
+    junit = tmp_path / "junit-planted.xml"
+    log = io.StringIO()
+    watch = hung.Overdue.beside(junit, past=1.0, log=log)
+    began = time.monotonic()
+    with out.open("w", encoding="utf-8") as sink:
+        nested = subprocess.Popen(
+            argv, cwd=root, env=env, stdout=sink, stderr=subprocess.STDOUT, start_new_session=True
+        )
+    try:
+        armed = hard_deadline.armed_path(tmp_path / "hard-deadline-planted-gw0.txt")
+        worker, _, deadline, _ = _published(armed, _GIL_TEST, within=15)
+        time.sleep(max(0.0, deadline + 2.0 - time.monotonic()))
+        assert _alive(worker), "premise: the worker runs on past its deadline"
+        said = out.read_text(encoding="utf-8")
+        assert "hard deadline:" not in said, "premise: its own watchdog never ran"
+        ends = time.monotonic() + 15
+        while nested.poll() is None and time.monotonic() < ends:
+            watch(nested.pid)
+            time.sleep(0.25)
+        assert nested.poll() is not None, "the run sat on with its worker held"
+    finally:
+        try:
+            os.killpg(nested.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        nested.wait(10)
+    said = out.read_text(encoding="utf-8")
+    assert f"crashed while running '{_GIL_TEST}'" in said, said[-3000:]
+    from_outside = f"hard deadline, from outside: {_GIL_TEST} was still running"
+    assert from_outside in said and from_outside in junit.read_text(encoding="utf-8")
+    assert f"(pid {worker})" in log.getvalue()
+    if sys.platform == "linux":
+        assert re.search(rf"  thread {worker} .*, in futex", said), said[-3000:]
+    assert "1 passed" in said, said[-1500:]
+    assert nested.returncode == 1 and time.monotonic() - began < 60
