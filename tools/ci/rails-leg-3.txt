@@ -13,6 +13,7 @@ tests/rails/test_model_reach_census_tree.py
 tests/rails/test_no_await_walks_shared_state_tree.py
 tests/rails/test_no_security_log_write_holds_the_event_loop_tree.py
 tests/rails/test_one_request_body_reader.py
+tests/rails/test_part_state_has_one_writer_tree.py
 tests/rails/test_process_environment_writes_census_tree.py
 tests/rails/test_provider_instance_secrets_tree.py
 tests/rails/test_session_acquisition_census.py

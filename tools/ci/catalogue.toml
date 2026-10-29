@@ -108,6 +108,7 @@ inputs = [
 "personalclaw-backend.spec",
 "publication-hygiene-baseline.json",
 "pyproject.toml",
+"schemas/",
 "scripts/",
 "setup.cfg",
 "setup.py",

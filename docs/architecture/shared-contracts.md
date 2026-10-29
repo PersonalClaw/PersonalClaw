@@ -1106,8 +1106,8 @@ here, never in prose), `blocks` (`[{kind: image | audio | resource_link | resour
 `answered` | `skipped` | `expired` | `cancelled`), `answers`, `ended` (`QuestionSegment`,
 `chatTypes.ts:102-121`).
 
-**`sign_in`**: `request_id` (the sign-in ask's `sia_` id, §11.2), `kind` (`sign_in` | `more_access`: a
-missing scope is the same card with other words), `subject` (a readiness subject, §7.3), `label` ("Sign
+**`sign_in`**: `request_id` (the sign-in ask's `sia_` id, §11.2), `need` (`sign_in` | `more_access`: a
+missing scope is the same card with other words; not `kind`, which every part carries as its own), `subject` (a readiness subject, §7.3), `label` ("Sign
 in to <server>", "Allow <server> more access"), `scopes` ([str]: for `more_access` the added scopes, else
 `[]`), `tool_part_id`, `state` (`pending` | `signed_in` | `skipped` | `expired` | `cancelled`). Saved at
 each state change, beside the waiting tool part.
@@ -1170,7 +1170,7 @@ ids: the helper this one runs again, the finished one it follows up, an agent CL
 reload.
 
 **`compaction`**: `trigger` (`auto` | `owner` | `rebuild` | `idle`: the
-threshold, `/compact`, a restore over its budget, an idle chat), `kind` (`summary` | `digest`), `model_ref`
+threshold, `/compact`, a restore over its budget, an idle chat), `form` (`summary` | `digest`; not `kind`, the part's own), `model_ref`
 ("" for a digest), `check` (`passed` | `retried` | `failed` | `skipped`), `summarized` (int, turns),
 `head_through` and `through` (Coord), `kept` ([Coord]: the user messages inside the span kept word for
 word), `text` (the summary message as the model received it, fenced), `account` (the resume account blocks
@@ -3382,7 +3382,7 @@ The dock reads #3888's list. Its item, as this release relies on it:
 | `work` | WorkRef | the work it belongs to (§2.2) |
 | `session` | str | the chat it is shown in: the asking chat, or the chat that started the asking helper. An agent's read of the Inbox shows an item with a `session` only to that chat's work, and a Temporary or Incognito chat's to nobody else; the owner's own Inbox lists every item |
 | `arrived_at` | instant | |
-| `brief` | ApprovalBrief \| QuestionBrief \| SignInBrief \| SecretBrief \| AccessBrief \| FillBrief | exactly what the card shows (§11.4); a sign-in's brief is `{kind: sign_in \| more_access, title, body, subject, scopes}` ("notes needs you to sign in before the agent can use search_notes."); a secret request's `{kind, title, body, name, label, why, project}`; an access request's the exact real paths, their access, the hosts, the agent's `why` and a lifetime ("This turn" or "This chat"); a fill request's the page's host and each field's label, never a value |
+| `brief` | ApprovalBrief \| QuestionBrief \| SignInBrief \| SecretBrief \| AccessBrief \| FillBrief | exactly what the card shows (§11.4); a sign-in's brief is `{need: sign_in \| more_access, title, body, subject, scopes}` (`need`, as the sign-in part names it, §3.3) ("notes needs you to sign in before the agent can use search_notes."); a secret request's `{kind, title, body, name, label, why, project}`; an access request's the exact real paths, their access, the hosts, the agent's `why` and a lifetime ("This turn" or "This chat"); a fill request's the page's host and each field's label, never a value |
 | `answer` | `{method, path}` | the source's own answer route, unchanged; a sign-in's is `POST /api/sign-in-asks/{id}/answer {answer: "sign_in" \| "skip"}` (owner only: `sign_in` starts the subject's sign-in and answers `200 {state: "pending", authorization_url, redirect_uri}`, `skip` answers `200 {state: "skipped"}`; `404 sign_in_ask_not_found`, `409 sign_in_ask_ended`) |
 | `answers` | [ApprovalAnswer] | what it takes (a sign-in: `[{key: sign_in, label: "Sign in"}, {key: skip, label: "Skip"}]`; a secret request: Save and Skip) |
 | `may_interrupt` | bool | decided once by the gateway from mute, quiet hours and the notification rules |

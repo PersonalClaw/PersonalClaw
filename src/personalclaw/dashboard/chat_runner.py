@@ -3773,6 +3773,12 @@ async def run_chat(
                 )
                 # The step it is: a search, a plan, or the tool its card names (`work_phase`).
                 chat_phase.step(state, session, _title, _kind)
+                _risk = resolve_effective_risk(
+                    getattr(event, "risk_level", "") or "",
+                    event.title,
+                    event.tool_kind,
+                    event.tool_input,
+                )
                 session.append(
                     "tool",
                     _title,
@@ -3804,6 +3810,10 @@ async def run_chat(
                             # decoder's own placeholder for "this frame declared none"
                             # and absence must stay representable.
                             **({"kind": _kind} if _kind else {}),
+                            # As decided at call time, never recomputed: the effective risk,
+                            # and `read` exactly when `task_modes.reads_only` held (§3.3).
+                            "risk": _risk,
+                            "effect": "read" if _risk == "safe" else "write",
                         }
                         if event.tool_call_id
                         else None
@@ -3819,12 +3829,6 @@ async def run_chat(
                 # A question the call puts to her (`owner_questions`): PersonalClaw's own tool's
                 # attaches to this call; another runtime's she cannot answer here is shown so.
                 chat_questions.on_tool_call(state, session, client, event)
-                _risk = resolve_effective_risk(
-                    getattr(event, "risk_level", "") or "",
-                    event.title,
-                    event.tool_kind,
-                    event.tool_input,
-                )
                 if event.tool_call_id:
                     # Carried to the call's ONE audit row, written where it is decided — never
                     # here. This card arrives before any gate runs (the native loop yields it and
