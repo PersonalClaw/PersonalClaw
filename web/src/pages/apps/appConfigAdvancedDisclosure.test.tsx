@@ -8,12 +8,12 @@ import { ActionConfig } from '../triggers/ActionConfig'
 afterEach(() => cleanup())
 
 interface NativeManifest {
-  provider: {
+  providers: {
     settingsSchema: {
       properties: Record<string, SchemaProp>
       required?: string[]
     }
-  }
+  }[]
 }
 
 function nativeManifest(name: string): NativeManifest {
@@ -92,7 +92,7 @@ describe('app config advanced-field disclosure (#500 defect B)', () => {
 
   it('states both the hidden-field count and how many values differ from their defaults', () => {
     const manifest = nativeManifest('create-task-action')
-    const props = manifest.provider.settingsSchema.properties
+    const props = manifest.providers[0].settingsSchema.properties
 
     render(
       <AppConfigFields
@@ -105,7 +105,7 @@ describe('app config advanced-field disclosure (#500 defect B)', () => {
           due: '2026-09-30',
         }}
         set={() => {}}
-        required={manifest.provider.settingsSchema.required ?? []}
+        required={manifest.providers[0].settingsSchema.required ?? []}
       />,
     )
 
@@ -148,7 +148,7 @@ describe('app config advanced-field disclosure (#500 defect B)', () => {
 
   it('keeps the bundled run-prompt-action manifest as the high-fan-out fixture', () => {
     const manifest = nativeManifest('run-prompt-action')
-    const props = manifest.provider.settingsSchema.properties
+    const props = manifest.providers[0].settingsSchema.properties
     const advanced = Object.values(props).filter(
       (prop) => prop['x-meta']?.tags?.includes('advanced'),
     )

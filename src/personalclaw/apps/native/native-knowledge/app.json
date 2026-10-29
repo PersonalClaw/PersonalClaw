@@ -15,18 +15,22 @@
     "prompts/knowledge-intent-match.yaml",
     "prompts/knowledge-skill-synthesis.yaml"
   ],
-  "provider": {
-    "type": "knowledge",
-    "implementation": "personalclaw.knowledge_providers.registry:create_native_provider",
-    "capabilities": [
-      "bookmarks",
-      "documents",
-      "search"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "properties": {}
+  "providers": [
+    {
+      "id": "knowledge",
+      "label": "Your knowledge library",
+      "type": "knowledge",
+      "implementation": "personalclaw.knowledge_providers.registry:create_native_provider",
+      "capabilities": [
+        "bookmarks",
+        "documents",
+        "search"
+      ],
+      "settingsSchema": {
+        "type": "object",
+        "properties": {}
+      }
     }
-  },
+  ],
   "native": true
 }

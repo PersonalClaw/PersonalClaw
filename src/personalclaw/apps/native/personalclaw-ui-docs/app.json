@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "provider:create_provider",
-    "capabilities": [
-      "ui_docs"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Read the design-system docs",
+      "type": "tool",
+      "implementation": "provider:create_provider",
+      "capabilities": [
+        "ui_docs"
+      ]
+    }
+  ],
   "native": true
 }

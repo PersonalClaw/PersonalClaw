@@ -93,7 +93,7 @@ def test_the_default_gives_a_local_model_minutes_to_start_answering(module):
 
 def test_the_manifest_default_is_the_providers_default(module):
     manifest = json.loads((NATIVE_DIR / APP_NAME / "app.json").read_text())
-    field = manifest["provider"]["settingsSchema"]["properties"]["timeout_secs"]
+    field = manifest["providers"][0]["settingsSchema"]["properties"]["timeout_secs"]
 
     assert field["default"] == module._DEFAULT_TIMEOUT
     # The sentence names the setting by the label the form shows for it.

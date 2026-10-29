@@ -21,7 +21,7 @@ function shipped(app: string, name: string): ActionProvider {
   const manifest = JSON.parse(readFileSync(path, 'utf8'))
   return {
     name, display_name: manifest.displayName, supports_blocking: false,
-    settingsSchema: manifest.provider.settingsSchema,
+    settingsSchema: manifest.providers[0].settingsSchema,
   }
 }
 

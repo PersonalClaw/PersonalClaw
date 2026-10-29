@@ -33,7 +33,7 @@ import {
 function providerSchema(provider: string): { required: string[]; properties: Record<string, unknown> } {
   const p = join(__dirname, '../../../../src/personalclaw/apps/native', `${provider}-action`, 'app.json')
   const manifest = JSON.parse(readFileSync(p, 'utf8'))
-  const schema = manifest?.provider?.settingsSchema ?? {}
+  const schema = manifest.providers[0].settingsSchema ?? {}
   return { required: schema.required ?? [], properties: schema.properties ?? {} }
 }
 

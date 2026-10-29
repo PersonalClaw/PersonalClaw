@@ -288,7 +288,7 @@ class TestRegistration:
         )
         assert manifest.is_file()
         data = json.loads(manifest.read_text())
-        assert data["provider"]["implementation"].endswith("create_workflows_provider")
+        assert data["providers"][0]["implementation"].endswith("create_workflows_provider")
         assert data["native"] is True
 
     def test_every_tool_has_manifest_meta(self) -> None:

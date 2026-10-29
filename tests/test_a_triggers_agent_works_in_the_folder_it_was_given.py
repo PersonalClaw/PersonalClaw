@@ -101,7 +101,7 @@ def test_the_form_offers_the_folder(home):
             / "src/personalclaw/apps/native/invoke-agent-action/app.json"
         ).read_text(encoding="utf-8")
     )
-    field = manifest["provider"]["settingsSchema"]["properties"]["cwd"]
+    field = manifest["providers"][0]["settingsSchema"]["properties"]["cwd"]
     assert field["type"] == "string"
     assert field["x-meta"]["label"] == "Working folder"
     assert "advanced" not in field["x-meta"].get("tags", [])

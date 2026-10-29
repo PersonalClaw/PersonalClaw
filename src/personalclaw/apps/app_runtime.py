@@ -179,8 +179,7 @@ def _refuse(manifest: AppManifest, reason: str) -> None:
     name = manifest.name
     logger.warning("app %s: not started — %s", name, reason)
     record(manifest)
-    primary = _provider_registry().get(name)
-    for provider in primary.chain() if primary is not None else []:
+    for provider in _provider_registry().list_for_app(name):
         provider.error = reason
     try:
         from personalclaw.apps.backend_runtime import get_backend_supervisor

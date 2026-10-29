@@ -103,7 +103,7 @@ def _ship_the_platform(monkeypatch) -> list[ToolProvider]:
         if not (app_dir / "app.json").exists():
             continue
         manifest = AppManifest.from_json_file(app_dir / "app.json")
-        if not manifest.provider:
+        if not manifest.all_providers():
             continue
         registry.register(manifest)
         for cfg in manifest.all_providers():

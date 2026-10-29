@@ -74,7 +74,7 @@ def test_the_bundle_is_declared_native():
 
 def test_the_manifest_declares_a_bundle_relative_model_provider():
     """type ``model``, both capabilities, and an implementation that is the BUNDLE's own."""
-    provider = _manifest().provider
+    provider = _manifest().first_provider()
     assert provider is not None
     assert provider.type == "model"
     assert {"chat", "embedding"} <= set(provider.capabilities)

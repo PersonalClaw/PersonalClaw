@@ -96,3 +96,23 @@ async def test_an_app_that_provides_nothing_lists_no_capabilities(tmp_path):
     row = next(a for a in apps if a["name"] == "notes")
     assert row["isProvider"] is False
     assert row["providerCapabilities"] == []
+
+
+@pytest.mark.asyncio
+async def test_an_app_that_lists_its_providers_shows_its_first_one(tmp_path):
+    """A provider declared in ``providers[]`` is the app's as much as the singular one: every
+    native bundle declares its providers there (#3841), and its row read as no provider at all."""
+    listed = {k: v for k, v in _SPEECH.items() if k != "provider"}
+    listed["providers"] = [
+        {**_SPEECH["provider"], "id": "speech", "label": "Speech to text"},
+        {"type": "trigger_source", "implementation": "provider:create_source"},
+    ]
+    _installed(tmp_path, "listed-whisper", listed)
+    async with _client(tmp_path) as client:
+        apps = (await (await client.get("/api/apps")).json())["apps"]
+    row = next(a for a in apps if a["name"] == "listed-whisper")
+    assert (row["isProvider"], row["providerType"], row["providerCapabilities"]) == (
+        True,
+        "model",
+        ["stt"],
+    )

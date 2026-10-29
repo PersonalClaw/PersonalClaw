@@ -40,16 +40,18 @@ def _all_setting_names(props: dict[str, Any] | None, trail: str = "") -> list[st
 
 
 def _schema_property_blocks(manifest: dict[str, Any]) -> list[dict[str, Any]]:
-    """Both places a first-party manifest may declare settings: top level and under ``provider``."""
+    """Every place a manifest may declare settings: top level, under the singular ``provider``,
+    and under each of ``providers[]`` (where every native bundle declares its providers, #3841)."""
     blocks: list[dict[str, Any]] = []
     top = manifest.get("settingsSchema")
     if isinstance(top, dict) and isinstance(top.get("properties"), dict):
         blocks.append(top["properties"])
-    provider = manifest.get("provider")
-    if isinstance(provider, dict):
-        inner = provider.get("settingsSchema")
-        if isinstance(inner, dict) and isinstance(inner.get("properties"), dict):
-            blocks.append(inner["properties"])
+    listed = manifest.get("providers")
+    for provider in [manifest.get("provider"), *(listed if isinstance(listed, list) else [])]:
+        if isinstance(provider, dict):
+            inner = provider.get("settingsSchema")
+            if isinstance(inner, dict) and isinstance(inner.get("properties"), dict):
+                blocks.append(inner["properties"])
     return blocks
 
 

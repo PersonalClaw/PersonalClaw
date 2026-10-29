@@ -2132,8 +2132,7 @@ def repair_app_packages() -> list[str]:
 def _mark_provider_error(name: str, message: str) -> None:
     """Replace a not-enabled provider's raw import error with the sentence that explains it."""
     try:
-        primary = _provider_registry().get(name)
-        for record in primary.chain() if primary is not None else []:
+        for record in _provider_registry().list_for_app(name):
             if not record.enabled:
                 record.error = message
     except Exception:  # noqa: BLE001 — a status annotation must not break the repair

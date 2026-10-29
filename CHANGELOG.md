@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **Each provider an app declares can now carry an id and a label, and the gateway keeps each one apart, under `<app>/<id>`: one is switched on, off or rebuilt without the app's others, and an app may declare two providers of one type when it names them. An app written before ids works as it did: its singular `provider` is read first, and each provider without an id is named by its type. Apps declare the `capability-ids` core feature to rely on it.**
+
 ### Changed
 
 - **A message you send runs once, however many times it is sent. A double click, a dropped connection or a script's retry sends the same message again, and it used to run again; now each message carries an id, and a repeat is answered as the first send was and runs nothing. A message typed to steer an answer that has just finished no longer lands in the next one: the chat says the turn is over and offers to send it as a message, or to queue it when another turn is running. For API clients, the dashboard API is version 3, and a client built for version 2 is refused with the version check's sentence: `POST /api/chat` takes `client_message_id` and answers with the message's receipt, `{session, message_id, accepted_at, disposition, turn_message_id, duplicate}` (`disposition`: started, steered, queued or replaced), in place of `{ok, session}`, `{ok, steered}`, `{ok, queued}` and `{ok, cancelled_and_replaced}`; a stream sends it first, as `event: receipt`. `meta.client_ts` is no longer read.**

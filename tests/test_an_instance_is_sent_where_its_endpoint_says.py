@@ -116,7 +116,7 @@ def test_the_settings_form_saves_the_address_under_the_one_name():
     """The form writes each field the app's settings schema declares: Ollama declares one address,
     under the name every reader reads."""
     schema = json.loads((NATIVE_DIR / APP / "app.json").read_text(encoding="utf-8"))
-    fields = schema["provider"]["settingsSchema"]["properties"]
+    fields = schema["providers"][0]["settingsSchema"]["properties"]
     assert ENDPOINT_OPTION in fields and "base_url" not in fields
 
 

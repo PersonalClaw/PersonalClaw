@@ -147,6 +147,7 @@ def test_single_instance_tool_path_unchanged(_cfg_home, monkeypatch):
 class _ModelCfg:
     def __init__(self):
         self.type = "model"
+        self.id = ""
         self.multiInstance = True
         self.implementation = "provider:create_fake_multi_model_provider"
         self.capabilities = ["chat"]
@@ -170,7 +171,7 @@ def _model_provider_registry(monkeypatch):
     record = RegisteredProvider(
         name="fake-multi-model", manifest=None, provider_config=_ModelCfg(), enabled=False
     )
-    registry._extensions["fake-multi-model"] = record
+    registry._extensions[record.key] = record
     monkeypatch.setattr("personalclaw.providers.registry.get_provider_registry", lambda: registry)
     yield registry
 

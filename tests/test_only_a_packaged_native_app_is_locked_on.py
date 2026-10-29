@@ -227,7 +227,7 @@ def test_the_providers_card_reads_managed_from_where_the_app_came_from(tmp_path)
         }
     finally:
         registry = get_provider_registry()
-        for name in list(registry._extensions):
+        for name in {r.name for r in registry.list_extensions()}:
             registry.disable(name)
         reset_provider_registry()
 

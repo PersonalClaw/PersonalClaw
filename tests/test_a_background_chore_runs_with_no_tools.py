@@ -99,7 +99,7 @@ def bundled_tool_registry():
             mf = d / "app.json"
             if mf.exists():
                 manifest = AppManifest.from_json_file(mf)
-                if manifest.provider:
+                if manifest.all_providers():
                     reg.register(manifest, enabled=True)
         yield tool_reg
     finally:

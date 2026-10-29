@@ -289,12 +289,12 @@ class TestTheProviderContract:
         assert path.is_file(), path
         app = json.loads(path.read_text(encoding="utf-8"))
         assert app["name"] == "inbox-op-action"
-        assert app["provider"]["type"] == "action"
+        assert app["providers"][0]["type"] == "action"
         assert (
-            app["provider"]["implementation"]
+            app["providers"][0]["implementation"]
             == "personalclaw.action_providers.inbox_op_provider:create_provider"
         )
-        schema = app["provider"]["settingsSchema"]
+        schema = app["providers"][0]["settingsSchema"]
         # The manifest's enum IS the provider's op set. A drift here is a Settings form offering
         # an operation the provider refuses, or hiding one it performs.
         assert set(schema["properties"]["op"]["enum"]) == set(OPS)

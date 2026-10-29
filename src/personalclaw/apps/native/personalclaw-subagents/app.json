@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_subagents_provider",
-    "capabilities": [
-      "subagents"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Start and track helpers",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.registry:create_subagents_provider",
+      "capabilities": [
+        "subagents"
+      ]
+    }
+  ],
   "native": true
 }

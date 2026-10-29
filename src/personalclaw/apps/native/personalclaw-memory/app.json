@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_memory_provider",
-    "capabilities": [
-      "memory"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Tools to remember and recall",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.registry:create_memory_provider",
+      "capabilities": [
+        "memory"
+      ]
+    }
+  ],
   "native": true
 }

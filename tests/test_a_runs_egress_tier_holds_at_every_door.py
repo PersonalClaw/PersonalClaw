@@ -411,7 +411,9 @@ def app(tmp_path, monkeypatch):
         }
     )
     monkeypatch.setitem(
-        get_provider_registry()._extensions, APP, SimpleNamespace(manifest=manifest)
+        get_provider_registry()._extensions,
+        f"{APP}/launches",
+        SimpleNamespace(name=APP, manifest=manifest),
     )
     _owner_allows()
     module = load_bundle_module(folder, APP, "provider")

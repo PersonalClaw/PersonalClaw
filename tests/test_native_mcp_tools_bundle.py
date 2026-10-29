@@ -54,7 +54,7 @@ def test_the_bundle_ships_native_with_the_files_it_owns():
 
 
 def test_the_manifest_declares_the_bundles_own_tool_provider():
-    provider = _manifest().provider
+    provider = _manifest().first_provider()
     assert provider is not None
     assert provider.type == "tool"
     assert provider.implementation == "provider:create_mcp_provider", (
@@ -78,7 +78,7 @@ def test_it_names_every_transport_it_connects_over_and_no_other():
     from personalclaw.mcp_discovery import MCP_TRANSPORTS
 
     raw = json.loads((_BUNDLE / "app.json").read_text(encoding="utf-8"))
-    transport = raw["provider"]["settingsSchema"]["properties"]["transport"]
+    transport = raw["providers"][0]["settingsSchema"]["properties"]["transport"]
     assert tuple(transport["enum"]) == MCP_TRANSPORTS
     for text in (raw["description"], (_BUNDLE / "README.md").read_text(encoding="utf-8")):
         for named in ("stdio", "Streamable HTTP", "SSE"):
@@ -92,7 +92,7 @@ def test_the_card_can_save_a_streamable_http_server():
     from personalclaw.providers.mcp_instances import _spec_to_instance
     from personalclaw.providers.settings import ProviderSettings
 
-    schema = json.loads((_BUNDLE / "app.json").read_text(encoding="utf-8"))["provider"][
+    schema = json.loads((_BUNDLE / "app.json").read_text(encoding="utf-8"))["providers"][0][
         "settingsSchema"
     ]
     card = _spec_to_instance("docs", {"type": "http", "url": "https://mcp.example.test/mcp"})

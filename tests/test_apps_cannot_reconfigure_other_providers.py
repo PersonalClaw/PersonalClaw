@@ -279,8 +279,8 @@ def _stop_providers() -> None:
     from personalclaw.tool_providers import registry as tools
 
     registry = registry_module.get_provider_registry()
-    for name in list(registry._extensions):
-        registry.disable(name)
+    for ext in registry.list_extensions():
+        registry.disable(ext.name, ext.capability)
     registry_module.reset_provider_registry()
     for provider in list(tools.list_providers()):
         if str(getattr(provider, "name", "")).startswith((ALPHA, BRAVO, MCP_TOOLS)):

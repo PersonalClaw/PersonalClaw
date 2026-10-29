@@ -19,6 +19,10 @@ wire asks a model by. A model app that imports it declares it.
 approval brief (``personalclaw.sdk.channel.approval_brief_for(event)["answers"]``). A channel app
 whose prompt offers them declares it.
 
+``CAPABILITY_IDS``: each provider in an app's manifest may carry an ``id`` and a ``label``, and
+PersonalClaw keeps it as its own capability, ``<app>/<id>``, so an app may declare one type of
+provider more than once. An app that declares two providers of one type declares it.
+
 ``CHAT_TRUST``: a channel that runs a conversation itself offers that chat's Trust on its own
 approval prompt and keeps none of its own (``personalclaw.sdk.channel.approval_brief_for(event,
 chat=...)``, ``answer_in_chat`` and ``chat_grant``). A channel app that uses them declares it.
@@ -105,6 +109,7 @@ app that reads the list declares it, with ``/api/waiting`` in its manifest.
 from personalclaw.apps.core_features import (
     ADAPTIVE_THINKING,
     APPROVAL_ANSWERS,
+    CAPABILITY_IDS,
     CHAT_TRUST,
     CLOSING_STREAMS,
     CORE_FEATURES,
@@ -129,6 +134,7 @@ from personalclaw.apps.core_features import (
 __all__ = [
     "ADAPTIVE_THINKING",
     "APPROVAL_ANSWERS",
+    "CAPABILITY_IDS",
     "CHAT_TRUST",
     "CLOSING_STREAMS",
     "CORE_FEATURES",

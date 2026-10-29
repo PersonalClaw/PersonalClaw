@@ -615,7 +615,7 @@ def test_every_shipped_tool_name_has_exactly_one_provider(monkeypatch):
     registry = provider_registry.get_provider_registry()
     for manifest_file in sorted(BUNDLED_DIR.glob("*/app.json")):
         manifest = AppManifest.from_json_file(manifest_file)
-        if manifest.provider:
+        if manifest.all_providers():
             registry.register(manifest, enabled=True)
 
     async def census() -> dict[str, list[str]]:

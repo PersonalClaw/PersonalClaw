@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_artifacts_provider",
-    "capabilities": [
-      "artifacts"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Tools for saved artifacts",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.registry:create_artifacts_provider",
+      "capabilities": [
+        "artifacts"
+      ]
+    }
+  ],
   "native": true
 }

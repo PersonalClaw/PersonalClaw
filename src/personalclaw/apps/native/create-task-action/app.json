@@ -10,101 +10,105 @@
     "bundled",
     "native"
   ],
-  "provider": {
-    "type": "action",
-    "entity": "task",
-    "implementation": "personalclaw.action_providers.create_task_provider:create_provider",
-    "capabilities": [
-      "execute"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "required": [
-        "title_template"
+  "providers": [
+    {
+      "id": "action",
+      "label": "File a task on agent events",
+      "type": "action",
+      "entity": "task",
+      "implementation": "personalclaw.action_providers.create_task_provider:create_provider",
+      "capabilities": [
+        "execute"
       ],
-      "properties": {
-        "title_template": {
-          "type": "string",
-          "x-meta": {
-            "label": "Task Title",
-            "help": "Title for the created task. Supports $EVENT, $CONTEXT, and $<payload-key>."
-          }
-        },
-        "body_template": {
-          "type": "string",
-          "x-meta": {
-            "label": "Description",
-            "help": "Optional task description. Supports the same placeholders."
-          }
-        },
-        "priority": {
-          "type": "string",
-          "enum": [
-            "low",
-            "medium",
-            "high"
-          ],
-          "default": "medium",
-          "x-meta": {
-            "label": "Priority"
-          }
-        },
-        "project": {
-          "type": "string",
-          "x-meta": {
-            "label": "Project",
-            "help": "Optional project to file the task under.",
-            "tags": [
-              "advanced"
-            ]
-          }
-        },
-        "provider": {
-          "type": "string",
-          "default": "native",
-          "x-meta": {
-            "label": "Task Provider",
-            "help": "Which task provider to create in (default native).",
-            "tags": [
-              "advanced"
-            ]
-          }
-        },
-        "assignee": {
-          "type": "string",
-          "x-meta": {
-            "label": "Assignee",
-            "help": "Optional assignee for the created task.",
-            "tags": [
-              "advanced"
-            ]
-          }
-        },
-        "due": {
-          "type": "string",
-          "x-meta": {
-            "label": "Due Date",
-            "help": "Optional due date (ISO 8601, e.g. 2026-07-31).",
-            "tags": [
-              "advanced"
-            ]
-          }
-        },
-        "labels": {
-          "type": "array",
-          "items": {
-            "type": "string"
+      "settingsSchema": {
+        "type": "object",
+        "required": [
+          "title_template"
+        ],
+        "properties": {
+          "title_template": {
+            "type": "string",
+            "x-meta": {
+              "label": "Task Title",
+              "help": "Title for the created task. Supports $EVENT, $CONTEXT, and $<payload-key>."
+            }
           },
-          "x-meta": {
-            "label": "Labels",
-            "help": "Optional labels to tag the created task with.",
-            "tags": [
-              "advanced"
-            ]
+          "body_template": {
+            "type": "string",
+            "x-meta": {
+              "label": "Description",
+              "help": "Optional task description. Supports the same placeholders."
+            }
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "default": "medium",
+            "x-meta": {
+              "label": "Priority"
+            }
+          },
+          "project": {
+            "type": "string",
+            "x-meta": {
+              "label": "Project",
+              "help": "Optional project to file the task under.",
+              "tags": [
+                "advanced"
+              ]
+            }
+          },
+          "provider": {
+            "type": "string",
+            "default": "native",
+            "x-meta": {
+              "label": "Task Provider",
+              "help": "Which task provider to create in (default native).",
+              "tags": [
+                "advanced"
+              ]
+            }
+          },
+          "assignee": {
+            "type": "string",
+            "x-meta": {
+              "label": "Assignee",
+              "help": "Optional assignee for the created task.",
+              "tags": [
+                "advanced"
+              ]
+            }
+          },
+          "due": {
+            "type": "string",
+            "x-meta": {
+              "label": "Due Date",
+              "help": "Optional due date (ISO 8601, e.g. 2026-07-31).",
+              "tags": [
+                "advanced"
+              ]
+            }
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "x-meta": {
+              "label": "Labels",
+              "help": "Optional labels to tag the created task with.",
+              "tags": [
+                "advanced"
+              ]
+            }
           }
         }
       }
     }
-  },
+  ],
   "native": true
 }

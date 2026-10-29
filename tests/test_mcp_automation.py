@@ -183,7 +183,7 @@ def test_a_native_app_bundle_registers_the_provider():
     manifest = _json.loads((root / "app.json").read_text())
     assert manifest["native"] is True
     assert (
-        manifest["provider"]["implementation"]
+        manifest["providers"][0]["implementation"]
         == "personalclaw.tool_providers.registry:create_automation_provider"
     )
 

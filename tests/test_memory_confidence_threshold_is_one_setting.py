@@ -148,7 +148,7 @@ def test_the_memory_settings_read_carries_the_value_the_control_renders(home):
 
 def test_the_vector_memory_app_no_longer_offers_the_setting():
     manifest = json.loads((_NATIVE / "native-vector-memory" / "app.json").read_text("utf-8"))
-    assert "settingsSchema" not in manifest["provider"], manifest["provider"]
+    assert "settingsSchema" not in manifest["providers"][0], manifest["providers"][0]
 
 
 # ── the family: a core app's provider setting must reach a reader ────────────────────────
@@ -223,7 +223,8 @@ def _audit(native_root: Path) -> tuple[list[str], list[str], list[str]]:
     unresolved: list[str] = []
     for manifest_path in sorted(native_root.glob("*/app.json")):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        provider = manifest.get("provider") or {}
+        # The first provider, declared singular or first in `providers[]` (#3841).
+        provider = manifest.get("provider") or (manifest.get("providers") or [{}])[0] or {}
         properties = (provider.get("settingsSchema") or {}).get("properties") or {}
         # An ACTION provider's settingsSchema is not factory config: it is the per-fire action
         # config a trigger stores and hands to `execute(config, …)` on every fire.
@@ -298,12 +299,12 @@ def test_the_family_rail_catches_an_mcp_card_field_its_store_drops(tmp_path):
     writes. The rail passes the real ones and names only the planted one, so following the card
     to `mcp.json` measures each field rather than passing the card."""
     real = json.loads((_NATIVE / "mcp-tools" / "app.json").read_text(encoding="utf-8"))
-    schema = real["provider"]["settingsSchema"]
+    schema = real["providers"][0]["settingsSchema"]
     planted = {**schema, "properties": {**schema["properties"], "cwd": {"type": "string"}}}
     app = tmp_path / "mcp-tools"
     app.mkdir()
     (app / "app.json").write_text(
-        json.dumps({**real, "provider": {**real["provider"], "settingsSchema": planted}}),
+        json.dumps({**real, "providers": [{**real["providers"][0], "settingsSchema": planted}]}),
         encoding="utf-8",
     )
     read, discarded, unresolved = _audit(tmp_path)

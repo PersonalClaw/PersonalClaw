@@ -11,70 +11,77 @@
     "embedding",
     "bundled"
   ],
-  "provider": {
-    "type": "model",
-    "implementation": "provider:create_provider",
-    "multiInstance": true,
-    "capabilities": [
-      "chat",
-      "embedding"
-    ],
-    "settingsSchema": {
-      "type": "object",
-      "properties": {
-        "endpoint": {
-          "type": "string",
-          "default": "http://localhost:11434",
-          "x-meta": {
-            "label": "Ollama Endpoint",
-            "help": "Base URL of the Ollama API server."
+  "providers": [
+    {
+      "id": "local-models",
+      "label": "Chat and embedding models from Ollama",
+      "renamedFrom": [
+        "model"
+      ],
+      "type": "model",
+      "implementation": "provider:create_provider",
+      "multiInstance": true,
+      "capabilities": [
+        "chat",
+        "embedding"
+      ],
+      "settingsSchema": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "default": "http://localhost:11434",
+            "x-meta": {
+              "label": "Ollama Endpoint",
+              "help": "Base URL of the Ollama API server."
+            }
+          },
+          "default_model": {
+            "type": "string",
+            "default": "",
+            "x-meta": {
+              "label": "Default Model",
+              "help": "The model this instance answers with when nothing in Settings → Models names one. Leave it empty to choose its models in Settings → Models."
+            }
+          },
+          "embedding_model": {
+            "type": "string",
+            "default": "",
+            "x-meta": {
+              "label": "Embedding Model",
+              "help": "Ollama model to use for embedding operations. Leave empty to use sentence-transformers instead."
+            }
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 600,
+            "x-meta": {
+              "label": "Request Timeout",
+              "help": "Seconds to wait for the model to start answering, and then between the parts of its answer. Reading a long conversation can take a model minutes before its first word, so keep this generous.",
+              "tags": [
+                "advanced"
+              ]
+            }
+          },
+          "context_window": {
+            "type": "integer",
+            "minimum": 1,
+            "x-meta": {
+              "label": "Served Context Window",
+              "help": "Tokens this endpoint actually serves (Ollama's num_ctx), used to size the context gauge and trigger compaction. Leave blank to detect it from the running model.",
+              "placeholder": "auto-detected",
+              "tags": [
+                "advanced"
+              ]
+            }
           }
         },
-        "default_model": {
-          "type": "string",
-          "default": "",
-          "x-meta": {
-            "label": "Default Model",
-            "help": "The model this instance answers with when nothing in Settings → Models names one. Leave it empty to choose its models in Settings → Models."
-          }
-        },
-        "embedding_model": {
-          "type": "string",
-          "default": "",
-          "x-meta": {
-            "label": "Embedding Model",
-            "help": "Ollama model to use for embedding operations. Leave empty to use sentence-transformers instead."
-          }
-        },
-        "timeout_secs": {
-          "type": "integer",
-          "default": 600,
-          "x-meta": {
-            "label": "Request Timeout",
-            "help": "Seconds to wait for the model to start answering, and then between the parts of its answer. Reading a long conversation can take a model minutes before its first word, so keep this generous.",
-            "tags": [
-              "advanced"
-            ]
-          }
-        },
-        "context_window": {
-          "type": "integer",
-          "minimum": 1,
-          "x-meta": {
-            "label": "Served Context Window",
-            "help": "Tokens this endpoint actually serves (Ollama's num_ctx), used to size the context gauge and trigger compaction. Leave blank to detect it from the running model.",
-            "placeholder": "auto-detected",
-            "tags": [
-              "advanced"
-            ]
-          }
-        }
-      },
-      "required": [
-        "endpoint"
-      ]
+        "required": [
+          "endpoint"
+        ]
+      }
     }
-  },
+  ],
   "modelCatalog": {
     "note": "Curated Ollama models with approximate disk size + minimum system RAM to run comfortably (q4 quantization). Vendor data — the generic recommendation engine reads min_ram_gb to filter by detected hardware. Sizes/requirements are guidance, not guarantees.",
     "pullKind": "ollama",

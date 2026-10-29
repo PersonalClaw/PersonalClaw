@@ -186,8 +186,10 @@ def fenced_state() -> dict[str, frozenset[str]]:
     def local_models() -> frozenset[str]:
         from personalclaw.local_models import registry as reg
 
-        return frozenset(f"providers:{k}" for k in _keys(reg._providers)) | frozenset(
-            f"capabilities:{k}" for k in _keys(reg._capabilities)
+        return (
+            frozenset(f"providers:{k}" for k in _keys(reg._providers))
+            | frozenset(f"capabilities:{k}" for k in _keys(reg._capabilities))
+            | frozenset(f"owners:{k}" for k in _keys(reg._owners))
         )
 
     def logging_sinks() -> frozenset[str]:

@@ -615,7 +615,7 @@ def _register_bundled_offline() -> None:
         if not mf.exists():
             continue
         manifest = AppManifest.from_json_file(mf)
-        if not manifest.provider:
+        if not manifest.all_providers():
             continue
         reg.register(manifest)
         for cfg in manifest.all_providers():

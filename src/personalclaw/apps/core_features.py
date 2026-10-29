@@ -183,11 +183,18 @@ WAITING_LIST = "waiting-list"
 #: no such route, so an app that reads the list there reads nothing.
 RUNNING_LIST = "running-list"
 
+#: Each provider in an app's manifest may carry an ``id`` and a ``label`` (and ``renamedFrom``),
+#: the app a top-level ``retiredCapabilities``, and core keeps each provider as its own capability,
+#: ``<app>/<id>``, so an app may declare one type more than once. A core without it drops the ids,
+#: and an app with two providers of one type collides with itself there.
+CAPABILITY_IDS = "capability-ids"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
         ADAPTIVE_THINKING,
         APPROVAL_ANSWERS,
+        CAPABILITY_IDS,
         CHAT_TRUST,
         CLOSING_STREAMS,
         CUT_OFF_ANSWERS,

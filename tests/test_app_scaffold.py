@@ -197,7 +197,7 @@ def test_an_upstream_type_appears_without_editing_the_generator(
     fake = "fake_capability"
     assert fake not in PROVIDER_TYPES
     monkeypatch.setattr(
-        "personalclaw.apps.manifest.PROVIDER_TYPES", frozenset(PROVIDER_TYPES | {fake})
+        "personalclaw.apps.provider_config.PROVIDER_TYPES", frozenset(PROVIDER_TYPES | {fake})
     )
 
     assert fake in provider_types()

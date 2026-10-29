@@ -9,14 +9,18 @@
     "memory",
     "bundled"
   ],
-  "provider": {
-    "type": "memory",
-    "implementation": "personalclaw.memory_providers.registry:create_default_provider",
-    "capabilities": [
-      "semantic_search",
-      "episodic",
-      "preferences"
-    ]
-  },
+  "providers": [
+    {
+      "id": "memory",
+      "label": "Semantic search over memory",
+      "type": "memory",
+      "implementation": "personalclaw.memory_providers.registry:create_default_provider",
+      "capabilities": [
+        "semantic_search",
+        "episodic",
+        "preferences"
+      ]
+    }
+  ],
   "native": true
 }

@@ -49,7 +49,7 @@ const MANIFEST = JSON.parse(readFileSync(
 ))
 const RUN_WORKFLOW: ActionProvider = {
   name: 'run-workflow', display_name: 'Run Workflow', internal: false, supports_blocking: false,
-  settingsSchema: MANIFEST.provider.settingsSchema,
+  settingsSchema: MANIFEST.providers[0].settingsSchema,
 }
 
 let saved: Record<string, unknown> = {}

@@ -9,14 +9,18 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_native_provider",
-    "capabilities": [
-      "skills",
-      "notification",
-      "system"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Built-in agent tools",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.registry:create_native_provider",
+      "capabilities": [
+        "skills",
+        "notification",
+        "system"
+      ]
+    }
+  ],
   "native": true
 }

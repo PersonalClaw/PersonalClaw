@@ -90,7 +90,9 @@ def _declare(monkeypatch, **launch) -> None:
         }
     )
     monkeypatch.setitem(
-        get_provider_registry()._extensions, APP, SimpleNamespace(manifest=manifest)
+        get_provider_registry()._extensions,
+        f"{APP}/launches",
+        SimpleNamespace(name=APP, manifest=manifest),
     )
 
 

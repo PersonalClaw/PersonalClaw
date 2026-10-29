@@ -140,7 +140,7 @@ async def _gateway(tmp_path: Path):
         async with TestClient(TestServer(app)) as client:
             yield client, registry
         await channel_transports.unbind_inbound()
-    for name in list(registry._extensions):
+    for name in {r.name for r in registry.list_extensions()}:
         registry.disable(name)
 
 

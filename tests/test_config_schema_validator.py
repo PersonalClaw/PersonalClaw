@@ -46,7 +46,7 @@ def _only(errors: list[str]) -> str:
 
 def _settings_schema(app: str) -> dict:
     manifest = json.loads((NATIVE_APPS / app / "app.json").read_text(encoding="utf-8"))
-    return manifest["provider"]["settingsSchema"]
+    return manifest["providers"][0]["settingsSchema"]
 
 
 # ── the bounds that were inert in BOTH paths ───────────────────────────────────────────────

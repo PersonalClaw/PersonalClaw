@@ -26,6 +26,10 @@ _providers: dict[str, LocalModelProvider] = {}
 # that provider's models when the model doesn't name its own (so a whisper model shows
 # under STT, a pyannote model under diarization, an ollama model under chat/embedding).
 _capabilities: dict[str, list[str]] = {}
+# Which capability of its app holds each entry (#3841). The key is the app's name (a path segment
+# of ``/api/models/local/{provider}/…``), so an app has one local-model capability: a second is
+# refused, and only the one holding the entry takes it away.
+_owners: dict[str, str] = {}
 
 
 def to_local_model(m: Any, *, capabilities: list[str] | None = None) -> LocalModel:
@@ -76,8 +80,12 @@ def register_provider(
     capabilities: list[str] | None = None,
     *,
     name: str | None = None,
+    owner: str = "",
 ) -> None:
     """Register (or replace) a local-model provider + the capabilities it serves.
+
+    ``owner`` is the capability of its app that registers it. A different capability of the same
+    app already holding the entry is refused with :class:`ValueError`, naming both.
 
     ``name`` overrides the registry key (defaults to ``provider.name``). The app loader
     passes the APP name (``faster-whisper``, ``sentence-transformers``, …) so the
@@ -85,14 +93,25 @@ def register_provider(
     on the SAME identifier — the provider's internal ``.name`` (``faster_whisper`` /
     ``native``) can differ, and the inference registries already accept both."""
     key = name or provider.name
+    held = _owners.get(key, "")
+    if owner and held and held != owner:
+        raise ValueError(
+            f"{key}/{owner}: an app has one local-model capability, and {key}'s is {held!r}"
+        )
     _providers[key] = provider
     _capabilities[key] = list(capabilities or [])
+    if owner:
+        _owners[key] = owner
     logger.debug("local-model provider registered: %s (caps=%s)", key, capabilities)
 
 
-def unregister_provider(name: str) -> None:
+def unregister_provider(name: str, *, owner: str = "") -> None:
+    """Take *name*'s entry away; with *owner*, only when that capability holds it."""
+    if owner and _owners.get(name, owner) != owner:
+        return
     _providers.pop(name, None)
     _capabilities.pop(name, None)
+    _owners.pop(name, None)
 
 
 def get_provider(name: str) -> LocalModelProvider | None:

@@ -9,12 +9,16 @@
     "tool",
     "bundled"
   ],
-  "provider": {
-    "type": "tool",
-    "implementation": "personalclaw.tool_providers.registry:create_code_map_provider",
-    "capabilities": [
-      "code_map"
-    ]
-  },
+  "providers": [
+    {
+      "id": "tools",
+      "label": "Find code by symbol",
+      "type": "tool",
+      "implementation": "personalclaw.tool_providers.registry:create_code_map_provider",
+      "capabilities": [
+        "code_map"
+      ]
+    }
+  ],
   "native": true
 }
