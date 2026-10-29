@@ -32,6 +32,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Checking whether the sandbox works no longer risks hanging the gateway or turning the sandbox off. On Linux the check forked the gateway, and a forked copy could wait forever on a lock another thread held, with the gateway waiting on the copy: it now runs in a new process. On Linux and macOS, a check that does not answer no longer reads as no sandbox here: the command that asked is refused, never run without it, and the next one checks again.**
 - **A provider added or removed while a Knowledge search, a task lookup, or the list of image, video or diarization providers is being read no longer ends that call with an error. Each read the live set of providers while it waited on one of them, so a provider coming or going meanwhile broke the read off; each now reads the providers as they stood when it started.**
 - **With mid-turn messages set to Replace (Settings → Chat), a message that stops the running answer now runs as soon as that answer stops. It was queued only after the stop finished, and an answer that ended during the stop had already looked for a next message and found none, so the message waited until something else was sent.**
+- **Guesses at the sign-in password, or at a new device's code, sent all at once from one address now stop at the lockout's limit. Every guess in such a burst passed the limit before the first one was counted, so the limit held only for guesses sent one after another.**
 
 ### For maintainers
 

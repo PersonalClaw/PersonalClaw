@@ -862,3 +862,99 @@ class TestASignInWhileItsRowIsWritten:
                 assert cookie is not None and not cookie["secure"], cookie
         finally:
             release.set()
+
+
+# ── A burst of guesses ────────────────────────────────────────────────────
+
+
+class TestABurstOfGuessesIsHeldToTheLockout:
+    """A guess's body is read, awaited, between the lockout check and the check of the guess.
+    Guesses from one address sent together all passed the check before any was counted, so the
+    threshold did not bound a burst. Each is checked again once its body is read, with nothing
+    awaited between that check, the guess's check and the count."""
+
+    @staticmethod
+    def _held_bodies(monkeypatch):
+        """Every body read waits for *release*; *reading* counts the reads under way."""
+        release = asyncio.Event()
+        reading: list[int] = []
+        read = auth_h.json_object_body
+
+        async def held(request, **kw):
+            reading.append(1)
+            await release.wait()
+            return await read(request, **kw)
+
+        monkeypatch.setattr(auth_h, "json_object_body", held)
+        return release, reading
+
+    @staticmethod
+    async def _until(check) -> None:
+        for _ in range(100):
+            if check():
+                return
+            await asyncio.sleep(0.05)
+        assert check()
+
+    @pytest.mark.asyncio
+    async def test_two_guesses_sent_together_meet_a_threshold_of_one(
+        self, _isolated, monkeypatch
+    ) -> None:
+        creds.set_password("jordan", GOOD_PASSWORD)
+        _enable_login(_isolated, lockout_threshold=1)
+        checked: list[str] = []
+        verify = creds.verify_password
+
+        def counting(username, password):
+            checked.append(password)
+            return verify(username, password)
+
+        monkeypatch.setattr(creds, "verify_password", counting)
+        release, reading = self._held_bodies(monkeypatch)
+        async with TestClient(TestServer(_app())) as client:
+            guesses = [
+                asyncio.ensure_future(
+                    client.post(
+                        "/api/auth/login",
+                        json={"username": "jordan", "password": f"guess-{n}-guess"},
+                    )
+                )
+                for n in range(2)
+            ]
+            await self._until(lambda: len(reading) == 2)
+            release.set()
+            answers = sorted([(await g).status for g in guesses])
+        assert len(checked) == 1, f"{len(checked)} guesses reached the password check: {checked}"
+        assert answers == [401, 429], answers
+
+    @pytest.mark.asyncio
+    async def test_two_codes_sent_together_meet_a_threshold_of_one(
+        self, _isolated, monkeypatch
+    ) -> None:
+        from personalclaw.auth import enrollment
+
+        monkeypatch.setattr(enrollment, "config_dir", lambda: _isolated)
+        _enable_login(_isolated, lockout_threshold=1)
+        checked: list[str] = []
+        redeem = enrollment.redeem_code
+
+        def counting(code, *args, **kw):
+            checked.append(code)
+            return redeem(code, *args, **kw)
+
+        monkeypatch.setattr(enrollment, "redeem_code", counting)
+        release, reading = self._held_bodies(monkeypatch)
+        app = _app()
+        app.router.add_post("/api/auth/enroll/complete", auth_h.api_auth_enroll_complete)
+        async with TestClient(TestServer(app)) as client:
+            codes = [
+                asyncio.ensure_future(
+                    client.post("/api/auth/enroll/complete", json={"code": f"AAAA{n}BBB"})
+                )
+                for n in range(2)
+            ]
+            await self._until(lambda: len(reading) == 2)
+            release.set()
+            answers = sorted([(await c).status for c in codes])
+        assert len(checked) == 1, f"{len(checked)} codes reached the code check: {checked}"
+        assert answers == [401, 429], answers
