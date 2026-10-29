@@ -160,13 +160,17 @@ def test_without_proc_it_says_so(tmp_path):
 
 
 #: A child with one thread in a read on a pipe, holding a mutex, and its main thread waiting on
-#: that mutex through ``ctypes.PyDLL``, whose calls keep the GIL. A third thread prints a tick
-#: every 20 ms, which stops once the main thread waits. It prints the reading thread's id, and
-#: waits for a line on its stdin before it waits on the mutex.
+#: that mutex through ``ctypes.PyDLL``. It first prints whether a call through ``PyDLL``, and one
+#: through ``CDLL``, keeps the GIL: ctypes releases it around a call unless the function carries
+#: ``_FUNCFLAG_PYTHONAPI``, as ``PyDLL``'s do. Then it prints the reading thread's id, and waits for
+#: a line on its stdin before it says it is holding and waits on the mutex.
 _TWO_WAITS = textwrap.dedent("""
-    import ctypes, os, sys, threading, time
+    import ctypes, os, sys, threading
 
     libc = ctypes.CDLL(None)
+    held = ctypes.PyDLL(None).pthread_mutex_lock
+    keeps = [bool(f._flags_ & ctypes._FUNCFLAG_PYTHONAPI) for f in (held, libc.pthread_mutex_lock)]
+    print(*keeps, flush=True)
     mutex = ctypes.create_string_buffer(128)
     assert libc.pthread_mutex_init(mutex, None) == 0
     r, w = os.pipe()
@@ -178,18 +182,10 @@ _TWO_WAITS = textwrap.dedent("""
         os.read(r, 1)
 
 
-    def ticks():
-        while True:
-            print("tick", flush=True)
-            time.sleep(0.02)
-
-
     threading.Thread(target=reads, daemon=True).start()
     sys.stdin.readline()
-    threading.Thread(target=ticks, daemon=True).start()
-    time.sleep(0.2)
     print("holding", flush=True)
-    ctypes.PyDLL(None).pthread_mutex_lock(mutex)
+    held(mutex)
     """)
 
 
@@ -199,7 +195,7 @@ def _asleep_in_a_system_call(pid: int, tid: int) -> None:
     steady = 0
     ends = time.monotonic() + 10
     while steady < 2:
-        assert time.monotonic() < ends, "premise: the reading thread never slept in its read"
+        assert time.monotonic() < ends, f"premise: thread {tid} never slept in a system call"
         state = (task / "stat").read_text().rpartition(")")[2].split()[0]
         call = (task / "syscall").read_text().split()[0]
         steady = steady + 1 if state == "S" and call.isdigit() else 0
@@ -227,19 +223,14 @@ def test_a_thread_in_a_read_and_one_waiting_on_a_mutex_with_the_gil_are_both_nam
 
     threading.Thread(target=listen, daemon=True).start()
     try:
+        keeps = said.get(timeout=10)
+        assert keeps == "True False", f"premise: PyDLL's call keeps the GIL, CDLL's not: {keeps}"
         reader = int(said.get(timeout=10))
         _asleep_in_a_system_call(child.pid, reader)
         child.stdin.write("\n")
         child.stdin.flush()
-        before = []
-        while (line := said.get(timeout=10)) != "holding":
-            before.append(line)
-        assert "tick" in before, "premise: a Python thread ran before the main thread waited"
-        time.sleep(0.5)
-        while not said.empty():
-            said.get()
-        time.sleep(1.0)
-        assert said.empty(), "premise: the main thread holds the GIL as it waits, so none ticks"
+        assert said.get(timeout=10) == "holding"
+        _asleep_in_a_system_call(child.pid, child.pid)
         capture = hung.threads(child.pid)
     finally:
         child.kill()
