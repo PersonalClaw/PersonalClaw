@@ -15,6 +15,7 @@ from pathlib import Path
 
 import hard_deadline
 import in_flight
+import junit_once
 import native_omp_guard
 import pycache_guard
 import pytest
@@ -342,6 +343,8 @@ def pytest_configure(config):
     if config.getoption("--fixture-costs"):
         config.pluginmanager.register(fixture_costs.Plugin(config.rootpath), "fixture-costs")
     config.pluginmanager.register(real_home_guard.Plugin(real_home_guard.GUARD), "real-home-guard")
+    # The JUnit report records a test with subtests once, at the time it took (tests/junit_once.py).
+    junit_once.configure(config)
     # The tests started and not finished, beside the JUnit report, so a hung shard names its test
     # (tests/in_flight.py). The controller's alone; a worker arms nothing.
     in_flight.configure(config)

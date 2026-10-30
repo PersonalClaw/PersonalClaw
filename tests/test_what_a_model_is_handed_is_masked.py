@@ -37,6 +37,7 @@ from personalclaw.security import (
     redact_for_model,
 )
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult, tool_failure
+from personalclaw.workflows import controller as controller_mod
 
 pytestmark = pytest.mark.security
 
@@ -47,6 +48,15 @@ TOKEN = "ghp_" + "Zr8" * 12
 #: A stored password with no shape any pattern knows: only the tool that handed it out can mask it.
 PASSWORD = "correct-horse-battery-staple"
 MASK = "[REDACTED: credential]"
+
+
+@pytest.fixture(autouse=True)
+def _a_stage_settles_at_test_speed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing wakes a run when its dispatched stage ends: the tick loop polls the stage once
+    every `TICK_WAKE_SECS` (`RunController._dispatched_poll_delay`), 5 s as shipped, so each
+    stage driven here waited up to that long to settle, and which tick its end landed on decided
+    how long. Shrunk, as the other end-to-end workflow tests shrink it."""
+    monkeypatch.setattr(controller_mod, "TICK_WAKE_SECS", 0.02)
 
 
 def _leaks(text: str, *secrets: str) -> list[str]:
