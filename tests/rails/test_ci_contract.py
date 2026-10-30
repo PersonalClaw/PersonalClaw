@@ -622,6 +622,54 @@ def _plant_in_job(
     return Control(name, plant, fails, expect)
 
 
+def _plant_in_entry(
+    name: str, rel: str, entry_id: str, old: str, new: str, expect: str = "", fails: bool = True
+) -> Control:
+    """A violation planted by one edit inside one ``[[job]]`` entry of the catalogue: the first
+    *old* between the entry's ``id = "<entry_id>"`` line and the next table, whatever the entry's
+    other lines say, so a head that changes those lines still takes the plant."""
+
+    def plant(root: Path) -> None:
+        text = (root / rel).read_text(encoding="utf-8")
+        _write(root, rel, _edit_in_entry(text, entry_id, old, new, name, rel))
+
+    return Control(name, plant, fails, expect)
+
+
+def _edit_in_entry(text: str, entry_id: str, old: str, new: str, name: str, rel: str) -> str:
+    start = text.find(f'\nid = "{entry_id}"\n')
+    end = text.find("\n[[", start + 1) if start >= 0 else -1
+    end = len(text) if end < 0 else end
+    at = text.find(old, start, end) if start >= 0 else -1
+    assert at >= 0, f"the plant {name!r} found no {old!r} in {rel}'s {entry_id!r} entry"
+    return text[:at] + new + text[at + len(old) :]
+
+
+def test_a_plant_in_an_entry_finds_it_by_its_id_whatever_its_other_lines_say() -> None:
+    """The entry plant edits its own entry only, with the entry's other lines as they are or
+    changed, and fails loudly where the entry, or the text in it, is gone."""
+
+    def catalogue_text(inputs: str, security: str = 'security = "security"\n') -> str:
+        return (
+            '[[job]]\nid = "audit"\nsecurity = "security"\n\n'
+            f'[[job]]\nid = "browse-live"\nexternal_inputs = {inputs}\n{security}\n'
+            '[[job]]\nid = "x"\nsecurity = "security"\n'
+        )
+
+    def mark(text: str) -> str:
+        return _edit_in_entry(
+            text, "browse-live", 'security = "security"', 'security = "ordinary"', "p", "c"
+        )
+
+    for inputs in ('["browser-download"]', '["browser-download", "apps-partner"]'):
+        text = catalogue_text(inputs)
+        assert mark(text) == catalogue_text(inputs, 'security = "ordinary"\n')
+    text = catalogue_text('["browser-download"]')
+    for gone in (text.replace('id = "browse-live"', 'id = "browse"'), catalogue_text("[]", "")):
+        with pytest.raises(AssertionError, match="found no"):
+            mark(gone)
+
+
 def _plant_job_copy(name: str, rel: str, job_id: str, copy_id: str, expect: str = "") -> Control:
     """A violation planted by a copy of one job of a workflow under a new id, as a new leg made
     from an existing one would be: the job's own lines, up to the next job's."""
@@ -9367,16 +9415,13 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             expect='breadth.yml job rails-macos runs "echo it\'s scanned"',
         ),
         # The census: an entry whose steps run a security-marked module is security posture.
-        _plant(
+        # By the entry's id, not its whole text, so a change to browse-live's inputs or toolchain
+        # still takes the plant (#3918: browse-live gains the apps partner).
+        _plant_in_entry(
             "the browse proof marked ordinary",
             catalogue.CATALOGUE,
-            'id = "browse-live"\ntiers = ["merge"]\ninputs = [":(glob)**"]\n'
-            'external_inputs = ["browser-download"]\n'
-            'toolchain = ["uv-sync", "node", "npm-ci", "chromium"]\ncache = ["uv", "npm"]\n'
+            "browse-live",
             'security = "security"',
-            'id = "browse-live"\ntiers = ["merge"]\ninputs = [":(glob)**"]\n'
-            'external_inputs = ["browser-download"]\n'
-            'toolchain = ["uv-sync", "node", "npm-ci", "chromium"]\ncache = ["uv", "npm"]\n'
             'security = "ordinary"',
             expect="browse-live: security is ordinary, but its steps run security-marked modules",
         ),
