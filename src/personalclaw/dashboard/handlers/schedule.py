@@ -31,6 +31,7 @@ from personalclaw.dashboard import memory_holds
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.security import MaskConflict, redact_values_for_display, stored_name
+from personalclaw.sel import sel_log_async
 from personalclaw.vector_memory import SemanticRejectCode
 
 from ._shared import _change_refused_for_the_app, _get_memory, _memory_refusal
@@ -103,7 +104,8 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         return refused
     sk = work_of_request(request)
     if not sk:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller="anonymous",
             operation="memory_remember",
             outcome="denied",
@@ -121,7 +123,8 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     reach = memory_reads.reach_of(state, sk)
     if reach.restricted_mode:
         logger.warning("Blocked memory_remember from restricted session %s", sk)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory_remember",
             outcome="denied",
@@ -134,7 +137,8 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     # your own word below, once it is one memory would take (`memory_holds`).
     asked_by_someone_else = bool(memory_writes.asker())
     if not asked_by_someone_else:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory_remember",
             outcome="allowed",
@@ -151,6 +155,10 @@ async def api_lessons_create(request: web.Request) -> web.Response:
     # a lesson written as yours never passes the memory service's own scan for. A dangerous
     # verdict (e.g. a bidi-override or an embedded instruction-override) is refused before it
     # ever lands in the store.
+    # The scan's `try` only reads the verdict, and the refusal and its row come after it: a row
+    # that cannot be written fails the request, where inside the `try` it read as a failed scan
+    # and the flagged lesson was saved.
+    cats: str | None = None
     try:
         from personalclaw.supply_chain import Verdict, default_scanner
 
@@ -161,20 +169,22 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         if flagged:
             rules = {finding.rule for report in flagged for finding in report.findings}
             cats = ", ".join(sorted(rules)) or "dangerous content"
-            _sel().log_api_access(
-                caller=work_of_request(request),
-                operation="memory_remember",
-                outcome="denied",
-                source="dashboard",
-                resources="injection_scan",
-                error=f"scanner flagged memory write: {cats}",
-            )
-            return web.json_response(
-                {"error": f"memory write refused: scanner flagged dangerous content ({cats})"},
-                status=400,
-            )
     except Exception:
         logger.debug("memory-write injection scan failed (allowing)", exc_info=True)
+    if cats is not None:
+        await sel_log_async(
+            _sel().log_api_access,
+            caller=work_of_request(request),
+            operation="memory_remember",
+            outcome="denied",
+            source="dashboard",
+            resources="injection_scan",
+            error=f"scanner flagged memory write: {cats}",
+        )
+        return web.json_response(
+            {"error": f"memory write refused: scanner flagged dangerous content ({cats})"},
+            status=400,
+        )
     category = body.get("category", "knowledge")
     # Write through the memory service onto memory.db ``lesson.*``. The store is
     # always present (see module docstring), so no JSONL fallback is needed; a
@@ -213,7 +223,8 @@ async def api_lessons_create(request: web.Request) -> web.Response:
         if refusal is None:
             state.push_refresh("lessons")
             return None
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="memory_remember",
             outcome="rejected",
@@ -279,7 +290,8 @@ async def api_lessons_delete(request: web.Request) -> web.Response:
         return refused
     sk = work_of_request(request)
     if memory_reads.reach_of(state, sk).temporary:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="lessons.delete",
             outcome="denied",
@@ -361,7 +373,8 @@ async def api_lessons(request: web.Request) -> web.Response:
     refusal = _memory_refusal(state, request)
     if refusal:
         sk = work_of_request(request)
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=sk,
             operation="lessons.list",
             outcome="denied",

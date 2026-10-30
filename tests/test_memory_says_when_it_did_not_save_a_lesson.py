@@ -21,6 +21,7 @@ from test_lessons_memory_reroute import _req, _state_with_record_store
 from test_memory_is_read_only_where_its_work_may_read_it import HERE, _call, _gateway
 
 from personalclaw import supply_chain, vector_memory
+from personalclaw.dashboard.handlers import schedule
 from personalclaw.dashboard.handlers.schedule import api_lessons, api_lessons_create
 
 TAUGHT = "Keep the seed trays on the north bench"
@@ -106,6 +107,67 @@ async def test_what_not_to_do_is_scanned_like_the_rule(tmp_path, monkeypatch):
     )
     assert kept.status == 200
     assert await _listed(state) == [f"{rule} — NOT: leave them on the bench"]
+
+
+async def _status_or_none(state, body: dict) -> int | None:
+    """The status a save answers, or None when it fails before answering."""
+    try:
+        return (await api_lessons_create(_req(state, body=body))).status
+    except (OSError, RuntimeError):
+        return None
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_lesson_is_not_saved_when_its_refusal_cannot_be_recorded(
+    tmp_path, monkeypatch
+):
+    """🔴 Red on main: the scan's refusal row was written inside the scan's own ``try``, whose
+    ``except`` means the scan failed and lets the lesson through. A security log that could not
+    take the row (a full disk) read as that, and the flagged lesson was saved."""
+    _flag(monkeypatch)
+    state, _vs = _state_with_record_store(tmp_path, with_embedder=False)
+    real = schedule._sel
+
+    class _RefusesTheScanRow:
+        def __init__(self, log):
+            self._log = log
+
+        def log_api_access(self, **row):
+            if row.get("resources") == "injection_scan":
+                raise OSError("No space left on device")
+            return self._log.log_api_access(**row)
+
+    monkeypatch.setattr(schedule, "_sel", lambda: _RefusesTheScanRow(real()))
+
+    status = await _status_or_none(state, {"rule": f"Leave the seedlings {FLAGGED}"})
+
+    assert status != 200
+    assert await _listed(state) == []
+
+
+@pytest.mark.asyncio
+async def test_a_flagged_lesson_is_not_saved_when_its_refusal_row_cannot_be_queued(
+    tmp_path, monkeypatch
+):
+    """The refusal's row is written off the event loop (#5605). Awaited inside the scan's
+    ``try``, a write that could not be queued (the log's thread gone at shutdown) read as a
+    failed scan, and the flagged lesson was saved."""
+    from personalclaw import sel as sel_module
+
+    _flag(monkeypatch)
+    state, _vs = _state_with_record_store(tmp_path, with_embedder=False)
+
+    async def _cannot_queue_the_scan_row(write, /, *args, **row):
+        if row.get("resources") == "injection_scan":
+            raise RuntimeError("cannot schedule new futures after shutdown")
+        await sel_module.sel_log_async(write, *args, **row)
+
+    monkeypatch.setattr(schedule, "sel_log_async", _cannot_queue_the_scan_row, raising=False)
+
+    status = await _status_or_none(state, {"rule": f"Leave the seedlings {FLAGGED}"})
+
+    assert status != 200
+    assert await _listed(state) == []
 
 
 @pytest.mark.asyncio
