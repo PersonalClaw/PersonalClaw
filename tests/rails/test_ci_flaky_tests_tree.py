@@ -3,8 +3,9 @@
 It runs daily and on dispatch, on main only, one run at a time. Its one job holds
 ``actions: read`` and ``issues: write`` beside the checkout's ``contents: read``, and its token
 reaches only the fetch and the step that writes the issues. It fetches a day more than the 14 days
-an issue closes after, and uploads nothing. Each rule fails on a planted edit of the real
-workflow.
+an issue closes after, carrying its own window from its previous run (``tools/ci/fetch.py``'s
+``CARRIES``), and its one upload is that window, stored, once the fetch that built it succeeded.
+Each rule fails on a planted edit of the real workflow.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import pytest
 import yaml
 from rails_repo import REPO
 
-from tools.ci import flaky_issues
+from tools.ci import fetch, flaky_issues
 
 _WORKFLOWS = REPO / ".github" / "workflows"
 _FLAKY = "flaky-tests.yml"
@@ -25,6 +26,10 @@ _FETCH = "fetch the last 14 days' histories"
 _ISSUES = "open, edit, reopen and close the flaky tests' issues"
 _ON_MAIN = "${{ github.ref == 'refs/heads/main' }}"
 _WINDOW = '--window "$RUNNER_TEMP/window"'
+#: The carried window is uploaded only once the fetch that built it succeeded.
+_AFTER_FETCH = "${{ !cancelled() && steps.fetch.outcome == 'success' }}"
+#: Days a carried window is kept: enough for a run GitHub's cron skipped or ran late to find it.
+_CARRY_DAYS = 3
 
 
 def _texts(old: str = "", new: str = "") -> dict[str, str]:
@@ -67,12 +72,30 @@ def violations(texts: dict[str, str]) -> list[str]:
             bad.append(
                 f"{_FLAKY}:flaky-tests:{step.get('name') or step.get('uses')} holds the token"
             )
-    if any(re.match(r"actions/(cache|upload-artifact)@", str(s.get("uses", ""))) for s in steps):
-        bad.append(f"{_FLAKY} uploads or caches something")
+    if any(re.match(r"actions/cache@", str(s.get("uses", ""))) for s in steps):
+        bad.append(f"{_FLAKY} keeps a cache")
+    carry, _, _ = fetch.CARRIES["flaky-tests"]
+    uploads = [s for s in steps if re.match(r"actions/upload-artifact@", str(s.get("uses", "")))]
+    given = (uploads[0].get("with") or {}) if len(uploads) == 1 else {}
+    if len(uploads) != 1 or given.get("name") != carry:
+        bad.append(f"{_FLAKY} uploads something besides its carried window, {carry}")
+    elif given.get("compression-level") != 0 or given.get("if-no-files-found") != "error":
+        bad.append(f"{_FLAKY} does not carry the window once, stored")
+    elif given.get("path") != f"${{{{ runner.temp }}}}/window/{fetch.WINDOW}":
+        # The next run takes a carried artifact only when it holds the window archive alone.
+        bad.append(f"{_FLAKY} carries more than {fetch.WINDOW}")
+    elif uploads[0].get("if") != _AFTER_FETCH:
+        bad.append(f"{_FLAKY} carries a window the fetch did not finish")
+    elif given.get("retention-days") != _CARRY_DAYS:
+        bad.append(f"{_FLAKY} keeps its carried window {given.get('retention-days')!r} days")
     by_name = {step.get("name"): str(step.get("run", "")) for step in steps}
-    days = re.search(r"--days (\d+) --no-carry\b", by_name.get(_FETCH, ""))
+    fetching = by_name.get(_FETCH, "")
+    days = re.search(r"--days (\d+)\b", fetching)
     if not days or int(days.group(1)) <= flaky_issues.CLOSE_DAYS:
-        bad.append(f"{_FLAKY} does not fetch more than {flaky_issues.CLOSE_DAYS} days afresh")
+        bad.append(f"{_FLAKY} does not fetch more than {flaky_issues.CLOSE_DAYS} days")
+    ids = [step.get("id") for step in steps if step.get("name") == _FETCH]
+    if "--carry flaky-tests" not in fetching or "--no-carry" in fetching or ids != ["fetch"]:
+        bad.append(f"{_FLAKY} does not carry its own window from its previous run")
     if '--out "$RUNNER_TEMP/window"' not in by_name.get(_FETCH, "") or _WINDOW not in by_name.get(
         _ISSUES, ""
     ):
@@ -135,16 +158,72 @@ _PLANTS = [
         id="the-token-in-another-step",
     ),
     pytest.param(
-        '/window" --days 15 --no-carry',
-        '/window" --days 14 --no-carry',
-        "does not fetch more than 14 days afresh",
+        "concurrency:\n  group: flaky-tests\n  cancel-in-progress: false\n",
+        "",
+        "can run twice at once or cancel a run",
+        id="no-concurrency-group",
+    ),
+    pytest.param(
+        '/window" --days 15 --carry flaky-tests',
+        '/window" --days 14 --carry flaky-tests',
+        "does not fetch more than 14 days",
         id="a-window-short-of-the-close",
     ),
     pytest.param(
+        '/window" --days 15 --carry flaky-tests',
         '/window" --days 15 --no-carry',
-        '/window" --days 15',
-        "does not fetch more than 14 days afresh",
-        id="a-carried-window",
+        "does not carry its own window",
+        id="a-window-fetched-afresh-every-day",
+    ),
+    pytest.param(
+        '/window" --days 15 --carry flaky-tests',
+        '/window" --days 15 --carry flake-report',
+        "does not carry its own window",
+        id="the-weekly-reports-window",
+    ),
+    pytest.param(
+        "        id: fetch\n",
+        "",
+        "does not carry its own window",
+        id="a-fetch-the-carry-cannot-name",
+    ),
+    pytest.param(
+        "          path: ${{ runner.temp }}/window/window.zip\n",
+        "          path: ${{ runner.temp }}/window/\n",
+        "carries more than window.zip",
+        id="the-status-carried-beside-the-window",
+    ),
+    pytest.param(
+        "        if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}\n",
+        "        if: ${{ !cancelled() }}\n",
+        "carries a window the fetch did not finish",
+        id="a-window-carried-after-a-failed-fetch",
+    ),
+    pytest.param(
+        "          compression-level: 0\n",
+        "          compression-level: 6\n",
+        "does not carry the window once, stored",
+        id="the-window-compressed-again",
+    ),
+    pytest.param(
+        "          retention-days: 3\n",
+        "          retention-days: 90\n",
+        "keeps its carried window 90 days",
+        id="a-carry-kept-past-its-use",
+    ),
+    pytest.param(
+        "          name: flaky-tests-window\n",
+        "          name: flake-report-window\n",
+        "uploads something besides its carried window",
+        id="the-weekly-reports-name",
+    ),
+    pytest.param(
+        "      - name: open, edit, reopen",
+        "      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830\n"
+        "        with:\n          path: x\n          key: x\n"
+        "      - name: open, edit, reopen",
+        "keeps a cache",
+        id="a-cache",
     ),
     pytest.param(
         '--window "$RUNNER_TEMP/window"',
@@ -157,8 +236,8 @@ _PLANTS = [
         "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n"
         "        with:\n          name: window\n          path: x\n"
         "      - name: open, edit, reopen",
-        "uploads or caches something",
-        id="an-upload",
+        "uploads something besides its carried window",
+        id="a-second-upload",
     ),
 ]
 
