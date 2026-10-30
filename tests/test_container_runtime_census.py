@@ -225,7 +225,6 @@ def test_the_census_sees_the_modules_that_drive_a_runtime():
     for module in (
         "test_compose_standalone.py",
         "test_sandbox_docker.py",
-        "test_sandbox_lima.py",
     ):
         assert module in asking, f"{module} no longer reads as starting a runtime: {asking}"
 
@@ -405,7 +404,6 @@ _GATED = (
     "tests/test_compose_standalone.py::test_compose_config_succeeds_from_a_scratch_directory",
     "tests/test_sandbox_docker.py::test_container_runs_uid_aligned",
     "tests/test_sandbox_docker.py::test_host_path_outside_workspace_is_not_visible",
-    "tests/test_sandbox_lima.py::test_guest_runs_with_translated_workdir",
 )
 
 
