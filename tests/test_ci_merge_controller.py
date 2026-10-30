@@ -11,8 +11,10 @@ that contract run on a branch at main's tip, and its verdict waits for it.
 from __future__ import annotations
 
 import base64
+import difflib
 import json
 import re
+import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -1001,6 +1003,385 @@ def test_an_alert_main_already_has_is_not_the_pull_requests() -> None:
     found = _decide(api)
     assert isinstance(found, mc.Posting) and found.conclusion == "success"
     assert "found no alert it brings" in found.output["summary"]
+
+
+# ── An alert that moved with its line is not one the pull request brings (#5610) ───────────────
+
+_FILES = "src/personalclaw/dashboard/handlers/files.py"
+_MAIN_AT = "f" * 40
+_INJECTION = "py/path-injection"
+
+
+def _alert(number: int, line: int, sha: str, path: str = _FILES, rule: str = _INJECTION) -> dict:
+    return {
+        "number": number,
+        "rule": {"id": rule},
+        "most_recent_instance": {
+            "commit_sha": sha,
+            "location": {"path": path, "start_line": line, "end_line": line},
+        },
+    }
+
+
+def _file(api: FakeApi, path: str, sha: str, text: str) -> None:
+    content = base64.b64encode(text.encode()).decode()
+    quoted = urllib.parse.quote(path)
+    api.answers[f"/repos/{REPO}/contents/{quoted}?ref={sha}"] = {
+        "type": "file",
+        "sha": "9" * 40,
+        "encoding": "base64",
+        "content": content,
+    }
+    _diffed(api, path, sha, text)
+
+
+def _patch(old: str, new: str) -> str:
+    """A file's patch as the compare API gives it: its unified diff's hunks, headers dropped."""
+    lines = difflib.unified_diff(old.splitlines(), new.splitlines(), n=3, lineterm="")
+    return "\n".join(list(lines)[2:])
+
+
+def _diffed(api: FakeApi, path: str, sha: str, text: str) -> None:
+    """Each main commit's compare with the head, as GitHub gives it: every file whose text both
+    hold and which differs, with its patch. A test that plants a compare of its own keeps it."""
+    texts = api.__dict__.setdefault("texts", {})
+    texts[(path, sha)] = text
+    if sha not in (HEAD, MAIN):
+        # By default main's tip has not changed the file since the commit its alert names.
+        api.answers.setdefault(f"/repos/{REPO}/compare/{sha}...{MAIN}", {"files": []})
+    for (where, base), old in texts.items():
+        new = texts.get((where, HEAD))
+        if base == HEAD or new is None:
+            continue
+        compare = api.answers.setdefault(f"/repos/{REPO}/compare/{base}...{HEAD}", {})
+        if compare.get("planted"):
+            continue
+        files = [f for f in compare.get("files", []) if f["filename"] != where]
+        if old != new:
+            files.append({"filename": where, "status": "modified", "patch": _patch(old, new)})
+        compare["files"] = files
+
+
+def _alerts(api: FakeApi, pull: list[dict], main: list[dict]) -> None:
+    alerts = "/repos/{REPO}/code-scanning/alerts?state=open&ref={ref}&per_page=100&page=1"
+    api.answers[alerts.format(REPO=REPO, ref="refs/pull/12/head")] = pull
+    api.answers[alerts.format(REPO=REPO, ref="refs/heads/main")] = main
+
+
+_MAIN_FILE = "def read(path):\n    return open(path).read()\n"
+_HEAD_FILE = "def read(path):\n    if path:\n        return open(path).read()\n"
+
+
+def _moved_api(pull: list[dict], main: list[dict], head_file: str = _HEAD_FILE) -> FakeApi:
+    api = FakeApi()
+    api.codeql(HEAD)
+    _alerts(api, pull, main)
+    _file(api, _FILES, _MAIN_AT, _MAIN_FILE)
+    _file(api, _FILES, HEAD, head_file)
+    return api
+
+
+def test_a_reindented_alerted_line_moved_and_is_not_brought() -> None:
+    api = _moved_api([_alert(421, 3, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    note = "1 CodeQL alerts moved with their lines, not brought: #421 (was #106)"
+    assert found.output["title"] == f"Green: every planned job passed on this head ({note})"
+    assert f"- {note}" in found.output["summary"]
+
+
+def test_a_green_with_a_moved_alert_and_a_flake_names_both_in_its_title() -> None:
+    api = _moved_api([_alert(421, 3, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    api.flakes(1, FLAKE)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    note = "1 CodeQL alerts moved with their lines, not brought: #421 (was #106)"
+    assert found.output["title"] == (
+        f"Green: every planned job passed on this head ({note}) · passed 1 flake: {FLAKE}"
+    )
+    assert f"- {note}" in found.output["summary"]
+    assert f"`{FLAKE}`" in found.output["summary"]
+
+
+_REPEATED = "    os.unlink(tmp_path)\n"
+_THRICE = (
+    "def f0(tmp_path):\n" + _REPEATED + "def f1(p):\n" + _REPEATED + "def f2(p):\n" + _REPEATED
+)
+
+
+@pytest.mark.parametrize(
+    "head_file",
+    [
+        pytest.param(
+            "def f0(tmp_path):\n"
+            + _REPEATED
+            + "def f1(p):\n"
+            + _REPEATED
+            + "def new(tmp_path):\n"
+            + _REPEATED,
+            id="an unalerted copy deleted",
+        ),
+        pytest.param(
+            "def f0(tmp_path):\n"
+            + _REPEATED
+            + "def f1(p):\n"
+            + _REPEATED
+            + "def f2(p):\n"
+            + "    os.remove(p)\n"
+            + "def new(tmp_path):\n"
+            + _REPEATED,
+            id="an unalerted copy rewritten",
+        ),
+    ],
+)
+def test_a_new_alert_pairs_with_no_main_alert_whose_lines_the_pull_request_left(
+    head_file: str,
+) -> None:
+    """Main has the line three times and alerts only the first (#106), which the head leaves as
+    it was. The head takes away an unalerted copy, by deleting or rewriting it, and adds a new
+    alerted one (#421): the text cap allows one pair, but #106 still stands, so #421 is brought."""
+    api = FakeApi()
+    api.codeql(HEAD)
+    line = 6 if "os.remove" not in head_file else 8
+    _alerts(api, [_alert(421, line, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    _file(api, _FILES, _MAIN_AT, _THRICE)
+    _file(api, _FILES, HEAD, head_file)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", found
+    assert "moved with their lines" not in found.output["title"], found.output["title"]
+
+
+@pytest.mark.parametrize(
+    "compare",
+    [
+        pytest.param(
+            {"files": [{"filename": _FILES, "status": "modified"}]}, id="the file has no patch"
+        ),
+        pytest.param(
+            {
+                "files": [
+                    {"filename": f"f{i}.py", "status": "added", "patch": "@@"} for i in range(300)
+                ]
+            },
+            id="the compare lists 300 files, not this one",
+        ),
+    ],
+)
+def test_a_pair_whose_lines_the_compare_does_not_show_is_unread(compare: dict) -> None:
+    api = _moved_api([_alert(421, 3, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    api.answers[f"/repos/{REPO}/compare/{_MAIN_AT}...{HEAD}"] = {**compare, "planted": True}
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", found
+    assert "unread" in found.output["summary"], found.output["summary"]
+
+
+def test_a_main_alert_whose_line_mains_tip_removed_waits_for_mains_analysis() -> None:
+    """#106 is open at an older main commit, but main's tip has since removed its line, and main's
+    CodeQL has not analysed the tip. The head, up to date with main, adds a new alerted copy of
+    that text: the compare from #106's commit to the head shows the line removed, but main took it
+    away, not the pull request. So #421 pairs with nothing, and the red waits for main's analysis.
+    """
+    api = _moved_api([_alert(421, 3, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    api.answers[f"/repos/{REPO}/compare/{_MAIN_AT}...{MAIN}"] = {
+        "files": [{"filename": _FILES, "status": "modified", "patch": _patch(_MAIN_FILE, "")}]
+    }
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", found
+    assert "moved with their lines" not in found.output["title"], found.output["title"]
+    assert f"{mc.WAITING}main's CodeQL has not analysed its tip's change to {_FILES}" in (
+        found.output["summary"]
+    )
+    assert mc.WAITING_FENCE in found.output["text"]
+
+
+def test_a_main_compare_too_long_to_show_the_file_is_unread() -> None:
+    api = _moved_api([_alert(421, 3, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    files = [{"filename": f"f{i}.py", "status": "added", "patch": "@@"} for i in range(300)]
+    api.answers[f"/repos/{REPO}/compare/{_MAIN_AT}...{MAIN}"] = {"files": files}
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", found
+    assert "unread" in found.output["summary"] and "lists 300 files" in found.output["summary"]
+
+
+def test_six_moved_alerts_of_one_block_are_all_moved() -> None:
+    """#5610's shape: six alerts on main, the same six lines re-indented further down."""
+    main_file = "".join(f"x{n} = open(p{n})\n" for n in range(6))
+    head_file = "def f():\n" + "".join(f"    x{n} = open(p{n})\n" for n in range(6))
+    pull = [_alert(421 + n, 2 + n, HEAD) for n in range(6)]
+    main = [_alert(106 + n, 1 + n, _MAIN_AT) for n in range(6)]
+    api = FakeApi()
+    api.codeql(HEAD)
+    _alerts(api, pull, main)
+    _file(api, _FILES, _MAIN_AT, main_file)
+    _file(api, _FILES, HEAD, head_file)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    pairs = ", ".join(f"#{421 + n} (was #{106 + n})" for n in range(6))
+    assert f"6 CodeQL alerts moved with their lines, not brought: {pairs}" in found.output["title"]
+
+
+def test_a_new_alert_with_nothing_unreported_is_brought() -> None:
+    api = _moved_api([_alert(421, 3, HEAD), _alert(106, 2, _MAIN_AT)], [_alert(106, 2, _MAIN_AT)])
+    found = _red(api)
+    assert "CodeQL finds 1 alerts this pull request brings (#421)" in found.output["summary"]
+    assert "moved" not in found.output["title"]
+
+
+@pytest.mark.parametrize(
+    ("pull", "head_file"),
+    [
+        pytest.param(
+            [_alert(421, 3, HEAD)],
+            "def read(path):\n    if path:\n        return open(path + '/x').read()\n",
+            id="the-same-rule-and-path-but-other-text",
+        ),
+        pytest.param(
+            [_alert(421, 3, HEAD, rule="py/command-line-injection")],
+            _HEAD_FILE,
+            id="another-rule",
+        ),
+        pytest.param(
+            [_alert(421, 3, HEAD, path="src/personalclaw/other.py")], _HEAD_FILE, id="another-path"
+        ),
+        pytest.param([_alert(421, 9, HEAD)], _HEAD_FILE, id="a-line-past-the-end"),
+    ],
+)
+def test_an_alert_that_does_not_match_an_unreported_one_is_brought(
+    pull: list[dict], head_file: str
+) -> None:
+    api = _moved_api(pull, [_alert(106, 2, _MAIN_AT)], head_file)
+    _file(api, "src/personalclaw/other.py", HEAD, _HEAD_FILE)
+    found = _red(api)
+    assert "CodeQL finds 1 alerts this pull request brings (#421)" in found.output["summary"]
+    assert "moved" not in found.output["title"]
+
+
+def test_two_copies_on_the_head_where_main_had_one_leave_one_brought() -> None:
+    head_file = _HEAD_FILE + "        return open(path).read()\n"
+    api = _moved_api([_alert(421, 3, HEAD), _alert(422, 4, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    _file(api, _FILES, HEAD, head_file)
+    found = _red(api)
+    assert found.output["title"] == (
+        "Red: CodeQL finds 1 alerts this pull request brings (#422) "
+        "(1 CodeQL alerts moved with their lines, not brought: #421 (was #106))"
+    )
+
+
+def test_a_copy_added_beside_an_untouched_alerted_line_is_brought() -> None:
+    """The pull request's ref reports only its diff's alerts: main's alert at line 2 is not
+    reported because the line is untouched, not because it moved. The copy at line 4 is new."""
+    head_file = _MAIN_FILE + "def other(path):\n    return open(path).read()\n"
+    api = _moved_api([_alert(421, 4, HEAD)], [_alert(106, 2, _MAIN_AT)], head_file)
+    found = _red(api)
+    assert "CodeQL finds 1 alerts this pull request brings (#421)" in found.output["summary"]
+    assert "moved" not in found.output["title"]
+
+
+def test_a_new_copy_of_a_line_main_repeats_is_brought() -> None:
+    """files.py's shape: a line alerted three times on main, and a new handler that adds a
+    fourth copy. Each of main's three is untouched, so none of them moved."""
+    line = "    os.unlink(tmp_path)\n"
+    main_file = "".join(f"def f{n}(tmp_path):\n{line}" for n in range(3))
+    head_file = main_file + "def new(tmp_path):\n" + line
+    api = FakeApi()
+    api.codeql(HEAD)
+    _alerts(api, [_alert(421, 8, HEAD)], [_alert(106 + n, 2 + 2 * n, _MAIN_AT) for n in range(3)])
+    _file(api, _FILES, _MAIN_AT, main_file)
+    _file(api, _FILES, HEAD, head_file)
+    found = _red(api)
+    assert "CodeQL finds 1 alerts this pull request brings (#421)" in found.output["summary"]
+
+
+_OTHER = "def other():\n    a = 1\n    b = 2\n    c = 3\n"
+
+
+def test_a_line_moved_from_one_place_to_another_moved() -> None:
+    """The patch removes the alerted line where it was and adds it below another function."""
+    api = _moved_api([_alert(421, 6, HEAD)], [_alert(106, 2, _MAIN_AT)], _OTHER + _MAIN_FILE)
+    _file(api, _FILES, _MAIN_AT, _MAIN_FILE + _OTHER)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert "#421 (was #106)" in found.output["title"]
+
+
+def test_an_alerted_line_only_shifted_by_lines_added_above_it_is_brought() -> None:
+    """Lines added above the alerted one leave it in the patch's context, not among the lines the
+    pull request removes or rewrites: its main alert stands, so a new number there is brought."""
+    head_file = "def read(path):\n    pass\n\n\n    return open(path).read()\n"
+    api = _moved_api([_alert(421, 5, HEAD)], [_alert(106, 2, _MAIN_AT)], head_file)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", found
+    assert "moved with their lines" not in found.output["title"]
+
+
+def test_two_reindented_copies_where_main_had_two_both_moved() -> None:
+    main_file = "def a(path):\n    return open(path)\ndef b(path):\n    return open(path)\n"
+    head_file = (
+        "class C:\n    def a(self, path):\n        return open(path)\n"
+        "    def b(self, path):\n        return open(path)\n"
+    )
+    api = FakeApi()
+    api.codeql(HEAD)
+    _alerts(
+        api,
+        [_alert(421, 3, HEAD), _alert(422, 5, HEAD)],
+        [_alert(106, 2, _MAIN_AT), _alert(107, 4, _MAIN_AT)],
+    )
+    _file(api, _FILES, _MAIN_AT, main_file)
+    _file(api, _FILES, HEAD, head_file)
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert (
+        "2 CodeQL alerts moved with their lines, not brought: #421 (was #106), #422 (was #107)"
+        in (found.output["title"])
+    )
+
+
+def test_main_alerts_on_one_line_that_name_two_commits_are_unread() -> None:
+    api = _moved_api([_alert(421, 3, HEAD)], [_alert(106, 2, _MAIN_AT), _alert(107, 2, "d" * 40)])
+    _file(api, _FILES, "d" * 40, _MAIN_FILE)
+    assert _red(api).output["title"].startswith("Red: unread: ")
+
+
+@pytest.mark.parametrize("side", ["head", "main"])
+def test_a_file_that_cannot_be_read_is_unread_never_a_pass(side: str) -> None:
+    api = _moved_api([_alert(421, 3, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    sha = HEAD if side == "head" else _MAIN_AT
+    del api.answers[f"/repos/{REPO}/contents/{urllib.parse.quote(_FILES)}?ref={sha}"]
+    found = _red(api)
+    assert found.output["title"].startswith("Red: unread: ")
+
+
+def test_an_alert_whose_instance_is_not_the_head_is_unread() -> None:
+    api = _moved_api([_alert(421, 3, "e" * 40)], [_alert(106, 2, _MAIN_AT)])
+    found = _red(api)
+    assert "is at eeee" in found.output["title"]
+
+
+def test_a_large_file_is_read_through_its_blob() -> None:
+    api = _moved_api([_alert(421, 3, HEAD)], [_alert(106, 2, _MAIN_AT)])
+    quoted = urllib.parse.quote(_FILES)
+    api.answers[f"/repos/{REPO}/contents/{quoted}?ref={HEAD}"] = {
+        "type": "file",
+        "sha": "8" * 40,
+        "encoding": "none",
+        "content": "",
+    }
+    api.answers[f"/repos/{REPO}/git/blobs/{'8' * 40}"] = {
+        "encoding": "base64",
+        "content": base64.b64encode(_HEAD_FILE.encode()).decode(),
+    }
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+
+
+def test_alerts_that_name_no_place_are_compared_by_number_as_before() -> None:
+    """The fixture's alerts name a number alone: nothing pairs, and no file is read."""
+    api = FakeApi()
+    api.codeql(HEAD, pull_alerts=(3, 9), main_alerts=(1, 2, 3))
+    found = _red(api)
+    assert "CodeQL finds 1 alerts this pull request brings (#9)" in found.output["summary"]
+    assert not any("/contents/" in c for c in api.calls)
 
 
 def test_every_language_main_analyses_is_required() -> None:

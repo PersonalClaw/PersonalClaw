@@ -57,10 +57,18 @@ trusted-run branch the old path left).
    head finished, with an ``Analyze (<language>)`` job that concluded ``success`` for each of
    ``main``'s languages; each language's analysis of the head is processed on the pull request's
    ref (a job's success means its results were uploaded, not yet read); and no alert is open on
-   that ref that is not open on ``main``. The ``CodeQL`` summary check is never read for its
-   conclusion: GitHub computes it when the first language's analysis uploads, so it reads
-   ``neutral`` on most pull requests. A red with a reason that waits (CodeQL still running or
-   still processing, or the head's contract run not reported) is marked waiting, whatever its
+   that ref that is not open on ``main``. An alert there that main does not have counts as moved,
+   not brought, when it pairs one to one with an alert open on main and not reported on the pull
+   request: the same rule id, the same path and the same source lines at each one's place,
+   whitespace read as one space, the head's file read at the head and main's at the main commit its
+   alert names (#5610: a re-indented line gets a new fingerprint, so a new number). The pull
+   request's ref reports only the alerts in its diff, so for each rule, path and block the pairs
+   are capped at main's copies of the block less the head's copies outside its diff: a copy added
+   beside one that stays is brought. A file that cannot be read is unread, never a pair; anything
+   unpaired is brought; the verdict's title names every moved pair. The ``CodeQL`` summary check is
+   never read for its conclusion: GitHub computes it when the first language's analysis uploads, so
+   it reads ``neutral`` on most pull requests. A red with a reason that waits (CodeQL still running
+   or still processing, or the head's contract run not reported) is marked waiting, whatever its
    other reasons, and the poster judges such heads again until nothing waits, so no red says it
    waits on what has finished: by the sweep of the open pull requests whose newest verdict is a
    waiting red (on its schedule, and a few heads on every other run), posting only what changed;
@@ -424,12 +432,14 @@ class Outcome:
     cleanup: str | None = None
 
 
-def _red(run: Run, reasons: list[str], head: str) -> Posting:
+def _red(run: Run, reasons: list[str], head: str, moved: list[Moved] | None = None) -> Posting:
+    note = [f"- {moved_note(moved)}"] if moved else []
     summary = "\n".join(
-        ["This head's merge verdict is red:", "", *[f"- {r}" for r in reasons], ""]
+        ["This head's merge verdict is red:", "", *[f"- {r}" for r in reasons], *note, ""]
         + [f"From Merge run {run.url or run.id}, attempt {run.attempt}."]
     )
-    output = {"title": f"Red: {reasons[0]}"[:255], "summary": summary}
+    title = f"Red: {reasons[0]}" + (f" ({moved_note(moved)})" if moved else "")
+    output = {"title": title[:255], "summary": summary}
     waiting = [r for r in reasons if r.startswith(WAITING)]
     if waiting:
         # What it waits on, one per line: the sweep reads only the fence. A red for another
@@ -563,8 +573,250 @@ def codeql_languages(get: Get, repo: str) -> frozenset[str]:
     return frozenset(languages)
 
 
-def codeql_reasons(get: Get, repo: str, head: str) -> list[str]:
+@dataclass(frozen=True)
+class Moved:
+    """An alert the pull request seems to bring that is one main has, moved with its line: the
+    same rule, the same path and the same source text (whitespace aside) at a new place."""
+
+    number: int
+    was: int
+    rule: str
+    path: str
+
+
+@dataclass(frozen=True)
+class CodeQL:
+    """What CodeQL's analysis of the head says: why it does not pass, and the alerts that moved."""
+
+    reasons: list[str]
+    moved: list[Moved]
+
+
+def _whole_lines(text: str, start: int, end: int) -> str | None:
+    """Lines *start* to *end* (1-based, inclusive) of *text*, each with its whitespace read as one
+    space and trimmed, or None if the file has no such lines."""
+    lines = text.splitlines()
+    if start < 1 or end < start or end > len(lines):
+        return None
+    return "\n".join(" ".join(line.split()) for line in lines[start - 1 : end])
+
+
+def _file_at(get: Get, repo: str, path: str, sha: str) -> str:
+    """A file's text at a commit, through the contents API (the blob, for a file too large for
+    it). One that cannot be read is Unread: a pair is never made on a guess."""
+    quoted = urllib.parse.quote(path)
+    answer = _read(get, f"/repos/{repo}/contents/{quoted}?ref={sha}")
+    if not isinstance(answer, Mapping) or answer.get("type") != "file":
+        raise Unread(f"{path} at {sha} is not a file")
+    content, encoding = answer.get("content"), answer.get("encoding")
+    if encoding != "base64" or not content:
+        blob = _read(get, f"/repos/{repo}/git/blobs/{answer.get('sha')}")
+        content = blob.get("content") if isinstance(blob, Mapping) else None
+        encoding = blob.get("encoding") if isinstance(blob, Mapping) else None
+    if encoding != "base64" or not isinstance(content, str):
+        raise Unread(f"{path} at {sha} has no base64 content")
+    try:
+        return base64.b64decode(content).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        raise Unread(f"{path} at {sha} is not UTF-8 text: {exc}") from exc
+
+
+def _where(alert: Mapping[str, Any]) -> tuple[str, str, int, int, str] | None:
+    """An alert's rule, path, lines and the commit its instance is at, or None for one that
+    names no such place (it can pair with nothing)."""
+    rule = alert.get("rule")
+    instance = alert.get("most_recent_instance")
+    location = instance.get("location") if isinstance(instance, Mapping) else None
+    if not isinstance(rule, Mapping) or not isinstance(location, Mapping):
+        return None
+    rule_id, path = rule.get("id"), location.get("path")
+    start, end = _int(location.get("start_line")), _int(location.get("end_line"))
+    sha = instance.get("commit_sha") if isinstance(instance, Mapping) else None
+    if not (isinstance(rule_id, str) and rule_id and isinstance(path, str) and path):
+        return None
+    if start is None or end is None or not isinstance(sha, str) or not _SHA.fullmatch(sha):
+        return None
+    return rule_id, path, start, end, sha
+
+
+def _occurrences(text: str, block: str) -> int:
+    """How many times *block*, whitespace-normalised whole lines, stands in *text*."""
+    want = block.split("\n")
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    return sum(lines[i : i + len(want)] == want for i in range(len(lines) - len(want) + 1))
+
+
+#: The most files the compare API lists: past it, a file it leaves out may have changed.
+_COMPARE_FILES = 300
+_HUNK = re.compile(r"@@ -(?P<start>[0-9]+)(?:,[0-9]+)? \+[0-9]+(?:,[0-9]+)? @@")
+
+
+def removed_lines(get: Get, repo: str, base: str, head: str, path: str) -> frozenset[int]:
+    """The lines of *path* at *base* that the head removes or rewrites, read from
+    ``compare/{base}...{head}``'s patch of the file: none for a file the compare does not list as
+    changed. A file it lists with no patch (too large to show), or a compare that lists as many
+    files as it can show and not this one, is unread: lines it cannot see are never taken as
+    changed, nor as untouched."""
+    answer = _read(get, f"/repos/{repo}/compare/{base}...{head}")
+    files = answer.get("files") if isinstance(answer, Mapping) else None
+    if not isinstance(files, list):
+        raise Unread(f"the compare of {base}...{head} lists no files")
+    listed = [f for f in files if isinstance(f, Mapping) and f.get("filename") == path]
+    if not listed:
+        if len(files) >= _COMPARE_FILES:
+            raise Unread(f"the compare of {base}...{head} lists {len(files)} files, not {path}")
+        return frozenset()
+    patch = listed[0].get("patch")
+    if not isinstance(patch, str) or not patch:
+        raise Unread(f"the compare of {base}...{head} shows no patch of {path}")
+    removed: set[int] = set()
+    old: int | None = None
+    for line in patch.splitlines():
+        hunk = _HUNK.match(line)
+        if hunk:
+            old = int(hunk.group("start"))
+        elif old is None or line.startswith("\\"):
+            continue
+        elif line.startswith("-"):
+            removed.add(old)
+            old += 1
+        elif not line.startswith("+"):
+            old += 1
+    return frozenset(removed)
+
+
+def changed_on_main(get: Get, repo: str, since: str, base: str, path: str) -> bool:
+    """Whether main changed *path* between the commit a main alert names and main's tip, by
+    ``compare/{since}...{base}``. A compare that lists as many files as it can show and not this
+    one is unread."""
+    answer = _read(get, f"/repos/{repo}/compare/{since}...{base}")
+    files = answer.get("files") if isinstance(answer, Mapping) else None
+    if not isinstance(files, list):
+        raise Unread(f"the compare of {since}...{base} lists no files")
+    if any(isinstance(f, Mapping) and f.get("filename") == path for f in files):
+        return True
+    if len(files) >= _COMPARE_FILES:
+        raise Unread(f"the compare of {since}...{base} lists {len(files)} files, not {path}")
+    return False
+
+
+def moved_alerts(
+    get: Get,
+    repo: str,
+    head: str,
+    base: str,
+    brought: list[Mapping[str, Any]],
+    unreported: list[Mapping[str, Any]],
+) -> tuple[list[Moved], list[str]]:
+    """Each alert the pull request seems to bring that pairs, one to one, with an alert open on
+    main and not reported on the pull request: the same rule id, the same path, and the same
+    source lines at each one's location, whitespace read as one space. The pull request's alert is
+    read at the head, main's at the main commit its instance names.
+
+    The pull request's ref reports only the alerts in its diff, so "not reported" holds nearly all
+    of main's alerts, not only those the pull request removed. A line that stands many times in a
+    file (``os.path.isfile(path)``) would let a new copy pair with an untouched one, so the pairs
+    of one rule, path and block are capped by what the head's file shows moved: no more than main's
+    file holds that block, less the copies the head keeps outside its diff (the head's copies
+    less its alerts on that block). And a main alert pairs only when the pull request took its
+    lines away: each of its lines at its main commit is one the compare's patch of the file
+    removes or rewrites (:func:`removed_lines`), so a new copy never pairs with an alert whose
+    line still stands, however many unalerted copies the head took away. A re-indent or a move
+    still pairs; a copy added beside one that stays is brought. Anything unpaired stays brought.
+
+    The compare from a main alert's commit to the head also holds main's own commits since then,
+    so the removal must be the pull request's: a main alert at a commit before main's tip *base*
+    pairs only when main has not changed its file since (:func:`changed_on_main`). One whose file
+    main changed pairs with nothing, and gives a reason that waits for main's CodeQL to analyse
+    its tip; the pairs and those reasons are returned."""
+    texts: dict[tuple[str, str], str] = {}
+
+    def text_at(path: str, sha: str) -> str:
+        if (path, sha) not in texts:
+            texts[(path, sha)] = _file_at(get, repo, path, sha)
+        return texts[(path, sha)]
+
+    keys = {place[:2] for place in map(_where, brought) if place is not None}
+    #: (rule, path, block) -> main's alerts on it, and the main commit they name.
+    candidates: dict[tuple[str, str, str], list[int]] = {}
+    main_sha: dict[tuple[str, str, str], str] = {}
+    #: (rule, path, block) -> each of main's alerts on it, and its lines at its main commit.
+    places: dict[tuple[str, str, str], dict[int, tuple[int, int]]] = {}
+    gone: dict[tuple[str, str], frozenset[int]] = {}
+    since: dict[tuple[str, str], bool] = {}
+    waiting: list[str] = []
+
+    def mains_own(path: str, sha: str) -> bool:
+        """Whether main changed the file after *sha*, so a removal there may be main's."""
+        if sha == base:
+            return False
+        if (path, sha) not in since:
+            since[(path, sha)] = changed_on_main(get, repo, sha, base, path)
+        return since[(path, sha)]
+
+    def taken(path: str, sha: str, start: int, end: int) -> bool:
+        if (path, sha) not in gone:
+            gone[(path, sha)] = removed_lines(get, repo, sha, head, path)
+        return all(line in gone[(path, sha)] for line in range(start, end + 1))
+
+    for alert in unreported:
+        place, number = _where(alert), _int(alert.get("number"))
+        if place is None or number is None or place[:2] not in keys:
+            continue
+        rule_id, path, start, end, sha = place
+        block = _whole_lines(text_at(path, sha), start, end)
+        if block is None:
+            continue
+        key = (rule_id, path, block)
+        if main_sha.setdefault(key, sha) != sha:
+            raise Unread(f"main's {rule_id} alerts on one line of {path} name two commits")
+        candidates.setdefault(key, []).append(number)
+        places.setdefault(key, {})[number] = (start, end)
+    seeming: dict[tuple[str, str, str], list[int]] = {}
+    for alert in sorted(brought, key=lambda a: _int(a.get("number")) or 0):
+        place, number = _where(alert), _int(alert.get("number"))
+        if place is None or number is None:
+            continue
+        rule_id, path, start, end, sha = place
+        if not any(k[:2] == (rule_id, path) for k in candidates):
+            continue
+        if sha != head:
+            raise Unread(f"alert #{number}'s instance on the pull request is at {sha}, not {head}")
+        block = _whole_lines(text_at(path, head), start, end)
+        if block is not None and (rule_id, path, block) in candidates:
+            seeming.setdefault((rule_id, path, block), []).append(number)
+    moved: list[Moved] = []
+    for key, numbers in sorted(seeming.items()):
+        rule_id, path, block = key
+        on_main = _occurrences(text_at(path, main_sha[key]), block)
+        on_head = _occurrences(text_at(path, head), block)
+        allowed = on_main - (on_head - len(numbers))
+        sha = main_sha[key]
+        if mains_own(path, sha):
+            reason = f"{WAITING}main's CodeQL has not analysed its tip's change to {path}"
+            if reason not in waiting:
+                waiting.append(reason)
+            continue
+        left = [n for n in sorted(candidates[key]) if taken(path, sha, *places[key][n])]
+        pairs = zip(numbers, left)
+        moved += [Moved(n, was, rule_id, path) for n, was in list(pairs)[: max(allowed, 0)]]
+    return sorted(moved, key=lambda m: m.number), waiting
+
+
+def moved_note(moved: list[Moved]) -> str:
+    """The moved pairs, as a verdict's title and summary name them."""
+    pairs = ", ".join(f"#{m.number} (was #{m.was})" for m in moved)
+    return f"{len(moved)} CodeQL alerts moved with their lines, not brought: {pairs}"
+
+
+def codeql_reasons(get: Get, repo: str, head: str, base: str) -> list[str]:
     """Why CodeQL's analysis of the head does not pass (rule 6), or nothing."""
+    return codeql_reading(get, repo, head, base).reasons
+
+
+def codeql_reading(get: Get, repo: str, head: str, base: str) -> CodeQL:
+    """Why CodeQL's analysis of the head does not pass (rule 6), and the alerts that moved;
+    *base* is main's tip, which the head is judged against."""
     query = urllib.parse.urlencode({"head_sha": head, "per_page": _PER_PAGE})
     answer = _read(get, f"/repos/{repo}/actions/runs?{query}")
     runs = answer.get("workflow_runs") if isinstance(answer, Mapping) else None
@@ -579,13 +831,14 @@ def codeql_reasons(get: Get, repo: str, head: str) -> list[str]:
         and _int(r.get("id")) is not None
     ]
     if not ours:
-        return [f"{WAITING}CodeQL has not analysed the head yet"]
+        return CodeQL([f"{WAITING}CodeQL has not analysed the head yet"], [])
     newest = max(ours, key=lambda r: int(r["id"]))
     if newest.get("status") != "completed":
-        return [f"{WAITING}CodeQL's analysis of the head is {newest.get('status')!r}, not finished"]
+        status = newest.get("status")
+        return CodeQL([f"{WAITING}CodeQL's analysis of the head is {status!r}, not finished"], [])
     pull = _PULL_HEAD.fullmatch(str(newest.get("head_branch") or ""))
     if pull is None:
-        return ["CodeQL's analysis of the head is not a pull request's"]
+        return CodeQL(["CodeQL's analysis of the head is not a pull request's"], [])
     jobs = _pages(get, f"/repos/{repo}/actions/runs/{newest['id']}/jobs", "jobs")
     done = {str(j.get("name")): j.get("conclusion") for j in jobs}
     languages = sorted(codeql_languages(get, repo))
@@ -595,7 +848,7 @@ def codeql_reasons(get: Get, repo: str, head: str) -> list[str]:
         if done.get(f"Analyze ({lang})") != "success"
     ]
     if reasons:
-        return reasons
+        return CodeQL(reasons, [])
     ref = f"refs/pull/{pull['number']}/head"
     processed = _read(get, f"/repos/{repo}/code-scanning/analyses?ref={ref}&per_page=100")
     if not isinstance(processed, list):
@@ -614,20 +867,32 @@ def codeql_reasons(get: Get, repo: str, head: str) -> list[str]:
         if lang not in ready
     ]
     if waiting:
-        return waiting
+        return CodeQL(waiting, [])
     alerts = "/repos/{repo}/code-scanning/alerts?state=open&ref={ref}"
-    on_pull = {_int(a.get("number")) for a in _all_pages(get, alerts.format(repo=repo, ref=ref))}
-    on_main = {
-        _int(a.get("number"))
-        for a in _all_pages(get, alerts.format(repo=repo, ref="refs/heads/main"))
-    }
-    brought = sorted(n for n in on_pull - on_main if n is not None)
+    pull_alerts = _all_pages(get, alerts.format(repo=repo, ref=ref))
+    main_alerts = _all_pages(get, alerts.format(repo=repo, ref="refs/heads/main"))
+    on_pull = {_int(a.get("number")) for a in pull_alerts}
+    on_main = {_int(a.get("number")) for a in main_alerts}
     if None in on_pull:
         raise Unread("an alert on the pull request names no number")
+    # The pull request's ref reports only the alerts in its diff: what main has and it does not
+    # report is not what it removed.
+    seeming = [a for a in pull_alerts if _int(a.get("number")) not in on_main]
+    unreported = [a for a in main_alerts if _int(a.get("number")) not in on_pull]
+    moved, waiting = (
+        moved_alerts(get, repo, head, base, seeming, unreported)
+        if seeming and unreported
+        else ([], [])
+    )
+    paired = {m.number for m in moved}
+    brought = sorted(n for n in on_pull - on_main - paired if n is not None)
     if brought:
         named = ", ".join(f"#{n}" for n in brought[:10])
-        return [f"CodeQL finds {len(brought)} alerts this pull request brings ({named})"]
-    return []
+        return CodeQL(
+            [*waiting, f"CodeQL finds {len(brought)} alerts this pull request brings ({named})"],
+            moved,
+        )
+    return CodeQL(waiting, moved)
 
 
 def _latest_merge_run(get: Get, repo: str, **query: str) -> int | None:
@@ -1025,6 +1290,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
     gate = ""
     # Every reason that holds, so one verdict names all a head must fix.
     reasons: list[str] = []
+    moved: list[Moved] = []
     try:
         base = main_tip(get, repo)
         tree_oid, head_tree = api_tree(get, repo, head)
@@ -1048,7 +1314,9 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         failing, labels = results_reasons(get, repo, run)
         reasons += failing
         reasons += dependency_review_reasons(get, repo, head)
-        reasons += codeql_reasons(get, repo, head)
+        codeql = codeql_reading(get, repo, head, base)
+        reasons += codeql.reasons
+        moved = codeql.moved
         if changed:
             contract = contract_run(get, repo, head, base)
             if contract is None:
@@ -1064,7 +1332,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
         flakes = passed_flakes(get, repo, run) if not reasons else []
     except (Unread, trust.Refused) as exc:
-        return Outcome(posting=_red(run, [*reasons, f"unread: {exc}"], head))
+        return Outcome(posting=_red(run, [*reasons, f"unread: {exc}"], head, moved))
     # A head that changes a definition: its contract run is started once, at main's tip, and its
     # verdict waits for it. Once that run has reported, its branch goes with the posted verdict.
     # Until it reports, the head is a red that waits on it: a contract run dispatched with the
@@ -1083,7 +1351,9 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         )
         reasons.append(f"{WAITING_CONTRACT}{running}")
     if reasons:
-        return Outcome(posting=_red(run, reasons, head), dispatch=start, base=base, cleanup=cleanup)
+        return Outcome(
+            posting=_red(run, reasons, head, moved), dispatch=start, base=base, cleanup=cleanup
+        )
     toolchain = {"runner": ",".join(labels) or "unnamed", "definitions": base}
     ran = [f"- the definitions that ran are main's at `{base}`"]
     if changed and contract is not None:
@@ -1110,6 +1380,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             "- the head is up to date with main",
             "- its dependency review passed",
             "- CodeQL analysed every language main has, and found no alert it brings",
+            *([f"- {moved_note(moved)}"] if moved else []),
             f"- {len(records)} job records, their digests in the receipt below",
             *(
                 [
@@ -1124,7 +1395,11 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
     )
     output = merge_verdict.render_output(
         receipt,
-        title="Green: every planned job passed on this head" + flakes_note(flakes),
+        title=(
+            "Green: every planned job passed on this head"
+            + (f" ({moved_note(moved)})" if moved else "")
+            + flakes_note(flakes)
+        )[:255],
         summary=summary,
     )
     posting = Posting(head, "success", output, run.url, f"{run.id}/{run.attempt}")

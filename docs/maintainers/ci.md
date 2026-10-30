@@ -396,7 +396,27 @@ verdict says all it must fix:
   job concluded `success` for each language `main`'s default-setup analyses name; each of those
   languages' analyses of the head processed on the pull request's ref (`refs/pull/<n>/head`, the
   head's commit), since a job's success means its results were uploaded, not yet read; and no
-  alert open on that ref that is not open on `main`. A scratch pull
+  alert open on that ref that is not open on `main`. A line that moves gets a new fingerprint,
+  so its alert a new number: an alert the pull request seems to bring counts as moved, not
+  brought, when it pairs one to one with an alert open on `main` and not reported on the pull
+  request, by the same rule id, the same path and the same source lines at each one's place,
+  whitespace read as one space (the head's file at the head, `main`'s at the commit its alert
+  names, through the contents API). The pull request's ref reports only the alerts in its diff
+  (refs/pull/5610/head showed none while `main` had 415), so "not reported" is nearly all of
+  `main`'s alerts, not what the pull request removed. A line repeated in a file
+  (`os.path.isfile(path)`) would let a new copy pair with an untouched one, so for each rule,
+  path and block the pairs are capped at `main`'s copies of the block less the head's copies
+  outside its diff. And a `main` alert pairs only when the pull request took its lines away:
+  each of its lines at its commit is one the compare's patch of the file removes or rewrites, so
+  a new copy never pairs with an alert whose line still stands, however many unalerted copies the
+  head took away. That compare also holds `main`'s own commits since the alert's, so the removal
+  must be the pull request's: an alert at a commit before `main`'s tip pairs only when `main` has
+  not changed its file since, and one whose file it has changed pairs with nothing and makes the
+  red wait for `main`'s CodeQL to analyse its tip. A re-indent or a move pairs; a copy added
+  beside one that stays, or a line only shifted by lines added above it, is brought. A file that cannot be read, or one the compare
+  shows no patch of (too large, or past its 300 files), is unread, never a pair; anything
+  unpaired is brought; the
+  verdict's title and summary name every moved pair (#5610). A scratch pull
   request that planted one `js/code-injection` showed exactly that alert there and not on
   `main`, with all three analyses green. The `CodeQL` summary check is never read for its
   conclusion: GitHub computes it when the first language's analysis uploads, so it reads
