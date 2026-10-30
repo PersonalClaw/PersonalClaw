@@ -12,8 +12,6 @@ import contextlib
 import functools
 import logging
 import os
-import subprocess
-import sys
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
@@ -52,10 +50,11 @@ from personalclaw.llm.events import (
     unasked_reason,
 )
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 from personalclaw.session import SessionManager
 from personalclaw.stats import Stats
 from personalclaw.subagent_ask import spawn_ask, spawn_refusal
+from personalclaw.subagent_endings import _timeout_context
 from personalclaw.subagent_kill import sigkill_session
 from personalclaw.subagent_persistence import (
     ASKING,
@@ -70,6 +69,12 @@ from personalclaw.subagent_persistence import (
 )
 from personalclaw.subagent_prompt import first_prompt
 from personalclaw.subagent_session import session_kwargs
+from personalclaw.subagent_sizing import (  # noqa: F401 (re-exported)
+    _AUTO_CEILING,
+    _AUTO_FLOOR,
+    _MAX_CONCURRENT,
+    resolve_max_subagents,
+)
 from personalclaw.subagent_tier import (
     CAPABILITY_TEXT,
     CallBudget,
@@ -92,82 +97,6 @@ if TYPE_CHECKING:
     from personalclaw.memory_reads import Reach
 
 logger = logging.getLogger(__name__)
-
-
-_MAX_CONCURRENT = 3
-
-# Auto-size bounds (used when max_subagents == 0). Floor 2 so "auto" always beats
-# a single-agent Pi-class host; ceiling 8 because past the SessionManager's
-# 4-concurrent cold-start semaphore the marginal throughput falls off while OOM
-# risk climbs. The per-agent memory budget reuses spawn_min_memory_gb (the
-# headroom the spawn gate already requires per subagent), so the auto cap stays
-# consistent with the existing admission control.
-_AUTO_FLOOR = 2
-_AUTO_CEILING = 8
-_CPU_HEADROOM = 2  # leave cores for the gateway + OS
-
-
-def _total_memory_gb() -> float:
-    """Total host RAM in GB, cross-platform; 0.0 if it can't be determined.
-
-    Mirrors the detection in ``dashboard/handlers_system.py`` (``sysctl
-    hw.memsize`` on macOS, ``/proc/meminfo`` ``MemTotal`` on Linux) so the two
-    agree on host facts without a third-party dependency.
-    """
-    try:
-        if sys.platform == "darwin":
-            out = (
-                subprocess.check_output(["sysctl", "-n", "hw.memsize"], timeout=2).decode().strip()
-            )
-            return int(out) / (1024**3)
-        if sys.platform == "linux":
-            for line in safe_read_file("/proc/meminfo").splitlines():
-                if line.startswith("MemTotal:"):
-                    return int(line.split()[1]) / (1024**2)
-    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-        return 0.0
-    return 0.0
-
-
-def resolve_max_subagents(configured: int, per_agent_gb: float = 4.0) -> int:
-    """Resolve the subagent concurrency cap, auto-sizing when ``configured == 0``.
-
-    An explicit non-zero ``configured`` is returned unchanged. ``0`` means
-    "auto": size from host CPU and total memory, taking the lower of the two
-    budgets and clamping to ``[_AUTO_FLOOR, _AUTO_CEILING]`` — a big host gets
-    more parallelism, a small one is protected from OOM. ``per_agent_gb`` is the
-    memory budgeted per concurrent subagent (defaults to the spawn gate's
-    ``spawn_min_memory_gb``). When host facts are unavailable (unknown platform,
-    unreadable meminfo) we fall back to the historical fixed cap.
-    """
-    if configured > 0:
-        return configured
-    cpu = os.cpu_count() or 0
-    total_gb = _total_memory_gb()
-    if cpu <= 0 or total_gb <= 0.0:
-        logger.info(
-            "subagent auto-size: host facts unavailable (cpu=%s, mem=%.1fGB) — "
-            "falling back to fixed cap %d",
-            cpu,
-            total_gb,
-            _MAX_CONCURRENT,
-        )
-        return _MAX_CONCURRENT
-    cpu_based = max(1, cpu - _CPU_HEADROOM)
-    mem_based = max(1, int(total_gb // max(per_agent_gb, 0.5)))
-    resolved = max(_AUTO_FLOOR, min(_AUTO_CEILING, min(cpu_based, mem_based)))
-    logger.info(
-        "subagent auto-size: %d (cpu=%d→%d, mem=%.1fGB/%.1f→%d, bounds[%d,%d])",
-        resolved,
-        cpu,
-        cpu_based,
-        total_gb,
-        per_agent_gb,
-        mem_based,
-        _AUTO_FLOOR,
-        _AUTO_CEILING,
-    )
-    return resolved
 
 
 def _validate_agent(requested: str) -> tuple[str, str]:
@@ -256,17 +185,13 @@ def _fanout_key(info: "SubagentInfo") -> str:
     return info.parent_run or info.parent_session_key or ""
 
 
-def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> str:
-    """The agent's own counters at a time-limit stop, for the log line beside it. Never part of
-    its error: a turn count against a limit of 0 and an elapsed figure counted from the spawn
-    request are this module's bookkeeping, and the error is what a person reads."""
-    parts = [f"turn {info.turns}/{info.max_turns}"]
-    if info.last_tool:
-        parts.append(f"last tool: {_redact(info.last_tool)}")
-    if include_elapsed:
-        elapsed = info.elapsed if info.elapsed > 0 else (time.time() - info.started)
-        parts.append(f"elapsed: {int(elapsed)}s")
-    return " | ".join(parts)
+def _say_a_failed_reap(tail: "asyncio.Task[None]") -> None:
+    """Log a committed reap's tail that failed once its caller had been cancelled: no one else
+    hears it (:meth:`SubagentManager._force_reap`)."""
+    if tail.cancelled():
+        return
+    if (exc := tail.exception()) is not None:
+        logger.error("Reaper: a stopped subagent's reap ended with an error", exc_info=exc)
 
 
 def check_memory_available(min_gb: float = 4.0, path: str = "/proc/meminfo") -> tuple[bool, float]:
@@ -633,6 +558,8 @@ class SubagentManager:
         self._on_event = on_event
         # The events fired from code that cannot await them (`_fire_soon`), held until each is sent.
         self._events_in_flight: set[asyncio.Task] = set()  # type: ignore[type-arg]
+        # The tails of reaps already committed (`_after_reap`), held until each has run to its end.
+        self._reaps_finishing: set[asyncio.Task] = set()  # type: ignore[type-arg]
         self._running_count = 0
         # Per-fan-out running count: keyed by ``_fanout_key(info)``. A run's
         # lane is capped independently so one wide fan-out cannot starve every other
@@ -856,7 +783,8 @@ class SubagentManager:
     ) -> None:
         """Approve and audit it: ``approved`` when a person did, ``auto_approved`` for a grant."""
         await client.approve_tool(request_id)
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key=session_key,
             source="subagent",
             tool_name=event.title,
@@ -884,7 +812,8 @@ class SubagentManager:
         the shell's own, named in *metadata*), a person's ``rejected``, or nobody's answer —
         ``unanswered`` is ``expired`` or ``cancelled`` — never one as another."""
         await client.reject_tool(request_id)
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key=session_key,
             source="subagent",
             tool_name=event.title,
@@ -1007,6 +936,30 @@ class SubagentManager:
         info.reaped = True
         self._maybe_clear_fanout(_fanout_key(info))
 
+        # The reap is committed above (done, not running, tombstoned, reaped), so what follows
+        # runs to its end, in a task of its own, whoever awaits this is cancelled: the audit row
+        # is awaited (#5605), and a cancel can land on it (an owner's Stop runs under its request,
+        # and a closed tab cancels it). Cut there, the session stayed held, the Activity view
+        # never heard `subagent_done`, and the parent never heard its child had ended, and the
+        # reaper would not reap it again. The caller still gets its cancel.
+        tail = asyncio.get_running_loop().create_task(
+            self._after_reap(agent_id, info, session_key, elapsed), name=f"reap-tail:{agent_id}"
+        )
+        self._reaps_finishing.add(tail)
+        tail.add_done_callback(self._reaps_finishing.discard)
+        try:
+            await asyncio.shield(tail)
+        except asyncio.CancelledError:
+            # Its caller is gone, so a tail that fails says so here rather than to nobody.
+            tail.add_done_callback(_say_a_failed_reap)
+            raise
+
+    async def _after_reap(
+        self, agent_id: str, info: SubagentInfo, session_key: str, elapsed: float
+    ) -> None:
+        """A committed reap's tail: its audit row, its session's release, its done event and its
+        delivery, each run whatever the one before it did. A row that could not be written is
+        raised once the rest has run."""
         # NOT best-effort. This write is the only record that the reaper
         # SIGKILLed a subagent, and it used to sit under `except Exception:
         # logger.exception(...)` — so a genuine audit-write failure (a read-only or full
@@ -1014,18 +967,23 @@ class SubagentManager:
         # proceeded, and a test patching `sel` could see zero calls with nothing raised.
         # Every other audit write in this file is unguarded; this one now matches. The
         # caller (`_reaper_loop`) logs and moves to the next agent, so an unauditable
-        # kill is reported instead of absorbed.
-        sel().log_tool_invocation(
-            session_key=session_key,
-            source="subagent",
-            tool_name="reaper_force_kill",
-            outcome="reaped",
-            metadata={
-                "subagent_id": agent_id,
-                "session_key": session_key,
-                "elapsed": int(elapsed),
-            },
-        )
+        # kill is reported instead of absorbed. It no longer leaves the rest undone.
+        unwritten: Exception | None = None
+        try:
+            await sel_log_async(
+                sel().log_tool_invocation,
+                session_key=session_key,
+                source="subagent",
+                tool_name="reaper_force_kill",
+                outcome="reaped",
+                metadata={
+                    "subagent_id": agent_id,
+                    "session_key": session_key,
+                    "elapsed": int(elapsed),
+                },
+            )
+        except Exception as exc:
+            unwritten = exc
 
         try:
             self._sessions.release(session_key, cleanup=True)
@@ -1046,6 +1004,8 @@ class SubagentManager:
         # Truncate retained text AFTER _on_done to preserve full output for result injection
         if len(info.streaming_text) > 10_000:
             info.streaming_text = info.streaming_text[:10_000] + "\n…(truncated)"
+        if unwritten is not None:
+            raise unwritten
 
     def notify_injection_failed(
         self, info: SubagentInfo, reason: str = "delivery timed out"
@@ -1803,7 +1763,8 @@ class SubagentManager:
             self._dec_running(info)
             self._drain_queue()
             self._tasks.pop(info.id, None)
-            sel().log_tool_invocation(
+            await sel_log_async(
+                sel().log_tool_invocation,
                 session_key=info.parent_session_key,
                 source="subagent",
                 tool_name="subagent_run",
@@ -1821,17 +1782,19 @@ class SubagentManager:
                 await self._safe_announce(info)
             return
 
-        sel().log_tool_invocation(
+        if decision.decided_by == approval_grants.YOU and info.request_key:
+            # Her answer, for the caller to keep with the work it started: resuming this start
+            # after a restart hands it back instead of asking her again. Kept before the row's
+            # await, in the step her answer came in, as a caller woken by it reads it at once.
+            info.approved_at = time.time()
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key=info.parent_session_key,
             source="subagent",
             tool_name="subagent_run",
             outcome="approved" if decision.decided_by == approval_grants.YOU else "auto_approved",
             metadata={"subagent_id": info.id, "decided_by": decision.decided_by},
         )
-        if decision.decided_by == approval_grants.YOU and info.request_key:
-            # Her answer, for the caller to keep with the work it started: resuming this start
-            # after a restart hands it back instead of asking her again.
-            info.approved_at = time.time()
         self._log_spawned(info)
         await self._run(info)
 
@@ -1964,7 +1927,8 @@ class SubagentManager:
                     logger.warning("Subagent %s: reset timed out, force-killing", info.id)
                     sigkill_session(self._sessions, session_key)
                     try:
-                        sel().log_tool_invocation(
+                        await sel_log_async(
+                            sel().log_tool_invocation,
                             session_key=session_key,
                             source="subagent",
                             tool_name="run_finally_force_kill",
@@ -2122,7 +2086,8 @@ class SubagentManager:
         # ceiling (rule 2): a refusal is audited here, once, and the calls then ask.
         grant = self._grant_now(info, audit=True)
         if grant:
-            sel().log_api_access(
+            await sel_log_async(
+                sel().log_api_access,
                 caller=info.parent_session_key or f"subagent:{info.id}",
                 operation=f"subagent.approval_grant:{grant}",
                 outcome="ok",
@@ -2133,7 +2098,8 @@ class SubagentManager:
         # Inherit agent from parent session when not explicitly specified
         agent = info.agent or self._sessions.get_agent(info.parent_session_key)
         if not info.agent and agent:
-            sel().log_api_access(
+            await sel_log_async(
+                sel().log_api_access,
                 caller=f"subagent:{info.id}",
                 operation="subagent.agent_inheritance",
                 outcome="ok",
@@ -2341,7 +2307,8 @@ class SubagentManager:
                     if hooks_said.refused:
                         tier.refused(call_id, event.title or "", hooks_said.note)
                         await client.reject_tool(event.request_id)
-                        sel().log_tool_invocation(
+                        await sel_log_async(
+                            sel().log_tool_invocation,
                             session_key=session_key,
                             source="subagent",
                             tool_name=event.title,
@@ -2466,7 +2433,8 @@ class SubagentManager:
                             if waived
                             else (unasked_reason(meta) if native else "not_asked_by_cli")
                         )
-                        sel().log_tool_invocation(
+                        await sel_log_async(
+                            sel().log_tool_invocation,
                             session_key=session_key,
                             source="subagent",
                             tool_name=event.title,

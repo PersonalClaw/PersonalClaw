@@ -176,14 +176,4 @@
 {"site": "src/personalclaw/llm/acp_session_provider.py::AcpSessionProvider.set_mode::sel().log_api_access #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/llm_helpers.py::stream_and_collect::_sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/proactive/answer.py::answer::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._approve_and_log::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._force_reap::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._reject_and_log::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._run::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._run_inner::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._run_inner::sel().log_api_access #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._run_inner::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._run_inner::sel().log_tool_invocation #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._spawn_with_approval::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/subagent.py::SubagentManager._spawn_with_approval::sel().log_tool_invocation #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/subagent_orphans.py::reconcile_orphans::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}

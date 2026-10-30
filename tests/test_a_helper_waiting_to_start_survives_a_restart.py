@@ -27,6 +27,7 @@ import pytest
 from personalclaw import approval_grants, lasting_work, memory_writes, session_restrictions
 from personalclaw.approval_grants import ToolDecision
 from personalclaw.security import redact_for_model
+from personalclaw.sel import sel_log_async
 from personalclaw.subagent import SubagentManager, agent_work_id
 from personalclaw.subagent_orphans import Orphan, announce_orphans
 from personalclaw.subagent_persistence import ASKING, QUEUED
@@ -127,9 +128,20 @@ def _manager(
     )
 
 
+def _nothing() -> None:
+    """A write that writes nothing: awaited, every row asked before it has been written."""
+
+
+async def _turn() -> None:
+    """One turn of the loop, and every security-log row the manager has asked for by then: those are
+    written on the log's own thread (`sel_log_async`), which no number of loop turns waits for."""
+    await asyncio.sleep(0)
+    await sel_log_async(_nothing)
+
+
 async def _settle() -> None:
     for _ in range(20):
-        await asyncio.sleep(0)
+        await _turn()
 
 
 async def _restart(manager: SubagentManager) -> None:
@@ -204,7 +216,7 @@ async def test_after_a_restart_each_comes_back_in_its_order_under_the_same_limit
     # Allowed now, it runs; its slot goes to the next one in the order they were made.
     owner.answer(first.id, True)
     for _ in range(50):
-        await asyncio.sleep(0)
+        await _turn()
         if len(owner.asked) == 2:
             break
     assert [e.request_id for e in owner.asked] == [f"spawn:{first.id}", f"spawn:{second.id}"]

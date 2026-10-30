@@ -493,7 +493,7 @@ _OPERATOR_EXEMPT: dict[str, str] = {
     "session_pid.py::_is_managed_agent_process::subprocess.check_output": (
         "host-fact: managed-process probe"
     ),
-    "subagent.py::_total_memory_gb::subprocess.check_output": "host-fact: total RAM probe",
+    "subagent_sizing.py::_total_memory_gb::subprocess.check_output": "host-fact: total RAM probe",
     # Sandbox availability probes — internal probes of the sandbox mechanism itself.
     "sandbox.py::_probe_sandbox_exec::subprocess.run": (
         "host-fact: sandbox-exec availability probe"

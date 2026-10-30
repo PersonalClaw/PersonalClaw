@@ -188,7 +188,7 @@ _RUNS_NO_WRITTEN_COMMAND: dict[str, str] = {
     "service/linux.py::_write_unit_via_sudo::subprocess.run": "the service manager",
     "service/macos.py::_launchctl::subprocess.run": "the service manager",
     "session_pid.py::_is_managed_agent_process::subprocess.check_output": _PROBE,
-    "subagent.py::_total_memory_gb::subprocess.check_output": _PROBE,
+    "subagent_sizing.py::_total_memory_gb::subprocess.check_output": _PROBE,
     "tmux_substrate.py::has_session::asyncio.create_subprocess_exec": _PROBE,
     "tmux_substrate.py::has_session_sync::subprocess.run": _PROBE,
     "tmux_substrate.py::kill_server::subprocess.run": _COMPOSED,

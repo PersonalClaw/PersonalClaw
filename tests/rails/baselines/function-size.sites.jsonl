@@ -135,7 +135,7 @@
 {"site": "src/personalclaw/snapshot.py::restore_main", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 154, "complexity": 38}
 {"site": "src/personalclaw/snapshot.py::snapshot_main", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 236, "complexity": 39}
 {"site": "src/personalclaw/started_work.py::end_started", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 94, "complexity": 32}
-{"site": "src/personalclaw/subagent.py::SubagentManager._run_inner", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 448, "complexity": 87}
+{"site": "src/personalclaw/subagent.py::SubagentManager._run_inner", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line. +4 lines from the awaited security-log writes (#5605), no new branch", "lines": 452, "complexity": 87}
 {"site": "src/personalclaw/supply_chain.py::_analyse_python", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 85, "complexity": 36}
 {"site": "src/personalclaw/tool_providers/portable_schema.py::_Walk._typed", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 115, "complexity": 38}
 {"site": "src/personalclaw/triggers/calendar.py::diagnose", "reason": "over a limit when the rail came (#4015): split it below both, then delete this line", "lines": 254, "complexity": 56}

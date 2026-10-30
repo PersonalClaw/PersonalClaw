@@ -28,9 +28,13 @@ where the chat shows how it ended.
 
 from __future__ import annotations
 
-from typing import Any
+import time
+from typing import TYPE_CHECKING, Any
 
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+
+if TYPE_CHECKING:
+    from personalclaw.subagent import SubagentInfo
 
 #: The ``_ChatSession`` attribute holding what the chat's agent is owed, oldest first.
 OWED = "_owed_subagent_endings"
@@ -42,6 +46,19 @@ def _masked(text: str) -> str:
     text, _ = redact_exfiltration_urls(text)
     text, _ = redact_credentials(text)
     return text
+
+
+def _timeout_context(info: "SubagentInfo", *, include_elapsed: bool = True) -> str:
+    """The agent's own counters at a time-limit stop, for the log line beside it. Never part of
+    its error: a turn count against a limit of 0 and an elapsed figure counted from the spawn
+    request are this module's bookkeeping, and the error is what a person reads."""
+    parts = [f"turn {info.turns}/{info.max_turns}"]
+    if info.last_tool:
+        parts.append(f"last tool: {_masked(info.last_tool)}")
+    if include_elapsed:
+        elapsed = info.elapsed if info.elapsed > 0 else (time.time() - info.started)
+        parts.append(f"elapsed: {int(elapsed)}s")
+    return " | ".join(parts)
 
 
 def done_event(info: Any) -> dict[str, Any]:
