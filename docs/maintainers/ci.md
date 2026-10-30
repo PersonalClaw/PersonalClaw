@@ -2649,6 +2649,14 @@ workflow's triggers are. A guard the row cannot evaluate fails it, never reads a
   list and no rerun; a `ttl` job's attempt 1 started inside its TTL; and every other shard of it
   replays too, so one red shard runs every shard. Only attempt 1 is read, never a later attempt
   or a later run, so a red is never rerun into a green.
+- **A record of the merge ref stands for the head.** A `pull_request` run checks out
+  `refs/pull/<n>/merge`, so `run-job` records that commit, not the head. A record that names it is
+  on the head when the commit has two parents, the second is the head, its tree is the head's (so
+  the pushed tree), and the commit the push replaced contains the first. Each commit is looked up
+  once per push (`main_replay._MergeRefs`): another tree (a base that moved), a merge of an older
+  head, one or three parents, a base the previous `main` lacks, or an answer it cannot read (a
+  404, a rate limit, anything that is not a commit) runs every key whose record names it, with
+  why.
 - **A later run is not read either way.** Unlike `tree_tested`, which needs every `pull_request`
   run on the head green on attempt 1, a later run's red does not stop the first run's green from
   replaying. What a later run found reaches the push only through the merge verdict, whose newest
@@ -2669,8 +2677,9 @@ workflow's triggers are. A guard the row cannot evaluate fails it, never reads a
   still keep it running.
 - **The receipt** carries the trust receipt's fields (the pushed commit, its tree, the toolchain,
   and the sha256 of the plan, of attempt 1's job list and of each replayed verdict file), the
-  source run, the images the push compared, and each job's decision, why, and the image a
-  replayed pass ran on.
+  source run, the images the push compared, and each job's decision, why, the image a replayed
+  pass ran on, and what its record named as the commit it ran on (`record_names`: `head` or
+  `merge-ref`, empty when no record got that far).
 
 **The shadow (#3919 (b1)).** On every push to `main`, `merge.yml`'s `changes` job runs `replay`
 from main's own `tools/ci` (the copy its plan step fetched), over the whole merge tier, with the
