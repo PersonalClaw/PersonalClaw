@@ -119,6 +119,26 @@ def test_a_move_already_recorded_is_not_run_again(movers) -> None:
     assert movers == [(APP, "inbox", "mail-inbox")]
 
 
+def test_a_move_is_written_down_pending_before_any_mover_runs(tmp_path, movers) -> None:
+    seen: list[dict[str, Any] | None] = []
+
+    def looks(app: str, old: str, new: str) -> None:
+        seen.append(manager._read_installed(APP).capabilityMoves.get(old))
+
+    capability_lifecycle.register_mover(looks)
+    try:
+        assert app_manager.install(_bundle(tmp_path, "1.0.0", **V1), confirm=True).ok
+        assert app_manager.update(_bundle(tmp_path, "1.1.0", **V11), confirm=True).ok
+    finally:
+        capability_lifecycle.unregister_mover(looks)
+    assert len(seen) == 1 and seen[0] is not None, "a stop now would leave nothing to finish"
+    assert seen[0]["to"] == "mail-inbox"
+    assert capability_lifecycle.mover_name(looks) in seen[0]["pending"]
+    assert manager._read_installed(APP).capabilityMoves == {
+        "inbox": {"to": "mail-inbox", "in": "1.1.0"}
+    }
+
+
 def test_a_move_a_mover_failed_stays_pending_and_is_not_done(tmp_path, movers) -> None:
     def breaks(app: str, old: str, new: str) -> None:
         raise OSError("the store is locked")

@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **948 registrations** over **770 distinct paths** — 941 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **955 registrations** over **774 distinct paths** — 948 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -29,9 +29,9 @@ The 132 families the surface divides into, largest first.
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
 | `/api/models` | 38 | 30 |
+| `/api/apps` | 32 | 20 |
 | `/api/loops` | 30 | 24 |
 | `/api/artifacts` | 26 | 17 |
-| `/api/apps` | 25 | 16 |
 | `/api/inbox` | 24 | 23 |
 | `/api/mcp` | 21 | 16 |
 | `/api/skills` | 21 | 17 |
@@ -159,7 +159,7 @@ The 132 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 941 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 948 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -214,6 +214,13 @@ The 941 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/apps/sources` | add a user git source URL ``{url}``. |
 | `DELETE` | `/api/apps/{name}` | remove an app: no flag deactivates, ``?remove=1`` keeps ``data/``, ``?force=1`` wipes. |
 | `GET` | `/api/apps/{name}` | full manifest + status + saved config. |
+| `GET` | `/api/apps/{name}/accounts` | The app's accounts, the first then each further one, by id and label. |
+| `POST` | `/api/apps/{name}/accounts` | Add a further account, with no settings yet. |
+| `DELETE` | `/api/apps/{name}/accounts/{account}` | Remove a further account and exactly its secrets, its capabilities' with them. |
+| `GET` | `/api/apps/{name}/accounts/{account}/capabilities/{capability}/config` | One capability's own settings for one account, its credentials masked. |
+| `PUT` | `/api/apps/{name}/accounts/{account}/capabilities/{capability}/config` | Save one capability's own settings for one account. |
+| `GET` | `/api/apps/{name}/accounts/{account}/config` | One account's own settings, its credentials masked, with the revision a write names. |
+| `PUT` | `/api/apps/{name}/accounts/{account}/config` | Save one account's own settings. |
 | `POST` | `/api/apps/{name}/agent-run` | start a background agent task. |
 | `GET` | `/api/apps/{name}/agent-run/{run_id}` | poll a background agent task. |
 | `GET` | `/api/apps/{name}/capabilities/{capability}/config` | One capability's own settings, its credentials masked. |

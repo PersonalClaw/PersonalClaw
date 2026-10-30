@@ -57,6 +57,13 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/apps/sources` — add a user git source URL ``{url}``.
 - `DELETE /api/apps/{name}` — remove an app: no flag deactivates, ``?remove=1`` keeps ``data/``, ``?force=1`` wipes.
 - `GET /api/apps/{name}` — full manifest + status + saved config.
+- `GET /api/apps/{name}/accounts` — The app's accounts, the first then each further one, by id and label.
+- `POST /api/apps/{name}/accounts` — Add a further account, with no settings yet.
+- `DELETE /api/apps/{name}/accounts/{account}` — Remove a further account and exactly its secrets, its capabilities' with them.
+- `GET /api/apps/{name}/accounts/{account}/capabilities/{capability}/config` — One capability's own settings for one account, its credentials masked.
+- `PUT /api/apps/{name}/accounts/{account}/capabilities/{capability}/config` — Save one capability's own settings for one account.
+- `GET /api/apps/{name}/accounts/{account}/config` — One account's own settings, its credentials masked, with the revision a write names.
+- `PUT /api/apps/{name}/accounts/{account}/config` — Save one account's own settings.
 - `POST /api/apps/{name}/agent-run` — start a background agent task.
 - `GET /api/apps/{name}/agent-run/{run_id}` — poll a background agent task.
 - `GET /api/apps/{name}/capabilities/{capability}/config` — One capability's own settings, its credentials masked.

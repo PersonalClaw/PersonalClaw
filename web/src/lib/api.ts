@@ -11558,6 +11558,21 @@ export const api = {
     get<{ name: string; capability: string; config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[]; revision: string }>(`/api/apps/${encodeURIComponent(name)}/capabilities/${encodeURIComponent(capability)}/config`),
   saveAppCapabilityConfig: (name: string, capability: string, config: Record<string, unknown>, base: string) =>
     put<{ ok: boolean; config: Record<string, unknown>; revision: string }>(`/api/apps/${encodeURIComponent(name)}/capabilities/${encodeURIComponent(capability)}/config`, config, basedOn(base)),
+  // An app's accounts (#3842): the first is `default`; #3845 builds the Accounts section.
+  appAccounts: (name: string) =>
+    get<{ name: string; accounts: { id: string; label: string }[] }>(`/api/apps/${encodeURIComponent(name)}/accounts`),
+  addAppAccount: (name: string, label: string) =>
+    post<{ id: string; label: string }>(`/api/apps/${encodeURIComponent(name)}/accounts`, { label }),
+  removeAppAccount: (name: string, account: string) =>
+    del(`/api/apps/${encodeURIComponent(name)}/accounts/${encodeURIComponent(account)}`),
+  appAccountConfig: (name: string, account: string) =>
+    get<{ name: string; account: string; config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[]; revision: string }>(`/api/apps/${encodeURIComponent(name)}/accounts/${encodeURIComponent(account)}/config`),
+  saveAppAccountConfig: (name: string, account: string, config: Record<string, unknown>, base: string) =>
+    put<{ ok: boolean; config: Record<string, unknown>; revision: string }>(`/api/apps/${encodeURIComponent(name)}/accounts/${encodeURIComponent(account)}/config`, config, basedOn(base)),
+  appAccountCapabilityConfig: (name: string, account: string, capability: string) =>
+    get<{ name: string; account: string; capability: string; config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[]; revision: string }>(`/api/apps/${encodeURIComponent(name)}/accounts/${encodeURIComponent(account)}/capabilities/${encodeURIComponent(capability)}/config`),
+  saveAppAccountCapabilityConfig: (name: string, account: string, capability: string, config: Record<string, unknown>, base: string) =>
+    put<{ ok: boolean; config: Record<string, unknown>; revision: string }>(`/api/apps/${encodeURIComponent(name)}/accounts/${encodeURIComponent(account)}/capabilities/${encodeURIComponent(capability)}/config`, config, basedOn(base)),
   // Store catalog: available-to-install apps (bundled-not-installed + git sources).
   // `defaultGitSources` = the rows PersonalClaw shipped (labelled "Default"); `builtinGitSources`
   // = the subset that cannot be removed (bundled into every read), so the UI hides a remove

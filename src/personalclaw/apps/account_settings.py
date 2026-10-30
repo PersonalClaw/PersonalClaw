@@ -82,6 +82,12 @@ def settings_refusals(manifest: AppManifest) -> list[str]:
     shared = _properties(manifest.settings)
     declared_by: dict[str, str] = {}
     for path, provider in manifest._provider_paths():
+        if provider.multiInstance:
+            errors.append(
+                f"{path}.multiInstance: an app that declares settings keeps more than one account "
+                "itself, each a copy of its settings, so none of its providers may be "
+                "multiInstance"
+            )
         for name in _properties(provider.settingsSchema):
             if name in shared:
                 errors.append(

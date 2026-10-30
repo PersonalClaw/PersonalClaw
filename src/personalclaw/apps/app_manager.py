@@ -1746,7 +1746,11 @@ def _record_update(
     # value would let a version that dropped its signature keep reading `official`.
     meta.tier = tier
     # What it did to the app's capabilities: each rename moved once, each dropped id a tombstone.
-    capability_lifecycle.after_update(meta, was, manifest)
+    # A rename is written down, pending, before it moves anything, so a stop part way is finished
+    # by the next start.
+    capability_lifecycle.after_update(
+        meta, was, manifest, save=lambda pending: _write_installed(name, pending)
+    )
     _write_installed(name, meta)
     return meta
 

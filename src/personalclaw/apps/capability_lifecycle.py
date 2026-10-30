@@ -11,13 +11,16 @@ Each provider an app declares is a capability, kept under ``<app>/<id>``
   under ``<app>/<old>`` moves to ``<app>/<new>``, once: each store that keys by capability
   registers a mover (:func:`register_mover`; per-capability settings, secrets and switches add
   theirs, #3842 and #3843), and the installed record keeps the move, so running it again moves
-  nothing. A move a mover failed is kept as pending, naming the movers that failed, and the
+  nothing. The move is kept pending on every mover before any runs, and each that finishes is
+  struck off, so one a mover failed, or that a stop cut short, names the movers left, and the
   gateway's next start runs those again (:func:`retry_pending_moves`) until none is left.
 * **Retired.** An id an update drops stays behind in the installed record as a tombstone with its
   last label, the version that dropped it and whether the author declared it in
   ``retiredCapabilities``, and a read of it says what it was and when it went
   (:func:`retired_sentence`). A declared one is never declared again (:func:`update_refusal`).
   One dropped without saying so may come back in a later version, which clears its tombstone.
+  Each store deletes what it kept for an id the app declared retired (:func:`register_remover`),
+  and keeps it for one dropped without saying so, which may come back.
 """
 
 from __future__ import annotations
@@ -38,6 +41,17 @@ Mover = Callable[[str, str, str], None]
 
 _MOVERS: list[Mover] = []
 
+#: ``remover(app, id)``: deletes what one store keeps for a capability its app retired.
+Remover = Callable[[str, str], None]
+
+_REMOVERS: list[Remover] = []
+
+
+def _core_stores() -> None:
+    """Register core's own movers and removers, the ones its per-capability stores need (#3842),
+    before any runs: importing their module registers them."""
+    import personalclaw.providers.capability_settings_move  # noqa: F401
+
 
 def register_mover(mover: Mover) -> None:
     """Have *mover* carry its store's entries when an update renames a capability.
@@ -56,8 +70,36 @@ def unregister_mover(mover: Mover) -> None:
         _MOVERS.remove(mover)
 
 
-def mover_name(mover: Mover) -> str:
-    """The name a pending move records *mover* by: its module and qualified name."""
+def register_remover(remover: Remover) -> None:
+    """Have *remover* delete its store's entries for a capability the app declares retired
+    (``retiredCapabilities``): that id never comes back, so nothing kept for it is used again.
+    One the app dropped without saying so keeps its entries, since a later version may bring it
+    back. A remover must be idempotent: every update runs it again for each retired id."""
+    if remover not in _REMOVERS:
+        _REMOVERS.append(remover)
+
+
+def unregister_remover(remover: Remover) -> None:
+    if remover in _REMOVERS:
+        _REMOVERS.remove(remover)
+
+
+def _run_removers(app: str, capability: str) -> None:
+    for remover in list(_REMOVERS):
+        try:
+            remover(app, capability)
+        except Exception:  # noqa: BLE001 — one store's failure must not undo the update
+            logger.exception(
+                "app %s: removing retired capability %s failed (%s)",
+                app,
+                capability,
+                mover_name(remover),
+            )
+
+
+def mover_name(mover: Mover | Remover) -> str:
+    """The name a pending move records *mover* by, or a log line a remover: its module and
+    qualified name."""
     return f"{getattr(mover, '__module__', '')}.{getattr(mover, '__qualname__', repr(mover))}"
 
 
@@ -111,13 +153,27 @@ def update_refusal(meta: InstalledApp | None, new: AppManifest) -> str:
     return ""
 
 
-def after_update(meta: InstalledApp, old: AppManifest | None, new: AppManifest) -> None:
+def after_update(
+    meta: InstalledApp,
+    old: AppManifest | None,
+    new: AppManifest,
+    save: Callable[[InstalledApp], None] | None = None,
+) -> None:
     """Record on *meta* what the update from *old* to *new* did to the app's capabilities: each
     rename moved (once, or pending with the movers that failed), each dropped id kept as a
-    tombstone, and each id dropped without saying so that is back cleared."""
+    tombstone, and each id dropped without saying so that is back cleared. Each id the app
+    declares retired has what the stores keep for it deleted (:func:`register_remover`).
+
+    Each new move is recorded pending on every registered mover, and *save* (the installed
+    record's writer) puts that on disk, before any mover runs: a stop part way through one, the
+    process killed included, leaves the move pending, and the gateway's next start runs it again
+    (:func:`retry_pending_moves`). Movers are idempotent, so one that had finished runs again to
+    no effect."""
+    _core_stores()
     before = _labels(old) if old is not None else {}
     after = _labels(new)
     moved: set[str] = set()
+    started: list[str] = []
     for cid, provider in zip(after, new.all_providers()):
         for was in provider.renamedFrom:
             if was not in before:
@@ -125,11 +181,24 @@ def after_update(meta: InstalledApp, old: AppManifest | None, new: AppManifest) 
             moved.add(was)
             if was in meta.capabilityMoves:
                 continue
-            failed = _run_movers(new.name, was, cid)
             meta.capabilityMoves[was] = {"to": cid, "in": new.version}
-            if failed:
-                meta.capabilityMoves[was]["pending"] = failed
+            names = [mover_name(m) for m in _MOVERS]
+            if names:
+                meta.capabilityMoves[was]["pending"] = names
+                started.append(was)
     _keep_tombstones(meta, new, before, after, moved)
+    if started and save is not None:
+        save(meta)
+    for was in started:
+        move = meta.capabilityMoves[was]
+        failed = _run_movers(new.name, was, move["to"], set(move["pending"]))
+        if failed:
+            move["pending"] = failed
+        else:
+            del move["pending"]
+    for cid, tomb in meta.retiredCapabilities.items():
+        if tomb.get("declared") is True:
+            _run_removers(new.name, cid)
 
 
 def _keep_tombstones(
@@ -163,6 +232,7 @@ def _keep_tombstones(
 def retry_pending_moves(meta: InstalledApp) -> bool:
     """Run again each mover a recorded move of *meta*'s is pending on, and mark the move done once
     none is left. A mover not registered now stays pending. Whether *meta* changed."""
+    _core_stores()
     changed = False
     registered = {mover_name(m) for m in _MOVERS}
     for was, move in meta.capabilityMoves.items():

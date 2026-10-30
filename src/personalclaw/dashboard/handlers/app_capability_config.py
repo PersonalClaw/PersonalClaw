@@ -135,3 +135,12 @@ async def api_app_capability_config_put(request: web.Request) -> web.Response:
             "revision": revision_of(masked),
         }
     )
+
+
+def register_routes(app: web.Application) -> None:
+    app.router.add_get(
+        "/api/apps/{name}/capabilities/{capability}/config", api_app_capability_config_get
+    )
+    app.router.add_put(
+        "/api/apps/{name}/capabilities/{capability}/config", api_app_capability_config_put
+    )
