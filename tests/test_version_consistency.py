@@ -260,3 +260,15 @@ def test_the_banner_must_name_a_version() -> None:
     """A banner the release cut left garbled fails loudly rather than comparing as nothing."""
     with pytest.raises(AssertionError, match="not a version"):
         _readme_declared_version("PersonalClaw is at **vnext**")
+
+
+def test_the_version_reads_as_an_attribute_and_as_an_import() -> None:
+    """The package root reads its version on the first ask (so a spawned child that never asks
+    pays nothing for it), and both ways a caller writes it still read a ``str``."""
+    from personalclaw import __version__
+
+    assert isinstance(__version__, str)
+    assert personalclaw.__version__ == __version__
+    assert "__version__" in dir(personalclaw)
+    with pytest.raises(AttributeError, match="no_such_thing"):
+        getattr(personalclaw, "no_such_thing")
