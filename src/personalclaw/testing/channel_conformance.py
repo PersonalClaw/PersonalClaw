@@ -209,9 +209,38 @@ class CapturedSession:
         self.task: Any = None
         self.appended: list[tuple[str, str]] = []
         self.queued: list[str] = []
+        self._queue: list[dict[str, Any]] = []
 
     def append(self, role: str, content: str, cls: str = "", ts: str = "", **kw: Any) -> None:
         self.appended.append((role, content))
+
+    def take_in_at_door(
+        self, state: Any, message: str, role: str = "user", cls: str = "msg msg-u", **fields: Any
+    ) -> Any:
+        """The one way a message enters a chat (``_ChatSession.take_in_at_door``): queued while a
+        turn runs, else the row its turn starts with. Answers its receipt."""
+        from types import SimpleNamespace
+
+        from personalclaw import ids
+
+        message_id = ids.new_id("msg")
+        if self.running:
+            self.queued.append(message)
+            self._queue.append({"id": "q", "message_id": message_id, "content": message})
+            disposition = "queued"
+        else:
+            shown = fields.get("shown")
+            said = {k: fields[k] for k in ("meta", "source") if fields.get(k)}
+            self.append(role, message if shown is None else shown, cls, **said)
+            disposition = "started"
+        return SimpleNamespace(
+            session=self.key,
+            message_id=message_id,
+            accepted_at="",
+            disposition=disposition,
+            turn_message_id=message_id,
+            duplicate=False,
+        )
 
     def queue_append(
         self,

@@ -337,6 +337,7 @@ async def api_chat(request: web.Request) -> web.StreamResponse:
             own_words=_own_recorded,
             pastes=_kept_pastes,
             heard=heard,
+            attended=True,  # typed in the chat, where the owner is
         ),
     )
     if isinstance(taken, chat_intake.Refusal) or taken.duplicate:

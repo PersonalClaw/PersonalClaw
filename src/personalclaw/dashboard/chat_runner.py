@@ -5750,20 +5750,20 @@ async def run_chat(
                 # And the blocks pasted into them, which the row shows as their chips.
                 if _pasted := queued_pastes(consumed):
                     queued_meta[PASTES] = _pasted
-                # Each message keeps its id and receipt: one alone as the row's, several named in it
-                # with where each came from (whose each was: `turn_source.asked_by`).
+                # Each message keeps its id and receipt (`chat_intake.write_drained`).
                 _queued_source = shared_source(consumed)
-                queued_meta.update(chat_intake.carried(consumed))
                 # A subagent's report runs alone, as asked for by whoever asked for its work, and
                 # its row says so, as a message's says who sent it.
                 carried = next((i[ASKED_FOR_BY] for i in consumed if i.get(ASKED_FOR_BY)), None)
                 if carried:
                     queued_meta[ASKED_FOR_BY] = dict(carried)
-                session.append(
-                    "subagent" if is_subagent else "inject" if is_cron else "user",
+                chat_intake.write_drained(
+                    session,
+                    consumed,
                     next_msg,
-                    json.dumps({"cronLabel": cron_label}) if is_cron else "msg msg-u",
-                    meta=queued_meta or None,
+                    role="subagent" if is_subagent else "inject" if is_cron else "user",
+                    cls=json.dumps({"cronLabel": cron_label}) if is_cron else "msg msg-u",
+                    meta=queued_meta,
                     source=_queued_source,  # where its messages came from
                 )
                 # A queued user message is persisted here but session.append suppresses

@@ -40,7 +40,6 @@ from personalclaw.history import CREATED_BY_APP_META_KEY
 from personalclaw.knowledge.store import KnowledgeStore
 from personalclaw.memory_locality import work_folder
 from personalclaw.memory_reads import reach_of
-from personalclaw.own_words import OWN_WORDS
 from personalclaw.owner_questions import OwnerQuestions
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.task_modes import (  # noqa: F401,E501 — re-exported for dashboard callers (chat_runner, tests)
@@ -797,12 +796,10 @@ class _ChatSession(ChatQueue):
         so two concurrent callers targeting the same session cannot both observe
         ``running == False`` within a single loop iteration.
         """
-        if self.running:
-            self.queue_append(prompt, own_words=own_words, attended=attended)
+        taken = self.take_in_at_door(state, prompt, own_words=own_words, attended=attended)
+        if taken.disposition != chat_intake.STARTED:
             state.say_run_state(self)  # one more message waits behind the turn
             return False
-        meta = None if own_words is None else {OWN_WORDS: own_words}
-        self.append("user", prompt, "msg msg-u", meta=meta)
         task = asyncio.create_task(run_chat_coro(state, self, prompt))
         self.task = task
         state._background_tasks.add(task)

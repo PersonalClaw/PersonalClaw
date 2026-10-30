@@ -9533,11 +9533,11 @@ export const api = {
   // every tab); returns the now-active index. 409 if the session is mid-turn.
   switchVariant: (session: string, index: number) =>
     post<{ ok: boolean; index: number }>(`/api/chat/sessions/${session}/switch-variant`, { index }),
-  editResend: (session: string, content: string, ts?: string, index?: number, client_ts?: string, rewind?: boolean, ask?: { again?: boolean; confirm?: string }, pastes?: { seq: number; lines: number; content: string }[]) =>
-    post<{ ok: boolean; rewound: number }>(`/api/chat/sessions/${session}/edit-resend`,
+  editResend: (session: string, content: string, ts?: string, index?: number, messageId?: string, rewind?: boolean, ask?: { again?: boolean; confirm?: string }, pastes?: { seq: number; lines: number; content: string }[]) =>
+    post<{ ok: boolean; rewound: number } & Partial<ChatReceipt>>(`/api/chat/sessions/${session}/edit-resend`,
       // Prefer the original turn's ts to LOCATE the message; always send the index
-      // as a fallback (un-hydrated optimistic turns have no ts) + a fresh client_ts
-      // the backend stores on the re-appended message so a repeat edit still matches.
+      // as a fallback (un-hydrated optimistic turns have no ts). The message sent in its place
+      // is a new one, named by its own id (`client_message_id`): a resend sent twice runs once.
       // rewind=true → fork-and-swap (edit ANY past turn): retain the discarded tail
       // on the edited message + reset the provider so context rebuilds truncated.
       // again=true → her message sent as it is (Rewind to here, a resend she did not change): its
@@ -9545,7 +9545,7 @@ export const api = {
       // changed something (`retry_repeats_steps`); `confirm` is her yes to that question.
       // pastes = the blocks she pasted into it, which `content` holds in their markers' place
       // (`asSent`): her row keeps them, so her bubble shows each as its chip.
-      { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), ...(client_ts ? { client_ts } : {}), ...(rewind ? { rewind: true } : {}), ...(ask?.again ? { again: true } : {}), ...(ask?.confirm ? { confirm: ask.confirm } : {}), ...(pastes?.length ? { pastes } : {}) }),
+      { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), client_message_id: messageId ?? newMessageId(), ...(rewind ? { rewind: true } : {}), ...(ask?.again ? { again: true } : {}), ...(ask?.confirm ? { confirm: ask.confirm } : {}), ...(pastes?.length ? { pastes } : {}) }),
   // Interrupt the running turn but KEEP the queue (unlike /stop). Optional queueId
   // promotes that queued message to the front so it runs next (queue_promoted WS echo).
   interruptChat: (session: string, queueId?: string) =>

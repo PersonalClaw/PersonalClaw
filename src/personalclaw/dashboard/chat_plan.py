@@ -55,7 +55,6 @@ from personalclaw.dashboard.chat_utils import (
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import _safe_key
 from personalclaw.http_errors import json_error
-from personalclaw.own_words import OWN_WORDS
 from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
 from personalclaw.request_validation import json_object_body
@@ -625,7 +624,8 @@ def _dispatch(state: DashboardState, chat: _ChatSession, prompt: str, *, own_wor
     """
     from personalclaw.dashboard.chat_runner import run_chat
 
-    chat.append("user", prompt, "msg msg-u", meta={OWN_WORDS: own_words})
+    # Taken in the one way a message enters a chat, as the turn it starts now.
+    chat.take_in_at_door(state, prompt, own_words=own_words, attended=True, starts=True)
     task = asyncio.create_task(run_chat(state, chat, prompt))
     chat.task = task
     state._background_tasks.add(task)

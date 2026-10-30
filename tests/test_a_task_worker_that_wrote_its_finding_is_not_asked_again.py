@@ -21,6 +21,7 @@ import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import door_fakes
 import pytest
 
 from personalclaw.loop import files as loop_files
@@ -129,6 +130,8 @@ def test_a_stage_workers_re_prompt_names_the_file_its_cycle_prompt_names(kind):
 
 
 class _Session:
+    take_in_at_door = door_fakes.take_in_at_door  # the one way a message enters a chat
+
     def __init__(self, key: str) -> None:
         self.key = key
         self._app = "loop"

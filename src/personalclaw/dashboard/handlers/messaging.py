@@ -10,6 +10,7 @@ from typing import Any
 from aiohttp import web
 
 from personalclaw import bounded_log, notification_kinds
+from personalclaw.dashboard import chat_intake
 from personalclaw.dashboard.chat_persistence import _rehydrate_session_from_history
 from personalclaw.dashboard.chat_utils import _remove_queued_by_id
 from personalclaw.dashboard.state import (
@@ -894,16 +895,17 @@ async def api_send_message(request: web.Request) -> web.Response:
                     # cronLabel in cls JSON provides structured data for frontend.
                     wrapped = f'{CRON_NOTIFY_PREFIX}"{label}"]\n{text}\n{CRON_NOTIFY_END}'
                     inject_cls = json.dumps({"cronLabel": label})
-                    if session.running:
-                        if len(session._queue) >= 50:
-                            evicted = session.queue_pop(0)
-                            logger.warning(
-                                "Queue full for session %s — evicting oldest message", session_name
-                            )
-                            _remove_queued_by_id(session.messages, evicted["id"])
-                        qid = session.queue_append(wrapped)
+                    if len(session._queue) >= 50:  # only ever behind a running turn
+                        evicted = session.queue_pop(0)
+                        logger.warning(
+                            "Queue full for session %s — evicting oldest message", session_name
+                        )
+                        _remove_queued_by_id(session.messages, evicted["id"])
+                    # Taken in as every message is: queued, else the `inject` row its turn starts.
+                    taken = session.take_in_at_door(state, wrapped, role="inject", cls=inject_cls)
+                    if taken.disposition != chat_intake.STARTED:
                         _cls = json.loads(inject_cls)
-                        _cls["queue_id"] = qid
+                        _cls["queue_id"] = session._queue[-1]["id"]
                         session.append("queued", wrapped, json.dumps(_cls))
                         state.say_run_state(session)  # one more message waits behind the turn
                         state.push_sessions_update()
@@ -914,7 +916,6 @@ async def api_send_message(request: web.Request) -> web.Response:
                         # module top-level without a cycle.
                         from personalclaw.dashboard.chat_runner import run_chat
 
-                        session.append("inject", wrapped, inject_cls)
                         task = asyncio.create_task(run_chat(state, session, wrapped))
                         session.task = task
                         state._background_tasks.add(task)

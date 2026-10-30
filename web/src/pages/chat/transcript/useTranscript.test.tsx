@@ -187,6 +187,15 @@ describe('useTranscript does what a turn offers', () => {
     expect(markStreaming).not.toHaveBeenCalled()
   })
 
+  it('names the message an edit sends in place of the old one, a new one each time', async () => {
+    h.editResend.mockResolvedValue({ ok: true, rewound: 0 })
+    const { result } = mount()
+    await act(async () => { await result.current.t.editResend(0, 'Why does the feed refetch at all?') })
+    await act(async () => { await Promise.resolve() })
+    const [, , , , messageId] = h.editResend.mock.calls[0]
+    expect(messageId, 'a message id, not a clock reading').toMatch(/^msg_[0-9a-hjkmnp-tv-z]{26}$/)
+  })
+
   it('regenerates once the gateway accepts, and cuts the page copy when the read that follows fails', async () => {
     h.regenerate.mockResolvedValue({})
     const { result, markStreaming } = mount()

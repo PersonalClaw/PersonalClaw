@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import door_fakes
 import pytest
 import pytest_asyncio
 from aiohttp import web
@@ -478,6 +479,8 @@ def _ctx() -> MagicMock:
 
 class _Turn:
     """The chat's running turn, which ends when :meth:`end` is called."""
+
+    take_in_at_door = door_fakes.take_in_at_door  # the one way a message enters a chat
 
     def __init__(self) -> None:
         self.task = asyncio.get_running_loop().create_future()

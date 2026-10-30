@@ -144,6 +144,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: The row a loop's cycle starts its turn with: a ``nudge`` row, shown as one.
+_NUDGE_ROW = ("nudge", "msg msg-nudge")
+
 # Full chat turn timeout — tool calls, multi-step reasoning, spawning.
 # More generous than INJECTION_TIMEOUT (120s) which only covers stream_and_collect.
 
@@ -3205,8 +3208,8 @@ class GatewayOrchestrator:
                     loop.cycle_count,
                 )
                 return False
-            # Show nudge as a distinct "nudge" role message in the session history.
-            session.append("nudge", tagged, "msg msg-nudge")
+            # Show nudge as a distinct "nudge" role message, taken in as every message is.
+            session.take_in_at_door(dstate, tagged, *_NUDGE_ROW)
 
             # Every unified Loop kind (goal/code/general/design) is a cycle-driven
             # worker (app="loop", keyed loop-<id>) whose deliverable is a per-cycle
@@ -3337,7 +3340,7 @@ class GatewayOrchestrator:
                         # plus an explicit write reminder.
                         _reprompt = _loop_manager.cycle_reprompt(_sess.key)
                         retry_msg = (_msg + "\n\n" + _reprompt) if fresh_started else _reprompt
-                        _sess.append("nudge", retry_msg, "msg msg-nudge")
+                        _sess.take_in_at_door(dstate, retry_msg, *_NUDGE_ROW, starts=True)
                         # The re-prompt is this cycle's turn too, so the session reads as
                         # running through it. `run_chat` clears `task` as each turn ends, and a
                         # session reading idle is one a Pause, a Stop or incident mode does not
@@ -4263,17 +4266,24 @@ class GatewayOrchestrator:
                     announce, _ = redact_exfiltration_urls(_announce(parent_key, handed))
                     announce, _ = redact_credentials(announce)
 
-                    # Re-check: another injection may have claimed the session
-                    # during the await above.
-                    if _injection_session.running:
+                    # Taken in the one way a message enters a chat: queued when another injection
+                    # claimed the session during the await above, else the report's own row, as a
+                    # queued report's: the turn it starts, and who asked for its work, is the row's.
+                    _taken = _injection_session.take_in_at_door(
+                        self.dashboard_state,
+                        announce,
+                        role="subagent",
+                        meta={ASKED_FOR_BY: dict(asked)} if asked else None,
+                        asked_for_by=asked,
+                    )
+                    if _taken.disposition != "started":
                         logger.info(
-                            "Subagent %s: session %s claimed by another injection, queuing",
+                            "Subagent %s: session %s claimed by another injection, queued",
                             info.id,
                             _session_name,
                         )
                         # run_chat's finally drains the queue on any exit path, and runs the
                         # report bounded by its silence (`turn_deadline`): nobody typed it.
-                        _injection_session.queue_append(announce, asked_for_by=asked)
                         # One more message waits behind the chat's turn, which its run state says.
                         self.dashboard_state.say_run_state(_injection_session)
                         self.dashboard_state.push_sessions_update()
@@ -4287,14 +4297,7 @@ class GatewayOrchestrator:
                             )
                         return
 
-                    # Session is idle — start run_chat, on the report's own row, as a queued
-                    # report's: the turn it starts, and who asked for its work, is the row's.
-                    _injection_session.append(
-                        "subagent",
-                        announce,
-                        "msg msg-u",
-                        meta={ASKED_FOR_BY: dict(asked)} if asked else None,
-                    )
+                    # Session is idle — start run_chat on the report's row.
                     _task = asyncio.create_task(
                         turn_deadline.run_within(
                             self.dashboard_state,

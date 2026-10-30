@@ -21,6 +21,7 @@ import type { QuestionReply } from '../QuestionCard'
 import { type ChatTurn, userTurn, turnText, markCoordOf } from '../chatTypes'
 import type { ChatStream } from '../useChatStream'
 import type { ApproveAction } from './AssistantSegments'
+import { newMessageId } from '../../../lib/messageIds'
 
 // ── The transcript's controller ───────────────────────────────────────────────────────────────
 //
@@ -348,12 +349,12 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     // marker, and the blocks beside it (`asSent`), as every send has. The page shows her message
     // with the markers, so the editor and Rewind to here both hold them.
     const sent = asSent(t, turn?.pastes ?? [])
-    // Locate the message by the ORIGINAL turn's ts (backend truncates from there),
-    // and stamp the re-added turn with a FRESH ts that the backend also stores —
-    // so an immediate SECOND edit-resend still has a matching ts (the backend
-    // re-appends the edited message, which would otherwise get a new server ts the
-    // FE doesn't know). Falls back to the index when the original turn has no ts.
+    // Locate the message by the ORIGINAL turn's ts (backend truncates from there), falling back
+    // to the index when the original turn has no ts. The message sent in its place is a new
+    // one with an id of its own, which the gateway keeps on its row; the snapshot read once it
+    // is sent brings the row's own time.
     const newTs = new Date().toISOString()
+    const messageId = newMessageId()
     // A rewind retains the discarded tail on the edited message and resets the provider so
     // context rebuilds from the truncated transcript; the snapshot the page adopts carries the
     // divider chip + read-only tail disclosure. An EARLIER turn is always a rewind — decided
@@ -374,8 +375,8 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     // runs only on her yes, sent back as `confirmed`, and a No leaves the page as it was.
     const again = !!turn && t === turnText(turn)
     const landed = await replaceTurns(
-      (s) => api.editResend(s, sent.text, turn?.ts, turnIndex, newTs, asRewind, { again, confirm: confirmed }, sent.pastes),
-      (prev) => [...prev.slice(0, turnIndex), userTurn(t, newTs, sent.pastes.length ? sent.pastes : undefined)],
+      (s) => api.editResend(s, sent.text, turn?.ts, turnIndex, messageId, asRewind, { again, confirm: confirmed }, sent.pastes),
+      (prev) => [...prev.slice(0, turnIndex), { ...userTurn(t, newTs, sent.pastes.length ? sent.pastes : undefined), messageId }],
       (e) => {
         if (askToRepeat(e, (yes) => editResend(turnIndex, content, rewind, yes))) return
         if (fromEditor) setEditFailure(failureSentence(what, e)); else reportActionFailure(what)(e)

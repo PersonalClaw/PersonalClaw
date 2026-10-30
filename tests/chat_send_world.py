@@ -26,7 +26,7 @@ from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
 from personalclaw.dashboard.api_version_gate import api_version_middleware
-from personalclaw.dashboard.chat import api_chat
+from personalclaw.dashboard.chat import api_chat, api_chat_session_edit_resend
 from personalclaw.dashboard.chat_utils import persisted_history_key
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
@@ -123,6 +123,9 @@ class World:
         if versioned:
             app.middlewares.append(api_version_middleware())
         app.router.add_post("/api/chat", api_chat)
+        app.router.add_post(
+            "/api/chat/sessions/{session}/edit-resend", api_chat_session_edit_resend
+        )
         async with TestClient(TestServer(app)) as client:
             with (
                 patch("personalclaw.dashboard.chat_runner.sel", MagicMock()),

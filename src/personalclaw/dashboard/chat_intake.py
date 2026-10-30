@@ -39,7 +39,15 @@ from aiohttp import web
 from personalclaw import ids
 from personalclaw.http_errors import json_error
 from personalclaw.ledger.hashing import canonical_digest
-from personalclaw.turn_source import MERGED, STEERED, TURN_STARTS, source_of, starts_a_turn
+from personalclaw.own_words import OWN_WORDS
+from personalclaw.turn_source import (
+    DASHBOARD_SOURCE,
+    MERGED,
+    STEERED,
+    TURN_STARTS,
+    source_of,
+    starts_a_turn,
+)
 
 if TYPE_CHECKING:
     from personalclaw.dashboard.state import DashboardState, _ChatSession
@@ -135,13 +143,21 @@ class Receipt:
 
 @dataclass(frozen=True)
 class Intake:
-    """A message at the chat's door, as the door read it.
+    """A message at a door of the chat, as the door read it.
 
     ``message`` is what runs, ``body_digest`` what was sent (:func:`body_digest`). ``queue_mode`` is
     how a message sent while a turn runs joins it, and ``expected_message_id`` the turn a steer is
     for. ``replaces`` says the mid-turn policy stops the running turn for it. ``meta`` is the row's
     when it starts a turn; ``own_words``, ``pastes`` and ``heard`` what the send said of its words
-    when it waits for or joins the running turn (``running_turn.steer``, ``chat_queue``)."""
+    when it waits for or joins the running turn (``running_turn.steer``, ``chat_queue``).
+
+    The row a turn starts with is a ``role`` row (``turn_source.TURN_STARTS``) of ``cls``, showing
+    ``shown`` when it shows other words than run (a channel's message, masked). ``source`` is where
+    the message came from, ``channel`` the chat channel that already shows it, ``files`` what it
+    carries, ``asked_for_by`` who asked for the work it reports on, and ``attended`` says the owner
+    typed it where they are (``chat_queue``): each kept on the queue item, when it waits. A door
+    whose message starts its turn whatever runs (``starts``: plan mode's next turn) is never
+    queued."""
 
     message: str
     message_id: str
@@ -153,6 +169,27 @@ class Intake:
     own_words: str | None = None
     pastes: Sequence[Mapping[str, Any]] = ()
     heard: bool = False
+    role: str = "user"
+    cls: str = "msg msg-u"
+    shown: str | None = None
+    source: Mapping[str, str] = DASHBOARD_SOURCE
+    channel: str = ""
+    files: Sequence[str] = ()
+    asked_for_by: Mapping[str, str] | None = None
+    attended: bool = False
+    starts: bool = False
+
+    @classmethod
+    def at_door(intake, message: str, **fields: Any) -> Intake:  # noqa: N804 - `cls` is a field
+        """A message a door takes in under an id the gateway mints, which no repeat can name: a
+        channel's (its delivery is told new by the channel's own door), an automation's, a
+        helper's report, a loop's cycle, a program's."""
+        return intake(
+            message=message,
+            message_id=ids.new_id("msg"),
+            body_digest=body_digest(message, "", "", fields.get("meta")),
+            **fields,
+        )
 
 
 def message_id_of(body: Mapping[str, Any], key: str = "client_message_id") -> str | Refusal:
@@ -223,6 +260,17 @@ async def repeat_of(
         await asyncio.shield(held.settled)
 
 
+def repeat_now(session: _ChatSession, message_id: str, digest: str) -> Receipt | Refusal | None:
+    """:func:`repeat_of` for a door that must not wait: the answer to a send of *message_id* the
+    chat took already, ``None`` for one it did not take (or that another send is taking)."""
+    held = _taken(session).get(message_id)
+    if not isinstance(held, _Taken):
+        return None
+    if held.body_digest != digest:
+        return Refusal("message_id_conflict")
+    return dataclasses.replace(held.receipt, duplicate=True)
+
+
 def hold(session: _ChatSession, message_id: str, digest: str) -> Callable[[], None]:
     """Hold *message_id* while the send taking it in waits before :func:`take_in` (it moves the chat
     to the agent it names), so a repeat sent meanwhile waits for its answer (:func:`repeat_of`)
@@ -254,10 +302,8 @@ def take_in(state: DashboardState, session: _ChatSession, intake: Intake) -> Rec
             return _take(state, session, intake)
         finally:
             _settle(session, intake.message_id, held)
-    if held is not None:
-        if held.body_digest != intake.body_digest:
-            return Refusal("message_id_conflict")
-        return dataclasses.replace(held.receipt, duplicate=True)
+    if (repeat := repeat_now(session, intake.message_id, intake.body_digest)) is not None:
+        return repeat
     return _take(state, session, intake)
 
 
@@ -275,10 +321,15 @@ def _take(state: DashboardState, session: _ChatSession, intake: Intake) -> Recei
     accepted_at = datetime.now(timezone.utc).isoformat()
     noted = {"accepted_at": accepted_at, "body_digest": intake.body_digest}
     into = intake.message_id
-    if current is None:
+    if current is None or intake.starts:
         disposition = STARTED
-        meta = {**(intake.meta or {}), MESSAGE_ID: into, RECEIPT: {**noted, "disposition": STARTED}}
-        session.append("user", intake.message, "msg msg-u", ts=accepted_at, meta=meta)
+        said = {} if intake.own_words is None else {OWN_WORDS: intake.own_words}
+        meta = {**said, **(intake.meta or {}), MESSAGE_ID: into}
+        meta[RECEIPT] = {**noted, "disposition": STARTED}
+        shown = intake.message if intake.shown is None else intake.shown
+        session.append(intake.role, shown, intake.cls, meta=meta, source=intake.source)
+        # Written as it happens, so its time is the row's own: the receipt's.
+        accepted_at = meta[RECEIPT]["accepted_at"] = session.messages[-1]["ts"]
     elif (
         intake.queue_mode == "steer"
         and not intake.replaces
@@ -300,9 +351,13 @@ def _take(state: DashboardState, session: _ChatSession, intake: Intake) -> Recei
         disposition = REPLACED if intake.replaces else QUEUED
         session.queue_append(
             intake.message,
+            channel=intake.channel,
+            files=list(intake.files) or None,
             own_words=intake.own_words,
+            source=intake.source,
+            asked_for_by=intake.asked_for_by,
             pastes=intake.pastes,
-            attended=True,
+            attended=intake.attended,
             message_id=intake.message_id,
             receipt={**noted, "disposition": disposition},
         )
@@ -329,6 +384,21 @@ def with_message_id(role: str, ts: str, meta: dict | None) -> dict | None:
     if role not in TURN_STARTS or ts or (meta or {}).get(MESSAGE_ID) or (meta or {}).get(STEERED):
         return meta
     return {**(meta or {}), MESSAGE_ID: ids.new_id("msg")}
+
+
+def write_drained(
+    session: _ChatSession,
+    items: Sequence[Mapping[str, Any]],
+    text: str,
+    *,
+    role: str,
+    cls: str,
+    meta: Mapping[str, Any],
+    source: Mapping[str, str],
+) -> None:
+    """Write the row the queued *items*, taken in when they were queued, run as: *text*, a *role*
+    row of *cls*, keeping each message's id and receipt (:func:`carried`)."""
+    session.append(role, text, cls, meta={**meta, **carried(items)} or None, source=source)
 
 
 def carried(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:

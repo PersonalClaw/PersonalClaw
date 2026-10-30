@@ -21,6 +21,7 @@ import os
 import shutil
 import subprocess
 
+import door_fakes
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -46,6 +47,8 @@ def _isolate(tmp_path, monkeypatch):
 
 
 class _Session:
+    take_in_at_door = door_fakes.take_in_at_door  # the one way a message enters a chat
+
     def __init__(self, key: str, agent: str = "") -> None:
         self.key = key
         self.agent = agent

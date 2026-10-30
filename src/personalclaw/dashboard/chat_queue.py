@@ -9,13 +9,17 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from personalclaw import ids
-from personalclaw.dashboard.chat_intake import MESSAGE_ID, RECEIPT
+from personalclaw.dashboard import chat_intake
+from personalclaw.dashboard.chat_intake import MESSAGE_ID, RECEIPT, Receipt
 from personalclaw.own_words import OWN_WORDS, PASTES
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 from personalclaw.turn_source import ASKED_FOR_BY, DASHBOARD_SOURCE, source_of
+
+if TYPE_CHECKING:
+    from personalclaw.dashboard.state import _ChatSession
 
 #: The item key of a message whose row is in the chat already: a steer the running turn took that
 #: its agent then refused (``running_turn.end_steers``). It runs on its own, and adds no second row.
@@ -87,6 +91,21 @@ class ChatQueue:
             item[ATTENDED] = True
         self._queue.append(item)
         return qid
+
+    def take_in_at_door(
+        self, state: Any, message: str, role: str = "user", cls: str = "msg msg-u", **fields: Any
+    ) -> Receipt:
+        """Take *message* into this chat at a door whose message names no id of its own (a
+        channel's, an automation's, a helper's report, a loop's cycle, a program's): the one way a
+        message enters a chat (``chat_intake.take_in``), under an id the gateway mints. Queued while
+        a turn runs, else written as the row its turn starts with, which the caller then starts.
+        It starts its turn as a *role* row of *cls*; *fields* are what else the door says of it
+        (``chat_intake.Intake``)."""
+        intake = chat_intake.Intake.at_door(message, role=role, cls=cls, **fields)
+        taken = chat_intake.take_in(state, cast("_ChatSession", self), intake)
+        if isinstance(taken, chat_intake.Refusal):  # a new id names no turn and repeats nothing
+            raise RuntimeError(f"a door's message was refused: {taken.code}")
+        return taken
 
     def queue_retry(
         self,

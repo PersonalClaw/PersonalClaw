@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import door_fakes
 import pytest
 
 from personalclaw.guardrails import incident
@@ -154,6 +155,8 @@ def test_a_plain_idle_trigger_is_held_too(tmp_path: Path) -> None:
 
 
 class _Session:
+    take_in_at_door = door_fakes.take_in_at_door  # the one way a message enters a chat
+
     def __init__(self, key: str, *, running: bool) -> None:
         self.key = key
         self._running = running
@@ -363,6 +366,8 @@ class _FakeNudgeService:
 
 
 class _LoopSession:
+    take_in_at_door = door_fakes.take_in_at_door  # the one way a message enters a chat
+
     def __init__(self, key: str) -> None:
         self.key = key
         self._app = "loop"

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from aiohttp import web
 
 from personalclaw.artifacts import retakes
-from personalclaw.dashboard import repeated_steps
+from personalclaw.dashboard import chat_intake, repeated_steps
 from personalclaw.dashboard.chat_persistence import _redact_meta, save_session_to_history
 from personalclaw.dashboard.chat_runner import run_chat
 from personalclaw.dashboard.chat_utils import _history_key_for, take_in_the_users_links
@@ -261,6 +261,58 @@ def _turn_rows(msgs: list[dict], start: int) -> list[dict]:
     return msgs[start + 1 : end]
 
 
+async def _new_message(
+    session: _ChatSession, body: dict, content: str, pastes: list
+) -> tuple[str, str] | web.Response:
+    """The id and digest of the message a resend sends in the edited one's place: its own
+    (``client_message_id``, a new one each time), so a resend sent twice runs once. Else the
+    answer: a repeat of a resend the chat took already changes nothing, and an id of another shape
+    is refused, before anything changes."""
+    message_id = chat_intake.message_id_of(body)
+    if isinstance(message_id, chat_intake.Refusal):
+        return message_id.response()
+    edits = {key: body.get(key) for key in ("ts", "index", "rewind", "again")}
+    digest = chat_intake.body_digest(content, "", "", {**edits, PASTES: pastes})
+    repeat = await chat_intake.repeat_of(session, message_id, digest)
+    return (message_id, digest) if repeat is None else _resent(repeat)
+
+
+def _resent(repeat: chat_intake.Receipt | chat_intake.Refusal) -> web.Response:
+    """The answer to a resend the chat took already: its receipt again, or the refusal of other
+    words under its id."""
+    if isinstance(repeat, chat_intake.Refusal):
+        return repeat.response()
+    return web.json_response({"ok": True, "rewound": 0, **repeat.answer()})
+
+
+def _resend_taken(
+    state: DashboardState,
+    session: _ChatSession,
+    message: str,
+    message_id: str,
+    digest: str,
+    pastes: list,
+) -> chat_intake.Receipt:
+    """Take the message a resend sends in the edited one's place in, the one way a message enters
+    a chat, as a new message: its row's time is when the chat took it in, which its receipt says.
+    Checked for a repeat just before, under the chat's lock, with the chat idle, so it starts the
+    turn the caller starts."""
+    taken = chat_intake.take_in(
+        state,
+        session,
+        chat_intake.Intake(
+            message=message,
+            message_id=message_id,
+            body_digest=digest,
+            meta=_redact_meta({PASTES: pastes}) if pastes else None,
+            attended=True,
+        ),
+    )
+    if isinstance(taken, chat_intake.Refusal) or taken.duplicate:
+        raise RuntimeError("a resend checked under the chat's lock was taken in twice")
+    return taken
+
+
 async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
     """POST /api/chat/sessions/{session}/edit-resend — edit a user message and resend.
 
@@ -284,7 +336,6 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
 
     index = body.get("index")
     ts = body.get("ts")
-    client_ts = body.get("client_ts")
     rewind = bool_field(body, "rewind", default=False)
     again = bool_field(body, "again", default=False)
     confirmed = string_field(body, "confirm")
@@ -298,10 +349,18 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
     pastes = pastes_of(body)
     if (unsent := left_as_marker(content, pastes)) is not None:
         return json_error("paste_not_expanded", status=400, error_extra={"paste": unsent})
+    named = await _new_message(session, body, content, pastes)
+    if isinstance(named, web.Response):
+        return named
+    message_id, digest = named
 
     async with session._lock:
         if session.running:
             return web.json_response({"error": "session is running"}, status=409)
+        # And again where nothing waits before the message is taken in: a resend sent twice, the
+        # second waiting on this lock for the first, cuts the chat once.
+        if (repeat := chat_intake.repeat_now(session, message_id, digest)) is not None:
+            return _resent(repeat)
 
         msgs = session.messages
 
@@ -390,22 +449,7 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         del session.messages[index:]
         session._dirty = True
 
-        # Store the FE's fresh client ts (if valid ISO-8601) on the re-appended
-        # message so a subsequent edit-resend still matches by ts; else server-stamp.
-        _resend_ts = ""
-        if isinstance(client_ts, str) and client_ts:
-            try:
-                datetime.fromisoformat(client_ts)
-                _resend_ts = client_ts
-            except (ValueError, TypeError):
-                _resend_ts = ""
-        session.append(
-            "user",
-            _bc,
-            "msg msg-u",
-            ts=_resend_ts,
-            meta=_redact_meta({PASTES: pastes}) if pastes else None,
-        )
+        taken = _resend_taken(state, session, _bc, message_id, digest, pastes)
         take_in_the_users_links(request.get("app", ""), session.key, _bc)
         if rewind and carried_rewound:
             session.messages[-1]["rewound"] = carried_rewound
@@ -447,4 +491,4 @@ async def api_chat_session_edit_resend(request: web.Request) -> web.Response:
         task.add_done_callback(_on_done)
 
     state.push_sessions_update()
-    return web.json_response({"ok": True, "rewound": retained})
+    return web.json_response({"ok": True, "rewound": retained, **taken.answer()})

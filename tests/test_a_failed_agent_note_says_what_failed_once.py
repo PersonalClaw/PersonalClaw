@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import door_fakes
 import pytest
 from test_gateway import _make_orchestrator, _mock_dashboard_state, _mock_sessions
 
@@ -121,7 +122,7 @@ async def test_a_chat_hears_every_failure_and_the_bell_one_note(home):
     from unittest.mock import AsyncMock
 
     orch, on_done = _on_done()
-    session = MagicMock(running=False, task=None, key="kitchen", mode="")
+    session = door_fakes.give(MagicMock(running=False, task=None, key="kitchen", mode=""))
     session._owed_subagent_endings = []
     orch.dashboard_state.get_session = MagicMock(return_value=session)
 
