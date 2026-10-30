@@ -89,6 +89,19 @@ git_helper_guard = importlib.import_module("git_helper_guard")
 remote_git_guard = importlib.import_module("remote_git_guard")
 remote_git_guard.seal(os.environ["GIT_CONFIG_GLOBAL"])
 
+# ── A local run's shared uv cache is the suite's own ───────────────────
+# Off CI, run-job installs from one uv cache every local run on the account shares, in the
+# account's own cache folder (`tools.ci.jobs.shared_cache_root`, from the home the user database
+# names, whatever `HOME` says). Every process of this run, and every child that keeps its
+# environment, names a folder of the process's own instead, so no test's job reads or writes the
+# real one. Nothing makes it but a job that installs into it, and it is removed as the process
+# ends, so a process killed before its end leaves nothing behind. Proof:
+# tests/test_ci_jobs_shared_cache.py.
+_RUN_JOB_CACHE = os.path.join(
+    tempfile.gettempdir(), f"pclaw-run-job-cache-{os.getpid()}-{os.urandom(4).hex()}"
+)
+os.environ["PCLAW_RUN_JOB_CACHE"] = _RUN_JOB_CACHE
+
 # ── The machine's container runtime stays out ───────────────────────────
 # From here on a container runtime, or the VM one runs in, that a test starts (docker, finch,
 # podman, nerdctl, limactl and the rest) is refused before it starts unless the run sets
@@ -426,6 +439,7 @@ def pytest_unconfigure(config):
     container_runtime.GUARD.undo()
     while _PUT_THE_PROGRAMS_BACK:
         _PUT_THE_PROGRAMS_BACK.pop()()
+    shutil.rmtree(_RUN_JOB_CACHE, ignore_errors=True)
 
 
 def pytest_terminal_summary(terminalreporter):

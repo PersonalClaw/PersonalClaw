@@ -21,7 +21,10 @@ The real home is the one this account's entry in the user database names, never 
 (:func:`real_home`). A job that names it by path is caught by what it leaves: when the real home's
 ``.personalclaw`` was absent as the job started and is there as it ends, the run fails. The
 runner only asks whether that folder exists: it never reads, lists or changes anything under the
-real home, which may be a live PersonalClaw's.
+real home, which may be a live PersonalClaw's, but for one folder. A local run's ``uv sync``
+installs from a uv cache the account's runs share, in the account's own cache folder
+(``jobs.shared_cache_root``: ``Library/Caches/personalclaw/run-job`` on macOS, ``.cache/...``
+elsewhere, or the folder ``PCLAW_RUN_JOB_CACHE`` names), never under ``.personalclaw``.
 
 Not guarded here: what a job does under a real home's ``.personalclaw`` that was already there,
 one it made and removed again before it ended, anything else in the real home, the container or
