@@ -239,9 +239,12 @@ def _problems(text: str) -> list[str]:
 
 def _shape(on: object) -> str | None:
     """Which of the poster's two shapes its triggers are, or None for neither."""
-    names = [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL", "Contract"]
+    wake = [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL", "Contract"]
+    # The DCO run may wake it too, once the verdict reads the head's sign-off check (#3908): the
+    # rail takes either list until that change lands, so it lands in two merges.
+    lists = (wake, [*wake, "DCO"])
     both = {"check_run": {"types": ["completed"]}, "schedule": [{"cron": "*/10 * * * *"}]}
-    if on == {"workflow_run": {"workflows": names, "types": ["completed"]}, **both}:
+    if any(on == {"workflow_run": {"workflows": n, "types": ["completed"]}, **both} for n in lists):
         return _AFTER
     if not isinstance(on, dict) or set(on) != {"workflow_run", "workflow_dispatch", *both}:
         return None
@@ -250,7 +253,10 @@ def _shape(on: object) -> str | None:
     head = inputs.get("head") if isinstance(inputs, dict) else None
     if (
         all(on[k] == v for k, v in both.items())
-        and on["workflow_run"] == {"workflows": names, "types": ["in_progress", "completed"]}
+        and any(
+            on["workflow_run"] == {"workflows": n, "types": ["in_progress", "completed"]}
+            for n in lists
+        )
         and set(dispatch) == {"inputs"}
         and set(inputs) == {"head"}
         and isinstance(head, dict)
@@ -318,12 +324,21 @@ _DISPATCH_TOKEN = (
 )
 
 
-#: The poster's wake: which workflows' runs it judges, as the tree's file spells them, in
-#: either shape (its types are ``[completed]``, or ``[in_progress, completed]`` beside).
-_WAKE = re.search(
-    r'    workflows: \["Merge", "Dependency review", "CodeQL", "Contract"\]\n    types: \[.*\]\n',
-    _WORKFLOW.read_text(encoding="utf-8"),
-).group(0)
+#: The poster's wake, which workflows' runs it judges, as the tree spells it, in either shape (its
+#: types are ``[completed]``, or ``[in_progress, completed]`` beside): a plant anchored here reads
+#: a tree that lists the DCO run as well as one that does not.
+_WAKE = "<the poster's workflow_run wake>"
+_WAKE_LIST = "<the poster's workflows list>"
+_WAKE_LINES = re.compile(r"    (workflows: \[[^\]\n]*\])\n    types: \[[^\]\n]*\]\n")
+
+
+def _anchored(text: str, old: str, new: str) -> tuple[str, str]:
+    """*old* and *new* with the wake's placeholders read from *text*."""
+    found = _WAKE_LINES.search(text)
+    assert found, "the poster lists no workflow_run wake"
+    for placeholder, spelled in ((_WAKE, found.group(0)), (_WAKE_LIST, found.group(1))):
+        old, new = old.replace(placeholder, spelled), new.replace(placeholder, spelled)
+    return old, new
 
 
 @pytest.mark.parametrize(
@@ -350,13 +365,18 @@ _WAKE = re.search(
             "runs on",
         ),
         (
-            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]',
+            _WAKE_LIST,
             'workflows: ["Merge", "PR"]',
             "runs on",
         ),
         (
-            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]',
+            _WAKE_LIST,
             'workflows: ["Merge", "Dependency review", "CodeQL"]',
+            "runs on",
+        ),
+        (
+            _WAKE_LIST,
+            'workflows: ["Merge", "Dependency review", "CodeQL", "Contract", "DCO", "PR"]',
             "runs on",
         ),
         (
@@ -436,10 +456,26 @@ _WAKE = re.search(
 )
 def test_a_planted_edit_of_the_poster_fails(old: str, new: str, says: str) -> None:
     text = _WORKFLOW.read_text(encoding="utf-8")
+    old, new = _anchored(text, old, new)
     assert text.count(old) == 1, f"the plant's anchor is not once: {old!r}"
     assert any(says in p for p in _problems(text.replace(old, new))), _problems(
         text.replace(old, new)
     )
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        '["Merge", "Dependency review", "CodeQL", "Contract"]',
+        '["Merge", "Dependency review", "CodeQL", "Contract", "DCO"]',
+    ],
+)
+def test_the_poster_wakes_on_either_list_until_the_dco_read_lands(names: str) -> None:
+    """Either list holds its trust shape, so the change that adds the DCO run is judged by this
+    row on its own head and main's alike."""
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    old, _ = _anchored(text, _WAKE_LIST, "")
+    assert _problems(text.replace(old, f"workflows: {names}")) == []
 
 
 #: Each event the poster can be started by, and when its jobs take a runner: ``head``, a pull
