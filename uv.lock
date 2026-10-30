@@ -1614,6 +1614,7 @@ bedrock = [
     { name = "boto3" },
 ]
 dev = [
+    { name = "anthropic" },
     { name = "av" },
     { name = "black" },
     { name = "boto3" },
@@ -1720,6 +1721,7 @@ requires-dist = [
     { name = "openpyxl", specifier = ">=3.1,<4" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "pdfplumber", specifier = ">=0.11,<1" },
+    { name = "personalclaw", extras = ["anthropic"], marker = "extra == 'dev'" },
     { name = "personalclaw", extras = ["bedrock"], marker = "extra == 'dev'" },
     { name = "personalclaw", extras = ["embeddings"], marker = "extra == 'models'" },
     { name = "personalclaw", extras = ["models"], marker = "extra == 'dev'" },
