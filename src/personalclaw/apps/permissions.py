@@ -1694,6 +1694,7 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     # anything; the list answers an app with its own conversations only.
     "GET /api/chat/sessions": AppMay(_LISTS_OWN_CHATS),
     "GET /api/chat/sessions/{session}": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
+    "GET /api/chat/sessions/{session}/turns/{message_id}": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
     "GET /api/chat/sessions/{session}/map": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
     "GET /api/chat/sessions/{session}/export": AppMay(_READS_OWN_CHAT, owns=_OWN_CHAT),
     "GET /api/chat/sessions/{session}/tool-result/{rid}": AppMay(

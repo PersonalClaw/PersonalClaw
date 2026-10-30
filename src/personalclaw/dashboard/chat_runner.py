@@ -2115,6 +2115,14 @@ def _settle_granted(
 _TurnEngine = TypeVar("_TurnEngine", bound=Callable[..., Awaitable[None]])
 
 
+def _started_by(row: Mapping[str, Any]) -> str:
+    """The name of the turn *row* started: its message's id, or its time for a row written before
+    ids."""
+    meta = row.get("meta")
+    found = meta.get(chat_intake.MESSAGE_ID) if isinstance(meta, Mapping) else None
+    return str(found or row.get("ts", ""))
+
+
 def _says_its_phases(turn: _TurnEngine) -> _TurnEngine:
     """Say each turn the chat's turn engine runs as it goes (``chat_phase``): waiting to start from
     the moment it is accepted, before the turn awaits anything, and how it ended in its last
@@ -2133,9 +2141,9 @@ def _says_its_phases(turn: _TurnEngine) -> _TurnEngine:
     ) -> None:
         owns = _prompt_depth == 0
         if owns:
-            # Named by the row that started it, which its dispatcher wrote before starting it.
+            # Named by the message that started it, whose row its dispatcher wrote first.
             at = in_flight_index(session, message)
-            started_by = str(session.messages[at].get("ts", "")) if at is not None else ""
+            started_by = _started_by(session.messages[at]) if at is not None else ""
             (chat_phase.take_up if _retry else chat_phase.begin)(state, session, started_by)
         # How a turn that left before its runner said how it ended, ended: stopped, unless it
         # raised.

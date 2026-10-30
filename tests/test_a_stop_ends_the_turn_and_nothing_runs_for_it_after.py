@@ -245,7 +245,7 @@ async def test_an_agent_that_ignores_the_stop_runs_none_of_personalclaws_tools_a
     await _turn_ends(task)
     took = time.monotonic() - pressed
 
-    assert answer == {"ok": True, "stopped": True, "trust": False}
+    assert answer == {"ok": True, "stopped": True, "trust": False, "withdrawn": []}
     # Every call it made after the Stop was answered as not made, saying why, and saved nothing.
     answers = chat.answers()
     assert set(answers) == {NOTED_BEFORE, *TRIED_AFTER}, answers
@@ -283,7 +283,7 @@ async def test_an_agent_that_answers_the_stop_ends_its_turn_soft_and_runs_nothin
     await _turn_ends(task)
     await chat.until(lambda: TRIED_AFTER[0] in chat.answers(), "the call after the Stop")
 
-    assert answer == {"ok": True, "stopped": True, "trust": False}
+    assert answer == {"ok": True, "stopped": True, "trust": False, "withdrawn": []}
     assert chat.answers()[TRIED_AFTER[0]]["refused"], chat.answers()
     assert chat.notes() == {NOTED_BEFORE}
     assert chat.outcomes()[-1:] == [TURN_STOPPED]
@@ -361,7 +361,7 @@ async def test_a_stop_with_work_to_end_answers_the_waiting_approval_as_stopped_n
         answer = json.loads((await api_chat_session_stop(request)).body)
         await _turn_ends(task)
 
-        assert answer == {"ok": True, "stopped": True, "trust": False}
+        assert answer == {"ok": True, "stopped": True, "trust": False, "withdrawn": []}
         assert [a["outcome"] for a in w.wire("permission_answer")] == ["cancelled"]
         assert len(w.prompts()) == 1, w.prompts()
         assert not any(ANSWER_AFTER_CARRY_ON in a for a in w.answers()), w.answers()

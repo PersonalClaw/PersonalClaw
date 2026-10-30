@@ -308,7 +308,12 @@ async def _press_stop(state: DashboardState, *, running: bool, query: str = "") 
 @pytest.mark.parametrize("stop_outcome", ["soft", "hard"])
 async def test_the_stop_answer_says_it_stopped_a_running_turn(tmp_path, stop_outcome):
     state = _stop_state(tmp_path, stop_outcome)
-    assert await _press_stop(state, running=True) == {"ok": True, "stopped": True, "trust": False}
+    assert await _press_stop(state, running=True) == {
+        "ok": True,
+        "stopped": True,
+        "trust": False,
+        "withdrawn": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -316,7 +321,7 @@ async def test_a_forced_stop_answer_says_it_stopped(tmp_path):
     state = _stop_state(tmp_path, "hard")
     state.get_or_create_session("s1")._stop_state = "soft_pending"
     body = await _press_stop(state, running=True, query="?force=true")
-    assert body == {"ok": True, "stopped": True, "trust": False}
+    assert body == {"ok": True, "stopped": True, "trust": False, "withdrawn": []}
 
 
 @pytest.mark.asyncio
@@ -324,13 +329,23 @@ async def test_the_stop_answer_says_nothing_stopped_when_the_runtime_had_no_turn
     """The runtime answered that no turn was in flight: this press stopped nothing, so a client
     must not announce a stop. The turn's own terminal frame says how it really ended."""
     state = _stop_state(tmp_path, "idle")
-    assert await _press_stop(state, running=True) == {"ok": True, "stopped": False, "trust": False}
+    assert await _press_stop(state, running=True) == {
+        "ok": True,
+        "stopped": False,
+        "trust": False,
+        "withdrawn": [],
+    }
 
 
 @pytest.mark.asyncio
 async def test_the_stop_answer_says_nothing_stopped_for_an_idle_chat(tmp_path):
     state = _stop_state(tmp_path, "soft")
-    assert await _press_stop(state, running=False) == {"ok": True, "stopped": False, "trust": False}
+    assert await _press_stop(state, running=False) == {
+        "ok": True,
+        "stopped": False,
+        "trust": False,
+        "withdrawn": [],
+    }
     state.sessions.stop_turn.assert_not_awaited()
 
 

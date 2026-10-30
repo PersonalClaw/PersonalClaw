@@ -1445,8 +1445,8 @@ and `widget_error {slug, title, error}`, a widget's failure sent for the agent t
 Delivery stays `queue_mode` (`steer`, `followup`, `collect`, `interrupt`, with the mid-turn policy as the
 default, `chat_handlers.api_chat`); the composer's queue-or-steer choice sends it (decision 19). A steer
 carries `expected_message_id`, the user message that started the running turn as the page knows it (the
-receipt's `turn_message_id`, a row's `meta.message_id`, a `chat_user_message` frame's `message_id`;
-`run_state.turn.message_id` once §4 serves it). With it, `take_in` answers, recording nothing: no turn
+receipt's `turn_message_id`, a row's `meta.message_id`, a `chat_user_message` frame's `message_id`,
+`run_state.turn.message_id`). With it, `take_in` answers, recording nothing: no turn
 running, `409 no_running_turn` (the page offers Send); another turn running, `409 turn_not_current` with
 `error_extra {expected, actual}` (the page offers Queue); a turn that takes no steer, `409
 turn_not_steerable {kind}`: `compact` (a `/compact` its runtime runs) or `command` (a slash word its
@@ -1489,8 +1489,9 @@ client's meta as the door keeps it: less `client_ts`, `own_words`, `ran_prompt` 
 `pastes` as validated): `200` with the original receipt and `duplicate: true`, and nothing runs. Same id,
 other digest: `409 message_id_conflict`. A malformed id: `400 invalid_message_id`.
 
-**The turn document** (`GET /api/chat/sessions/{session}/turns/{message_id}`; `404 turn_not_found`; a
-steer's or a merged message's id answers the turn it ran in):
+**The turn document** (`GET /api/chat/sessions/{session}/turns/{message_id}`, `dashboard/chat_turns.py`;
+`404 turn_not_found`; a steer's or a merged message's id answers the turn it ran in, under that turn's
+`message_id`; with the detail route's authorization):
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -1503,13 +1504,23 @@ steer's or a merged message's id answers the turn it ran in):
 | `error` | as `Message.error` \| null | |
 | `run_state` | §4 \| null | while running |
 
-The document's reply carries each result's first 8,000 characters; `GET
-/api/chat/sessions/{session}/parts/{part_id}` answers one part whole (`404 part_not_found`), with the
-detail route's authorization.
+The document's reply carries each result's first 8,000 characters (`truncated`, `original_length`); `GET
+/api/chat/sessions/{session}/parts/{part_id}` will answer one part whole (`404 part_not_found`), with the
+detail route's authorization, beside the typed record (#4017). A turn's start row records how it ended,
+`meta.turn {outcome, settled_at}` (`chat_phase.ended`), which the document reads until the typed record
+replaces rows; `run_state.turn.message_id` names the running turn by its start message's id.
 
 **Stop** (`POST /api/chat/sessions/{session}/stop {message_id, with_started?}`): stops that turn only; `409
-turn_not_current {expected, actual}` when it is not running, and nothing is stopped or cleared. Without
-`message_id` it stops whatever runs, as today; the dashboard always sends one. `with_started` also stops
+turn_not_current {expected, actual, state, turn_message_id, outcome?}` when that turn already finished
+(`state: settled`, with its `outcome`) or the message still waits in the queue (`state: queued`), with
+`actual` the running turn's id (`""` when none runs), and nothing is stopped or cleared, no stop card is
+written and the chat's Trust stands. The id may be the start message's, or a steer's or merged message's
+that ran in the turn: it resolves to exactly that turn, as the turn document does, and an id the chat
+does not hold is `404 turn_not_found`, saying nothing of any other chat. The answer to a Stop that named
+its turn adds `turn_message_id` and `message_ids` (every id the turn answers to), and `state: stopping`
+when that turn's stop was already under way. Who may stop is the chat's rule; naming a message never
+widens it. Without `message_id` it stops whatever runs, as before; the dashboard sends the running
+turn's whenever it knows it. `with_started` (#4021) also stops
 what the turn started, walked by `caused_by` (its helpers, theirs, the workflow runs it started): the
 registry row "Stop this turn and what it started". The answer carries `withdrawn: [message_id]`, the queued
 messages a soft Stop removed.

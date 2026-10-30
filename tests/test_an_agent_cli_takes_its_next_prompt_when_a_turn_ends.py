@@ -297,6 +297,7 @@ async def test_after_a_stop_her_next_message_reaches_the_same_agent_cli(chat, ke
             "ok": True,
             "stopped": True,
             "trust": False,
+            "withdrawn": [],
         }
         await _turn_ends(task)
         assert w.outcomes()[-1:] == [TURN_STOPPED]

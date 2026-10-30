@@ -4,7 +4,8 @@
 turn engine (``chat_runner.run_chat``), the real ``SessionManager`` and a native runtime per chat,
 answered by :class:`Model`. Its first answer can pause after its first words (``hold``), the way an
 answer is still being written when the owner sends again. A second :class:`World` over the same
-home is the gateway after a restart: it knows a chat only from its file.
+home is the gateway after a restart: it knows a chat only from its file. Edit-and-resend, Stop and
+the turn document (``GET …/turns/{message_id}``) are served beside the send.
 """
 
 from __future__ import annotations
@@ -25,8 +26,13 @@ from personalclaw.agents.provider import AgentRuntimeDefinition
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import AppConfig
 from personalclaw.context import ContextBuilder
+from personalclaw.dashboard import chat_turns
 from personalclaw.dashboard.api_version_gate import api_version_middleware
-from personalclaw.dashboard.chat import api_chat, api_chat_session_edit_resend
+from personalclaw.dashboard.chat import (
+    api_chat,
+    api_chat_session_edit_resend,
+    api_chat_session_stop,
+)
 from personalclaw.dashboard.chat_utils import persisted_history_key
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
@@ -125,6 +131,10 @@ class World:
         app.router.add_post("/api/chat", api_chat)
         app.router.add_post(
             "/api/chat/sessions/{session}/edit-resend", api_chat_session_edit_resend
+        )
+        app.router.add_post("/api/chat/sessions/{session}/stop", api_chat_session_stop)
+        app.router.add_get(
+            "/api/chat/sessions/{session}/turns/{message_id}", chat_turns.api_chat_turn
         )
         async with TestClient(TestServer(app)) as client:
             with (

@@ -197,8 +197,8 @@ async def test_a_first_message_on_an_idle_chat_is_queued_before_anything_runs(tm
     first = w.phases()[0]
     assert (first["phase"], first["line"]) == ("queued", "Waiting to start")
     assert first["work"] == f"chat:{CHAT}" and first["session"] == CHAT and first["kind"] == "chat"
-    # The turn is named by the row that started it: her message.
-    assert first["turn"]["message_id"] == w.session.messages[0]["ts"]
+    # The turn is named by the message that started it: the owner's message's id.
+    assert first["turn"]["message_id"] == w.session.messages[0]["meta"]["message_id"]
     assert first["turn"]["started_at"].endswith("+00:00")
     assert said_when["acquired"] == ["queued"]
     assert said_when["streaming"] == ["queued", "thinking"]

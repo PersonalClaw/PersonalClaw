@@ -20,6 +20,7 @@
 {"site": "GET /api/chat/sessions/{session}/plan-session", "reason": "_resolve rejects a missing live chat session"}
 {"site": "GET /api/chat/sessions/{session}/rewind", "reason": "_resolve_session rejects a missing live chat session"}
 {"site": "GET /api/chat/sessions/{session}/tool-result/{rid}", "reason": "the exact session/result key must resolve in the raw-result store"}
+{"site": "GET /api/chat/sessions/{session}/turns/{message_id}", "reason": "the live-or-persisted resolver rejects a missing session (404 session_not_found), and an id nothing in it has answers 404 turn_not_found", "added": "2026-11-04"}
 {"site": "GET /api/dashboard/views/{view_id}", "reason": "plain view detail; get_view rejects unknown ids"}
 {"site": "GET /api/dashboard/views/{view_id}/tiles/refresh", "reason": "tile_refresh rejects a missing view or tile with tile_not_found"}
 {"site": "GET /api/desktop/capabilities/{cap}", "reason": "enum-key detail; CAPABILITIES rejects unknown names"}

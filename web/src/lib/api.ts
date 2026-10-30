@@ -1541,6 +1541,20 @@ export interface RoutingSuggestion {
  *  message's id, when the chat took it in, what became of it, and the message whose turn it runs
  *  in (its own, or the running turn's for a steer). `duplicate` is true when the chat already took
  *  this id with the same words: nothing ran again. */
+/** One turn read by its message's id (`GET /api/chat/sessions/{session}/turns/{message_id}`, shared
+ *  contracts §3.9): `queued`, `running` with its `run_state`, or `settled` with how it ended and its
+ *  shown answer, each result in it cut at 8,000 characters. */
+export interface ChatTurnDocument {
+  session: string
+  message_id: string
+  state: 'queued' | 'running' | 'settled'
+  outcome: 'complete' | 'stopped' | 'error' | 'interrupted' | null
+  reply: Record<string, unknown> | null
+  attempts: number
+  usage: Record<string, unknown> | null
+  error: { code: string; message: string; retryable?: boolean } | null
+  run_state: RunState | null
+}
 export interface ChatReceipt {
   session: string
   message_id: string
@@ -1553,7 +1567,7 @@ export interface ChatReceipt {
 /** A chat's run state: what its turn is doing and how its last one ended — the last `work_phase`
  *  payload the gateway sent it (`dashboard/chat_phase.py`), served as `run_state` on the chat list
  *  and a chat's detail, and carried by every `work_phase` frame after it. `turn` is the running turn
- *  (named by the time of the row that started it), `null` when nothing runs; `last_step_at` is when
+ *  (named by the id of the message that started it), `null` when nothing runs; `last_step_at` is when
  *  its runtime last did anything; `seq` is the stream stamp a page compares with its snapshot's,
  *  applying only a newer frame. Times are UTC instants; `since` and `last_step_at` are `null` when
  *  nothing has happened yet. */
@@ -9530,7 +9544,15 @@ export const api = {
   // `stopped`: whether THIS press stopped a turn. False when nothing was running, a stop was
   // already under way, or the runtime had no turn in flight — the turn's own `chat_done` says how
   // it ended then.
-  stopChat: (session: string, force = false) => post<{ ok: boolean; stopped: boolean }>(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
+  // Stop names the turn it means (`messageId`: `run_state.turn.message_id`); the gateway answers
+  // 409 `turn_not_current` and changes nothing when that turn is no longer the one running.
+  // `withdrawn` is the queued messages a soft stop removed unsent.
+  stopChat: (session: string, force = false, messageId?: string) =>
+    post<{ ok: boolean; stopped: boolean; withdrawn?: string[] }>(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`, messageId ? { message_id: messageId } : {}),
+  /** How one turn went, by the id of the message that started it (or of a steer or merged message
+   *  that ran in it): queued, running (with its run state) or settled (with its outcome and reply). */
+  turn: (session: string, messageId: string) =>
+    get<ChatTurnDocument>(`/api/chat/sessions/${encodeURIComponent(session)}/turns/${encodeURIComponent(messageId)}`),
   approve: (session: string, action: string, request_id?: string) =>
     post(`/api/chat/sessions/${session}/approve`, { action, request_id }),
   /** Their answer to an agent's question (one per question), or their Skip. Refused with

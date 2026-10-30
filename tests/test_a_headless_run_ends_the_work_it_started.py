@@ -551,7 +551,7 @@ async def test_a_stop_ends_a_runs_trust_before_its_turn_is_asked_to_stop(tmp_pat
     answer = await _press_stop(state, chat.key)
 
     assert asked == [False], "the turn was asked to stop while the run's Trust still stood"
-    assert answer == {"ok": True, "stopped": True, "trust": False}
+    assert answer == {"ok": True, "stopped": True, "trust": False, "withdrawn": []}
     assert state.standing_grant(chat) == ""
     assert _the_runs_trust_ended(chat.key)[0]["metadata"] == {"why": "its turn was stopped"}
 
@@ -564,7 +564,12 @@ async def test_a_stop_after_a_runs_turn_ended_still_ends_its_trust(tmp_path):
     chat = state.get_or_create_session(cli_run.session_key_for("nightly-report"))
     chat._trust = True
 
-    assert await _press_stop(state, chat.key) == {"ok": True, "stopped": False, "trust": False}
+    assert await _press_stop(state, chat.key) == {
+        "ok": True,
+        "stopped": False,
+        "trust": False,
+        "withdrawn": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -579,7 +584,7 @@ async def test_stopping_your_own_chat_leaves_its_trust_as_you_set_it(tmp_path):
     answer = await _press_stop(state, chat.key)
 
     assert asked == [True]
-    assert answer == {"ok": True, "stopped": True, "trust": True}
+    assert answer == {"ok": True, "stopped": True, "trust": True, "withdrawn": []}
 
 
 @pytest.mark.asyncio

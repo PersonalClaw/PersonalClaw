@@ -15,7 +15,7 @@ import os
 from aiohttp import web
 
 from personalclaw.config import config_dir
-from personalclaw.dashboard import chat, chat_questions, handlers, handlers_inbox, ws
+from personalclaw.dashboard import chat, chat_questions, chat_turns, handlers, handlers_inbox, ws
 from personalclaw.suggestions import api_suggestions
 
 
@@ -752,8 +752,8 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
         "/api/chat/sessions/{session}/bookmarks", chat_bookmarks.api_chat_session_bookmarks
     )
     app.router.add_get("/api/chat/sessions/{session}", chat.api_chat_session_detail)
-    # The durable session map: the in-session index's marks + per-turn telemetry,
-    # served without hydrating the whole transcript client-side.
+    app.router.add_get("/api/chat/sessions/{session}/turns/{message_id}", chat_turns.api_chat_turn)
+    # The durable session map: the index's marks and per-turn telemetry, not the whole transcript.
     app.router.add_get("/api/chat/sessions/{session}/map", chat.api_chat_session_map)
     app.router.add_get("/api/chat/sessions/{session}/tool-result/{rid}", chat.api_chat_tool_result)
     app.router.add_post("/api/chat/sessions/{session}/stop", chat.api_chat_session_stop)

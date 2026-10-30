@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **Stop stops only the turn you pressed it for, and a turn can be read by its message id. A Stop that reaches the gateway after its turn ended no longer stops the next one or empties its queue: it changes nothing, and the page says nothing failed. A soft Stop's answer names the queued messages it removed unsent, and sending one of them again runs nothing. A script, a channel or the page reads how one turn went at `GET /api/chat/sessions/{session}/turns/{message_id}`: queued, running with its run state, or settled with how it ended and its answer. An app reads only the turns of conversations it started.**
+
 ### Fixed
 
 - **On Linux, the Docker image included, the gateway could stop answering for good when the loop list opened the workflow store while a background read closed it: from then on it took every request and answered none. It now uses Python's own SQLite wherever that has full-text search and JSON, which every build of PersonalClaw's does, and the loop list reads its stores without holding up the gateway's other requests.**

@@ -324,7 +324,8 @@ SESSION_WRITES: list[tuple[str, str, dict]] = [
     ("POST", "/api/chat/sessions/{session}/plan/cancel", {}),
     ("POST", "/api/chat/sessions/{session}/generate-title", {}),
     ("POST", "/api/chat/sessions/{session}/context", {"content": "the user wants X"}),
-    ("POST", "/api/chat/sessions/{session}/stop", {}),
+    # Named by a message id too: naming a message never widens which chats an app may stop.
+    ("POST", "/api/chat/sessions/{session}/stop", {"message_id": "msg_01m66g21zm0000000000000000"}),
     ("POST", "/api/chat/sessions/{session}/interrupt", {}),
     ("DELETE", "/api/chat/sessions/{session}/queue/{queue_id}", {}),
     ("DELETE", "/api/chat/sessions/{session}", {}),

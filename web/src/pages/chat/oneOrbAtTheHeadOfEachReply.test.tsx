@@ -154,7 +154,8 @@ describe('a running turn\'s Stop is the composer\'s', () => {
     expect(head()!.querySelector('button'), 'the line has no button of its own').toBeNull()
     await act(async () => { stop.click() })
     await waitFor(() => expect(h.stopChat).toHaveBeenCalledTimes(1))
-    expect(h.stopChat).toHaveBeenCalledWith(SESSION)
+    // Which turn it names is `stopNamesTheRunningTurn.test.tsx`'s: here, that it stops this chat.
+    expect(h.stopChat.mock.calls[0][0]).toBe(SESSION)
   })
 })
 

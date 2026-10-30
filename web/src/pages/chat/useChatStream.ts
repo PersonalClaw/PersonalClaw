@@ -1261,7 +1261,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     // The messages bookmarked on its Session Map.
     bookmarks, setBookmarks,
     // The live turn: the streaming claim, how it ends, what it is doing, whether it takes a steer.
-    streaming, streamingRef, markStreaming, sayTurnEnded, srAnnounce, turnSeqRef, stoppedTurnRef,
+    streaming, streamingRef, markStreaming, sayTurnEnded, srAnnounce, turnSeqRef, stoppedTurnRef, runningTurnRef,
     takesSteers, takesSteersRef, turnPhase, turnLine, turnEnding, turnStart, turnLastStep, turnUsage, sessionSkillsEpoch, wsConnected,
     // The read that opened the session.
     loadingHistory, missing, setMissing, loadFailure, setLoadAttempt,
