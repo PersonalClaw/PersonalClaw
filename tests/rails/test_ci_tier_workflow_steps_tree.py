@@ -36,8 +36,8 @@ record. It is the results job's last step, held back by nothing but a cancelled 
 runs it as GitHub does. The programs step is off unless a tier workflow names programs; it refuses
 every name outside tmux, shellcheck, dash, ffmpeg and docker before it installs anything, and
 installs each one PATH lacks, docker aside, which it only checks for, from apt-get on Linux or brew
-on macOS, nothing elsewhere. main's copy of this rail judges the next change's head, whose install
-retries each fetch and words its refusal with ffmpeg, so until that change it reads either form.
+on macOS, nothing elsewhere. apt-get retries each fetch, and an install that still fails is an
+`infrastructure` failure of the step.
 """
 
 from __future__ import annotations
@@ -1302,7 +1302,6 @@ def _run_programs(
     present: tuple[str, ...] = (),
     install_fails: bool = False,
     install_puts_nothing: bool = False,
-    run: str | None = None,
 ) -> tuple[int, list[str], str]:
     """Run the action's programs step as written, under the `shell: bash` GitHub runs it with,
     with PATH the stub folder alone. The working folder holds a file named for each listed
@@ -1326,7 +1325,7 @@ def _run_programs(
         (stub / "install-puts-nothing").write_text("")
     step = _programs_step()
     script = tmp / "step.sh"
-    script.write_text(step["run"] if run is None else run, encoding="utf-8")
+    script.write_text(step["run"], encoding="utf-8")
     env = {
         "PATH": str(bin_),
         "HOME": str(tmp),
@@ -1373,27 +1372,8 @@ def test_the_programs_step_is_off_by_default_so_no_other_call_changes() -> None:
 #: The programs the setup action installs when the path lacks one; docker it only checks for.
 _INSTALLED = [p for p in planner.SETUP_PROGRAMS if p != "docker"]
 
-#: apt-get as the next change's step runs it, each fetch retried (#3918). main's copy of this rail
-#: judges that change's head, so until it lands the rows read the step's calls bare or retried,
-#: all of them one way: a mix fails.
-_RETRIED = "apt-get -o Acquire::Retries=3"
-
-#: The step's refusal as it words it today, and as the next change words it (#3918).
-_REFUSALS = (
-    "the setup action installs tmux, shellcheck and dash, and checks docker, not",
-    "the setup action installs tmux, shellcheck, dash and ffmpeg, and checks docker, not",
-)
-
-
-def _as_bare(installs: list[str]) -> list[str]:
-    """*installs* with each apt-get call bare, where the step's calls are all bare or all
-    retried; a mix of the two fails here."""
-    apt = [i for i in installs if i.startswith("apt-get ")]
-    retried = [i for i in apt if i.startswith(f"{_RETRIED} ")]
-    assert not retried or len(retried) == len(apt), f"apt-get calls retried and bare: {installs}"
-    return [
-        i.replace(_RETRIED, "apt-get", 1) if i.startswith(f"{_RETRIED} ") else i for i in installs
-    ]
+#: apt-get as the step runs it: each fetch retried, so one flaky mirror read is not a red.
+_APT = "apt-get -o Acquire::Retries=3"
 
 
 @pytest.mark.parametrize(
@@ -1401,8 +1381,8 @@ def _as_bare(installs: list[str]) -> list[str]:
     [
         (
             "Linux",
-            ["apt-get update -qq"]
-            + [f"apt-get install -y --no-install-recommends {p}" for p in _INSTALLED],
+            [f"{_APT} update -qq"]
+            + [f"{_APT} install -y --no-install-recommends {p}" for p in _INSTALLED],
         ),
         ("macOS", [f"brew install {p}" for p in _INSTALLED]),
     ],
@@ -1412,7 +1392,7 @@ def test_each_listed_program_the_path_lacks_comes_from_the_runners_package_manag
 ) -> None:
     rc, installs, log = _run_programs(tmp_path, " ".join(_INSTALLED), runner_os=runner_os)
     assert rc == 0, log
-    assert _as_bare(installs) == want
+    assert installs == want
 
 
 def test_docker_is_the_runner_images_and_is_checked_never_installed(tmp_path: Path) -> None:
@@ -1427,10 +1407,7 @@ def test_docker_is_the_runner_images_and_is_checked_never_installed(tmp_path: Pa
 def test_a_program_on_path_is_not_installed(tmp_path: Path) -> None:
     rc, installs, log = _run_programs(tmp_path, "tmux dash", present=("tmux",))
     assert rc == 0, log
-    assert _as_bare(installs) == [
-        "apt-get update -qq",
-        "apt-get install -y --no-install-recommends dash",
-    ]
+    assert installs == [f"{_APT} update -qq", f"{_APT} install -y --no-install-recommends dash"]
     rc, installs, log = _run_programs(tmp_path / "all", "tmux dash", present=("tmux", "dash"))
     assert (rc, installs) == (0, []), log
 
@@ -1459,7 +1436,8 @@ def test_a_name_outside_the_list_fails_before_any_install(tmp_path: Path, progra
     rc, installs, log = _run_programs(tmp_path, programs)
     assert rc != 0, log
     assert installs == [], f"installed before the refusal: {installs}"
-    assert any(refusal in log for refusal in _REFUSALS), log
+    refusal = "the setup action installs tmux, shellcheck, dash and ffmpeg, and checks docker, not"
+    assert refusal in log, log
 
 
 def test_a_runner_with_no_known_installer_installs_nothing(tmp_path: Path) -> None:
@@ -1473,29 +1451,18 @@ def test_a_program_still_missing_after_its_install_fails_the_step(tmp_path: Path
     assert rc != 0, log
 
 
-def test_the_rows_read_the_install_bare_or_retried_and_either_refusal_but_no_mix(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("runner_os", "programs", "attempted"),
+    [
+        ("Linux", "ffmpeg", [f"{_APT} update -qq"]),
+        ("macOS", "ffmpeg dash", ["brew install ffmpeg"]),
+    ],
+)
+def test_a_package_manager_that_fails_after_its_retries_is_an_infrastructure_failure(
+    tmp_path: Path, runner_os: str, programs: str, attempted: list[str]
 ) -> None:
-    """Planted both ways: the step as it is and, while it is in today's form, as the next change
-    writes it (each apt-get call retried, the refusal naming ffmpeg) both pass these rows, and a
-    step that retries one call and not the other fails them. main's copy of this rail reads the
-    next change's head, which is already in the second form: that head is read as it is."""
-    run = _programs_step()["run"]
-    today = "sudo apt-get update" in run
-    forms = [("as it is", run)]
-    if today:
-        assert _REFUSALS[0] in run, "re-point the plant"
-        retried = run.replace("sudo apt-get ", f"sudo {_RETRIED} ").replace(*_REFUSALS)
-        forms.append(("retried", retried))
-    want = ["apt-get update -qq", "apt-get install -y --no-install-recommends dash"]
-    for form, text in forms:
-        rc, installs, log = _run_programs(tmp_path / form / "install", "dash", run=text)
-        assert rc == 0 and _as_bare(installs) == want, (form, log)
-        rc, installs, log = _run_programs(tmp_path / form / "refuse", "curl", run=text)
-        assert rc != 0 and installs == [], (form, log)
-        assert any(refusal in log for refusal in _REFUSALS), (form, log)
-    if today:
-        mixed = run.replace("sudo apt-get update", f"sudo {_RETRIED} update")
-        rc, installs, log = _run_programs(tmp_path / "mixed", "dash", run=mixed)
-        with pytest.raises(AssertionError, match="retried and bare"):
-            _as_bare(installs)
+    """A flaky mirror must not read as a red in the job's tests: the step fails at the first
+    install that fails, under an `infrastructure` title, and installs nothing after it."""
+    rc, installs, log = _run_programs(tmp_path, programs, runner_os=runner_os, install_fails=True)
+    assert rc != 0 and installs == attempted, log
+    assert "::error title=infrastructure::" in log, log

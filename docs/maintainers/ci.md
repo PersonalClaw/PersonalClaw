@@ -640,9 +640,12 @@ does not install
 (`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`, `ffmpeg`, `docker`), space-separated,
 as the plan's matrix gives them: every name is checked before anything installs, and any other
 name fails the step with nothing installed (none is read as a pattern); each one PATH lacks is
-then installed from the runner's package manager (`apt-get` on Linux, `brew` on macOS, nothing
-elsewhere), except `docker`, which is the runner image's and only checked for, so a runner
-without it fails the step; and empty, the default, installs none. `docker` is in the vocabulary
+then installed from the runner's package manager (`apt-get` on Linux, after one `apt-get update`
+and with `--no-install-recommends` and each fetch retried 3 times; `brew` on macOS; nothing
+elsewhere). An install that still fails fails the step under an `infrastructure` title before any
+test runs, so a flaky mirror never reads as a test red. `docker` is never installed: it is the
+runner image's and only checked for, so a runner without it fails the step. Empty, the default,
+installs none. `docker` is in the vocabulary
 before any job names it because the plan of a pull request is made by `main`'s `tools/ci`
 (`pr.yml`'s plan step): a toolchain word a job uses must be on `main` before the change that
 uses it, or the planner refuses that change's catalogue. `ffmpeg` (which brings `ffprobe`) is in the
