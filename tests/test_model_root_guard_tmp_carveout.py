@@ -58,34 +58,48 @@ class TestEveryRealRootIsStillRefused:
         assert G.offending_root(str(G.REAL_HOME / "anything")) == G.REAL_HOME
 
 
+@pytest.fixture
+def home_scoped_tmp(tmp_path, monkeypatch):
+    """The regime the carve-out was written for, built on any host: a home with the OS temp
+    directory inside it, as on a machine that exports ``TMPDIR=$HOME/...``.
+
+    Read from the host, the regime is there only where the developer set it up. On stock macOS
+    (``/var/folders/...``), stock Linux and CI (``/tmp``) the temp directory is outside the home,
+    every path under it passes the catch-all whether or not the carve-out exists, and a test of
+    it could not fail. So the home and its temp directory are a layout under ``tmp_path``, and
+    the rail reads them where it reads the real ones: ``REAL_HOME`` and ``tempfile.gettempdir``.
+    """
+    home = (tmp_path / "home").resolve()
+    tmp = home / "tmp"
+    tmp.mkdir(parents=True)
+    monkeypatch.setattr(G, "REAL_HOME", home)
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp))
+    return tmp
+
+
 class TestATmpPathIsNotAModelRoot:
-    def test_a_path_under_the_temp_dir_is_allowed(self):
-        target = Path(tempfile.gettempdir()).resolve() / "pytest-of-x" / "test_a0" / "models"
+    """With the temp directory under the home, a test path under it is allowed and the rest of
+    the home is not: each assertion here fails on a rail with no carve-out."""
+
+    def test_a_path_under_the_temp_dir_is_allowed(self, home_scoped_tmp):
+        target = home_scoped_tmp / "pytest-of-x" / "test_a0" / "models"
         assert G.offending_root(str(target)) is None
 
-    def test_pytests_own_tmp_path_is_allowed(self, tmp_path):
+    def test_a_tmp_path_shaped_path_and_a_model_dir_in_it_are_allowed(self, home_scoped_tmp):
         """The end-to-end statement of the bug: the fixture the rail's own error message tells
         you to use must not be what the rail rejects. This is the assertion that was failing 55
         times on a machine with a home-scoped TMPDIR."""
-        assert G.offending_root(str(tmp_path)) is None
-        assert G.offending_root(str(tmp_path / "models" / "some-model")) is None
+        test_dir = home_scoped_tmp / "pytest-of-x" / "pytest-0" / "test_it0"
+        assert G.offending_root(str(test_dir)) is None
+        assert G.offending_root(str(test_dir / "models" / "some-model")) is None
 
-    def test_the_temp_dir_is_actually_under_the_home_on_this_machine_or_this_is_vacuous(self):
-        """The vacuity floor, and it is honest about being conditional.
+    def test_the_rest_of_the_home_is_still_refused(self, home_scoped_tmp):
+        """The carve-out is the temp directory, not the home: a sibling of it is a real path."""
+        assert G.offending_root(str(G.REAL_HOME / "Documents" / "models")) == G.REAL_HOME
 
-        On a machine whose temp directory is ALREADY outside ``$HOME`` (stock macOS
-        ``/var/folders/…``, stock Linux ``/tmp``) the two tests above pass without the
-        carve-out existing at all — they would have passed before the fix. So this records
-        which regime the run is in rather than pretending to prove something it cannot: it
-        skips with the reason, instead of reporting a green that means nothing."""
-        tmp = Path(tempfile.gettempdir()).resolve()
-        under_home = tmp == G.REAL_HOME or G.REAL_HOME in tmp.parents
-        if not under_home:
-            pytest.skip(
-                f"temp dir {tmp} is not under {G.REAL_HOME}, so the tests above cannot "
-                "distinguish the fixed rail from the broken one — they pass either way. The "
-                "carve-out is exercised on a machine with a home-scoped TMPDIR (and by "
-                "test_a_named_root_is_refused_even_if_it_sits_under_the_temp_dir, which "
-                "constructs the condition rather than depending on the host)."
-            )
-        assert G.offending_root(str(tmp / "pytest-of-x")) is None
+    def test_a_named_root_is_still_refused(self, home_scoped_tmp):
+        assert G.offending_root(str(G.REAL_HOME / ".ollama" / "models")) is not None
+
+    def test_the_shared_temp_base_itself_is_still_refused(self, home_scoped_tmp):
+        """Strictly inside (#2999): the base every xdist worker shares is never a test's own."""
+        assert G.offending_root(str(home_scoped_tmp)) == G.REAL_HOME

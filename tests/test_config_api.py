@@ -4,21 +4,21 @@ Includes property-based tests (Properties 7, 8, 13) and unit tests for the
 schema API endpoint covering filtering, content-type, and sensitive masking.
 """
 
+import asyncio
+import dataclasses
 import json
+import sys
 import tempfile
 import unittest.mock
 from pathlib import Path
 
 import pytest
 from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from personalclaw.config.schema import (
-    SCHEMA_REGISTRY,
-    config_entry_to_dict,
-)
+from personalclaw.config.schema import SCHEMA_REGISTRY
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -34,12 +34,41 @@ def _make_app() -> web.Application:
     return app
 
 
-def _all_tags() -> set[str]:
-    """Collect every tag used across the registry."""
-    tags: set[str] = set()
-    for entry in SCHEMA_REGISTRY:
-        tags.update(entry.tags)
-    return tags
+def _answer(registry: list, query: str = "") -> list[dict]:
+    """The schema handler's entries for ``query``, read over ``registry`` in place of the
+    shipped one."""
+    from personalclaw.dashboard.handlers import api_config_schema
+
+    module = sys.modules[api_config_schema.__module__]
+    request = make_mocked_request("GET", f"/api/config/schema{query}")
+    loop = asyncio.new_event_loop()
+    try:
+        with unittest.mock.patch.object(module, "SCHEMA_REGISTRY", registry):
+            response = loop.run_until_complete(api_config_schema(request))
+    finally:
+        loop.close()
+    return json.loads(response.body)["entries"]
+
+
+_TAGS = ("alpha", "beta", "gamma")
+
+
+@st.composite
+def _registries(draw: st.DrawFn) -> list:
+    """Planted registries, copies of a real entry with their tags and flags drawn. The shipped
+    registry carries no tag at all, so a filter read over it could only ever answer "none"."""
+    base = SCHEMA_REGISTRY[0]
+    return [
+        dataclasses.replace(
+            base,
+            path=f"planted.e{n}",
+            tags=sorted(draw(st.sets(st.sampled_from(_TAGS)))),
+            deprecated=draw(st.booleans()),
+            sensitive=draw(st.booleans()),
+            default_value="planted-default",
+        )
+        for n in range(draw(st.integers(min_value=1, max_value=6)))
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -48,55 +77,37 @@ def _all_tags() -> set[str]:
 
 
 class TestConfigApiProperties:
-    """Property-based tests for schema API filtering logic."""
+    """Property-based tests of the handler's filtering and masking, over planted registries.
 
-    # Property: Tag filtering returns only matching entries
-    @given(tag_subset=st.frozensets(st.sampled_from(sorted(_all_tags() | {"nonexistent_tag"}))))
+    Each reads the handler's answer, never a filter the test writes itself: a property that
+    filters the registry with an expression and then checks that same expression cannot fail.
+    """
+
+    # Property: Tag filtering returns exactly the entries whose tags meet the request
+    @settings(deadline=None)
+    @given(registry=_registries(), requested=st.sets(st.sampled_from(_TAGS), min_size=1))
     def test_tag_filtering_returns_only_matching_entries(
-        self,
-        tag_subset: frozenset[str],
+        self, registry: list, requested: set[str]
     ) -> None:
-        """For any set of requested tags, filtering SCHEMA_REGISTRY returns
-        only entries whose tags intersect with the requested set."""
-        requested = set(tag_subset)
-        filtered = [e for e in SCHEMA_REGISTRY if set(e.tags) & requested]
+        answered = {e["path"] for e in _answer(registry, f"?tags={','.join(sorted(requested))}")}
+        assert answered == {e.path for e in registry if set(e.tags) & requested}
 
-        for entry in filtered:
-            assert set(entry.tags) & requested, (
-                f"Entry {entry.path!r} has tags {entry.tags} which do not "
-                f"intersect with requested tags {requested}"
-            )
+    # Property: Deprecated filtering excludes exactly the deprecated entries
+    @settings(deadline=None)
+    @given(registry=_registries())
+    def test_deprecated_filtering_excludes_deprecated(self, registry: list) -> None:
+        answered = {e["path"] for e in _answer(registry, "?deprecated=false")}
+        assert answered == {e.path for e in registry if not e.deprecated}
+        assert {e["path"] for e in _answer(registry)} == {e.path for e in registry}
 
-        # Entries NOT in filtered must have no intersection
-        filtered_paths = {e.path for e in filtered}
-        for entry in SCHEMA_REGISTRY:
-            if entry.path not in filtered_paths:
-                assert not (set(entry.tags) & requested), (
-                    f"Entry {entry.path!r} has tags {entry.tags} which intersect "
-                    f"with {requested} but was not included in filtered results"
-                )
-
-    # Property: Deprecated filtering excludes deprecated entries
-    @given(data=st.data())
-    def test_deprecated_filtering_excludes_deprecated(self, data: st.DataObject) -> None:
-        """Filtering with deprecated=false returns zero deprecated entries."""
-        filtered = [e for e in SCHEMA_REGISTRY if not e.deprecated]
-
-        for entry in filtered:
-            assert not entry.deprecated, f"Entry {entry.path!r} is deprecated but was not excluded"
-
-    # Property: Sensitive entries have null defaultValue in API
-    @given(data=st.data())
-    def test_sensitive_entries_have_null_default_in_api(self, data: st.DataObject) -> None:
-        """For any sensitive ConfigEntry, the API response dict has defaultValue=null."""
-        for entry in SCHEMA_REGISTRY:
-            if entry.sensitive:
-                d = config_entry_to_dict(entry)
-                # Simulate the handler's masking logic
-                d["defaultValue"] = None
-                assert (
-                    d["defaultValue"] is None
-                ), f"Sensitive entry {entry.path!r} should have null defaultValue"
+    # Property: A sensitive entry's default never leaves the handler; any other's does
+    @settings(deadline=None)
+    @given(registry=_registries())
+    def test_sensitive_entries_have_null_default_in_api(self, registry: list) -> None:
+        sensitive = {e.path for e in registry if e.sensitive}
+        for entry in _answer(registry):
+            expected = None if entry["path"] in sensitive else "planted-default"
+            assert entry["defaultValue"] == expected, entry["path"]
 
 
 # ---------------------------------------------------------------------------
@@ -121,23 +132,31 @@ class TestSchemaApiEndpoint:
             assert len(data["entries"]) > 0
 
     @pytest.mark.asyncio
-    async def test_tags_query_param_filtering(self) -> None:
-        """tags query param filters entries by tag intersection."""
+    async def test_tags_query_param_filtering(self, monkeypatch) -> None:
+        """tags query param keeps the entries that carry any requested tag.
+
+        The shipped registry carries no tag, so this reads planted entries: read over the
+        shipped one it skipped on every run."""
+        from personalclaw.dashboard.handlers import api_config_schema
+
+        base = SCHEMA_REGISTRY[0]
+        planted = [
+            dataclasses.replace(base, path="planted.a", tags=["alpha"]),
+            dataclasses.replace(base, path="planted.ab", tags=["alpha", "beta"]),
+            dataclasses.replace(base, path="planted.none", tags=[]),
+        ]
+        monkeypatch.setattr(sys.modules[api_config_schema.__module__], "SCHEMA_REGISTRY", planted)
         async with TestClient(TestServer(_make_app())) as client:
-            # Request with a known tag
-            known_tags = _all_tags()
-            if not known_tags:
-                pytest.skip("No tags in registry")
-
-            tag = sorted(known_tags)[0]
-            resp = await client.get(f"/api/config/schema?tags={tag}")
-            assert resp.status == 200
-            data = await resp.json()
-
-            for entry_dict in data["entries"]:
-                assert (
-                    tag in entry_dict["tags"]
-                ), f"Entry {entry_dict['path']!r} does not have tag {tag!r}"
+            for query, expected in (
+                ("alpha", ["planted.a", "planted.ab"]),
+                ("beta", ["planted.ab"]),
+                ("beta,gamma", ["planted.ab"]),
+                ("gamma", []),
+            ):
+                resp = await client.get(f"/api/config/schema?tags={query}")
+                assert resp.status == 200
+                data = await resp.json()
+                assert sorted(e["path"] for e in data["entries"]) == expected, query
 
     @pytest.mark.asyncio
     async def test_tags_nonexistent_returns_empty(self) -> None:

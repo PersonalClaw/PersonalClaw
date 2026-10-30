@@ -13,7 +13,6 @@ at runtime is a template that was authored wrong.
 import json
 import re
 
-import pytest
 from table_rows import row
 
 from personalclaw.workflows.bundled_defs import read_template, template_names
@@ -49,6 +48,13 @@ LOOP_TEMPLATES = (
     # contract, loop bounds and shipping metadata as the four kinds ported before it.
     "deep-research",
 )
+
+#: The loop templates whose graph has no work loop, so the judge row below has nothing to close:
+#: diagnose-run is one diagnosis pass, closed by its gates; code-project repeats through a
+#: foreach closed by its verify gates, not a judged loop, and those gates are held in
+#: ``tests/test_workflows_code_project.py``. Named, so a template that loses its loop by accident
+#: fails the judge row instead of being skipped by it.
+NO_WORK_LOOP = frozenset({"diagnose-run", "code-project"})
 
 
 def _spec(name: str) -> dict:
@@ -193,7 +199,11 @@ def test_every_work_loop_is_closed_by_a_judge(subtests):
             spec = _spec(name)
             loops = [n for n in _nodes(spec["root"]) if n.get("kind") == "loop"]
             if not loops:
-                pytest.skip(f"{name} has no work loop")
+                assert (
+                    name in NO_WORK_LOOP
+                ), f"{name} has no work loop: give it back, or name it in NO_WORK_LOOP"
+                continue
+            assert name not in NO_WORK_LOOP, f"{name} has a work loop: take it out of NO_WORK_LOOP"
             judge_ids = {n.get("id") for n in _judges(spec)}
             for loop in loops:
                 body_ids = {n.get("id") for n in _nodes(loop.get("body") or {})}

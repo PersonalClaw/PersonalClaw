@@ -118,20 +118,22 @@ body-read ones. Converging them HERE would fork the work and mint the envelope d
 two places, so this file measures the split and leaves it: 157 flat, 17 ``json_error``, 3
 behind module-local ``_deny`` helpers.
 
-🔴 **Also NOT asserted: that inline reads go through the one reader at all.** 182 route
-handlers still call ``await request.json()`` in their own bodies. Each answers its own request,
-none swallows any more, and each is individually visible to a route test — so the property that
-MATTERS is already pinned by the two invariants above. Converging the call syntax as well is a
-larger mechanical change; ``test_request_json_is_called_only_by_the_one_reader`` below is
-written and skipped so the next author inherits a measurement rather than a memory.
+**Held as a list, not yet as a rule: that inline reads go through the one reader at all.** 179
+route handlers still call ``await request.json()`` in their own bodies (182 when this was first
+measured). Each answers its own request, none swallows any more, and each is individually visible
+to a route test — so the property that MATTERS is already pinned by the two invariants above.
+Converging the call syntax as well is a larger mechanical change, so the handlers are a site
+baseline (:data:`BODY_READERS`): a new one fails by name, and each one moved deletes its line. It
+was a skipped test before, and a check that is always skipped checks nothing (#3918).
 """
 
 from __future__ import annotations
 
 import ast
 import pathlib
+from collections.abc import Iterable
 
-import pytest
+import site_baseline
 import source_index
 from rails_repo import REPO
 
@@ -255,12 +257,10 @@ def _reads_the_body(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> int | None:
     never parse them as a JSON body. Measured, the qualifier is the difference between 2 hits
     and a noisy list needing an allowlist — which is the thing this file refuses to have.
     """
-    read_line: int | None = None
-    raw_line: int | None = None
+    read_lines: list[int] = []
+    raw_lines: list[int] = []
     parses_json = False
-    for node in ast.walk(fn):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node is not fn:
-            continue
+    for node in _own_nodes(fn):
         if not isinstance(node, ast.Call):
             continue
         if isinstance(node.func, ast.Attribute) and node.func.attr == "loads":
@@ -268,12 +268,25 @@ def _reads_the_body(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> int | None:
             continue
         kind = _request_read_kind(node)
         if kind == "json":
-            read_line = read_line or node.lineno
+            read_lines.append(node.lineno)
         elif kind is not None:
-            raw_line = raw_line or node.lineno
-    if read_line is not None:
-        return read_line
-    return raw_line if (raw_line is not None and parses_json) else None
+            raw_lines.append(node.lineno)
+    if read_lines:
+        return min(read_lines)
+    return min(raw_lines) if (raw_lines and parses_json) else None
+
+
+def _own_nodes(fn: ast.FunctionDef | ast.AsyncFunctionDef):
+    """Every node of *fn*'s own body. A def nested in it is a function of its own, read on its
+    own, so neither it nor anything under it is *fn*'s. (``ast.walk`` would go on into it: skipping
+    the nested def's node alone still walks its body, and charged its reads to *fn*.)"""
+    stack = list(ast.iter_child_nodes(fn))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        yield node
+        stack.extend(ast.iter_child_nodes(node))
 
 
 def _walk_functions(node: ast.AST, prefix: tuple[str, ...] = ()):
@@ -491,20 +504,77 @@ def test_the_one_reader_can_refuse_a_malformed_body() -> None:
     )
 
 
-@pytest.mark.skip(
-    reason="The stricter form of the invariants above, recorded rather than enforced. "
-    "182 route handlers still read `request.json()` inline; each answers its own request, "
-    "none is a private reader, and none swallows a parse failure any more, so the property "
-    "that matters is already pinned. Converging the call syntax too is a separate, much "
-    "larger change. Unskip it when they are migrated — do not weaken the number to pass."
-)
-def test_request_json_is_called_only_by_the_one_reader() -> None:
-    """Eventually: nothing outside the one reader touches `request.json()` at all."""
-    callers: list[str] = []
-    for path, tree in source_index.package_trees():
-        module = _module_name(path)
+#: The functions besides the one reader that still read the request body themselves, one line
+#: each with why it may: they were there when this check came, each a route that answers its own
+#: request through ``request.json()``. None is a private reader and none swallows a parse failure
+#: (the tests above hold both), so each line waits only for its route to move to the one reader,
+#: in its own change, which deletes the line. A new reader fails by name.
+BODY_READERS = "tests/rails/baselines/request-body-readers.sites.jsonl"
+
+
+def body_reader_sites(trees: Iterable[tuple[str, ast.AST]]) -> list[str]:
+    """``path::qualname`` of every function outside the one reader that reads the request body
+    as JSON (:func:`_reads_the_body`), repeats told apart."""
+    sites: list[str] = []
+    for rel, tree in trees:
+        module = rel.removeprefix("src/").removesuffix(".py").replace("/", ".")
         for qualname, fn in _walk_functions(tree):
-            line = _reads_the_body(fn)
-            if line is not None and (module, qualname) != THE_READER:
-                callers.append(f"{module}.{qualname} (line {line})")
-    assert not callers, "\n".join(callers)
+            if (module, qualname) != THE_READER and _reads_the_body(fn) is not None:
+                sites.append(f"{rel}::{qualname}")
+    return site_baseline.numbered(sites)
+
+
+def _package_sites() -> list[str]:
+    return body_reader_sites(
+        (source_index.rel(p), tree) for p, tree in source_index.package_trees()
+    )
+
+
+def test_no_new_function_reads_the_request_body_itself() -> None:
+    """Nothing outside the one reader reads the request body, past the functions listed in
+    :data:`BODY_READERS`, and that list only shrinks. It was a skipped test that named all of
+    them and so could not pass, and a check that is always skipped checks nothing."""
+    found = _package_sites()
+    assert found, "the scan found no body reader at all: it is reading nothing"
+    site_baseline.check(found, BODY_READERS)
+
+
+_PLANTED_READERS = """
+async def handler(request):
+    return await request.json()
+
+
+async def webhook(request):
+    raw = await request.read()
+    return json.loads(raw)
+
+
+async def upload(request):
+    return await request.read()
+
+
+def outer():
+    async def inner(request):
+        return await request.json()
+
+    return inner
+"""
+
+
+def test_a_planted_body_read_is_named_and_a_raw_read_alone_is_not() -> None:
+    found = body_reader_sites([("src/personalclaw/planted.py", ast.parse(_PLANTED_READERS))])
+    assert found == [
+        "src/personalclaw/planted.py::handler",
+        "src/personalclaw/planted.py::webhook",
+        "src/personalclaw/planted.py::outer.inner",
+    ], found
+
+
+def test_a_new_body_reader_fails_the_baseline_by_name() -> None:
+    planted = "src/personalclaw/planted.py::handler"
+    try:
+        site_baseline.check([*_package_sites(), planted], BODY_READERS, None, prune=False)
+    except AssertionError as exc:
+        assert planted in str(exc), exc
+    else:
+        raise AssertionError("a body reader the baseline does not list passed")
