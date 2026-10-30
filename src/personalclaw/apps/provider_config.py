@@ -219,6 +219,11 @@ class ProviderConfig:
     #: The ids this capability was known by in earlier versions, so an update carries what was
     #: kept under an old id to this one.
     renamedFrom: list[str] = field(default_factory=list)  # noqa: N815
+    #: The account settings this capability cannot run without (#3842): while one is empty in an
+    #: account, the capability is not built there and says which (``needs setup``), and the
+    #: account's other capabilities run. Each names a field of the app's account ``settings``, or
+    #: of its own instance schema for a ``multiInstance`` capability.
+    requiresAccountFields: list[str] = field(default_factory=list)  # noqa: N815
     not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
     not_lists: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
@@ -255,6 +260,8 @@ class ProviderConfig:
             d["description"] = self.description
         if self.renamedFrom:
             d["renamedFrom"] = list(self.renamedFrom)
+        if self.requiresAccountFields:
+            d["requiresAccountFields"] = list(self.requiresAccountFields)
         if self.type:
             d["type"] = self.type
         if self.implementation:
@@ -282,6 +289,7 @@ class ProviderConfig:
     def from_dict(cls, data: dict[str, Any]) -> "ProviderConfig":
         autonomy_raw = data.get("autonomy", {})
         renamed = data.get("renamedFrom", [])
+        required = data.get("requiresAccountFields", [])
         provider = cls(
             type=str(data.get("type", "")),
             implementation=str(data.get("implementation", "")),
@@ -289,6 +297,9 @@ class ProviderConfig:
             label=str(data.get("label", "")),
             description=str(data.get("description", "")),
             renamedFrom=[str(x) for x in renamed] if isinstance(renamed, list) else [],
+            requiresAccountFields=(
+                [str(x) for x in required] if isinstance(required, list) else []
+            ),
             multiInstance=strict_bool(data.get("multiInstance"), field="multiInstance"),
             settingsSchema=dict(data.get("settingsSchema", {})),  # noqa: N815
             capabilities=[str(c) for c in data.get("capabilities", [])],
@@ -302,7 +313,7 @@ class ProviderConfig:
             execution=str(data.get("execution", EXECUTION_IN_PROCESS) or EXECUTION_IN_PROCESS),
         )
         provider.not_booleans = _not_booleans(data, "multiInstance")
-        provider.not_lists = _not_lists(data, "renamedFrom")
+        provider.not_lists = _not_lists(data, "renamedFrom", "requiresAccountFields")
         return provider
 
 

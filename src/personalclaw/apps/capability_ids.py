@@ -78,7 +78,9 @@ def capability_refusals(manifest: AppManifest) -> list[str]:
     from personalclaw.apps.manifest import KEBAB_RE
 
     paths = manifest._provider_paths()
-    errors = [_not_a_list("retiredCapabilities", raw) for raw in manifest.not_lists.values()]
+    errors = []
+    if "retiredCapabilities" in manifest.not_lists:
+        errors.append(_not_a_list("retiredCapabilities", manifest.not_lists["retiredCapabilities"]))
     errors += [
         _not_a_list(f"{path}.renamedFrom", p.not_lists["renamedFrom"])
         for path, p in paths

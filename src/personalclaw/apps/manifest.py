@@ -1639,6 +1639,7 @@ _KNOWN_FIELDS = frozenset(
         "providers",
         "retiredCapabilities",
         "settings",
+        "connections",
         # Connector-pack parse-only source scripts.
         "sources",
         "native",
@@ -1657,6 +1658,12 @@ _KNOWN_FIELDS = frozenset(
         "sops",
     }
 )
+
+
+def _list_or_empty(data: dict[str, Any], key: str) -> list[Any]:
+    """*data*'s *key* as written when it is a list, else empty: ``not_lists`` names it then."""
+    value = data.get(key)
+    return list(value) if isinstance(value, list) else []
 
 
 @dataclass
@@ -1824,6 +1831,11 @@ class AppManifest:
     #: a region, entered once. A capability's ``settingsSchema`` holds only its own. Declared, it
     #: replaces ``setup.configSchema`` (``apps.account_settings``).
     settings: dict[str, Any] = field(default_factory=dict)
+
+    #: An account's connections when it has more than one, each ``{"id", "label"}`` (#3842): Email
+    #: reads over one and sends over another, and each shows its own health on the account.
+    #: Kept as written, so ``validate`` names an entry that is wrong.
+    connections: list[Any] = field(default_factory=list)
 
     not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
     not_lists: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
@@ -2239,10 +2251,15 @@ class AppManifest:
         """Each provider's own refusals, then the ones for the ids and labels that tell them
         apart."""
         errors = [e for prov in self.all_providers() for e in prov.validate()]
-        from personalclaw.apps.account_settings import settings_refusals
+        from personalclaw.apps.account_settings import account_field_refusals, settings_refusals
         from personalclaw.apps.capability_ids import capability_refusals
 
-        return errors + capability_refusals(self) + settings_refusals(self)
+        return (
+            errors
+            + capability_refusals(self)
+            + settings_refusals(self)
+            + account_field_refusals(self)
+        )
 
     def _capabilities_to_dict(self) -> dict[str, Any]:
         """The manifest's providers and retired capability ids, as written."""
@@ -2257,6 +2274,8 @@ class AppManifest:
             d["retiredCapabilities"] = list(self.retiredCapabilities)
         if self.settings:
             d["settings"] = self.settings
+        if self.connections:
+            d["connections"] = list(self.connections)
         return d
 
     def core_compatibility(self, host: str | None = None) -> CoreCompatibility:
@@ -2471,6 +2490,7 @@ class AppManifest:
                 else []
             ),
             settings=dict(data["settings"]) if isinstance(data.get("settings"), dict) else {},
+            connections=_list_or_empty(data, "connections"),
             sources=[
                 PackSourceEntry.from_dict(s)
                 for s in data.get("sources", [])
@@ -2488,7 +2508,7 @@ class AppManifest:
             extra=extra,
         )
         manifest.not_booleans = _not_booleans(data, "native")
-        manifest.not_lists = _not_lists(data, "retiredCapabilities")
+        manifest.not_lists = _not_lists(data, "retiredCapabilities", "connections")
         if "settings" in data and not isinstance(data["settings"], dict):
             manifest.not_schemas = {"settings": data["settings"]}
         return manifest

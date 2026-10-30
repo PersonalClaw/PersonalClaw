@@ -5207,6 +5207,56 @@
   ],
   "returns": "str"
  },
+ "personalclaw.sdk.health.CONNECTED": {"kind": "value", "type": "str", "value": "'connected'"},
+ "personalclaw.sdk.health.HEALTHS": {"kind": "value", "type": "tuple", "value": "('refused', 'unreachable', 'signing_in', 'unknown', 'connected')"},
+ "personalclaw.sdk.health.REFUSED": {"kind": "value", "type": "str", "value": "'refused'"},
+ "personalclaw.sdk.health.SIGNING_IN": {"kind": "value", "type": "str", "value": "'signing_in'"},
+ "personalclaw.sdk.health.UNKNOWN": {"kind": "value", "type": "str", "value": "'unknown'"},
+ "personalclaw.sdk.health.UNREACHABLE": {"kind": "value", "type": "str", "value": "'unreachable'"},
+ "personalclaw.sdk.health.report_ok": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "app"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "account"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "connection"},
+   {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "note"}
+  ],
+  "returns": "None"
+ },
+ "personalclaw.sdk.health.report_refused": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "app"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "sentence"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "account"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "connection"}
+  ],
+  "returns": "None"
+ },
+ "personalclaw.sdk.health.report_signing_in": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "app"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"},
+   {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "sentence"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "account"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "connection"}
+  ],
+  "returns": "None"
+ },
+ "personalclaw.sdk.health.report_unreachable": {
+  "kind": "function",
+  "params": [
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "app"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"},
+   {"annotation": "str", "kind": "positional_or_keyword", "name": "sentence"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "account"},
+   {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "connection"}
+  ],
+  "returns": "None"
+ },
  "personalclaw.sdk.image.ImageGenError": {
   "bases": ["Exception"],
   "kind": "class"
@@ -5784,7 +5834,8 @@
     {"annotation": "list[ExternalWrite]", "default": "<factory>", "kind": "positional_or_keyword", "name": "writes"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requiresCoreFeatures"},
     {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "retiredCapabilities"},
-    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "settings"}
+    {"annotation": "dict[str, Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "settings"},
+    {"annotation": "list[Any]", "default": "<factory>", "kind": "positional_or_keyword", "name": "connections"}
    ],
    "returns": "None"
   },
@@ -6370,7 +6421,8 @@
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "id"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "label"},
     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "description"},
-    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "renamedFrom"}
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "renamedFrom"},
+    {"annotation": "list[str]", "default": "<factory>", "kind": "positional_or_keyword", "name": "requiresAccountFields"}
    ],
    "returns": "None"
   },

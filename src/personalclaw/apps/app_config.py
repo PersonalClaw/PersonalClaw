@@ -145,16 +145,20 @@ def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> d
     errors = validate_config(values, schema)
     if errors:
         raise AppConfigError("; ".join(errors))
-    from personalclaw.providers.settings import account_secret_owner
+    from personalclaw.providers.settings import account_saved, account_secret_owner
 
+    previous = read_stored(name)
+    wrote: set[str] = set()
     try:
         stored = secret_refs.store(
             values,
             owner=account_secret_owner(name),
             declared=sensitive_field_names(schema) | secret_refs.declared_app_fields(name),
-            previous=read_stored(name),
+            previous=previous,
+            wrote=wrote,
         )
     except ValueError as exc:
         raise AppConfigError(str(exc)) from exc
     atomic_write(_config_path(name), json.dumps(stored, indent=2, sort_keys=True) + "\n")
+    account_saved(name, None, previous, stored, wrote)
     return values

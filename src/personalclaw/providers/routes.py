@@ -333,10 +333,11 @@ async def apply_saved_settings(name: str, capability: str | None = None) -> None
     restart. A multi-instance provider's instances are its settings too, one record each
     (``instance_routes``).
 
-    A provider whose enable FAILED is retried too: its settings are what failed it (one naming a
-    credential another owner holds, say), and a fix that waits for a restart reads as a fix that
-    did not work. Nothing else is switched on here. A provider switched off is its app disabled,
-    and a disabled app is not retried: its change is saved, and loads when the app is switched on.
+    Each capability whose enable FAILED is retried too: its settings are what failed it (one
+    naming a credential another owner holds, or leaving empty an account field the capability
+    requires, say), and a fix that waits for a restart reads as a fix that did not work. Nothing
+    else is switched on here. A provider switched off is its app disabled, and a disabled app is
+    not retried: its change is saved, and loads when the app is switched on.
     Neither is an app this core cannot host (one that needs a newer core, or, in the desktop app,
     one that runs a Python child the app cannot start), which startup lists off with that reason
     and leaves enabled (``app_runtime._refuse``): the core refused it, not its settings, and
@@ -348,17 +349,23 @@ async def apply_saved_settings(name: str, capability: str | None = None) -> None
 
     registry = get_provider_registry()
     one = (capability,) if capability else ()
-    ext = registry.get(name, *one)
-    if ext is not None and ext.enabled:
+    if capability is None:
+        records = registry.list_for_app(name)
+    else:
+        records = [rec for rec in [registry.get(name, capability)] if rec is not None]
+    if any(rec.enabled for rec in records):
         registry.rebuild(name, *one)
-    elif (
-        ext is not None
-        and ext.error
+    # Each that failed, a capability whose required account field was empty among them (#3842):
+    # this save may be what it waited for.
+    failed = [rec for rec in records if not rec.enabled and rec.error]
+    if (
+        failed
         and not app_lifecycle_denial(name)
-        and ext.manifest.core_compatibility().admits
-        and not python_children.app_refusal(ext.manifest)
+        and failed[0].manifest.core_compatibility().admits
+        and not python_children.app_refusal(failed[0].manifest)
     ):
-        registry.enable(name, *one)
+        for rec in failed:
+            registry.enable(name, rec.capability or None)
     # A rebuilt tool provider offers what its new settings make it offer (a different endpoint
     # answers a different tool list), so its names are read again before this answers.
     await admit_tool_names()

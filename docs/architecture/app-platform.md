@@ -963,6 +963,44 @@ id already holds are kept. A capability the app declares retired has its setting
 account (`capability_lifecycle.register_remover`). One dropped without saying so keeps them, in case
 it comes back.
 
+**An account's health is reported beside its settings, never in them** (#3842,
+`apps/account_health.py`). A capability says what it saw when it talked to its service, through
+`personalclaw.sdk.health`: `report_ok` (with an optional one-line note), `report_refused`,
+`report_unreachable` and `report_signing_in`, each naming its app and capability, the account
+when it is not the one the capability runs under (the first, until each account runs its own,
+#3843), and the connection when the app declares connections. A capability or connection the manifest does not declare raises; an
+account that is gone records nothing, since a report can race its removal. A failure stays until
+the same capability next succeeds, so another capability's success never hides it; a success is
+the account's last good contact. A connection's health is its worst outstanding failure (refused,
+unreachable, signing in), else `connected` once something succeeded, else `unknown`. An app
+whose accounts have more than one connection declares them (`connections: [{id, label}]`,
+Email's reading and sending), and the account reads the worst of them, `connected` only when
+every one does. The values are the SDK's constants (`health.HEALTHS`). A report reads no file
+and no credential, so a capability may make one on the gateway's loop. A sentence and a note are
+shown as one line of plain text (200 and 120 characters at most) with the account's secret
+values and any other credential-shaped text masked, so a capability passing `str(exc)` shows no
+key; the masking reads the account's secrets, so it is done once, when the text is first read,
+off the loop, and only the masked text is held from then on. A save that changes an account's
+settings sets its failures back to `unknown` ("Not checked since the account was changed."),
+keeping its last good contact and dropping its capabilities' notes, and one that changes a
+capability's own settings does the same for that capability ("Not checked since its settings were
+changed."). A save that changes nothing leaves them as they are; one that gives a secret a value
+counts as a change even when the value is the one it had, since no value is read to tell.
+`/api/apps` rows carry `accounts` (each with its
+`health`, `reason`, `lastOk` and, with connections, `connections`) and `capabilities` (each with
+its `lastOk`, `note` and `needsSetup`); the settings routes carry none of it. The board lives in
+memory: after a start every account reads `unknown` until a capability reports. A capability an
+update renames or drops reports nothing any more, and a removed account's reports go with it.
+
+A capability may list the account settings it cannot run without (`requiresAccountFields`, the
+account's `settings` or, for a `multiInstance` capability, its instance schema). While one is
+empty in the first account, the registry does not build that capability, and its error says which
+field ("Needs setup: the account's bucket is empty."), while the account's other capabilities build
+as before; a save that fills it builds it. A secret counts as set when the store holds its key, so
+no value is read to tell. A `multiInstance` capability's list is checked against its instance
+schema but not enforced yet: each instance runs under its own account once each account runs its
+own (#3843), and an app should not count on it before then.
+
 A tool provider is registered under its app's name, and every tool it lists passes the tool
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see
