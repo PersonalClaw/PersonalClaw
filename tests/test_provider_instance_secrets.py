@@ -97,14 +97,18 @@ class _FakeRegistry:
 @asynccontextmanager
 async def _client(tmp_path: Path):
     from personalclaw.providers import instance_routes
+    from personalclaw.providers import registry as registry_module
 
+    # The registry is swapped, never its getter: `providers.routes` binds the getter when it is
+    # first imported, and a create imports it (`_refresh_multi_instance_provider_safe`), so a
+    # patched getter would answer for every later test in the worker.
     # 🪤 A multi-instance TOOL fake reaches `_rebuild_agent_config_safe()`: every
     # `_create()` call in this file runs `instance_routes._refresh_multi_instance_provider_safe`
     # → `rebuild_agent_config()`, which writes through `agent.agents_dir()` and reads the home
     # per call, so patching `config_dir` keeps the write inside tmp_path.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
-        patch("personalclaw.providers.registry.get_provider_registry", lambda: _FakeRegistry()),
+        patch.object(registry_module, "_registry", _FakeRegistry()),
         patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),
     ):
         app = web.Application()
