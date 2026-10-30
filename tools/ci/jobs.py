@@ -224,6 +224,9 @@ class Host:
     #: Why this host cannot run an Electron job's sandbox, given the root, or ``None`` when it
     #: can (tools/ci/sandbox_host.py): read off GitHub only. ``None`` here reads nothing.
     sandbox: Callable[[Path], str | None] | None = field(default=None, compare=False)
+    #: The folder every local run on this account shares uv's cache and managed Pythons in
+    #: (:func:`shared_cache_root`), or ``None`` for each checkout's own, as on CI.
+    shared_cache: Path | None = field(default=None, compare=False)
 
     @classmethod
     def this(cls, root: Path) -> Host:
@@ -236,6 +239,7 @@ class Host:
             on_github=on_github,
             memory=None if on_github else admission.Memory.this(),
             sandbox=None if on_github else sandbox_host.problem,
+            shared_cache=None if on_github or os.environ.get("CI") else shared_cache_root(),
         )
 
 
@@ -514,13 +518,180 @@ def _step_argv(
     return argv
 
 
+#: What names the folder local runs share uv's cache and managed Pythons in, in place of the
+#: account's own cache folder (:func:`shared_cache_root`): a machine that keeps everything a run
+#: writes under one folder sets it, and the suite pins it to a folder of its own.
+SHARED_CACHE_ENV = "PCLAW_RUN_JOB_CACHE"
+#: The most the shared uv cache may hold, in GB, before a local run evicts from it
+#: (:func:`bound_shared_cache`), and what changes it.
+CACHE_BOUND_GB = 6.0
+CACHE_BOUND_ENV = "PCLAW_RUN_JOB_CACHE_GB"
+#: How long an eviction waits for uv's lock on the cache, in seconds, before it leaves the cache
+#: as it is for this run: another checkout's run holds it while its uv runs.
+EVICT_LOCK_S = 10
+#: The shared caches already bounded, and checked for their file system, by this process.
+_READIED: set[Path] = set()
+
+
+def shared_cache_root(environ: Mapping[str, str] = os.environ) -> Path | None:
+    """Where local runs share uv's cache and managed Pythons: :data:`SHARED_CACHE_ENV` when it
+    names a folder, else the account's own cache folder, resolved from the home its entry in the
+    user database names (``run.real_home``), never ``$HOME``, which a caller can point anywhere:
+    ``Library/Caches/personalclaw/run-job`` on macOS, ``$XDG_CACHE_HOME/personalclaw/run-job``
+    (else ``.cache/...``) elsewhere. ``None`` when the account's home can't be told, and each
+    checkout keeps its own."""
+    given = environ.get(SHARED_CACHE_ENV)
+    if given:
+        return Path(given)
+    try:
+        home = run.real_home()
+    except RuntimeError:
+        return None
+    if sys.platform == "darwin":
+        return home / "Library" / "Caches" / "personalclaw" / "run-job"
+    xdg = environ.get("XDG_CACHE_HOME", "")
+    return (Path(xdg) if os.path.isabs(xdg) else home / ".cache") / "personalclaw" / "run-job"
+
+
+def _blocks(folder: Path) -> int:
+    """The bytes the files under *folder* take on disk."""
+    total = 0
+    for parent, _dirs, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(parent, name)).st_blocks * 512
+            except OSError:
+                pass
+    return total
+
+
+def _packages_oldest_first(uv_cache: Path) -> list[str]:
+    """Each package the cache holds wheels of, the one written to longest ago first: by the
+    newest entry under its folder in each index (``wheels-v*/pypi/<name>``,
+    ``wheels-v*/index/<index>/<name>``)."""
+    newest: dict[str, float] = {}
+    for wheels in uv_cache.glob("wheels-v*"):
+        folders = [*wheels.glob("pypi/*"), *wheels.glob("index/*/*")]
+        for folder in folders:
+            try:
+                times = [entry.lstat().st_mtime for entry in folder.iterdir()]
+            except OSError:
+                continue
+            newest[folder.name] = max([newest.get(folder.name, 0.0), *times])
+    return sorted(newest, key=lambda name: (newest[name], name))
+
+
+def bound_shared_cache(
+    root: Path,
+    *,
+    bound_gb: float | None = None,
+    uv: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    log=None,
+) -> None:
+    """Keep the shared uv cache under *root* within its bound (:data:`CACHE_BOUND_GB`, or
+    :data:`CACHE_BOUND_ENV`): over it, ``uv cache prune`` first, and if it is still over, ``uv
+    cache clean`` of the packages written to longest ago, a few at a time, oldest first, until it
+    holds under four fifths of the bound. Both through uv, whose lock keeps a run in another
+    checkout from reading an entry while it goes; each waits :data:`EVICT_LOCK_S` for that lock
+    and, refused it, leaves the cache as it is for this run and says so. A checkout's venv keeps
+    working once its packages go: its files are its own clones or links of what the cache held.
+    Managed Pythons are not evicted."""
+    out = log or sys.stderr
+    cache = root / "uv"
+    if not cache.is_dir():
+        return
+    if bound_gb is None:
+        try:
+            bound_gb = float(os.environ.get(CACHE_BOUND_ENV) or CACHE_BOUND_GB)
+        except ValueError:
+            bound_gb = CACHE_BOUND_GB
+    bound = int(bound_gb * 1e9)
+    size = _blocks(cache)
+    if size <= bound:
+        return
+    env = {**os.environ, "UV_CACHE_DIR": str(cache), "UV_LOCK_TIMEOUT": str(EVICT_LOCK_S)}
+
+    def through_uv(*words: str) -> bool:
+        try:
+            done = uv(["uv", "cache", *words], env=env, capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"run: the shared uv cache was left as it is: {exc}", file=out)
+            return False
+        if done.returncode != 0:
+            said = (done.stderr or done.stdout or "").strip().splitlines()[-1:] or ["no reason"]
+            print(f"run: the shared uv cache was left as it is: {said[0]}", file=out)
+            return False
+        return True
+
+    print(
+        f"run: the shared uv cache at {cache} holds {size / 1e9:.1f} GB, past its"
+        f" {bound_gb:g} GB: pruning it",
+        file=out,
+    )
+    if not through_uv("prune"):
+        return
+    size = _blocks(cache)
+    oldest = _packages_oldest_first(cache)
+    while size > bound * 0.8 and oldest:
+        batch, oldest = oldest[:8], oldest[8:]
+        if not through_uv("clean", *batch):
+            return
+        size = _blocks(cache)
+    print(f"run: the shared uv cache holds {size / 1e9:.1f} GB", file=out)
+
+
+def _device(path: Path) -> int | None:
+    """The file system *path* is on, or the nearest folder above it that exists is on."""
+    for each in (path, *path.parents):
+        try:
+            return each.stat().st_dev
+        except OSError:
+            continue
+    return None
+
+
+def _ready_shared_cache(host: Host) -> None:
+    """Once a process: bound the host's shared cache (:func:`bound_shared_cache`), and say when it
+    is on another file system than the checkout, where uv copies a venv's files in place of
+    linking them, so each checkout's venv costs its whole size again."""
+    shared = host.shared_cache
+    if shared is None or shared in _READIED:
+        return
+    _READIED.add(shared)
+    if _device(shared) != _device(host.root):
+        print(
+            f"run: the shared uv cache {shared} is on another file system than {host.root}: uv"
+            f" copies each venv's files from it rather than linking them ({SHARED_CACHE_ENV}"
+            " names another folder)",
+            file=sys.stderr,
+        )
+    bound_shared_cache(shared)
+
+
+def _command_uv(job: Job, host: Host, scratch: run.Scratch) -> dict[str, str]:
+    """What a command step of *job* runs uv with where the host shares its cache: a cache of the
+    job's own in its scratch folder, and no sync (``UV_NO_SYNC``), so the command runs the venv
+    the job's ``uv sync`` install left and nothing it does reaches the shared cache. Only that
+    install writes it, from what the lock's hashes allow. Nothing where each checkout keeps its
+    own cache, or for a job with no ``uv sync`` install, whose commands install what they use."""
+    if host.shared_cache is None or "uv-sync" not in job.toolchain:
+        return {}
+    return {"UV_CACHE_DIR": str(scratch.root / "uv-cache"), "UV_NO_SYNC": "1"}
+
+
 def _cache_env(job: Job, host: Host) -> dict[str, str]:
     """Where a step's caches, managed Pythons and project venv go.
 
     Here, under the work folder, kept between runs as CI restores its caches, never the caller's
     own; and ``uv venv`` replaces a venv an earlier local run left in the checkout, as a new
-    checkout on CI has none. ``npm ci`` still reinstalls the checkout's own ``node_modules``, as
-    it does on CI.
+    checkout on CI has none. Where the host shares a cache (:attr:`Host.shared_cache`), uv's
+    cache for a ``uv sync`` job and the managed Pythons are that folder's, so every checkout on
+    the account installs from one cache, and its venv, still its own under the work folder, is
+    linked from it: on APFS each file is a clone of the cache's, so a checkout's venv costs about
+    a tenth of its size. The venv stays the checkout's own: ``uv sync`` installs the project
+    itself, editable, from that checkout's ``src``. The commands after the install run with a
+    cache of their own (:func:`_command_uv`). ``npm ci`` still reinstalls the checkout's own
+    ``node_modules``, as it does on CI.
 
     On GitHub, in the setup action's own folders, so the cache it restored is what the job reads
     and the cache it saves holds what the job wrote: setup-uv's cache and Python folders
@@ -537,12 +708,14 @@ def _cache_env(job: Job, host: Host) -> dict[str, str]:
     In both, the venv's own interpreter is the job's Python, given as ``PERSONALCLAW_PY``
     (:data:`JOB_PYTHON_ENV`), so nothing a step runs looks for it in a checkout's ``.venv``."""
     cache = host.root / WORK / "cache"
+    shared = host.shared_cache
     runner = os.environ if host.on_github else {}
     env: dict[str, str] = {}
     if "uv" in job.toolchain or "uv-sync" in job.toolchain:
-        env["UV_CACHE_DIR"] = runner.get("UV_CACHE_DIR") or str(cache / "uv")
+        uv_cache = shared / "uv" if shared and "uv-sync" in job.toolchain else cache / "uv"
+        env["UV_CACHE_DIR"] = runner.get("UV_CACHE_DIR") or str(uv_cache)
         env["UV_PYTHON_INSTALL_DIR"] = runner.get("UV_PYTHON_INSTALL_DIR") or str(
-            cache / "uv-python"
+            (shared or cache) / "uv-python"
         )
         if not host.on_github:
             env["UV_PROJECT_ENVIRONMENT"] = str(cache / f"venv-{job.python or 'default'}")
@@ -1709,6 +1882,8 @@ def run_one(
             _offline_plan(job, host, runner_temp)
             plan = "offline"
     base_env = _base_env(job, host, options)
+    if "uv-sync" in job.toolchain:
+        _ready_shared_cache(host)
 
     planned: list[tuple[list[str], str, dict[str, str]]] = [
         (list(INSTALL_ARGV[tool]), "", _helper_env(INSTALL_ARGV[tool], host))
@@ -1720,7 +1895,13 @@ def run_one(
     for step in job.command:
         env = {name: _render(value, values) for name, value in {**job.env, **step.env}.items()}
         argv = _step_argv(step, job, values, options, host)
-        planned.append((argv, step.workdir, {**env, **_helper_env(argv, host)}))
+        planned.append(
+            (
+                argv,
+                step.workdir,
+                {**env, **_helper_env(argv, host), **_command_uv(job, host, scratch)},
+            )
+        )
 
     total = (
         options.deadline_s if options.deadline_s is not None else job.timeout_min * 60 - MARGIN_S

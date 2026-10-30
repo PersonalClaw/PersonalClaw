@@ -2245,7 +2245,19 @@ changes to tests, `tools/ci`, `scripts`, docs and the web.
   it, and one forged in a local caller's shell never reaches a step.
 - **Caches, managed Pythons and the project venv** go under `.local/run-job/cache`, never the
   caller's own: uv's cache and Pythons, the venv `uv sync` installs, npm's cache and the
-  Playwright browsers. `npm ci` reinstalls the checkout's own `node_modules`, as it does on CI,
+  Playwright browsers. Off CI (neither `CI` nor `GITHUB_ACTIONS` set), uv's cache for a
+  `uv sync` job and the managed Pythons are one folder every local run on the account shares:
+  `~/Library/Caches/personalclaw/run-job` on macOS, `$XDG_CACHE_HOME/personalclaw/run-job`
+  (else `~/.cache/...`) elsewhere, from the home the user database names, not `HOME`. A machine
+  that must keep everything under one folder, the homelab box among them, sets
+  `PCLAW_RUN_JOB_CACHE` to a folder of its own, and the suite sets it to a temporary one. The
+  venv stays each checkout's own (`uv sync` installs the checkout's own `src`, editable), and uv
+  links it from the shared cache, so on APFS a checkout's venv costs about a tenth of the 1.2 GB
+  its own copy of the cache did. Only the install writes the shared cache: the commands after it
+  run with `UV_NO_SYNC=1` and a uv cache of the job's own scratch folder. Before its first
+  `uv sync` job a run holds the cache to `PCLAW_RUN_JOB_CACHE_GB` (6 by default): over it,
+  `uv cache prune`, then `uv cache clean` of the packages written to longest ago, each waiting at
+  most 10 s for uv's lock and leaving the cache as it is when another run holds it. `npm ci` reinstalls the checkout's own `node_modules`, as it does on CI,
   and `uv venv` replaces a venv an earlier run left in the checkout (`UV_VENV_CLEAR`), where
   CI's checkout is new each run. On GitHub the caches are the setup action's own folders
   (`jobs._cache_env`), so the cache it restored is what the job reads and the cache it saves
