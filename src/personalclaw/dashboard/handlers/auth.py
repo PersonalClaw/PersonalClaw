@@ -151,6 +151,27 @@ def reset_lockouts() -> None:
     _FAILURES.clear()
 
 
+async def _refuse_a_locked_out(ip: str, cfg: Any, said: str = "") -> web.Response | None:
+    """The 429 for *ip* while it is locked out, its row written; ``None`` when it is not.
+
+    It awaits nothing when *ip* is not locked out, so a handler that checks here, then checks the
+    guess and counts it (``_record_failure``), does all three in one step of the loop: no other
+    guess from *ip* can be checked between them.
+    """
+    remaining = _lockout_remaining(ip, cfg)
+    if not remaining:
+        return None
+    await sel_log_async(
+        _sel().log_api_access,
+        caller=ip,
+        operation="login_locked_out",
+        outcome="denied",
+        source="auth",
+        error=f"{said}retry_after={remaining}s",
+    )
+    return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
+
+
 async def api_auth_login(request: web.Request) -> web.Response:
     """POST /api/auth/login — verify the owner credential and mint a session cookie.
 
@@ -177,17 +198,9 @@ async def api_auth_login(request: web.Request) -> web.Response:
         # misconfiguration indistinguishable from a typo.
         return json_error(ERR_NOT_ENABLED, status=403)
 
-    remaining = _lockout_remaining(ip, cfg)
-    if remaining:
-        await sel_log_async(
-            _sel().log_api_access,
-            caller=ip,
-            operation="login_locked_out",
-            outcome="denied",
-            source="auth",
-            error=f"retry_after={remaining}s",
-        )
-        return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
+    refused = await _refuse_a_locked_out(ip, cfg)
+    if refused is not None:
+        return refused
 
     body = await json_object_body(request)
     if not isinstance(body, dict):
@@ -196,6 +209,11 @@ async def api_auth_login(request: web.Request) -> web.Response:
     password = str(body.get("password") or "")
     code = str(body.get("totp") or "")
 
+    # Reading the body awaited, so guesses sent together all passed the check above before any
+    # was counted. Checked again here, with nothing awaited from here to the count.
+    refused = await _refuse_a_locked_out(ip, cfg)
+    if refused is not None:
+        return refused
     if not creds.verify_password(username, password):
         _record_failure(ip)
         await sel_log_async(
@@ -528,23 +546,19 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
     if not check_origin(request):
         return json_error(ERR_ORIGIN, status=403)
 
-    remaining = _lockout_remaining(ip, cfg)
-    if remaining:
-        await sel_log_async(
-            _sel().log_api_access,
-            caller=ip,
-            operation="login_locked_out",
-            outcome="denied",
-            source="auth",
-            error=f"enroll retry_after={remaining}s",
-        )
-        return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
+    refused = await _refuse_a_locked_out(ip, cfg, "enroll ")
+    if refused is not None:
+        return refused
 
     from personalclaw.auth import enrollment
 
     body = await json_object_body(request)
     code = str((body or {}).get("code") or "") if isinstance(body, dict) else ""
 
+    # As at sign-in: checked again once the body is read, with nothing awaited to the count.
+    refused = await _refuse_a_locked_out(ip, cfg, "enroll ")
+    if refused is not None:
+        return refused
     if not enrollment.redeem_code(code):
         _record_failure(ip)
         return json_error(ERR_ENROLL_INVALID, status=401)
