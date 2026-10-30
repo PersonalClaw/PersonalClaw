@@ -33,6 +33,7 @@ from personalclaw.providers.use_cases import (
     save_active_models,
     split_ref,
 )
+from personalclaw.sel import sel_log_async
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
@@ -688,7 +689,8 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     # caller saw success while its binding was wiped. Clearing must be explicit, so
     # `{"models": []}` still clears and anything else is a 400 naming the key.
     if "models" not in body:
-        _sel_log(
+        await sel_log_async(
+            _sel_log,
             "models.active_set",
             "error",
             use_case,
@@ -725,7 +727,8 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     # choosing. Settings → Models offers no such entry, so this is an API caller's mistake.
     unnamed = [m for m in models if not names_model(m)]
     if unnamed:
-        _sel_log(
+        await sel_log_async(
+            _sel_log,
             "models.active_set",
             "error",
             f"{use_case}:{unnamed[0]!r}",
@@ -746,6 +749,9 @@ async def api_models_active_set(request: web.Request) -> web.Response:
     # bundled + media), NOT that the model id is in the discovered catalog — a real
     # provider that's installed but slow to enumerate models must NOT be rejected.
     # A bare id (no "provider:" prefix) is left alone (some use-cases store bare ids).
+    # The refusal's row is written after the `try`, so a write that cannot be made fails the
+    # request rather than reading as an unreadable config and binding the ref.
+    unknown: tuple[object, str, set[str]] | None = None
     try:
         from personalclaw.providers.use_cases import _known_provider_names
 
@@ -756,23 +762,28 @@ async def api_models_active_set(request: web.Request) -> web.Response:
             for m in models:
                 parsed = split_ref(str(m))
                 if parsed and parsed[0] not in known:
-                    _sel_log(
-                        "models.active_set",
-                        "error",
-                        f"{use_case}:{m}",
-                        request,
-                        error=f"unknown provider {parsed[0]!r}",
-                    )
-                    return web.json_response(
-                        {
-                            "error": f"Unknown provider {parsed[0]!r} in model ref {m!r}. "
-                            f"Install/configure it first (Providers), or pick a known provider. "
-                            f"Known: {sorted(known)}"
-                        },
-                        status=400,
-                    )
+                    unknown = (m, parsed[0], known)
+                    break
     except Exception:
         logger.debug("active-model provider validation skipped", exc_info=True)
+    if unknown is not None:
+        m, provider, known = unknown
+        await sel_log_async(
+            _sel_log,
+            "models.active_set",
+            "error",
+            f"{use_case}:{m}",
+            request,
+            error=f"unknown provider {provider!r}",
+        )
+        return web.json_response(
+            {
+                "error": f"Unknown provider {provider!r} in model ref {m!r}. "
+                f"Install/configure it first (Providers), or pick a known provider. "
+                f"Known: {sorted(known)}"
+            },
+            status=400,
+        )
 
     # A model this request ADDS is checked against what its own provider lists it for. One the
     # chain already holds is not: a binding stored before this check existed can still be moved
@@ -785,7 +796,8 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         jobs = listed.get((provider, model))
         refusal = _cannot_serve(use_case, provider, model, jobs) if jobs is not None else ""
         if refusal:
-            _sel_log(
+            await sel_log_async(
+                _sel_log,
                 "models.active_set",
                 "error",
                 f"{use_case}:{ref}",
@@ -801,7 +813,8 @@ async def api_models_active_set(request: web.Request) -> web.Response:
 
         for ref in added:
             if await ref_without_tools(ref, use_case=use_case):
-                _sel_log(
+                await sel_log_async(
+                    _sel_log,
                     "models.active_set",
                     "error",
                     f"{use_case}:{ref}",
@@ -827,14 +840,17 @@ async def api_models_active_set(request: web.Request) -> web.Response:
         request, active.get(use_case, []), what=f"the {use_case} model chain"
     )
     if stale is not None:
-        _sel_log("models.active_set", refusal_outcome(stale), use_case, request)
+        await sel_log_async(
+            _sel_log, "models.active_set", refusal_outcome(stale), use_case, request
+        )
         return stale
     active[use_case] = [str(m) for m in models]
     save_active_models(active)
 
     # Audit the binding change: repointing a use-case to a different model is
     # a security-relevant state change — record who set what.
-    _sel_log(
+    await sel_log_async(
+        _sel_log,
         "models.active_set",
         "ok",
         f"{use_case}={','.join(active[use_case]) or '(cleared)'}",
