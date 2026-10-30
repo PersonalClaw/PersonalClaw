@@ -167,6 +167,24 @@ def app_owner(app: str) -> SecretOwner:
     return SecretOwner(f"{OWNED_KEY_PREFIX}APP_{_app_part(app)}__", app=app)
 
 
+def account_owner(app: str) -> SecretOwner:
+    """An app's account settings, the part every capability shares (``data/config.json``,
+    #3842). The same prefix as :func:`app_owner`, so a key stored before the split stays where
+    it is and an older core still resolves it."""
+    return app_owner(app)
+
+
+def capability_owner(app: str, capability: str) -> SecretOwner:
+    """One capability's own settings (``data/capabilities/<id>.json``, #3842). The app's.
+
+    Nested under the app's own prefix, so the app holds it as before (and so does an older core,
+    which resolves any key under that prefix as the app's), and removing the capability deletes
+    exactly its keys (:func:`purge` over :attr:`SecretOwner.prefix`)."""
+    return SecretOwner(
+        f"{app_owner(app).prefix}CAP_{_segment(capability, 16)}_{_digest(capability)}__", app=app
+    )
+
+
 def instance_owner(app: str, instance_id: str) -> SecretOwner:
     """One record of a multi-instance provider (``extensions/<app>/instances/<id>.json``).
     The app's."""
@@ -349,14 +367,16 @@ def _app_manifest(app: str) -> Any:
 
 
 def declared_app_fields(app: str) -> set[str]:
-    """Fields ``app`` declares ``x-meta.sensitive`` — in every provider's ``settingsSchema``
-    and in ``setup.configSchema``, the two schemas that describe its one settings file."""
+    """Fields ``app`` declares ``x-meta.sensitive`` — in its account ``settings``, in
+    ``setup.configSchema`` and in every provider's ``settingsSchema``, the schemas that describe
+    its settings."""
     from personalclaw.apps.secret_fields import sensitive_field_names
 
     manifest = _app_manifest(app)
     if manifest is None:
         return set()
-    names = sensitive_field_names(getattr(manifest.setup, "configSchema", None) or {})
+    names = sensitive_field_names(getattr(manifest, "settings", None) or {})
+    names |= sensitive_field_names(getattr(manifest.setup, "configSchema", None) or {})
     for provider in manifest.all_providers():
         names |= sensitive_field_names(provider.settingsSchema or {})
     return names

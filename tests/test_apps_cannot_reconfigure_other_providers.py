@@ -996,6 +996,7 @@ async def _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     on that, and the rows either side of it, the home put back before each, pass."""
     from personalclaw import sel
     from personalclaw.dashboard import server
+    from personalclaw.providers.registry import get_provider_registry
     from personalclaw.providers.settings import ProviderSettings
 
     await SETTINGS.home(tmp_path_factory, monkeypatch)
@@ -1017,7 +1018,10 @@ async def _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
         app = request.get("app", "")
         if not app:
             return await handle(request)
-        name = request.match_info["name"]
+        # Named by the registry's record, as the real handler names what it writes: the plant is
+        # the missing ownership check, not a write a request's text names.
+        ext = get_provider_registry().get(request.match_info["name"])
+        name = ext.name if ext is not None else ""
         ProviderSettings.update(name, await request.json())
         reason = f"{name!r} is not this app — an app reaches only its own, never another's"
         sel.sel().log_api_access(

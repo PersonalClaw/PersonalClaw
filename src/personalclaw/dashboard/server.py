@@ -522,6 +522,28 @@ MIXED_INTERNAL_ROUTES: frozenset[str] = frozenset(
 )
 
 
+def _move_stored_settings() -> None:
+    """Move what an earlier release stored where this one no longer reads it, once at start.
+
+    First any secret an earlier release left inline in a settings file (a provider key or the
+    webhook token in config.json, an app's tokens in its data/config.json, an instance's key, an
+    MCP server's env and headers in mcp.json and the agent config) into the credential store; then
+    each capability's own settings out of its app's shared file, for an app that declares account
+    settings (#3842), re-stored under the capability's owner. Each is idempotent and fail-safe per
+    file or app: what it cannot move keeps working where it is, and the next start retries."""
+    from personalclaw.config.secret_refs import migrate_plaintext_secrets
+    from personalclaw.providers.capability_settings_move import move_capability_settings
+
+    try:
+        migrate_plaintext_secrets()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("moving plaintext secrets into the credential store failed", exc_info=True)
+    try:
+        move_capability_settings()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("moving capability settings failed", exc_info=True)
+
+
 async def start_dashboard(
     sessions: "SessionManager",
     port: int = _DEFAULT_PORT,
@@ -644,18 +666,9 @@ async def start_dashboard(
     from personalclaw.tool_providers.registry import admit as _admit_tool_names
 
     await _admit_tool_names(wait=0)
-    # Move any secret an earlier release left inline in a settings file (a provider key or the
-    # webhook token in config.json, an app's tokens in its data/config.json, an instance's key,
-    # an MCP server's env and headers in mcp.json and the agent config) into the
-    # credential store. HERE: after extensions load, so every app's declared-sensitive fields
-    # are known, and before the registry sync below reads config.json. Idempotent and
-    # fail-safe per file — a key it cannot move keeps working where it is.
-    from personalclaw.config.secret_refs import migrate_plaintext_secrets
-
-    try:
-        migrate_plaintext_secrets()
-    except Exception:  # noqa: BLE001 — never block boot; the next start retries
-        logger.warning("moving plaintext secrets into the credential store failed", exc_info=True)
+    # HERE: after extensions load, so every app's declared-sensitive fields are known, and
+    # before the registry sync below reads config.json.
+    _move_stored_settings()
     # And `credentials.json`, the second store an earlier release kept, before the registry
     # sync below resolves a provider entry's `credential` by name. Deleted only once every value
     # in it reads back from the store; what it cannot settle, the Doctor lists.

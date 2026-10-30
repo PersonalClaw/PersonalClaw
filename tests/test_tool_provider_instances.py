@@ -124,7 +124,7 @@ def test_single_instance_tool_path_unchanged(_cfg_home, monkeypatch):
     _stub_factory(monkeypatch)
     monkeypatch.setattr(
         "personalclaw.providers.settings.ProviderSettings.load",
-        staticmethod(lambda name: {"endpoint": "https://single/x"}),
+        staticmethod(lambda name, capability=None: {"endpoint": "https://single/x"}),
     )
     handler = ToolTypeHandler()
     result = handler.create(_Ext("some-tool", multi=False))

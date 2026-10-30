@@ -11553,6 +11553,11 @@ export const api = {
     get<{ name: string; config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[]; revision: string }>(`/api/apps/${encodeURIComponent(name)}/config`),
   saveAppConfig: (name: string, config: Record<string, unknown>, base: string) =>
     put<{ ok: boolean; config: Record<string, unknown>; revision: string }>(`/api/apps/${encodeURIComponent(name)}/config`, config, basedOn(base)),
+  // One capability's own settings (#3842), beside the account's above; #3845 builds the form.
+  appCapabilityConfig: (name: string, capability: string) =>
+    get<{ name: string; capability: string; config: Record<string, unknown>; schema: Record<string, unknown>; _secret_set?: string[]; revision: string }>(`/api/apps/${encodeURIComponent(name)}/capabilities/${encodeURIComponent(capability)}/config`),
+  saveAppCapabilityConfig: (name: string, capability: string, config: Record<string, unknown>, base: string) =>
+    put<{ ok: boolean; config: Record<string, unknown>; revision: string }>(`/api/apps/${encodeURIComponent(name)}/capabilities/${encodeURIComponent(capability)}/config`, config, basedOn(base)),
   // Store catalog: available-to-install apps (bundled-not-installed + git sources).
   // `defaultGitSources` = the rows PersonalClaw shipped (labelled "Default"); `builtinGitSources`
   // = the subset that cannot be removed (bundled into every read), so the UI hides a remove

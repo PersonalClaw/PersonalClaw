@@ -102,6 +102,17 @@ def register_app_routes(app: web.Application) -> None:
     app.router.add_get("/api/apps/{name}/uninstall-preview", api_app_uninstall_preview)
     app.router.add_get("/api/apps/{name}/config", api_app_config_get)
     app.router.add_put("/api/apps/{name}/config", api_app_config_put)
+    from personalclaw.dashboard.handlers.app_capability_config import (
+        api_app_capability_config_get,
+        api_app_capability_config_put,
+    )
+
+    app.router.add_get(
+        "/api/apps/{name}/capabilities/{capability}/config", api_app_capability_config_get
+    )
+    app.router.add_put(
+        "/api/apps/{name}/capabilities/{capability}/config", api_app_capability_config_put
+    )
     app.router.add_post("/api/apps/{name}/agent-run", api_app_agent_run)
     app.router.add_get("/api/apps/{name}/agent-run/{run_id}", api_app_agent_run_status)
     app.router.add_post("/api/apps/{name}/token", api_app_token)
@@ -963,16 +974,16 @@ async def api_app_uninstall_preview(request: web.Request) -> web.Response:
 
 
 def _effective_config_schema(manifest) -> dict[str, Any]:
-    """The schema that drives an app's config UI: an explicit ``setup.configSchema``
-    if declared, else its first provider's ``settingsSchema`` (where a pluggable
-    provider declares its user-configurable settings), declared singular or first
-    in ``providers[]``. Lets a
-    provider-only app expose its settings without duplicating the schema.
+    """The schema that drives an app's config UI: its account ``settings`` (#3842), else an
+    explicit ``setup.configSchema`` if declared, else its first provider's ``settingsSchema``
+    (where a pluggable provider declares its user-configurable settings), declared singular or
+    first in ``providers[]``. Lets a provider-only app expose its settings without duplicating
+    the schema.
 
     A MULTI-INSTANCE provider's ``settingsSchema`` describes one of its INSTANCES, not
     the app, so it never becomes app-level config — see :func:`_configured_per_instance`.
     """
-    schema = manifest.setup.configSchema
+    schema = manifest.settings or manifest.setup.configSchema
     if schema:
         return schema
     first = manifest.first_provider()
@@ -993,7 +1004,7 @@ def _configured_per_instance(manifest) -> str | None:
     such thing to save — only instances, managed in Settings → Providers.
     """
     first = manifest.first_provider()
-    if manifest.setup.configSchema or not first or not first.multiInstance:
+    if manifest.settings or manifest.setup.configSchema or not first or not first.multiInstance:
         return None
     who = manifest.displayName or manifest.name
     return (

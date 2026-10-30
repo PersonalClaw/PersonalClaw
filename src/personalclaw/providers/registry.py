@@ -255,6 +255,15 @@ class ProviderRegistry:
         return [ext for ext in self.list_extensions() if ext.provider_config.type == provider_type]
 
 
+def _settings_of(ext: Any) -> dict[str, Any]:
+    """What a capability's factory is built from: the app's account settings merged with that
+    capability's own (#3842). A stand-in record with no capability reads the app's whole settings,
+    as every record did before settings had two parts."""
+    from personalclaw.providers.settings import ProviderSettings
+
+    return ProviderSettings.load(ext.name, getattr(ext, "capability", "") or None)
+
+
 def model_provider_type(ext: RegisteredProvider) -> str:
     """The CONCRETE provider type a model app registers into the LLM registry.
 
@@ -290,9 +299,8 @@ class _TypeHandler:
 class TaskTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -310,9 +318,8 @@ class TaskTypeHandler(_TypeHandler):
 class WorkflowTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -335,7 +342,6 @@ class ToolTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
         from personalclaw.providers.mcp_instances import MCP_TOOLS_EXTENSION
-        from personalclaw.providers.settings import ProviderSettings
 
         factory = load_factory(ext)
         # The MCP Tool Servers app is multiInstance for its SETTINGS card, whose instances are the
@@ -377,7 +383,7 @@ class ToolTypeHandler(_TypeHandler):
                     )
             return providers or None
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         return factory(config)
 
     def register(self, ext: RegisteredProvider, instance: Any) -> None:
@@ -472,9 +478,8 @@ class SearchTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -565,9 +570,8 @@ class ActionTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -610,9 +614,8 @@ class DutyGateTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -646,9 +649,8 @@ class ChannelTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -675,9 +677,8 @@ class SyncTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -725,9 +726,8 @@ class TriggerSourceTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -871,9 +871,8 @@ class TriggerTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -917,9 +916,8 @@ class SandboxTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -951,9 +949,8 @@ class OcrTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -982,9 +979,8 @@ class PromptTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -1002,9 +998,8 @@ class PromptTypeHandler(_TypeHandler):
 class MemoryTypeHandler(_TypeHandler):
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -1036,9 +1031,8 @@ class VectorStoreTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -1104,9 +1098,8 @@ class KnowledgeTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -1154,9 +1147,8 @@ class InboxTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -1205,9 +1197,8 @@ class NotificationTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -1261,9 +1252,8 @@ class EntitySeamHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         factory = load_factory(ext)
         return factory(config)
 
@@ -1298,14 +1288,13 @@ class ModelTypeHandler(_TypeHandler):
 
     def create(self, ext: RegisteredProvider) -> Any:
         from personalclaw.providers.loader import load_factory
-        from personalclaw.providers.settings import ProviderSettings
 
         # Imports the app's module — which registers its provider type and catalog — and
         # resolves its declared entry point, for both kinds of app.
         factory = load_factory(ext)
         if ext.provider_config.multiInstance:
             return None
-        config = ProviderSettings.load(ext.name)
+        config = _settings_of(ext)
         return factory(config)
 
     @staticmethod

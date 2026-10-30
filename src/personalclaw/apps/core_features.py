@@ -189,9 +189,19 @@ RUNNING_LIST = "running-list"
 #: and an app with two providers of one type collides with itself there.
 CAPABILITY_IDS = "capability-ids"
 
+#: An app's settings come in two parts (#3842): a top-level ``settings`` schema for the account
+#: every capability shares, stored in ``data/config.json``, and each capability's own
+#: ``settingsSchema``, stored in ``data/capabilities/<id>.json``;
+#: ``ProviderSettings.load(app, capability)`` reads one capability's (the account's merged with its
+#: own) and ``ProviderSettings.load_account(app)`` the account's. A core without it keeps one
+#: settings file, so an app that declares ``settings`` declares this and such a core refuses it
+#: rather than running it without its capabilities'.
+ACCOUNT_SETTINGS = "account-settings"
+
 #: Every feature this core offers. A name is added with its contract and never taken away.
 CORE_FEATURES: frozenset[str] = frozenset(
     {
+        ACCOUNT_SETTINGS,
         ADAPTIVE_THINKING,
         APPROVAL_ANSWERS,
         CAPABILITY_IDS,

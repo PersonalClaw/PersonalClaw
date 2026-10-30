@@ -60,20 +60,27 @@ def instructions(app: str) -> frozenset[str]:
     a setting it declares an instruction, each without the spaces around it.
 
     Read from the manifest the owner installed and the settings file her Configure page writes
-    (``providers.settings.load_stored``), across every schema that describes that one file: the
-    app's ``setup.configSchema`` and each provider's ``settingsSchema``. An app that is not
-    installed, or declares no instruction, holds none."""
+    (``providers.settings.load_stored``) and each capability's own (``load_stored_capability``,
+    #3842), across every schema that describes them: the app's account ``settings`` or
+    ``setup.configSchema`` and each provider's ``settingsSchema``. An app that is not installed,
+    or declares no instruction, holds none."""
+    from personalclaw.apps.account_settings import account_schema, capability_schemas
     from personalclaw.apps.app_manager import _manifest_of
-    from personalclaw.providers.settings import load_stored
+    from personalclaw.providers.settings import load_stored, load_stored_capability
 
     manifest = _manifest_of(app) if app else None
     if manifest is None:
         return frozenset()
-    schemas = [getattr(manifest.setup, "configSchema", None) or {}]
+    schemas = [account_schema(manifest)]
     schemas += [provider.settingsSchema or {} for provider in manifest.all_providers()]
-    stored = load_stored(app)
+    stored = [load_stored(app)]
+    stored += [load_stored_capability(app, cid) for cid in capability_schemas(manifest)]
     return frozenset(
-        text.strip() for schema in schemas for text in _declared(schema, stored) if text.strip()
+        text.strip()
+        for schema in schemas
+        for values in stored
+        for text in _declared(schema, values)
+        if text.strip()
     )
 
 

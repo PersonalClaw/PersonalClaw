@@ -17,6 +17,7 @@ import pytest
 from personalclaw.apps.core_features import FEATURE_NAME_RE
 from personalclaw.sdk import features
 from personalclaw.sdk.features import (
+    ACCOUNT_SETTINGS,
     ADAPTIVE_THINKING,
     APPROVAL_ANSWERS,
     CAPABILITY_IDS,
@@ -72,6 +73,7 @@ OFFERED_ONCE = {
 
 def test_the_sdk_publishes_the_names_and_the_question():
     assert set(features.__all__) == {
+        "ACCOUNT_SETTINGS",
         "ADAPTIVE_THINKING",
         "APPROVAL_ANSWERS",
         "CAPABILITY_IDS",
@@ -95,6 +97,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "WAITING_LIST",
         "core_has",
     }
+    assert ACCOUNT_SETTINGS == "account-settings"
     assert ADAPTIVE_THINKING == "adaptive-thinking"
     assert APPROVAL_ANSWERS == "approval-answers"
     assert CAPABILITY_IDS == "capability-ids"
@@ -913,6 +916,46 @@ def _capability_ids_hold() -> None:
     assert [r.enabled for r in records] == [True, False]
 
 
+def _account_settings_hold() -> None:
+    """An app's settings come in two parts: the account every capability shares, and each
+    capability's own, which a capability reads merged with the account's and which no other
+    capability reads (#3842)."""
+    import json
+
+    from personalclaw.apps import manager
+    from personalclaw.providers.settings import ProviderSettings
+
+    raw = {
+        "name": "witness-account",
+        "version": "1.0.0",
+        "displayName": "Witness",
+        "description": "Two capabilities, one account.",
+        "requiresCoreFeatures": [ACCOUNT_SETTINGS],
+        "settings": {"type": "object", "properties": {"server": {"type": "string"}}},
+        "providers": [
+            {
+                "type": "sync",
+                "implementation": "a:make",
+                "id": "git",
+                "label": "Git",
+                "settingsSchema": {"type": "object", "properties": {"branch": {"type": "string"}}},
+            },
+            {"type": "inbox", "implementation": "b:make", "id": "mail", "label": "Mail"},
+        ],
+    }
+    folder = manager.app_dir(raw["name"])
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "app.json").write_text(json.dumps(raw), encoding="utf-8")
+    ProviderSettings.update_account(raw["name"], {"server": "example.invalid"})
+    ProviderSettings.update_capability(raw["name"], "git", {"branch": "main"})
+    assert ProviderSettings.load(raw["name"], "git") == {
+        "server": "example.invalid",
+        "branch": "main",
+    }
+    assert ProviderSettings.load(raw["name"], "mail") == {"server": "example.invalid"}
+    assert ProviderSettings.load_account(raw["name"]) == {"server": "example.invalid"}
+
+
 def _adaptive_thinking_holds() -> None:
     """The SDK says which models think adaptively, as core's Anthropic-compatible wire asks them:
     a Claude line that takes adaptive thinking in each form a listing names it by, and no older
@@ -1133,6 +1176,7 @@ def _running_list_holds() -> None:
 
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
+    ACCOUNT_SETTINGS: _account_settings_hold,
     ADAPTIVE_THINKING: _adaptive_thinking_holds,
     APPROVAL_ANSWERS: _approval_answers_hold,
     CAPABILITY_IDS: _capability_ids_hold,
