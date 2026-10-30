@@ -33,6 +33,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from personalclaw.workflows import controller as controller_mod
 from personalclaw.workflows import journal as journal_mod
 from personalclaw.workflows import store
 from personalclaw.workflows.controller import EngineServices, RunController
@@ -44,6 +45,15 @@ STAGE_PATH = "root.children[0]"
 SCRIPT_IN = 2411
 SCRIPT_OUT = 613
 SCRIPT_TOTAL = SCRIPT_IN + SCRIPT_OUT  # 3024
+
+
+@pytest.fixture(autouse=True)
+def _a_stage_settles_at_test_speed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing wakes a run when its dispatched stage ends: the tick loop polls the stage once
+    every `TICK_WAKE_SECS` (`RunController._dispatched_poll_delay`), 5 s as shipped, so each
+    stage driven here waited up to that long to settle, and which tick its end landed on decided
+    how long. Shrunk, as the other end-to-end workflow tests shrink it."""
+    monkeypatch.setattr(controller_mod, "TICK_WAKE_SECS", 0.02)
 
 
 @pytest.fixture

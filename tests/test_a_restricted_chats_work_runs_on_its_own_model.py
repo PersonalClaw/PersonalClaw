@@ -41,6 +41,7 @@ from personalclaw.llm.capabilities import Capability, ProviderCapability
 from personalclaw.llm.events import EVENT_TOOL_CALL, AgentEvent
 from personalclaw.llm.registry import ProviderEntry, ProviderRegistry
 from personalclaw.tool_providers.base import ToolDefinition, ToolProvider, ToolResult
+from personalclaw.workflows import controller as controller_mod
 
 #: The chat's own model, on this machine; the model bound for Orchestration (and Reasoning); the
 #: model bound for Background; an agent CLI a chat can run on. Invented names.
@@ -60,6 +61,15 @@ NOT_ASKED = "so nothing from it is sent to any model but the one it runs on"
 
 
 # ── the models Settings holds ────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _a_stage_settles_at_test_speed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing wakes a run when its dispatched stage ends: the tick loop polls the stage once
+    every `TICK_WAKE_SECS` (`RunController._dispatched_poll_delay`), 5 s as shipped, so each
+    stage driven here waited up to that long to settle, and which tick its end landed on decided
+    how long. Shrunk, as the other end-to-end workflow tests shrink it."""
+    monkeypatch.setattr(controller_mod, "TICK_WAKE_SECS", 0.02)
 
 
 class _Model:

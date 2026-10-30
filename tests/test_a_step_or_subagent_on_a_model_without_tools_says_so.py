@@ -34,6 +34,7 @@ from personalclaw.session import SessionManager
 from personalclaw.subagent import SubagentInfo, SubagentManager
 from personalclaw.subagent_persistence import create_agent_folder
 from personalclaw.tool_providers.base import RiskLevel, ToolDefinition, ToolProvider, ToolResult
+from personalclaw.workflows import controller as controller_mod
 
 #: What a subagent started on the scripted model that can't use tools ends with.
 REFUSED = (
@@ -41,6 +42,15 @@ REFUSED = (
     "them. Choose a model that uses tools for Orchestration in Settings → Models, or start it on "
     "one."
 )
+
+
+@pytest.fixture(autouse=True)
+def _a_stage_settles_at_test_speed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nothing wakes a run when its dispatched stage ends: the tick loop polls the stage once
+    every `TICK_WAKE_SECS` (`RunController._dispatched_poll_delay`), 5 s as shipped, so each
+    stage driven here waited up to that long to settle, and which tick its end landed on decided
+    how long. Shrunk, as the other end-to-end workflow tests shrink it."""
+    monkeypatch.setattr(controller_mod, "TICK_WAKE_SECS", 0.02)
 
 
 class _Model:
