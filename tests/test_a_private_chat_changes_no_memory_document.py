@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import namespace_sandbox
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
@@ -540,17 +541,6 @@ def test_macos_a_private_chats_command_cannot_write_the_memory_folders(home):
         assert _seatbelt(writes[0]).returncode == 0
 
 
-def _linux_sandbox_works() -> bool:
-    if sys.platform != "linux":
-        return False
-    from personalclaw.sandbox import _probe_unshare
-
-    works = _probe_unshare()
-    if works is None:  # never a skip: an unanswered check would hide the test
-        raise RuntimeError("the sandbox's namespace check did not answer")
-    return works
-
-
 def _launch(command: str) -> subprocess.CompletedProcess:
     from personalclaw.sandbox import namespace_argv
 
@@ -561,9 +551,7 @@ def _launch(command: str) -> subprocess.CompletedProcess:
         os.unlink(argv[1])
 
 
-@pytest.mark.skipif(
-    not _linux_sandbox_works(), reason="needs the Linux namespace sandbox (user + mount namespaces)"
-)
+@namespace_sandbox.needs_it()
 def test_linux_a_private_chats_command_cannot_write_the_memory_folders(home):
     ws = os.path.realpath(_workspace(home))
     shutil.rmtree(_workspace(home) / "_ext")  # a folder that is not there yet is fenced too
@@ -587,9 +575,7 @@ def test_linux_a_private_chats_command_cannot_write_the_memory_folders(home):
         assert _launch(writes[0]).returncode == 0
 
 
-@pytest.mark.skipif(
-    not _linux_sandbox_works(), reason="needs the Linux namespace sandbox (user + mount namespaces)"
-)
+@namespace_sandbox.needs_it()
 @pytest.mark.parametrize("mode", ["incognito", "temporary"])
 def test_linux_a_private_chats_command_runs_in_a_home_with_no_workspace_yet(home, mode):
     """The memory folders a private chat's command is fenced from are made when the home has none
