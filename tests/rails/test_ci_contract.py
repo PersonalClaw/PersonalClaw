@@ -8499,6 +8499,10 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "desktop-smoke": _Mapped((), ("merge",)),
     "browse-live": _Mapped((), ("merge",), security="security", live=True),
     "apps-contract": _Mapped((), ("merge",)),
+    # The sandbox's own namespace tests, on a runner whose user-namespace restriction its `userns`
+    # install lifts (#3918). Security posture: it runs fence tests, so it is never reused or rerun.
+    # The row is on main before the entry, which a second change adds, as a toolchain word is.
+    "namespace-sandbox": _Mapped((), ("merge",), security="security"),
     "audit": _Mapped((), ("merge",), live=True),
     # The gateway image's build and smoke (#3917), which merge.yml runs through run-job. Its
     # Dockerfile's apt installs are pinned by no lock, so it is never reused.
@@ -9514,6 +9518,14 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             '  { argv = ["npm", "run", "typecheck:web"] },\n',
             '  { argv = ["npm", "ci"] },\n  { argv = ["npm", "run", "typecheck:web"] },\n',
             expect="web-unit: command step 1 is an install (npm ci)",
+        ),
+        _plant(
+            "the user-namespace lift as a step, which would run wherever the job runs",
+            catalogue.CATALOGUE,
+            '  { argv = ["npm", "run", "typecheck:web"] },\n',
+            '  { argv = ["sh", "tools/ci/allow_userns.sh"] },\n'
+            '  { argv = ["npm", "run", "typecheck:web"] },\n',
+            expect="web-unit: command step 1 is an install (sh tools/ci/allow_userns.sh)",
         ),
         _plant(
             "a toolchain install no breadth.yml job of the entry runs",

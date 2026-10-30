@@ -144,7 +144,16 @@ INSTALL_ARGV: dict[str, tuple[str, ...]] = {
     "npm-ci": ("npm", "ci"),
     "chromium": ("npx", "playwright", "install", "chromium"),
     "electron": ("sh", "tools/ci/install_electron.sh"),
+    "userns": ("sh", "tools/ci/allow_userns.sh"),
 }
+
+#: Why a job whose toolchain names ``userns`` cannot run on a machine that is not a GitHub-hosted
+#: Linux runner: its install changes a kernel setting, which only a throwaway runner may have
+#: changed for it, never a developer's machine or a self-hosted runner (#3918).
+USERNS_ELSEWHERE = (
+    "it lifts the runner's user-namespace restriction (tools/ci/allow_userns.sh), which only a "
+    "GitHub-hosted Linux runner may have lifted"
+)
 
 #: The marker run-job gives a command that runs Electron's setuid sandbox helper
 #: (``tools/ci/sandbox_helper.sh``) on a GitHub-hosted Linux runner, so the helper gives it root's
@@ -323,6 +332,8 @@ def cannot_run_here(job: Job, host: Host, *, working_tree: bool = False) -> list
         where = PARTNERS.get(name)
         if where and not (host.root / where / ".git").exists():
             why.append(f"it reads {name}, and there is no checkout at {where}")
+    if "userns" in job.toolchain and not github_hosted_linux(host):
+        why.append(USERNS_ELSEWHERE)
     if "electron" in job.toolchain and not host.on_github and host.sandbox is not None:
         withheld = host.sandbox(host.root)
         if withheld:
@@ -2207,9 +2218,14 @@ def github_hosted_linux(host: Host) -> bool:
 
 def _helper_env(argv: Sequence[str], host: Host) -> dict[str, str]:
     """:data:`SANDBOX_HELPER_ENV` for a command that runs the sandbox helper, on a GitHub-hosted
-    Linux runner; nothing for any other command or host."""
-    runs_it = tuple(argv[:2]) in (INSTALL_ARGV["electron"], SANDBOX_HELPER_STEP)
-    if runs_it and github_hosted_linux(host):
+    Linux runner; nothing for any other command or host. The ``userns`` install there is given
+    the runner's own ``GITHUB_ACTIONS`` and ``RUNNER_ENVIRONMENT``, which it refuses to run
+    without, read from run-job's process, since a step's environment is built from nothing."""
+    if not github_hosted_linux(host):
+        return {}
+    if tuple(argv) == INSTALL_ARGV["userns"]:
+        return {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": SANDBOX_HELPER_HOSTED}
+    if tuple(argv[:2]) in (INSTALL_ARGV["electron"], SANDBOX_HELPER_STEP):
         return {SANDBOX_HELPER_ENV: SANDBOX_HELPER_HOSTED}
     return {}
 
