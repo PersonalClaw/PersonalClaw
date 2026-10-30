@@ -77,15 +77,13 @@ VERDICT_JOBS: tuple[tuple[Path, str], ...] = tuple((p, j) for p, j, _ in AGGREGA
     (p, "results") for p in TIER
 )
 
-#: A tier workflow's cancel-in-progress: true for a pull request's run, false for any other.
-_ONLY_A_PULL_REQUEST = "${{ github.event_name == 'pull_request' }}"
-#: The same, but false for a Dependabot head's run too, which waits its turn in the one group
-#: every Dependabot head's tier runs share. Either holds until that change lands (#3915).
-_ONLY_A_PULL_REQUEST_NOT_DEPENDABOTS = (
+#: A tier workflow's cancel-in-progress: true for a pull request's run, false for any other and
+#: for a Dependabot head's, which waits its turn in the one group every Dependabot head's tier
+#: runs share (#3915).
+_ONLY_A_PULL_REQUEST = (
     "${{ github.event_name == 'pull_request' &&"
     " github.event.pull_request.user.login != 'dependabot[bot]' }}"
 )
-_CANCELS_ONLY_A_PULL_REQUEST = (_ONLY_A_PULL_REQUEST, _ONLY_A_PULL_REQUEST_NOT_DEPENDABOTS)
 
 
 def _job_block(path: Path, job: str) -> list[str]:
@@ -250,7 +248,7 @@ def test_mains_merge_run_is_never_cancelled_by_the_next_merge() -> None:
     """Relation 4 for the tier: a push to main is its commit's check, so ``merge.yml`` cancels in
     progress only a pull request's run (#3913)."""
     value = _cancel_in_progress(MERGE_YML)
-    assert value in _CANCELS_ONLY_A_PULL_REQUEST, (
+    assert value == _ONLY_A_PULL_REQUEST, (
         f"merge.yml's concurrency has `cancel-in-progress: {value}`. A push to main is its "
         f"commit's check: the next merge must queue behind it, not erase it, so the run cancels "
         f"in progress only for a pull request, `{_ONLY_A_PULL_REQUEST}`."
@@ -268,10 +266,11 @@ def test_the_pr_gate_still_cancels_superseded_runs(path: Path) -> None:
     for runner capacity.
     """
     value = _cancel_in_progress(path)
-    assert value in _CANCELS_ONLY_A_PULL_REQUEST, (
+    assert value == _ONLY_A_PULL_REQUEST, (
         f"{path.name}'s concurrency has `cancel-in-progress: {value}`. A pull request's run must "
         f"cancel in progress, so a newer push to its branch cancels the run for the older head; "
-        f"any other run is its commit's check. The cancelled run's verdict is fixed in "
+        f"any other run is its commit's check, and a Dependabot head's run waits its turn in the "
+        f"group every Dependabot head shares. The cancelled run's verdict is fixed in "
         f"`results`' `if:`, not by keeping superseded runs alive."
     )
 

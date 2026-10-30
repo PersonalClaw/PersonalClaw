@@ -530,7 +530,10 @@ id is accepted, and a shallow clone refuses, because it cannot show ancestry.
   exception: it reads as empty, as GitHub reads a missing property, so the row does not hold a
   group keyed on one. A `workflows:` entry of a listener is read as a glob, and a listener of a
   `pull_request_target` workflow is held like one of a `pull_request` workflow. A push to a feature branch counts as the pull request whose head it is. A push to `main`
-  and a scheduled run are not a candidate's, so `main`'s own grouping is not this row's.
+  and a scheduled run are not a candidate's, so `main`'s own grouping is not this row's. The
+  candidates include two Dependabot pull requests and a fork's on a branch named as Dependabot
+  names its own. The one group two candidates may share is one only Dependabot heads join, where
+  every run waits its turn: no cancel-in-progress, and `queue: max` (see "The tier workflows").
 
 Main's `tools/ci` now reads a pull request's catalogue (see "Main's copy reads a pull request's
 catalogue" under "The catalogue"), and these rows still run in the candidate's own suite. A
@@ -1248,6 +1251,16 @@ group of their own: on `main`'s first attempt a suite shard's entry shares
 `merge-suite-<key>` with every push's (see "A burst of merges"), and every other entry, and a
 re-run, keys on its pull request or commit.
 
+A Dependabot head's runs are the exception. Every Dependabot head's runs, both tiers', wait in
+one group, `dependabot-heads`, so one runs at a time. None is cancelled: no cancel-in-progress,
+and `queue: max` keeps every waiting run, where the default `single` would replace the waiting
+run with the next, which GitHub reports as cancelled. A Dependabot head's run is one whose pull
+request's author is `dependabot[bot]`, a login no fork's branch name can borrow. On 2026-10-25
+four Dependabot pull requests held 13 of the account's 20 jobs, twice, and starved the release
+run's breadth. A Dependabot pull request's newer push no longer cancels its older run, which runs
+in its turn and is read stale, and closing one cancels none of its runs (see "A closed pull
+request's runs").
+
 Records are kept 30 days: the controller and the push replay read them at merge, after the run.
 The issue gave no retention, so 30 is the default until the owner sets one. Reports are kept a
 week and the build three days.
@@ -1287,9 +1300,8 @@ The rows that hold them, in `tests/rails/test_ci_contract.py`, each with planted
   the verdict names it, read from that output, as the candidate's partner; `changes` publishes the
   partners by key and the verdict holds every record to them, read from that output; one
   concurrency group per workflow and pull request or commit, cancelling only a pull request's
-  superseded run (the row also takes the shape that puts every Dependabot head's runs of both
-  tiers in one group, queued and never cancelled, until that change lands), and no job's group
-  of its own but `merge.yml`'s stage jobs'; no
+  superseded run, and every Dependabot head's runs of both tiers in one group, queued and never
+  cancelled; no job's group of its own but `merge.yml`'s stage jobs'; no
   job is `merge-verdict`, by its id, its name or any key the tier's plan can give a stage job; and
   no expensive job (the suite's shards, the browser run, the package, the gateway image) is in
   both tiers' plans, so the expensive tier runs once per candidate.
@@ -1545,6 +1557,11 @@ that trigger workflows", `pull_request`), so a key read from either would name t
 `main` run. `pr.yml`'s and `merge.yml`'s key on the pull request's number, which the close
 carries too. A workflow added later that runs on
 `pull_request` needs a job here; the contract row below fails until it has one.
+
+A closed Dependabot pull request's tier runs are not cancelled. They wait in the group every
+Dependabot head's runs share, and a job here that joined it would cancel another Dependabot
+head's run in flight. So they run in their turn, one at a time, and the row fails a job that
+joins that group on a Dependabot pull request's close.
 
 ### `test-macos`
 

@@ -41,9 +41,13 @@ on:
 # one commit, and a run of it in flight is never cancelled. The suite's shards on main share a
 # group of their own (the stage jobs' `concurrency`), so a burst of merges does not queue a full
 # suite per commit.
+#
+# Except a Dependabot head's run, which waits in `dependabot-heads` with pr.yml's Dependabot runs,
+# one at a time, never cancelled, as pr.yml's header says.
 concurrency:
-  group: merge-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && 'dependabot' || 'merge' }}-${{ github.event.pull_request.user.login == 'dependabot[bot]' && 'heads' || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]' }}
+  queue: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && 'max' || 'single' }}
 
 permissions:
   contents: read

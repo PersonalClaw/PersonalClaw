@@ -30,9 +30,18 @@ on:
 # name the older head, which the verdict reads as stale. A dispatch runs one commit, and a run of
 # it in flight is never cancelled: a later dispatch of the same commit waits. The workflow's name
 # is in the key, so this never cancels merge.yml.
+#
+# Except a Dependabot head's run (its pull request's author is `dependabot[bot]`). Every
+# Dependabot head's runs, this workflow's and merge.yml's, wait in one group,
+# `dependabot-heads`: one runs at a time and none is cancelled. `queue: max` keeps every waiting
+# run, where `single` would replace the waiting one with the next, and GitHub reports a replaced
+# run as cancelled. On 2026-10-25 four Dependabot pull requests held 13 of the account's 20 jobs,
+# twice, and starved the release run. Any other run's group, cancel-in-progress and queue are as
+# they were. See docs/maintainers/ci.md, "The tier workflows".
 concurrency:
-  group: pr-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && 'dependabot' || 'pr' }}-${{ github.event.pull_request.user.login == 'dependabot[bot]' && 'heads' || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]' }}
+  queue: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && 'max' || 'single' }}
 
 permissions:
   contents: read
