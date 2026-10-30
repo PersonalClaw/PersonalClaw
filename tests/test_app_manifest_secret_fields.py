@@ -132,7 +132,7 @@ from app_manifest_secret_fields_shared import (
 # The resolution of "where do first-party apps live" has ONE owner already — reuse it rather
 # than re-deriving it here. A second answer to that question is the defect shape this rail
 # exists to catch, and issue 1777 is what a wrong answer costs.
-from app_roots import _app_roots
+from app_roots import _app_roots, skip_unless_required
 
 from personalclaw.apps.secret_fields import is_credential_field_name
 
@@ -223,7 +223,7 @@ def test_no_credential_field_ships_unmarked() -> None:
                     unmarked.append(f"{app}: {name}")
 
     if credential_fields_seen == 0:
-        pytest.skip(
+        skip_unless_required(
             "no credential-shaped field is in scope, so this assertion would pass by matching "
             "nothing — which is indistinguishable from a clean catalog. Core's bundled tree has "
             "none by design and no first-party apps clone was resolved "

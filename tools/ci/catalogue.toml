@@ -1112,8 +1112,14 @@ cache = ["uv"]
 security = "ordinary"
 python = "3.12.15"
 timeout_min = 15
+junit = ["reports/junit-first-party-apps.xml"]
 command = [
   { argv = ["uv", "run", "python", "scripts/apps_sdk_contract.py", "--apps-dir", ".ci-apps", "--base-ref", "{base}", "--install-deps"] },
+  # Core's tests that read a first-party app (an agent bundle, web-tools, webhook-action, every
+  # manifest's settings). A core clone has no copy of the apps, so every suite shard skips those
+  # cases, and before this step no job ran them (#3918). Over the checkout above, a missing app
+  # fails them.
+  { argv = ["uv", "run", "pytest", "tests/test_acp_bundles.py", "tests/test_app_owned_prompts.py", "tests/test_web_extract_tool.py", "tests/test_web_render.py", "tests/test_action_schema_executor_parity.py", "tests/test_app_manifest_secret_fields.py", "tests/rails/test_app_manifest_secret_fields_tree.py", "--junitxml=reports/junit-first-party-apps.xml"], env = { PERSONALCLAW_FIRST_PARTY_APPS_DIR = ".ci-apps", PERSONALCLAW_REQUIRE_FIRST_PARTY_APPS = "1" } },
 ]
 
 # The dependency audit reads the advisories published at the time of the run: live, never reused.

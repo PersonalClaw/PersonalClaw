@@ -71,10 +71,22 @@ _NO_BROWSER = (
     "its only run without one, where the live cases skip and the string and structure tests run"
 )
 
+_NO_APPS = (
+    "apps-contract runs it over the first-party apps checkout, where its app cases must run; the "
+    "shards' run is its run on every platform, in a core clone that has no apps, where those cases "
+    "skip and the rest run (#3918)"
+)
+
 #: Files a job runs by name that the shards keep collecting on purpose, each with why.
 #: ``(job, file): reason``, the job a catalogue id or ``<workflow> <job>``. An exemption whose
 #: file is no longer a copy fails, so the list shrinks with the tree.
 EXEMPT_FILE_COPIES: Mapping[tuple[str, str], str] = {
+    ("apps-contract", "tests/test_acp_bundles.py"): _NO_APPS,
+    ("apps-contract", "tests/test_action_schema_executor_parity.py"): _NO_APPS,
+    ("apps-contract", "tests/test_app_manifest_secret_fields.py"): _NO_APPS,
+    ("apps-contract", "tests/test_app_owned_prompts.py"): _NO_APPS,
+    ("apps-contract", "tests/test_web_extract_tool.py"): _NO_APPS,
+    ("apps-contract", "tests/test_web_render.py"): _NO_APPS,
     ("browse-live", "tests/test_browse_behavioural_proof_is_reachable.py"): _NO_BROWSER,
     ("browse-live", "tests/test_browse_cdp_live.py"): (
         f"{_NO_BROWSER}; it is security-marked, so no leg selects it out"

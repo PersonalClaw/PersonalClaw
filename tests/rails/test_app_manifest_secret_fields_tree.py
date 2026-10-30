@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import re
 
-import pytest
 from app_manifest_secret_fields_shared import (
     _all_setting_names,
     _manifests,
@@ -20,7 +19,7 @@ from app_manifest_secret_fields_shared import (
 # The resolution of "where do first-party apps live" has ONE owner already — reuse it rather
 # than re-deriving it here. A second answer to that question is the defect shape this rail
 # exists to catch, and issue 1777 is what a wrong answer costs.
-from app_roots import _app_roots
+from app_roots import _app_roots, skip_unless_required
 
 from personalclaw.apps.secret_fields import is_credential_field_name
 
@@ -57,7 +56,7 @@ def test_the_sibling_rails_verdicts_match_ours_over_the_live_catalog() -> None:
         None,
     )
     if sibling is None:
-        pytest.skip(
+        skip_unless_required(
             "no sibling apps clone with a settings-schema-posture rail was resolved, so the "
             "two implementations were not compared at all. Roots searched: "
             f"{[str(r) for r in _app_roots()]}"

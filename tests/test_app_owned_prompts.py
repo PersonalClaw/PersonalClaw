@@ -16,6 +16,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from app_roots import first_party_app
 
 from personalclaw.apps import app_manager, manager, prompt_registry
 from personalclaw.apps.manifest import AppManifest
@@ -53,7 +54,6 @@ def _isolate(tmp_path, monkeypatch):
 # web-tools is a SEPARATED app now (not baseline-bundled), so its prompts seed only
 # when installed — covered by test_web_extract_renders_* below. native-knowledge is
 # still a core-platform bundled app whose prompts seed as baseline.
-_APPS_DIR = Path(__file__).resolve().parents[2] / "apps"
 
 
 @pytest.mark.parametrize(
@@ -96,9 +96,7 @@ def test_bundled_apps_seed_their_prompts_as_baseline(use_cases, prompt_names):
 
 def test_web_extract_renders_byte_identical_to_pre_migration_literal():
     """The app-seeded web_extract prompt renders identically to the original md."""
-    if not (_APPS_DIR / "web-tools").is_dir():  # standalone core clone
-        pytest.skip("web-tools app dir not present (standalone clone)")
-    app_manager.install(_APPS_DIR / "web-tools", origin="local", confirm=True)
+    app_manager.install(first_party_app("web-tools"), origin="local", confirm=True)
 
     # The pre-migration literal (config/prompts/task-web_extract.md content) with
     # its declared variables — the migrated prompt must render the same bytes.
