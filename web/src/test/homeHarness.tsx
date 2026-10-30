@@ -76,6 +76,7 @@ export function thread(key: string, title: string, over: Partial<ChatSessionSumm
     run_state: {
       work: `chat:${key}`, session: key, kind: 'chat', phase: 'idle', line: '', since: null, turn: null,
       last_step_at: null, stopping: false, steerable: false, last_outcome: 'complete', queued_messages: 0, seq: 0,
+      waiting: [], helpers_waiting: [], wait: null,
     },
     ...over,
   } as ChatSessionSummary

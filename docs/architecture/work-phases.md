@@ -41,7 +41,7 @@ cuts the line to its own room.
 | `idle` | nothing queued or running | neutral | quiet | (empty) |
 
 **Tones.** Live work is the scheme's primary (coral), never a colour of its own.
-Waiting on the owner's yes is warn and on her answer info, a finish is ok, a failure
+Waiting on the owner's yes is warn and on their answer info, a finish is ok, a failure
 danger, and nothing running carries no accent. Listening keeps warn, which matches the
 system's own microphone dot.
 
@@ -71,6 +71,9 @@ vocabulary so every surface already has their looks.
 | `last_outcome` | how the latest settled turn ended: `complete`, `stopped`, `error` or `interrupted` (`chat_runner.terminal_outcome_for_turn`) |
 | `queued_messages` | how many messages wait behind the turn |
 | `seq` | the stream stamp (`DashboardState.next_stream_seq`), so a page applies a frame only when it is newer than its snapshot |
+| `retry`, `queue` | set only in `retrying` and `waiting_model` (below) |
+| `waiting`, `helpers_waiting` | while a turn runs, the waiting list's ids (`approval:<id>`, `question:<id>`) of the asks it raised itself, and of the approvals its helpers raised, oldest first |
+| `wait` | set only in `approval` and `input`: the typed wait on the newest ask (below) |
 
 Times are UTC instants. A frame is sent when the phase, its line or one of the other
 fields changes, never per streamed chunk.
@@ -135,8 +138,8 @@ cancellation included. Nothing runs the turn engine around it
 | How the turn ended | Phase | Line |
 | --- | --- | --- |
 | complete (an answer, or a command answered by the chat itself) | `done` | Done in 12 seconds |
-| stopped (her Stop, a move, a stop before its prompt) | `done` | Stopped |
-| declined (her Deny, and the agent ends the turn) | `done` | the decline's own sentence |
+| stopped (their Stop, a move, a stop before its prompt) | `done` | Stopped |
+| declined (their Deny, and the agent ends the turn) | `done` | the decline's own sentence |
 | error (a failure, a turn past its time limit) | `error` | Stopped: the turn's own error |
 | interrupted (a restart or a shutdown cut it short) | `error` | Stopped: The gateway restarted before this reply finished. … |
 
@@ -154,7 +157,7 @@ work ended, and nothing is kept of it after.
 by the chat's own rule (`work_phase.classify_call`: a search says where it looks, any other call
 is a tool under its own label), `streaming` once on its first words after another phase, and
 `approval` while its start or one of its calls waits on the owner's OK. Its ending: a stop is
-`done` ("Stopped"), her Deny of its start is `done` in the decline's own words, a failure is
+`done` ("Stopped"), their Deny of its start is `done` in the decline's own words, a failure is
 `error` with its error, and a finish is `done` with how long it took.
 
 **A loop** says the phase of its status, and while it runs, what its worker's turn does: the
@@ -183,9 +186,9 @@ worker's turn ending under the hold included, and runs again once the switch is 
 **A workflow run** says the phase of its status, a `tool` for each step it starts (named as its
 author named the step), and while it waits at a gate, the gate's ask: a yes or no is `approval`,
 any other answer `input`, and an event gate, which waits for something to happen rather than for
-her, `queued`. The gate's ask outlasts the run's own needs-input status until the gate is answered
+them, `queued`. The gate's ask outlasts the run's own needs-input status until the gate is answered
 or the run leaves it, and a step started while it waits does not say over it. An escalation asks
-nothing of her, and is no gate. Incident mode holds a running run without changing its status: the
+nothing of them, and is no gate. Incident mode holds a running run without changing its status: the
 run's publisher says it is held, and that it carries on (`workflows/incident_hold.py`).
 
 | Status | Phase | Line |
@@ -205,7 +208,11 @@ run's publisher says it is held, and that it carries on (`workflows/incident_hol
 While a turn runs, the gateway sends its chat's `work_phase` again every 15 s, with
 the phase unchanged and `last_step_at` current, as a frame that carries data. A turn
 whose model is silent still says it is running. It is one task per running turn
-(named `work_phase:<chat>`), cancelled where the turn's last frame is sent.
+(named `work_phase:<chat>`), cancelled where the turn's last frame is sent. The
+turn's status row says "No new activity for 1m" once `last_step_at` (the turn's start,
+while it has taken no step) is a minute old, in a working phase that does not say what
+it waits on itself (`retrying`, `waiting_model`), and drops it at the next step
+(`web/src/ui/TurnStatusRow.tsx`).
 
 ## Retries and waits
 
@@ -226,6 +233,22 @@ measured each and never from a timer:
 
 Each field is set only in its phase, `null` otherwise.
 
+## What a turn waits on
+
+An ask that names the chat, raised while its turn runs, is its phase: the newest
+approval (`approval`, "Needs your OK: <tool>"), else the newest question (`input`,
+"Asks: <question>"). The payload names each ask by the waiting list's id
+(`personalclaw.waiting`): `waiting` holds the turn's own approvals and questions, and
+`helpers_waiting` the approvals of the helpers it started (an approval's id names its
+helper, `subagent.approval_subagent_id`). `wait` is the newest ask's typed record
+(`personalclaw/work_wait.py`, `Wait`): `reason` (`owner_answer` for an approval, `input`
+for a question), `resume_condition` `{kind: "answered", ref: <its waiting list id>}`,
+`deadline_at` (the approval window after it was asked, `null` for none) and
+`evidence_source` (`approval_registry`, `question_registry`). Each reason is known from
+its own registries (`work_wait.REASONS`), and the constructor refuses any other source,
+and `model_text` by name: a model's words never make a wait
+(`tests/test_a_wait_is_typed.py`). Once nothing runs, the chat waits on nothing.
+
 ## Listening
 
 Listening is the shell's system state, with the sources that hold the microphone, not a
@@ -243,10 +266,10 @@ tab has no shell and reports nothing.
 
 `GET /api/chat/sessions` rows, `GET /api/chat/sessions/{session}` and the chats of
 `GET /api/projects/{id}/linked` carry the chat's `run_state` (`_ChatSession.run_state`):
-the last `work_phase` payload sent for it, served with `phase: "idle"`, an empty line
-and no turn once nothing runs. A chat that never ran here is served the idle payload.
+the last `work_phase` payload sent for it, served with `phase: "idle"`, an empty line,
+no turn and no waits once nothing runs. A chat that never ran here is served the idle payload.
 A page that opens or reconnects mid-turn reads the same state the frames say, and a
-chat's running, stopping and steerable state, whether it waits on her OK, and how its
+chat's running, stopping and steerable state, whether it waits on the owner's OK, and how its
 last turn ended, are read there and nowhere else: the routes' own flags for them are
 gone (`web/src/lib/noSurfaceDerivesRunning.test.ts`). The chat page's stall
 reconciler, which recovers an approval card whose frame it lost, reads the `approval`
@@ -277,14 +300,14 @@ reading it from `web/src/lib/workPhase.ts` (`phaseColor`, `phaseToken`, `phaseTe
 
 - **A loop's and a workflow run's status** are painted as the phase the gateway says
   they are (`LOOP_STATUS_PHASES` and `RUN_STATUS_PHASES`, the web's copies of
-  `work_phase.py`'s, which `tests/test_work_phase_vocabulary.py` pins equal): her plan
-  waiting for launch is warn, a run or a loop waiting on her answer info, queued and
+  `work_phase.py`'s, which `tests/test_work_phase_vocabulary.py` pins equal): their plan
+  waiting for launch is warn, a run or a loop waiting on their answer info, queued and
   held work coral, a stop and a cancel ok, a failure and an early end danger.
 - **An agent world's states** are painted as the phase each stands for
   (`WORLD_PHASE`): working is coral, and live work held up is queued's coral, told
   apart by its ring, its pace and its word.
 - **A needs-you row** in the Inbox, the bell and the Projects board is painted by what
-  it waits on: her yes (approval, warn) or her answer (input, info).
+  it waits on: their yes (approval, warn) or their answer (input, info).
 - **The microphone chip** is listening's warn, the system's own microphone dot.
 
 `web/src/lib/everySurfacePaintsAPhaseInItsTone.test.ts` holds each of these to its
@@ -297,11 +320,13 @@ a chat with a turn running, a helper that has not ended (a queued one included),
 a workflow run that has started and not ended, a trigger's fire whose work has no row of
 its own, and a webhook's turn. Each row is the work's last frame with the row's own fields
 beside it (`name`, `agent`, `started_at`, `route`, `blocked`, `waiting`), so a chat's row
-is its `run_state`. Work no producer has said anything of yet reads its phase from its
+is its `run_state`, but for `waiting`: the row's own names each ask waiting on the owner for
+the work by its registry id, its helpers' included, where the run state's names the turn's
+own asks by their waiting list ids (and `helpers_waiting` its helpers'). Work no producer has said anything of yet reads its phase from its
 status, by the tables above. A loop's workers and planner are their loop, and a loop
 backed by a run is one row, a loop, named by its run. `blocked` is true in `queued`,
 `waiting_model` and `retrying`; `waiting` names the approvals and the owner's questions
-that wait on her for the work. Rows are ordered by when the work began (a chat's turn, a
+that wait on them for the work. Rows are ordered by when the work began (a chat's turn, a
 helper, a loop's or a run's creation, a fire, a webhook's turn), so a row never moves as its
 phase does. `finished` is the last 20 endings, each kept 10 minutes, newest first.
 

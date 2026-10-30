@@ -3,7 +3,7 @@
 The chat list and a chat's detail serve ``run_state``, the chat's last ``work_phase`` payload. The
 running list's row for a chat turn is that same payload with the row's own fields beside it (its
 name, its agent, its route, what waits on the owner for it), so the list and the chat can never
-disagree about one chat: running, stopping and waiting on her OK alike.
+disagree about one chat: running, stopping and waiting on the owner's OK alike.
 """
 
 from __future__ import annotations
@@ -40,7 +40,11 @@ async def _row_and_run_state(state) -> tuple[dict, dict]:
 
 
 def _is_its_run_state(row: dict, run_state: dict) -> None:
-    assert {k: row[k] for k in run_state} == run_state, "the row is the chat's run state"
+    """The row is the run state, beside the row's own fields: its ``waiting`` is the running list's
+    (each ask waiting on the owner for the work by its registry id, its helpers' included), where
+    the run state's names the turn's own asks by their waiting list ids."""
+    theirs = {k: v for k, v in run_state.items() if k != "waiting"}
+    assert {k: row[k] for k in theirs} == theirs, "the row is the chat's run state"
 
 
 @pytest.mark.asyncio
@@ -87,7 +91,7 @@ async def test_a_stopping_chats_row_is_its_run_state(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_chat_waiting_on_her_ok_is_its_run_state_and_names_the_ask(tmp_path):
+async def test_a_chat_waiting_on_the_owners_ok_is_its_run_state_and_names_the_ask(tmp_path):
     w = _World(tmp_path, lambda: _asks())
     w.session._trust = False
     task = w.start()
@@ -96,5 +100,6 @@ async def test_a_chat_waiting_on_her_ok_is_its_run_state_and_names_the_ask(tmp_p
     _is_its_run_state(row, run_state)
     assert row["phase"] == "approval"
     assert row["waiting"] == list(w.state._pending_approvals), "the ask it waits on is named"
+    assert run_state["waiting"] == [f"approval:{i}" for i in w.state._pending_approvals]
     w.state.decide_session_approval(w.session, "r1", "approved", by=YOU)
     await asyncio.wait_for(task, timeout=10)

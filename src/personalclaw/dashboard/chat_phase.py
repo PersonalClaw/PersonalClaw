@@ -8,6 +8,11 @@ question (``owner_questions``) for this chat. This module turns those into the c
 it is about, when its latest step was, whether a stop is asked of it and whether it takes a steer,
 how the chat's last turn ended, and how many messages wait behind it.
 
+**What it waits on is typed.** While a turn runs, ``waiting`` and ``helpers_waiting`` are the
+waiting list's ids (``personalclaw.waiting``) of the asks it raised itself and of those its helpers
+raised, and in ``approval`` or ``input`` ``wait`` is the newest ask's ``work_wait.Wait``: what ends
+it, by when, and the registry that says so, never the model's words.
+
 **Sent on a change, never per chunk.** :func:`say` records a step and sends the payload only when
 what it says changed; :func:`touch` moves the latest step's time without sending.
 
@@ -28,7 +33,7 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.instants import utc_iso
@@ -42,6 +47,7 @@ from personalclaw.work_phase import (
     done_in,
     family_of,
 )
+from personalclaw.work_wait import Resume, Wait
 from personalclaw.workref import work_ref
 
 if TYPE_CHECKING:
@@ -100,6 +106,13 @@ class RunState:
     #: Set only in ``waiting_model``: ``{model, behind}`` — the local model it waits for, and how
     #: many calls are ahead of it there.
     queue: dict[str, Any] | None = None
+    #: While a turn runs, the waiting list's ids (``personalclaw.waiting``) of the asks it raised
+    #: itself and of those its helpers raised, oldest first.
+    waiting: list[str] = field(default_factory=list)
+    helpers_waiting: list[str] = field(default_factory=list)
+    #: Set only in ``approval`` and ``input``: the typed wait on the newest ask
+    #: (``work_wait.Wait``), which says what ends it and the registry it is known from.
+    wait: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -170,13 +183,14 @@ def idle_payload(key: str) -> dict[str, Any]:
 
 
 def served(session: _ChatSession) -> dict[str, Any]:
-    """The chat's run state as the routes serve it: the last payload it was sent, idle once nothing
-    runs; :func:`idle_payload` when it was sent none."""
+    """The chat's run state as the routes serve it: the last payload it was sent, idle and waiting
+    on nothing once nothing runs; :func:`idle_payload` when it was sent none."""
     run = session._run
     if run is None or run.sent is None:
         return idle_payload(session.key)
     if run.turn is None:
-        return {**run.sent, "phase": WorkPhase.IDLE.value, "line": "", "turn": None}
+        idle = {"phase": WorkPhase.IDLE.value, "line": "", "turn": None, "wait": None}
+        return {**run.sent, **idle, "waiting": [], "helpers_waiting": []}
     return dict(run.sent)
 
 
@@ -184,29 +198,70 @@ def _clip(line: str) -> str:
     return clip_words(redact_for_display(str(line or "")), LINE_LIMIT)
 
 
-def _waiting_on(state: DashboardState, session: _ChatSession) -> tuple[WorkPhase, str] | None:
-    """What the chat's running turn waits on the owner for: the newest approval that names the chat
-    (its own call's, or a helper's it started), else the newest question it asks her."""
+@dataclass(frozen=True)
+class _Asks:
+    """What a chat's running turn waits on the owner for: the waiting list's ids of its own asks
+    and of its helpers', and the phase, line and wait the newest ask is said with."""
+
+    own: list[str] = field(default_factory=list)
+    helpers: list[str] = field(default_factory=list)
+    newest: tuple[WorkPhase, str, dict[str, Any]] | None = None
+
+
+def _ts(ask: dict[str, Any]) -> float:
+    return float(ask.get("ts") or 0.0)
+
+
+def _deadline(state: DashboardState, ask: dict[str, Any]) -> str | None:
+    """When an unanswered *ask* ends: the owner's window after it was asked
+    (``agent.approval_timeout_minutes``), which an approval and a question each wait before it
+    ends unanswered (``owner_questions.ask``), as the waiting list says. ``None`` when the window
+    cannot be read."""
+    try:
+        window = float(state.approval_window_secs())
+    except Exception:  # noqa: BLE001 — a window that cannot be read is no deadline
+        window = 0.0
+    return utc_iso(_ts(ask) + window) if _ts(ask) and window > 0 else None
+
+
+def _asks(state: DashboardState, session: _ChatSession) -> _Asks:
+    """The approvals that name the chat (its own calls', or a helper's it started: the approval's
+    id names the helper, ``subagent.approval_subagent_id``) and the questions it asks the owner,
+    by their waiting list ids. The newest approval, else the newest question, is the phase."""
+    from personalclaw.subagent import approval_subagent_id
+
     pending = getattr(state, "_pending_approvals", None) or {}
-    asks = [e for e in pending.values() if str(e.get("session") or "") == session.key]
-    if asks:
-        newest = max(asks, key=lambda e: float(e.get("ts") or 0.0))
-        return WorkPhase.APPROVAL, f"Needs your OK: {newest.get('tool') or 'a step'}"
+    named = (e for e in pending.values() if str(e.get("session") or "") == session.key)
+    approvals = sorted((e for e in named if e.get("id")), key=_ts)
     questions = getattr(state, "owner_questions", None)
-    cards = questions.pending_for(session.key) if questions is not None else []
+    asked = questions.pending_for(session.key) if questions is not None else []
+    cards = sorted((c for c in asked if c.get("id")), key=_ts)
+    mine = [("approval", e) for e in approvals if not approval_subagent_id(str(e["id"]))]
+    theirs = [e for e in approvals if approval_subagent_id(str(e["id"]))]
+    own = sorted(mine + [("question", c) for c in cards], key=lambda ask: _ts(ask[1]))
+    asks = _Asks([f"{kind}:{a['id']}" for kind, a in own], [f"approval:{e['id']}" for e in theirs])
+    if approvals:
+        newest = approvals[-1]
+        resume = Resume("answered", f"approval:{newest['id']}")
+        wait = Wait("owner_answer", resume, _deadline(state, newest), "approval_registry")
+        line = f"Needs your OK: {newest.get('tool') or 'a step'}"
+        return _Asks(asks.own, asks.helpers, (WorkPhase.APPROVAL, line, wait.as_dict()))
     if cards:
-        newest = max(cards, key=lambda c: float(c.get("ts") or 0.0))
-        asked = (newest.get("questions") or [{}])[0].get("question") or "a question"
-        return WorkPhase.INPUT, f"Asks: {asked}"
-    return None
+        newest = cards[-1]
+        resume = Resume("answered", f"question:{newest['id']}")
+        wait = Wait("input", resume, _deadline(state, newest), "question_registry")
+        question = (newest.get("questions") or [{}])[0].get("question") or "a question"
+        return _Asks(asks.own, asks.helpers, (WorkPhase.INPUT, f"Asks: {question}", wait.as_dict()))
+    return asks
 
 
-def _shown(state: DashboardState, session: _ChatSession, run: ChatRun) -> tuple[WorkPhase, str]:
-    if run.turn is not None:
-        waiting = _waiting_on(state, session)
-        if waiting is not None:
-            return waiting[0], _clip(waiting[1])
-    return run.phase, run.line
+def _shown(
+    state: DashboardState, session: _ChatSession, run: ChatRun
+) -> tuple[WorkPhase, str, _Asks]:
+    asks = _asks(state, session) if run.turn is not None else _Asks()
+    if asks.newest is not None:
+        return asks.newest[0], _clip(asks.newest[1]), asks
+    return run.phase, run.line, asks
 
 
 def _coarse(payload: dict[str, Any]) -> tuple[bool, str, bool]:
@@ -220,7 +275,7 @@ _STAMPS = ("seq", "last_step_at")
 
 def _send(state: DashboardState, session: _ChatSession, run: ChatRun, *, again=False) -> None:
     """Send the chat's payload when what it says changed; *again*, whether or not it did."""
-    phase, line = _shown(state, session, run)
+    phase, line, asks = _shown(state, session, run)
     if run.shown != (phase, line):
         run.shown, run.since = (phase, line), _now()
     turn = run.turn
@@ -238,7 +293,7 @@ def _send(state: DashboardState, session: _ChatSession, run: ChatRun, *, again=F
         ),
         last_step_at=utc_iso(run.last_step) if run.last_step is not None else None,
         # Asked of the running turn only: a stop is over with the turn it was asked of, whether or
-        # not her Stop has heard so yet.
+        # not the owner's Stop has heard so yet.
         stopping=turn is not None and session._stopping,
         steerable=turn is not None and session._takes_steers,
         last_outcome=run.last_outcome,
@@ -246,6 +301,9 @@ def _send(state: DashboardState, session: _ChatSession, run: ChatRun, *, again=F
         seq=0,
         retry=run.retry if phase is WorkPhase.RETRYING else None,
         queue=run.queue if phase is WorkPhase.WAITING_MODEL else None,
+        waiting=asks.own,
+        helpers_waiting=asks.helpers,
+        wait=asks.newest[2] if asks.newest is not None else None,
     ).as_dict()
     previous = run.sent
     if not again and previous is not None:

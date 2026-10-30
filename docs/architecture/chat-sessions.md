@@ -544,14 +544,14 @@ chat, channel thread, loop worker, webhook, subagent).
   once the turn takes it (`EVENT_STEER`, written by `running_turn.take_steer`):
   the answer so far is settled first, so the entry sits between what the answer
   said before it and after it, marked `meta.steered`; one the turn does not take
-  is written by the queue when it runs, once. However her message comes in (a
+  is written by the queue when it runs, once. However their message comes in (a
   send, a steer, a queued send, an edit or a rewind), the page sends each block
-  she pasted in place of its `[Paste #N]` marker and the blocks beside it
+  they pasted in place of its `[Paste #N]` marker and the blocks beside it
   (`asSent` in `web/src/pages/chat/pasteBlocks.ts`; `meta.pastes`,
-  `own_words.PASTES`): her entry keeps them, a
+  `own_words.PASTES`): their entry keeps them, a
   queued item carries them to the row it runs as (numbered again when queued
-  messages merge), and every frame that tells a page of her message carries them,
-  so her bubble shows each as its chip live and read back. A send that carries a
+  messages merge), and every frame that tells a page of their message carries them,
+  so their bubble shows each as its chip live and read back. A send that carries a
   block and still holds its marker is refused (`paste_not_expanded`): the model
   would read the marker and never what was pasted. The save records `message_count`
   in the metadata line, which `ConversationLog.list_sessions` serves as the chat
@@ -755,7 +755,7 @@ chat, channel thread, loop worker, webhook, subagent).
    the working directory changes what the chat runs on the way a change of its
    agent or model does (`running_turn.rebind`, `running_turn.to_folder`): between
    turns its runtime is let go and the next turn's is built in the new folder, and
-   a turn running when it lands ends as stopped and her message is answered again
+   a turn running when it lands ends as stopped and their message is answered again
    there. A clear puts the chat back in the workspace a new chat starts in. A
    cached runtime built on another axis (the same folder starting or ceasing to be
    the workspace) is rebuilt at its next acquire (`session._axis_moved`,
@@ -855,11 +855,11 @@ chat, channel thread, loop worker, webhook, subagent).
    (`one_shot_completion(attempt_timeout=…)`, which knowledge enrichment uses), so a
    slow first model hands over instead of spending the whole wait, and a chain that
    only timed out is reported as a timeout (`llm_helpers.ChainExhausted`), not as
-   no model being available. The chores whose answer she sends as her own words, the
-   follow-up chips and the suggestions, may say for her only what they were written
+   no model being available. The chores whose answer they send as their own words, the
+   follow-up chips and the suggestions, may say for them only what they were written
    from says. Each prompt has rules added after whatever template is bound (a seeded
    prompt is never rewritten on an existing install); the chips' rules also say a chip
-   never answers what the reply asked her. The answer is then checked
+   never answers what the reply asked them. The answer is then checked
    (`given_details.keep_given`): one that states a time, number, name, path or file
    its source does not give is left out. A prompt rewrite is checked the same way
    (`given_details.ungiven`) and is not used when it adds such a detail;
@@ -872,14 +872,18 @@ chat, channel thread, loop worker, webhook, subagent).
 6. **What the turn is doing** — the turn says each phase it is in, as the
    runner measures it, in a `work_phase` frame (`dashboard/chat_phase.py`, see
    [work-phases.md](work-phases.md)): waiting to start as soon as it is
-   accepted, thinking, searching, the tool it runs, writing, waiting on her OK
-   or her answer, handing off to helpers. A running turn says its phase again
-   every 15 s, and every way a turn ends sends one last frame that says how.
-   The chat list, a chat's detail and a project's chats serve the last frame
-   as the chat's `run_state`, idle once nothing runs, so a page that opens or
-   reconnects mid-turn reads what the frames said; whether a turn runs, is
-   stopping, takes a steer or waits on her OK, and how the last one ended, is
-   read there and nowhere else.
+   accepted, thinking, searching, the tool it runs, writing, waiting on the
+   owner's OK or answer, handing off to helpers. A wait names each ask by its
+   waiting list id (`waiting`, and `helpers_waiting` for its helpers' asks) and
+   carries a typed `wait` (`work_wait.Wait`), built from the approval or
+   question registry, never from the model's words. A running turn says its
+   phase again every 15 s, which the turn's status row reads to say "No new
+   activity for 1m", and every way a turn ends sends one last frame that says
+   how. The chat list, a chat's detail and a project's chats serve the last
+   frame as the chat's `run_state`, idle once nothing runs, so a page that
+   opens or reconnects mid-turn reads what the frames said; whether a turn
+   runs, is stopping, takes a steer or waits on the owner, and how the last
+   one ended, is read there and nowhere else.
 
 Around the engine:
 
@@ -921,20 +925,20 @@ a variant.
 
 **Running a turn again may repeat what the attempt did.** Five doors run a turn
 again: Retry on a failed turn and Regenerate on an answer (`regenerate`), Rewind
-to an earlier message and a resend of a message she did not change
+to an earlier message and a resend of a message they did not change
 (`edit-resend`), and a move to another agent, model or folder while the turn
 answered (`running_turn.say_moved`). Each replaces the attempt the turn made, and none
 hands the turn asked again the calls that attempt finished: the first four
 delete them, and a runtime built for a turn (after a restart, a rewind or a
 move) is given the chat's messages, never its calls. So every door asks through
 one function, `repeated_steps.ask_first`, before it deletes or runs anything.
-When the attempt finished a call that may have changed something, a door she
-uses runs nothing and answers `409 retry_repeats_steps` with the question: its
+When the attempt finished a call that may have changed something, a door they
+use runs nothing and answers `409 retry_repeats_steps` with the question: its
 title, its sentence, each such call by its tool and target (a failed one says
 so), and the `confirm` the owner's yes sends back. The chat page shows it, each
 step in the words of its card, and sends the request again only on that yes; a
 No leaves the chat as it was. A move, which nobody is there to answer, does not
-send her message to the new agent on its own: the turn ends in the error that
+send their message to the new agent on its own: the turn ends in the error that
 says so ("Moved to … This turn had finished 1 step that may have changed
 something, so your message was not sent again …"), and Retry on it asks. The
 edit door counts a message as sent again when the page says so (`again`, which

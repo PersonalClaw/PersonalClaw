@@ -1650,103 +1650,103 @@ Status: planned
 
 ### 4.1 What it is
 
-Status: planned
+One value per chat, computed by the gateway (`dashboard/chat_phase.py`, `RunState`), sent as that chat's
+`work_phase` frame (#3833) and served on the chat list and the detail routes as `run_state`. Every surface
+reads it; none derives "running" from anything else.
 
-One value per chat, computed by the gateway, sent as that chat's #3833 phase frame and served on the chat
-list and the detail routes. Every surface reads it; none derives "running" from anything else.
+### 4.2 What it replaced
 
-### 4.2 Today
-
-Status: planned
-
-- The list row derives `running`, `stopping`, `pending_approval`, `pending_approval_info` (by scanning back
-  for the last unresolved permission row), `waiting_for_input` and `stop_state`
-  (`dashboard/state.py:845-899`); the detail serves `running`, `stopping`, `steerable`,
-  `last_turn_outcome`, `stream_seq` (`chat_handlers.py:1023-1044`) and `pending_questions` (`:1111`).
-- A native turn says one free-text status, "Thinking…", twice: a `chat_status` frame and an
-  `activity_event {kind: status}` (`chat_runner.py:3413-3415`); `turn_steerable` says when a steer is
-  taken (`running_turn.py:126`); a `heartbeat` frame goes out only when another event arrives, and nothing
-  reads it (`chat_runner.py:3496-3498`).
-- The page reconstructs stalls (`resolveStalledStream`, `web/src/pages/chat/streamStall.ts:50-64`) and
-  lanes (`web/src/lib/attentionLanes.ts:66`).
-- A stop is `idle`, `soft_pending` or `killing` (`state.py:556-579`).
-- The phase list planned in #3833: `queued`, `thinking`, `searching`, `tool`, `planning`, `delegating`,
-  `streaming`, `listening`, `approval`, `input`, `done`, `error`, sent as `{work, kind, phase, line,
-  since}`.
+- The list row derived `running`, `stopping`, `pending_approval`, `pending_approval_info` (by scanning back
+  for the last unresolved permission row), `waiting_for_input` and `stop_state`; the detail served
+  `running`, `stopping`, `steerable`, `last_turn_outcome`, `stream_seq` and `pending_questions`. All of them
+  but `stream_seq` are gone.
+- A native turn said one free-text status, "Thinking…", twice: a `chat_status` frame and an
+  `activity_event {kind: status}`; `turn_steerable` said when a steer was taken; a `heartbeat` frame went
+  out only when another event arrived. The `work_phase` frame replaces all four.
+- The page reconstructed stalls (`streamStall.ts`) and lanes (`attentionLanes.ts`) from those flags; both
+  read `run_state` now.
 
 ### 4.3 The run state (decision 7)
 
-Status: planned
-
 #3833's event is one frame, `work_phase`, for every kind of work. A chat's run state is its `work_phase`
-payload, with these fields:
+payload, with these fields, in this order (`RunState`; `web/src/lib/api.ts` types it, and
+`tests/test_the_list_and_detail_serve_the_last_phase_frame.py` holds the two to one list):
 
-| Field | Type | Required | Meaning |
-|---|---|---|---|
-| `work` | WorkRef | yes | `chat:<session>` |
-| `kind` | `chat` | yes | #3833's kind |
-| `session` | str | yes | the frame's conversation field (§1.6) |
-| `phase` | Phase (§4.4) | yes | |
-| `line` | str | yes | the gateway's one line for what it is doing now; "" when idle |
-| `since` | instant | yes | when this phase began |
-| `turn` | `{message_id, started_at}` \| null | yes | the running turn, null when idle |
-| `stopping` | bool | yes | a stop was asked and the turn has not ended (`_stop_state != "idle"`) |
-| `steerable` | bool | yes | the running turn takes a steer (`session._takes_steers`) |
-| `waiting` | [str] | yes | ids of #3888 items this chat's own turn raised |
-| `helpers_waiting` | [str] | yes | ids of #3888 items its helpers raised (the helpers' roll-up, §12): a helper in `waiting_on_owner` counts, and so do the waiting items of the chat's ways |
-| `wait` | Wait \| null | yes | in `approval` and `input`: the typed wait, below |
-| `scheduled_continue` | `{message_id, at, kind}` \| null | yes | while a timed Continue or Retry waits (§5.5) |
-| `call` | `{message_id, state, since}` \| null | yes | while a voice call in this chat is `connecting`, `live` or `ending`, so every surface knows a call holds the microphone without reading parts |
-| `retry` | `{attempt, of, next_at, reason}` \| null | yes | set in `retrying`; `reason` is the provider-failure record's (§17.16) |
-| `queue` | `{model, behind}` \| null | yes | set in `waiting_model`: how many requests are ahead on that model |
-| `last_step_at` | instant \| null | yes | the latest step's time, so a surface can say "No new activity for 1m" |
-| `last_outcome` | as `Message.outcome` \| null | yes | how the latest settled turn ended (today's `last_turn_outcome`) |
-| `queued_messages` | int | yes | the chat's queue length |
-| `seq` | int | yes | from `next_stream_seq`; a client keeps the highest it saw |
+| Field | Type | Meaning |
+|---|---|---|
+| `work` | WorkRef | `chat:<session>` |
+| `session` | str | the frame's conversation field (§1.6) |
+| `kind` | `chat` | #3833's kind |
+| `phase` | Phase (§4.4) | |
+| `line` | str | the gateway's one line for what it is doing now; "" when idle |
+| `since` | instant \| null | when this phase or its line began; null before anything ran |
+| `turn` | `{message_id, started_at}` \| null | the running turn, null when idle |
+| `last_step_at` | instant \| null | the latest step's time, so a surface can say "No new activity for 1m" |
+| `stopping` | bool | a stop was asked of the running turn and it has not ended |
+| `steerable` | bool | the running turn takes a steer (`session._takes_steers`) |
+| `last_outcome` | as `Message.outcome` \| null | how the latest settled turn ended |
+| `queued_messages` | int | the chat's queue length |
+| `seq` | int | from `next_stream_seq`; a client keeps the highest it saw |
+| `retry` | `{attempt, of, next_at, reason}` \| null | set in `retrying`: this attempt of how many, when it is made (null once it is, or for a fail-over), and the failure's sentence until the provider-failure record names it (§17.16) |
+| `queue` | `{model, behind}` \| null | set in `waiting_model`: how many calls are ahead on that local model |
+| `waiting` | [str] | while a turn runs, the #3888 item ids (`approval:<id>`, `question:<id>`) of the asks it raised itself, oldest first |
+| `helpers_waiting` | [str] | while a turn runs, the #3888 item ids of the approvals its helpers raised (a helper's start or one of its calls, by the approval's id); the helpers' roll-up (§12) |
+| `wait` | Wait \| null | in `approval` and `input`: the typed wait on the newest ask, below |
 
-**A wait is a typed record** (`run_state.Wait`; a helper's wait and a goal cycle's take it
-too): `reason` (`owner_answer` an approval, `input` a question, `permission` a sign-in or more access,
+`scheduled_continue` (`{message_id, at, kind}`, while a timed Continue or Retry waits, §5.5) and `call`
+(`{message_id, state, since}`, while a voice call in this chat is `connecting`, `live` or `ending`) join the
+payload with the work that produces them. A chat in `retrying` or `waiting_model` has no `wait`: `retry`
+and `queue` say what it waits on.
+
+**A wait is a typed record** (`personalclaw/work_wait.py`, `Wait`; a helper's wait and a goal cycle's take
+it too): `reason` (`owner_answer` an approval, `input` a question, `permission` a sign-in or more access,
 `children` the helpers or background commands the work started, `dependency` a throttled provider),
-`resume_condition {kind: answered | children_done | at_time | signal, ref}` (a `children_done` ref may name
-a background command, `job:job_…`, for a goal cycle waiting on one), `deadline_at` and `evidence_source`
-(`approval_registry`, `question_registry`, `sign_in_ask`, `subagent_registry`, `dependency_waits`,
-`jobs`). Its constructor refuses any other source, `model_text` by name, so a model's words never make a
-wait; #3888 and #3889 read it instead of inferring. **A waiting helper gives back its slot:** a helper whose
-wait is `owner_answer`, `input`, `permission` or `dependency` releases its concurrency slot and keeps its
-runtime; it resumes through admission, where one slot is held back for children and resumes, so waiting
-parents cannot starve their own helpers; at most as many helpers as the slot limit wait this way at once.
+`resume_condition {kind: answered | children_done | at_time | signal, ref}` (`ref` names what resumes it: a
+#3888 item id for an ask, and a `children_done` ref may name a background command, `job:job_…`, for a goal
+cycle waiting on one), `deadline_at` (when an ask goes unanswered: the approval window after it was asked,
+null for none) and `evidence_source` (`approval_registry`, `question_registry`, `sign_in_ask`,
+`subagent_registry`, `dependency_waits`, `jobs`). Each reason is known from its own sources and ends its own
+ways (`work_wait.REASONS`), and the constructor refuses any other, and `model_text` by name, so a model's
+words never make a wait; #3888 and #3889 read it instead of inferring. A chat's wait is built from the
+approval registry or the question registry, by the newest ask that names the chat.
+
+**A waiting helper gives back its slot** (#4008, planned): a helper whose wait is `owner_answer`, `input`,
+`permission` or `dependency` releases its concurrency slot and keeps its runtime; it resumes through
+admission, where one slot is held back for children and resumes, so waiting parents cannot starve their own
+helpers; at most as many helpers as the slot limit wait this way at once.
 
 ### 4.4 Phases
 
-Status: planned
+The phase module is `personalclaw/work_phase.py` (`WorkPhase`, each phase's tone, family and copy row), and
+`web/src/lib/workPhase.ts` reads the same table (`tests/test_work_phase_vocabulary.py` pins the two).
 
-| Phase | Defined by | Meaning | The line |
-|---|---|---|---|
-| `idle` | this document, chats only | nothing queued or running | "" |
-| `queued` | #3833 | accepted, not started | "Waiting to start" |
-| `thinking` | #3833 | the model works, nothing streams yet | the runtime's activity line, else "Thinking" |
-| `searching` | #3833 | a knowledge or web search | "Searching <where>" |
-| `tool` | #3833 | a tool runs | the tool part's title |
-| `planning` | #3833 | planning | "Planning" |
-| `delegating` | #3833 | starting helpers | "Starting N helpers" |
-| `streaming` | #3833 | the answer streams | "" |
-| `listening` | #3833 | push-to-talk captures for this chat | "Listening" |
-| `approval` | #3833 | waits on an approval or a sign-in | "Needs your approval" / "Needs you to sign in" |
-| `input` | #3833 | waits on a question's answer | "Waiting for your answer" |
-| `retrying` | this document | a provider retry or failover is pending | "Retrying (2 of 3) · next try 10:42" |
-| `waiting_model` | this document | queued behind other requests on a local model | "Waiting for <model> · 2 ahead" |
-| `done` | #3833 | the turn ended `complete`; transient | "" |
-| `error` | #3833 | the turn ended `error`; transient | the error's sentence |
+| Phase | Meaning | The line |
+|---|---|---|
+| `idle` | nothing queued or running (chats only) | "" |
+| `queued` | accepted, not started | "Waiting to start" |
+| `thinking` | the model works, nothing streams yet | "Thinking" |
+| `searching` | a search of knowledge, memory, the files, the tools or the web | "Searching <where>", or an agent CLI's own label |
+| `tool` | a tool runs | the tool part's title |
+| `planning` | planning (plan mode, or an agent CLI's `think` call) | "Planning" |
+| `delegating` | handing work to helpers | "Handing off to N helpers" |
+| `streaming` | the answer streams | "Writing" |
+| `listening` | push-to-talk captures for this chat (nothing drives it yet) | "Listening" |
+| `approval` | waits on an approval | "Needs your OK: <tool>" |
+| `input` | waits on a question's answer | "Asks: <question>" |
+| `retrying` | a provider retry or fail-over is pending | "Retrying (2 of 3)", with "· next try 10:42" for a retry a minute or more away; "Trying <model>" for a fail-over |
+| `waiting_model` | held behind other calls on a local model | "Waiting for <model> · 2 ahead" |
+| `done` | the turn ended `complete`, `stopped` or declined; transient | "Done in <how long>", "Stopped", or the declined step's sentence |
+| `error` | the turn ended `error` or `interrupted`; transient | "Stopped: <the error's sentence>" |
 
-`idle` is the chat's state when it has no live work, not a work phase: #3833's list and its other kinds
-are unchanged. A stop does not change the phase; `stopping` is a flag and the line says "Stopping". A
-`tool` phase's line gains "· <elapsed>" for a call that has run a while, and "· waiting for input" for a
-command that waits on its input.
+`idle` is the chat's state when it has no live work, not a work phase: #3833's other kinds are unchanged. A
+stop does not change the phase; `stopping` is a flag.
 
-**Kind `subagent`** maps a helper's `HelperState` (§3.3) to #3833's phases: `queued` → `queued`,
-`waiting_on_owner` → `approval` (`input` for a question), `running` → the runner's phase,
-`waiting_on_limit` → `retrying`, a terminal state → `done` or `error`. Background commands are live work of
-kind `job` on #3889's list (§0.5).
+**Kind `subagent`** says a helper's phases from the subagent manager's events and the approval registry
+(`personalclaw/work_phases.py`): waiting for a slot, started, each call as a chat's are classified, its
+first words, an approval of its start or one of its calls, and how it ended. Once §3.3's `HelperState`
+lands, it maps to the same phases: `queued` → `queued`, `waiting_on_owner` → `approval` (`input` for a
+question), `running` → the runner's phase, `waiting_on_limit` → `retrying`, a terminal state → `done` or
+`error`. Background commands are live work of kind `job` on #3889's list (§0.5).
 
 | From | To | When |
 |---|---|---|
@@ -1754,48 +1754,39 @@ kind `job` on #3889's list (§0.5).
 | `idle`, `queued` | `thinking` | the turn starts |
 | `thinking` | `searching`, `tool`, `planning`, `delegating`, `streaming` | the runtime reports it |
 | any working phase | another working phase | the runtime reports it |
-| any working phase | `approval`, `input` | a decision is raised for this chat's turn |
-| `approval`, `input` | the phase before it | the decision is answered or ends |
+| any working phase | `approval`, `input` | an ask naming the chat is raised while its turn runs |
+| `approval`, `input` | the phase before it | the ask is answered or ends |
 | `thinking`, `streaming` | `retrying` | the chain schedules a retry or a failover |
 | `retrying` | `thinking` | the retry starts |
-| `queued`, `thinking` | `waiting_model` | the local model's queue holds the request |
+| `queued`, `thinking` | `waiting_model` | the local model's queue holds the call |
 | `waiting_model` | `thinking` | the model takes it |
-| any working phase | `done` → `idle` | the turn ends `complete` |
-| any working phase | `error` → `idle` | the turn ends `error` |
-| any working phase | `idle` | the turn ends `stopped` or `interrupted` |
+| any working phase | `done`, `error` | the turn ends; served `idle` after its last frame |
 
 ### 4.5 Reads and writes
 
-Status: planned
-
-- `work_phase` is sent on every phase change and, while a turn runs, again every 15 s with the phase
-  unchanged and `last_step_at` current, which is the liveness signal a surface needs (no separate
-  heartbeat).
-- `work_phase` replaces `chat_status`, `activity_event {kind: status}`, `turn_steerable` and `heartbeat`
-  (§3.8).
-- `GET /api/chat/sessions` rows and `GET /api/chat/sessions/{session}` gain `run_state` (the last
-  `work_phase` payload) and lose `running`, `stopping`, `stop_state`, `pending_approval`,
-  `pending_approval_info`, `waiting_for_input`, `steerable`, `last_turn_outcome` and `pending_questions`
-  (the parts and `waiting` carry them). `stream_seq` stays on the detail. Home's "your turn" moves to
-  §12's `attention`.
+- `work_phase` is sent on every change of what the payload says and, while a turn runs, again every 15 s
+  (`chat_phase.RESEND_SECS`) with `last_step_at` current, which is the liveness signal a surface needs (no
+  separate heartbeat). The page says "No new activity for 1m" from `last_step_at` (the turn's start while
+  it has taken no step), in a working phase other than `retrying` and `waiting_model`
+  (`web/src/ui/TurnStatusRow.tsx`).
+- `GET /api/chat/sessions` rows and `GET /api/chat/sessions/{session}` serve `run_state`, the last
+  `work_phase` payload (`chat_phase.served`), idle and waiting on nothing once nothing runs; `stream_seq`
+  stays on the detail. Home's "your turn" is §12's `attention`.
 - The phase module (#3833's) is the one place phases, tones and line templates are defined; the classifier
-  that produces a chat's phase lives with the chat runner.
+  that produces a chat's phase lives with the chat runner (`chat_phase`, fed by `chat_runner.run_chat`).
 
 ### 4.6 Invariants
 
-Status: planned
-
 | Invariant | Rail |
 |---|---|
-| Every way a turn ends sends the final frame | a census over the runner's exits, anchored on `terminal_outcome_for_turn` (`chat_runner.py:278-308`) |
-| The routes serve exactly what the frame carried | `test_the_list_and_detail_serve_the_last_phase_frame` |
-| Every phase has a tone, a line template and a mapping on every surface | #3833's mapping test, extended to `idle`, `retrying` and `waiting_model` |
-| No surface derives "running" another way | the chat session wire types no longer have the old flags; a web rail fails on a read of them |
-| `retrying` and `waiting_model` come only from measured events | scripted-fault tests (§17.3) drive `retrying`; the local-model queue's own counter drives `waiting_model` |
+| Every way a turn ends sends the final frame | `tests/test_every_way_a_turn_ends_sends_the_final_phase.py` |
+| The routes serve exactly what the frame carried | `tests/test_the_list_and_detail_serve_the_last_phase_frame.py` |
+| Every phase has a tone, a line template and a mapping on every surface | `tests/test_work_phase_vocabulary.py`, `web/src/lib/everySurfacePaintsAPhaseInItsTone.test.ts` |
+| No surface derives "running" another way | `web/src/lib/noSurfaceDerivesRunning.test.ts`, `web/src/lib/onlyAChatsOwnPhaseIsItsRunState.test.ts` |
+| `retrying` and `waiting_model` come only from measured events | `tests/test_retrying_and_waiting_model_come_from_measured_events.py` |
+| A wait is known from a registry, never from a model's words | `tests/test_a_wait_is_typed.py` |
 
 ### 4.7 What it must not do
-
-Status: planned
 
 It is not the waiting list (#3888) or the running list (#3889), which carry it; not attention (unread,
 your turn, §12); not history; never a timer a client invents; never per tab.

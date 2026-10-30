@@ -56,6 +56,9 @@ def idle(key: str) -> dict:
         "seq": 0,
         "retry": None,
         "queue": None,
+        "waiting": [],
+        "helpers_waiting": [],
+        "wait": None,
     }
 
 
@@ -126,7 +129,7 @@ async def test_a_stopping_chat_serves_its_last_frame(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_chat_waiting_on_her_ok_serves_its_last_frame(tmp_path):
+async def test_a_chat_waiting_on_the_owners_ok_serves_its_last_frame(tmp_path):
     w = _World(
         tmp_path,
         lambda: _asks(),

@@ -9,7 +9,7 @@ import type { AgentActivityState } from './useAgentActivity'
 // each phase looks, and every surface reads it here:
 //
 //   · `tone` — the status tone a phase is painted in. Live work is the scheme's primary (coral),
-//     never a colour of its own; waiting on the owner's yes is warn and on her answer info; a finish
+//     never a colour of its own; waiting on the owner's yes is warn and on their answer info; a finish
 //     is ok and a failure danger; nothing running carries no accent. Listening keeps warn, which
 //     matches the system's own microphone dot.
 //   · `family` — which of the four shared families it reads as: active, waiting, blocked, quiet.
@@ -134,7 +134,7 @@ export function idleRunState(session: string): RunState {
   return {
     work: `chat:${session}`, session, kind: 'chat', phase: 'idle', line: '', since: null, turn: null,
     last_step_at: null, stopping: false, steerable: false, last_outcome: null, queued_messages: 0, seq: 0,
-    retry: null, queue: null,
+    retry: null, queue: null, waiting: [], helpers_waiting: [], wait: null,
   }
 }
 

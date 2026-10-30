@@ -12,6 +12,7 @@ const doc: UiDoc = {
     { name: 'phase', description: "The turn's phase from the phase contract, null until the gateway has said one (drawn as waiting to start)." },
     { name: 'line', description: "The gateway's line for the phase: the tool by name while one runs. Empty falls back to the phase's word." },
     { name: 'startedAt', description: 'When the turn began (epoch ms), from its run state; null counts from when the row first saw it running.' },
+    { name: 'lastStepAt', description: "When the turn's runtime last did anything (epoch ms, the run state's last_step_at); after a minute of nothing in a working phase the row says No new activity for 1m. Null counts from when the turn began." },
     { name: 'usage', description: 'The tokens the runtime reported for the turn so far, in and out; null (or zero) while it has reported none, and nothing is shown.' },
     { name: 'onStop', description: 'Stop the turn: the Stop button, and Esc while the shortcut is on.' },
     { name: 'stopShortcut', description: 'Whether Esc presses Stop (default true). Off where another control owns Esc.' },
