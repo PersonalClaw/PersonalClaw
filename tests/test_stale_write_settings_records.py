@@ -527,9 +527,13 @@ class _ToolsRegistry:
 
 @pytest.fixture
 def instance_home(tmp_path):
+    from personalclaw.providers import registry as registry_module
+
+    # The registry is swapped, never its getter: a create first-imports `providers.routes`, which
+    # binds the getter it finds, and a patched one would outlive this fixture.
     with (
         patch("personalclaw.config.loader.config_dir", return_value=tmp_path),
-        patch("personalclaw.providers.registry.get_provider_registry", lambda: _ToolsRegistry()),
+        patch.object(registry_module, "_registry", _ToolsRegistry()),
         patch("personalclaw.agent.agents_dir", lambda: tmp_path / "agents"),
     ):
         yield tmp_path

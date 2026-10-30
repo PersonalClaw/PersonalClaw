@@ -41,7 +41,15 @@ def _app(name: str, **fields: Any) -> AppManifest:
 
 
 @pytest.fixture
-def registry():
+def registry(monkeypatch):
+    from personalclaw.providers import routes as provider_routes
+
+    # The routes read the registry through the getter they imported. Pin it to the registry's own,
+    # so a getter another test patched in (and that a first import of the routes kept) can't
+    # answer for this file's registry.
+    real = vars(registry_module)["get_provider_registry"]
+    assert real.__module__ == registry_module.__name__, f"the registry's getter is {real!r}"
+    monkeypatch.setattr(provider_routes, "get_provider_registry", real)
     registry_module.reset_provider_registry()
     reg = registry_module.get_provider_registry()
     reg.register(
