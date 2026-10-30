@@ -12033,6 +12033,177 @@ NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST = _toolchain_row(
 ROWS = (*ROWS, NO_WORKFLOW_JOB_OUTSIDE_THE_CATALOGUE_RUNS_A_TEST)
 
 
+# ── A tier workflow runs each test through run-job (#3915, #5600) ────────────────────────────
+# The tier workflows run a catalogue entry as one command, `python -m tools.ci run-job <id>`, so a
+# test runs under the entry's own steps, cap, runner, Python and env: one definition. `pr.yml` and
+# `merge.yml` hold that. `breadth.yml` still runs its legs' steps itself, each held to its entry
+# token for token by "every catalogue command is the workflow's". This row refuses a step of a
+# tier workflow that runs a test runner itself (`_test_runner`), outside the steps that still do.
+# That list never grows: the Contract run judges a head with main's copy of this row, so a head
+# can't add an entry. A listed step that goes is refused too, unless its job now runs run-job,
+# which is how #5600 moves each leg in one merge.
+
+#: The tier workflows, whose every test runs through run-job.
+_RUN_JOB_TIERS = ("pr.yml", "merge.yml", "breadth.yml")
+#: The steps that still run a test themselves, by workflow, job and step name: breadth.yml's legs,
+#: until #5600 moves each one to run-job.
+_STEPS_THAT_RUN_THEIR_OWN_TEST: frozenset[tuple[str, str, str]] = frozenset(
+    {
+        ("breadth.yml", "ubuntu", "pytest (shard ${{ matrix.shard }})"),
+        ("breadth.yml", "macos", "pytest (shard ${{ matrix.shard }})"),
+        ("breadth.yml", "arm", "pytest (shard ${{ matrix.shard }})"),
+        ("breadth.yml", "coverage-shard", "pytest (shard ${{ matrix.shard }})"),
+        ("breadth.yml", "canary", "pytest (canary shard ${{ matrix.shard }})"),
+        (
+            "breadth.yml",
+            "random-order",
+            "pytest (random-order shard ${{ matrix.shard }}, first order)",
+        ),
+        (
+            "breadth.yml",
+            "random-order",
+            "pytest (random-order shard ${{ matrix.shard }}, second order)",
+        ),
+        ("breadth.yml", "rails-macos", "pytest (every rail, tests/rails)"),
+        (
+            "breadth.yml",
+            "collection-parses",
+            "pytest (collect the whole suite, counting parses of the source tree)",
+        ),
+        ("breadth.yml", "security", "pytest (adversarial scanner corpus)"),
+        ("breadth.yml", "security-macos", "pytest (adversarial scanner corpus)"),
+        *(
+            (
+                "breadth.yml",
+                f"planned-ids-{leg}",
+                "pytest (collect the planned suite, writing its ids)",
+            )
+            for leg in ("ubuntu", "macos", "arm", "coverage-shard", "canary", "random-order")
+        ),
+    }
+)
+
+
+def _runs_run_job(words: list[str]) -> bool:
+    """Whether one command is ``python -m tools.ci run-job``, behind ``uv run`` or not."""
+    words = [w for w in words if not re.fullmatch(r"[A-Za-z_]\w*=\S*", w)]
+    if words[:2] == ["uv", "run"]:
+        words = _skip_options(words[2:], _UV_RUN_VALUED)
+    if not words or not re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", words[0].rsplit("/", 1)[-1]):
+        return False
+    args = [w for w in words[1:] if w != "-I"]
+    return args[:3] == ["-m", "tools.ci", "run-job"]
+
+
+def own_test_step_violations(tree: Tree) -> list[str]:
+    """No step of a tier workflow runs a test runner itself, but the listed ones; and no listed
+    step is gone unless its job runs run-job now."""
+    bad: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    runs_run_job: set[tuple[str, str]] = set()
+    for name, job_id, job in _jobs(tree):
+        if name not in _RUN_JOB_TIERS:
+            continue
+        for n, step in enumerate(_job_steps(tree, job), 1):
+            label = str(step.get("name") or f"step {n}")
+            for words in _commands(str(step.get("run", ""))):
+                if _runs_run_job(words):
+                    runs_run_job.add((name, str(job_id)))
+                runner = _test_runner(words)
+                if not runner:
+                    continue
+                key = (name, str(job_id), label)
+                if key in _STEPS_THAT_RUN_THEIR_OWN_TEST:
+                    seen.add(key)
+                    continue
+                bad.append(
+                    f"{name} job {job_id} step {label!r} runs {' '.join(words)} ({runner})"
+                    " itself: a tier workflow runs each test through"
+                    " `python -m tools.ci run-job <id>`"
+                )
+    for name, job_id, label in sorted(_STEPS_THAT_RUN_THEIR_OWN_TEST - seen):
+        if (name, job_id) not in runs_run_job:
+            bad.append(
+                f"{name} job {job_id} step {label!r} runs no test any more, and its job runs no"
+                " run-job: a leg that stops running its tests is a check gone"
+            )
+    return bad
+
+
+#: Where the plants put a step: an orchestration job of each tier, and a breadth leg.
+_IN_PR_STAGE = (".github/workflows/pr.yml", "test")
+_IN_BREADTH_LEG = (".github/workflows/breadth.yml", "ubuntu")
+
+
+def _own_test(name: str, where: tuple[str, str], run: str, expect: str = "") -> Control:
+    rel, job = where
+    return _raw_test(name, rel, job, run, expect=expect)
+
+
+A_TIER_WORKFLOW_RUNS_EACH_TEST_THROUGH_RUN_JOB = _toolchain_row(
+    "a-tier-workflow-runs-each-test-through-run-job",
+    own_test_step_violations,
+    (
+        _own_test(
+            "a pytest step in merge.yml",
+            _IN_MERGE_ORCHESTRATION,
+            "pytest tests/test_more.py",
+            expect="merge.yml job changes step 'planted' runs pytest tests/test_more.py (pytest)",
+        ),
+        _own_test(
+            "a vitest step in pr.yml's stage job",
+            _IN_PR_STAGE,
+            "npx vitest run",
+            expect="pr.yml job test step 'planted' runs npx vitest run (vitest)",
+        ),
+        _own_test(
+            "a new pytest step in a breadth leg, beside its listed one",
+            _IN_BREADTH_LEG,
+            "uv run pytest tests/test_more.py",
+            expect="breadth.yml job ubuntu step 'planted' runs uv run pytest tests/test_more.py",
+        ),
+        Control(
+            "a listed step renamed",
+            _edit(
+                _BREADTH,
+                "      - name: pytest (every rail, tests/rails)\n",
+                "      - name: pytest (the rails)\n",
+            ),
+            expect="breadth.yml job rails-macos step 'pytest (the rails)' runs uv run pytest",
+        ),
+        Control(
+            "a listed step gone, and its job running no run-job",
+            _edit(_BREADTH, _RAILS_MACOS_STEP, "        run: echo no rails tonight\n"),
+            expect=(
+                "breadth.yml job rails-macos step 'pytest (every rail, tests/rails)' runs no"
+                " test any more, and its job runs no run-job"
+            ),
+        ),
+        Control(
+            "a listed step moved to run-job passes",
+            _edit(
+                _BREADTH,
+                _RAILS_MACOS_STEP,
+                "        run: python3 -m tools.ci run-job rails-macos\n",
+            ),
+            fails=False,
+        ),
+        _own_test(
+            "run-job in a tier workflow passes",
+            _IN_MERGE_ORCHESTRATION,
+            "python3 -m tools.ci run-job static",
+        ),
+        _own_test(
+            "an echo that names pytest passes",
+            _IN_PR_STAGE,
+            "echo pytest runs through run-job",
+        ),
+    ),
+)
+
+ROWS = (*ROWS, A_TIER_WORKFLOW_RUNS_EACH_TEST_THROUGH_RUN_JOB)
+
+
 # ── The harness's replay and exemplar gates run in the merge tier (#3909) ─────────────────────
 # `replay` and `exemplars` are harness profiles, not catalogue entries: the merge tier runs what
 # they gate already. python-suite collects the three test files that gate every replay scenario
