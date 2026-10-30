@@ -1023,7 +1023,8 @@ reads it too, but it is what the Nix workflow builds and checks, a workflow of i
 catalogue job, so a change to it alone is named by no input and plans the whole tier.
 
 The list does not decide whether `python-suite` runs: it is a security job, so every plan holds
-it, as every plan holds `python-suite-macos` and `browse-live`. It decides which paths are known.
+it, as every plan holds `python-suite-macos`, `browse-live` and `namespace-sandbox`. It decides
+which paths are known.
 Because it names `src/`, a `src/` diff is known: the plan is not the whole tier, and
 `apps-contract` runs only when the diff reaches one of its inputs. So two kinds of rule now
 decide plans alone, and `tests/rails/test_ci_plan_tree.py` holds each across the tree:
@@ -2386,6 +2387,9 @@ changes to tests, `tools/ci`, `scripts`, docs and the web.
   and the run is partial, and nothing of it, its install included, runs. The word is on `main`
   before the job that names it, as `docker` was. A machine of your own keeps the restriction:
   there the sandbox needs an AppArmor profile that allows user namespaces.
+  `namespace-sandbox` is the job that names it: the three files with namespace cases, run with
+  `PERSONALCLAW_REQUIRE_NAMESPACE_SANDBOX=1`, so a namespace the host still withholds is an error
+  there, never a skip (`tests/namespace_sandbox.py`).
 - **Electron's sandbox.** Off GitHub, a job whose toolchain names `electron` cannot run on a
   Linux host whose kernel withholds the user namespaces Chromium's sandbox needs: Ubuntu 24.04's
   `kernel.apparmor_restrict_unprivileged_userns = 1` (`tools/ci/sandbox_host.py`). Electron then

@@ -43,6 +43,7 @@ jobs = [
   "ui-quality",
   "browse-live",
   "security",
+  "namespace-sandbox",
   "apps-contract",
   "audit",
 ]
@@ -257,6 +258,29 @@ junit = ["reports/junit-security-corpus.xml"]
 prepush = false  # the security corpus: CI is its gate, not the pre-push hook
 command = [
   { argv = ["uv", "run", "pytest", "--junitxml=reports/junit-security-corpus.xml", "tests/security", "tests/test_supply_chain_scanner.py", "tests/test_supply_chain_gates.py"] },
+]
+
+# The sandbox's own namespace tests: the home fence, a private chat that writes no memory, a
+# temporary chat that reads none. GitHub's Ubuntu 24.04 runners withhold the user and mount
+# namespaces the launcher needs, so every suite shard skips these cases (#3918). Its `userns`
+# install lifts that for this job's own run, on a GitHub-hosted runner alone (run-job names the job
+# as one it cannot run anywhere else, so `make gate` leaves it out, partial), and with
+# PERSONALCLAW_REQUIRE_NAMESPACE_SANDBOX set, a namespace the host still withholds is an error,
+# never a skip. Security posture: fence tests, never reused or rerun, and in every plan.
+[[job]]
+id = "namespace-sandbox"
+tiers = ["merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync", "userns"]
+cache = ["uv"]
+security = "security"
+python = "3.12.15"
+timeout_min = 15
+env = { PERSONALCLAW_SKIP_APP_BACKENDS = "1" }
+junit = ["reports/junit-namespace-sandbox.xml"]
+command = [
+  { argv = ["uv", "run", "pytest", "tests/test_the_home_fence_holds_its_names.py", "tests/test_a_private_chat_changes_no_memory_document.py", "tests/test_a_temporary_chat_reads_no_memory_document.py", "--junitxml=reports/junit-namespace-sandbox.xml"], env = { PERSONALCLAW_REQUIRE_NAMESPACE_SANDBOX = "1" } },
 ]
 
 # The same files on macOS, nightly only: no suite shard collects them (JOB_OWNED), so this leg is
