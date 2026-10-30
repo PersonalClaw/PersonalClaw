@@ -211,6 +211,32 @@ def test_a_step_gets_the_workflow_env_then_the_jobs_then_its_own_and_none_of_the
     assert seen["HOME"].startswith(str(tmp_path / "work"))
 
 
+def test_a_job_that_names_ffmpeg_requires_it_and_its_own_env_cannot_unset_that(repo, tmp_path):
+    """A job that installs a program its tests need gets the variable that fails those tests
+    when the program is missing (jobs.REQUIRES), over its own env and its step's; a job that
+    does not name the word gets nothing (#3918)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "ffmpeg").write_text("#!/bin/sh\n")
+    (bin_dir / "ffmpeg").chmod(0o755)
+    host = _host(repo, path=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', os.defpath)}")
+    name, value = jobs.REQUIRES["ffmpeg"]
+    out = tmp_path / "env.json"
+    step = Step((PY, "-c", _dump_env(out)), env=Env({name: "0"}))
+    job = _job("video", steps=(step,), toolchain=("ffmpeg",), env=Env({name: ""}))
+    assert _run(repo, job, tmp_path, host=host).code == run.OK
+    assert json.loads(out.read_text())[name] == value
+    assert jobs.required_env(job) == {name: value}
+    other = _job("plain", steps=(Step((PY, "-c", _dump_env(out))),))
+    assert jobs.required_env(other) == {}
+    assert _run(repo, other, tmp_path, host=host).code == run.OK
+    assert name not in json.loads(out.read_text())
+
+
+def test_every_requiring_word_is_a_toolchain_word_with_a_program() -> None:
+    assert set(jobs.REQUIRES) <= set(catalogue.TOOLCHAINS) & set(jobs.PROGRAMS)
+
+
 def test_every_step_gets_the_runners_ci_variable_and_never_github_actions(
     repo, tmp_path, monkeypatch
 ):

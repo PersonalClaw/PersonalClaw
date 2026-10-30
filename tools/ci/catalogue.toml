@@ -121,7 +121,11 @@ inputs = [
 "web/",
 ]
 external_inputs = ["shard-history"]
-toolchain = ["uv-sync", "tmux"]
+# ffmpeg (and ffprobe) for the tests that build and read a video, which skip without them. A job
+# that names the word gets PERSONALCLAW_REQUIRE_FFMPEG from run-job (jobs.REQUIRES), so here a
+# missing program fails them instead (#3918). The macOS suite does not install it: brew's ffmpeg
+# is a long install, and one platform proves them. Its env stays this suite's.
+toolchain = ["uv-sync", "tmux", "ffmpeg"]
 cache = ["uv"]
 security = "security"
 python = "3.12.15"

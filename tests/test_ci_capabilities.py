@@ -584,12 +584,13 @@ def test_the_callers_own_path_is_never_read(
 # ── the skip switches ────────────────────────────────────────────────────────────────────────
 
 
-def test_the_switches_are_the_five_that_change_what_runs() -> None:
+def test_the_switches_are_the_six_that_change_what_runs() -> None:
     assert cap.SWITCHES == (
         "PERSONALCLAW_TEST_CONTAINER_RUNTIME",
         "PERSONALCLAW_REQUIRE_INSTALL_PROOF",
         "PERSONALCLAW_REQUIRE_BROWSE_PROOF",
         "PERSONALCLAW_REQUIRE_NPM_TREE",
+        "PERSONALCLAW_REQUIRE_FFMPEG",
         "PERSONALCLAW_TEST_CHROME",
     )
 

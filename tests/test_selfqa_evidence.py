@@ -22,6 +22,7 @@ import types
 import warnings
 from pathlib import Path
 
+import ffmpeg_tools
 import pytest
 
 from personalclaw.selfqa import evidence as ev
@@ -384,7 +385,7 @@ _UNPROVEN = (
     "UNPROVEN, NOT PASSED: ffmpeg/ffprobe absent, so the contact-sheet tile geometry and the GIF "
     "filter graph were never executed on this host"
 )
-_real_ffmpeg_only = pytest.mark.skipif(not (_HAS_FFMPEG and _HAS_FFPROBE), reason=_UNPROVEN)
+_real_ffmpeg_only = ffmpeg_tools.needs_it(_HAS_FFMPEG and _HAS_FFPROBE, _UNPROVEN)
 
 if not (_HAS_FFMPEG and _HAS_FFPROBE):  # pragma: no cover - host-dependent
     warnings.warn(

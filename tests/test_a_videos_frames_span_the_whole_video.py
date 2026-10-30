@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import ffmpeg_tools
 import pytest
 
 from personalclaw.knowledge.pipeline.nodes import media_nodes
@@ -30,7 +31,9 @@ from personalclaw.knowledge.pipeline.types import NodeContext, NodeOutput
 def _ffmpeg() -> str:
     found = shutil.which("ffmpeg")
     if found is None or shutil.which("ffprobe") is None:
-        pytest.skip("needs ffmpeg and ffprobe to build and read the fixture video")
+        ffmpeg_tools.skip_unless_required(
+            "needs ffmpeg and ffprobe to build and read the fixture video"
+        )
     return found
 
 
