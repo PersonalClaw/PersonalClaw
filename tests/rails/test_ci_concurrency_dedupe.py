@@ -28,6 +28,12 @@ relations that matter:
 
 and that a pull request's run cancels in progress where a push's or a dispatch's never does.
 
+A Dependabot head's runs are the one exception to relation 2: every Dependabot head's runs, both
+tiers', wait in one group, ``dependabot-heads``, one at a time, never cancelled in flight, and
+``queue: max``, so a waiting run is never replaced (#3915). The file holds that too, and that no
+other pull request's run, a fork's on a branch named as Dependabot names its own included, is in
+that group.
+
 ``tests/rails/test_ci_contract.py``'s concurrency row holds relations 2 and 3 (different
 candidates never share a group) for every workflow, ``pull_request_target`` included, and that
 two runs of one head share theirs. It does not hold relation 1: a newer head of one pull request
@@ -66,7 +72,10 @@ def _lookup(context: dict[str, Any], dotted: str) -> Any:
 
 
 def _operand(context: dict[str, Any], text: str) -> Any:
-    """A property, or a property compared with a quoted literal (``a == 'b'``)."""
+    """A quoted literal, a property, or a property compared with a quoted literal (``a == 'b'``)."""
+    literal = re.fullmatch(r"\s*'([^']*)'\s*", text)
+    if literal:
+        return literal.group(1)
     m = re.fullmatch(r"\s*([\w.-]+)\s*(==|!=)\s*'([^']*)'\s*", text)
     if not m:
         return _lookup(context, text)
@@ -127,6 +136,7 @@ def _pull_request_ctx(
     number: int = 42,
     head: str = "aaaa111",
     merge: str = "merge999",
+    author: str = "a-contributor",
 ) -> dict[str, Any]:
     return {
         "github": {
@@ -140,6 +150,7 @@ def _pull_request_ctx(
             "event": {
                 "pull_request": {
                     "number": number,
+                    "user": {"login": author},
                     "head": {"sha": head, "repo": {"full_name": head_repo}},
                 }
             },
@@ -259,6 +270,79 @@ def test_only_a_pull_requests_run_cancels_in_progress(name: str) -> None:
         )
     )
     assert len(pushes) == 2, f"two pushes share {name}'s group, so one waits on the other: {pushes}"
+
+
+# ---------------------------------------------------------------------------
+# Every Dependabot head's runs wait in one group, one at a time, none cancelled.
+# ---------------------------------------------------------------------------
+
+#: The login GitHub gives Dependabot as a pull request's author.
+_DEPENDABOT = "dependabot[bot]"
+#: The group every Dependabot head's tier runs share.
+_DEPENDABOT_GROUP = "dependabot-heads"
+_DEPENDABOT_BRANCH = "dependabot/uv/ruff-0.15.0"
+
+
+def _dependabot_ctx(**fields: Any) -> dict[str, Any]:
+    return _pull_request_ctx(author=_DEPENDABOT, **{"branch": _DEPENDABOT_BRANCH, **fields})
+
+
+def test_every_dependabot_heads_runs_share_one_group_in_both_tiers() -> None:
+    """Two Dependabot pull requests' runs, in either tier, wait in one group, so one runs at a
+    time. On 2026-10-25 four Dependabot pull requests held 13 of the account's 20 jobs, twice,
+    and starved the release run."""
+    keys = {
+        _evaluate(_concurrency_group(name), _dependabot_ctx(branch=branch, number=number))
+        for name in TIER
+        for branch, number in (
+            (_DEPENDABOT_BRANCH, 60),
+            ("dependabot/npm_and_yarn/web/vite-8.1.0", 61),
+        )
+    }
+    assert keys == {_DEPENDABOT_GROUP}, (
+        f"two Dependabot pull requests' runs resolved to {sorted(keys)!r}, not one group "
+        f"{_DEPENDABOT_GROUP!r}, so their runs hold runners side by side"
+    )
+
+
+@pytest.mark.parametrize("name", TIER)
+def test_a_dependabot_heads_run_waits_its_turn_and_is_never_cancelled(name: str) -> None:
+    cancel = _workflow_level(name, "cancel-in-progress")
+    assert not _evaluate(cancel, _dependabot_ctx()), (
+        f"{name} cancels a Dependabot head's run in flight, so the next Dependabot head's run "
+        f"cancels it: {cancel}"
+    )
+    queue = _workflow_level(name, "queue")
+    assert _evaluate(queue, _dependabot_ctx()) == "max", (
+        f"{name} queues a Dependabot head's run as {_evaluate(queue, _dependabot_ctx())!r}: at "
+        "`single` the next one replaces the waiting run, and GitHub reports it cancelled"
+    )
+    assert _evaluate(queue, _pull_request_ctx()) == "single", (
+        f"{name} queues another pull request's run as {_evaluate(queue, _pull_request_ctx())!r}:"
+        " GitHub refuses `max` beside cancel-in-progress"
+    )
+
+
+@pytest.mark.parametrize("name", TIER)
+def test_no_other_run_waits_in_dependabots_group(name: str) -> None:
+    """A fork's branch named as Dependabot names its own, and this repository's, key on their
+    pull request, as does every other run."""
+    group = _concurrency_group(name)
+    for number, ctx in (
+        (42, _pull_request_ctx()),
+        (
+            62,
+            _pull_request_ctx(branch=_DEPENDABOT_BRANCH, head_repo="alice/PersonalClaw", number=62),
+        ),
+        (63, _pull_request_ctx(branch=_DEPENDABOT_BRANCH, number=63)),
+    ):
+        key = _evaluate(group, ctx)
+        assert key != _DEPENDABOT_GROUP and str(number) in key, (
+            f"{name}'s run for pull request #{number} resolved to {key!r}, so it waits behind "
+            "every Dependabot head's runs, or cancels its own"
+        )
+    for event in ("push", "workflow_dispatch"):
+        assert _evaluate(group, _event_ctx(event)) != _DEPENDABOT_GROUP, event
 
 
 # ---------------------------------------------------------------------------

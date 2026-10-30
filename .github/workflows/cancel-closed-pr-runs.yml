@@ -22,6 +22,10 @@
 # tests/rails/test_ci_contract.py evaluates both, for every workflow that runs on `pull_request`, and
 # holds them equal, merged or not, from this repository or a fork.
 #
+# A Dependabot head's tier runs are the exception: they wait in `dependabot-heads`, which every
+# Dependabot head's runs share, and no job here joins it on a Dependabot pull request's close,
+# since that would cancel another Dependabot head's run in flight. Those runs run in their turn.
+#
 # Nothing of the pull request runs here: no checkout, `permissions: {}`, and one step that logs
 # the runner image, as every job does. It runs on `pull_request`, not `pull_request_target`.
 name: Cancel a closed pull request's runs

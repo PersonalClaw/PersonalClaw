@@ -2123,9 +2123,13 @@ def _runs(job: dict[str, Any]) -> str:
     return "\n".join(str(step.get("run", "")) for step in job.get("steps") or [])
 
 
+#: The login GitHub gives Dependabot as a pull request's author, and two of its branches.
+_DEPENDABOT_LOGIN = "dependabot[bot]"
+_DEPENDABOT_A = "dependabot/uv/ruff-0.15.0"
+_DEPENDABOT_B = "dependabot/npm_and_yarn/web/vite-8.1.0"
 #: A tier run for a Dependabot head: its pull request's author is Dependabot, which no fork's
 #: branch name can borrow.
-_DEPENDABOT_RUN = "github.event.pull_request.user.login == 'dependabot[bot]'"
+_DEPENDABOT_RUN = f"github.event.pull_request.user.login == '{_DEPENDABOT_LOGIN}'"
 
 
 def _dependabot_tier_concurrency(prefix: str) -> dict[str, str]:
@@ -2217,7 +2221,7 @@ def _stage_group_violations(tree: Tree, job_id: str, job: dict[str, Any]) -> lis
     legs = _matrix_legs(_literal_matrix(tree, "merge.yml", job))
     if not legs:
         return [*bad, f"{where}: no planned entry to read its group for"]
-    shared: dict[str, str] = {}
+    shared: dict[str, set[str]] = {}
     for leg in legs:
         key, suite = str(leg.get("key", "")), str(leg.get("id", "")) in _SUITE_ENTRIES
         resolved = _leg_group(group, leg)
@@ -6559,25 +6563,38 @@ _LITERAL = re.compile(r"\s*'([^']*)'\s*")
 _LITERALS_COMPARED = re.compile(r"\s*'([^']*)'\s*(==|!=)\s*'([^']*)'\s*")
 
 
-def _pr_context(*, head_repo: str, action: str, merged: bool = False) -> dict[str, Any]:
+def _pr_context(
+    *,
+    head_repo: str,
+    action: str,
+    merged: bool = False,
+    author: str = "a-contributor",
+    number: int = 42,
+    branch: str = _CLOSE_HEAD,
+) -> dict[str, Any]:
     """A `pull_request` event's context: a pull request's run (`synchronize`), or its close."""
     merged_close = action == "closed" and merged
-    head = {"ref": _CLOSE_HEAD, "sha": "head2222", "repo": {"full_name": head_repo}}
+    head = {"ref": branch, "sha": "head2222", "repo": {"full_name": head_repo}}
     return {
         "github": {
             "repository": _CLOSE_REPO,
             "event_name": "pull_request",
             # GitHub's "Events that trigger workflows", `pull_request`: when a pull request closes
             # because it merged, the ref is the branch it merged into and the sha its merge commit.
-            "ref": "refs/heads/main" if merged_close else "refs/pull/42/merge",
-            "ref_name": "main" if merged_close else "42/merge",
+            "ref": "refs/heads/main" if merged_close else f"refs/pull/{number}/merge",
+            "ref_name": "main" if merged_close else f"{number}/merge",
             "sha": _MERGE_SHA if merged_close else "testmerge1111",
-            "head_ref": _CLOSE_HEAD,
+            "head_ref": branch,
             "base_ref": "main",
             "event": {
                 "action": action,
-                "number": 42,
-                "pull_request": {"number": 42, "merged": merged, "head": head},
+                "number": number,
+                "pull_request": {
+                    "number": number,
+                    "merged": merged,
+                    "user": {"login": author},
+                    "head": head,
+                },
             },
         }
     }
@@ -6723,7 +6740,9 @@ def closed_pr_runs_violations(tree: Tree) -> list[str]:
     """Every workflow that runs on `pull_request` has its run cancelled when the pull request
     closes: a job of the canceller evaluates, on the close, to the group that workflow's run
     evaluated to, with cancel-in-progress, whether the pull request merged or not and whether it
-    came from this repository or a fork. No job of it joins a push to main's group."""
+    came from this repository or a fork. No job of it joins a push to main's group, nor, on a
+    Dependabot pull request's close, the group every Dependabot head's runs wait in: those go on
+    in their turn."""
     canceller = dict(_workflows(tree)).get(_CANCELLER)
     if canceller is None:
         return [f"{_CANCELLER} is missing, so a closed pull request's runs go on to their end"]
@@ -6771,6 +6790,34 @@ def closed_pr_runs_violations(tree: Tree) -> list[str]:
                         f"{origin} once it is {how} (the run's group is {key!r})"
                     )
 
+    # Every Dependabot head's runs wait in one group, so a closed Dependabot pull request's runs
+    # there go on, in their turn: a job that joined it on the close would cancel another
+    # Dependabot head's run in flight, or replace the one waiting.
+    shared: dict[str, str] = {}
+    for name, workflow in _runs_on_pull_requests(tree):
+        group = _concurrency_group(workflow.get("concurrency"))
+        if group is None:
+            continue
+        try:
+            keys = {
+                _evaluate(group, _pr_context(**_DEPENDABOT_CLOSE, action="synchronize", **pr))
+                for pr in _TWO_DEPENDABOT_PRS
+            }
+        except ValueError:
+            continue  # reported above
+        if len(keys) == 1:
+            shared.setdefault(keys.pop(), set()).add(name)
+    for merged in (False, True):
+        close = _pr_context(**_DEPENDABOT_CLOSE, action="closed", merged=merged, number=45)
+        for job_id, group in closing_groups(close, cancelling=False):
+            if group in shared:
+                bad.append(
+                    f"{_CANCELLER}:{job_id} joins {group!r}, where every Dependabot head's runs"
+                    f" wait ({', '.join(sorted(shared[group]))}), on a Dependabot pull request's"
+                    " close, so it cancels another Dependabot head's run in flight or replaces the"
+                    " one waiting"
+                )
+
     # A job that only joins a group still replaces its pending run, so every join counts here.
     merged_close = _pr_context(head_repo=_CLOSE_REPO, action="closed", merged=True)
     joined = closing_groups(merged_close, cancelling=False)
@@ -6794,6 +6841,12 @@ def closed_pr_runs_violations(tree: Tree) -> list[str]:
     return list(dict.fromkeys(bad))
 
 
+#: A Dependabot pull request's context, and two of them, by number and branch.
+_DEPENDABOT_CLOSE: dict[str, Any] = {"head_repo": _CLOSE_REPO, "author": _DEPENDABOT_LOGIN}
+_TWO_DEPENDABOT_PRS = (
+    {"number": 45, "branch": _DEPENDABOT_A},
+    {"number": 46, "branch": _DEPENDABOT_B},
+)
 _CANCEL_MERGE_GROUP = "      group: merge-${{ github.event.pull_request.number }}\n"
 _CANCEL_NIX_GROUP = (
     "      group: nix-${{ github.event.pull_request.head.repo.full_name"
@@ -6860,11 +6913,19 @@ CLOSED_PR_RUNS_ARE_CANCELLED = _toolchain_row(
         # A closed event is a pull_request event with its number, so the tier's own key and
         # cancel-in-progress read on it as on the pull request's runs.
         _plant(
-            "merge.yml's own key copied passes",
+            "the key merge.yml gives any but a Dependabot head's run, copied, passes",
             _CANCELLER_PATH,
             _CANCEL_MERGE_GROUP,
             "      group: merge-${{ github.event.pull_request.number || github.sha }}\n",
             fails=False,
+        ),
+        _plant(
+            "merge.yml's whole key copied, which joins Dependabot's group on its close",
+            _CANCELLER_PATH,
+            _CANCEL_MERGE_GROUP,
+            f"      group: {_dependabot_tier_concurrency('merge')['group']}\n",
+            expect="joins 'dependabot-heads', where every Dependabot head's runs wait (merge.yml,"
+            " pr.yml)",
         ),
         _plant(
             "a job that does not cancel in progress",
@@ -10756,6 +10817,8 @@ class _CandidateRun:
     kind: str
     head: str
     context: dict[str, Any]
+    #: A Dependabot head's: its pull request's author is Dependabot.
+    dependabot: bool = False
 
 
 _REPO_SLUG = "PersonalClaw/PersonalClaw"
@@ -10776,10 +10839,12 @@ def _candidate_pr(
     run: int,
     attempt: int = 1,
     kind: str = "pull_request",
+    author: str = "a-contributor",
 ) -> _CandidateRun:
     target = kind == "pull_request_target"
     pull_request = {
         "number": number,
+        "user": {"login": author},
         "head": {"ref": branch, "sha": head, "repo": {"full_name": head_repo}},
         "base": {"ref": "main", "sha": _MAIN_SHA},
     }
@@ -10798,7 +10863,8 @@ def _candidate_pr(
         "run_attempt": str(attempt),
         "event": {"action": "synchronize", "number": number, "pull_request": pull_request},
     }
-    return _CandidateRun(label, candidate, kind, head, {"github": github})
+    dependabot = author == _DEPENDABOT_LOGIN
+    return _CandidateRun(label, candidate, kind, head, {"github": github}, dependabot)
 
 
 def _candidate_push(
@@ -10851,13 +10917,17 @@ def _listener_run(run: _CandidateRun) -> _CandidateRun:
         }
     }
     label = f"the listener of {run.label}"
-    return _CandidateRun(label, run.candidate, f"workflow_run:{run.kind}", run.head, context)
+    kind = f"workflow_run:{run.kind}"
+    return _CandidateRun(label, run.candidate, kind, run.head, context, run.dependabot)
 
 
 _PR41 = "pull request #41 (feature-a)"
 _PR42 = "pull request #42 (feature-b)"
 _PR43 = "pull request #43 from a fork (feature-a)"
 _PR44 = "pull request #44 from another fork (feature-a)"
+_PR45 = f"Dependabot's pull request #45 ({_DEPENDABOT_A})"
+_PR46 = f"Dependabot's pull request #46 ({_DEPENDABOT_B})"
+_PR47 = f"pull request #47 from a fork ({_DEPENDABOT_A})"
 
 
 def _pr_runs(kind: str) -> tuple[_CandidateRun, ...]:
@@ -10874,6 +10944,12 @@ def _pr_runs(kind: str) -> tuple[_CandidateRun, ...]:
         _candidate_pr(f"{_PR42}{at}", "pr42", 42, _REPO_SLUG, b, "b1", 4, kind=kind),
         _candidate_pr(f"{_PR43}{at}", "pr43", 43, _FORK, a, "c1", 5, kind=kind),
         _candidate_pr(f"{_PR44}{at}", "pr44", 44, _FORK_2, a, "d1", 6, kind=kind),
+        _candidate_pr(f"{_PR45}{at}", "pr45", 45, _REPO_SLUG, _DEPENDABOT_A, "e1", 10, kind=kind,
+                      author=_DEPENDABOT_LOGIN),
+        _candidate_pr(f"{_PR46}{at}", "pr46", 46, _REPO_SLUG, _DEPENDABOT_B, "f1", 11, kind=kind,
+                      author=_DEPENDABOT_LOGIN),
+        # A fork's branch named as Dependabot names its own, by another author.
+        _candidate_pr(f"{_PR47}{at}", "pr47", 47, _FORK, _DEPENDABOT_A, "g1", 12, kind=kind),
     )  # fmt: skip
 
 
@@ -11006,16 +11082,17 @@ def concurrency_keying_violations(tree: Tree) -> list[str]:
     workflows = [(name, wf if isinstance(wf, dict) else {}) for name, wf in _workflows(tree)]
     kinds = _candidate_kinds(workflows)
     bad: list[str] = []
-    #: group key -> the (where, run) pairs that evaluate to it
-    joined: dict[str, list[tuple[str, _CandidateRun]]] = {}
+    #: group key -> the (where, run, whether the run waits its turn there) that evaluate to it
+    joined: dict[str, list[tuple[str, _CandidateRun, bool]]] = {}
     for name, workflow in workflows:
         if not kinds.get(name):
             continue
-        groups = [(name, _concurrency_group(workflow.get("concurrency")))]
-        groups += [
-            (f"{name}:{job_id}", _concurrency_group(job.get("concurrency")))
+        values = [(name, workflow.get("concurrency"))]
+        values += [
+            (f"{name}:{job_id}", job.get("concurrency"))
             for job_id, job in _trust_jobs(workflow).items()
         ]
+        groups = [(where, _concurrency_group(value), value) for where, value in values]
         jobs = {
             "": {},
             **{
@@ -11023,7 +11100,7 @@ def concurrency_keying_violations(tree: Tree) -> list[str]:
                 for job_id, job in _trust_jobs(workflow).items()
             },
         }
-        for where, group in groups:
+        for where, group, value in groups:
             if group is None:
                 continue
             job = jobs.get(where.partition(":")[2], {})
@@ -11042,8 +11119,9 @@ def concurrency_keying_violations(tree: Tree) -> list[str]:
                 for run in _CANDIDATE_RUNS:
                     if run.kind in kinds[name]:
                         keys[run.label] = {_evaluate(leg, run.context) for leg in legs}
+                        waits = _waits_its_turn(value, run.context)
                         for key in keys[run.label]:
-                            joined.setdefault(key, []).append((where, run))
+                            joined.setdefault(key, []).append((where, run, waits))
             except ValueError as exc:
                 bad.append(f"{where}: {exc}")
                 continue
@@ -11064,14 +11142,43 @@ def concurrency_keying_violations(tree: Tree) -> list[str]:
                         )
     for key, members in joined.items():
         first = members[0][1]
-        other = next((run for _where, run in members if run.candidate != first.candidate), None)
-        if other is not None:
-            wheres = ", ".join(sorted({where for where, _run in members}))
-            bad.append(
-                f"{wheres}: the group {key!r} is shared by {first.label} and {other.label}, so "
-                "one candidate's run cancels or replaces another's"
-            )
+        others = [run for _where, run, _waits in members if run.candidate != first.candidate]
+        if not others:
+            continue
+        # Name a run that is not a Dependabot head's where there is one: it is the one out of place.
+        other = next((run for run in others if not run.dependabot), others[0])
+        wheres = ", ".join(sorted({where for where, _run, _waits in members}))
+        # The one exception: every Dependabot head's runs wait in one group, one at a time, and
+        # none cancels or replaces another, so Dependabot holds few of the account's runners.
+        if all(run.dependabot for _where, run, _waits in members):
+            hurried = sorted({where for where, _run, waits in members if not waits})
+            if hurried:
+                bad.append(
+                    f"{wheres}: every Dependabot head's runs share the group {key!r}, and"
+                    f" {', '.join(hurried)} cancels a run in flight there or replaces the one"
+                    " waiting (cancel-in-progress, or a queue other than `max`)"
+                )
+            continue
+        bad.append(
+            f"{wheres}: the group {key!r} is shared by {first.label} and {other.label}, so "
+            "one candidate's run cancels or replaces another's"
+        )
     return list(dict.fromkeys(bad))
+
+
+def _waits_its_turn(value: object, context: dict[str, Any]) -> bool:
+    """Whether a run that joins a ``concurrency:`` *value* waits in its group whatever joins
+    after it: never cancelled in flight (no cancel-in-progress) and never replaced while it waits
+    (``queue: max``). A value the row cannot read waits for no one."""
+    if not isinstance(value, dict):
+        return False
+    cancel, queue = value.get("cancel-in-progress", False), value.get("queue", "single")
+    if any(_unmodelled(str(v)) for v in (cancel, queue)):
+        return False
+    try:
+        return not _cancels(cancel, context) and _rendered(str(queue), context) == "max"
+    except ValueError:
+        return False
 
 
 _DCO_GROUP = "group: dco-${{ github.event.pull_request.number }}"
@@ -11176,6 +11283,22 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
         _plant("a group that reads vars", _NIX, _NIX_GROUP,
                "group: nix-${{ vars.LANE || github.event.pull_request.number }}",
                expect="it reads `vars`"),
+        # The one exception: every Dependabot head's runs, both tiers', wait in one group.
+        Control("every Dependabot head's runs in one group, waiting their turn", _nothing,
+                fails=False),
+        Control("a Dependabot head's run cancelled in flight in the group they share",
+                _tier_concurrency_line(_PR_YML, "cancel-in-progress", "true"),
+                expect="and pr.yml cancels a run in flight there"),
+        Control("a Dependabot head's waiting run replaced in the group they share",
+                _tier_concurrency_line(_MERGE_YML, "queue", ""),
+                expect="and merge.yml cancels a run in flight there or replaces the one waiting"),
+        Control("a fork's branch named as Dependabot's, in the group Dependabot's heads share",
+                _tier_concurrency_line(
+                    _PR_YML, "group",
+                    f"${{{{ github.head_ref == '{_DEPENDABOT_A}' && 'dependabot' || 'pr' }}}}-"
+                    f"${{{{ github.head_ref == '{_DEPENDABOT_A}' && 'heads'"
+                    " || github.event.pull_request.number || github.sha }}"),
+                expect=f"the group 'dependabot-heads' is shared by {_PR45} and {_PR47}"),
         Control("a called workflow keyed on an input its caller fixes",
                 _both(_new_workflow(f"{_WORKFLOWS}/reusable.yml",
                                     "name: Reusable\non:\n  workflow_call:\n"
@@ -14119,25 +14242,20 @@ def _tier_concurrency_violations(
     """One group per workflow and pull request, or commit for any other run; only a pull
     request's superseded run cancelled in flight, never a dispatch's or a push's; and no job's
     group of its own but merge.yml's stage jobs' (decision 9, whose shape the main-push row
-    holds). A later dispatch of the commit waits, and never waits on the other tier's run."""
+    holds). A later dispatch of the commit waits, and never waits on the other tier's run.
+
+    Every Dependabot head's runs, both tiers', wait in one group instead, one at a time and none
+    cancelled (:func:`_dependabot_tier_concurrency`)."""
     bad: list[str] = []
     concurrency = workflow.get("concurrency")
     concurrency = concurrency if isinstance(concurrency, dict) else {"group": concurrency}
-    prefix = name.removesuffix(".yml")
-    # Either shape, until the change that queues Dependabot's heads lands (two merges, #4584).
-    shapes = (
-        {"group": f"{prefix}-{_TIER_RUN_KEY}", "cancel-in-progress": _PR_RUN_CANCELS},
-        _dependabot_tier_concurrency(prefix),
-    )
-    group = concurrency.get("group")
-    shape = next((s for s in shapes if s["group"] == group), None)
-    if shape is None:
+    shape = _dependabot_tier_concurrency(name.removesuffix(".yml"))
+    if concurrency.get("group") != shape["group"]:
         bad.append(
-            f"{name} groups its runs as {group!r}, not {shapes[0]['group']!r}: one group per"
-            f" workflow and pull request, or commit (or {shapes[1]['group']!r}, every Dependabot"
-            " head's runs in one)"
+            f"{name} groups its runs as {concurrency.get('group')!r}, not {shape['group']!r}: one"
+            " group per workflow and pull request, or commit, and every Dependabot head's runs in"
+            " one"
         )
-        shape = shapes[0]
     if concurrency.get("cancel-in-progress") != shape["cancel-in-progress"]:
         bad.append(
             f"{name} sets cancel-in-progress {concurrency.get('cancel-in-progress')!r}, not"
@@ -14405,7 +14523,8 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
         Control("every Dependabot head's runs in one queued group",
                 _tier_concurrency(_PR_YML, _MERGE_YML, dependabot=True), fails=False),
         Control("each tier keying its own runs, Dependabot's too",
-                _tier_concurrency(_PR_YML, _MERGE_YML, dependabot=False), fails=False),
+                _tier_concurrency(_PR_YML, dependabot=False),
+                expect=f"pr.yml groups its runs as 'pr-{_TIER_RUN_KEY}'"),
         Control("a Dependabot head's waiting run replaced by the next one",
                 _both(_tier_concurrency(_PR_YML, dependabot=True),
                       _tier_concurrency_line(_PR_YML, "queue", "")),
