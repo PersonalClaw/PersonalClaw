@@ -41,8 +41,10 @@ git commit -s -m "fix(memory): correct recall ordering"
 This appends `Signed-off-by: Your Name <your@email>` (using your git
 `user.name`/`user.email`), certifying you wrote the change or have the right to
 submit it under the project's license. A CI check enforces it on every PR; an
-unsigned commit fails. If you forget, `git commit --amend -s` (or `git rebase
---signoff`) fixes it.
+unsigned commit fails, and so does the merge verdict. If you forget, `git commit --amend -s`
+(or `git rebase --signoff`) fixes it. To bring your branch up to date with `main`, use
+**Update with rebase** or rebase locally: GitHub's plain **Update branch** adds a merge commit
+with no sign-off, which fails the check.
 
 The same check (`scripts/check_commit_provenance.py`) holds more rules, so every commit on
 `main` can say where it came from:

@@ -57,6 +57,7 @@ class FakeApi:
         self.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {"behind_by": 0}
         self.artifacts({"ci-record-unit": DIGEST, "web-dist": "sha256:" + "e" * 64})
         self.review(HEAD, ("completed", "success"))
+        self.sign_off(HEAD, ("completed", "success"))
         self.codeql(HEAD)
 
     def codeql(
@@ -111,18 +112,30 @@ class FakeApi:
 
     def review(self, head: str, *runs: tuple[str, str | None], path: str = "") -> None:
         """The head's dependency-review runs, oldest first."""
+        self._target_runs(mc.DEPENDENCY_REVIEW, head, runs, path=path)
+
+    def sign_off(self, head: str, *runs: tuple[str, str | None], **fields: Any) -> None:
+        """The head's DCO runs, oldest first; *fields* plant what each run says of itself."""
+        self._target_runs(mc.DCO_CHECK, head, runs, **fields)
+
+    def _target_runs(
+        self, workflow: str, head: str, runs: Any, *, path: str = "", **fields: Any
+    ) -> None:
         listed = [
             {
                 "id": 900 + n,
-                "path": path or mc.DEPENDENCY_REVIEW,
+                "path": path or workflow,
+                "event": "pull_request_target",
                 "head_sha": head,
                 "status": s,
                 "conclusion": c,
+                **fields,
             }
             for n, (s, c) in enumerate(runs)
         ]
         query = f"head_sha={head}&event=pull_request_target&per_page=100"
-        self.answers[f"/repos/{REPO}/actions/workflows/dependency-review.yml/runs?{query}"] = {
+        name = workflow.rsplit("/", 1)[-1]
+        self.answers[f"/repos/{REPO}/actions/workflows/{name}/runs?{query}"] = {
             "total_count": len(listed),
             "workflow_runs": listed,
         }
@@ -886,6 +899,70 @@ def test_a_review_from_another_workflow_counts_for_nothing() -> None:
     assert "has no dependency review" in _red(api).output["summary"]
 
 
+# ── The sign-off check (#3908) ─────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "runs, says",
+    [
+        ((), "has no sign-off check (dco.yml)"),
+        ((("in_progress", None),), "sign-off check (DCO) is 'in_progress', not finished"),
+        ((("completed", "failure"),), "sign-off check (DCO) is 'failure'"),
+        ((("completed", "success"), ("completed", "failure")), "sign-off check (DCO) is 'failure'"),
+    ],
+)
+def test_a_sign_off_check_that_did_not_pass_is_red(runs: Any, says: str) -> None:
+    api = FakeApi()
+    api.sign_off(HEAD, *runs)
+    assert says in _red(api).output["summary"]
+
+
+def test_a_red_sign_off_check_names_its_fix_in_the_title() -> None:
+    """The case of #5601: GitHub's Update branch wrote a merge commit with no sign-off, DCO went
+    red and the verdict stayed green. The red says how to update the head instead."""
+    api = FakeApi()
+    api.sign_off(HEAD, ("completed", "failure"))
+    title = _red(api).output["title"]
+    assert title == f"Red: the head's sign-off check (DCO) is 'failure': {mc.DCO_FIX}"
+    assert len(title) <= 255, "the title is cut at 255, and the fix is its tail"
+    assert "Update branch" in title and "update with rebase, or rebase locally" in title
+
+
+def test_the_newest_sign_off_check_decides() -> None:
+    api = FakeApi()
+    api.sign_off(HEAD, ("completed", "failure"), ("completed", "success"))
+    found = _decide(api)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success"
+    assert "its sign-off check (DCO) passed" in found.output["summary"]
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"path": f"{WF}fake-dco.yml"}, id="a candidate's own workflow named DCO"),
+        pytest.param(
+            {"event": "pull_request"}, id="dco.yml run as the head's copy, on pull_request"
+        ),
+        pytest.param({"head_sha": "d" * 40}, id="a run on an older head of the same pull request"),
+    ],
+)
+def test_a_sign_off_check_that_is_not_mains_on_this_head_counts_for_nothing(
+    fields: dict[str, Any],
+) -> None:
+    api = FakeApi()
+    api.sign_off(HEAD, ("completed", "success"), **fields)
+    assert "has no sign-off check (dco.yml)" in _red(api).output["summary"]
+
+
+def test_a_head_red_on_its_review_and_its_sign_off_names_both() -> None:
+    api = FakeApi()
+    api.review(HEAD, ("completed", "failure"))
+    api.sign_off(HEAD, ("completed", "failure"))
+    summary = _red(api).output["summary"]
+    assert "the head's dependency review is 'failure'" in summary, summary
+    assert "the head's sign-off check (DCO) is 'failure'" in summary, summary
+
+
 REVIEW_RUN = 55
 
 
@@ -942,6 +1019,28 @@ def test_a_review_of_a_head_that_changes_ci_reads_its_contract_run() -> None:
     judged = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
     assert judged.posting is not None and judged.posting.head_sha == HEAD
     assert judged.posting.conclusion == "success" and judged.cleanup == CONTRACT_BRANCH
+
+
+def test_a_completed_sign_off_check_judges_its_head_again() -> None:
+    api = FakeApi()
+    _review_run(api, path=mc.DCO_CHECK)
+    _merge_runs(api, OWN_MERGE, [RUN])
+    api.sign_off(HEAD, ("completed", "failure"))
+    red = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    assert red.posting is not None and red.posting.head_sha == HEAD
+    assert red.posting.conclusion == "failure"
+    assert "update with rebase" in red.posting.output["title"]
+    api.sign_off(HEAD, ("completed", "failure"), ("completed", "success"))
+    green = mc.judge(api, REPO, REVIEW_RUN, CONTROLLER)
+    assert green.posting is not None and green.posting.conclusion == "success"
+
+
+def test_a_sign_off_run_from_a_fork_or_on_pull_request_posts_nothing() -> None:
+    api = FakeApi()
+    _review_run(api, path=mc.DCO_CHECK, event="pull_request")
+    assert "not a pull request's" in mc.judge(api, REPO, REVIEW_RUN, CONTROLLER).why
+    _review_run(api, path=mc.DCO_CHECK, repository={"full_name": "someone/fork"})
+    assert mc.judge(api, REPO, REVIEW_RUN, CONTROLLER).posting is None
 
 
 def test_a_review_run_that_is_not_a_pull_requests_posts_nothing() -> None:

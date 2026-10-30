@@ -289,7 +289,8 @@ no workflow calls it yet.
 ### The merge controller's poster
 
 `.github/workflows/merge-verdict.yml` posts `merge-verdict` on a head each time a Merge run
-(`merge.yml`) or a Dependency review run completes, or code scanning's CodeQL check does. It is a `workflow_run` listener, so GitHub
+(`merge.yml`), a Dependency review run or a DCO run completes, or code scanning's CodeQL check
+does. It is a `workflow_run` listener, so GitHub
 runs main's copy of it and of
 the `tools/ci` it runs, whatever the candidate brings. `python -m tools.ci merge-controller
 decide` (`tools/ci/merge_controller.py`) reads everything through the API by the run's id:
@@ -391,6 +392,16 @@ verdict says all it must fix:
   is still running or did not pass is red. The poster also follows Dependency review: when one
   completes, it judges that head again from the head's own completed Merge run (and, for a head
   that changes a definition, its contract run). So they finish in any order.
+- **The sign-off check (#3908):** the newest `pull_request_target` run of `dco.yml` on the head,
+  `main`'s copy, concluded `success`, read as the dependency review is: by its path, its event
+  and the head, so a candidate's own workflow named DCO, a `pull_request` run of the head's copy
+  or a run on an older head of the pull request counts for nothing. Before, the verdict did not
+  read it, and it is the one required check: #5601's head went red on DCO after GitHub's Update
+  branch gave it a merge commit with no sign-off, and the verdict stayed green. That merge commit
+  is refused on purpose, with no exemption: a commit's committer is text anyone can write, so
+  naming GitHub proves nothing, and a merge commit can carry a conflict resolution no one signed
+  off. A red names the fix, update with rebase or rebase locally, in its title. The poster
+  follows DCO as it follows Dependency review.
 - **CodeQL, read from what it ran:** the newest run of GitHub's dynamic CodeQL workflow
   (`dynamic/github-code-scanning/codeql`) on the head finished, with an `Analyze (<language>)`
   job concluded `success` for each language `main`'s default-setup analyses name; each of those
@@ -1497,7 +1508,8 @@ are in [CONTRIBUTING.md](../../CONTRIBUTING.md#developer-certificate-of-origin-d
 places:
 
 - **`dco.yml`, on every pull request,** in `pr` mode: rules 1, 3 and 5, over the commits the
-  API returns and the title in the event payload. It runs on `pull_request_target`, so it checks
+  API returns and the title in the event payload. The merge verdict reads its run on the head
+  (see "The merge controller's poster"), so a red one keeps the pull request from merging. It runs on `pull_request_target`, so it checks
   out only the base branch's script and `MAINTAINERS`, and puts no file or git object of the pull
   request on disk. The commits endpoint returns at most 250 commits, so a list short of the pull
   request's own count fails the check rather than passing half of it. It also answers for the

@@ -47,11 +47,19 @@ trusted-run branch the old path left).
 4. The ``results`` job, which judges the run with ``main``'s ``verdict.py``, concluded
    ``success`` on every attempt, by the API's job list. Missing, cancelled, skipped or red on any
    attempt is red: a rerun never turns a red into a green.
-5. The head's dependency review passed (#4585 step 6): the newest ``pull_request_target`` run
-   of ``dependency-review.yml`` on the head, main's copy, concluded ``success``. One that has
-   not run, is still running or did not pass is red. When a Dependency review run completes, the
-   poster judges its head again from the head's own completed Merge run (and, for a head that
-   changes a definition, its contract run), so they may finish in any order.
+5. The head's dependency review passed (#4585 step 6), and so did its sign-off check (#3908):
+   the newest ``pull_request_target`` run of ``dependency-review.yml``, and of ``dco.yml``, on the
+   head, main's copy of each, concluded ``success``. One that has not run, is still running or
+   did not pass is red. Each is read by its path, its event and the head, so a candidate's own
+   workflow named for either, which runs under ``pull_request``, never stands in for it, and a
+   run on an older head of the pull request does not count. A red sign-off check names its fix.
+   GitHub's Update branch makes a merge commit with no sign-off, and rule 1 of
+   ``scripts/check_commit_provenance.py`` refuses it on purpose, with no exemption: a commit's
+   committer is text anyone can write, so naming GitHub proves nothing, and a merge commit can
+   carry a conflict resolution no one signed off. The head is updated with rebase. When a Dependency
+   review or DCO run completes, the poster judges its head again from the head's own completed
+   Merge run (and, for a head that changes a definition, its contract run), so they may finish
+   in any order.
 6. CodeQL analysed the head in every language ``main``'s CodeQL analyses name, and the pull
    request brings no alert of its own: the newest run of GitHub's dynamic CodeQL workflow on the
    head finished, with an ``Analyze (<language>)`` job that concluded ``success`` for each of
@@ -119,6 +127,13 @@ MERGE_WORKFLOW = f".github/workflows/{workflows.MERGE}"
 JUDGED_EVENTS = frozenset({"pull_request", "workflow_dispatch"})
 #: The dependency review: a pull_request_target workflow, so the run is main's copy.
 DEPENDENCY_REVIEW = ".github/workflows/dependency-review.yml"
+#: The sign-off check: a pull_request_target workflow too, so the run is main's copy.
+DCO_CHECK = ".github/workflows/dco.yml"
+#: What a red sign-off check tells the contributor to do, short enough to stay whole in the title.
+DCO_FIX = (
+    "its run names each commit and rule it refused. A merge commit from GitHub's Update branch"
+    " has no Signed-off-by, so update with rebase, or rebase locally, and push again"
+)
 #: GitHub's dynamic CodeQL workflow (code scanning's default setup), by its run path.
 CODEQL_WORKFLOW = "dynamic/github-code-scanning/codeql"
 #: The analysis key default setup's CodeQL analyses carry.
@@ -514,31 +529,50 @@ def contract_run(get: Get, repo: str, head: str, base: str) -> Contract | None:
     )
 
 
-def dependency_review_reasons(get: Get, repo: str, head: str) -> list[str]:
-    """Why the head's dependency review is not green (rule 5), or nothing."""
-    name = DEPENDENCY_REVIEW.rsplit("/", 1)[-1]
+def _newest_target_run(get: Get, repo: str, head: str, path: str, what: str) -> Mapping[str, Any]:
+    """The newest ``pull_request_target`` run of main's *path* on *head*, or an empty mapping:
+    read by its path, its event and the head, so no other run stands in for it."""
+    name = path.rsplit("/", 1)[-1]
     query = urllib.parse.urlencode(
         {"head_sha": head, "event": "pull_request_target", "per_page": _PER_PAGE}
     )
     answer = _read(get, f"/repos/{repo}/actions/workflows/{name}/runs?{query}")
     runs = answer.get("workflow_runs") if isinstance(answer, Mapping) else None
     if not isinstance(runs, list):
-        raise Unread(f"{head}'s dependency reviews are not a list")
+        raise Unread(f"{head}'s {what}s are not a list")
     ours = [
         r
         for r in runs
         if isinstance(r, Mapping)
-        and r.get("path") == DEPENDENCY_REVIEW
+        and r.get("path") == path
+        and r.get("event") == "pull_request_target"
         and r.get("head_sha") == head
         and _int(r.get("id")) is not None
     ]
-    if not ours:
+    return max(ours, key=lambda r: int(r["id"])) if ours else {}
+
+
+def dependency_review_reasons(get: Get, repo: str, head: str) -> list[str]:
+    """Why the head's dependency review is not green (rule 5), or nothing."""
+    newest = _newest_target_run(get, repo, head, DEPENDENCY_REVIEW, "dependency review")
+    if not newest:
         return ["the head has no dependency review (dependency-review.yml) yet"]
-    newest = max(ours, key=lambda r: int(r["id"]))
     if newest.get("status") != "completed":
         return [f"the head's dependency review is {newest.get('status')!r}, not finished"]
     if newest.get("conclusion") != "success":
         return [f"the head's dependency review is {newest.get('conclusion')!r}"]
+    return []
+
+
+def sign_off_reasons(get: Get, repo: str, head: str) -> list[str]:
+    """Why the head's sign-off check is not green (rule 5), or nothing: a red one names its fix."""
+    newest = _newest_target_run(get, repo, head, DCO_CHECK, "sign-off check")
+    if not newest:
+        return ["the head has no sign-off check (dco.yml) yet"]
+    if newest.get("status") != "completed":
+        return [f"the head's sign-off check (DCO) is {newest.get('status')!r}, not finished"]
+    if newest.get("conclusion") != "success":
+        return [f"the head's sign-off check (DCO) is {newest.get('conclusion')!r}: {DCO_FIX}"]
     return []
 
 
@@ -910,12 +944,14 @@ def _latest_merge_run(get: Get, repo: str, **query: str) -> int | None:
 
 
 def decide_review(get: Get, repo: str, run: Mapping[str, Any], controller_revision: str) -> Outcome:
-    """A completed Dependency review run: judge its head again (:func:`rejudge`)."""
+    """A completed Dependency review or DCO run: judge its head again (:func:`rejudge`)."""
     head = run.get("head_sha")
     if run.get("event") != "pull_request_target" or not isinstance(head, str):
-        return Outcome(why=f"run {run.get('id')} is not a pull request's dependency review")
+        return Outcome(
+            why=f"run {run.get('id')} is not a pull request's dependency review or sign-off check"
+        )
     if not _SHA.fullmatch(head):
-        raise Unread(f"dependency review run {run.get('id')} names no head")
+        raise Unread(f"run {run.get('id')} of {run.get('path')} names no head")
     return rejudge(get, repo, head, controller_revision)
 
 
@@ -1056,13 +1092,13 @@ def wake(get: Get, repo: str, head: str, controller_revision: str) -> Outcome:
 
 def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome:
     """What a completed run of a workflow the poster follows does: a Merge run is judged; a
-    Dependency review, CodeQL or contract run judges its head again."""
+    Dependency review, DCO, CodeQL or contract run judges its head again."""
     run = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
     if not isinstance(run, Mapping):
         raise Unread(f"run {run_id} is not an object")
     repository = run.get("repository")
     owner = repository.get("full_name") if isinstance(repository, Mapping) else None
-    if owner == repo and run.get("path") == DEPENDENCY_REVIEW:
+    if owner == repo and run.get("path") in (DEPENDENCY_REVIEW, DCO_CHECK):
         if run.get("status") != "completed":
             return Outcome(why=f"run {run_id} is {run.get('status')!r}, not completed")
         return decide_review(get, repo, run, controller_revision)
@@ -1314,6 +1350,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         failing, labels = results_reasons(get, repo, run)
         reasons += failing
         reasons += dependency_review_reasons(get, repo, head)
+        reasons += sign_off_reasons(get, repo, head)
         codeql = codeql_reading(get, repo, head, base)
         reasons += codeql.reasons
         moved = codeql.moved
@@ -1379,6 +1416,7 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             *ran,
             "- the head is up to date with main",
             "- its dependency review passed",
+            "- its sign-off check (DCO) passed",
             "- CodeQL analysed every language main has, and found no alert it brings",
             *([f"- {moved_note(moved)}"] if moved else []),
             f"- {len(records)} job records, their digests in the receipt below",
