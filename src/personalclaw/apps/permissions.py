@@ -944,8 +944,9 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "GET /api/providers/{name}": AppMay(
         "reads the app's own provider — its manifest and whether it is running", owns=_OWN_APP
     ),
-    "GET /api/providers/{name}/schema": AppMay(
-        "reads the settings form of the app's own provider", owns=_OWN_APP
+    "GET /api/providers/{name}/capabilities/{capability}": AppMay(
+        "reads one capability of the app's own provider — its settings form and whether it runs",
+        owns=_OWN_APP,
     ),
     "GET /api/providers/{name}/config": AppMay(
         "reads the app's own provider settings, its credentials masked", owns=_OWN_APP

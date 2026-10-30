@@ -78,7 +78,7 @@ function archives(list: DurabilityArchive[]): DurabilityArchives {
   }
 }
 
-const FOLDER = { name: 'dir-sync', displayName: 'Folder Sync', enabled: true, provider: { type: 'sync' } } as unknown as SettingsProvider
+const FOLDER = { name: 'dir-sync', id: 'sync', displayName: 'Folder Sync', enabled: true, provider: { type: 'sync' } } as unknown as SettingsProvider
 
 /** Every read the panel makes, stubbed. `statuses` and `snaps` are answered in order, the last
  *  one repeating, so a test can say what the page should show after it re-reads. */

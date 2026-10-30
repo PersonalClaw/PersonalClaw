@@ -6144,6 +6144,9 @@ export interface ModelConnection {
 export interface ChatProviderConnection extends ModelConnection { provider: string }
 export interface SettingsProvider {
   name: string; displayName?: string; description?: string; version?: string; author?: string
+  /** The capability this row is (#3841): an app with two providers has two rows, told apart by
+   *  `id` (within the app) and `key` (`<app>/<id>`), each with its own `label`. */
+  id: string; key?: string; label?: string
   enabled: boolean; error?: string
   /** Absent only from a gateway that predates the availability board — read as available. */
   availability?: ProviderAvailability
@@ -6152,7 +6155,7 @@ export interface SettingsProvider {
   managed?: boolean
   /** `execution: 'sidecar'` runs its engine in a child process with a Python environment of its
    *  own, which the card offers to install (Install engine). */
-  provider?: { type?: string; entity?: string; capabilities?: string[]; multiInstance?: boolean; hasConfigSchema?: boolean; execution?: string }
+  provider?: { type?: string; description?: string; entity?: string; capabilities?: string[]; multiInstance?: boolean; hasConfigSchema?: boolean; execution?: string }
   tags?: string[]
 }
 // Agent runtime readiness — native + each acp:<cli>. `extension` keys it onto
@@ -8968,8 +8971,9 @@ export const api = {
   // Entries carry both model_name (composer pill) and model_id (pickers).
   models: () => get<ModelItem[]>('/api/models/chat'),
   settingsProviders: () => get<{ providers: SettingsProvider[] }>('/api/providers').then((d) => d.providers),
-  // per-extension config: schema (for the dynamic form) + current values + save.
-  providerSchema: (name: string) => get<{ schema: ProviderSchema }>(`/api/providers/${encodeURIComponent(name)}/schema`).then((d) => d.schema),
+  // per-extension config: schema (for the dynamic form) + current values + save. The schema is one
+  // capability's (`SettingsProvider.id`); the values are still the app's, until #3842.
+  providerSchema: (name: string, capability: string) => get<{ schema: ProviderSchema }>(`/api/providers/${encodeURIComponent(name)}/capabilities/${encodeURIComponent(capability)}`).then((d) => d.schema),
   // `_secret_set` names the sensitive fields that already hold a stored secret. The GET
   // masks those values (they are write-only), so the form needs this list to tell "saved"
   // from "empty" — without it a masked field is indistinguishable from an unset one.

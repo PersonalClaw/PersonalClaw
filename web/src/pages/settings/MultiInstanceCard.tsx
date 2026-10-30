@@ -32,8 +32,8 @@ export function MultiInstanceCard({ ext, onChanged }: { ext: SettingsProvider; o
   // is ready instantly on revisit. Instances are mutable but still cached for an
   // instant paint, then revalidated; an empty list when disabled (no fetch).
   const { data: schema } = useQuery(
-    `settings:provider-schema:${ext.name}`,
-    () => api.providerSchema(ext.name).catch(() => ({ properties: {} } as ProviderSchema)),
+    `settings:provider-schema:${ext.name}/${ext.id}`,
+    () => api.providerSchema(ext.name, ext.id).catch(() => ({ properties: {} } as ProviderSchema)),
     { persist: true },
   )
   // 🔴 THE INSTANCE LIST IS NOT THE SCHEMA READ, and that is why only one of this file's two

@@ -82,7 +82,7 @@ describe("every channel's header and Owner line name its owner the same way", ()
       it(`${ch.display}, ${name ? 'with a name' : 'with no name'}`, async () => {
         const person = channelPerson(ch.display, ch.id, name)
         const ext: SettingsProvider = {
-          name: ch.app, displayName: `${ch.display} Channel`, enabled: true, managed: true,
+          name: ch.app, id: 'channel', displayName: `${ch.display} Channel`, enabled: true, managed: true,
           provider: { type: 'channel', capabilities: ['messaging'], hasConfigSchema: true },
           availability: { state: 'available', reason: '', checkedAt: 1 },
         }

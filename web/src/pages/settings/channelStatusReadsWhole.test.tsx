@@ -20,7 +20,7 @@ const REFUSED =
   "authority's certificate. It tries again, waiting longer after each failure, up to 15 minutes."
 
 const ext: SettingsProvider = {
-  name: 'email-channel', displayName: 'Email Channel', enabled: true, managed: true,
+  name: 'email-channel', id: 'channel', displayName: 'Email Channel', enabled: true, managed: true,
   provider: { type: 'channel', capabilities: ['messaging'], hasConfigSchema: true },
   availability: { state: 'available', reason: '', checkedAt: 1 },
 }

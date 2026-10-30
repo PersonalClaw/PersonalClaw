@@ -11,7 +11,7 @@ import { api, type ChannelRuntime, type SettingsProvider } from '../../lib/api'
 // as channels change, and reports `starting` while one starts, so the word comes from the state.
 
 const ext: SettingsProvider = {
-  name: 'telegram-channel', displayName: 'Telegram Channel', enabled: true, managed: true,
+  name: 'telegram-channel', id: 'channel', displayName: 'Telegram Channel', enabled: true, managed: true,
   provider: { type: 'channel', capabilities: ['messaging'], hasConfigSchema: true },
   availability: { state: 'available', reason: '', checkedAt: 1 },
 }

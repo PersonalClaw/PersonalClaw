@@ -54,7 +54,7 @@ describe('a long numeric ID in a text setting', () => {
     vi.spyOn(api, 'providerConfig').mockResolvedValue({ config: { application_id: '' }, _secret_set: [], revision: 'rev-1' })
     const save = vi.spyOn(api, 'saveProviderConfig').mockImplementation((_n, config) =>
       Promise.resolve({ config, _secret_set: [], revision: 'rev-2' }))
-    render(<ProviderConfigForm name="discord-channel" />)
+    render(<ProviderConfigForm name="discord-channel" capability="channel" />)
     fireEvent.change(await screen.findByRole('textbox', { name: 'Application ID' }), { target: { value: ID } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(save).toHaveBeenCalledWith('discord-channel', { application_id: ID }, 'rev-1'))

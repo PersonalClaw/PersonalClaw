@@ -121,7 +121,7 @@ describe('Settings › Providers shows the same state and Test on the app', () =
     const { ProviderCard } = await import('./ProviderCard')
     const retry = vi.fn()
     const ext: SettingsProvider = {
-      name: 'brave-search', displayName: 'Brave Search', enabled: true, managed: true,
+      name: 'brave-search', id: 'search', displayName: 'Brave Search', enabled: true, managed: true,
       provider: { type: 'search', capabilities: [] },
     }
     render(<ProviderCard ext={ext} search={brave({ check: { state: 'ok', detail: '', checked_at: 1 } })}

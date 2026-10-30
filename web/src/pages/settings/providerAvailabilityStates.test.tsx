@@ -14,7 +14,7 @@ import { api, type SettingsProvider } from '../../lib/api'
 
 function ext(availability: SettingsProvider['availability']): SettingsProvider {
   return {
-    name: 'sentence-transformers', displayName: 'Sentence Transformers', enabled: true, managed: true,
+    name: 'sentence-transformers', id: 'model', displayName: 'Sentence Transformers', enabled: true, managed: true,
     provider: { type: 'model', capabilities: ['embedding'] }, availability,
   }
 }

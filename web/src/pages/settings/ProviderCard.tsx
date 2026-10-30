@@ -201,7 +201,7 @@ export function ProviderCard({ ext, runtime, channel, search, searchUnread, onSe
 
       {/* A save rebuilds the provider — for a channel, its receiver restarts on what was saved —
           so the card re-reads what the save changed instead of showing the status from before. */}
-      {open && hasConfig && <ProviderConfigForm name={ext.name} onSaved={() => { setSaves((n) => n + 1); onChanged() }} />}
+      {open && hasConfig && <ProviderConfigForm name={ext.name} capability={ext.id} onSaved={() => { setSaves((n) => n + 1); onChanged() }} />}
       {/* A chat channel's owner — who it reaches you as, and pairing it. After the settings: a
           channel pairs through its receiver, which runs once its token is saved. */}
       {open && channel?.owner && (

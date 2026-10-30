@@ -126,7 +126,7 @@ describe('the engine section', () => {
 
 describe('the Providers card', () => {
   const provider = (execution: string): SettingsProvider => ({
-    name: 'voice-clone-tts', displayName: 'Voice Clone TTS', enabled: true, managed: true,
+    name: 'voice-clone-tts', id: 'model', displayName: 'Voice Clone TTS', enabled: true, managed: true,
     availability: { state: 'unavailable', reason: 'The OmniVoice cloning engine is not installed.', checkedAt: 0 },
     provider: { type: 'model', capabilities: ['tts'], hasConfigSchema: false, execution },
   })

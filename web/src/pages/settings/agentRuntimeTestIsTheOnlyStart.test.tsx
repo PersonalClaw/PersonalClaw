@@ -12,7 +12,7 @@ import type { AgentRuntime, SettingsProvider } from '../../lib/api'
 // plainly when the CLI has not been tried, and offers ONE control that starts it: Test.
 
 const ext: SettingsProvider = {
-  name: 'demo-cli-agent', displayName: 'Demo CLI', enabled: true, managed: true,
+  name: 'demo-cli-agent', id: 'agent', displayName: 'Demo CLI', enabled: true, managed: true,
   provider: { type: 'agent', capabilities: ['acp'] }, availability: { state: 'available', reason: '', checkedAt: 1 },
 }
 

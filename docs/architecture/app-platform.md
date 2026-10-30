@@ -893,6 +893,12 @@ share a use or an event, and an app has one local-model capability (the local-mo
 refuses a second when it registers: only the provider can say it is local). The 36 native bundles declare `providers[]` with ids and labels;
 first-party apps keep the singular field until both repositories drop it together (#5665).
 
+`GET /api/providers` lists one row per capability, each with its `id`, `key` and `label`, and
+`GET /api/providers/{name}/capabilities/{id}` reads one: its record, whether it runs, and its
+settings form. A capability has a path segment of its own so it never takes the path of a route
+added under `/api/providers/{name}` later. An app's settings are still one document,
+`/api/providers/{name}/config`, until #3842 gives each capability its own.
+
 A tool provider is registered under its app's name, and every tool it lists passes the tool
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see

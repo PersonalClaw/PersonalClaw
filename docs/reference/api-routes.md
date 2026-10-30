@@ -858,6 +858,7 @@ The 939 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/providers` | _(no summary)_ |
 | `GET` | `/api/providers/{name}` | _(no summary)_ |
 | `POST` | `/api/providers/{name}/availability` | measure again whether it can run here. |
+| `GET` | `/api/providers/{name}/capabilities/{capability}` | One capability of the app: what it is, whether it runs, and its settings form. |
 | `GET` | `/api/providers/{name}/config` | _(no summary)_ |
 | `PATCH` | `/api/providers/{name}/config` | _(no summary)_ |
 | `GET` | `/api/providers/{name}/instances` | _(no summary)_ |
@@ -866,7 +867,6 @@ The 939 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `GET` | `/api/providers/{name}/instances/{id}` | _(no summary)_ |
 | `PUT` | `/api/providers/{name}/instances/{id}` | _(no summary)_ |
 | `POST` | `/api/providers/{name}/instances/{id}/test` | test connectivity. |
-| `GET` | `/api/providers/{name}/schema` | _(no summary)_ |
 | `GET` | `/api/push` | The subscribe-side facts: backend, VAPID public key, which devices are subscribed. |
 | `POST` | `/api/push/relay-register` | Store one device's vendor push-service token for the relay backend, and route approvals. |
 | `POST` | `/api/push/relay-unregister` | Drop one device's relay token. |

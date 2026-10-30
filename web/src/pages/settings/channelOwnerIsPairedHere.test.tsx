@@ -215,7 +215,7 @@ describe('the owner section', () => {
 // ── …and the channel's status says whether it knows its owner ───────────────────────────────────
 
 const ext: SettingsProvider = {
-  name: 'telegram-channel', displayName: 'Telegram Channel', enabled: true, managed: true,
+  name: 'telegram-channel', id: 'channel', displayName: 'Telegram Channel', enabled: true, managed: true,
   provider: { type: 'channel', capabilities: ['messaging'], hasConfigSchema: true },
   availability: { state: 'available', reason: '', checkedAt: 1 },
 }

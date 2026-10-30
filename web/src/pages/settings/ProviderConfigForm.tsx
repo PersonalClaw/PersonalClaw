@@ -41,7 +41,7 @@ function editableConfig(c: { config?: Record<string, unknown>; _secret_set?: str
  *  form and saves via PATCH /api/providers/{name}/config. Lives under a
  *  provider's toggle — only mounted when the provider is enabled + has a schema.
  *  `onSaved` runs after a save the gateway accepted: the save rebuilt the provider. */
-export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: () => void }) {
+export function ProviderConfigForm({ name, capability, onSaved }: { name: string; capability: string; onSaved?: () => void }) {
   const [schema, setSchema] = useState<ProviderSchema | null>(null)
   // The config as the form last read or saved it — the copy a save names the revision of.
   const [base, setBase] = useState<Revisioned<Record<string, unknown>>>({ value: {}, revision: '' })
@@ -60,7 +60,7 @@ export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: 
   }, [])
   useEffect(() => {
     let live = true
-    Promise.all([api.providerSchema(name), api.providerConfig(name)])
+    Promise.all([api.providerSchema(name, capability), api.providerConfig(name)])
       .then(([s, c]) => {
         if (!live) return
         setSchema(s)
@@ -68,7 +68,7 @@ export function ProviderConfigForm({ name, onSaved }: { name: string; onSaved?: 
       })
       .catch(() => { if (live) setSchema({ properties: {} }) })
     return () => { live = false }
-  }, [name, show])
+  }, [name, capability, show])
 
   // 🔴 THE FORM IS SAVED WHOLE, over the revision it was read at. It PATCHes every field it shows,
   // so a form opened before this app's settings were saved elsewhere — Apps → Configure writes the

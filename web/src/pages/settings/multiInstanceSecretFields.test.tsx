@@ -116,6 +116,7 @@ const CARD_SCHEMA = {
 
 const EXT: SettingsProvider = {
   name: 'openai-models',
+  id: 'model',
   displayName: 'OpenAI',
   description: 'OpenAI chat + embedding models',
   enabled: true,
