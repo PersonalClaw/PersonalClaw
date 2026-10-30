@@ -35,6 +35,7 @@ from personalclaw.request_validation import (
     require_string,
     string_field,
 )
+from personalclaw.sel import sel_log_async
 from personalclaw.voice import bindings as vb
 from personalclaw.voice import profiles as vp
 
@@ -205,7 +206,8 @@ async def api_voice_profile_consent_record(request: web.Request) -> web.Response
     try:
         profile = vp.record_consent(pid, consent_text=consent_text)
     except vp.VoiceProfileError as exc:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=_caller(request),
             operation="voice_profile.consent.record",
             outcome="denied",
@@ -213,13 +215,16 @@ async def api_voice_profile_consent_record(request: web.Request) -> web.Response
             error=exc.reason,
         )
         return json_error(exc.reason, message=exc.message, status=exc.status)
-    _sel().log_api_access(
+    # Shown with the change, ahead of its row, so a change landing while the row is written goes
+    # out after this one.
+    _broadcast(request, "voice_profile_updated", profile)
+    await sel_log_async(
+        _sel().log_api_access,
         caller=_caller(request),
         operation="voice_profile.consent.record",
         outcome="success",
         resources=f"{pid} verified={profile.verified_own_voice}",
     )
-    _broadcast(request, "voice_profile_updated", profile)
     return web.json_response(vp.profile_payload(profile))
 
 
@@ -231,7 +236,8 @@ async def api_voice_profile_consent_verify(request: web.Request) -> web.Response
     except vp.VoiceProfileError as exc:
         return json_error(exc.reason, message=exc.message, status=exc.status)
     verified = vp.recompute_verified(profile)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=_caller(request),
         operation="voice_profile.consent.verify",
         outcome="success" if verified else "denied",
@@ -252,7 +258,8 @@ async def api_voice_profile_consent_revoke(request: web.Request) -> web.Response
     try:
         profile = vp.revoke_consent(pid)
     except vp.VoiceProfileError as exc:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=_caller(request),
             operation="voice_profile.consent.revoke",
             outcome="denied",
@@ -260,13 +267,14 @@ async def api_voice_profile_consent_revoke(request: web.Request) -> web.Response
             error=exc.reason,
         )
         return json_error(exc.reason, message=exc.message, status=exc.status)
-    _sel().log_api_access(
+    _broadcast(request, "voice_profile_updated", profile)
+    await sel_log_async(
+        _sel().log_api_access,
         caller=_caller(request),
         operation="voice_profile.consent.revoke",
         outcome="success",
         resources=f"{pid} verified={profile.verified_own_voice}",
     )
-    _broadcast(request, "voice_profile_updated", profile)
     return web.json_response(vp.profile_payload(profile))
 
 
@@ -357,7 +365,8 @@ async def api_voice_migrate(request: web.Request) -> web.Response:
     try:
         profile = vm.migrate_active_to_default_profile(name=name)
     except vp.VoiceProfileError as exc:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=_caller(request),
             operation="voice_profile.migrate",
             outcome="denied",
@@ -367,13 +376,14 @@ async def api_voice_migrate(request: web.Request) -> web.Response:
         if exc.reason == "no_active_voice":
             return json_error("no_active_voice", message=exc.message, status=exc.status)
         return json_error("invalid_request", message=exc.message, status=exc.status)
-    _sel().log_api_access(
+    _broadcast(request, "voice_profile_created", profile, migrated=True)
+    await sel_log_async(
+        _sel().log_api_access,
         caller=_caller(request),
         operation="voice_profile.migrate",
         outcome="success",
         resources=f"{profile.id} provider={profile.provider}",
     )
-    _broadcast(request, "voice_profile_created", profile, migrated=True)
     return web.json_response({**vp.profile_payload(profile)}, status=201)
 
 
