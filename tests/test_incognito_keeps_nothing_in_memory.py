@@ -247,6 +247,27 @@ def test_a_session_whose_mode_cannot_be_read_keeps_nothing(home, first_line: str
     _nothing_kept(home)
 
 
+@pytest.mark.parametrize(
+    "first_line", ["not a metadata line {", '{"_type": "metadata", "memory_mode": 3}']
+)
+def test_a_normal_chat_whose_first_line_was_damaged_since_keeps_nothing(
+    home, first_line: str
+) -> None:
+    """Its record says normal, and its first line, which wins, was damaged after: a mode that
+    cannot be read keeps nothing, never the record's."""
+    from personalclaw import chat_record
+
+    _chat(home["log"], NORMAL, "persistent")
+    path = session_path(NORMAL)
+    assert chat_record.read(path)["memory_mode"] == "persistent"
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    path.write_text(first_line + "\n" + "".join(lines[1:]), encoding="utf-8")
+    home["log"]._invalidate_cache(NORMAL)
+
+    asyncio.run(home["consolidator"].consolidate_session(NORMAL))
+    _nothing_kept(home)
+
+
 def test_a_normal_chat_still_consolidates_and_its_records_name_it(home) -> None:
     _chat(home["log"], NORMAL, "persistent")
     assert asyncio.run(home["consolidator"].consolidate_session(NORMAL)) is True

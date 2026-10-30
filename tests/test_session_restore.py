@@ -11,6 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from personalclaw import memory_writes
+from personalclaw.chat_traces import TEMPORARY
 from personalclaw.dashboard.chat import restore_recent_sessions
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import ConversationLog
@@ -818,12 +819,38 @@ class TestRehydrateSessionFromHistory:
         # Registered in _sessions so subsequent send_message calls hit the hot path.
         assert state._sessions["originchat"] is session
 
-    def test_rehydrates_incognito_memory_mode(self, tmp_path, monkeypatch):
-        """Rehydrated session preserves non-persistent memory_mode from metadata.
+    @pytest.mark.parametrize("mode", sorted(memory_writes.RESTRICTED_MODES))
+    def test_rehydrates_a_mode_that_keeps_nothing_as_itself(self, tmp_path, monkeypatch, mode):
+        """A rehydrated chat keeps its own mode when that mode keeps nothing.
 
         Regression guard for the phantom-session bug: naive get_or_create_session
         would default to memory_mode='persistent', so an incognito cron message
-        would leak content to disk."""
+        would leak content to disk. A Temporary chat is the one exception to coming
+        back: one not running here has ended, so its transcript is forgotten and
+        nothing is reopened, which keeps nothing either."""
+        monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
+        _write_session(
+            tmp_path,
+            "dashboard_incog",
+            [{"role": "user", "content": "secret", "ts": "2026-03-23T10:00:00"}],
+            meta={"memory_mode": mode, "title": "Private Tab"},
+        )
+        from personalclaw.dashboard.chat import _rehydrate_session_from_history
+
+        state = _make_state(tmp_path)
+        session = _rehydrate_session_from_history(state, "incog")
+        if mode == TEMPORARY:
+            assert session is None
+            assert not (tmp_path / "dashboard_incog.jsonl").exists()
+            assert "incog" not in state._sessions
+        else:
+            assert session is not None
+            assert session.memory_mode == mode
+        assert memory_writes.blocks_memory_writes("dashboard:incog", state=state)
+
+    def test_rehydrates_a_mode_this_build_does_not_know_as_unreadable(self, tmp_path, monkeypatch):
+        """A rehydrated chat whose mode this build does not know comes back unreadable, never
+        persistent: no build has written memory_mode "off", so nothing can say what it keeps."""
         monkeypatch.setattr("personalclaw.dashboard.state.config_dir", lambda: tmp_path)
         _write_session(
             tmp_path,
@@ -836,7 +863,8 @@ class TestRehydrateSessionFromHistory:
         state = _make_state(tmp_path)
         session = _rehydrate_session_from_history(state, "incog")
         assert session is not None
-        assert session.memory_mode == "off"
+        assert session.memory_mode == memory_writes.UNREADABLE
+        assert session.memory_mode != memory_writes.PERSISTENT
         # A mode this build does not know keeps nothing: the one reader of a session's mode reads
         # it as one nothing can say, so consolidation and every write respect it.
         assert memory_writes.blocks_memory_writes("dashboard:incog", state=state)

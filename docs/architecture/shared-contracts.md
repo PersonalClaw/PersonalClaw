@@ -1330,6 +1330,17 @@ nothing writes it). A metadata line at the head of an append-only file would for
 every title, pin or grant change, which is what §3.6 removes; the sidecar has precedent beside it
 (`<safe_key>.summary.json`, `docs/architecture/chat-sessions.md:344-348`).
 
+**Built so far (#4013).** The record file, `chat_record.py`: `read(transcript)`, `update(transcript,
+changes, drop=())` (the one write of a chat-level field, through `ConversationLog.update_metadata`),
+`saved(transcript, line)` (a save that wrote the transcript's line) and `forget(transcript)`; the fields
+every key the line holds today, plus `v`, `line_digest`, `line_bytes`, `kind`, `work`, `parent` and
+`created_by_client` (written once). Compatibility first (owner ruling, as for #3841 and #3842): the line
+is copied, not moved, and stays until the cut. Each start copies it into a record that has none and takes
+back a line written since its record matched it (the line wins for each key it holds), a save that
+rewrites the transcript writes it as the record says, and a clean stop writes it for every chat whose
+record changed since; readers read the record, and the line when a chat has none. `queue`, `withdrawn`
+and the other fields below join in their own changes.
+
 Fields: every key the line holds today (`chat_persistence.py:914-1033`): `created_at`,
 `last_consolidated`, `closed`, `memory_mode`, `title`, `agent`, `model`, `reasoning_effort`, `mode`,
 `workspace_dir`, `project_id`, `acp_provider`, `acp_provider_agent`, `task_mode`, `pinned`, `color_index`,

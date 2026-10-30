@@ -1,12 +1,13 @@
-"""The Doctor's two checks of the store files a write would be refused over.
+"""The Doctor's checks of the store files a write would be refused over, and of each chat's record.
 
 A store file that is there and cannot be read is never written over (``record_files``): every
 write to it is refused until it can be read, and a copy of it as it was is kept beside it. These
 checks name such a file before a refused write is the first anyone hears of it: the automations
 file in its own row (``automations.store``), which says what its being unreadable stops, in the
 Triggers page's own words; every other one this gateway found, in another
-(``durability.store_files``). Registered by :mod:`~personalclaw.resilience.doctor`, which owns the
-probe registry.
+(``durability.store_files``). A third names each chat the start could not give its record
+(``durability.chat_records``). Registered by :mod:`~personalclaw.resilience.doctor`, which owns
+the probe registry.
 """
 
 from __future__ import annotations
@@ -108,8 +109,39 @@ async def probe_unreadable_store_files(ctx: DoctorContext) -> ProbeResult:
     )
 
 
+async def probe_chat_records(ctx: DoctorContext) -> ProbeResult:
+    """durability — has every chat its record (``chat_record``)?
+
+    The transcripts the start's copy could not give a record, which are left as they were and read
+    from their first line, each by name. A record that cannot be read is named by
+    ``durability.store_files``, as every store file is. Read-only.
+    """
+    from personalclaw import chat_record
+    from personalclaw.resilience.doctor import ProbeResult
+
+    left = chat_record.failed()
+    if not left:
+        return ProbeResult(ok=True, detail="Every chat's record is beside its transcript.")
+    said = (
+        "1 chat could not be given its record at this start, and is read from its transcript's "
+        "first line"
+        if len(left) == 1
+        else f"{len(left)} chats could not be given their records at this start, and are read "
+        "from their transcripts' first lines"
+    )
+    return ProbeResult(
+        ok=False,
+        detail=f"{said}: " + ", ".join(left) + ".",
+        evidence={"transcripts": left},
+        remedy=(
+            "No automatic fix. Check that each transcript can be read and that its folder can be "
+            "written; the next start copies it again."
+        ),
+    )
+
+
 def store_file_probes() -> list[Probe]:
-    """The two checks, as the Doctor registers them."""
+    """The checks, as the Doctor registers them."""
     from personalclaw.resilience.doctor import Probe, Tier
 
     return [
@@ -126,5 +158,12 @@ def store_file_probes() -> list[Probe]:
             Tier.CAPABILITY,
             probe_unreadable_store_files,
             "Store files that could not be read",
+        ),
+        Probe(
+            "durability.chat_records",
+            "durability",
+            Tier.CAPABILITY,
+            probe_chat_records,
+            "Each chat's record beside its transcript",
         ),
     ]

@@ -64,7 +64,7 @@
     - group: Every state path is claimed by the manifest all # state paths claimed
     - group: Sync is sending and receiving sync is off
     - group: Scheduled snapshots and exports are working last snapshot <when>
-    - text: Store files that could not be read Every store file this gateway read could be read. Memory
+    - text: Store files that could not be read Every store file this gateway read could be read. Each chat's record beside its transcript Every chat's record is beside its transcript. Memory
     - button "Investigate in chat"
     - group: Memory store + faiss consistency memory.db healthy
     - group: Memory keyword search Keyword search over memory is working.

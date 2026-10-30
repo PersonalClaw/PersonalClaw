@@ -557,7 +557,7 @@ INVENTORY: tuple[StateEntry, ...] = (
         path="sessions",
         domain=DOMAIN_WORK,
         merge=MERGE_APPEND_DEDUP,
-        help="chat transcripts",
+        help="chat transcripts, and each chat's record beside it",
     ),
     # A TREE rather than `jsonl_append` like its `sessions` sibling, because the directory is
     # mixed: `rooms/index.json` is one document of room records and members, while each

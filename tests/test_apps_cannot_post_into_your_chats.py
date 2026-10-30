@@ -459,7 +459,11 @@ async def _a_refusal_that_writes_state_fails_its_own_row_and_no_other(
     recorded = RecordedRows()
     await SHARED.run(recorded, rows[at - 1 : at + 2], routes, label="route")
     assert list(recorded.failed) == [PLANTED], recorded.failed
-    assert "a refusal changed your home: ['dashboard_mine.jsonl']" in recorded.failed[PLANTED]
+    # The planted save writes a chat's three files, and each is named: its transcript, its record
+    # (`chat_record`, the chat-level fields every reader reads) and the lock its record's writers
+    # take (`record_files`, so two writers never interleave).
+    changed = [".dashboard_mine.chat.lock", "dashboard_mine.chat.json", "dashboard_mine.jsonl"]
+    assert f"a refusal changed your home: {changed}" in recorded.failed[PLANTED]
 
 
 @pytest.mark.asyncio

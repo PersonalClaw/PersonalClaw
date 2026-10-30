@@ -281,7 +281,7 @@ def test_a_default_session_writes_no_lifecycle_keys(real_state):
     s.messages.append({"role": "user", "content": "hi", "cls": "", "ts": "2026-01-01T00:00:00Z"})
     save_session_to_history(real_state, s, force=True)
 
-    path = next(real_state.conversation_log._dir.glob("*chat-1-default*"))
+    path = next(real_state.conversation_log._dir.glob("*chat-1-default*.jsonl"))
     meta = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
     assert "lifecycle" not in meta
     assert "last_activity_at" not in meta
@@ -302,7 +302,7 @@ def test_an_unknown_lifecycle_value_on_disk_is_ignored(real_state):
     s.append("user", "hello", broadcast=False)
     save_session_to_history(real_state, s, force=True)
 
-    path = next(real_state.conversation_log._dir.glob("*chat-1-junk*"))
+    path = next(real_state.conversation_log._dir.glob("*chat-1-junk*.jsonl"))
     lines = path.read_text(encoding="utf-8").splitlines()
     meta = json.loads(lines[0])
     meta["lifecycle"] = "deleted"  # not a valid lifecycle

@@ -1,7 +1,8 @@
 """What a chat keeps on disk, read without touching it.
 
 A chat leaves five things behind: its transcript (``sessions/<key>.jsonl``, with what hangs off
-it — its search rows, its background summary, any archive batch of it), its working folder
+it — its record ``sessions/<key>.chat.json``, its search rows, its background summary, any
+archive batch of it), its working folder
 (``sessions/<key>/``, the raw tool results kept for it), its turn checkpoints (pre-edit copies of
 the files it changed), the files attached to its messages (``uploads/``, and ``screenshots/``
 for a native capture) and the skills it was taught and not yet kept (``skills/.ephemeral/``).
@@ -73,10 +74,17 @@ def attached_files(messages: Iterable[dict], *, home: Path | None = None) -> lis
 
 
 def _read_temporary_transcript(path: Path) -> list[dict] | None:
-    """The rows of *path* when it is a Temporary chat's transcript (its first line is the
-    metadata row of a chat in that mode), else ``None``."""
+    """The rows of *path* when it is a Temporary chat's transcript, else ``None``: its record says
+    that mode (``chat_record``), or its first line, the metadata row, does, which a hand edit or an
+    older release may have written since. A chat whose record cannot be read may be Temporary, so it
+    is taken as one."""
+    from personalclaw import chat_record
+
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        record = chat_record.read(path)
+    except chat_record.ChatRecordUnreadable:
+        record = {"memory_mode": TEMPORARY}
     except OSError:
         return None
     rows: list[dict] = []
@@ -87,18 +95,20 @@ def _read_temporary_transcript(path: Path) -> list[dict] | None:
             continue
         if isinstance(row, dict):
             rows.append(row)
-    if not rows or rows[0].get("_type") != "metadata" or not is_temporary(rows[0]):
-        return None
-    return rows
+    first = rows[0] if rows and rows[0].get("_type") == "metadata" else None
+    by_record = record is not None and is_temporary(record)
+    return rows if by_record or (first is not None and is_temporary(first)) else None
 
 
 def kept_by_temporary_chats(home: Path) -> frozenset[Path]:
-    """Everything the Temporary chats in *home* keep on disk, resolved: each transcript, the
-    working folder of each form of its key, and the files attached to it.
+    """Everything the Temporary chats in *home* keep on disk, resolved: each transcript and its
+    record, the working folder of each form of its key, and the files attached to it.
 
     A backup or an export of *home* leaves these out. Such a chat is forgotten when its session
     ends, and a copy taken while it ran would outlive it.
     """
+    from personalclaw import chat_record
+
     sessions = home / "sessions"
     kept: set[Path] = set()
     try:
@@ -110,6 +120,7 @@ def kept_by_temporary_chats(home: Path) -> frozenset[Path]:
         if rows is None:
             continue
         kept.add(path.resolve())
+        kept.update(p.resolve() for p in (chat_record.path_of(path), chat_record.lock_of(path)))
         name = name_of(path.stem)
         for form in {path.stem, name, f"dashboard:{name}"}:
             kept.add((sessions / form).resolve())
