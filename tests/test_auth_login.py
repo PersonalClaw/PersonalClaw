@@ -13,7 +13,10 @@ a local box:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import threading
+from unittest.mock import MagicMock
 
 import pytest
 from aiohttp import web
@@ -743,3 +746,119 @@ async def test_password_change_rejects_a_cross_origin_request(_isolated) -> None
         )
         assert resp.status == 403
         assert creds.has_credentials() is False
+
+
+# ── A sign-in while its row is written ────────────────────────────────────
+
+
+class TestASignInWhileItsRowIsWritten:
+    """A sign-in's security-log rows are written in the log's own thread, awaited (#5605). What the
+    sign-in decided is settled before its row: a failure counts toward the lockout before the row
+    that records it, and the session's cookie is made with the session, not after the row."""
+
+    @staticmethod
+    def _held_log(monkeypatch, operation: str):
+        """The log holds its first *operation* row in its thread until *release*; *asked* is every
+        row the handlers asked for, in order, as they asked."""
+        held, release = threading.Event(), threading.Event()
+
+        def log_api_access(**row):
+            if row.get("operation") == operation and not held.is_set():
+                held.set()
+                release.wait(5)
+
+        monkeypatch.setattr(auth_h, "_sel", lambda: MagicMock(log_api_access=log_api_access))
+        asked: list[str] = []
+        write = auth_h.sel_log_async
+
+        async def asking(*args, **row):
+            asked.append(row.get("operation"))
+            await write(*args, **row)
+
+        monkeypatch.setattr(auth_h, "sel_log_async", asking)
+        return asked, held, release
+
+    @staticmethod
+    async def _until(check) -> None:
+        for _ in range(100):
+            if check():
+                return
+            await asyncio.sleep(0.05)
+        assert check()
+
+    @pytest.mark.asyncio
+    async def test_a_guess_while_a_failures_row_is_written_is_locked_out(
+        self, _isolated, monkeypatch
+    ) -> None:
+        creds.set_password("jordan", GOOD_PASSWORD)
+        _enable_login(_isolated, lockout_threshold=1)
+        asked, held, release = self._held_log(monkeypatch, "login_failed")
+        wrong = {"username": "jordan", "password": "wrong-wrong-wrong"}
+        right = {"username": "jordan", "password": GOOD_PASSWORD}
+        try:
+            async with TestClient(TestServer(_app())) as client:
+                first = asyncio.ensure_future(client.post("/api/auth/login", json=wrong))
+                assert await asyncio.to_thread(held.wait, 5), "the failure's row was never written"
+                guess = asyncio.ensure_future(client.post("/api/auth/login", json=right))
+                await self._until(lambda: len(asked) > 1)
+                assert asked == ["login_failed", "login_locked_out"], asked
+                release.set()
+                assert (await first).status == 401
+                assert (await guess).status == 429
+        finally:
+            release.set()
+
+    @pytest.mark.asyncio
+    async def test_the_cookie_is_made_with_its_session(self, _isolated, monkeypatch) -> None:
+        """An https address set while the row is written does not change the cookie this sign-in
+        already made."""
+        creds.set_password("jordan", GOOD_PASSWORD)
+        _enable_login(_isolated)
+        _asked, held, release = self._held_log(monkeypatch, "login_success")
+        monkeypatch.setattr(auth_h, "secure_cookies", lambda: False)
+        try:
+            async with TestClient(TestServer(_app())) as client:
+                answer = asyncio.ensure_future(
+                    client.post(
+                        "/api/auth/login", json={"username": "jordan", "password": GOOD_PASSWORD}
+                    )
+                )
+                assert await asyncio.to_thread(held.wait, 5), "the sign-in's row was never written"
+                monkeypatch.setattr(auth_h, "secure_cookies", lambda: True)
+                release.set()
+                resp = await answer
+                assert resp.status == 200, await resp.text()
+                cookie = resp.cookies.get(f"pc_token_{PORT}")
+                assert cookie is not None and not cookie["secure"], cookie
+        finally:
+            release.set()
+
+    @pytest.mark.asyncio
+    async def test_a_redeemed_codes_cookie_is_made_with_its_session(
+        self, _isolated, monkeypatch
+    ) -> None:
+        from personalclaw.auth import enrollment
+
+        monkeypatch.setattr(enrollment, "config_dir", lambda: _isolated)
+        _enable_login(_isolated)
+        code, _expires = enrollment.issue_code()
+        _asked, held, release = self._held_log(monkeypatch, "enroll_completed")
+        monkeypatch.setattr(auth_h, "secure_cookies", lambda: False)
+        app = _app()
+        app.router.add_post("/api/auth/enroll/complete", auth_h.api_auth_enroll_complete)
+        try:
+            async with TestClient(TestServer(app)) as client:
+                answer = asyncio.ensure_future(
+                    client.post("/api/auth/enroll/complete", json={"code": code})
+                )
+                assert await asyncio.to_thread(
+                    held.wait, 5
+                ), "the redemption's row was never written"
+                monkeypatch.setattr(auth_h, "secure_cookies", lambda: True)
+                release.set()
+                resp = await answer
+                assert resp.status == 200, await resp.text()
+                cookie = resp.cookies.get(f"pc_token_{PORT}")
+                assert cookie is not None and not cookie["secure"], cookie
+        finally:
+            release.set()

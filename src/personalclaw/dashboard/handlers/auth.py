@@ -61,6 +61,7 @@ from personalclaw.dashboard.token_auth import (
 from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import json_object_body
+from personalclaw.sel import sel_log_async
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +161,8 @@ async def api_auth_login(request: web.Request) -> web.Response:
     cfg = _auth_cfg()
 
     if not check_origin(request):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=ip,
             operation="login_origin_rejected",
             outcome="denied",
@@ -177,7 +179,8 @@ async def api_auth_login(request: web.Request) -> web.Response:
 
     remaining = _lockout_remaining(ip, cfg)
     if remaining:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=ip,
             operation="login_locked_out",
             outcome="denied",
@@ -195,7 +198,13 @@ async def api_auth_login(request: web.Request) -> web.Response:
 
     if not creds.verify_password(username, password):
         _record_failure(ip)
-        _sel().log_api_access(caller=ip, operation="login_failed", outcome="denied", source="auth")
+        await sel_log_async(
+            _sel().log_api_access,
+            caller=ip,
+            operation="login_failed",
+            outcome="denied",
+            source="auth",
+        )
         return json_error(ERR_INVALID, status=401)
 
     # Password is right. The second factor is checked AFTER, so a valid password with a
@@ -208,7 +217,8 @@ async def api_auth_login(request: web.Request) -> web.Response:
             # Required but never enrolled: refuse rather than silently skipping the factor
             # the owner asked for. `auth status` warns about this exact state, and the local
             # token path is still available to fix it.
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=ip,
                 operation="login_failed",
                 outcome="denied",
@@ -220,7 +230,8 @@ async def api_auth_login(request: web.Request) -> web.Response:
             return json_error(ERR_TOTP_REQUIRED, status=401)
         if not totp_mod.verify_code(secret, code):
             _record_failure(ip)
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=ip,
                 operation="login_failed",
                 outcome="denied",
@@ -234,15 +245,15 @@ async def api_auth_login(request: web.Request) -> web.Response:
         username.strip() or "owner", ttl, issuer=ISSUER_LOGIN, device=client_of(request)
     ).token
     _clear_failures(ip)
-    _sel().log_api_access(
+    resp = web.json_response({"ok": True, "expires_in": ttl})
+    _set_session_cookie(request, resp, token, ttl)
+    await sel_log_async(
+        _sel().log_api_access,
         caller=username.strip() or "owner",
         operation="login_success",
         outcome="granted",
         source="auth",
     )
-
-    resp = web.json_response({"ok": True, "expires_in": ttl})
-    _set_session_cookie(request, resp, token, ttl)
     return resp
 
 
@@ -312,7 +323,8 @@ async def api_auth_logout(request: web.Request) -> web.Response:
             logger.warning("could not revoke the session on logout", exc_info=True)
 
     if not revoked:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=caller,
             operation="session_signed_out",
             outcome="partial",
@@ -417,7 +429,8 @@ async def api_auth_set_password(request: web.Request) -> web.Response:
         logger.warning("could not store the credential record", exc_info=True)
         return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
 
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user") or "dashboard",
         operation="password_set",
         outcome="ok",
@@ -517,7 +530,8 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
 
     remaining = _lockout_remaining(ip, cfg)
     if remaining:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=ip,
             operation="login_locked_out",
             outcome="denied",
@@ -543,10 +557,15 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
         "enrolled-device", ttl, issuer=ISSUER_ENROLL, device=client_of(request)
     ).token
     _clear_failures(ip)
-    _sel().log_api_access(caller=ip, operation="enroll_completed", outcome="granted", source="auth")
-
     resp = web.json_response({"ok": True, "expires_in": ttl})
     _set_session_cookie(request, resp, token, ttl)
+    await sel_log_async(
+        _sel().log_api_access,
+        caller=ip,
+        operation="enroll_completed",
+        outcome="granted",
+        source="auth",
+    )
     return resp
 
 
