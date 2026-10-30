@@ -28,7 +28,7 @@ from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
 from signed_in_gateway import Gateway, signed_in_gateway
 
-from personalclaw import mcp_core
+from personalclaw import mcp_core, mcp_subagents
 from personalclaw.dashboard.handlers import hooks as hooks_mod
 
 #: A webhook token as the owner sets one: long, and nothing else's.
@@ -47,9 +47,12 @@ def turns(monkeypatch):
         hooks_mod._hook_semaphore.release()
 
     monkeypatch.setattr(hooks_mod, "_run_hook_agent", _turn)
-    monkeypatch.setattr(
-        mcp_core, "_resolve_session_key", lambda: "dashboard:chat-ci", raising=False
-    )
+    # mcp_subagents holds its own name for the lookup (``from mcp_core import``), bound when it is
+    # first imported. Imported above, before this patch, and patched here too, so the stand-in is
+    # never what it binds and both names are put back after: a later subagent test in the same
+    # worker reads its own session key, not this one.
+    for module in (mcp_core, mcp_subagents):
+        monkeypatch.setattr(module, "_resolve_session_key", lambda: "dashboard:chat-ci")
     return calls
 
 
