@@ -303,6 +303,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                   {/* A turn whose last frame said how it ended is over, though its stream has not closed. */}
                   <TurnStatusRow running={stream.streaming && !stream.turnEnding} phase={stream.turnPhase} line={stream.turnLine}
                     startedAt={stream.turnStart ? Date.parse(stream.turnStart) || null : null} usage={stream.turnUsage}
+                    lastStepAt={stream.turnLastStep ? Date.parse(stream.turnLastStep) || null : null}
                     onStop={composer.stop} onShown={transcript.followEnd} className="mb-s" />
                 </div>
                 <ComposerFold folded={folded} onUnfold={() => setReading(false)} composerRef={composerRef} draft={input}

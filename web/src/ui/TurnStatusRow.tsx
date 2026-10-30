@@ -18,6 +18,8 @@ import { cx } from './cx'
 //   phase's word: the row's one polite live region, said once per change;
 // - while it works, a word that turns over (`STATUS_WORDS`), decoration only and never said;
 // - the time since the turn began;
+// - once its runtime has done nothing for a minute, for how long ("No new activity for 1m"), from
+//   the gateway's `last_step_at`, while it works and waits on nothing that says why;
 // - the tokens the runtime reported for the turn, in and out, and nothing while it has reported
 //   none: never an estimate;
 // - Stop, which Esc presses too while nothing else has taken the key.
@@ -34,6 +36,10 @@ export const STATUS_WORDS = [
 export const WORD_MS = 2400
 /** How long after the turn starts the row appears. */
 export const SHOW_DELAY_MS = 150
+/** How long a working turn's runtime does nothing before the row says it has gone quiet. */
+export const STALL_AFTER_MS = 60_000
+/** The phases that say what they wait on themselves: a retry when, a local model how many ahead. */
+const SAYS_ITS_WAIT: readonly WorkPhase[] = ['retrying', 'waiting_model']
 
 export interface TurnUsage { input: number; output: number }
 
@@ -44,6 +50,12 @@ export function elapsedWords(ms: number): string {
   const m = Math.floor(s / 60)
   if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`
   return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+}
+
+/** How long a turn has been quiet: `1m`, `14m`, `1h 05m`. */
+export function quietWords(ms: number): string {
+  const m = Math.max(1, Math.floor(ms / 60_000))
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
 }
 
 /** What the turn is doing, in words: the gateway's line, else the phase's word. */
@@ -67,7 +79,7 @@ const onMotionChange = (cb: () => void) => {
   return () => q.removeEventListener?.('change', cb)
 }
 
-export function TurnStatusRow({ running, phase, line, startedAt, usage, onStop, stopShortcut = true, onShown, className }: {
+export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = null, usage, onStop, stopShortcut = true, onShown, className }: {
   /** Whether a turn runs: the row shows a moment after it starts and goes when it ends. */
   running: boolean
   /** The turn's phase, `null` until the gateway has said one (waiting to start). */
@@ -76,6 +88,9 @@ export function TurnStatusRow({ running, phase, line, startedAt, usage, onStop, 
   line: string
   /** When the turn began (epoch ms), or `null` for when the row first saw it running. */
   startedAt: number | null
+  /** When its runtime last did anything (epoch ms, the gateway's `last_step_at`), or `null` while it
+   *  has taken no step: then it is quiet since it began. */
+  lastStepAt?: number | null
   /** The tokens the runtime reported for the turn so far, or `null` while it has reported none. */
   usage: TurnUsage | null
   /** Stop the turn. */
@@ -147,6 +162,8 @@ export function TurnStatusRow({ running, phase, line, startedAt, usage, onStop, 
   if (!running || !shown) return null
   const said = stateWords(shows, line)
   const began = startedAt ?? seenAt.current ?? now
+  const quietFor = now - (lastStepAt ?? began)
+  const quiet = works && !SAYS_ITS_WAIT.includes(shows) && quietFor >= STALL_AFTER_MS
   const reported = usage && (usage.input > 0 || usage.output > 0) ? usage : null
   return (
     <div data-turn-status="" data-phase={shows}
@@ -159,6 +176,11 @@ export function TurnStatusRow({ running, phase, line, startedAt, usage, onStop, 
         </span>
       ) : null}
       <span data-turn-elapsed="" data-type="label-s" className="shrink-0 tabular-nums text-on-surface-var">{elapsedWords(now - began)}</span>
+      {quiet ? (
+        <span data-turn-quiet="" data-type="label-s" className="shrink-0 tabular-nums text-on-surface-var">
+          No new activity for {quietWords(quietFor)}
+        </span>
+      ) : null}
       {reported ? (
         <span data-turn-tokens="" data-type="label-s" title="Tokens the model reported for this turn" className="shrink-0 tabular-nums text-on-surface-var">
           {reported.input.toLocaleString('en-US')} in · {reported.output.toLocaleString('en-US')} out

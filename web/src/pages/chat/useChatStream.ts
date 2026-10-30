@@ -94,7 +94,7 @@ const TRANSCRIPT_FRAMES = new Set([
   'chat_done', 'chat_user_message', 'session_clear',
 ])
 
-/** A message waiting in the chat's queue, as the strip shows it: her words with each block she
+/** A message waiting in the chat's queue, as the strip shows it: their words with each block they
  *  pasted into it as its marker (`content`), and the blocks, which Edit gives back with it. */
 export interface QueuedMessage { id: string; content: string; pastes?: TurnPaste[] }
 
@@ -294,10 +294,10 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // Messages typed while a turn is streaming are QUEUED server-side (FIFO) and
   // shown above the composer; the backend dispatches them one-by-one as each turn
   // finishes. Driven by the queue_push / queue_pop / queue_cancel WS events. Each keeps the blocks
-  // she pasted into it: the strip shows them as their markers, and Edit gives them back.
+  // they pasted into it: the strip shows them as their markers, and Edit gives them back.
   const [queued, setQueued] = useState<QueuedMessage[]>([])
   // Messages the server confirmed it will STEER into the running turn, until the turn takes
-  // each: then it is her bubble in the transcript, where the turn took it (the `steer` flavour
+  // each: then it is their bubble in the transcript, where the turn took it (the `steer` flavour
   // of `chat_user_message`), and its line here goes. Distinct from `queued`: a steered message
   // has no queue id and nothing to cancel. Keyed by the message's id, which the gateway's row
   // and frames carry; one the turn ends without taking is queued (`queue_push` names it by its
@@ -306,7 +306,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // Async subagents (fire-and-forget) spawned this turn — live cards driven by
   // the subagent_spawn / subagent_tool / subagent_done WS events (`foldSubagentEvent`). The
   // report of one that ran starts its own turn once the parent turn finishes (backend-injected);
-  // one that never ran, or that she stopped, starts none, and its card is where it shows.
+  // one that never ran, or that they stopped, starts none, and its card is where it shows.
   const [subagents, setSubagents] = useState<SubagentCard[]>([])
   // side chat (stage 6) — isolated Q&A in the activity panel's Side tab. Each
   // entry is {q, a}; `a` streams in via the chat.side_result WS event by run_id.
@@ -342,6 +342,9 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   // runtime has reported for it (`token_usage` frames), which stays null until one is said: the
   // live status row shows what was reported, never an estimate.
   const [turnStart, setTurnStart] = useState<string | null>(null)
+  // When the running turn's runtime last did anything (`last_step_at`), which the gateway says again
+  // every 15 s while it runs: the row says how long it has been quiet from it.
+  const [turnLastStep, setTurnLastStep] = useState<string | null>(null)
   const [turnUsage, setTurnUsage] = useState<{ input: number; output: number } | null>(null)
   const runSeqRef = useRef(0)
   // The running turn's name and when the gateway started it, from its run state, kept for the
@@ -419,6 +422,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     setTurnPhase(running ? workPhaseOf(rs.phase) : null)
     setTurnLine(running ? String(rs.line ?? '') : '')
     setTakesSteers(running && !!rs.steerable)
+    setTurnLastStep(running ? rs.last_step_at ?? null : null)
     // A turn's last frame says how it ended. A snapshot's idle run state says nothing of the turn
     // this view watched, so it leaves the ending as the frame said it.
     if (from === 'frame') {
@@ -457,7 +461,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
   const adoptSnapshot = (d: ChatDetail) => {
     const messages = d.messages || []
     const running = !!d.run_state.turn
-    // …with the questions its turn is waiting on her answer to, which no row holds yet.
+    // …with the questions its turn is waiting on their answer to, which no row holds yet.
     setTurns(graftPendingQuestions(hydrateTurns(messages, running), d.pending_questions))
     takeRunState(d.run_state, 'snapshot')
     adoptedUserTs.current = new Set(messages.flatMap((m) => (m.role === 'user' && m.ts ? [m.ts] : [])))
@@ -526,6 +530,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     runningTurnRef.current = null
     setTurnPhase(null)
     setTurnLine('')
+    setTurnLastStep(null)
     setTurnEnding(null)
     setQueued([])  // queue is per-session; clear when the open session changes
     setSubagents([])  // subagent cards are per-session too
@@ -757,8 +762,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
           })
           break
         }
-        // The saved prompt her message ran, announced as it expands: its text folds under her
-        // bubble, labelled as the prompt's, while the bubble keeps what she typed.
+        // The saved prompt their message ran, announced as it expands: its text folds under their
+        // bubble, labelled as the prompt's, while the bubble keeps what they typed.
         if (kind === 'prompt') {
           const ran = ranPromptOf(d.prompt)
           if (ran) setTurns((prev) => {
@@ -768,7 +773,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
           break
         }
         // Said elsewhere on this page: the session line, the loop breaker's notes (on the call's card
-        // and as the turn's error) and a steer's acknowledgement (her steer is shown itself).
+        // and as the turn's error) and a steer's acknowledgement (their steer is shown itself).
         if (kind === 'session' || kind === 'loop_breaker' || kind === 'steer' || !text) break
         // The turn's stats line names the model that answered and how it was chosen: the turn's
         // chip and the composer's Auto say it from here, the line itself goes to the ledger below.
@@ -814,7 +819,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         // already dropped a frame for another chat, which may be waiting on the same bare id.
         setTurns((prev) => prev.map((t) => ({ ...t, segments: applyApprovalResolved(t.segments, d) })))
         break
-      // An agent's question to her (`questionFrames`): its card, and how it ended.
+      // An agent's question to them (`questionFrames`): its card, and how it ended.
       case 'question_card':
         endTextRun()  // land buffered text before the question card
         patchLastAssistant((segs) => applyQuestionFrame(segs, d))
@@ -897,8 +902,8 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
       case 'chat_done': {
         endTextRun()  // fully reveal any buffered tail before the turn closes
         markStreaming(false, chatDoneOutcome(d))
-        // A turn her rapid follow-up replaced (cancel-and-replace) is said as that: its answer was
-        // cut where it stood, and her new message runs next, queued server-side.
+        // A turn their rapid follow-up replaced (cancel-and-replace) is said as that: its answer was
+        // cut where it stood, and their new message runs next, queued server-side.
         if (d.superseded) setSrAnnounce(TURN_SUPERSEDED)
         sinks.current.onReplyFinished(sessionRef.current, { last: true })
         stoppedTurnRef.current = false
@@ -1081,10 +1086,10 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
         // already on screen, and dropping the text run here would cut the answer that snapshot
         // resumed in two.
         if (d.ts && adoptedUserTs.current.has(String(d.ts))) break
-        // Her bubble shows each block she pasted as its chip, as the chat does read back.
+        // Their bubble shows each block they pasted as its chip, as the chat does read back.
         const pastes = pastesOf(d.pastes)
         const sentTurn = { ...userTurn(shownText(content, pastes), d.ts ? String(d.ts) : undefined, pastes), ...(d.message_id ? { messageId: String(d.message_id) } : {}) }
-        // Her steer, which the running turn has just taken: her bubble goes here, below what the
+        // Their steer, which the running turn has just taken: their bubble goes here, below what the
         // answer said so far (settled by the `chat_segment` before this frame), and the answer
         // goes on below it. Nothing ends or starts: it is the same turn, and it is running.
         if (d.steer) {
@@ -1257,7 +1262,7 @@ export function useChatStream({ sessionId, liveRun, setLiveRun, ...given }: {
     bookmarks, setBookmarks,
     // The live turn: the streaming claim, how it ends, what it is doing, whether it takes a steer.
     streaming, streamingRef, markStreaming, sayTurnEnded, srAnnounce, turnSeqRef, stoppedTurnRef,
-    takesSteers, takesSteersRef, turnPhase, turnLine, turnEnding, turnStart, turnUsage, sessionSkillsEpoch, wsConnected,
+    takesSteers, takesSteersRef, turnPhase, turnLine, turnEnding, turnStart, turnLastStep, turnUsage, sessionSkillsEpoch, wsConnected,
     // The read that opened the session.
     loadingHistory, missing, setMissing, loadFailure, setLoadAttempt,
     // What the frames and the reads say beside the transcript.

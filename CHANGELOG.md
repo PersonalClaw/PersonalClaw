@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Added
 
 - **Each provider an app declares can now carry an id and a label, and the gateway keeps each one apart, under `<app>/<id>`: one is switched on, off or rebuilt without the app's others, and an app may declare two providers of one type when it names them. An app written before ids works as it did: its singular `provider` is read first, and each provider without an id is named by its type. Apps declare the `capability-ids` core feature to rely on it.**
+- **A chat whose answer has gone quiet says for how long. Once the agent has done nothing for a minute while it works, the line above the composer says "No new activity for 1m", counted from the last thing the agent did, and the note goes away at its next step. A chat waiting on your OK or your answer, on a retry or on a local model says what it waits on instead. For API clients, a chat's `run_state` now also says what it waits on: `waiting` and `helpers_waiting` name the asks its turn and its helpers raised by their ids on `GET /api/waiting`, and `wait` gives the newest ask's reason, what ends it, its deadline and the registry it comes from.**
 
 ### Changed
 

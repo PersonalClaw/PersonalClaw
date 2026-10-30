@@ -102,8 +102,8 @@ export function isTransientFailure(e: unknown): boolean {
 const ASKS_FOR_CONSENT = { 'X-PersonalClaw-Consent': 'ask' }
 
 /** A trigger write's body, sent again with the owner's yes (`withSecurityConsent`): `confirm: true`,
- *  and what the question she answered showed of the workflow its action runs (`shown`), which the
- *  gateway holds that yes to (`triggers/grants.py`). The body as it is when she has not answered. */
+ *  and what the question they answered showed of the workflow its action runs (`shown`), which the
+ *  gateway holds that yes to (`triggers/grants.py`). The body as it is when they have not answered. */
 const consented = (body: Record<string, unknown>, c: boolean, shown?: Record<string, unknown>) =>
   c ? { ...body, confirm: true, ...(shown ? { shown } : {}) } : body
 
@@ -1540,6 +1540,20 @@ export interface RunState {
   retry?: { attempt: number; of: number; next_at: string | null; reason: string } | null
   /** Set only in `waiting_model`: the local model it waits for, and how many calls are ahead. */
   queue?: { model: string; behind: number } | null
+  /** While a turn runs, the waiting list's ids (`GET /api/waiting`) of the asks it raised itself
+   *  and of those its helpers raised, oldest first. */
+  waiting: string[]
+  helpers_waiting: string[]
+  /** Set only in `approval` and `input`: the typed wait on the newest ask. */
+  wait: RunWait | null
+}
+/** What a chat's turn waits on (`work_wait.Wait`): why, what ends it (`ref` names the ask by its
+ *  waiting list id), when it ends unanswered (`null` for never), and the registry that says so. */
+export interface RunWait {
+  reason: 'owner_answer' | 'input' | 'permission' | 'children' | 'dependency'
+  resume_condition: { kind: 'answered' | 'children_done' | 'at_time' | 'signal'; ref: string }
+  deadline_at: string | null
+  evidence_source: 'approval_registry' | 'question_registry' | 'sign_in_ask' | 'subagent_registry' | 'dependency_waits' | 'jobs'
 }
 /** The kinds of live work (`workref.WORK_KINDS`). */
 export type WorkKind = 'chat' | 'loop' | 'workflow' | 'subagent' | 'trigger' | 'webhook'
@@ -2005,7 +2019,7 @@ export interface ChatHistoryMsg {
 }
 
 /** One question an agent put to its owner (`owner_questions`), as its card shows it: every string
- *  masked, options in the order asked. `free_text` says she may answer in her own words too. */
+ *  masked, options in the order asked. `free_text` says they may answer in their own words too. */
 export interface AgentQuestion {
   question: string
   header: string
@@ -2013,7 +2027,7 @@ export interface AgentQuestion {
   free_text: boolean
   options: { label: string; description: string }[]
 }
-/** Her answer to one question: the options she chose, by their place in the list, and her words. */
+/** Their answer to one question: the options they chose, by each one's place in the list, and their words. */
 export interface QuestionAnswer { selected: number[]; other: string }
 /** The `question_card` frame, and each of a session's `pending_questions`. `answerable: false` is a
  *  question shown with no way to send an answer back (`note` says so); nothing waits on it. */
@@ -3120,7 +3134,7 @@ export interface PromptSyntax { functions: PromptSyntaxFn[]; constructs: PromptS
  *  can say what was installed; `unverified`: it has no record. */
 export type SkillIntegrityState = 'intact' | 'edited' | 'tampered' | 'unverified'
 /** One row of `GET /api/skills`: the copy of the skill agents get. `bundled_update` is, for a skill
- *  that comes with PersonalClaw whose copy the owner changed, the newer version kept from her copy
+ *  that comes with PersonalClaw whose copy the owner changed, the newer version kept from their copy
  *  (its `digest` is what taking it consents to), and `null` on every other row. */
 export interface SkillItem { key: string; name: string; description: string; always: boolean; path?: string; source: string; provenance?: 'dashboard' | 'auto' | 'taught' | ''; type: string; loaded_by_agents: string[]; integrity?: SkillIntegrityState; agent?: string; feedback_producer?: FeedbackProducer; bundled_update?: { digest: string } | null }
 /** One accepted refinement of a skill. `text` is its block exactly as the skill loads it, added after
@@ -3240,7 +3254,7 @@ export type McpTransport = 'stdio' | 'http' | 'sse'
 export interface McpServer {
   name: string; transport?: McpTransport; status: string; tools: Array<string | McpListedTool>
   error?: string; source?: string; enabled?: boolean
-  /** The owner's trust in the server's read-only labels, sealed to each tool she saw. Absent for
+  /** The owner's trust in the server's read-only labels, sealed to each tool they saw. Absent for
    *  PersonalClaw's own server, whose tools say what they do themselves. */
   readOnlyTrust?: McpReadOnlyTrust
   /** When its last start failed: the tail of what it wrote to its error output, which the card shows
@@ -3262,12 +3276,12 @@ export interface McpListedTool {
 /** Which part of a tool's definition changed since the owner trusted the server's labels. */
 export type McpToolPart = 'description' | 'inputSchema' | 'annotations'
 /** `GET /api/mcp`'s `readOnlyTrust` (`mcp_read_only_trust`): whether the owner trusts the server's
- *  read-only labels, and what its tools are now against what she trusted. `listed` is every tool the
+ *  read-only labels, and what its tools are now against what they trusted. `listed` is every tool the
  *  server lists now with the digest of its definition — what Trust and Review send back — and `null`
  *  while no listing of the server as it is defined now is known (nothing can be trusted yet, and
- *  nothing is said about what changed). While she trusts it: when she trusted or last reviewed it,
+ *  nothing is said about what changed). While they trust it: when they trusted or last reviewed it,
  *  and the tools added, changed (with which parts) and removed since. A new or changed tool asks
- *  until she reviews it. */
+ *  until they review it. */
 export interface McpReadOnlyTrust {
   trusted: boolean
   listed: Record<string, string> | null
@@ -3405,10 +3419,10 @@ export interface TriggerAction { provider: string; config: Record<string, unknow
  *  folder to trust for it, `''` when no folder holds it back. */
 export interface HeldBack { why: string; folder: string }
 /** Which version of its workflow a "Run workflow" automation runs (`triggers/grants.py`
- *  `workflow_version`): the one its owner allowed, or a newer one she saved in the workflow's
- *  editor — never a newer one anything else saved, which waits for her Use vN. `runs` is the
+ *  `workflow_version`): the one its owner allowed, or a newer one they saved in the workflow's
+ *  editor — never a newer one anything else saved, which waits for their Use vN. `runs` is the
  *  version a fire runs now (0 when it would run none, and `problem` says why) and `saved_by` who
- *  saved it; `allowed` the version her yes was given for (0 when it records none); `follows` is
+ *  saved it; `allowed` the version their yes was given for (0 when it records none); `follows` is
  *  PersonalClaw's own automation, which runs the template it ships as it is; `newer` the workflow's
  *  version now when that is not what runs (0 otherwise), with `since`, who saved each version
  *  after the one it runs. `steps` says the same of each workflow its steps start, held to the
@@ -4872,16 +4886,16 @@ export type InboxItemKind =
   | 'message' | 'mention' | 'email' | 'agent_request'
   | 'proposal' | 'needs_input' | 'digest' | 'system' | 'user_note'
 export interface InboxThreadMsg { sender_name?: string; text?: string; ts?: string }
-/** A note a drafted reply was given: as she named it, where it was found (`library`: the
+/** A note a drafted reply was given: as they named it, where it was found (`library`: the
  *  knowledge library; `workspace`: the folders chat's file tools read), and whether only its
  *  start fit. */
 export interface InboxDraftNote { name: string; found: string; where: 'library' | 'workspace'; truncated: boolean }
-/** What one Generate draft stood on (`POST /api/inbox/{id}/draft`). `read`: the files her words
- *  named; `related`: naming none, the library's best matches for her words; `summary`: the row's
+/** What one Generate draft stood on (`POST /api/inbox/{id}/draft`). `read`: the files their words
+ *  named; `related`: naming none, the library's best matches for their words; `summary`: the row's
  *  `context_summary` saying so, '' when nothing was written. `question`: the model would not draft
- *  without her word, and nothing was written. `skipped`: it judged no reply is needed.
- *  `answered_for_you`: how many parts of the draft its check left to her (`[your answer: …]`)
- *  because they answered for her with what neither her words nor her notes say; `unchecked`: a
+ *  without their word, and nothing was written. `skipped`: it judged no reply is needed.
+ *  `answered_for_you`: how many parts of the draft its check left to them (`[your answer: …]`)
+ *  because they answered for them with what neither their words nor their notes say; `unchecked`: a
  *  draft was written that could not be checked. */
 export interface InboxDrafting {
   read: InboxDraftNote[]; related: InboxDraftNote[]; summary: string
@@ -5316,7 +5330,7 @@ export interface TriageAutoDone {
 export interface TriagePending {
   ordinal: string; action_type: string; tier: string; pattern_key: string; clamped: boolean
   /** What the proposal bound when its run recorded it, and what its Yes carries out: a task's
-   *  `title` for "File a task", nothing for the other kinds (a reply is drafted when she says yes). */
+   *  `title` for "File a task", nothing for the other kinds (a reply is drafted when they say yes). */
   action_config: { title?: string }
   reason: string; rule: string; answered: boolean; answer: string
   /** The server's sentence when the digest tried this on its own and it failed, or a safety rule
@@ -5639,7 +5653,7 @@ export interface Lesson {
    *  written from `~`, and `folder_gone` when that folder is not there any more. */
   partition?: string; folder?: string; folder_gone?: boolean
 }
-/** One memory she has, as `GET /api/memory/partitions` lists it: the memory every chat outside a
+/** One memory they have, as `GET /api/memory/partitions` lists it: the memory every chat outside a
  *  folder of its own shares (`global`), or a folder's own, named by the folder (`folder`, written
  *  from `~`; "" when no record names it). `gone` says the folder is not there any more, so nothing
  *  reads this memory now. `projects` are the projects whose memory it is; `semantic` and
@@ -7428,7 +7442,7 @@ export interface PlanStep {
 export interface LoopQuestion {
   question: string; why?: string; merge?: LoopMergeWaiting; spend_cap?: boolean; settings?: string
   /** A finished task's work that conflicts with the workspace's branch: nothing of it was merged, and
-   *  the loop waits for its owner to redo the task, resolve the conflict herself, or drop the work. */
+   *  the loop waits for its owner to redo the task, resolve the conflict themselves, or drop the work. */
   conflict?: LoopMergeConflict
   /** The loop waits because its owner ended a cycle with a Deny (`LoopWatchdog.hold_after_decline`). */
   declined?: boolean
@@ -7438,7 +7452,7 @@ export interface LoopQuestion {
 }
 
 /** A cycle its owner ended with a Deny, which wrote no finding (`files.get_declined_cycles`): the
- *  sentence the loop's page shows, and the steps she declined. */
+ *  sentence the loop's page shows, and the steps they declined. */
 export interface LoopDeclinedCycle { cycle: number; task_id: string; reason: string; declined: string[]; ts?: string }
 
 export interface PlanSession {
@@ -8702,7 +8716,7 @@ export const api = {
     ),
 
   // ── Memory Studio: health, observability, deep recall, promotion, lessons ──
-  // Every memory she has, and removing a folder's (the global one cannot be). Each memory call
+  // Every memory they have, and removing a folder's (the global one cannot be). Each memory call
   // below takes the memory it is about as its last argument (`inMemory`): "" for every chat's.
   memoryPartitions: () => get<{ partitions: MemoryPartition[] }>('/api/memory/partitions').then((d) => d.partitions),
   removeMemoryPartition: (id: string) => del(`/api/memory/partitions/${encodeURIComponent(id)}`),
@@ -8903,7 +8917,7 @@ export const api = {
    *  tools work from its next turn. `workspace_dir` is that folder, `auto_chain` the Settings →
    *  Models chain its next turn on Auto runs on there (a folder of its own moves it to Code & tools,
    *  while that chain binds a model), and `moved` that a turn was running: it ends, and the chat
-   *  says whether her message is answered again in the new folder. */
+   *  says whether their message is answered again in the new folder. */
   setSessionWorkspaceDir: (key: string, workspace_dir: string) =>
     post<{ ok: boolean; workspace_dir?: string; auto_chain?: string; moved?: boolean }>(`/api/chat/sessions/${encodeURIComponent(key)}/workspace-dir`, { workspace_dir }),
 
@@ -9481,7 +9495,7 @@ export const api = {
   stopChat: (session: string, force = false) => post<{ ok: boolean; stopped: boolean }>(`/api/chat/sessions/${session}/stop${force ? '?force=true' : ''}`),
   approve: (session: string, action: string, request_id?: string) =>
     post(`/api/chat/sessions/${session}/approve`, { action, request_id }),
-  /** Her answer to an agent's question (one per question), or her Skip. Refused with
+  /** Their answer to an agent's question (one per question), or their Skip. Refused with
    *  `question_answered` / `question_ended` (409) once it no longer waits, saying which. */
   answerChatQuestion: (session: string, question: string, body: { answers: QuestionAnswer[] } | { skip: true }) =>
     post<{ ok: boolean; outcome: string }>(`/api/chat/sessions/${encodeURIComponent(session)}/questions/${encodeURIComponent(question)}/answer`, body),
@@ -9525,7 +9539,7 @@ export const api = {
 
   // message actions (stage 4) — all stream the new reply over the dashboard WS.
   // Retry or Regenerate over steps that may have changed something is answered with the gateway's
-  // question (`retry_repeats_steps`, `pages/chat/repeatedSteps.tsx`); `confirm` is her yes to it.
+  // question (`retry_repeats_steps`, `pages/chat/repeatedSteps.tsx`); `confirm` is their yes to it.
   regenerate: (session: string, confirm?: string) =>
     post<{ ok: boolean }>(`/api/chat/sessions/${session}/regenerate`, confirm ? { confirm } : undefined),
   // Switch which regenerated answer variant is active on the latest assistant turn.
@@ -9540,11 +9554,11 @@ export const api = {
       // is a new one, named by its own id (`client_message_id`): a resend sent twice runs once.
       // rewind=true → fork-and-swap (edit ANY past turn): retain the discarded tail
       // on the edited message + reset the provider so context rebuilds truncated.
-      // again=true → her message sent as it is (Rewind to here, a resend she did not change): its
+      // again=true → their message sent as it is (Rewind to here, a resend they did not change): its
       // turn runs again, and the gateway asks first when that turn finished steps that may have
-      // changed something (`retry_repeats_steps`); `confirm` is her yes to that question.
-      // pastes = the blocks she pasted into it, which `content` holds in their markers' place
-      // (`asSent`): her row keeps them, so her bubble shows each as its chip.
+      // changed something (`retry_repeats_steps`); `confirm` is their yes to that question.
+      // pastes = the blocks they pasted into it, which `content` holds in their markers' place
+      // (`asSent`): their row keeps them, so their bubble shows each as its chip.
       { content, ...(ts ? { ts } : {}), ...(index !== undefined ? { index } : {}), client_message_id: messageId ?? newMessageId(), ...(rewind ? { rewind: true } : {}), ...(ask?.again ? { again: true } : {}), ...(ask?.confirm ? { confirm: ask.confirm } : {}), ...(pastes?.length ? { pastes } : {}) }),
   // Interrupt the running turn but KEEP the queue (unlike /stop). Optional queueId
   // promotes that queued message to the front so it runs next (queue_promoted WS echo).
@@ -9992,8 +10006,8 @@ export const api = {
   deleteSkill: (name: string, agent?: string) => del(`/api/skills/${encodeURIComponent(name)}${skillQuery({ agent })}`),
   verifySkill: (name: string, agent?: string) => post<SkillIntegrity>(`/api/skills/${encodeURIComponent(name)}/verify${skillQuery({ agent })}`),
   // The newer version of a skill that comes with PersonalClaw, offered over the owner's changed copy
-  // (`SkillItem.bundled_update`): take it in place of hers, or keep hers. `digest` names the version
-  // she was offered, and nothing is changed when another version ships by then (409).
+  // (`SkillItem.bundled_update`): take it in place of theirs, or keep theirs. `digest` names the version
+  // they were offered, and nothing is changed when another version ships by then (409).
   useBundledSkill: (name: string, digest: string) => post<{ ok: boolean; name: string }>('/api/skills/bundled/update', { name, digest }),
   keepSkillCopy: (name: string, digest: string) => post<{ ok: boolean; name: string }>('/api/skills/bundled/keep', { name, digest }),
   // Skill proposals inbox — propose-only review.
@@ -10695,8 +10709,8 @@ export const api = {
       `/api/inbox/${encodeURIComponent(id)}/apply`,
       edited ? { proposal: edited } : {},
     ),
-  // `instructions`: what she says the reply should contain, for this draft only ('' says nothing).
-  // Answers the row as it now stands and what the draft stood on. A file her words name that
+  // `instructions`: what they say the reply should contain, for this draft only ('' says nothing).
+  // Answers the row as it now stands and what the draft stood on. A file their words name that
   // cannot be read is a 422 `draft_source_unread` whose message says which and why.
   draftInboxReply: (id: string, instructions = '') =>
     post<InboxDraftResult>(`/api/inbox/${encodeURIComponent(id)}/draft`, { instructions }),

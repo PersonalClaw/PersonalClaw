@@ -169,6 +169,15 @@ describe('useChatStream folds the session’s frames', () => {
     expect(result.current.turnLine, 'a frame older than the state held is not applied').toBe('Reading fetch.py')
   })
 
+  it("takes the running turn's latest step from the run state, so the row can say how long it has been quiet", async () => {
+    const { result } = await opened()
+    frame('chat_user_message', { content: 'and the cache?', ts: '2026-10-01T09:01:00Z' })
+    frame('work_phase', { ...runningState({ session: SESSION, phase: 'tool', line: 'Reading fetch.py', seq: 5, last_step_at: '2026-10-01T09:01:30Z' }) })
+    expect(result.current.turnLastStep).toBe('2026-10-01T09:01:30Z')
+    frame('work_phase', { ...runState({ session: SESSION, phase: 'done', line: 'Done in 40 seconds', seq: 6, last_step_at: '2026-10-01T09:01:40Z' }) })
+    expect(result.current.turnLastStep, 'a turn that ended has no latest step to be quiet since').toBeNull()
+  })
+
   it("takes no helper's phase for the chat's own, though it names the chat it works for", async () => {
     const { result } = await opened()
     frame('chat_user_message', { content: 'and the cache?', ts: '2026-10-01T09:01:00Z' })
