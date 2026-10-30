@@ -18,7 +18,7 @@ from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import json_object_body, require_bool, require_string
 from personalclaw.safety_flags import confirm_granted
 from personalclaw.security import MaskConflict, redact_credentials, redact_exfiltration_urls
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 from personalclaw.stale_write import claimed_revision, revision_of, stale_write_refusal
 
 logger = logging.getLogger(__name__)
@@ -754,7 +754,8 @@ async def api_mcp_toggle_tool(request: web.Request) -> web.Response:
             return web.json_response({"error": relayed_failure_copy(exc)}, status=500)
     # It changes what an agent can call, the security-relevant change its native sibling
     # (`POST /api/tools/toggle`) already logs.
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="mcp.toggle_tool",
         outcome="enabled" if enabled else "disabled",
@@ -1243,31 +1244,35 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
         async with _get_mcp_lock():
             async with _get_agent_file_lock():
                 removed = bool(remove_mcp_servers([name]))
-        sel().log_api_access(
+        if removed:
+            # What its last probe said goes with it: a server added later under the name is not
+            # this one, and must not be shown this one's state. Forgotten before the row is
+            # written, so a server added under the name while it is written keeps its own.
+            from personalclaw.mcp_discovery import forget_probe
+
+            forget_probe(name)
+            answer = web.json_response({"ok": True, "name": name, "removed": True}, status=200)
+        else:
+            # The 404 body must carry an `error` key like every other refusal on this handler
+            # (the 409 branch above already does) — otherwise the frontend funnel has nothing
+            # to show and the toast reads the bare "HTTP 404" (#2942). `ok`/`name`/`removed`
+            # stay at the top level so an existing reader of those keys is unaffected.
+            answer = json_error(
+                "not_found",
+                message=f"No MCP server named '{name}' was found to remove.",
+                status=404,
+                ok=False,
+                name=name,
+                removed=False,
+            )
+        await sel_log_async(
+            sel().log_api_access,
             caller="dashboard",
             operation="mcp_server_remove",
             outcome="completed" if removed else "not_found",
             resources=name,
         )
-        if removed:
-            # What its last probe said goes with it: a server added later under the name is not
-            # this one, and must not be shown this one's state.
-            from personalclaw.mcp_discovery import forget_probe
-
-            forget_probe(name)
-            return web.json_response({"ok": True, "name": name, "removed": True}, status=200)
-        # The 404 body must carry an `error` key like every other refusal on this handler
-        # (the 409 branch above already does) — otherwise the frontend funnel has nothing
-        # to show and the toast reads the bare "HTTP 404" (#2942). `ok`/`name`/`removed`
-        # stay at the top level so an existing reader of those keys is unaffected.
-        return json_error(
-            "not_found",
-            message=f"No MCP server named '{name}' was found to remove.",
-            status=404,
-            ok=False,
-            name=name,
-            removed=False,
-        )
+        return answer
 
     # PUT — add or edit
     try:
@@ -1383,17 +1388,21 @@ async def api_mcp_server_detail(request: web.Request) -> web.Response:
     async with _get_agent_file_lock():
         _sync_mcp_to_agent(name, True)
     await asyncio.to_thread(_rebuild_agent_config_logged)
-    # Whatever the save changed — what the server runs, where it connects, a value behind a
-    # reference — its last probe no longer says what it does: it is probed again as saved.
-    _recheck(request, name)
-
     logger.info("MCP register via REST: %s (%s)", name, transport)
-    sel().log_api_access(
-        caller="dashboard",
-        operation="mcp_server_register",
-        outcome="completed",
-        resources=name,
-    )
+    try:
+        await sel_log_async(
+            sel().log_api_access,
+            caller="dashboard",
+            operation="mcp_server_register",
+            outcome="completed",
+            resources=name,
+        )
+    finally:
+        # Whatever the save changed — what the server runs, where it connects, a value behind a
+        # reference — its last probe no longer says what it does: it is probed again as saved.
+        # After the row, so nothing is awaited once the probe is started, and whatever the row
+        # did: written, refused, or its request cancelled there.
+        _recheck(request, name)
     return web.json_response({"ok": True, "name": name, "revision": revision}, status=200)
 
 
@@ -1455,13 +1464,18 @@ async def api_mcp_server_allow(request: web.Request) -> web.Response:
 
     async with _get_agent_file_lock():
         _sync_mcp_to_agent(name, True)
-    _forget_connections(request, name)
-    sel().log_api_access(
-        caller=request.get("user", "dashboard"),
-        operation="mcp_server_allow",
-        outcome="completed",
-        resources=name,
-    )
+    try:
+        await sel_log_async(
+            sel().log_api_access,
+            caller=request.get("user", "dashboard"),
+            operation="mcp_server_allow",
+            outcome="completed",
+            resources=name,
+        )
+    finally:
+        # After the row, so nothing is awaited once the probe is started, and whatever the row
+        # did: a connection opened before the yes never outlives it.
+        _forget_connections(request, name)
     return web.json_response({"ok": True, "name": name, "allowed": True})
 
 
@@ -1529,13 +1543,18 @@ async def api_mcp_server_sign_in(request: web.Request) -> web.Response:
         async with _get_mcp_lock():
             async with _get_agent_file_lock():
                 removed = await asyncio.to_thread(remove_mcp_sign_in, name)
-        _forget_connections(request, name)
-        sel().log_api_access(
-            caller="dashboard",
-            operation="mcp_sign_out",
-            outcome="completed" if removed else "not_found",
-            resources=name,
-        )
+        try:
+            await sel_log_async(
+                sel().log_api_access,
+                caller="dashboard",
+                operation="mcp_sign_out",
+                outcome="completed" if removed else "not_found",
+                resources=name,
+            )
+        finally:
+            # After the row, so nothing is awaited once the probe is started, and whatever the
+            # row did: no connection stays signed in with what was just removed.
+            _forget_connections(request, name)
         return web.json_response({"ok": True, "name": name, "signedOut": removed})
 
     body = await json_object_body(request)
@@ -2087,7 +2106,8 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             # argv-injection chars or path traversal.
             if not _is_valid_mcp_name(name):
                 results.append({"error": "invalid name", "name": name})
-                sel().log_api_access(
+                await sel_log_async(
+                    sel().log_api_access,
                     caller="dashboard",
                     operation="mcp_apply_rejected_name",
                     outcome="denied",
@@ -2101,7 +2121,8 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             problem = server_name_problem(name)
             if problem is not None:
                 results.append({"error": problem, "name": name})
-                sel().log_api_access(
+                await sel_log_async(
+                    sel().log_api_access,
                     caller="dashboard",
                     operation="mcp_apply_rejected_name",
                     outcome="denied",
@@ -2217,7 +2238,8 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
                         rejected.append(tool_name[:64])
                 if rejected:
                     outcome["actions"]["tools_rejected"] = rejected
-                    sel().log_api_access(
+                    await sel_log_async(
+                        sel().log_api_access,
                         caller="dashboard",
                         operation="mcp_apply_rejected_tool_name",
                         outcome="denied",
@@ -2232,7 +2254,8 @@ async def api_mcp_apply(request: web.Request) -> web.Response:
             # controls which MCP servers (and therefore tools) are
             # reachable from PersonalClaw sessions — a permission-shaping
             # event that belongs in the SEL log.
-            sel().log_api_access(
+            await sel_log_async(
+                sel().log_api_access,
                 caller="dashboard",
                 operation="mcp_scope_apply",
                 outcome="ok",
