@@ -1073,7 +1073,7 @@ command = [
 id = "browse-live"
 tiers = ["merge"]
 inputs = [":(glob)**"]
-external_inputs = ["browser-download"]
+external_inputs = ["browser-download", "apps-partner"]
 toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
 cache = ["uv", "npm"]
 security = "security"
@@ -1082,9 +1082,13 @@ python = "3.12.15"
 timeout_min = 20
 needs_node = true
 needs_browser = true
-junit = ["reports/junit-browse-live.xml"]
+junit = ["reports/junit-browse-live.xml", "reports/junit-web-tools-app.xml"]
 command = [
   { argv = ["uv", "run", "pytest", "tests/test_browse_safety_script.py", "tests/test_browse_cdp_live.py", "tests/test_browse_behavioural_proof_is_reachable.py", "--junitxml=reports/junit-browse-live.xml"], env = { PERSONALCLAW_REQUIRE_BROWSE_PROOF = "1", PERSONALCLAW_SKIP_APP_BACKENDS = "1" } },
+  # The web fetch tool's security-marked file, whose web-tools cases read the app, which a core
+  # clone has no copy of: every suite shard skipped them (#3918). Here over the apps checkout
+  # (apps-partner), where a missing app fails them.
+  { argv = ["uv", "run", "pytest", "tests/test_web_fetch.py", "--junitxml=reports/junit-web-tools-app.xml"], env = { PERSONALCLAW_FIRST_PARTY_APPS_DIR = ".ci-apps", PERSONALCLAW_REQUIRE_FIRST_PARTY_APPS = "1", PERSONALCLAW_SKIP_APP_BACKENDS = "1" } },
 ]
 
 # What the apps build against. A signature change anywhere in core must regenerate the snapshot

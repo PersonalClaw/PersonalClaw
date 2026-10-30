@@ -1065,8 +1065,8 @@ that is no job's input but changes a job's result, and give it a reason that say
 `tools/ci/verdict.py` is the one function that turns a plan's job results into green or red. It
 is green only when the plan is not empty, every planned job has a result, every result for it on
 every attempt is `success`, and every result names the candidate's head and partner revisions.
-A per-job record names only the partners its own job read (`apps-contract`'s names the apps
-checkout, every other job's names none), so the verdict is given each planned key's partners
+A per-job record names only the partners its own job read (`apps-contract`'s and `browse-live`'s
+name the apps checkout, every other job's names none), so the verdict is given each planned key's partners
 (`--key-partners`, which the plan reads from the job's catalogue entry: its `revision` inputs),
 and a record must name exactly its key's, each one the candidate names, at the candidate's
 revision. Given none, a record is held to the candidate's partners exactly. A `needs` result
