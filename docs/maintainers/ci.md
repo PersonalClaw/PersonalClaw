@@ -2108,10 +2108,18 @@ and on dispatch, one run at a time and never cancelled:
   workflow's own scheduled or dispatched run on main, and the artifact holds `window.zip` alone;
   otherwise the window refills from the record within the budget. Every carried history is
   checked again as a fetched one is: its collector run must still be listed as the collector's
-  own, and its run line shown from its own workflow's listing. One that fails, that left the
-  window, or whose `fetched.json` entry is not in its shape (no time with its zone, say) is
-  dropped, and fetched again while its collector run is listed. Only the collector runs the
-  window does not hold are fetched: about 70 a week.
+  own, and its run line shown from its own workflow's listing. One that fails, or whose
+  `fetched.json` entry is not in its shape (no time with its zone, say) is dropped, and fetched
+  again while its collector run is listed. One whose day is before the window's and whose
+  collector run the listing no longer holds has aged out: it is counted as aged, neither dropped
+  nor refused. Only the collector runs the window does not hold are fetched: about 70 a week.
+  Which artifact a workflow carries, and whose run is trusted to have uploaded it, is a fixed
+  table in `tools/ci/fetch.py` (`CARRIES`, `--carry`), never a name a run passes: the weekly
+  report's `flake-report-window`, and the daily flaky tests' `flaky-tests-window` below.
+- **Refused before the download.** A history archive's name gives its run and attempt; when no
+  counted workflow's listing shows them, it is refused by its name and never downloaded (the
+  deleted `ci.yml`'s histories, until they leave the window). The same check runs again on what
+  is downloaded.
 - **A budget.** Before each history the fetch reads how many calls the token has left
   (`rate_limit`, which costs none) and stops at 200, so the other workflows keep theirs; a count
   it cannot read is a spent budget, and the status says so. It fetches newest first, warns how
@@ -2131,8 +2139,13 @@ other workflow takes, and on dispatch, on `main` only and one run at a time. It 
 for each such test (`tools/ci/flaky_issues.py`, `python -m tools.ci flaky-issues`). It is a
 workflow of its own so the collector holds no write.
 
-- **The window.** `python -m tools.ci fetch --days 15 --no-carry` fetches the last 14 days of
-  histories, a day of slack, as the weekly report's fetch does. A flake is a failed test a job
+- **The window.** `python -m tools.ci fetch --days 15 --carry flaky-tests` builds the last 14
+  days of histories, a day of slack, as the weekly report's fetch does, from the window the
+  previous day's run carried: that run uploads `window.zip` alone as `flaky-tests-window`
+  (stored, kept 3 days, and only once its fetch succeeded), and the next run checks every history
+  in it again and fetches only the collector runs it does not hold, about 25 a day. Fetched afresh
+  every day, the 15 days were about 740 histories, twice the token's hourly calls, and the job ran
+  out of its 20 minutes in the fetch. A flake is a failed test a job
   record's rerun classified `flake`: the run's own records, and a tested push's pull request
   run's (`tested_record`, version 6). Each counts once per test, run and attempt.
 - **Opening.** A test with 2 or more flakes in 7 days has one issue, titled `Flaky test: <id>`

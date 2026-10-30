@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.ci import fetch, report, telemetry, workflows
+from tools.ci import fetch, flaky_issues, report, telemetry, workflows
 
 REPO = "owner/project"
 NOW = datetime.datetime(2026, 10, 26, 8, 13, tzinfo=datetime.UTC)
@@ -190,8 +190,9 @@ class Gh:
         if m := re.search(r"/actions/runs/(\d+)/artifacts\?", path):
             listed = self.artifacts.get(int(m.group(1)), [])
             return json.dumps({"total_count": len(listed), "artifacts": listed})
-        if f"/actions/artifacts?name={fetch.CARRY}" in path:
-            return json.dumps({"total_count": len(self.carried), "artifacts": self.carried})
+        if m := re.search(r"/actions/artifacts\?name=([^&]+)&", path):
+            named = [a for a in self.carried if a["name"] == m.group(1)]
+            return json.dumps({"total_count": len(named), "artifacts": named})
         if m := re.search(r"/actions/runs/(\d+)$", path):
             return json.dumps(self.own_runs[int(m.group(1))])
         raise AssertionError(f"the fetch asked gh for {args}")
@@ -524,16 +525,53 @@ def test_a_breadth_history_is_shown_by_breadths_own_listing(tmp_path: Path) -> N
     assert _fetch(gh, tmp_path / "window").fetched == 1
 
 
-def test_a_history_of_the_deleted_ci_yml_is_refused(tmp_path: Path) -> None:
-    """The flip deleted ci.yml (#3915): a history whose run line names it is no counted run, and
-    the fetch lists no run of it."""
+def test_a_history_of_the_deleted_ci_yml_is_refused_before_its_download(tmp_path: Path) -> None:
+    """The flip deleted ci.yml (#3915): the fetch lists no run of it, so no listing shows the run
+    a history of it names, and the archive is refused by its name, never downloaded."""
     gh = Gh()
     gh.collector(30, "workflow_run", 1)
     gh.artifact(30, "telemetry-history-300-1", _history_zip(300, 1, workflow="ci.yml"))
     out = tmp_path / "window"
     assert _fetch(gh, out).refused == 1
-    assert _refused(out, "run 300 (ci.yml, push, main) is not a counted run"), _status(out)
+    assert _refused(out, "run 300 attempt 1 is not a run its workflow's listing shows")
+    assert gh.requested == [], gh.requested
     assert not any("/actions/workflows/ci.yml/" in a for a in gh.asked), gh.asked
+
+
+@pytest.mark.parametrize(
+    ("archive", "source"),
+    [
+        pytest.param("telemetry-history-300-1", None, id="its-run-is-not-listed"),
+        pytest.param("telemetry-history-300-2", {}, id="its-attempt-is-not-listed"),
+    ],
+)
+def test_a_history_no_listing_shows_is_refused_before_its_download(
+    tmp_path: Path, archive: str, source: dict | None, monkeypatch
+) -> None:
+    """The run and attempt a history archive's name gives are checked against the listings before
+    it is downloaded: the check ``history_refusal`` makes after the download, made first, so an
+    archive it would refuse costs no download. Without the early check the archive is downloaded
+    and refused in the same words."""
+    attempt = int(archive.rsplit("-", 1)[1])
+
+    def one() -> Gh:
+        gh = Gh()
+        gh.collector(30, "workflow_run", 1)
+        gh.artifact(30, archive, _history_zip(300, 1, attempt=attempt))
+        if source is not None:
+            gh.source(300, 1, **source)
+        return gh
+
+    words = f"run 300 attempt {attempt} is not a run its workflow's listing shows"
+    gh = one()
+    got = _fetch(gh, tmp_path / "early")
+    assert (got.fetched, got.refused) == (0, 1) and gh.requested == []
+    assert _refused(tmp_path / "early", f"{archive}.zip: {words}"), _status(tmp_path / "early")
+    monkeypatch.setattr(fetch, "_unshown", lambda artifact, shown: None)
+    gh = one()
+    got = _fetch(gh, tmp_path / "late")
+    assert (got.fetched, got.refused) == (0, 1) and len(gh.requested) == 1
+    assert _refused(tmp_path / "late", f"{archive}.zip: {words}"), _status(tmp_path / "late")
 
 
 def test_a_second_archive_of_one_name_is_refused(tmp_path: Path) -> None:
@@ -674,14 +712,16 @@ def _carry(
     *,
     links: tuple[str, ...] = (),
     beside: dict[str, bytes] | None = None,
+    carrier: str = "flake-report",
     **run: object,
 ) -> None:
-    """The artifact a previous weekly run uploaded: upload-artifact's archive, holding the one
-    window archive the fetch built (``members``, or that archive as it is), and ``beside`` it
-    whatever else the artifact holds."""
+    """The artifact a previous run of ``carrier``'s workflow uploaded (the weekly one unless it
+    says otherwise): upload-artifact's archive, holding the one window archive the fetch built
+    (``members``, or that archive as it is), and ``beside`` it whatever else the artifact holds."""
+    name, path, _ = fetch.CARRIES[carrier]
     own = {
         "id": 77,
-        "path": fetch.FLAKE_REPORT_PATH,
+        "path": path,
         "event": "schedule",
         "head_branch": "main",
         "head_repository": {"full_name": REPO},
@@ -695,7 +735,7 @@ def _carry(
     gh.carried.append(
         {
             "id": ident,
-            "name": fetch.CARRY,
+            "name": name,
             "size_in_bytes": len(data),
             "expired": False,
             "created_at": _iso(NOW - datetime.timedelta(days=7)),
@@ -1003,3 +1043,103 @@ def test_a_carried_window_of_too_many_members_is_refused_whole(tmp_path: Path, m
     out = tmp_path / "window"
     got = _fetch(gh, out)
     assert got.carried == 0 and "2 members" in _status(out)["carry"]
+
+
+# ── which workflow's window is carried ────────────────────────────────────────────────────────
+
+
+def test_the_daily_job_carries_its_own_window_and_fetches_only_newer_histories(
+    tmp_path: Path,
+) -> None:
+    """``flaky-tests.yml`` carries its window to its next day's run as the weekly report does to
+    its next week's: the carried histories are checked again, and only the collector runs the
+    window does not hold are listed and downloaded."""
+    gh = _gh_with_three_histories()
+    _carry(gh, _carried_two(), carrier="flaky-tests")
+    out = tmp_path / "window"
+    got = _fetch(gh, out, carrier="flaky-tests")
+    assert (got.carried, got.fetched, got.dropped, got.refused) == (2, 1, 0, 0)
+    assert not any("/runs/20/artifacts" in a or "/runs/10/artifacts" in a for a in gh.asked)
+    assert any("/actions/artifacts?name=flaky-tests-window&" in a for a in gh.asked), gh.asked
+    assert not any(f"name={fetch.CARRY}&" in a for a in gh.asked), gh.asked
+    assert _status(out)["carry"] == "kept: the window daily run 77 carried"
+    assert set(json.loads(_members(out)[fetch.MANIFEST])) == {"30", "20", "10"}
+
+
+@pytest.mark.parametrize(
+    ("carrier", "uploader"),
+    [
+        pytest.param("flaky-tests", "flake-report", id="the-daily-window-from-the-weekly-run"),
+        pytest.param("flake-report", "flaky-tests", id="the-weekly-window-from-the-daily-run"),
+    ],
+)
+def test_each_carry_trusts_only_its_own_workflows_run(
+    tmp_path: Path, carrier: str, uploader: str
+) -> None:
+    """A window under the carry's own name is taken only from its own workflow's scheduled or
+    dispatched run on main; the same name uploaded by the other workflow's run is refused, and
+    the window refills from the record."""
+    gh = _gh_with_three_histories()
+    name, _, _ = fetch.CARRIES[carrier]
+    _carry(gh, _carried_two(), carrier=carrier, path=fetch.CARRIES[uploader][1])
+    assert gh.carried[0]["name"] == name
+    out = tmp_path / "window"
+    got = _fetch(gh, out, carrier=carrier)
+    assert got.carried == 0 and got.fetched == 3
+    assert _status(out)["carry"].startswith("refused: "), _status(out)
+
+
+def test_a_carry_the_table_does_not_name_is_refused(tmp_path: Path) -> None:
+    """Which artifact is carried, and whose run is trusted to have uploaded it, come from the
+    fixed table alone: neither the command line nor a caller can name another."""
+    with pytest.raises(ValueError, match="no carried window is named 'other'"):
+        _fetch(Gh(), tmp_path / "window", carrier="other")
+    with pytest.raises(SystemExit) as exited:
+        fetch.main(["--repo", REPO, "--out", str(tmp_path / "w"), "--carry", "other"])
+    assert exited.value.code == 2
+    assert set(fetch.CARRIES) == {"flake-report", "flaky-tests"}
+    assert fetch.CARRIES["flaky-tests"][:2] == (
+        "flaky-tests-window",
+        f"{telemetry.WORKFLOWS}/flaky-tests.yml",
+    )
+    assert fetch.CARRIES["flake-report"][:2] == (fetch.CARRY, fetch.FLAKE_REPORT_PATH)
+
+
+def test_a_carried_history_that_aged_out_of_the_window_is_neither_dropped_nor_refused(
+    tmp_path: Path,
+) -> None:
+    """The daily window is 15 days, so every day the oldest carried histories leave it: one whose
+    collector run is no longer listed and whose day is before the window's is counted as aged,
+    not dropped, so the window stays whole and the close rule can still judge it. A history of
+    the window's first day, its collector run still listed, is kept, not dropped and fetched
+    again."""
+    gh = Gh()
+    gh.history(30, 300, 1)
+    gh.history(20, 200, 3)
+    # Run 10's day is the window's first, a few hours before its start; run 5's is long gone.
+    first_day = 15 + 2 / 24
+    gh.history(10, 100, first_day)
+    members = {
+        "telemetry-history-200-1.zip": _history_zip(200, 3),
+        "telemetry-history-100-1.zip": _history_zip(100, first_day),
+        "telemetry-history-50-1.zip": _history_zip(50, 20),
+        fetch.MANIFEST: _manifest(
+            {
+                20: ("telemetry-history-200-1.zip", 3),
+                10: ("telemetry-history-100-1.zip", first_day),
+                5: ("telemetry-history-50-1.zip", 20),
+            }
+        ),
+    }
+    gh.source(50, 20)
+    _carry(gh, members, carrier="flaky-tests")
+    out = tmp_path / "window"
+    now = NOW.replace(hour=12)
+    got = _fetch(gh, out, carrier="flaky-tests", days=15, now=now)
+    assert (got.carried, got.aged, got.dropped, got.fetched, got.refused) == (2, 1, 0, 1, 0)
+    kept = _members(out)
+    assert "telemetry-history-50-1.zip" not in kept
+    assert kept["telemetry-history-100-1.zip"] == _history_zip(100, first_day)
+    assert _status(out)["aged"] == 1
+    assert not any("telemetry-history-50-1" in why for why in _status(out)["refusals"])
+    assert flaky_issues.complete(out / fetch.STATUS)
