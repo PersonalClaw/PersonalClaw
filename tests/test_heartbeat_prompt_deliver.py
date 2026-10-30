@@ -257,6 +257,79 @@ class TestDashboardSessionInjectDeliver:
         assert kwargs["operation"] == "heartbeat_inject_deliver"
 
 
+_DELIVERIES = ["prompt:dashboard:chat-1", "dashboard:chat-1"]
+
+
+def _handed(session: MagicMock, deliver: str) -> MagicMock:
+    """What hands the result to the chat: its prompt queue, or its transcript."""
+    return session.enqueue_or_run_prompt if deliver.startswith("prompt:") else session.append
+
+
+class TestAResultGoesOnlyIntoAChatStillOpenAfterItsRow:
+    """A heartbeat result's ``approved`` row comes ahead of its delivery, as on main, so a row
+    that cannot be written delivers nothing. It is written off the event loop (#5605), so the chat
+    found for the result can be closed while it is: the result then goes nowhere, and a
+    ``not_found`` row says so. Handed to the chat found before the row, it went into a chat that
+    was gone."""
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("deliver", _DELIVERIES)
+    async def test_an_open_chat_is_handed_the_result_after_its_row(
+        self, orchestrator, dashboard_state, monkeypatch, deliver
+    ):
+        _, session = dashboard_state
+        order: list[str] = []
+
+        class _Rows:
+            def log_api_access(self, **row):
+                order.append(row["outcome"])
+
+        monkeypatch.setattr("personalclaw.gateway.sel", lambda: _Rows())
+        _handed(session, deliver).side_effect = lambda *a, **k: order.append("delivered") or True
+
+        await orchestrator._deliver_result("💓 Heartbeat", "CR check", "Fix these", deliver)
+
+        assert order == ["approved", "delivered"]
+
+    @pytest.mark.asyncio()
+    @pytest.mark.parametrize("deliver", _DELIVERIES)
+    async def test_a_chat_closed_while_the_row_is_written_is_handed_nothing(
+        self, orchestrator, dashboard_state, monkeypatch, deliver
+    ):
+        import asyncio
+        import threading
+
+        state, session = dashboard_state
+        held, release = threading.Event(), threading.Event()
+        outcomes: list[str] = []
+        closed = {"now": False}
+        landed_when_closed: list[bool] = []
+
+        class _HoldsTheApprovedRow:
+            def log_api_access(self, **row):
+                outcomes.append(row["outcome"])
+                if row["outcome"] == "approved":
+                    held.set()
+                    release.wait(2)  # on main the row is on the loop: this holds the loop instead
+
+        monkeypatch.setattr("personalclaw.gateway.sel", lambda: _HoldsTheApprovedRow())
+        state.resolve_session.side_effect = lambda _name: None if closed["now"] else session
+        _handed(session, deliver).side_effect = (
+            lambda *a, **k: landed_when_closed.append(closed["now"]) or True
+        )
+        delivering = asyncio.ensure_future(
+            orchestrator._deliver_result("💓 Heartbeat", "CR check", "Fix these", deliver)
+        )
+        assert await asyncio.to_thread(held.wait, 5)
+        closed["now"] = True  # the chat is closed while its row is written
+        release.set()
+        await delivering
+
+        assert True not in landed_when_closed, "the result went into a chat that was closed"
+        if not landed_when_closed:  # on main the held row holds the loop: it lands before the close
+            assert outcomes == ["approved", "not_found"]
+
+
 class TestLogTaskException:
     """Direct unit tests for _log_task_exception helper."""
 

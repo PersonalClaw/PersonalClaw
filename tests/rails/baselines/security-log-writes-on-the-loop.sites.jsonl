@@ -91,12 +91,6 @@
 {"site": "src/personalclaw/eval/runner.py::EvalRunner._run_turn::sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/evals/judge_bench.py::run_judge_bench::_sel_log", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/evals/judge_bench.py::run_judge_bench::_sel_log #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/gateway.py::GatewayOrchestrator._deliver_result::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/gateway.py::GatewayOrchestrator._deliver_result::sel().log_api_access #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/gateway.py::GatewayOrchestrator._deliver_result::sel().log_api_access #3", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/gateway.py::GatewayOrchestrator._deliver_result::sel().log_api_access #4", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/gateway.py::GatewayOrchestrator._init_heartbeat._deliver_due_commitments::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
-{"site": "src/personalclaw/gateway.py::GatewayOrchestrator._interactive_approval._approve::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/llm/acp_session_provider.py::AcpSessionProvider.set_mode::sel().log_api_access", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/llm/acp_session_provider.py::AcpSessionProvider.set_mode::sel().log_api_access #2", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
 {"site": "src/personalclaw/llm_helpers.py::stream_and_collect::_sel().log_tool_invocation", "reason": "a security-log write on the event loop from before sel_log_async; #5605 moves it to a worker thread"}
