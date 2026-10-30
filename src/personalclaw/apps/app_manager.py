@@ -48,7 +48,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw.apps import app_runtime
+from personalclaw.apps import app_runtime, capability_lifecycle
 from personalclaw.apps import disclosure as app_disclosure
 from personalclaw.apps import staging as app_staging
 from personalclaw.apps.manager import (
@@ -603,6 +603,7 @@ def _load_staged_manifest(staged: Path, *, action: str = "install") -> AppManife
         raise AppLifecycleError(f"manifest validation failed: {'; '.join(errors)}")
     _core_compatibility_gate(manifest, action=action)
     _python_children_gate(manifest, action=action)
+    _retired_capability_gate(manifest, action=action)
     return manifest
 
 
@@ -615,6 +616,15 @@ def _python_children_gate(manifest: AppManifest, *, action: str) -> None:
     from personalclaw import python_children
 
     refused = python_children.app_refusal(manifest)
+    if refused:
+        logger.warning("app %s: %s refused — %s", manifest.name, action, refused)
+        raise AppLifecycleError(refused)
+
+
+def _retired_capability_gate(manifest: AppManifest, *, action: str) -> None:
+    """Raise when *manifest* declares a capability id an earlier installed version retired: a
+    retired id is never declared again (``capability_lifecycle.update_refusal``)."""
+    refused = capability_lifecycle.update_refusal(_read_installed(manifest.name), manifest)
     if refused:
         logger.warning("app %s: %s refused — %s", manifest.name, action, refused)
         raise AppLifecycleError(refused)
@@ -1571,6 +1581,7 @@ def update(
                 scan=None,
                 error=f"manifest name {manifest.name!r} ≠ target {name!r}",
             )
+        was = _manifest_of(name)
         # The FULL install gate on the new content — an update is a fresh fetch of mutable
         # content, so skipping the signature or the scan here would make "update" the way
         # around both.
@@ -1693,15 +1704,7 @@ def update(
         shutil.rmtree(rollback, ignore_errors=True)
         # Only now: the old version's tree (and the packages only it needed) is gone.
         _collect_app_packages()
-        meta = _read_installed(name)
-        if meta is not None:
-            meta.version = manifest.version
-            meta.updatedAt = _now_iso()
-            # The update re-ran the signature gate on the NEW bytes, so the tier it
-            # produced is the one that now describes what is installed. Leaving the old
-            # value would let a version that dropped its signature keep reading `official`.
-            meta.tier = report.tier.value
-            _write_installed(name, meta)
+        meta = _record_update(name, was, manifest, report.tier.value)
         # The new version starts now — imported from the files just swapped in. A disabled app
         # stays off: its providers are listed, and nothing of it runs until it is enabled.
         if meta is None or meta.enabled:
@@ -1726,6 +1729,26 @@ def update(
         return InstallResult(ok=False, name=name, error=str(exc))
     finally:
         shutil.rmtree(staged, ignore_errors=True)
+
+
+def _record_update(
+    name: str, was: AppManifest | None, manifest: AppManifest, tier: str
+) -> InstalledApp | None:
+    """Bump *name*'s installed record to the version *manifest* just put live, and return it, or
+    ``None`` when it has none."""
+    meta = _read_installed(name)
+    if meta is None:
+        return None
+    meta.version = manifest.version
+    meta.updatedAt = _now_iso()
+    # The update re-ran the signature gate on the NEW bytes, so the tier it
+    # produced is the one that now describes what is installed. Leaving the old
+    # value would let a version that dropped its signature keep reading `official`.
+    meta.tier = tier
+    # What it did to the app's capabilities: each rename moved once, each dropped id a tombstone.
+    capability_lifecycle.after_update(meta, was, manifest)
+    _write_installed(name, meta)
+    return meta
 
 
 _SEED_MARKER_FILENAME = ".seeded-builtins.json"
@@ -2141,8 +2164,9 @@ def _mark_provider_error(name: str, message: str) -> None:
 
 def _hosting_refusal(manifest: AppManifest) -> tuple[str, str]:
     """Why this core does not switch *manifest*'s app on here: ``(audit outcome, sentence)``, or
-    ``("", "")`` when it does. A core older than the app needs, or the desktop app, which cannot
-    run what the app runs as a Python child (``python_children.app_refusal``)."""
+    ``("", "")`` when it does. A core older than the app needs, the desktop app, which cannot
+    run what the app runs as a Python child (``python_children.app_refusal``), or a manifest whose
+    capabilities this core cannot tell apart (``capability_lifecycle.hold_off_reason``)."""
     from personalclaw import python_children
 
     compat = manifest.core_compatibility()
@@ -2151,6 +2175,9 @@ def _hosting_refusal(manifest: AppManifest) -> tuple[str, str]:
     refused = python_children.app_refusal(manifest)
     if refused:
         return "refused_needs_python", refused
+    held = capability_lifecycle.hold_off_reason(manifest)
+    if held:
+        return "refused_capability_ids", held
     return "", ""
 
 

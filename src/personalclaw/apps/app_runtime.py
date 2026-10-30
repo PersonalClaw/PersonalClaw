@@ -84,16 +84,24 @@ def start_installed(*, gateway: bool = True) -> list[str]:
     is registered before any app's backend starts — one launching through another app's sandbox
     tier finds it. A disabled app is listed with its providers off (:func:`record`). An enabled
     app this core cannot host is refused as an enable refuses it (:func:`_refuse`): one that needs
-    a newer core, and in the desktop app one that runs a Python child the app cannot start.
+    a newer core, in the desktop app one that runs a Python child the app cannot start, and one
+    whose capabilities this core cannot tell apart (``capability_lifecycle.hold_off_reason``).
+
+    The gateway first runs again each capability move an update left pending because a store's
+    mover failed (:func:`_retry_pending_moves`), so an app starts with its stores under its new ids.
 
     ``gateway=False`` is the same walk for a process that is not the gateway, such as a CLI
     command that resolves a model: each enabled app's code and registrations
-    (:func:`_load_in_process`), and none of the servers or processes the gateway runs for it.
+    (:func:`_load_in_process`), and none of the servers or processes the gateway runs for it. It
+    retries no move: installed records are the gateway's to write.
 
     Returns the names of the apps it loaded.
     """
     from personalclaw import python_children
+    from personalclaw.apps.capability_lifecycle import hold_off_reason
 
+    if gateway:
+        _retry_pending_moves()
     ready: list[AppManifest] = []
     for manifest, enabled in installed():
         if not enabled:
@@ -103,7 +111,7 @@ def start_installed(*, gateway: bool = True) -> list[str]:
         if not compat.admits:
             _refuse(manifest, compat.reason)
             continue
-        refused = python_children.app_refusal(manifest)
+        refused = python_children.app_refusal(manifest) or hold_off_reason(manifest)
         if refused:
             _refuse(manifest, refused)
             continue
@@ -114,6 +122,19 @@ def start_installed(*, gateway: bool = True) -> list[str]:
         for manifest in ready:
             _load_in_process(manifest)
     return [m.name for m in ready]
+
+
+def _retry_pending_moves() -> None:
+    """Each installed app's pending capability moves, run again
+    (``capability_lifecycle.retry_pending_moves``), its record written when one changed."""
+    from personalclaw.apps.capability_lifecycle import retry_pending_moves
+    from personalclaw.apps.manager import _read_installed, _write_installed, list_apps
+
+    for info in list_apps():
+        name = str(info.get("name") or "")
+        meta = _read_installed(name) if name else None
+        if meta is not None and retry_pending_moves(meta):
+            _write_installed(name, meta)
 
 
 def load(*manifests: AppManifest) -> None:

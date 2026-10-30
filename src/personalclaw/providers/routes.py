@@ -172,9 +172,10 @@ async def handle_get_capability(request: web.Request) -> web.Response:
     capability = request.match_info["capability"]
     ext = get_provider_registry().get(name, capability)
     if not ext:
-        return web.json_response(
-            {"error": f"{name!r} has no capability {capability!r}"}, status=404
-        )
+        from personalclaw.apps.capability_lifecycle import retired_sentence
+
+        said = retired_sentence(name, capability) or f"{name!r} has no capability {capability!r}"
+        return web.json_response({"error": said}, status=404)
     availability = get_availability_board().read(ext.name, ext.provider_config.implementation)
     return web.json_response(
         {
