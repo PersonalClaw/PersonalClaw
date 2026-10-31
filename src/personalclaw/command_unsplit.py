@@ -13,7 +13,13 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from personalclaw.command_shell import _MOVES, _assignments, _changes_environment, _runs_code
+from personalclaw.command_shell import (
+    _MOVES,
+    _assignments,
+    _changes_environment,
+    _program_of,
+    _runs_code,
+)
 from personalclaw.shell_syntax import lex, parts, simple_commands
 
 if TYPE_CHECKING:
@@ -93,7 +99,7 @@ def _changes_shell(command: str, depth: int, *, max_depth: int) -> tuple[bool, b
         return any(moved for moved, _ in found), any(relays for _, relays in found)
     moved = relays = False
     for one in commands:
-        name = one.words[0].text if one.words else ""
+        name, _args = _program_of(one)
         runs = _runs_code(one)
         moved = moved or name in _MOVES or runs
         relays = relays or runs or _changes_environment(one)

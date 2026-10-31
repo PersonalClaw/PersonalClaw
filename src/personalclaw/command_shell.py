@@ -45,13 +45,45 @@ _CHANGES_ENVIRONMENT = frozenset(
 _RUNS_CODE = frozenset({"eval", "source", ".", "builtin"})
 
 
+#: The shell's reserved words that run the command after them in the shell itself: ``!``,
+#: ``time`` and a compound command's ``if``, ``then``, ``do`` and the rest, and the precommand
+#: modifiers zsh reads the same way. ``if cd /x; then …`` moves the shell as ``cd /x`` does.
+_LEADS = frozenset(
+    {"!", "time", "if", "elif", "while", "until", "then", "else", "do", "noglob", "nocorrect"}
+)
+
+
+def _lead(words: Sequence[Word]) -> tuple[int, bool]:
+    """How many of *words* lead up to the program a command runs: its leading ``NAME=value``
+    assignments and the reserved words before it (:data:`_LEADS`, and ``time``'s ``-p``), in any
+    order; and whether one of the assignments may send it elsewhere (:func:`_relays`)."""
+    k, relays = 0, False
+    while k < len(words):
+        assigned, sends = _assignments(words[k:])
+        if assigned:
+            k, relays = k + assigned, relays or sends
+        elif words[k].text in _LEADS:
+            k += 1
+            if words[k - 1].text == "time" and k < len(words) and words[k].text == "-p":
+                k += 1
+        else:
+            break
+    return k, relays
+
+
+def _program_of(one: Simple) -> tuple[str, list[Word]]:
+    """The name of the program *one* runs, past its leading assignments and reserved words
+    (``FOO=1 cd /x`` and ``if cd /x`` run ``cd``: :func:`_lead`), and the words it is given:
+    ``""`` and none for a command with no program."""
+    k, _relays = _lead(one.words)
+    return (one.words[k].text, one.words[k + 1 :]) if k < len(one.words) else ("", [])
+
+
 def _runs_code(one: Simple) -> bool:
     """Whether *one* runs a command in the shell itself (``eval``, ``source``, ``command cd``)."""
-    if not one.words:
-        return False
-    name = one.words[0].text
+    name, args = _program_of(one)
     if name == "command":  # `command -v NAME` only says what NAME is
-        return len(one.words) > 1 and one.words[1].text not in ("-v", "-V")
+        return bool(args) and args[0].text not in ("-v", "-V")
     return name in _RUNS_CODE
 
 
@@ -60,7 +92,7 @@ def _changes_environment(one: Simple) -> bool:
     commands after it. Setting shell options (``set -euo pipefail``) does not, unless it exports
     every variable set after it (``set -a``)."""
     words = one.words
-    k, relays = _assignments(words)
+    k, relays = _lead(words)
     if k == len(words):
         return relays  # `NAME=value` alone sets it for the commands after it
     name, args = words[k].text, words[k + 1 :]

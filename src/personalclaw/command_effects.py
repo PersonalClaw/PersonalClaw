@@ -74,6 +74,7 @@ from personalclaw.command_shell import (
     _MOVES,
     _assignments,
     _changes_environment,
+    _program_of,
     _relays,
     _runs_code,
 )
@@ -261,7 +262,7 @@ def _text_effects(command: str, depth: int) -> CommandEffects:
         effects = effects | _under(
             _simple_effects(one, depth, relayed=relayed), base, lost=lost, base_glob=base_glob
         )
-        name = one.words[0].text if one.words else ""
+        name, _args = _program_of(one)
         runs = _runs_code(one)
         lost = lost or name in _MOVES or runs
         relayed = relayed or runs or _changes_environment(one)
