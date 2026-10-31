@@ -70,6 +70,10 @@ _REPO = "o/r"
 _HEAD = "a" * 40
 #: merge.yml's line its plan and verdict steps read their judge's ref from: on a push to main
 #: the commit the push replaced, else nothing, which reads main's tip. pr.yml's is empty.
+#: merge.yml's COMPARED: a queue commit's run compares with the commit the queue built it on.
+_COMPARED = (
+    "${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || 'main' }}"
+)
 _JUDGE = (
     "${{ github.event_name == 'push' && github.ref == 'refs/heads/main'"
     " && github.event.before || '' }}"
@@ -243,6 +247,8 @@ def _run_plan(
         "PUSH_PLAN": push_plan,
         # What the tiers' JUDGE gives: the commit a push to main replaced, else empty.
         "JUDGE": judge,
+        # What the tiers' COMPARED gives where a step names it: main, but for a queue commit.
+        **({"COMPARED": "main"} if "COMPARED" in step["env"] else {}),
         "GITHUB_EVENT_NAME": "workflow_dispatch",
         "GITHUB_REF": "refs/heads/feature",
         "GITHUB_REPOSITORY": _REPO,
@@ -304,7 +310,7 @@ def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) ->
         "${{ github.event_name == 'push' && (needs.tree-check.outputs.tested == 'true'"
         " && 'tested' || 'full') || '' }}"
     )
-    assert step.get("env") == {
+    want = {
         "GH_TOKEN": "${{ github.token }}",
         "HEAD_SHA": "${{ github.sha }}",
         "TIER": tier,
@@ -313,6 +319,10 @@ def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) ->
         "PUSH_PLAN": push_plan if workflow == "merge.yml" else "",
         "JUDGE": _JUDGE if workflow == "merge.yml" else "",
     }
+    # What the changed paths are compared with (0.4.0 A1): main, but for merge.yml's queue
+    # commit, the commit the queue built it on. It lands in two merges, so both are read here.
+    compared = _COMPARED if workflow == "merge.yml" else "main"
+    assert step.get("env") in (want, {**want, "COMPARED": compared})
     assert step.get("shell") is None and _workflow(workflow).get("defaults") is None
     assert "${{" not in step["run"], "an expression pasted into the shell"
 
