@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **A chat's pending self-model observation and a new skill proposal's id are named by a SHA-256 digest of the chat, no longer MD5 or SHA-1, so an observation pending in a chat left open across the upgrade starts fresh from its next turn, while proposals already filed keep their ids and the learned evidence keeps its rows.**
+
 ## [0.3.2] — 2026-10-31
 
 A tool call cut off at the model's output limit now says so on its card, and a model app that allows it is asked again with twice the room. A tool card shows the same input after a reload as while its turn ran. Rewinding a chat puts back the files its agent wrote. Switching a chat to plan mode while its turn runs no longer stops the turn without a word, and leaving plan mode before its plan is drafted cancels the plan. Every line of `gateway.log` starts with its full date and time.

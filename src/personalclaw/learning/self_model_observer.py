@@ -73,13 +73,25 @@ def _now() -> str:
 
 
 def _slug(text: str) -> str:
-    """A key-safe short hash of a pattern/session string.
+    """A key-safe short hash of a pattern string.
 
     `_validate_key` demands `^[a-z][a-z0-9_.]*[a-z0-9]$` with no consecutive dots, and a pattern
     like "PersonalClaw + edit_file,read_file" satisfies none of that. A hex digest is the stable,
     collision-resistant, always-valid key — the shape `memory_service` uses for its derived keys.
     """
-    return hashlib.md5(text.encode("utf-8")).hexdigest()[:16]
+    return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
+
+
+def _session_slug(session_key: str) -> str:
+    """A key-safe short digest of a chat's key, the name of the chat's pending row.
+
+    SHA-256, not `_slug`'s MD5: a chat's key names the chat, and an MD5 of an identifier reads as a
+    weak hash of it. The pattern keys keep `_slug`, so the evidence they hold stays where it is. A
+    pending row written under the old MD5 name is never read again: the chat's next turn parks
+    under this name, and the old row sits unread, as a finished chat's pending row always has (the
+    snapshot, the caps and memory formation all skip pending rows).
+    """
+    return hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:16]
 
 
 def observed_pattern(route: str, tools: tuple[str, ...]) -> str:
@@ -102,7 +114,7 @@ def _candidate_key(pattern: str) -> str:
 
 
 def _pending_key(session_key: str) -> str:
-    return f"{KEY_PREFIX}.{_PENDING}.{_slug(session_key or 'default')}"
+    return f"{KEY_PREFIX}.{_PENDING}.{_session_slug(session_key or 'default')}"
 
 
 def _retrospection_entry(observation: Observation) -> Entry:
