@@ -122,6 +122,21 @@ _WAITS = {
 }
 
 
+#: The tick the controller ships with. An action on a waiting run that waited for the tick would
+#: take this long; a woken one takes a fraction of it.
+SHIPPED_TICK = 5.0
+
+
+@pytest.fixture
+def _the_tick_an_hour_away(monkeypatch):
+    """The loop's tick an hour away (its sleep is then the wait's own 600 s deadline), so within
+    a test only the action's own wake can move the run. Each test below then bounds the action
+    by the shipped tick instead of a fraction of a second: a loaded macOS runner took 0.67 s to
+    apply an edit against a 0.5 s bound (#5739), though the wake had worked."""
+    assert controller_mod.TICK_WAKE_SECS == SHIPPED_TICK, "the shipped tick, not a shortened one"
+    monkeypatch.setattr(controller_mod, "TICK_WAKE_SECS", 3600.0)
+
+
 class _Supervisor:
     def __init__(self, c: RunController) -> None:
         self._c = c
@@ -142,7 +157,7 @@ async def _waiting_on_a_live_loop() -> RunController:
     return c
 
 
-async def test_a_stop_ends_a_live_run_at_once() -> None:
+async def test_a_stop_ends_a_live_run_at_once(_the_tick_an_hour_away) -> None:
     from personalclaw.workflows import service
 
     c = await _waiting_on_a_live_loop()
@@ -151,10 +166,10 @@ async def test_a_stop_ends_a_live_run_at_once() -> None:
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
     took = time.monotonic() - asked
     assert c.run.status == RunStatus.CANCELLED
-    assert took < 0.5, f"the run ended {took:.2f}s after its Stop"
+    assert took < SHIPPED_TICK, f"the run ended {took:.2f}s after its Stop"
 
 
-async def test_a_pause_parks_a_live_run_at_once() -> None:
+async def test_a_pause_parks_a_live_run_at_once(_the_tick_an_hour_away) -> None:
     from personalclaw.workflows import service
 
     c = await _waiting_on_a_live_loop()
@@ -163,17 +178,17 @@ async def test_a_pause_parks_a_live_run_at_once() -> None:
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
     took = time.monotonic() - asked
     assert c.run.status == RunStatus.PAUSED
-    assert took < 0.5, f"the run paused {took:.2f}s after it was asked"
+    assert took < SHIPPED_TICK, f"the run paused {took:.2f}s after it was asked"
 
 
-async def test_an_edit_to_a_live_run_is_applied_at_once() -> None:
+async def test_an_edit_to_a_live_run_is_applied_at_once(_the_tick_an_hour_away) -> None:
     c = await _waiting_on_a_live_loop()
     asked = time.monotonic()
     body = c.submit_mutation([{"op": "skip", "node_id": "hold"}], confirm=True)
     assert body.get("queued"), body
     await _until(lambda: _state(c, "root.children[0]") == InstanceState.SKIPPED, within=10)
     took = time.monotonic() - asked
-    assert took < 0.5, f"the edit was applied {took:.2f}s after it was queued"
+    assert took < SHIPPED_TICK, f"the edit was applied {took:.2f}s after it was queued"
     await asyncio.wait_for(c._terminal.wait(), timeout=10)
     await c.stop()
 
