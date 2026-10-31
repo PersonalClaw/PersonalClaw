@@ -33,6 +33,7 @@ import pytest_asyncio
 
 from personalclaw import mcp_core, session_restrictions, started_work
 from personalclaw.action_providers import services as action_services
+from personalclaw.durability import service as durability
 from personalclaw.workflows import controller as controller_mod
 from personalclaw.workflows import defs as defs_mod
 from personalclaw.workflows import ownership, service, store
@@ -165,6 +166,11 @@ async def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     # The services the gateway wires are this test's, and go with it.
     monkeypatch.setattr(action_services, "_services", action_services._services)
     monkeypatch.setattr(controller_mod, "TICK_WAKE_SECS", 0.02)
+    # The gateway's own backups are not these tests' work. Its durability service's first tick runs
+    # the nightly snapshot of a home that has never had one, and the snapshot connects to every
+    # store's database to checkpoint it while the workflow tools here open and close the workflow
+    # store's own: a random-order shard hung on Linux with one of each in flight (#5786).
+    monkeypatch.setattr(durability, "run_due_jobs", lambda *_a, **_k: [])
     saved = dict(defs_mod._providers)
     defs_mod._providers.clear()
     defs_mod.register_provider(_Defs())
