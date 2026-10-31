@@ -547,6 +547,7 @@ class ScriptedProvider(ModelProvider):
         tools: list[dict] | None = None,
         model: str | None = None,
         reasoning_effort: str = "",
+        max_tokens: int | None = None,  # never sent: it does not declare takes_output_cap
     ) -> AsyncIterator[LLMEvent]:
         """Stateless multi-message entry point (the reasoning-axis / native-loop path).
 

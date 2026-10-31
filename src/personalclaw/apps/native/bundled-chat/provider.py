@@ -1502,6 +1502,7 @@ class BundledChatProvider(ModelProvider, LocalModelProvider):
         tools: list[dict] | None = None,
         model: str | None = None,
         reasoning_effort: str = "",
+        max_tokens: int | None = None,  # never sent: it does not declare takes_output_cap
     ) -> AsyncIterator[LLMEvent]:
         """Stream one completion. ``tools`` and ``reasoning_effort`` are accepted and ignored.
 

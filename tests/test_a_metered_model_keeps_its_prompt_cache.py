@@ -92,6 +92,7 @@ _DECLARED: dict[str, object] = {
     "supports_tools": True,
     "prompt_cache": PromptCache.EXPLICIT,
     "reads_reasoning": True,
+    "takes_output_cap": True,
     "request_only": True,
     "request_timeout_secs": 42.0,
     "supports_native_commands": True,

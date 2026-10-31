@@ -316,6 +316,7 @@ class LoopPhases:
                         yield ev
                 continue
             st.answered_ms = now_ms()
+            st.room = 0  # it rode this one request
             # A capped call is recorded here when no guard did (a turn a person watches), with the
             # tokens and cost its usage says, and the turn's usage row names its row
             # (``attempt_audit``).
@@ -346,6 +347,10 @@ class LoopPhases:
             unattended=self._unattended,
             next_ref=self._fallback.next_ref() if st.steps == 1 else "",
         )
+        # The room after a cut call goes only to a provider that takes one, read off the model the
+        # request goes to: any other is sent no such keyword, which it may not take at all.
+        takes = getattr(self._model, "takes_output_cap", False) is True
+        room = {"max_tokens": st.room} if st.room and takes else {}
         try:
             async with turn_streams.closing_stream(
                 self._model.complete(
@@ -353,6 +358,7 @@ class LoopPhases:
                     tools=st.tools,
                     model=self._definition.model or None,
                     reasoning_effort=st.owed.effort(self._reasoning_effort),
+                    **room,
                 )
             ) as answer:
                 async for ev in answer:
@@ -617,14 +623,19 @@ class LoopPhases:
         """
         # A call the model was cut off in the middle of writing, at its output limit: its card says
         # so, and whether the turn tries again. The second such cut ends the turn there, saying
-        # so, since asking again at the same limit would only meet it again.
+        # so, rather than asking again at a limit it has met twice.
         cut = ""
         if cut_in_a_call(st.calls):
             st.cut_calls += 1
+            again = st.cut_calls < CUT_CALLS_PER_TURN
             cut = cut_call_words(
-                max(0.0, st.answered_ms - st.attempt_started) / 1000.0,
-                again=st.cut_calls < CUT_CALLS_PER_TURN,
+                max(0.0, st.answered_ms - st.attempt_started) / 1000.0, again=again
             )
+            # The try after it asks for twice the room, sent only to a provider that takes a cap
+            # for one request (`_answer`); it holds the cap to its configured one and its model's
+            # ceiling.
+            if again:
+                st.room = 2 * capped_at(st.usage)
         async for ev in self._execute_tool_batch(st.calls, cut=cut):
             st.totals.events += 1
             yield ev

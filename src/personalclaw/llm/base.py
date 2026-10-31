@@ -121,6 +121,13 @@ class ModelProvider(ABC):
     # opaque model data never reaches a wire that does not know it.
     reads_reasoning: bool = False
 
+    # Whether this provider's ``complete`` takes ``max_tokens``, an output cap for that one request,
+    # and holds it to its own configured cap and its model's ceiling (``sdk.model.output_cap`` lets
+    # a configured cap win). False by default: no other provider is sent one. The native loop reads
+    # it (via getattr, mirroring supports_tools) for the one request after a tool call was cut at
+    # the output limit (the ``per-call-output-cap`` core feature).
+    takes_output_cap: bool = False
+
     # Whether this provider hands its model ONLY the user's request, never the assembled
     # context (identity, memory, skills, instructions). True for a model too small to follow a
     # long instruction block — it continues the instructions instead of answering — so the
@@ -352,6 +359,7 @@ class ModelProvider(ABC):
         tools: list[dict] | None = None,
         model: str | None = None,
         reasoning_effort: str = "",
+        max_tokens: int | None = None,
     ) -> AsyncIterator[LLMEvent]:
         """Stream a completion for the full ``messages`` list (stateless).
 
@@ -365,6 +373,10 @@ class ModelProvider(ABC):
         to the shape that model takes (an effort level, or a thinking token budget on a
         model that takes one), sending a level the model lacks as the nearest one it has;
         others ignore it. "" = model default.
+
+        ``max_tokens`` is an output cap for this one request, sent only to a provider that declares
+        :attr:`takes_output_cap`; such a provider holds it to its configured cap and its model's
+        ceiling. ``None``: the provider's own cap, as always.
 
         An assistant message may carry the reasoning record its model wrote
         (:data:`~personalclaw.llm.reasoning_record.REASONING_KEY`). Only a provider that

@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **A model app's provider can be asked for more output room on one request: a provider that declares `takes_output_cap` is sent `max_tokens` in its `complete()`, and holds it to its own configured cap and its model's ceiling. PersonalClaw sends one once in a turn, on the try after a tool call was cut at the output limit, at twice what that call stopped at. A provider that declares nothing is sent nothing new, and is asked again at its own limit, as before. Apps rely on it with the `per-call-output-cap` core feature (SDK additions no app has to change for).**
+
 ### Fixed
 
 - **A tool call cut off at the model's output limit says so on its card: "Cut off at the output limit after 5 minutes. Trying again." The card showed the note written for the model, and nothing said the reply had hit its limit or that the agent would try again. A second cut in the same turn ends the turn there, with Retry, rather than asking again at the same limit. The model-call log's row for a cut attempt now has its tokens and cost.**

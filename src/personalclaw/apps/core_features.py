@@ -189,6 +189,14 @@ RUNNING_LIST = "running-list"
 #: and an app with two providers of one type collides with itself there.
 CAPABILITY_IDS = "capability-ids"
 
+#: A model provider takes an output cap for one request: core's ``complete(…, max_tokens=…)`` is
+#: sent ``max_tokens`` only by a provider that declares ``takes_output_cap`` (``ModelProvider``),
+#: which holds it to its own configured cap and its model's ceiling. Core sends one once in a turn,
+#: on the request after a tool call was cut at the output limit, at twice what that call stopped
+#: at (#5795). A core without it reads no ``takes_output_cap`` and sends no ``max_tokens``, so an
+#: app's tool call cut at its limit is asked again at the same limit there.
+PER_CALL_OUTPUT_CAP = "per-call-output-cap"
+
 #: An app's settings come in two parts (#3842): a top-level ``settings`` schema for the account
 #: every capability shares, stored in ``data/config.json``, and each capability's own
 #: ``settingsSchema``, stored in ``data/capabilities/<id>.json``;
@@ -216,6 +224,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         MESSAGES_RUN_ONCE,
         MODEL_EFFORTS,
         PAIRED_OWNER,
+        PER_CALL_OUTPUT_CAP,
         PRE_TOOL_HOOKS,
         RUNNING_LIST,
         TOOL_CALL_SCREEN,

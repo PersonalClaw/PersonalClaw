@@ -857,6 +857,7 @@ class AnthropicProvider(ModelProvider):
         tools: list[dict] | None = None,
         model: str | None = None,
         reasoning_effort: str = "",
+        max_tokens: int | None = None,  # never sent: it does not declare takes_output_cap
     ) -> AsyncIterator[LLMEvent]:
         """Stream a stateless completion (:meth:`_complete_chat`), closable by :meth:`cancel`."""
         chat = self._complete_chat(

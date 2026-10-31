@@ -2179,7 +2179,8 @@
      {"annotation": "list[dict]", "kind": "positional_or_keyword", "name": "messages"},
      {"annotation": "list[dict] | None", "default": "None", "kind": "keyword_only", "name": "tools"},
      {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "model"},
-     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "reasoning_effort"}
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "reasoning_effort"},
+     {"annotation": "int | None", "default": "None", "kind": "keyword_only", "name": "max_tokens"}
     ],
     "returns": "AsyncIterator[AgentEvent]"
    },
@@ -5088,7 +5089,7 @@
  "personalclaw.sdk.features.CAPABILITY_IDS": {"kind": "value", "type": "str", "value": "'capability-ids'"},
  "personalclaw.sdk.features.CHAT_TRUST": {"kind": "value", "type": "str", "value": "'chat-trust'"},
  "personalclaw.sdk.features.CLOSING_STREAMS": {"kind": "value", "type": "str", "value": "'closing-streams'"},
- "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'account-settings', 'adaptive-thinking', 'approval-answers', 'capability-ids', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-clients', 'guarded-download', 'links-name-their-channel', 'message-instructions', 'messages-run-once', 'model-efforts', 'paired-owner', 'pre-tool-hooks', 'running-list', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked', 'waiting-list'})"},
+ "personalclaw.sdk.features.CORE_FEATURES": {"kind": "value", "type": "frozenset", "value": "frozenset({'account-settings', 'adaptive-thinking', 'approval-answers', 'capability-ids', 'chat-trust', 'closing-streams', 'cut-off-answers', 'digest-replies', 'guarded-clients', 'guarded-download', 'links-name-their-channel', 'message-instructions', 'messages-run-once', 'model-efforts', 'paired-owner', 'per-call-output-cap', 'pre-tool-hooks', 'running-list', 'tool-call-screen', 'turns-name-their-channel', 'turns-name-who-asked', 'waiting-list'})"},
  "personalclaw.sdk.features.CUT_OFF_ANSWERS": {"kind": "value", "type": "str", "value": "'cut-off-answers'"},
  "personalclaw.sdk.features.DIGEST_REPLIES": {"kind": "value", "type": "str", "value": "'digest-replies'"},
  "personalclaw.sdk.features.GUARDED_CLIENTS": {"kind": "value", "type": "str", "value": "'guarded-clients'"},
@@ -5098,6 +5099,7 @@
  "personalclaw.sdk.features.MESSAGE_INSTRUCTIONS": {"kind": "value", "type": "str", "value": "'message-instructions'"},
  "personalclaw.sdk.features.MODEL_EFFORTS": {"kind": "value", "type": "str", "value": "'model-efforts'"},
  "personalclaw.sdk.features.PAIRED_OWNER": {"kind": "value", "type": "str", "value": "'paired-owner'"},
+ "personalclaw.sdk.features.PER_CALL_OUTPUT_CAP": {"kind": "value", "type": "str", "value": "'per-call-output-cap'"},
  "personalclaw.sdk.features.PRE_TOOL_HOOKS": {"kind": "value", "type": "str", "value": "'pre-tool-hooks'"},
  "personalclaw.sdk.features.RUNNING_LIST": {"kind": "value", "type": "str", "value": "'running-list'"},
  "personalclaw.sdk.features.TOOL_CALL_SCREEN": {"kind": "value", "type": "str", "value": "'tool-call-screen'"},
@@ -6970,7 +6972,8 @@
      {"annotation": "list[dict]", "kind": "positional_or_keyword", "name": "messages"},
      {"annotation": "list[dict] | None", "default": "None", "kind": "keyword_only", "name": "tools"},
      {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "model"},
-     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "reasoning_effort"}
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "reasoning_effort"},
+     {"annotation": "int | None", "default": "None", "kind": "keyword_only", "name": "max_tokens"}
     ],
     "returns": "AsyncIterator[AgentEvent]"
    },
@@ -7379,7 +7382,8 @@
      {"annotation": "list[dict]", "kind": "positional_or_keyword", "name": "messages"},
      {"annotation": "list[dict] | None", "default": "None", "kind": "keyword_only", "name": "tools"},
      {"annotation": "str | None", "default": "None", "kind": "keyword_only", "name": "model"},
-     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "reasoning_effort"}
+     {"annotation": "str", "default": "''", "kind": "keyword_only", "name": "reasoning_effort"},
+     {"annotation": "int | None", "default": "None", "kind": "keyword_only", "name": "max_tokens"}
     ],
     "returns": "AsyncIterator[AgentEvent]"
    },

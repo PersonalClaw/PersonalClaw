@@ -16,7 +16,9 @@ the providers whose cap counts it. More room is not what changes, though it woul
 lever: the cap is the model instance's own setting, a hosted model's ceiling above it is not
 declared anywhere core can read, and a request over that ceiling is refused by the provider. A
 capped silence after that ask ends the turn at the cap, and the turn's ending names it
-(``llm.events.out_of_room``).
+(``llm.events.out_of_room``). Room is given in one case, by a provider that takes a cap for one
+request and knows its model's ceiling (``ModelProvider.takes_output_cap``): the try after a tool
+call cut at the output limit asks it for twice what that call stopped at.
 
 :class:`OwedReply` is one turn's account of that: whether the turn wrote anything, whether it has
 asked, and whether the request about to go out carries the note. The loop keeps it; the request

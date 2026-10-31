@@ -33,6 +33,7 @@ from personalclaw.sdk.features import (
     MESSAGES_RUN_ONCE,
     MODEL_EFFORTS,
     PAIRED_OWNER,
+    PER_CALL_OUTPUT_CAP,
     PRE_TOOL_HOOKS,
     RUNNING_LIST,
     TOOL_CALL_SCREEN,
@@ -62,6 +63,7 @@ OFFERED_ONCE = {
     "messages-run-once",
     "model-efforts",
     "paired-owner",
+    "per-call-output-cap",
     "pre-tool-hooks",
     "running-list",
     "tool-call-screen",
@@ -89,6 +91,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "MESSAGES_RUN_ONCE",
         "MODEL_EFFORTS",
         "PAIRED_OWNER",
+        "PER_CALL_OUTPUT_CAP",
         "PRE_TOOL_HOOKS",
         "RUNNING_LIST",
         "TOOL_CALL_SCREEN",
@@ -112,6 +115,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert MESSAGES_RUN_ONCE == "messages-run-once"
     assert MODEL_EFFORTS == "model-efforts"
     assert PAIRED_OWNER == "paired-owner"
+    assert PER_CALL_OUTPUT_CAP == "per-call-output-cap"
     assert PRE_TOOL_HOOKS == "pre-tool-hooks"
     assert TOOL_CALL_SCREEN == "tool-call-screen"
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
@@ -131,6 +135,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         MESSAGES_RUN_ONCE,
         MODEL_EFFORTS,
         PAIRED_OWNER,
+        PER_CALL_OUTPUT_CAP,
         PRE_TOOL_HOOKS,
         RUNNING_LIST,
         TOOL_CALL_SCREEN,
@@ -1174,6 +1179,20 @@ def _running_list_holds() -> None:
     _read_the_lists(read)
 
 
+def _per_call_output_cap_holds() -> None:
+    """A provider that declares ``takes_output_cap`` is sent ``max_tokens`` in its ``complete``:
+    twice what a tool call cut at the output limit stopped at, on the one request after it. One
+    that declares nothing is sent no such keyword. Driven through the real native loop."""
+    import asyncio
+
+    from test_a_call_cut_at_the_output_limit_says_so_on_its_card import ANSWER, CAP, _cut_call
+    from test_a_cut_call_is_retried_with_twice_the_room import _TakesACap, _turn
+
+    model = _TakesACap([_cut_call("tc-1"), ANSWER])
+    asyncio.run(_turn(model))
+    assert model.caps == [None, 2 * CAP]
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     ACCOUNT_SETTINGS: _account_settings_hold,
@@ -1191,6 +1210,7 @@ WITNESSES = {
     MESSAGES_RUN_ONCE: _messages_run_once_hold,
     MODEL_EFFORTS: _model_efforts_hold,
     PAIRED_OWNER: _paired_owner_holds,
+    PER_CALL_OUTPUT_CAP: _per_call_output_cap_holds,
     PRE_TOOL_HOOKS: _pre_tool_hooks_hold,
     RUNNING_LIST: _running_list_holds,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,
