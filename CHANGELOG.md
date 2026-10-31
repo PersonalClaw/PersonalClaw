@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-10-31
+
+A tool call cut off at the model's output limit now says so on its card, and a model app that allows it is asked again with twice the room. A tool card shows the same input after a reload as while its turn ran. Rewinding a chat puts back the files its agent wrote. Switching a chat to plan mode while its turn runs no longer stops the turn without a word, and leaving plan mode before its plan is drafted cancels the plan. Every line of `gateway.log` starts with its full date and time.
+
 ### Changed
 
 - **A model app's provider can be asked for more output room on one request: a provider that declares `takes_output_cap` is sent `max_tokens` in its `complete()`, and holds it to its own configured cap and its model's ceiling. PersonalClaw sends one once in a turn, on the try after a tool call was cut at the output limit, at twice what that call stopped at. A provider that declares nothing is sent nothing new, and is asked again at its own limit, as before. Apps rely on it with the `per-call-output-cap` core feature (SDK additions no app has to change for).**
