@@ -13404,23 +13404,6 @@ if ! [[ "$apps" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 echo "apps-partner=$apps" | tee -a "$GITHUB_OUTPUT"
 """,  # noqa: E501
-        "the pull request's changed paths, for the flake rule": r"""
-set -uo pipefail
-out="$RUNNER_TEMP/changed-paths/changed.z"
-mkdir -p "$RUNNER_TEMP/changed-paths"
-parents=$(git cat-file -p HEAD | sed -n 's/^parent //p' | tr '\n' ' ')
-read -r main head extra <<< "$parents"
-if [ -z "${head:-}" ] || [ -n "${extra:-}" ] || [ "$head" != "$PR_HEAD" ]; then
-  echo "::warning title=no changed list::the checkout is not this pull request's test merge, so the flake rule passes no flake"
-  exit 0
-fi
-if git fetch --no-tags --depth=1 origin "$main" \
-   && git diff --name-only -z --no-renames "$main" HEAD > "$out" && [ -s "$out" ]; then
-  echo "ok=true" >> "$GITHUB_OUTPUT"
-else
-  echo "::warning title=no changed list::the test merge's changed paths could not be read, so the flake rule passes no flake"
-fi
-""",  # noqa: E501
         "a pull request's or a queue commit's changed paths, for the flake rule": r"""
 set -uo pipefail
 out="$RUNNER_TEMP/changed-paths/changed.z"
@@ -13448,15 +13431,6 @@ set -uo pipefail
 listed="$RUNNER_TEMP/changed.json"
 changed="$RUNNER_TEMP/changed.txt"
 gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${COMPARED}...${HEAD_SHA}" \
-  --jq '.files[].filename | @json' > "$listed" || : > "$listed"
-python3 -c 'import json, sys; names = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]; assert all(isinstance(n, str) and "\0" not in n for n in names); sys.stdout.write("".join(n + "\0" for n in names))' "$listed" > "$changed" || : > "$changed"
-echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
-""",  # noqa: E501
-        "the changed paths, against main's tip": r"""
-set -uo pipefail
-listed="$RUNNER_TEMP/changed.json"
-changed="$RUNNER_TEMP/changed.txt"
-gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
   --jq '.files[].filename | @json' > "$listed" || : > "$listed"
 python3 -c 'import json, sys; names = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]; assert all(isinstance(n, str) and "\0" not in n for n in names); sys.stdout.write("".join(n + "\0" for n in names))' "$listed" > "$changed" || : > "$changed"
 echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
@@ -13604,29 +13578,6 @@ python3 -m tools.ci shards check --plan "$RUNNER_TEMP/shard-plan/plan.json"
     },
     _RESULTS_JOB: {
         "the runner's identity": _RUNNER_IDENTITY_LINE,
-        "main's verdict.py, over the plan's keys, needs and the run's records": r"""
-set -u
-judge="$RUNNER_TEMP/verdict.py"
-if ! gh api -H "Accept: application/vnd.github.raw" \
-     "repos/${GITHUB_REPOSITORY}/contents/tools/ci/verdict.py?ref=${JUDGE:-main}" > "$judge"; then
-  echo "::error title=no verdict::main's tools/ci/verdict.py could not be read, so nothing judged this run. Re-run the job."
-  exit 1
-fi
-printf '%s' "$NEEDS" > "$RUNNER_TEMP/needs.json"
-printf '%s' "${KEYS:-[]}" > "$RUNNER_TEMP/keys.json"
-printf '%s' "${KEY_PARTNERS:-"{}"}" > "$RUNNER_TEMP/key-partners.json"
-mkdir -p "$RUNNER_TEMP/records"
-proof=""
-if [ -f "$RUNNER_TEMP/superseded.json" ]; then
-  proof="$RUNNER_TEMP/superseded.json"
-fi
-python3 -I "$judge" --plan "$RUNNER_TEMP/keys.json" --needs "$RUNNER_TEMP/needs.json" \
-  --head "$HEAD_SHA" --partner "apps-partner=$APPS_PARTNER" \
-  --run-head "$HEAD_SHA" --records "$RUNNER_TEMP/records" \
-  --key-partners "$RUNNER_TEMP/key-partners.json" \
-  ${proof:+--superseded "$proof"} \
-  --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT"
-""",  # noqa: E501
         # The flake rule's lists (tools/ci/verdict.py), on a pull request's run: the verdict step
         # reads its inputs, then the two lists, then calls main's verdict with them. Listed before
         # the workflows run it (#4584 step 4): until they do, the step above stands.
@@ -13651,20 +13602,6 @@ fi
 flakes=()
 case "${GITHUB_EVENT_NAME:-}" in pull_request|merge_group) judged=yes ;; *) judged="" ;; esac
 if [ -n "$judged" ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
-  if gh api --paginate --slurp \
-       "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
-       > "$RUNNER_TEMP/jobs.json"; then
-    flakes=(--changed "$RUNNER_TEMP/changes/changed.z" --jobs "$RUNNER_TEMP/jobs.json")
-  else
-    echo "::warning title=no jobs list::this run's jobs could not be listed, so the flake rule passes no flake"
-  fi
-fi
-""",  # noqa: E501
-        "the flake rule's two lists, on a pull request only": r"""
-# The flake rule's two lists, on a pull request only: its changed paths, and this run's
-# jobs on this attempt. Without both, the verdict passes no flake.
-flakes=()
-if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
   if gh api --paginate --slurp \
        "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
        > "$RUNNER_TEMP/jobs.json"; then
@@ -13700,38 +13637,28 @@ fi
 #: Each orchestration job's steps, as the blocks of :data:`_TIER_LINES` each one runs, in
 #: order: a step runs exactly its blocks' lines, in that order, so a reorder that keeps every
 #: line (publishing a plan before the check that refuses it) fails as an extra line does.
-#: The verdict step that gives main's verdict the flake rule's two lists.
-_FLAKE_VERDICT = (
-    "the verdict's inputs, read",
-    "the flake rule's two lists, on a pull request only",
-    "main's verdict.py, given the flake rule's lists",
-)
-_PLAIN_VERDICT = ("main's verdict.py, over the plan's keys, needs and the run's records",)
-#: The flake rule's verdict step on a queue commit too (0.4.0 A1): the queue takes the pull
-#: request's flake rule. It lands in two merges, so both verdict steps are listed meanwhile.
+#: The verdict step that gives main's verdict the flake rule's two lists, on a pull request's run
+#: and (0.4.0 A1) a queue commit's: the queue takes the pull request's flake rule.
 _QUEUE_FLAKE_VERDICT = (
     "the verdict's inputs, read",
     "the flake rule's two lists, on a pull request or a queue commit only",
     "main's verdict.py, given the flake rule's lists",
 )
-#: The plan step, its changed paths compared with main's tip, or (0.4.0 A1) with what the run
-#: compares with: main, or a queue commit's queue base. Both are listed until merge.yml's merge.
+#: The plan step, its changed paths compared with what the run compares with (0.4.0 A1): main, or
+#: a queue commit's queue base.
 _PLAN_STEP_TAIL = (
     "main's tools/ci, archived beside the checkout, or no plan",
     "a push's plan, by the tree check's answer, or no plan",
     "main's planner, over this checkout's catalogue, as a matrix",
     "the keys and the stage jobs' matrices, read back before they are published",
 )
-_PLAN_AGAINST_MAIN = ("the changed paths, against main's tip", *_PLAN_STEP_TAIL)
 _PLAN_COMPARED = ("the changed paths, against what the run compares with", *_PLAN_STEP_TAIL)
 _QUEUE_CHANGED = ("a pull request's or a queue commit's changed paths, for the flake rule",)
 _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
     _PLAN_JOB: (
         ("the runner's identity",),
         ("the apps repository's head, read once for the run, or no partner",),
-        ("the pull request's changed paths, for the flake rule",),
         _QUEUE_CHANGED,
-        _PLAN_AGAINST_MAIN,
         _PLAN_COMPARED,
         ("the push's replay, in shadow, beside the tree check (merge.yml's)",),
         ("main's check of this run's catalogue (merge.yml's)",),
@@ -13748,8 +13675,6 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
     _RESULTS_JOB: (
         ("the runner's identity",),
         ("main's superseded.py, over the suite shards a newer push to main replaced",),
-        ("main's verdict.py, over the plan's keys, needs and the run's records",),
-        _FLAKE_VERDICT,
         _QUEUE_FLAKE_VERDICT,
     ),
 }
@@ -13781,22 +13706,12 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
 #: The listed steps a tier workflow may run or leave out, by job: each is held to its listed lines
 #: when it runs. A step a row names lands in two merges (#4584 step 4): these rows first, with
 #: the step here, then the workflow, which takes it out of here. None waits today.
-_TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {
-    _PLAN_JOB: frozenset(
-        {
-            ("the pull request's changed paths, for the flake rule",),
-            _QUEUE_CHANGED,
-            _PLAN_AGAINST_MAIN,
-            _PLAN_COMPARED,
-        }
-    ),
-    _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT, _QUEUE_FLAKE_VERDICT}),
-}
-#: Listed steps of which each tier workflow's job runs exactly one: its results job's verdict,
-#: with the flake rule's lists or without them (merge.yml's moves to them in its own merge).
+_TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {}
+#: Listed steps of which each tier workflow's job runs exactly one: its plan step, and its results
+#: job's verdict.
 _TIER_ONE_OF: dict[str, frozenset[tuple[str, ...]]] = {
-    _PLAN_JOB: frozenset({_PLAN_AGAINST_MAIN, _PLAN_COMPARED}),
-    _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT, _QUEUE_FLAKE_VERDICT}),
+    _PLAN_JOB: frozenset({_PLAN_COMPARED}),
+    _RESULTS_JOB: frozenset({_QUEUE_FLAKE_VERDICT}),
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
@@ -13970,49 +13885,17 @@ def _tier_run(block: str) -> str:
     )
 
 
-#: The verdict step's call as the workflows run it today, and the flake rule's lists and call
-#: that replace it (the flake rule's wiring), each as the workflows spell them.
-_PLAIN_CALL = _tier_run(
-    _TIER_LINES[_RESULTS_JOB][
-        "main's verdict.py, over the plan's keys, needs and the run's records"
-    ][
-        _TIER_LINES[_RESULTS_JOB][
-            "main's verdict.py, over the plan's keys, needs and the run's records"
-        ].index('python3 -I "$judge"') :
-    ]
-)
-_FLAKE_CALL = _tier_run(
-    _TIER_LINES[_RESULTS_JOB]["the flake rule's two lists, on a pull request only"]
-) + _tier_run(_TIER_LINES[_RESULTS_JOB]["main's verdict.py, given the flake rule's lists"])
-#: The same on a queue commit too (0.4.0 A1), as merge.yml spells it after its own merge.
+#: The flake rule's lists and the verdict's call, as the workflows spell them (0.4.0 A1).
 _QUEUE_FLAKE_CALL = _tier_run(
     _TIER_LINES[_RESULTS_JOB][
         "the flake rule's two lists, on a pull request or a queue commit only"
     ]
 ) + _tier_run(_TIER_LINES[_RESULTS_JOB]["main's verdict.py, given the flake rule's lists"])
-_PARTNER_STEP = "      - name: the partner heads the run tests against\n"
-#: merge.yml's changes step for the flake rule, as the wiring adds it.
-_CHANGED_STEP = (
-    "      - name: the pull request's changed paths, for the flake rule\n"
-    "        id: changed\n"
-    "        if: ${{ github.event_name == 'pull_request' }}\n"
-    "        env:\n"
-    "          PR_HEAD: ${{ github.event.pull_request.head.sha }}\n"
-    "        run: |\n"
-    + _tier_run(_TIER_LINES[_PLAN_JOB]["the pull request's changed paths, for the flake rule"])
-)
 
 
 def _wired(text: str) -> str:
-    """merge.yml's text with the flake rule's wiring, whether the tree already runs it or not."""
-    if _PLAIN_CALL in text:
-        text = text.replace(_PLAIN_CALL, _FLAKE_CALL, 1)
-    if _CHANGED_STEP.splitlines(True)[0] not in text:
-        assert _PARTNER_STEP in text, f"no {_PARTNER_STEP!r} to add the changed-paths step before"
-        text = text.replace(_PARTNER_STEP, _CHANGED_STEP + _PARTNER_STEP, 1)
-    assert (
-        _FLAKE_CALL in text or _QUEUE_FLAKE_CALL in text
-    ), "merge.yml runs neither form of the verdict step"
+    """merge.yml's text, which runs the flake rule's wiring as listed."""
+    assert _QUEUE_FLAKE_CALL in text, "merge.yml does not run the listed verdict step"
     return text
 
 
@@ -14023,11 +13906,9 @@ def _with_a_line_of_its_own(text: str) -> str:
 
 
 def _no_verdict_call(text: str) -> str:
-    """The workflow's verdict step without its call, in whichever form it runs."""
-    for call in (_PLAIN_CALL, _FLAKE_CALL, _QUEUE_FLAKE_CALL):
-        if call in text:
-            return text.replace(call, "", 1)
-    raise AssertionError("the workflow runs neither form of the verdict step")
+    """The workflow's verdict step without its call."""
+    assert _QUEUE_FLAKE_CALL in text, "the workflow does not run the listed verdict step"
+    return text.replace(_QUEUE_FLAKE_CALL, "", 1)
 
 
 def _edited(rel: str, edit: Callable[[str], str]) -> Callable[[Path], None]:
@@ -14132,7 +14013,7 @@ THE_TIER_WORKFLOWS_RUN_ONLY_THEIR_CLOSED_LISTS = Row(
                      "      - name: the flake rule's verdict, beside the plain one\n"
                      "        run: |\n"
                      + _tier_run(_TIER_LINES[_RESULTS_JOB]["the verdict's inputs, read"])
-                     + _FLAKE_CALL
+                     + _QUEUE_FLAKE_CALL
                      + "      - name: the verdict over the plan's keys and the run's records\n"),
                 ), expect="merge.yml job results runs 2 of its verdict steps"),
     ),
@@ -15152,18 +15033,15 @@ def _permission_writes(where: str, value: object) -> list[str]:
 
 
 #: Each tier workflow's triggers: a pull request's run and a dispatch, and merge.yml's push stage
-#: and (0.4.0 A1) its queue commit's run, ``merge_group``. That trigger lands in two merges: these
-#: rows first, with merge.yml's set without it here too, then the workflow, which takes that set
-#: out of here.
+#: and (0.4.0 A1) its queue commit's run, ``merge_group``, which main's merge queue needs.
 _TIER_TRIGGERS: dict[str, tuple[frozenset[str], ...]] = {
     "pr.yml": (frozenset({"pull_request", "workflow_dispatch"}),),
-    "merge.yml": (
-        frozenset({"pull_request", "push", "workflow_dispatch"}),
-        frozenset({"pull_request", "push", "workflow_dispatch", "merge_group"}),
-    ),
+    "merge.yml": (frozenset({"pull_request", "push", "workflow_dispatch", "merge_group"}),),
 }
-#: How a tier workflow names the queue's one event: a queue commit whose checks GitHub asks for.
-_QUEUE_TRIGGERS: tuple[object, ...] = (None, {}, {"types": ["checks_requested"]})
+#: How a tier workflow names the queue's one event, its types spelt out: a queue commit whose
+#: checks GitHub asks for. A bare ``merge_group:`` (or ``{}``) takes every type, so one GitHub
+#: adds later would start a run unread.
+_QUEUE_TRIGGERS: tuple[object, ...] = ({"types": ["checks_requested"]},)
 
 
 def tier_trust_violations(root: Path) -> list[str]:
@@ -15231,6 +15109,14 @@ THE_TIER_WORKFLOWS_TAKE_NO_TRUST = Row(
                 _edited(_MERGE_YML, lambda t: _with_the_queue(t).replace(
                     "types: [checks_requested]", "types: [checks_requested, destroyed]", 1)),
                 expect="merge.yml takes a merge_group event other than checks_requested"),
+        _plant("merge.yml without its queue commit's run", _MERGE_YML, _QUEUE_TRIGGER, "",
+               expect="merge.yml runs on ['pull_request', 'push', 'workflow_dispatch'], not"),
+        _plant("merge.yml's queue run with every type", _MERGE_YML, _QUEUE_TRIGGER,
+               "  merge_group:\n",
+               expect="merge.yml takes a merge_group event other than checks_requested"),
+        _plant("merge.yml's queue run with no types named", _MERGE_YML, _QUEUE_TRIGGER,
+               "  merge_group: {}\n",
+               expect="merge.yml takes a merge_group event other than checks_requested"),
         _plant_in_job("an environment on a tier job", _MERGE_YML, "results",
                       "    runs-on: ubuntu-24.04\n",
                       "    runs-on: ubuntu-24.04\n    environment: ci-controller\n",

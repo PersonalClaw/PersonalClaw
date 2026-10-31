@@ -13,11 +13,12 @@
 # one `changes` read, and a failed job of this run each read red: nothing missing can read as a
 # pass.
 #
-# ON EVERY PULL REQUEST, EVERY PUSH TO MAIN, AND ON DISPATCH. A push to main first asks whether
-# a green pull-request run of this workflow tested its tree (`tree-check`): a tested push runs
-# `[tier.merge] every_push` alone, an untested one the whole tier. Its result posts no check of
-# its own, and `merge-verdict` is the trusted controller's alone (#3910). pr.yml is the change
-# tier's half of the same shape.
+# ON EVERY PULL REQUEST, EVERY PUSH TO MAIN, EACH QUEUE COMMIT OF MAIN'S MERGE QUEUE, AND ON
+# DISPATCH. A push to main first asks whether a green run of this workflow tested its tree
+# (`tree-check`): a tested push runs `[tier.merge] every_push` alone, an untested one the whole
+# tier. A queue commit plans the merge tier over its entry's change, against the commit the
+# queue built it on. Its result posts no check of its own, and `merge-verdict` is the trusted
+# controller's alone (#3910). pr.yml is the change tier's half of the same shape.
 #
 # The run's records are kept 30 days: the controller and the push replay (#3919) read them at
 # merge, after the run. A run's reports are kept a week and its build three days.
@@ -35,6 +36,10 @@ on:
     # only run it twice. A tag is not a branch: tags are release.yml's.
     branches: [main]
   workflow_dispatch: {}
+  # A queue commit of main's merge queue: main's tip or the queue commit of the entry ahead, with
+  # the entry's change squashed on it. Its run is the verdict on the tree the queue lands (A1).
+  merge_group:
+    types: [checks_requested]
 
 # One run per pull request at a time: a newer push to it cancels the older run, whose records
 # name the older head, which the verdict reads as stale. A push to main and a dispatch each run
@@ -153,18 +158,25 @@ jobs:
           persist-credentials: false
       - name: the pull request's changed paths, for the flake rule
         id: changed
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         env:
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
         # The checkout stays one deep: the merge's parents are read from its own commit, and its
-        # first parent alone is fetched, by id, to diff against.
+        # first parent alone is fetched, by id, to diff against. A queue commit is the entry's
+        # squash on the commit ahead of it in the queue: one parent, the queue's base.
         run: |
           set -uo pipefail
           out="$RUNNER_TEMP/changed-paths/changed.z"
           mkdir -p "$RUNNER_TEMP/changed-paths"
           parents=$(git cat-file -p HEAD | sed -n 's/^parent //p' | tr '\n' ' ')
           read -r main head extra <<< "$parents"
-          if [ -z "${head:-}" ] || [ -n "${extra:-}" ] || [ "$head" != "$PR_HEAD" ]; then
+          if [ "${GITHUB_EVENT_NAME:-}" = merge_group ]; then
+            if [ -n "${head:-}" ] || [ "$main" != "$QUEUE_BASE" ]; then
+              echo "::warning title=no changed list::the checkout is not this entry's queue commit, so the flake rule passes no flake"
+              exit 0
+            fi
+          elif [ -z "${head:-}" ] || [ -n "${extra:-}" ] || [ "$head" != "$PR_HEAD" ]; then
             echo "::warning title=no changed list::the checkout is not this pull request's test merge, so the flake rule passes no flake"
             exit 0
           fi
@@ -201,6 +213,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.sha }}
+          # A queue commit plans what its entry changed, against the commit ahead of it.
+          COMPARED: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || 'main' }}
           TIER: merge
           STAGE_JOBS: build test test-2 test-3
           PUSH_PLAN: ${{ github.event_name == 'push' && (needs.tree-check.outputs.tested == 'true' && 'tested' || 'full') || '' }}
@@ -211,7 +225,7 @@ jobs:
           changed="$RUNNER_TEMP/changed.txt"
           # Each name as a JSON string on a line of its own, so a name with a newline in it stays
           # one name. A failed enumeration is the empty list, which plans the whole tier.
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${COMPARED}...${HEAD_SHA}" \
             --jq '.files[].filename | @json' > "$listed" || : > "$listed"
           python3 -c 'import json, sys; names = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]; assert all(isinstance(n, str) and "\0" not in n for n in names); sys.stdout.write("".join(n + "\0" for n in names))' "$listed" > "$changed" || : > "$changed"
           echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
@@ -956,7 +970,7 @@ jobs:
       # The PREVIOUS main commit's copy of tools/ci/superseded.py proves it, as tree-check's
       # copy is that commit's: on a push, main's tip is the pushed commit itself.
       - name: the pull request's changed paths
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
         # By pattern, so a run whose `changes` wrote none downloads nothing and fails nothing:
         # the flake rule then passes no flake.
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -1005,10 +1019,11 @@ jobs:
           if [ -f "$RUNNER_TEMP/superseded.json" ]; then
             proof="$RUNNER_TEMP/superseded.json"
           fi
-          # The flake rule's two lists, on a pull request only: its changed paths, and this run's
-          # jobs on this attempt. Without both, the verdict passes no flake.
+          # The flake rule's two lists, on a pull request or a queue commit only: its changed
+          # paths, and this run's jobs on this attempt. Without both, the verdict passes no flake.
           flakes=()
-          if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
+          case "${GITHUB_EVENT_NAME:-}" in pull_request|merge_group) judged=yes ;; *) judged="" ;; esac
+          if [ -n "$judged" ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
             if gh api --paginate --slurp \
                  "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
                  > "$RUNNER_TEMP/jobs.json"; then

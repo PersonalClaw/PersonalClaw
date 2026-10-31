@@ -98,6 +98,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.sha }}
+          # merge.yml's same step compares a queue commit with the commit ahead of it; this
+          # tier never runs on one.
+          COMPARED: main
           TIER: change
           STAGE_JOBS: test
           PUSH_PLAN: ""
@@ -108,7 +111,7 @@ jobs:
           changed="$RUNNER_TEMP/changed.txt"
           # Each name as a JSON string on a line of its own, so a name with a newline in it stays
           # one name. A failed enumeration is the empty list, which plans the whole tier.
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/main...${HEAD_SHA}" \
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${COMPARED}...${HEAD_SHA}" \
             --jq '.files[].filename | @json' > "$listed" || : > "$listed"
           python3 -c 'import json, sys; names = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]; assert all(isinstance(n, str) and "\0" not in n for n in names); sys.stdout.write("".join(n + "\0" for n in names))' "$listed" > "$changed" || : > "$changed"
           echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
@@ -369,10 +372,11 @@ jobs:
           if [ -f "$RUNNER_TEMP/superseded.json" ]; then
             proof="$RUNNER_TEMP/superseded.json"
           fi
-          # The flake rule's two lists, on a pull request only: its changed paths, and this run's
-          # jobs on this attempt. Without both, the verdict passes no flake.
+          # The flake rule's two lists, on a pull request or a queue commit only: its changed
+          # paths, and this run's jobs on this attempt. Without both, the verdict passes no flake.
           flakes=()
-          if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
+          case "${GITHUB_EVENT_NAME:-}" in pull_request|merge_group) judged=yes ;; *) judged="" ;; esac
+          if [ -n "$judged" ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
             if gh api --paginate --slurp \
                  "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
                  > "$RUNNER_TEMP/jobs.json"; then

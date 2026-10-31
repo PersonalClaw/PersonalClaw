@@ -1476,8 +1476,15 @@ def main(argv: list[str] | None = None) -> int:
                 raise Refused("--changed and --jobs are read only with --records")
             if args.superseded is not None:
                 raise Refused("--changed and --jobs are a pull request's, never a push's")
-            if os.environ.get("GITHUB_EVENT_NAME", "pull_request") != "pull_request":
-                raise Refused("--changed and --jobs are read on a pull request's run only")
+            # A pull request's run, or (0.4.0 A1) a queue commit's of main's merge queue.
+            if os.environ.get("GITHUB_EVENT_NAME", "pull_request") not in (
+                "pull_request",
+                "merge_group",
+            ):
+                raise Refused(
+                    "--changed and --jobs are read on a pull request's or a queue commit's run"
+                    " only"
+                )
         if args.records is None:
             if args.run_id is not None:
                 raise Refused("--run-id is read only with --records")
