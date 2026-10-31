@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **The app settings and account routes answer a malformed body with the standard error envelope (`invalid_json`, or `invalid_body` for a body that is no object), and adding an account needs no body.**
+
 ## [0.3.1] — 2026-10-31
 
 A message you send now runs once, however many times it is sent, a chat that has gone quiet says for how long, and every page uses the window's full width, apart from the chat, which keeps its reading width. An app can offer more than one provider of a kind, each with its own settings, keep the settings they share once as account settings, hold more than one account, and show each account's connection health apart from its settings. The gateway no longer waits on the disk while it writes a security event, the sandbox check can no longer hang it, and each sandboxed command starts about 50 ms sooner. A burst of sign-in guesses now stops at the lockout's limit, a command whose network use the check couldn't read is now asked about like one reaching a host off Allowed hosts, and automations and reports read their schedules for the time they decide. Scripts and apps that call the dashboard API need version 3 of it: read the breaking changes before you upgrade.
