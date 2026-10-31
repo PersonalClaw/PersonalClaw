@@ -213,6 +213,163 @@ command = [{ argv = ["uv", "run", "pytest", "tests/apps"] }]
     assert loaded.every_push == ("security", "apps-contract")
 
 
+# ── the entry tier: what a pull request's run passes to enter the merge queue ─────────────
+
+_RAILS_CHECKS = """
+[[job]]
+id = "rails-checks"
+tiers = ["change", "entry", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+reuse = "tree"
+timeout_min = 5
+command = [{ argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] }]
+"""
+
+_ENTRY_LIST = '[tier.entry]\njobs = ["rails", "rails-checks", "python-suite", "security"]\n'
+
+
+def _tiers(text: str, job_id: str, tiers: str) -> str:
+    """``text`` with the entry ``job_id`` claiming ``tiers``."""
+    head, *entries = text.split("\n[[job]]\n")
+    edited = [
+        (
+            "\n".join(
+                f"tiers = {tiers}" if line.startswith("tiers = ") else line
+                for line in e.split("\n")
+            )
+            if e.startswith(f'id = "{job_id}"\n')
+            else e
+        )
+        for e in entries
+    ]
+    assert edited != entries, job_id
+    return "\n[[job]]\n".join([head, *edited])
+
+
+def _queued() -> str:
+    """The base with rails-checks and an entry tier: the merge tier less the macOS suite."""
+    text = _edit(
+        _MERGE_LIST, _MERGE_LIST.replace('"rails", ', '"rails", "rails-checks", ') + _ENTRY_LIST
+    )
+    text += _RAILS_CHECKS
+    text = _tiers(text, "rails", '["change", "entry", "merge"]')
+    for job_id in ("python-suite", "security"):
+        text = _tiers(text, job_id, '["entry", "merge"]')
+    return text
+
+
+_QUEUED = _queued()
+
+
+def test_the_entry_list_loads_as_listed() -> None:
+    cat = catalogue.load(_QUEUED)
+    assert cat.entry_jobs == ("rails", "rails-checks", "python-suite", "security")
+    assert [j.id for j in cat.tier("entry")] == [
+        "rails",
+        "python-suite",
+        "security",
+        "rails-checks",
+    ]
+
+
+def test_a_catalogue_naming_no_entry_list_loads_with_none() -> None:
+    assert catalogue.load(_BASE).entry_jobs is None
+
+
+def test_a_job_claiming_entry_without_the_list_is_refused() -> None:
+    text = _QUEUED.replace(_ENTRY_LIST, "", 1)
+    assert (
+        "python-suite: its tiers claim entry, and the catalogue has no [tier.entry] jobs"
+        " list" in _problems(text)
+    )
+
+
+def test_an_entry_job_the_list_leaves_out_is_refused() -> None:
+    text = _QUEUED.replace('"python-suite", "security"]\n', '"security"]\n', 1)
+    assert "python-suite: its tiers claim entry, and [tier.entry] does not list it" in (
+        _problems(text)
+    )
+
+
+def test_a_listed_job_that_does_not_claim_entry_is_refused() -> None:
+    text = _tiers(_QUEUED, "python-suite", '["merge"]')
+    assert "python-suite: [tier.entry] lists it, and it is no job whose tiers claim entry" in (
+        _problems(text)
+    )
+
+
+def test_an_entry_job_outside_the_merge_tier_is_refused() -> None:
+    """The merge tier stays the whole gate: the queue's run holds every job the entry tier does."""
+    text = _tiers(_QUEUED, "rails", '["change", "entry"]')
+    text = text.replace(
+        'jobs = ["rails", "rails-checks", "python-suite", "python-suite-macos"',
+        'jobs = ["rails-checks", "python-suite", "python-suite-macos"',
+        1,
+    )
+    assert (
+        "rails: its tiers claim entry and not merge, and the queue's run must hold every job a"
+        " pull request passed to enter it" in _problems(text)
+    )
+
+
+def test_the_jobs_the_entry_tier_must_hold_are_the_rails_their_check_and_the_corpus() -> None:
+    assert catalogue.ENTRY_NEEDS_JOBS == {
+        "rails": "every rail",
+        "rails-checks": "the check that holds every rail to one leg",
+        "security": "the security corpus",
+    }
+
+
+@pytest.mark.parametrize("job_id", sorted(catalogue.ENTRY_NEEDS_JOBS))
+def test_an_entry_tier_without_the_rails_their_check_or_the_corpus_is_refused(
+    job_id: str,
+) -> None:
+    """Each leaves the tier and its list, staying in the merge tier, and the catalogue is refused
+    by name: a pull request never enters the queue without it."""
+    tiers = '["change", "merge"]' if job_id != "security" else '["merge"]'
+    text = _tiers(_QUEUED, job_id, tiers)
+    text = text.replace(
+        _ENTRY_LIST,
+        _ENTRY_LIST.replace(f'"{job_id}", ', "").replace(f', "{job_id}"', ""),
+        1,
+    )
+    what = catalogue.ENTRY_NEEDS_JOBS[job_id]
+    assert _problems(text) == [
+        f"the entry tier lacks {job_id}, {what}, so a pull request could enter the queue"
+        " without it"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("new", "expect"),
+    [
+        ("[tier.entry]\njobs = []\n", "tier.entry jobs is a non-empty list of job ids"),
+        (
+            '[tier.entry]\njobs = "rails"\n',
+            "tier.entry jobs is a non-empty list of job ids",
+        ),
+        (
+            _ENTRY_LIST.replace('"rails", ', '"rails", "rails", '),
+            "tier.entry jobs names a job twice",
+        ),
+        (_ENTRY_LIST + "every_push = []\n", "tier.entry has unknown key 'every_push'"),
+    ],
+)
+def test_a_malformed_entry_list_is_refused(new: str, expect: str) -> None:
+    assert expect in " ".join(_problems(_QUEUED.replace(_ENTRY_LIST, new, 1)))
+
+
+def test_an_entry_tier_that_is_no_table_is_refused() -> None:
+    text = _QUEUED.replace(_ENTRY_LIST, "", 1).replace(
+        "[tier.merge]\n", "[tier]\nentry = 3\n[tier.merge]\n", 1
+    )
+    assert "tier.entry is a table holding jobs" in " ".join(_problems(text))
+
+
 def test_a_pytest_n_must_equal_workers() -> None:
     text = _edit(
         'timeout_min = 10\ncommand = [{ argv = ["uv", "run", "pytest", "tests/rails"] }]',

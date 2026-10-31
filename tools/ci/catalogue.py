@@ -25,6 +25,8 @@ modules on each platform and ``security``, the one run of the security corpus.
 A pull request's catalogue is read with main's as its reference (:func:`against`): a security or
 live job main has stays, with its posture and its tiers, until main's own copy marks it
 ``retiring = "#<issue>"``, so a removal takes two merges and the second only drops the entry.
+The one tier such a job may leave in one merge is ``entry``, the jobs a pull request passes to
+enter the merge queue: the merge tier, which the queue's run plans, still holds every one of them.
 A ``nightly`` mark, which lets a live job out of a plan its inputs do not reach, likewise counts
 only once main's copy carries it (:func:`trusted_marks`).
 
@@ -57,7 +59,7 @@ AREAS = "tools/ci/areas.toml"
 REPO = Path(__file__).resolve().parents[2]
 
 #: The tiers, in the order a change meets them. There is no batch tier.
-TIERS: tuple[str, ...] = ("change", "merge", "breadth", "weekly", "release")
+TIERS: tuple[str, ...] = ("change", "entry", "merge", "breadth", "weekly", "release")
 
 #: What each tier proves, and what it does not.
 TIER_TEXT: dict[str, tuple[str, str]] = {
@@ -65,6 +67,12 @@ TIER_TEXT: dict[str, tuple[str, str]] = {
         "the check to run before a commit: the fast jobs, on this machine",
         "anything the merge tier adds: the full suite on both platforms, the browser specs, "
         "the dependency audit",
+    ),
+    "entry": (
+        "what a pull request must pass to enter the merge queue: the merge-tier jobs "
+        "[tier.entry] lists, every rail, the rails check and the security corpus among them",
+        "what the merge tier adds on the queue's commit, the tree that reaches main: the jobs "
+        "the list leaves out",
     ),
     "merge": (
         "what a pull request into main must pass: the tree lints, every rail holds, the suite "
@@ -238,8 +246,9 @@ _VARIABLE = re.compile(r"[A-Z_][A-Z0-9_]*")
 SHORT_MAGIC = re.compile(r"\A:[/!^]*:?")
 
 #: The catalogue's tables besides its jobs, and what each may hold.
-_TIER_TABLES = frozenset({"merge"})
+_TIER_TABLES = frozenset({"merge", "entry"})
 _TIER_KEYS = frozenset({"jobs", "every_push"})
+_ENTRY_KEYS = frozenset({"jobs"})
 #: What an ``[[override]]`` of the areas file may hold.
 _OVERRIDE_KEYS = frozenset({"paths", "jobs", "whole_tier", "reason"})
 
@@ -260,6 +269,21 @@ MERGE_SECURITY_JOBS: dict[str, str] = {
     "python-suite": "ubuntu-",
     "python-suite-macos": "macos-",
     "security": "ubuntu-",
+}
+
+#: The tier a pull request's run plans once the merge queue gates main: the jobs it passes to enter
+#: the queue. The merge tier stays the whole gate, which the queue's run plans, so every job here
+#: is a merge-tier job too, and a security or live job may leave this tier, and no other, in one
+#: merge (:func:`against`).
+ENTRY_TIER = "entry"
+
+#: The jobs a catalogue's ``[tier.entry]`` must hold, each with what it is. None of them leaves
+#: the entry tier, even where :func:`against` lets a security job go: a pull request enters
+#: the queue with every rail held, each in one leg, and the security corpus run.
+ENTRY_NEEDS_JOBS: dict[str, str] = {
+    MERGE_NEEDS_JOB: "every rail",
+    RAILS_CHECKS_JOB: "the check that holds every rail to one leg",
+    "security": "the security corpus",
 }
 
 #: The jobs a push to main runs whatever the tree check answers (the owner's rule, 2026-10-19):
@@ -431,6 +455,9 @@ class Catalogue:
     #: ``[tier.merge] every_push``: the merge-tier jobs a push to main runs whatever the tree
     #: check answers (:data:`EVERY_PUSH_JOBS` among them); None when the catalogue names none.
     every_push: tuple[str, ...] | None = None
+    #: ``[tier.entry] jobs``: the jobs a pull request's run must pass to enter the merge queue,
+    #: held against each job's tiers; None when the catalogue has no such table.
+    entry_jobs: tuple[str, ...] | None = None
 
     def job(self, job_id: str) -> Job:
         for job in self.jobs:
@@ -807,6 +834,7 @@ def load(text: str, source: str = CATALOGUE, reference: Catalogue | None = None)
         f"{source}: unknown table {key!r}" for key in data if key not in ("job", "tier")
     ]
     merge_jobs, every_push = _tier_merge(data.get("tier"), source, problems)
+    entry_jobs = _tier_entry(data.get("tier"), source, problems)
     raw_jobs = data.get("job")
     if not isinstance(raw_jobs, list) or not raw_jobs:
         raise CatalogueError([*problems, f"{source} has no [[job]] entries"])
@@ -814,7 +842,7 @@ def load(text: str, source: str = CATALOGUE, reference: Catalogue | None = None)
     for job_id in sorted({i for i in ids if isinstance(i, str) and ids.count(i) > 1}):
         problems.append(f"{job_id}: the id is used by {ids.count(job_id)} entries")
     jobs = [job for n, raw in enumerate(raw_jobs, 1) if (job := _job(raw, n, problems))]
-    cat = Catalogue(tuple(jobs), merge_jobs, every_push)
+    cat = Catalogue(tuple(jobs), merge_jobs, every_push, entry_jobs)
     complete = not problems
     problems += validate(cat, complete=complete)
     if reference is not None and complete:
@@ -920,6 +948,26 @@ def _tier_merge(
     if len(set(jobs)) != len(jobs):
         problems.append(f"{source}: tier.merge jobs names a job twice")
     return tuple(jobs), every
+
+
+def _tier_entry(raw: object, source: str, problems: list[str]) -> tuple[str, ...] | None:
+    """``[tier.entry] jobs``, the jobs a pull request's run passes to enter the merge queue,
+    or None when the catalogue has no such table; a fault is a problem naming it."""
+    if not isinstance(raw, dict) or ENTRY_TIER not in raw:
+        return None
+    entry = raw[ENTRY_TIER]
+    if not isinstance(entry, dict):
+        problems.append(f"{source}: tier.entry is a table holding jobs")
+        return None
+    for key in sorted(set(entry) - _ENTRY_KEYS):
+        problems.append(f"{source}: tier.entry has unknown key {key!r}")
+    jobs = entry.get("jobs")
+    if not isinstance(jobs, list) or not jobs or not all(isinstance(j, str) and j for j in jobs):
+        problems.append(f"{source}: tier.entry jobs is a non-empty list of job ids")
+        return None
+    if len(set(jobs)) != len(jobs):
+        problems.append(f"{source}: tier.entry jobs names a job twice")
+    return tuple(jobs)
 
 
 #: pytest's own spellings of "collect, run nothing". No other word counts.
@@ -1130,6 +1178,42 @@ def validate(catalogue: Catalogue, complete: bool = True) -> list[str]:
                     f"{job_id}: platform is {evidence.platform}, but the merge tier's security"
                     f" evidence is its run on a {family}* runner"
                 )
+        problems += _entry_faults(catalogue, merge)
+    return problems
+
+
+def _entry_faults(catalogue: Catalogue, merge: Mapping[str, Job]) -> list[str]:
+    """The entry tier against its list, the merge tier and :data:`ENTRY_NEEDS_JOBS`. A
+    catalogue with no ``[tier.entry]`` runs no job in it."""
+    in_entry = [j.id for j in catalogue.tier(ENTRY_TIER)]
+    listed = catalogue.entry_jobs
+    if listed is None:
+        return [
+            f"{job_id}: its tiers claim entry, and the catalogue has no [tier.entry] jobs" " list"
+            for job_id in in_entry
+        ]
+    problems = [
+        f"{job_id}: [tier.entry] lists it, and it is no job whose tiers claim entry"
+        for job_id in listed
+        if job_id not in in_entry
+    ]
+    problems += [
+        f"{job_id}: its tiers claim entry, and [tier.entry] does not list it"
+        for job_id in in_entry
+        if job_id not in listed
+    ]
+    problems += [
+        f"{job_id}: its tiers claim entry and not merge, and the queue's run must hold every"
+        " job a pull request passed to enter it"
+        for job_id in in_entry
+        if job_id not in merge
+    ]
+    problems += [
+        f"the entry tier lacks {job_id}, {what}, so a pull request could enter the queue"
+        " without it"
+        for job_id, what in ENTRY_NEEDS_JOBS.items()
+        if job_id not in in_entry
+    ]
     return problems
 
 
@@ -1225,8 +1309,10 @@ def trusted_marks(candidate: Catalogue, trusted: Catalogue) -> Catalogue:
 def against(candidate: Catalogue, trusted: Catalogue) -> list[str]:
     """What main's catalogue (``trusted``) refuses in a pull request's (``candidate``).
 
-    A security or live job of main's stays, with its posture and every tier main gives it: a
-    candidate cannot drop the evidence its own verdict is judged by. Removal takes two merges.
+    A security or live job of main's stays, with its posture and every tier main gives it but the
+    entry tier: a candidate cannot drop the evidence its own verdict is judged by. The queue's
+    run plans the merge tier, which holds every entry-tier job, so a job may leave that tier in one
+    merge, except one of :data:`ENTRY_NEEDS_JOBS`. Removal takes two merges.
     First the job is marked ``retiring = "#<issue>"`` (it stays and still runs); once main's
     catalogue carries the mark, a pull request may drop that entry, and only drop it. A mark the
     candidate adds itself is not main's, so it allows nothing. While main runs a security job in
@@ -1252,6 +1338,8 @@ def against(candidate: Catalogue, trusted: Catalogue) -> list[str]:
         if job.live and not mine.live:
             problems.append(f"{job.id}: live is false, and main's catalogue has it live")
         for tier in job.tiers:
+            if tier == ENTRY_TIER and job.id not in ENTRY_NEEDS_JOBS:
+                continue
             if tier not in mine.tiers:
                 problems.append(
                     f"{job.id}: it leaves the {tier} tier, where main's catalogue runs this"

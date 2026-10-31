@@ -455,6 +455,24 @@ def test_no_plan_leaves_out_the_rails_or_a_security_or_live_job() -> None:
         assert floor <= set(_plan(path).jobs), path
 
 
+def test_the_entry_tier_never_lets_go_of_the_rails_their_check_or_the_corpus() -> None:
+    """A pull request enters the merge queue with every rail held, each in one leg, and the
+    security corpus run: the three are in the entry tier's list and in each of its plans, and
+    every entry-tier job is a merge-tier job, so the queue's run holds it too. A catalogue with no
+    ``[tier.entry]`` runs no job in that tier. The loader refuses each breach
+    (tests/test_ci_catalogue_loader_rules.py); this holds the tree's catalogue and the three ids."""
+    needs = set(catalogue.ENTRY_NEEDS_JOBS)
+    assert needs == {"rails", "rails-checks", "security"}
+    in_entry = {j.id for j in _CAT.tier(catalogue.ENTRY_TIER)}
+    if _CAT.entry_jobs is None:
+        assert not in_entry, f"no [tier.entry], and these claim it: {sorted(in_entry)}"
+        return
+    assert needs <= set(_CAT.entry_jobs) and needs <= in_entry
+    assert in_entry <= _MERGE, sorted(in_entry - _MERGE)
+    for path in [*MAY_SKIP_E2E, *MUST_RUN_E2E, *_OVERRIDE_ROWS]:
+        assert needs <= set(_plan(path, tier=catalogue.ENTRY_TIER).jobs), path
+
+
 def test_a_src_diff_is_known_and_leaves_apps_contract_out() -> None:
     """python-suite names src/, so a backend diff is a known path: the plan is not the whole
     tier, and apps-contract, whose inputs are the SDK's, is left out."""
