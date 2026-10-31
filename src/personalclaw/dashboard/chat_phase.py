@@ -395,6 +395,12 @@ def ended(session: _ChatSession, outcome: str, *, declined: str = "") -> None:
         turn.outcome, turn.declined = outcome, declined
 
 
+def last_outcome(session: _ChatSession) -> str | None:
+    """How the chat's latest settled turn ended, or None before one has here."""
+    run = getattr(session, "_run", None)
+    return run.last_outcome if run is not None else None
+
+
 def _reason(session: _ChatSession, turn: _Turn) -> str:
     """The error the turn ended on: the latest error row written since it began, never an earlier
     turn's."""

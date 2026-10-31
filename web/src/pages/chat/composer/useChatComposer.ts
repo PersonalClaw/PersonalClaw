@@ -683,8 +683,9 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
   // chat's `planning/session.py` walkthrough and puts the session in the `plan` task
   // mode, which is what makes the backend's tool gate refuse mutations. There is no
   // heuristic anywhere: a chat only ever gets a plan gate from this click. When a turn
-  // is in flight the server PARKS it (the transcript is kept) and resumes on approval,
-  // so the mid-conversation case needs nothing extra here.
+  // is in flight it runs to its end and the mode changes then, so the next turn plans;
+  // `stop` stops it now instead, and the server PARKS it (the transcript is kept, with
+  // the stop's card) and resumes it on approval.
   /** Hand *task* (the draft, by default) to the loop composer as a goal loop, with the project this
    *  new chat was scoped to. The loop composer drafts and plans it as it always has, through the
    *  loop-start route and its guards, and opens the loop's thread once it is made. */
@@ -696,13 +697,15 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     navigate(`loop?${params}`)
   }
 
-  async function activatePlanMode() {
+  async function activatePlanMode(opts: { stop?: boolean } = {}) {
     const sid = sessionRef.current
     if (!sid) return
     try {
-      const r = await api.chatPlanActivate(sid)
-      setSelection((sel) => ({ ...sel, taskMode: 'plan' }))
-      if (r.parked) {
+      const r = await api.chatPlanActivate(sid, opts)
+      setSelection((sel) => ({ ...sel, taskMode: r.task_mode || 'plan' }))
+      if (r.after_turn) {
+        notice.showInfo('Plan mode starts when this turn ends. Your next message gets a plan.')
+      } else if (r.parked) {
         notice.showInfo('This run is parked — approve the plan below to resume it.')
       }
     } catch (e) {

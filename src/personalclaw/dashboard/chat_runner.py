@@ -2206,6 +2206,30 @@ def _says_its_phases(turn: _TurnEngine) -> _TurnEngine:
     return _said  # type: ignore[return-value]
 
 
+def _start_plan_after_turn(state: DashboardState, session: _ChatSession) -> None:
+    """Plan mode switched on while a turn ran starts as that turn ends, before anything runs next,
+    so the next turn is the planning turn (``chat_plan.start_after_turn``). What follows in
+    :func:`run_chat` runs without a pause until the chat reads idle or its next turn has started,
+    so a plan asked for from then on finds one of those. Imported here, not at module scope,
+    because ``chat_plan`` dispatches back into :func:`run_chat`."""
+    try:
+        from personalclaw.dashboard.chat_plan import start_after_turn
+
+        start_after_turn(state, session)
+    except Exception:
+        logger.warning("Could not start the plan for %s", session.key, exc_info=True)
+
+
+def _submit_plan_draft(state: DashboardState, session: _ChatSession, ran_in: str) -> None:
+    """Hand a turn's reply to the chat's planning walkthrough as its step's draft. Only a turn that
+    ran in plan mode drafts the plan: *ran_in* is the task mode the turn started in, whatever the
+    mode is by the time it ends (``chat_plan.maybe_submit_plan_draft``). Imported here, not at
+    module scope, because ``chat_plan`` dispatches back into :func:`run_chat` on approval."""
+    from personalclaw.dashboard.chat_plan import maybe_submit_plan_draft
+
+    maybe_submit_plan_draft(state, session, ran_in=ran_in)
+
+
 @memory_writes.runs_as_its_session
 @_says_its_phases
 async def run_chat(
@@ -2250,6 +2274,7 @@ async def run_chat(
     session._last_turn_declined = []  # what she declines this turn (`declined_calls.declined_step`)
     # No stop has been asked of this turn yet (`_ChatSession._stop_asked`).
     session._stop_asked = False
+    _ran_in = getattr(session, "_task_mode", "agent") or "agent"  # `_submit_plan_draft`
     # The text this turn's dispatcher appended to the buffer, captured before anything
     # below rewrites ``message`` (attachments, @prompt expansion, preambles). It is how
     # the history restore finds — and leaves out — the message now being sent.
@@ -5700,6 +5725,7 @@ async def run_chat(
                     logger.warning("Failed to reset session %s after agent switch", session_key)
             state.sessions.release(session_key)
         await running_turn.apply_pending_move(state, session, session_key)
+        _start_plan_after_turn(state, session)
         # Process queued messages (FIFO) — keep SSE stream alive. Not while the gateway stops: a
         # turn started now would only be cut off in its turn.
         if session._queue and not state.stopping_for:
@@ -5864,11 +5890,8 @@ async def run_chat(
                 # the turn's reply IS the step's artifact — hand it to the EXISTING planning
                 # session so its review gate opens on real content. A single sidecar read
                 # and a no-op for every chat that never opened a walkthrough, so a quick
-                # task is untouched. Imported here (not at module scope) because chat_plan
-                # dispatches back into run_chat on approval.
-                from personalclaw.dashboard.chat_plan import maybe_submit_plan_draft
-
-                maybe_submit_plan_draft(state, session)
+                # task is untouched (`_submit_plan_draft`).
+                _submit_plan_draft(state, session, _ran_in)
                 ft = asyncio.create_task(_maybe_followups(state, session))
                 session._followups_task = ft
                 state._background_tasks.add(ft)

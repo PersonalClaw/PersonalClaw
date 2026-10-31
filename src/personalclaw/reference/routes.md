@@ -204,7 +204,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/chat/sessions/{session}/organize/decline` — remember the refusal.
 - `PATCH /api/chat/sessions/{session}/pin` — toggle pinned state.
 - `GET /api/chat/sessions/{session}/plan-session` — the walkthrough state.
-- `POST /api/chat/sessions/{session}/plan/activate` — open the plan walkthrough.
+- `POST /api/chat/sessions/{session}/plan/activate` — {stop?} — open the plan walkthrough.
 - `POST /api/chat/sessions/{session}/plan/approve` — {step_id, run?} — approve a step.
 - `POST /api/chat/sessions/{session}/plan/cancel` — abandon the walkthrough.
 - `POST /api/chat/sessions/{session}/plan/comment` — {step_id, text} — comment + redraft.

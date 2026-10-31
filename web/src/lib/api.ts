@@ -7504,7 +7504,7 @@ export interface PlanSession {
  *  whether a mid-turn activation parked a run). */
 export interface ChatPlanWire {
   session: PlanSession | null
-  binding: { resume_task_mode?: string; parked?: boolean; parked_messages?: number }
+  binding: { resume_task_mode?: string; parked?: boolean; parked_messages?: number; after_turn?: boolean }
   awaiting_step_id: string
   task_mode: TaskMode
 }
@@ -9441,11 +9441,13 @@ export const api = {
   // mode and the backend's tool gate — not a prompt — is what refuses to execute.
   chatPlanSession: (session: string, opts: ReadOptions = {}) =>
     get<ChatPlanWire>(`/api/chat/sessions/${encodeURIComponent(session)}/plan-session`, opts),
-  /** Open (or, mid-conversation, extend) the walkthrough. `parked: true` means a turn
-   *  was in flight and has been asked to stop — the transcript is left intact. */
-  chatPlanActivate: (session: string) =>
-    post<{ ok: boolean; session: PlanSession; parked: boolean }>(
-      `/api/chat/sessions/${encodeURIComponent(session)}/plan/activate`,
+  /** Open (or, mid-conversation, extend) the walkthrough. A turn in flight runs to its end and
+   *  the chat plans from the next one (`after_turn: true`, the mode changes when it ends), unless
+   *  `stop` asks to stop it now: `parked: true`, stopped as a Stop stops it, with the same card,
+   *  and the transcript is otherwise left intact. `task_mode` is the chat's mode now. */
+  chatPlanActivate: (session: string, opts: { stop?: boolean } = {}) =>
+    post<{ ok: boolean; session: PlanSession; parked: boolean; after_turn: boolean; task_mode: TaskMode }>(
+      `/api/chat/sessions/${encodeURIComponent(session)}/plan/activate`, opts.stop ? { stop: true } : undefined,
     ),
   // The markdown replaces the step's whole body, so the edit names the draft it was made on
   // (`PlanStep.revision`): an edit of a draft a redraft has since replaced is refused with

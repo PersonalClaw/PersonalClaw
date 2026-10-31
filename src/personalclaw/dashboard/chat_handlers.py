@@ -1324,6 +1324,27 @@ def _close_stop_event(
     state.push_sessions_update()
 
 
+async def stop_the_turn(state: DashboardState, session: _ChatSession) -> str:
+    """Stop *session*'s running turn as a first Stop press stops it, and say so in its transcript.
+
+    A headless run's chat keeps no Trust past a stop, so it is withdrawn first, before the runtime
+    is asked to stop (``headless_run``). What is queued behind the turn is dropped, a cooperative
+    stop is asked of it (with the kill fallback of ``SessionManager.stop_turn``), and the Stop's
+    record goes into the transcript as the stop starts and says how it ended once it has. Returns
+    how it ended. Stop and plan mode's "Stop and plan" both stop a turn here, so a turn stopped to
+    plan ends as a Stop ends it and shows the same card, live and after a reload (#5722); the park
+    used to ask the same stop, kept the run's Trust and wrote nothing.
+    """
+    headless_run.end_the_runs_trust(state, session, why="its turn was stopped")
+    session._stop_state = "soft_pending"
+    session._queue.clear()
+    stop_id = _open_stop_event(state, session, "stopping")
+    logger.info("Stop: cooperative cancel for session %s", session.key)
+    outcome = await state.sessions.stop_turn(_history_key_for(session.key), force=False)
+    _close_stop_event(state, session, stop_id, outcome)
+    return outcome
+
+
 def _resolve_stop_event(session: _ChatSession, stop_id: str, outcome: str) -> None:
     """Write how the Stop *stop_id* ended (*outcome*) into its record in the transcript, in place,
     unless that record is already closed."""
@@ -1415,12 +1436,7 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "stopped": False, "trust": session._trust})
 
     # First press: soft stop
-    session._stop_state = "soft_pending"
-    session._queue.clear()
-    stop_id = _open_stop_event(state, session, "stopping")
-    logger.info("Stop: cooperative cancel for session %s (queue=%d)", name, len(session._queue))
-    outcome = await state.sessions.stop_turn(_history_key_for(name), force=False)
-    _close_stop_event(state, session, stop_id, outcome)
+    outcome = await stop_the_turn(state, session)
     await sel_log_async(
         sel().log_tool_invocation,
         session_key=_history_key_for(name),
@@ -2850,9 +2866,9 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
     # control: while a step's review gate is open, the no-execute guarantee IS the plan
     # task mode, so letting the pill drop it would make that guarantee decorative. The
     # exits are Approve and Cancel, both named here.
-    if mode != "plan":
-        from personalclaw.dashboard import chat_plan
+    from personalclaw.dashboard import chat_plan
 
+    if mode != "plan":
         gated = [s.key for s in targets if chat_plan.awaiting_review(s.key)]
         if gated:
             return web.json_response(
@@ -2870,6 +2886,10 @@ async def api_chat_task_mode(request: web.Request) -> web.Response:
             )
     take_pick(state, body, "task_mode")
     for session in targets:
+        # Leaving plan mode before its plan is drafted cancels that plan, as Cancel does: the
+        # next turn runs in this mode, and its answer is not a plan (#5723).
+        if mode != "plan":
+            chat_plan.cancel_unsubmitted(session.key)
         # One write path for both postures — the session's own and the runtime's (the
         # native runtime gates in _guard_and_invoke, before approval, so a Trust/YOLO
         # auto-approve can't bypass an ask/plan/build restriction).

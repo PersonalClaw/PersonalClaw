@@ -91,8 +91,9 @@ function draftOf(step: PlanStep): Revisioned<string> {
 export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
   /** Chat session key. */
   session: string
-  /** Bumped by the host when a turn lands, so the gate picks up the new draft. */
-  refreshKey: number
+  /** Changed by the host when a turn lands or ends, so the gate picks up the new draft, and a
+   *  plan that waited for the turn to end. */
+  refreshKey: number | string
   /** The server-restored task mode after approve/cancel — the host syncs its pill. */
   onTaskMode: (mode: TaskMode) => void
   /** Opens a chat by its key: the fresh chat an approval ran the plan in. */
@@ -101,6 +102,9 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
   const [step, setStep] = useState<PlanStep | null>(null)
   const [awaiting, setAwaiting] = useState('')
   const [parked, setParked] = useState(false)
+  // Plan mode switched on while a turn ran waits for that turn's end (`binding.after_turn`).
+  const [afterTurn, setAfterTurn] = useState(false)
+  const waited = useRef(false)
   // Whether approving the step on screen completes the plan: every other step is approved. Only
   // then can the plan run in a fresh chat, which runs the whole of it.
   const [completes, setCompletes] = useState(false)
@@ -133,6 +137,11 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
       setCompletes(!!current && steps.every((s) => s.id === current.id || s.status === 'approved'))
       setAwaiting(d.awaiting_step_id)
       setParked(!!d.binding?.parked)
+      // The turn it waited for has ended and the chat is planning now: the pill says so.
+      const waits = !!current && !!d.binding?.after_turn
+      if (waited.current && !waits && current) onTaskMode(d.task_mode)
+      waited.current = waits
+      setAfterTurn(waits)
     },
     () => { setStep(null); setAwaiting('') },
   )
@@ -181,7 +190,7 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
       <div className="mb-1.5 flex items-center gap-2">
         <span data-type="title-s" className="text-on-surface">{step.title}</span>
         <span data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">
-          {open ? 'Awaiting your review' : 'Drafting…'}
+          {open ? 'Awaiting your review' : afterTurn ? 'Starts when this turn ends' : 'Drafting…'}
         </span>
         {parked && (
           <span data-type="caption" className="rounded-pill bg-surface-high px-2 py-0.5 text-on-surface-var">
@@ -192,7 +201,9 @@ export function ChatPlanGate({ session, refreshKey, onTaskMode, onOpenChat }: {
       {step.objective && <p data-type="body-s" className="mb-2 text-on-surface-low">{step.objective}</p>}
       {!open ? (
         <p data-type="body-s" className="text-on-surface-low">
-          Nothing runs until you approve. The plan appears here when this turn finishes.
+          {afterTurn
+            ? 'This turn runs to its end. Your next message gets a plan, and nothing runs until you approve it.'
+            : 'Nothing runs until you approve. The plan appears here when this turn finishes.'}
         </p>
       ) : editText !== null ? (
         <div className="flex flex-col gap-2">

@@ -283,11 +283,12 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
         )}
         {/* Plan review gate. Mounted whenever there's a session and renders
             nothing until the "Plan this first" affordance has opened a walkthrough —
-            keyed on the turn count so the draft the plan-mode turn just produced shows
-            up without a reload. Approve/cancel hand back the restored task mode, so the
+            keyed on the turn count and on whether a turn runs, so the draft the plan-mode
+            turn just produced, and a plan that waited for a turn to end, show up without a
+            reload. Approve/cancel hand back the restored task mode, so the
             composer's pill can't drift from the posture the backend gate enforces. */}
         {sessionRef.current && (
-          <ChatPlanGate session={sessionRef.current} refreshKey={turns.length}
+          <ChatPlanGate session={sessionRef.current} refreshKey={`${turns.length}:${streaming ? 'live' : 'idle'}`}
             onTaskMode={(m) => setSelection((sel) => ({ ...sel, taskMode: m }))}
             onOpenChat={(key) => navigate(`chat/${encodeURIComponent(key)}`)} />
         )}
@@ -329,11 +330,22 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
               )}
               {/* Plan mode — an explicit, manual entry. Nothing decides FOR the
                   user that a message needs planning: a quick task just sends. Offered on
-                  a started chat because the plan is drafted by the next turn in it. */}
-              {started && sessionRef.current && (
+                  a started chat because the plan is drafted by the next turn in it. While
+                  a turn runs, nothing stops it unless "Stop and plan" is picked (#5722). */}
+              {started && sessionRef.current && !streaming && (
                 <MenuRow icon={<ListChecks size={16} />} label="Plan this first"
                   hint="Draft a plan for review — nothing runs until you approve it"
                   onClick={() => { close(); void activatePlanMode() }} />
+              )}
+              {started && sessionRef.current && streaming && (
+                <>
+                  <MenuRow icon={<ListChecks size={16} />} label="Plan after this turn"
+                    hint="This turn runs to its end, then your next message gets a plan to review"
+                    onClick={() => { close(); void activatePlanMode() }} />
+                  <MenuRow icon={<ListChecks size={16} />} label="Stop and plan"
+                    hint="Stop this turn now, then your next message gets a plan to review"
+                    onClick={() => { close(); void activatePlanMode({ stop: true }) }} />
+                </>
               )}
               {started && sessionRef.current && <AutoNudgeMenuItem session={sessionRef.current!} onOpen={close} />}
               {/* Background context for the next reply, never shown in the transcript: it left the

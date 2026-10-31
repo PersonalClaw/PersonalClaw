@@ -10,8 +10,8 @@ behavioural rather than structural:
   ``NativeAgentRuntime`` until a mutating tool is denied at the
   ``_guard_and_invoke`` call site — never by inspecting a system prompt. A test that
   asserted "the framing says plan" would pass with the gate deleted;
-* activating mid-turn **parks** the run: the transcript is not truncated, and approval
-  resumes the SAME conversation with the approved plan rather than restarting it.
+* activating mid-turn with "Stop and plan" **parks** the run: the transcript is not truncated,
+  and approval resumes the SAME conversation with the approved plan rather than restarting it.
 
 ``test_native_runtime``'s scripted model/tool harness is imported rather than re-derived,
 so the runtime under test here is wired exactly like the runtime the gate ships with.
@@ -334,8 +334,8 @@ class TestTheGateNotThePrompt:
 
 
 class TestMidTurnParkAndResume:
-    """Clause 5: mid-turn activation parks the run without losing the transcript, and
-    approval resumes it."""
+    """Clause 5: mid-turn activation with "Stop and plan" parks the run without losing the
+    transcript, and approval resumes it."""
 
     @staticmethod
     def _running(state, chat):
@@ -355,13 +355,17 @@ class TestMidTurnParkAndResume:
         task = self._running(state, chat)
         try:
             async with TestClient(TestServer(_app(state))) as client:
-                r = await client.post("/api/chat/sessions/c1/plan/activate")
+                r = await client.post("/api/chat/sessions/c1/plan/activate", json={"stop": True})
                 assert r.status == 200
                 assert (await r.json())["parked"] is True
         finally:
             task.cancel()
-        # Parking is a posture change plus a stop request — never a truncation.
-        assert [(m["role"], m["content"]) for m in chat.messages] == before
+        # Parking is a posture change plus a stop request — never a truncation. The only row it
+        # adds is the stop's card, as a Stop press adds it.
+        after = [(m["role"], m["content"]) for m in chat.messages]
+        assert after[: len(before)] == before
+        assert [r for r, _ in after[len(before) :]] == ["system"]
+        assert '"stop_event"' in after[-1][1]
         _sess, binding = chat_plan.read("c1")
         assert binding["parked"] is True
         assert binding["parked_messages"] == len(before)
@@ -383,7 +387,7 @@ class TestMidTurnParkAndResume:
         task = self._running(state, chat)
         try:
             async with TestClient(TestServer(_app(state))) as client:
-                await client.post("/api/chat/sessions/c1/plan/activate")
+                await client.post("/api/chat/sessions/c1/plan/activate", json={"stop": True})
                 chat.append("assistant", "# Approved plan\n- step one", "msg msg-a")
                 chat.drain()
                 chat_plan.maybe_submit_plan_draft(state, chat)
@@ -492,7 +496,7 @@ class TestADraftMustComeFromItsOwnTurn:
         chat_plan.write(sess, binding)
         chat.append("assistant", "### PLAN\n1. one", "msg msg-a")
         chat.drain()
-        assert chat_plan.maybe_submit_plan_draft(state, chat) is True
+        assert chat_plan.maybe_submit_plan_draft(state, chat, ran_in="plan") is True
 
 
 class TestSidecarRobustness:

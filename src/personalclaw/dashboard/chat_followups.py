@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from personalclaw import chores
 from personalclaw.agents.defaults import LITE_AGENT_NAME
+from personalclaw.dashboard import chat_phase
 from personalclaw.dashboard.chat_title import chat_chore, keeps_to_its_own_model
 from personalclaw.dashboard.chat_utils import _history_key_for
 from personalclaw.given_details import keep_given
@@ -100,6 +101,15 @@ def turn_earns_check_work_offer(assistant_text: str, tool_calls: int) -> bool:
     return bool(_COMPLETION_CLAIM.search((assistant_text or "")[-_REPLY_CAP:]))
 
 
+def _was_stopped(session: "_ChatSession") -> bool:
+    """Whether the chat's latest turn was stopped: by a Stop, by "Stop and plan", or by its agent's
+    own cancel. A stopped turn did not finish, so nothing offers to follow it up as if it had: its
+    chips read as an answer the turn never gave (#5722)."""
+    from personalclaw.dashboard.chat_runner import TURN_STOPPED  # it imports this module
+
+    return chat_phase.last_outcome(session) == TURN_STOPPED
+
+
 def maybe_offer_check_work(
     state: "DashboardState", session: "_ChatSession", tool_calls: int
 ) -> None:
@@ -116,7 +126,7 @@ def maybe_offer_check_work(
             return
         if getattr(session, "is_restricted", False):
             return
-        if getattr(session, "_last_turn_errored", False):
+        if getattr(session, "_last_turn_errored", False) or _was_stopped(session):
             return
         assistant_text = ""
         for m in reversed(session.messages):
@@ -215,7 +225,7 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
 
     Gated OFF when: config disabled, the chat keeps to its own model (Incognito or
     Temporary — the answer auto-title asks), a loop's hidden worker or planner session, a
-    message is queued (the next turn is imminent), or the turn errored. Broadcasts
+    message is queued (the next turn is imminent), or the turn errored or was stopped. Broadcasts
     ``chat_followups`` on success, and with no chips and the reason when no model is chosen
     for them; silent on any other failure.
     """
@@ -232,7 +242,7 @@ async def _maybe_followups(state: "DashboardState", session: "_ChatSession") -> 
         return
     if session._queue:
         return
-    if getattr(session, "_last_turn_errored", False):
+    if getattr(session, "_last_turn_errored", False) or _was_stopped(session):
         return
     try:
         items = await _generate_followups(session)

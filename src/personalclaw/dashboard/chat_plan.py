@@ -9,8 +9,9 @@ module only does the two things that model deliberately leaves to its owner:
   * **persists** that session for a CHAT owner instead of a loop owner
     (``PlanSession.project_id`` carries the chat session key), and
   * records the chat-side **attachment** — which task mode to restore once the plan is
-    approved, and whether activation happened mid-turn and therefore parked a run.
-    That is turn bookkeeping, not plan state.
+    approved, and, for an activation made while a turn ran, whether the plan waits for that
+    turn to end (``after_turn``) or the turn was stopped to plan (``parked``). That is turn
+    bookkeeping, not plan state.
 
 Two properties are load-bearing:
 
@@ -45,19 +46,14 @@ from aiohttp import web
 
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
-from personalclaw.dashboard import chat_phase
 from personalclaw.dashboard.chat_persistence import resolve_session
-from personalclaw.dashboard.chat_utils import (
-    _history_key_for,
-    apply_task_mode,
-    take_in_the_users_links,
-)
+from personalclaw.dashboard.chat_utils import apply_task_mode, take_in_the_users_links
 from personalclaw.dashboard.state import DashboardState, _ChatSession
 from personalclaw.history import _safe_key
 from personalclaw.http_errors import json_error
 from personalclaw.planning import session as PS
 from personalclaw.planning.session import PlanSession, PlanStep, StepStatus
-from personalclaw.request_validation import json_object_body
+from personalclaw.request_validation import bool_field, json_object_body
 from personalclaw.security import MaskConflict
 from personalclaw.sel import sel
 from personalclaw.stale_write import stale_write_refusal
@@ -157,7 +153,29 @@ def in_progress(chat_key: str) -> bool:
     return sess is not None and not PS.is_complete(sess)
 
 
-def activate(chat_session: _ChatSession, *, running: bool) -> tuple[PlanSession, dict[str, Any]]:
+def cancel_unsubmitted(chat_key: str) -> bool:
+    """The chat left plan mode before its plan was drafted: the plan is cancelled, as Cancel
+    cancels it, and its parked run is let go with it. Returns whether there was one.
+
+    Only a step not yet submitted is cancelled here. One awaiting review keeps the chat in plan
+    mode (the task-mode route refuses to leave it), and a finished walkthrough is a record, not an
+    open plan. Left open, a drafting step outlived the mode that was to draft it: the next turn
+    ran in agent mode, its answer became the plan, and approving it sent that answer back as a
+    run (#5723).
+    """
+    sess, _ = read(chat_key)
+    if sess is None:
+        return False
+    step = PS.current_step(sess)
+    if step is None or step.status == StepStatus.AWAITING_REVIEW.value:
+        return False
+    clear(chat_key)
+    return True
+
+
+def activate(
+    chat_session: _ChatSession, *, running: bool, after_turn: bool = False
+) -> tuple[PlanSession, dict[str, Any]]:
     """Open — or, mid-conversation, EXTEND — the chat's walkthrough. Manual only.
 
     A first activation creates the session and remembers the task mode to restore. A
@@ -165,8 +183,11 @@ def activate(chat_session: _ChatSession, *, running: bool) -> tuple[PlanSession,
     shared model already supports ("``steps`` may grow as the planner refines"), so
     mid-task re-planning needs no new state.
 
-    ``running`` (a turn is in flight) records the PARK: the transcript is deliberately
-    left untouched — parking is a posture change plus a stop request, never a truncation.
+    ``running`` (a turn is in flight) records what happens to that turn. With ``after_turn`` it
+    runs to its end and the plan starts then (:func:`start_after_turn`), so the next turn is the
+    planning turn. Without, it is stopped to plan, which records the PARK: the transcript is
+    deliberately left untouched — parking is a posture change plus a stop request, never a
+    truncation.
     """
     now = time.time()
     sess, binding = read(chat_session.key)
@@ -199,7 +220,10 @@ def activate(chat_session: _ChatSession, *, running: bool) -> tuple[PlanSession,
     # dropped. The user then reviews and approves a plan they did not ask for, and
     # `_resume_prompt` carries that stale text into the run.
     binding["draft_from"] = len(chat_session.messages)
-    if running:
+    if running and after_turn:
+        # Nothing is stopped or changed yet: the turn's end starts the plan.
+        binding["after_turn"] = True
+    elif running:
         binding["parked"] = True
         binding["parked_at"] = now
         # Diagnostic only: the transcript length at park time, kept so a park that
@@ -209,14 +233,39 @@ def activate(chat_session: _ChatSession, *, running: bool) -> tuple[PlanSession,
     return sess, binding
 
 
-def maybe_submit_plan_draft(state: DashboardState, session: _ChatSession) -> bool:
+def start_after_turn(state: DashboardState, session: _ChatSession) -> bool:
+    """Turn-end hook: plan mode switched on while this turn ran starts now that it is over.
+
+    The chat moves to the ``plan`` task mode, and the step is drafted only from what comes after
+    this point, so the next turn is the planning turn. Called before anything runs next (a queued
+    message included). A no-op — a single cheap sidecar read — for every other chat.
+    """
+    sess, binding = read(session.key)
+    if sess is None or not binding.pop("after_turn", False):
+        return False
+    binding["draft_from"] = len(session.messages)
+    write(sess, binding)
+    apply_task_mode(state, session, "plan")
+    state.push_sessions_update()
+    return True
+
+
+def maybe_submit_plan_draft(
+    state: DashboardState, session: _ChatSession, *, ran_in: str = ""
+) -> bool:
     """Turn-end hook: a plan-gated turn's reply IS the walkthrough artifact.
 
     Hands the assistant's final text to ``PS.submit_artifact`` (running →
     awaiting_review) so the gate opens on real content, in the SAME editable-markdown
     shape the loop walkthrough uses (``artifact['markdown']``). A no-op — a single
     cheap sidecar read — when the chat has no plan session, which is every quick task.
+
+    Only a turn that ran in plan mode drafts the plan. *ran_in* is the task mode the turn
+    started in (the chat's mode now when not given): an agent turn's answer is a report of what
+    it did, and handing it to an open step offered it for review as the plan (#5723).
     """
+    if (ran_in or getattr(session, "_task_mode", "agent")) != "plan":
+        return False
     sess, binding = read(session.key)
     if sess is None:
         return False
@@ -299,48 +348,53 @@ async def api_chat_plan_session(request: web.Request) -> web.Response:
 
 
 async def api_chat_plan_activate(request: web.Request) -> web.Response:
-    """POST /api/chat/sessions/{session}/plan/activate — open the plan walkthrough.
+    """POST /api/chat/sessions/{session}/plan/activate {stop?} — open the plan walkthrough.
 
     The ONLY way a chat acquires a plan session. Flips the session to task mode
-    ``plan`` (so the existing gate denies mutations) and opens a walkthrough step. When
-    a turn is in flight the run is PARKED: the queue is dropped and a cooperative stop
-    is requested, while ``session.messages`` is left exactly as it is.
+    ``plan`` (so the existing gate denies mutations) and opens a walkthrough step.
+
+    A turn in flight is stopped only when asked (#5722). By default it runs to its end and the
+    mode changes then (``after_turn``), so the next turn is the planning turn. ``stop: true``
+    stops it to plan now and the run is PARKED: it is stopped as a Stop press stops it (the queue
+    is dropped, and the stop's card goes into the transcript and says how it ended), while
+    ``session.messages`` is otherwise left exactly as it is.
     """
     resolved = _resolve(request)
     if isinstance(resolved, web.Response):
         return resolved
     state, chat = resolved
+    body = await json_object_body(request)
+    stop = bool_field(body, "stop", default=False)
     was_running = bool(chat.running)
-    sess, binding = activate(chat, running=was_running)
-    apply_task_mode(state, chat, "plan")
-    if was_running:
-        chat._queue.clear()
-        chat._stop_state = "soft_pending"
-        chat_phase.restate(state, chat)  # a stop is asked of its turn, and nothing waits behind it
+    after_turn = was_running and not stop
+    parked = was_running and stop
+    sess, binding = activate(chat, running=was_running, after_turn=after_turn)
+    if not after_turn:
+        apply_task_mode(state, chat, "plan")
+    if parked:
+        from personalclaw.dashboard.chat_handlers import stop_the_turn
 
-        async def _parked() -> None:
-            # The park is complete once the turn actually stops. Resetting here (rather
-            # than on approval) keeps the posture honest if the user cancels instead.
-            chat._stop_state = "idle"
-            chat_phase.restate(state, chat)
-            state.push_sessions_update()
-
-        await state.sessions.stop_turn(
-            _history_key_for(chat.key), force=False, on_soft=_parked, on_hard=_parked
-        )
+        await stop_the_turn(state, chat)
     try:
         sel().log_api_access(
             caller="dashboard:chat-plan",
             operation="chat.plan_activate",
             outcome="enabled",
             source="dashboard",
-            resources=f"session={chat.key},parked={was_running}",
+            resources=f"session={chat.key},parked={parked},after_turn={after_turn}",
         )
     except Exception:  # noqa: BLE001
         logger.warning("SEL audit failed for chat plan activation", exc_info=True)
     state.push_sessions_update()
     return web.json_response(
-        {"ok": True, "session": PS.wire(sess), "binding": binding, "parked": was_running}
+        {
+            "ok": True,
+            "session": PS.wire(sess),
+            "binding": binding,
+            "parked": parked,
+            "after_turn": after_turn,
+            "task_mode": getattr(chat, "_task_mode", "agent") or "agent",
+        }
     )
 
 
