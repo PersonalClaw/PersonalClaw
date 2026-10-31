@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 # source-tree run (no dist-info, e.g. `python -m personalclaw` from a checkout
 # without `pip install -e .`) falls back to the literal below. The consistency
 # test (tests/test_version_consistency.py) asserts the three agree at release time.
-_FALLBACK_VERSION = "0.3.0"
+_FALLBACK_VERSION = "0.3.1"
 
 
 @functools.cache

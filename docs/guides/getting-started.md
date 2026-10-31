@@ -404,6 +404,20 @@ Settings → Updates still checks once when you press it, and `personalclaw upda
 when you run it by hand. This is a separate switch from `updates.auto`: one governs whether
 PersonalClaw *looks*, the other whether it *installs*.
 
+### Upgrading from 0.3.0
+
+- **The dashboard API is version 3.** A client that declares version 2
+  (`X-PersonalClaw-API-Version: 2`) is refused with a 400 that says so; an open dashboard tab
+  needs only a reload. A client that declares no version is answered as version 3, so
+  `personalclaw-client`, which declares none, is not refused, and 0.3.1 is the same client.
+  `POST /api/chat` answers with the message's receipt, `{session, message_id, accepted_at,
+  disposition, turn_message_id, duplicate}`, in place of `{ok, session}`, `{ok, steered}`,
+  `{ok, queued}` and `{ok, cancelled_and_replaced}`, and a send may name its
+  `client_message_id`, so that sending it again runs it once.
+- **`GET /api/providers/{name}/schema` is gone.** A capability's settings form is at
+  `GET /api/providers/{name}/capabilities/{id}`, with the `id` each row of `GET /api/providers`
+  gives. An app's settings are still read and saved at `/api/providers/{name}/config`.
+
 ### Upgrading from 0.2.x
 
 - **From 0.2.3 to 0.2.4, update the model apps, and `design-critique` if you have it.**
