@@ -9,11 +9,12 @@ this one imports nothing from it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from personalclaw.shell_syntax import Simple, Word, lex, parts, simple_commands
+from personalclaw.command_shell import _MOVES, _assignments, _changes_environment, _runs_code
+from personalclaw.shell_syntax import lex, parts, simple_commands
 
 if TYPE_CHECKING:
     from personalclaw.command_effects import CommandEffects
@@ -24,10 +25,6 @@ def unsplit_effects(
     depth: int,
     *,
     read: Callable[[str, int], CommandEffects],
-    assignments: Callable[[Sequence[Word]], tuple[int, bool]],
-    moves: frozenset[str],
-    runs_code: Callable[[Simple], bool],
-    changes_environment: Callable[[Simple], bool],
     under: Callable[..., CommandEffects],
     relayed: Callable[[CommandEffects], CommandEffects],
     nothing: CommandEffects,
@@ -48,32 +45,21 @@ def unsplit_effects(
     one that changes the shell's environment may send what the others write elsewhere
     (:func:`_changes_shell`).
 
-    *read* reads a part at a depth; *assignments*, *moves*, *runs_code* and *changes_environment*
-    are what that reading says of a command's leading assignments and of what it does to the shell,
-    and *under* and *relayed* what it makes of a part's effects once the folder it runs in, or where
-    its programs reach, is not known. *nothing* is the effects of a command that does nothing,
-    *held* those of one that reaches a host it does not name, *writes* those of one that writes a
-    path it does not name, and a line is cut only above *max_depth*."""
+    *read* reads a part at a depth, and *under* and *relayed* are what that reading makes of a
+    part's effects once the folder it runs in, or where its programs reach, is not known. *nothing*
+    is the effects of a command that does nothing, *held* those of one that reaches a host it does
+    not name, *writes* those of one that writes a path it does not name, and a line is cut only
+    above *max_depth*."""
     pieces = parts(command) if depth < max_depth else None
     if not pieces or pieces == [command]:
         return held | writes
-    shell = [
-        _changes_shell(
-            piece,
-            depth,
-            moves=moves,
-            runs_code=runs_code,
-            changes_environment=changes_environment,
-            max_depth=max_depth,
-        )
-        for piece in pieces
-    ]
+    shell = [_changes_shell(piece, depth, max_depth=max_depth) for piece in pieces]
     found = nothing
     for k, piece in enumerate(pieces):
         if not piece.strip():
             continue
         effects = read(piece, depth + 1)
-        if _runs_unnamed_program(piece, assignments):
+        if _runs_unnamed_program(piece):
             effects = effects | held | writes
         others = shell[:k] + shell[k + 1 :]
         written = under(effects, "", lost=True) if any(moved for moved, _ in others) else effects
@@ -91,15 +77,7 @@ def unsplit_effects(
     return found
 
 
-def _changes_shell(
-    command: str,
-    depth: int,
-    *,
-    moves: frozenset[str],
-    runs_code: Callable[[Simple], bool],
-    changes_environment: Callable[[Simple], bool],
-    max_depth: int,
-) -> tuple[bool, bool]:
+def _changes_shell(command: str, depth: int, *, max_depth: int) -> tuple[bool, bool]:
     """Whether *command*, anywhere in it, moves the shell or runs code in it, and whether it changes
     the shell's environment or runs code: what a part of a line may do to the line's other parts.
     One this reading cannot read does both."""
@@ -111,36 +89,24 @@ def _changes_shell(
         pieces = parts(command) if depth < max_depth else None
         if not pieces or pieces == [command]:
             return True, True
-        found = [
-            _changes_shell(
-                piece,
-                depth + 1,
-                moves=moves,
-                runs_code=runs_code,
-                changes_environment=changes_environment,
-                max_depth=max_depth,
-            )
-            for piece in pieces
-        ]
+        found = [_changes_shell(piece, depth + 1, max_depth=max_depth) for piece in pieces]
         return any(moved for moved, _ in found), any(relays for _, relays in found)
     moved = relays = False
     for one in commands:
         name = one.words[0].text if one.words else ""
-        runs = runs_code(one)
-        moved = moved or name in moves or runs
-        relays = relays or runs or changes_environment(one)
+        runs = _runs_code(one)
+        moved = moved or name in _MOVES or runs
+        relays = relays or runs or _changes_environment(one)
     return moved, relays
 
 
-def _runs_unnamed_program(
-    command: str, assignments: Callable[[Sequence[Word]], tuple[int, bool]]
-) -> bool:
+def _runs_unnamed_program(command: str) -> bool:
     """Whether a command in *command* runs a program whose name its text does not say: one named
     by an expansion, or by what a substitution prints."""
     tokens = lex(command)
     commands = simple_commands(tokens) if tokens is not None else None
     for one in commands or ():
-        k, _relays = assignments(one.words)
+        k, _relays = _assignments(one.words)
         if k < len(one.words) and one.words[k].opaque:
             return True
     return False
