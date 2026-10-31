@@ -60,6 +60,15 @@ replayed only when all of these hold, and runs otherwise:
 - a ``ttl`` job's attempt 1 started less than its TTL before ``now``, and not after it;
 - every other shard of a sharded job replays too.
 
+**Under main's merge queue** (0.4.0 A1) the source is the pushed commit's own run: when a
+``merge_group`` run of the workflow ran on the pushed commit, the first of them is read, on its
+attempt 1 as above, when exactly one pull request into ``main`` was merged as that commit, the
+commit contains the one the push replaced, and the run's branch names that pull request
+(:data:`QUEUE_BRANCH`). A queue commit is what lands, so guard 2's squash-tree, opened-after and
+base rules are not read, its records must name the pushed commit itself (never a merge ref), and
+the merge verdict is asked of it. Once main's rules queue its merges (``tree_tested``'s reading),
+a push with no queue run on its commit replays nothing.
+
 **The receipt** carries ``trust.RECEIPT_FIELDS`` (the pushed commit, its tree, the toolchain,
 and the sha256 of the plan, of attempt 1's job list as read and of each replayed verdict file),
 the source run, and each planned job's decision and why. It is None when nothing could be
@@ -108,6 +117,10 @@ from .verdict_store import _live, reuse_class
 
 #: The workflow whose pull_request runs a push replays from (#3915's merge tier).
 WORKFLOW = "merge.yml"
+#: A queue commit's run of main's merge queue (0.4.0 A1), and the branch GitHub runs it on:
+#: ``gh-readonly-queue/main/pr-<n>-<the commit it was built on>``.
+QUEUE_EVENT = "merge_group"
+QUEUE_BRANCH = re.compile(r"gh-readonly-queue/main/pr-(?P<number>[1-9][0-9]*)-[0-9a-f]{40}")
 
 #: Where a workflow file lives, as a run's ``path`` names it.
 WORKFLOWS = ".github/workflows/"
@@ -234,6 +247,8 @@ def _everything(plan: Sequence[Job], reason: str, workflow: str) -> Replay:
 @dataclass(frozen=True)
 class _Source:
     pull_request: int
+    #: The commit the source run tested and its records must name: the pull request's head, or,
+    #: for a queue run, the pushed commit itself.
     head: str
     tree: str
     run: int
@@ -241,6 +256,8 @@ class _Source:
     started: float
     listed: Mapping[str, Mapping[str, Any]]
     jobs_digest: str
+    #: The source run's event: ``pull_request``, or ``merge_group`` for a queue commit's run.
+    event: str = "pull_request"
 
 
 def _started(attempt: Mapping[str, Any]) -> float:
@@ -264,13 +281,12 @@ def _whole(page: Mapping[str, Any], listing: list[Any], what: str) -> None:
         raise Unanswered(f"{total} {what} do not fit one page, so one may be unseen")
 
 
-def _source(get: Get, *, repo: str, sha: str, before: str, workflow: str) -> _Source | str:
-    """The pull request's first run of *workflow* and its attempt 1, or why there is none."""
-    tree = _tree_of(get, repo, sha)
+def _merged_as(get: Get, repo: str, sha: str) -> list[Mapping[str, Any]]:
+    """The pull requests into main that GitHub merged as *sha*."""
     pulls = get(f"/repos/{repo}/commits/{sha}/pulls")
     if not isinstance(pulls, list):
         raise Unanswered("the pull requests of the pushed commit are not a list")
-    merged = [
+    return [
         pr
         for pr in pulls
         if isinstance(pr, Mapping)
@@ -279,6 +295,65 @@ def _source(get: Get, *, repo: str, sha: str, before: str, workflow: str) -> _So
         and isinstance(pr.get("base"), Mapping)
         and pr["base"].get("ref") == "main"
     ]
+
+
+def _queue_source(
+    get: Get, *, repo: str, sha: str, before: str, workflow: str, tree: str
+) -> _Source | str | None:
+    """The pushed commit's own first ``merge_group`` run of *workflow* (0.4.0 A1) and its attempt
+    1, or why it is none, or None when no queue run ran on it. A queue commit is what lands, so its
+    run tested the pushed tree itself: no squash-tree or merge-ref rule is needed, and its records
+    must name the pushed commit."""
+    query = urllib.parse.urlencode({"head_sha": sha, "event": QUEUE_EVENT, "per_page": _PER_PAGE})
+    page = _mapping(get(f"/repos/{repo}/actions/workflows/{workflow}/runs?{query}"), "the runs")
+    runs = page.get("workflow_runs")
+    if not isinstance(runs, list):
+        raise Unanswered("the runs are not a list")
+    _whole(page, runs, f"{workflow} runs")
+    for run in runs:
+        if not isinstance(run, Mapping):
+            raise Unanswered(f"the {workflow} runs hold an entry that is not a run")
+        if run.get("path") != f"{WORKFLOWS}{workflow}":
+            raise Unanswered(f"the {workflow} runs hold a run of {run.get('path')!r}")
+    ours = [r for r in runs if r.get("head_sha") == sha and r.get("event") == QUEUE_EVENT]
+    if not ours:
+        return None
+    merged = _merged_as(get, repo, sha)
+    if len(merged) != 1:
+        found = "no pull request" if not merged else f"{len(merged)} pull requests"
+        return f"{found} into main was merged as this queue commit"
+    number = _integer(merged[0], "number", "the pull request")
+    compare = _mapping(get(f"/repos/{repo}/compare/{before}...{sha}"), "the comparison")
+    if _integer(compare, "behind_by", "the comparison") != 0:
+        return "the queue commit does not contain the previous main"
+    ours.sort(key=lambda run: (_integer(run, "run_number", "a run"), _integer(run, "id", "a run")))
+    first = ours[0]
+    branch = QUEUE_BRANCH.fullmatch(str(first.get("head_branch") or ""))
+    if branch is None or int(branch["number"]) != number:
+        return (
+            f"the first {workflow} merge_group run on the queue commit is on"
+            f" {first.get('head_branch')!r}, which names no queue entry of #{number}"
+        )
+    run_id, url, started, listed, digest = _attempt_one(get, repo, workflow, first)
+    if isinstance(url, Refusal):
+        return url.why
+    return _Source(number, sha, tree, run_id, url, started, listed, digest, QUEUE_EVENT)
+
+
+def _source(get: Get, *, repo: str, sha: str, before: str, workflow: str) -> _Source | str:
+    """The source run and its attempt 1, or why there is none: the pushed commit's own queue run
+    when one ran on it; once main's rules queue its merges, nothing else; and before that, the
+    pull request's first run of *workflow*."""
+    tree = _tree_of(get, repo, sha)
+    queued = _queue_source(get, repo=repo, sha=sha, before=before, workflow=workflow, tree=tree)
+    if queued is not None:
+        return queued
+    if tree_tested._queue_live(get, repo):
+        return (
+            f"main's merges are queued, and no {workflow} merge_group run ran on the pushed"
+            " commit itself"
+        )
+    merged = _merged_as(get, repo, sha)
     if len(merged) != 1:
         found = "no pull request" if not merged else f"{len(merged)} pull requests"
         return f"{found} into main was merged as this commit"
@@ -328,17 +403,37 @@ def _source(get: Get, *, repo: str, sha: str, before: str, workflow: str) -> _So
         raise Unanswered(f"#{number}'s events do not fit one page, so a base change may be unseen")
     if any(isinstance(e, Mapping) and e.get("event") in _BASE_CHANGED for e in events):
         return f"#{number}'s base was changed, so its run may have tested another base"
+    run_id, url, started, listed, digest = _attempt_one(get, repo, workflow, first)
+    if isinstance(url, Refusal):
+        return url.why
+    return _Source(number, head, tree, run_id, url, started, listed, digest)
+
+
+@dataclass(frozen=True)
+class Refusal:
+    """Why a source run's attempt 1 is judged by nothing."""
+
+    why: str
+
+
+def _attempt_one(
+    get: Get, repo: str, workflow: str, first: Mapping[str, Any]
+) -> tuple[int, str | Refusal, float, dict[str, Mapping[str, Any]], str]:
+    """Attempt 1 of the source run *first*: its id, its link (or why it is judged by nothing), its
+    start, its jobs by name and the digest of their listing."""
     run_id = _integer(first, "id", "the first run")
     attempt = _mapping(get(f"/repos/{repo}/actions/runs/{run_id}/attempts/1"), "attempt 1")
     if _integer(attempt, "run_attempt", "attempt 1") != 1:
         raise Unanswered(f"run {run_id}'s attempt 1 says it is attempt {attempt['run_attempt']}")
     status, conclusion = attempt.get("status"), attempt.get("conclusion")
     if status != "completed":
-        return f"attempt 1 of {workflow} run {run_id} is {status or 'of no status'}"
+        why = f"attempt 1 of {workflow} run {run_id} is {status or 'of no status'}"
+        return run_id, Refusal(why), 0.0, {}, ""
     # A run with a red job concludes failure, and its green jobs are still judged one by one;
     # a run cut short (cancelled, timed out) is judged by nothing.
     if conclusion not in ("success", "failure"):
-        return f"attempt 1 of {workflow} run {run_id} concluded {conclusion or 'nothing'}"
+        why = f"attempt 1 of {workflow} run {run_id} concluded {conclusion or 'nothing'}"
+        return run_id, Refusal(why), 0.0, {}, ""
     started = _started(attempt)
     url = str(attempt.get("html_url") or first.get("html_url") or "")
     page = _mapping(
@@ -358,7 +453,7 @@ def _source(get: Get, *, repo: str, sha: str, before: str, workflow: str) -> _So
         if name in listed:
             raise Unanswered(f"attempt 1's jobs name {name} twice")
         listed[name] = job
-    return _Source(number, head, tree, run_id, url, started, listed, _digest(_canonical(listing)))
+    return run_id, url, started, listed, _digest(_canonical(listing))
 
 
 # ── the verdict files ────────────────────────────────────────────────────────────────────────
@@ -521,6 +616,9 @@ def _judge(
         return False, f"its verdict file names no head, not #{source.pull_request}'s", None, ""
     if identity.head_sha == source.head:
         named = HEAD_NAMED
+    elif source.event == QUEUE_EVENT:
+        why = f"its verdict file names {identity.head_sha}, not the queue commit {source.head}"
+        return False, why, None, ""
     else:
         why_not = merge_refs.why_not(identity.head_sha)
         if why_not is not None:
@@ -590,6 +688,7 @@ def _receipt(
             "url": source.run_url,
             "pull_request": source.pull_request,
             "head": source.head,
+            "event": source.event,
         },
         "images": dict(sorted(images.items())),
         "jobs": [d.to_json() for d in decisions],
@@ -679,7 +778,9 @@ def decide(
         if refusal is not None:
             return _everything(
                 planned,
-                f"the merge-verdict on #{source.pull_request}'s head does not count: {refusal}",
+                f"the merge-verdict on #{source.pull_request}'s"
+                f" {'queue commit' if source.event == QUEUE_EVENT else 'head'} does not count:"
+                f" {refusal}",
                 workflow,
             )
         files = _files(records(source.run), source.run)
@@ -745,8 +846,13 @@ def decide(
         images=images,
     )
     reason = (
-        f"#{source.pull_request}'s head has this tree and contains the previous main; its first"
-        f" {workflow} run ({source.run}) is read on attempt 1 only, and its merge-verdict counts"
+        f"the pushed commit is #{source.pull_request}'s queue commit and contains the previous"
+        f" main; its first {workflow} merge_group run ({source.run}) is read on attempt 1 only,"
+        " and its merge-verdict counts"
+        if source.event == QUEUE_EVENT
+        else f"#{source.pull_request}'s head has this tree and contains the previous main; its"
+        f" first {workflow} run ({source.run}) is read on attempt 1 only, and its merge-verdict"
+        " counts"
     )
     return Replay(
         reason,

@@ -45,6 +45,7 @@ ATTEMPT = f"/repos/{REPO}/actions/runs/{RUN}/attempts/1"
 JOBS = f"{ATTEMPT}/jobs"
 EVENTS = f"/repos/{REPO}/issues/7/events"
 PULLS = f"/repos/{REPO}/commits/{SHA}/pulls"
+RULES = f"/repos/{REPO}/rules/branches/main"
 STARTED = 1_800_000_000.0  # 2027-01-15T08:00:00Z
 NOW = STARTED + 3600.0
 TOOLCHAIN = {"python": "3.12.15", "uv": "0.13.1"}
@@ -136,6 +137,8 @@ def _answers(head: str = HEAD) -> dict[str, Any]:
             ],
         },
         EVENTS: [{"event": "labeled"}],
+        # Main's rules: no merge queue yet.
+        RULES: [{"type": "pull_request"}, {"type": "required_status_checks"}],
         ATTEMPT: {
             "status": "completed",
             "conclusion": "success",
@@ -314,6 +317,7 @@ def test_its_receipt_carries_every_receipt_field_and_each_decision() -> None:
         "url": f"https://example.com/runs/{RUN}/attempts/1",
         "pull_request": 7,
         "head": HEAD,
+        "event": "pull_request",
     }
     lines = replay.lines()
     assert f"replayed rails from {WORKFLOW} run {RUN}, attempt 1" in lines
@@ -1609,3 +1613,135 @@ def test_the_shadow_command_tallies_into_the_summary_and_never_fails_on_a_disagr
     assert "2 replayed, 1 passed live, 1 did not" in summary.read_text(encoding="utf-8")
     receipt.write_text("[]", encoding="utf-8")
     assert main_replay.shadow_main([*argv, "--records", str(records)]) == 2
+
+
+# ── Under main's merge queue (0.4.0 A1, P2c) ─────────────────────────────────────────────────
+#
+# A queue commit is what lands, so a push replays from the pushed commit's own first merge_group
+# run, whose records name the pushed commit itself. Once main's rules queue its merges, no other
+# source counts.
+
+QUEUE_BRANCH = "gh-readonly-queue/main/pr-7-" + BEFORE
+
+
+def _queued(**run: Any) -> dict[str, Any]:
+    """The shape that replays under the queue: the pushed commit is #7's queue commit, built on
+    the previous main, and its first merge_group run is the source."""
+    answers = _answers()
+    answers[RUNS] = {
+        "total_count": 1,
+        "workflow_runs": [
+            {
+                "id": RUN,
+                "run_number": 60,
+                "head_sha": SHA,
+                "event": "merge_group",
+                "head_branch": QUEUE_BRANCH,
+                "path": f".github/workflows/{WORKFLOW}",
+                "created_at": "2027-01-15T07:59:00Z",
+                **run,
+            }
+        ],
+    }
+    answers[f"/repos/{REPO}/compare/{BEFORE}...{SHA}"] = {"behind_by": 0, "ahead_by": 1}
+    answers[RULES] = [{"type": "merge_queue"}, *answers[RULES]]
+    return answers
+
+
+def _queue_files() -> dict[str, bytes]:
+    return {key: _record(key, head=SHA) for key in KEYS}
+
+
+def test_a_queue_commit_s_push_replays_from_its_own_queue_run() -> None:
+    replay = _decide(_queued(), _queue_files(), head=SHA)
+    assert _replayed(replay) == set(REPLAYABLE), replay.lines()
+    assert "is #7's queue commit and contains the previous main" in replay.reason
+    assert replay.receipt is not None
+    assert replay.receipt["source_run"]["event"] == "merge_group"
+    assert replay.receipt["source_run"]["head"] == SHA
+    assert {d.record_names for d in replay.jobs if d.replayed} == {main_replay.HEAD_NAMED}
+
+
+def test_a_queue_run_s_record_of_another_commit_runs_its_job() -> None:
+    files = _queue_files()
+    files["rails"] = _record("rails", head=HEAD)
+    replay = _decide(_queued(), files, head=SHA)
+    rails = next(d for d in replay.jobs if d.key == "rails")
+    assert not rails.replayed and f"not the queue commit {SHA}" in rails.reason
+
+
+@pytest.mark.parametrize(
+    "plant, says",
+    [
+        pytest.param(
+            lambda a: a[RUNS]["workflow_runs"][0].update(
+                head_branch="gh-readonly-queue/main/pr-8-" + BEFORE
+            ),
+            "which names no queue entry of #7",
+            id="a-run-for-another-entry",
+        ),
+        pytest.param(
+            lambda a: a[f"/repos/{REPO}/compare/{BEFORE}...{SHA}"].update(behind_by=1),
+            "does not contain the previous main",
+            id="behind-the-previous-main",
+        ),
+        pytest.param(
+            lambda a: a[PULLS].clear(),
+            "no pull request into main was merged as this queue commit",
+            id="no-merged-pull-request",
+        ),
+        pytest.param(
+            lambda a: a[ATTEMPT].update(conclusion="cancelled"),
+            "concluded cancelled",
+            id="attempt-1-cancelled",
+        ),
+        pytest.param(
+            lambda a: a[RUNS]["workflow_runs"].clear() or a[RUNS].update(total_count=0),
+            "no merge.yml merge_group run ran on the pushed commit itself",
+            id="no-queue-run-once-live",
+        ),
+        pytest.param(
+            lambda a: a.update({RULES: {"message": "Not Found"}})
+            or a[RUNS]["workflow_runs"].clear()
+            or a[RUNS].update(total_count=0),
+            "could not find out",
+            id="unread-rules",
+        ),
+    ],
+)
+def test_a_queue_source_that_does_not_hold_replays_nothing(plant: Any, says: str) -> None:
+    answers = _queued()
+    plant(answers)
+    replay = _decide(answers, _queue_files(), head=SHA)
+    assert not _replayed(replay) and says in replay.reason, replay.reason
+
+
+def test_a_batch_s_tip_replays_from_its_own_run() -> None:
+    """A fast-forward over two queue commits pushes the tip, whose run tested every entry ahead
+    of it: the previous main is two commits back, and the tip's run is the source."""
+    answers = _queued()
+    answers[f"/repos/{REPO}/compare/{BEFORE}...{SHA}"] = {"behind_by": 0, "ahead_by": 2}
+    answers[RUNS]["workflow_runs"][0]["head_branch"] = "gh-readonly-queue/main/pr-7-" + "9" * 40
+    replay = _decide(answers, _queue_files(), head=SHA)
+    assert _replayed(replay) == set(REPLAYABLE), replay.reason
+
+
+def test_before_the_queue_a_push_replays_from_its_pull_request_s_run_as_before() -> None:
+    replay = _decide()
+    assert _replayed(replay) == set(REPLAYABLE)
+    assert replay.receipt is not None and replay.receipt["source_run"]["event"] == "pull_request"
+
+
+@pytest.mark.parametrize(
+    "refusal",
+    ["the newest merge-verdict on it concluded failure", "no merge-verdict on it"],
+)
+def test_a_green_queue_run_whose_merge_verdict_does_not_count_replays_nothing(
+    refusal: str,
+) -> None:
+    """A queue commit GitHub merged had a green verdict, but the replay does not assume it: the
+    merge verdict is asked of the queue commit itself, and anything but a counting one replays
+    nothing, however green the run's first attempt was."""
+    replay = _decide(_queued(), _queue_files(), head=SHA, verified=refusal)
+    assert not _replayed(replay)
+    assert f"the merge-verdict on #7's queue commit does not count: {refusal}" in replay.reason
