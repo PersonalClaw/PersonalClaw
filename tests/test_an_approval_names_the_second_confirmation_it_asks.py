@@ -84,8 +84,9 @@ def test_a_file_write_is_judged_by_its_path(tmp_path, path, expected):
         ('echo hi > "$OUT"', (OUTSIDE_WORKSPACE,)),
         ('cp notes.md "$DEST"', (DELETES, OUTSIDE_WORKSPACE)),
         ("tee -a $LOG < notes.md", (DELETES, OUTSIDE_WORKSPACE)),
-        # A command the screen could not read can do anything a shell can: it may destroy.
-        ("echo hi > $(mktemp)", (DELETES,)),
+        # A command the screen could not read can do anything a shell can: it may destroy. Its
+        # write is read from its parts, and goes where a substitution prints, which it cannot name.
+        ("echo hi > $(mktemp)", (DELETES, OUTSIDE_WORKSPACE)),
     ],
 )
 def test_a_shell_write_whose_target_the_screen_cannot_read_counts_as_outside(
