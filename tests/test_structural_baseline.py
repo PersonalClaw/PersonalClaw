@@ -628,7 +628,29 @@ def test_the_upper_layer_may_import_itself():
     rule = next(r for r in gen.DIRECTION_RULES if r.upper == ("dashboard",))
     assert rule.applies_to("workflows/handlers.py") is True
     assert rule.applies_to("dashboard/handlers/core.py") is False
-    assert rule.applies_to("gateway.py") is True, "top-level modules are part of core"
+    assert rule.applies_to("agent.py") is True, "top-level modules are part of core"
+
+
+def test_an_entry_point_imports_the_http_surface_on_purpose():
+    """The gateway and the CLI start the dashboard, so their imports of it point down: they are
+    the declared layer above it, not edges the HTTP rule grandfathers. A domain module, and a
+    top-level one beside them, is still held to the rule, and so is the published facade."""
+    rule = next(r for r in gen.DIRECTION_RULES if r.upper == ("dashboard",))
+    for entry in ("gateway.py", "cli_server.py", "cli_doctor.py", "app_cli.py"):
+        assert rule.applies_to(entry) is False, entry
+    for below in ("agent.py", "workflows/engine.py", "sdk/channel.py", "gateway_services.py"):
+        assert rule.applies_to(below) is True, below
+    facade = next(r for r in gen.DIRECTION_RULES if r.upper == ("sdk",))
+    assert facade.applies_to("app_cli.py") is True, "an entry point may not lean on the facade"
+
+
+def test_a_dead_name_in_the_layer_map_fires_vacuity(monkeypatch):
+    """A unit renamed away leaves its old name in the map, guarding nothing while the gate reads
+    clean. Every name the layer map declares must be a unit the census holds."""
+    assert gen.vacuity_failures(gen.RATCHET_IMPORT_DIRECTION) == []
+    monkeypatch.setattr(gen, "ENTRY_POINT_UNITS", (*gen.ENTRY_POINT_UNITS, "cli_long_gone"))
+    failures = gen.vacuity_failures(gen.RATCHET_IMPORT_DIRECTION)
+    assert len(failures) == 1 and "cli_long_gone" in failures[0], failures
 
 
 def _real_counts() -> dict[str, int]:

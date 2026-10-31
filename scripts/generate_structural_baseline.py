@@ -512,18 +512,41 @@ def _unit_of(in_src: str) -> str:
     return "" if head == "__init__.py" else head.removesuffix(".py")
 
 
+#: The entry points: the outermost layer, which starts the gateway and the CLI and so composes
+#: every layer below it, the HTTP surface included. An entry point importing the dashboard points
+#: down on purpose, so it is a declared layer rather than a grandfathered edge, and a unit joins
+#: it only by a line here. Declared units must exist (``vacuity_failures``), so a rename cannot
+#: leave a dead name standing in for a layer.
+ENTRY_POINT_UNITS: tuple[str, ...] = (
+    "app_cli",
+    "cli",
+    "cli_app_new",
+    "cli_chat",
+    "cli_commands",
+    "cli_config",
+    "cli_doctor",
+    "cli_project",
+    "cli_run",
+    "cli_server",
+    "cli_setup",
+    "gateway",
+)
+
+
 @dataclass(frozen=True)
 class DirectionRule:
     """One declared layer-order rule: files in ``lower`` may not import ``upper``.
 
-    ``lower == ("*",)`` means "every package except the ones named in ``upper``" — the
-    whole-core form used for the two rules whose lower layer is "all of core".
+    ``lower == ("*",)`` means "every unit except the ones named in ``upper``" — the
+    whole-core form used for the rules whose lower layer is "all of core". ``beside`` leaves
+    units out of that whole-core lower layer: the layers above ``upper``, which may import it.
     """
 
     name: str
     lower: tuple[str, ...]
     upper: tuple[str, ...]
     rationale: str
+    beside: tuple[str, ...] = ()
 
     def applies_to(self, in_src: str) -> bool:
         if _is_bundled_app_module(in_src):
@@ -531,6 +554,8 @@ class DirectionRule:
         top = _unit_of(in_src)
         if top in self.upper:
             return False  # the upper layer may of course import itself
+        if top in self.beside:
+            return False  # a layer above the upper one, which imports it on purpose
         return self.lower == ("*",) or top in self.lower
 
 
@@ -556,14 +581,17 @@ DIRECTION_RULES: tuple[DirectionRule, ...] = (
         name="core-must-not-import-the-http-surface",
         lower=("*",),
         upper=("dashboard",),
+        beside=ENTRY_POINT_UNITS,
         rationale=(
             "``dashboard/`` is the aiohttp + SPA surface. Domain code that imports a handler "
             "module inverts the dependency: the domain can no longer be exercised without "
             "standing up the web app, which is how a feature ends up reachable ONLY through "
             "one route and invisible to the CLI, the MCP surface and the harness. Measured 56 "
             "edges across 26 files, most of them entry-point composition (gateway, cli_*) "
-            "that is legitimately downward-facing. Shrink-only GRANDFATHERS those instead of "
-            "an exemption list — an allowlist is a thing that rots, a measured floor is not."
+            "that is legitimately downward-facing. Shrink-only grandfathered those at first, "
+            "because an allowlist rots and a measured floor does not. The entry points are now "
+            "a declared layer above the surface (ENTRY_POINT_UNITS), so their 19 edges left "
+            "the floor on 2026-10-31: 27 edges remain, all of them below the entry points."
         ),
     ),
     DirectionRule(
@@ -653,6 +681,7 @@ def _import_direction_block() -> dict[str, Any]:
                 "name": r.name,
                 "lower": list(r.lower),
                 "upper": list(r.upper),
+                "beside": list(r.beside),
                 "rationale": r.rationale,
             }
             for r in DIRECTION_RULES
@@ -1086,7 +1115,28 @@ def vacuity_failures(ratchet: str | None = None) -> list[str]:
                 f"{name}: VACUITY — inspected no file from {missed}. A whole sub-package left "
                 "the walk while the file count stayed plausible."
             )
+            continue
+        if name == RATCHET_IMPORT_DIRECTION:
+            dead = sorted(_declared_units() - census_units())
+            if dead:
+                failures.append(
+                    f"{name}: VACUITY — the layer map names {dead}, and no such unit exists. A "
+                    "rule over a dead name guards nothing: rename it in the map, or drop it."
+                )
     return failures
+
+
+def census_units() -> set[str]:
+    """Every unit the census holds (:func:`_unit_of`), the package root left out."""
+    return {_unit_of(_in_src(path)) for path in _src_py_files()} - {""}
+
+
+def _declared_units() -> set[str]:
+    """Every unit the layer map names: each rule's layers, and each declared layer."""
+    named = set(ENTRY_POINT_UNITS)
+    for rule in DIRECTION_RULES:
+        named.update(rule.lower, rule.upper, rule.beside)
+    return named - {"*"}
 
 
 def ratchet_failures(ratchet: str, baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:

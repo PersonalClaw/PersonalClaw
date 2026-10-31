@@ -252,45 +252,11 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
         ]
       },
-      "src/personalclaw/cli_doctor.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
-        ]
-      },
-      "src/personalclaw/cli_server.py": {
-        "edges": 2,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
-        ]
-      },
       "src/personalclaw/companion/discovery.py": {
         "edges": 2,
         "violations": [
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
-        ]
-      },
-      "src/personalclaw/gateway.py": {
-        "edges": 16,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_persistence",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_runner",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_utils",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.autonudge",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.updates",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.session_lifecycle",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
         ]
       },
       "src/personalclaw/gateway_services.py": {
@@ -386,6 +352,7 @@
     },
     "rules": [
       {
+        "beside": [],
         "lower": [
           "ledger"
         ],
@@ -402,16 +369,31 @@
         ]
       },
       {
+        "beside": [
+          "app_cli",
+          "cli",
+          "cli_app_new",
+          "cli_chat",
+          "cli_commands",
+          "cli_config",
+          "cli_doctor",
+          "cli_project",
+          "cli_run",
+          "cli_server",
+          "cli_setup",
+          "gateway"
+        ],
         "lower": [
           "*"
         ],
         "name": "core-must-not-import-the-http-surface",
-        "rationale": "``dashboard/`` is the aiohttp + SPA surface. Domain code that imports a handler module inverts the dependency: the domain can no longer be exercised without standing up the web app, which is how a feature ends up reachable ONLY through one route and invisible to the CLI, the MCP surface and the harness. Measured 56 edges across 26 files, most of them entry-point composition (gateway, cli_*) that is legitimately downward-facing. Shrink-only GRANDFATHERS those instead of an exemption list — an allowlist is a thing that rots, a measured floor is not.",
+        "rationale": "``dashboard/`` is the aiohttp + SPA surface. Domain code that imports a handler module inverts the dependency: the domain can no longer be exercised without standing up the web app, which is how a feature ends up reachable ONLY through one route and invisible to the CLI, the MCP surface and the harness. Measured 56 edges across 26 files, most of them entry-point composition (gateway, cli_*) that is legitimately downward-facing. Shrink-only grandfathered those at first, because an allowlist rots and a measured floor does not. The entry points are now a declared layer above the surface (ENTRY_POINT_UNITS), so their 19 edges left the floor on 2026-10-31: 27 edges remain, all of them below the entry points.",
         "upper": [
           "dashboard"
         ]
       },
       {
+        "beside": [],
         "lower": [
           "*"
         ],
@@ -425,11 +407,11 @@
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 5,
-        "core-must-not-import-the-http-surface": 46,
+        "core-must-not-import-the-http-surface": 27,
         "ledger-is-a-leaf": 0
       },
-      "edges": 51,
-      "files": 26
+      "edges": 32,
+      "files": 23
     }
   },
   "structural-size": {
