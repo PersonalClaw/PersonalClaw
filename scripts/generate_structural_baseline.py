@@ -7,8 +7,8 @@ silently; a family we have already unified once gets re-derived a thirteenth tim
 nothing counts. None of those show up in a unit test — the code works. Only a *census of
 the shape of the tree* sees them.
 
-This generator IS that census. It measures three structural properties of production
-``src/personalclaw`` and commits them to ``structural-baseline.json`` as three INDEPENDENT
+This generator IS that census. It measures four structural properties of production
+``src/personalclaw`` and commits them to ``structural-baseline.json`` as four INDEPENDENT
 shrink-only ratchets:
 
   * ``structural-size`` — a per-file size ceiling no file may exceed, plus a shrink-only
@@ -18,10 +18,12 @@ shrink-only ratchets:
     an upper one; each file's upward-edge count may only shrink.
   * ``structural-duplication`` — a duplicate-implementation counter for the families this
     codebase has repeatedly re-derived (HTTP error envelope, verdict types, durable write).
+  * ``structural-import-cycle`` — the units outside the biggest import cycle. One of them
+    inside it is the red; the cycle's size is reported, never gated (``_CYCLE_RATIONALE``).
 
-Each ratchet is its own gate in ``scripts/gate_report.py`` (the aggregate), so three
-independent structural failures report as THREE failures in one run — one red never hides
-the other two.
+Each ratchet is its own gate in ``scripts/gate_report.py`` (the aggregate), so four
+independent structural failures report as FOUR failures in one run — one red never hides
+the other three.
 
 ⚠️  FORBIDDEN-TO-RAISE RULE (the whole point — do not weaken it): when a ratchet reds
     because a counter ROSE, the fix is to FIX THE CODE — split the file, invert the import,
@@ -71,9 +73,10 @@ the other two.
     * **Total line count of ``src/``.** A growing project grows; a total-lines ratchet would
       red on every feature and teach the team to regenerate baselines, which is the habit
       that kills every other ratchet in this file.
-    * **Import CYCLES.** Worth having and genuinely separate: a cycle is a different defect
-      (initialization order) from a direction violation (layer inversion), and it needs a
-      strongly-connected-component pass rather than a per-edge rule. Its own change.
+    * **The import cycle's SIZE.** The cycle is ratcheted (``structural-import-cycle``): a
+      unit outside it may not join it. Its size is not, because a new module the dashboard
+      imports that imports config joins it by construction, so a count that may only fall would
+      red ordinary features. The size is printed in the gate report and read at each release.
 
 # how to update
     Regenerate ONLY when a counter LEGITIMATELY SHRANK (a file was split, an upward import
@@ -111,7 +114,7 @@ import contextlib
 import contextvars
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -145,7 +148,8 @@ MIN_CENSUS_PY_FILES = 800
 RATCHET_SIZE = "structural-size"
 RATCHET_IMPORT_DIRECTION = "structural-import-direction"
 RATCHET_DUPLICATION = "structural-duplication"
-RATCHETS = (RATCHET_SIZE, RATCHET_IMPORT_DIRECTION, RATCHET_DUPLICATION)
+RATCHET_IMPORT_CYCLE = "structural-import-cycle"
+RATCHETS = (RATCHET_SIZE, RATCHET_IMPORT_DIRECTION, RATCHET_DUPLICATION, RATCHET_IMPORT_CYCLE)
 
 # A render may be pointed at another tree (a test's fixture) for one call. With no override,
 # every reader below sees this checkout exactly as before.
@@ -684,11 +688,16 @@ def _imported_personalclaw_modules(path: Path, tree: ast.Module) -> list[str]:
     config`` in a top-level module) brings the modules it names, so each of them is listed too:
     read as plain ``personalclaw``, the 778 such imports in the tree on 2026-10-31 named no module.
     """
+    return _resolved(path, ast.walk(tree))
+
+
+def _resolved(path: Path, nodes: Iterable[ast.AST]) -> list[str]:
+    """The ``personalclaw.*`` modules the import statements among *nodes* name, resolved."""
     parent = path.resolve().parent
     rel_parent = parent.relative_to(_src_root()).as_posix()
     pkg_parts = [] if rel_parent == "." else rel_parent.split("/")
     out: list[str] = []
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Import):
             out.extend(a.name for a in node.names if a.name.startswith("personalclaw"))
         elif isinstance(node, ast.ImportFrom):
@@ -1117,11 +1126,231 @@ def regressions_duplication(baseline: dict[str, Any], current: dict[str, Any]) -
     return lines
 
 
+# ── Ratchet 4: the import cycle may not take in a unit it does not hold ──────
+
+#: Why the cycle ratchet records the units OUTSIDE the biggest cycle, not its size.
+_CYCLE_RATIONALE = (
+    "One import cycle holds most of core: on 2026-10-31, 268 of the 358 units over every import, "
+    "and 71 counting only the imports that run at startup. A unit in it can't be built, tested or "
+    "moved without the rest. The size can't be the gated number: a new module the dashboard "
+    "imports that imports config joins the cycle by construction, and 3 of the 9 units added in "
+    "the week before this ratchet did, so a count that may only fall would red ordinary features "
+    "that no change to their own module could fix. What a PR can always do is keep a clean unit "
+    "clean, so the baseline records the units outside the cycle, and one of them inside it is the "
+    "red. A unit leaving the cycle, and a new unit made outside it, is recorded by running this "
+    "generator in that commit. The size and its startup figure are printed in the gate report, "
+    "ungated, and read at each release cut."
+)
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    """``if TYPE_CHECKING:`` or ``if typing.TYPE_CHECKING:``, exactly. Any other test that names
+    it (``if not TYPE_CHECKING:``) runs its body at startup."""
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    return (
+        isinstance(test, ast.Attribute)
+        and test.attr == "TYPE_CHECKING"
+        and isinstance(test.value, ast.Name)
+        and test.value.id == "typing"
+    )
+
+
+def _startup_nodes(tree: ast.Module) -> list[ast.AST]:
+    """The import statements that run when the module is imported: module level and class
+    bodies, both branches of an ``if`` and every arm of a ``try``, but not a function's body or
+    an ``if TYPE_CHECKING`` block."""
+    found: list[ast.AST] = []
+
+    def walk(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                found.append(node)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            elif isinstance(node, ast.If) and _is_type_checking(node.test):
+                walk(node.orelse)
+            elif isinstance(node, ast.Try):
+                walk(node.body)
+                for handler in node.handlers:
+                    walk(handler.body)
+                walk(node.orelse)
+                walk(node.finalbody)
+            else:
+                for field_name in ("body", "orelse", "finalbody"):
+                    inner = getattr(node, field_name, None)
+                    if isinstance(inner, list):
+                        walk([n for n in inner if isinstance(n, ast.stmt)])
+
+    walk(tree.body)
+    return found
+
+
+@dataclass(frozen=True)
+class UnitGraph:
+    """Which unit imports which, and the first file that does: over every import, and over the
+    imports that run at startup."""
+
+    every: dict[str, set[str]]
+    startup: dict[str, set[str]]
+    sites: dict[tuple[str, str], str]
+
+
+def _unit_graph() -> tuple[frozenset[str], UnitGraph]:
+    """The unit graph and the files read to build it (every census file, bundled apps' too,
+    whose imports are left out the way the direction ratchet leaves them out)."""
+    units = census_units()
+    every: dict[str, set[str]] = {unit: set() for unit in units}
+    startup: dict[str, set[str]] = {unit: set() for unit in units}
+    sites: dict[tuple[str, str], str] = {}
+    inspected: set[str] = set()
+    for path in _src_py_files():
+        tree = _parse(path)
+        if tree is None:
+            continue
+        inspected.add(_rel(path))
+        in_src = _in_src(path)
+        own = _unit_of(in_src)
+        if own not in units or _is_bundled_app_module(in_src):
+            continue
+        for graph, modules in (
+            (every, _imported_personalclaw_modules(path, tree)),
+            (startup, _resolved(path, _startup_nodes(tree))),
+        ):
+            for mod in modules:
+                unit = mod.split(".")[1] if mod.count(".") else ""
+                if unit in units and unit != own:
+                    graph[own].add(unit)
+                    if graph is every:
+                        sites.setdefault((own, unit), _rel(path))
+    return frozenset(inspected), UnitGraph(every, startup, sites)
+
+
+def biggest_cycle(graph: dict[str, set[str]]) -> list[str]:
+    """The units of the biggest import cycle, sorted: the biggest strongly connected component of
+    two or more units (Tarjan, iterative), or none when the graph has no cycle. A tie goes to the
+    component whose first unit sorts first, so the answer never depends on order."""
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on_stack: set[str] = set()
+    stack: list[str] = []
+    best: list[str] = []
+    counter = 0
+    for root in sorted(graph):
+        if root in index:
+            continue
+        index[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack.add(root)
+        work = [(root, iter(sorted(graph[root])))]
+        while work:
+            node, children = work[-1]
+            for child in children:
+                if child not in index:
+                    index[child] = low[child] = counter
+                    counter += 1
+                    stack.append(child)
+                    on_stack.add(child)
+                    work.append((child, iter(sorted(graph[child]))))
+                    break
+                if child in on_stack:
+                    low[node] = min(low[node], index[child])
+            else:
+                work.pop()
+                if work:
+                    parent = work[-1][0]
+                    low[parent] = min(low[parent], low[node])
+                if low[node] == index[node]:
+                    component: list[str] = []
+                    while True:
+                        member = stack.pop()
+                        on_stack.discard(member)
+                        component.append(member)
+                        if member == node:
+                            break
+                    component.sort()
+                    if len(component) < 2:
+                        continue
+                    if len(component) > len(best) or (
+                        len(component) == len(best) and component[0] < best[0]
+                    ):
+                        best = component
+    return best
+
+
+def scan_import_cycle() -> Scan:
+    """``{"members": [...], "outside": [...], "startup_units": N}`` for the unit graph."""
+    inspected, graph = _unit_graph()
+    members = biggest_cycle(graph.every)
+    return Scan(
+        inspected,
+        {
+            "members": members,
+            "outside": sorted(set(graph.every) - set(members)),
+            "startup_units": len(biggest_cycle(graph.startup)),
+            "ties": {unit: _ties(unit, set(members), graph) for unit in members},
+        },
+    )
+
+
+def _import_cycle_block() -> dict[str, Any]:
+    return cycle_block_from(scan(RATCHET_IMPORT_CYCLE))
+
+
+def cycle_block_from(result: Scan) -> dict[str, Any]:
+    """The cycle ratchet's block. ``outside`` and the rationale are the baseline; ``_live`` holds
+    the figures the render leaves out (``build_baseline``), so a new unit inside the cycle never
+    asks for a regeneration."""
+    rows = result.rows
+    return {
+        "outside": list(rows["outside"]),
+        "rationale": _CYCLE_RATIONALE,
+        "_live": {
+            "members": list(rows["members"]),
+            "units": len(rows["members"]),
+            "startup_units": int(rows["startup_units"]),
+            "ties": dict(rows["ties"]),
+        },
+    }
+
+
+def cycle_information(current: dict[str, Any]) -> str:
+    """The gate report's information line for the cycle: its size, never gated."""
+    live = current["_live"]
+    return (
+        f"the biggest import cycle holds {live['units']} units ({live['startup_units']} counting "
+        f"only startup imports); {len(current['outside'])} units are outside it"
+    )
+
+
+def _ties(unit: str, members: set[str], graph: UnitGraph) -> str:
+    """The import edges that tie *unit* into the cycle, each with the file that makes it."""
+    out = sorted(v for v in graph.every.get(unit, set()) if v in members)
+    into = sorted(u for u in members if unit in graph.every.get(u, set()))
+    parts = [f"{graph.sites[(unit, v)]} imports {v}" for v in out[:3]]
+    parts += [f"{graph.sites[(u, unit)]} imports {unit}" for u in into[:3]]
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
+def regressions_import_cycle(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
+    """Units the baseline records outside the cycle that are inside it now, sorted."""
+    members = set(current["_live"]["members"])
+    ties = current["_live"].get("ties", {})
+    lines: list[str] = []
+    for unit in sorted(set(baseline["outside"]) & members):
+        lines.append(
+            f"{unit}: was outside the import cycle and joined it{ties.get(unit, '')} — cut the "
+            "import that pulled it in, do not regenerate to bless it"
+        )
+    return lines
+
+
 # ── Inventory, vacuity, ratchet dispatch ─────────────────────────────────────
 
 
 def build_inventory(root: Path | None = None) -> dict[str, Any]:
-    """Render all three structural ratchet baselines as a deterministic, JSON-safe dict.
+    """Render all four structural ratchet baselines as a deterministic, JSON-safe dict.
 
     *root* points the census at another tree (a test fixture); with no *root* it reads this
     checkout.
@@ -1139,12 +1368,20 @@ def build_inventory(root: Path | None = None) -> dict[str, Any]:
             RATCHET_SIZE: _size_block(),
             RATCHET_IMPORT_DIRECTION: _import_direction_block(),
             RATCHET_DUPLICATION: _duplication_block(),
+            RATCHET_IMPORT_CYCLE: _import_cycle_block(),
         }
 
 
 def build_baseline(root: Path | None = None) -> str:
-    """Render the inventory as a deterministic JSON string (sorted, trailing newline)."""
-    return json.dumps(build_inventory(root), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    """Render the inventory as a deterministic JSON string (sorted, trailing newline). A block's
+    ``_live`` figures are left out: they change with every new unit, and only the comparison
+    and the gate report read them."""
+    inventory = build_inventory(root)
+    rendered = {
+        name: {k: v for k, v in block.items() if k != "_live"} if isinstance(block, dict) else block
+        for name, block in inventory.items()
+    }
+    return json.dumps(rendered, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
 _SCAN_CACHE: dict[str, tuple[tuple[object, object, Path], Scan]] = {}
@@ -1166,6 +1403,7 @@ def scan(ratchet: str) -> Scan:
         RATCHET_SIZE: scan_sizes,
         RATCHET_IMPORT_DIRECTION: scan_upward_edges,
         RATCHET_DUPLICATION: scan_duplicates,
+        RATCHET_IMPORT_CYCLE: scan_import_cycle,
     }
     if ratchet not in builders:
         raise ValueError(f"unknown structural ratchet {ratchet!r}; known: {list(RATCHETS)}")
@@ -1254,8 +1492,8 @@ def ratchet_failures(ratchet: str, baseline: dict[str, Any], current: dict[str, 
     """Every failure line for ONE ratchet: its vacuity failures first, then its backslides.
 
     Scoped to a single ratchet on purpose — that is what lets ``scripts/gate_report.py``
-    register the three as three INDEPENDENT gates, so three simultaneous structural failures
-    report as three rather than the first one hiding the rest.
+    register the four as four INDEPENDENT gates, so four simultaneous structural failures
+    report as four rather than the first one hiding the rest.
     """
     if ratchet not in RATCHETS:
         raise ValueError(f"unknown structural ratchet {ratchet!r}; known: {list(RATCHETS)}")
@@ -1264,6 +1502,7 @@ def ratchet_failures(ratchet: str, baseline: dict[str, Any], current: dict[str, 
         RATCHET_SIZE: regressions_size,
         RATCHET_IMPORT_DIRECTION: regressions_import_direction,
         RATCHET_DUPLICATION: regressions_duplication,
+        RATCHET_IMPORT_CYCLE: regressions_import_cycle,
     }[ratchet]
     return failures + comparer(baseline[ratchet], current[ratchet])
 
@@ -1288,6 +1527,18 @@ def stale_high(ratchet: str, baseline: dict[str, Any], current: dict[str, Any]) 
                 f"watch band: committed {len(base['watch_band_members'])} members > current "
                 f"{len(now['watch_band_members'])}; {departed} left the band (a split landed)"
             )
+        return lines
+    if ratchet == RATCHET_IMPORT_CYCLE:
+        members = set(now["_live"]["members"])
+        added = sorted(set(now["outside"]) - set(base["outside"]))
+        if added:
+            lines.append(
+                f"outside the import cycle now, and not recorded: {added} (a unit left the cycle, "
+                "or a new one was made outside it) — regenerate to keep them out"
+            )
+        gone = sorted(set(base["outside"]) - set(now["outside"]) - members)
+        if gone:
+            lines.append(f"recorded outside the import cycle, and no longer a unit: {gone}")
         return lines
     key = "edges" if ratchet == RATCHET_IMPORT_DIRECTION else "count"
     for rel, entry in sorted(base["per_file"].items()):
@@ -1326,6 +1577,7 @@ def main() -> None:
         f"  {RATCHET_DUPLICATION}: {dup['sites']} re-derived sites in {dup['files']} files "
         f"{dup['by_family']}"
     )
+    print(f"  {RATCHET_IMPORT_CYCLE}: {cycle_information(inventory[RATCHET_IMPORT_CYCLE])}")
 
 
 if __name__ == "__main__":

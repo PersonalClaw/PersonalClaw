@@ -2,9 +2,9 @@
 """Aggregate report for the platform-hardening drift/inert gates.
 
 The family shipped three independent gates, each a generator + committed baseline +
-shrink/byte-compare ratchet test; three more joined it (the STRUCTURAL ratchets),
+shrink/byte-compare ratchet test; four more joined it (the STRUCTURAL ratchets),
 registered here rather than beside here so that one structural red never hides the other
-five — six gates, one table, every failure visible in a single run:
+six — seven gates, one table, every failure visible in a single run:
 
   * ``config-baseline`` — ``scripts/generate_config_baseline.py`` renders the
     ``AppConfig`` schema; drift is a BYTE mismatch between the committed
@@ -14,15 +14,17 @@ five — six gates, one table, every failure visible in a single run:
     hold (``unlisted(listed(), sites(current))`` non-empty), named by its site.
   * ``docs-lint`` — ``scripts/generate_docs_lint_baseline.py`` censuses docs drift;
     drift is any per-file finding counter that ROSE (``regressions(...)`` non-empty).
-  * ``structural-size`` / ``structural-import-direction`` / ``structural-duplication``
-    — ``scripts/generate_structural_baseline.py`` censuses the SHAPE of the tree
-    (per-file size ceiling, declared layer order, re-derived implementation families). Each
-    is a separate gate here, and each reports its own VACUITY failure (a rail that inspected
-    fewer files than the census counted) alongside its backslides.
+  * ``structural-size`` / ``structural-import-direction`` / ``structural-duplication`` /
+    ``structural-import-cycle`` — ``scripts/generate_structural_baseline.py`` censuses the
+    SHAPE of the tree (per-file size ceiling, declared layer order, re-derived implementation
+    families, the units the biggest import cycle has not taken in). Each is a separate gate
+    here, and each reports its own VACUITY failure (a rail that inspected fewer files than the
+    census counted) alongside its backslides. The cycle's size is printed under the table as
+    information, and never gated.
 
 Each is its own pytest test that fails independently. A dev running them one at a time — or a
 fail-fast runner — fixes one, re-runs, hits the next, fixes, re-runs… This aggregate runs ALL
-SIX, collects EVERY failure, and prints ONE table so all failures are visible in a single
+SEVEN, collects EVERY failure, and prints ONE table so all failures are visible in a single
 run. That is the "aggregate, don't short-circuit" ergonomic: unlike ``harness/cli.py``'s
 task runner (which stops at the first failing command), this NEVER short-circuits — a gate
 that drifts, or even one that raises, is captured as a structured failure while every other
@@ -74,6 +76,8 @@ class GateResult:
     name: str
     ok: bool
     failures: list[str] = field(default_factory=list)
+    #: A figure the gate reports and never gates on (the import cycle's size).
+    info: str = ""
 
 
 def _config_baseline_gate() -> GateResult:
@@ -124,7 +128,10 @@ def _structural_gate(ratchet: str) -> GateResult:
     committed = json.loads(structural_gen.baseline_path().read_text(encoding="utf-8"))
     current = structural_gen.build_inventory()
     failures = structural_gen.ratchet_failures(ratchet, committed, current)
-    return GateResult(ratchet, not failures, failures)
+    info = ""
+    if ratchet == structural_gen.RATCHET_IMPORT_CYCLE:
+        info = structural_gen.cycle_information(current[ratchet])
+    return GateResult(ratchet, not failures, failures, info)
 
 
 def _guard(name: str, run: object) -> GateResult:
@@ -138,10 +145,10 @@ def _guard(name: str, run: object) -> GateResult:
 
 
 def run_all_gates() -> list[GateResult]:
-    """Run all six gates in a FIXED order, collecting every failure. Never short-circuits:
+    """Run all seven gates in a FIXED order, collecting every failure. Never short-circuits:
     each gate runs even if an earlier one failed or raised. Returns one ``GateResult`` per
-    gate, always length 6 — config-baseline, inert-surface, docs-lint, then the three
-    structural ratchets (size, import-direction, duplication)."""
+    gate, always length 7 — config-baseline, inert-surface, docs-lint, then the four
+    structural ratchets (size, import-direction, duplication, import-cycle)."""
     return [
         _guard("config-baseline", _config_baseline_gate),
         _guard("inert-surface", _inert_surface_gate),
@@ -163,6 +170,11 @@ def render_report(results: list[GateResult]) -> str:
     for r in results:
         status = "PASS" if r.ok else "FAIL"
         lines.append(f"{r.name.ljust(name_w)} | {status:<6} | {len(r.failures)}")
+
+    informed = [r for r in results if r.info]
+    if informed:
+        lines.append("")
+        lines.extend(f"{r.name}: {r.info} (information, not gated)" for r in informed)
 
     for r in results:
         if r.ok:

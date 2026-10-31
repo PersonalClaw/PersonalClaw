@@ -228,7 +228,7 @@ def test_the_deliberate_non_ratchets_are_recorded_as_decisions():
     an oversight — or delete the reasoning and leave the list."""
     doc = gen.__doc__ or ""
     assert "what this deliberately does NOT ratchet" in doc
-    for omission in ("tests/", "complexity", "web/", "apps", "Total line count", "Import CYCLES"):
+    for omission in ("tests/", "complexity", "web/", "apps", "Total line count", "cycle's SIZE"):
         assert omission in doc, f"the deliberate-omission list lost {omission!r}"
 
 
@@ -264,20 +264,25 @@ def _clean_structural() -> dict:
         },
         gen.RATCHET_IMPORT_DIRECTION: {"per_file": {}},
         gen.RATCHET_DUPLICATION: {"per_file": {}},
+        gen.RATCHET_IMPORT_CYCLE: {
+            "outside": [],
+            "_live": {"members": [], "units": 0, "startup_units": 0, "ties": {}},
+        },
     }
 
 
-def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, tmp_path):
+def test_four_simultaneous_structural_violations_report_as_four(monkeypatch, tmp_path):
     """The ratchets report THROUGH the aggregate, so one red does not hide the others — proven,
     not asserted, and registration proven in the same breath (a ratchet that exists only as a
     pytest test is invisible to ``make gates``).
 
     ONE violation per structural ratchet at the same time (a new band entrant, a new upward
-    import, a new re-derivation) against a clean committed baseline; the real comparison
-    functions do the work. All three gates must come back FAIL in a SINGLE ``run_all_gates()``
-    call, and the rendered table must carry all three. The other three gates and the vacuity
-    check are stubbed to pass: the rails job runs every gate on the real tree once
-    (``scripts/gate_report.py``), and this test is about how the aggregate reports them.
+    import, a new re-derivation, a clean unit taken into the import cycle) against a clean
+    committed baseline; the real comparison functions do the work. All four gates must come back
+    FAIL in a SINGLE ``run_all_gates()`` call, and the rendered table must carry all four. The
+    other three gates and the vacuity check are stubbed to pass: the rails job runs every gate on
+    the real tree once (``scripts/gate_report.py``), and this test is about how the aggregate
+    reports them.
     """
     from scripts import generate_config_baseline as config_gen
     from scripts import generate_docs_lint_baseline as docs_gen
@@ -295,7 +300,9 @@ def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, t
     monkeypatch.setattr(docs_gen, "build_inventory", lambda: {"per_file": {}})
 
     committed = tmp_path / "structural-baseline.json"
-    committed.write_text(json.dumps(_clean_structural()) + "\n", encoding="utf-8")
+    baseline = _clean_structural()
+    baseline[gen.RATCHET_IMPORT_CYCLE]["outside"] = ["synthetic_leaf"]
+    committed.write_text(json.dumps(baseline) + "\n", encoding="utf-8")
     victim_size = "src/personalclaw/synthetic_giant.py"
     victim_import = "src/personalclaw/synthetic_edge.py"
     victim_dup = "src/personalclaw/synthetic_copy.py"
@@ -305,6 +312,7 @@ def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, t
         victim_import: {"edges": 1, "violations": ["up:synthetic"]}
     }
     current[gen.RATCHET_DUPLICATION]["per_file"] = {victim_dup: {"count": 1, "sites": ["s:1"]}}
+    current[gen.RATCHET_IMPORT_CYCLE]["_live"]["members"] = ["synthetic_hub", "synthetic_leaf"]
     monkeypatch.setattr(gen, "baseline_path", lambda: committed)
     monkeypatch.setattr(gen, "build_inventory", lambda: json.loads(json.dumps(current)))
     monkeypatch.setattr(gen, "vacuity_failures", lambda ratchet=None: [])
@@ -321,13 +329,14 @@ def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, t
     assert any(victim_size in ln for ln in results[gen.RATCHET_SIZE].failures)
     assert any(victim_import in ln for ln in results[gen.RATCHET_IMPORT_DIRECTION].failures)
     assert any(victim_dup in ln for ln in results[gen.RATCHET_DUPLICATION].failures)
+    assert any("synthetic_leaf" in ln for ln in results[gen.RATCHET_IMPORT_CYCLE].failures)
 
-    # All three appear in the ONE rendered table — the point of reporting through the
+    # All four appear in the ONE rendered table — the point of reporting through the
     # aggregate, with the three stubbed gates passing beside them.
     report = gate_report.render_report(list(results.values()))
     for ratchet in gen.RATCHETS:
         assert f"{ratchet} FAIL (" in report
-    assert "SUMMARY: 3 of 6 gate(s) FAILED" in report, report
+    assert "SUMMARY: 4 of 7 gate(s) FAILED" in report, report
 
 
 # ── Vacuity: a rail that matches nothing looks clean ─────────────────────────
@@ -715,6 +724,113 @@ def test_a_unit_below_the_entry_points_that_imports_one_reds(tmp_path):
     assert len(failures) == 1, failures
     assert failures[0].startswith("src/personalclaw/workflows/__init__.py"), failures
     assert "nothing-below-the-entry-points-imports-them -> personalclaw.gateway" in failures[0]
+
+
+def _cycle(root: Path) -> dict:
+    """The import-cycle block for the synthetic tree under *root*, read afresh."""
+    with gen._rooted(root):
+        return gen.cycle_block_from(gen.scan_import_cycle())
+
+
+#: Two units that import each other, the cycle, and one unit outside it that imports into it.
+_CYCLE_TREE = {
+    "__init__.py": "",
+    "hub_a.py": "from personalclaw import hub_b\n",
+    "hub_b.py": "from personalclaw import hub_a\n",
+    "leaf.py": "from personalclaw import hub_a\n",
+}
+
+
+def test_a_unit_outside_the_cycle_pulled_into_it_reds_naming_the_imports(tmp_path):
+    """A clean unit staying clean is what a PR can always do, so a unit the baseline records
+    outside the cycle and finds inside it is the red. It names the imports that tie it in, each
+    with its file, so the cut is one read away."""
+    src = _write_tree(tmp_path, _CYCLE_TREE)
+    baseline = _cycle(tmp_path)
+    assert baseline["outside"] == ["leaf"] and baseline["_live"]["members"] == ["hub_a", "hub_b"]
+    (src / "hub_b.py").write_text("from personalclaw import hub_a, leaf\n", encoding="utf-8")
+    current = _cycle(tmp_path)
+    failures = gen.regressions_import_cycle(baseline, current)
+    assert len(failures) == 1 and failures[0].startswith("leaf: was outside the import cycle")
+    assert "src/personalclaw/leaf.py imports hub_a" in failures[0], failures[0]
+    assert "src/personalclaw/hub_b.py imports leaf" in failures[0], failures[0]
+
+
+def test_a_new_unit_made_outside_the_cycle_asks_for_its_generator_run(tmp_path):
+    """A new unit made outside the cycle is growth the baseline records, by a generator run in
+    that commit. Until it runs, the shrink-side check names the unit, and the comparison stays
+    green: nothing joined."""
+    src = _write_tree(tmp_path, _CYCLE_TREE)
+    baseline = _cycle(tmp_path)
+    (src / "fresh.py").write_text("from personalclaw import hub_a\n", encoding="utf-8")
+    current = _cycle(tmp_path)
+    assert gen.regressions_import_cycle(baseline, current) == []
+    stale = gen.stale_high(
+        gen.RATCHET_IMPORT_CYCLE,
+        {gen.RATCHET_IMPORT_CYCLE: baseline},
+        {gen.RATCHET_IMPORT_CYCLE: current},
+    )
+    assert len(stale) == 1 and "['fresh']" in stale[0], stale
+
+
+def test_a_new_unit_made_inside_the_cycle_stays_green(tmp_path):
+    """A new module the cycle both imports and is imported by joins it by construction, and no
+    change to the module alone could keep it out. It reds nothing and asks for no regeneration:
+    the baseline records only the units outside, and those did not change."""
+    src = _write_tree(tmp_path, _CYCLE_TREE)
+    baseline = _cycle(tmp_path)
+    (src / "feature.py").write_text("from personalclaw import hub_a\n", encoding="utf-8")
+    (src / "hub_b.py").write_text("from personalclaw import hub_a, feature\n", encoding="utf-8")
+    current = _cycle(tmp_path)
+    assert "feature" in current["_live"]["members"]
+    assert gen.regressions_import_cycle(baseline, current) == []
+    assert current["outside"] == baseline["outside"]
+    inventories = ({gen.RATCHET_IMPORT_CYCLE: baseline}, {gen.RATCHET_IMPORT_CYCLE: current})
+    assert gen.stale_high(gen.RATCHET_IMPORT_CYCLE, *inventories) == []
+
+
+def test_the_startup_cycle_leaves_out_lazy_and_type_only_imports(tmp_path):
+    """The startup figure counts only the imports that run when a module loads. A lazy import in
+    a function and one under ``if TYPE_CHECKING`` close the full cycle, and not that one."""
+    _write_tree(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "hub_a.py": "from personalclaw import hub_b\n",
+            "hub_b.py": (
+                "from typing import TYPE_CHECKING\n"
+                "if TYPE_CHECKING:\n    from personalclaw import hub_a\n"
+                "def later():\n    from personalclaw import hub_a\n"
+            ),
+        },
+    )
+    block = _cycle(tmp_path)
+    assert block["_live"]["units"] == 2
+    assert block["_live"]["startup_units"] == 0, "one unit on its own is not a cycle"
+
+
+def test_an_import_under_if_not_type_checking_runs_at_startup(tmp_path):
+    """Only a bare ``if TYPE_CHECKING:`` (or ``typing.TYPE_CHECKING``) is type-only. A test that
+    merely names it, ``if not TYPE_CHECKING:``, runs its body when the module loads."""
+    _write_tree(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "hub_a.py": (
+                "import typing\n"
+                "if typing.TYPE_CHECKING:\n    from personalclaw import hub_c\n"
+                "from personalclaw import hub_b\n"
+            ),
+            "hub_b.py": (
+                "from typing import TYPE_CHECKING\n"
+                "if not TYPE_CHECKING:\n    from personalclaw import hub_a\n"
+            ),
+            "hub_c.py": "from personalclaw import hub_a\n",
+        },
+    )
+    block = _cycle(tmp_path)
+    assert block["_live"]["units"] == 3
+    assert block["_live"]["startup_units"] == 2, "hub_c ties in only through a type-only import"
 
 
 def _real_counts() -> dict[str, int]:
