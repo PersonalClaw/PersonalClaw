@@ -260,7 +260,11 @@ def test_a_worker_past_its_tests_deadline_is_read_written_and_ended(tmp_path):
     child = _sleeper()
     try:
         log = io.StringIO()
-        watch = hung.Overdue(tmp_path, "leg", read=lambda pid: f"the threads of {pid}\n", log=log)
+        # Made with no start: its file is written a moment after, and a file system's coarser clock
+        # can stamp it before the watch's start, which the earlier-step test is about.
+        watch = hung.Overdue(
+            tmp_path, "leg", read=lambda pid: f"the threads of {pid}\n", log=log, since=0
+        )
         now = time.monotonic()
         armed = _publish(tmp_path, child.pid, began=now - 125, deadline=now - 35)
         watch(child.pid)
@@ -313,7 +317,12 @@ def test_a_line_is_acted_on_only_once_two_looks_read_it_the_same(tmp_path):
         now = time.monotonic()
         ended: list[int] = []
         watch = hung.Overdue(
-            tmp_path, "leg", end=lambda pid, sig: ended.append(pid), read=str, log=io.StringIO()
+            tmp_path,
+            "leg",
+            end=lambda pid, sig: ended.append(pid),
+            read=str,
+            log=io.StringIO(),
+            since=0,  # as above: no start for a file written a moment after it
         )
         for n in range(3):  # a new test each look: never the same line twice
             _publish(tmp_path, child.pid, began=now - 200 + n, deadline=now - 100)
