@@ -864,23 +864,40 @@ def _redact_text(text: str) -> str:
     return redact_credentials(redact_exfiltration_urls(text)[0])[0]
 
 
-_TOOL_INPUT_OBJ_MAX = 8000  # cap the serialized structured input shipped to the UI
+#: The characters one string value of a call's structured input keeps, on its card and on its row.
+_TOOL_INPUT_VALUE_MAX = 8000
+#: The serialized size past which a call's structured input is not kept at all (a call of a great
+#: many values): its card and its row fall back to the preview string, so no call bloats a row.
+_TOOL_INPUT_OBJ_MAX = 256_000
+
+
+def _bounded(text: str) -> str:
+    """*text* as one value of a card's input keeps it: whole, or its first
+    :data:`_TOOL_INPUT_VALUE_MAX` characters and a line saying how many more there were."""
+    if len(text) <= _TOOL_INPUT_VALUE_MAX:
+        return text
+    more = len(text) - _TOOL_INPUT_VALUE_MAX
+    return f"{text[:_TOOL_INPUT_VALUE_MAX]}\n… {more:,} more characters"
 
 
 def _redact_tool_input_obj(tool_input: object) -> dict | None:
     """Structured tool input for schema-driven rendering — a dict with each string
-    value redacted (credentials + exfil URLs), bounded in total size.
+    value redacted (credentials + exfil URLs), then bounded (:func:`_bounded`).
 
     Returns ``None`` for non-dict input (ACP passes a string) so the UI falls back
     to the string ``input_preview`` exactly as before. The same redaction the
     string preview gets is applied per value, so shipping the object never leaks
-    what the string path would have stripped."""
+    what the string path would have stripped. Each value is bounded rather than the
+    whole object dropped past a size: the row keeps this object (``input_obj``), and a
+    call whose input ran long (a command carrying a script, a file write) was stored
+    only as the preview string, cut mid-JSON, which no reload could read back (#5729).
+    Redacted before it is bounded, so a cut can never split a secret past its mask."""
     if not isinstance(tool_input, dict):
         return None
 
     def _red(v: object) -> object:
         if isinstance(v, str):
-            return _redact_text(v)
+            return _bounded(_redact_text(v))
         if isinstance(v, dict):
             return {k: _red(x) for k, x in v.items()}
         if isinstance(v, list):
@@ -889,18 +906,20 @@ def _redact_tool_input_obj(tool_input: object) -> dict | None:
 
     try:
         obj = {str(k): _red(v) for k, v in tool_input.items()}
+        return obj if len(json.dumps(obj, default=str)) <= _TOOL_INPUT_OBJ_MAX else None
     except Exception:
         return None
-    # Bound the shipped size: if the serialized object is huge, drop it (the
-    # string preview is already capped + shipped alongside).
-    import json as _json
 
-    try:
-        if len(_json.dumps(obj, default=str)) > _TOOL_INPUT_OBJ_MAX:
-            return None
-    except (TypeError, ValueError):
-        return None
-    return obj
+
+def _keep_input(meta: dict, preview: str, obj: dict | None) -> None:
+    """Keep a tool call's input on its row's *meta*: the preview string when there is one, and the
+    object its card renders (``input_obj``, :func:`_redact_tool_input_obj`) when there is one, as
+    the opening frame's row keeps both. A reload then renders the card the turn showed: the
+    preview alone is cut at 4,000 characters, mid-JSON for a long input."""
+    if preview:
+        meta["input"] = preview
+    if obj is not None:
+        meta["input_obj"] = obj
 
 
 def served_model_phrase(model: str, chosen: str) -> str:
@@ -3787,6 +3806,7 @@ async def run_chat(
                             "tool_call_id": event.tool_call_id,
                             "purpose": _purpose,
                             "input": _input_preview,
+                            **({"input_obj": _input_obj} if _input_obj is not None else {}),
                             # The DECLARED tool kind, persisted. `_kind` was computed above
                             # and broadcast on the live `tool_call` WS frame, but never
                             # written here — so
@@ -3934,8 +3954,7 @@ async def run_chat(
                             and m.get("meta", {}).get("tool_call_id") == event.tool_call_id
                         ):
                             _meta = m.setdefault("meta", {})
-                            if _u_input:
-                                _meta["input"] = _u_input
+                            _keep_input(_meta, _u_input, _u_input_obj)
                             # only treat the update title as a detail when it
                             # actually differs from the tool name (some agents
                             # echo the name back), so we don't render "Terminal · Terminal".

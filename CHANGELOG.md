@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **A tool call cut off at the model's output limit says so on its card: "Cut off at the output limit after 5 minutes. Trying again." The card showed the note written for the model, and nothing said the reply had hit its limit or that the agent would try again. A second cut in the same turn ends the turn there, with Retry, rather than asking again at the same limit. The model-call log's row for a cut attempt now has its tokens and cost.**
+- **A tool card shows the same fields after a reload as while its turn ran, however long the call's input. A call whose input ran past 4,000 characters, a command carrying a script or a file write, was stored cut off mid-JSON and rebuilt from that. Each value of a call's input now keeps up to 8,000 characters and says how many more there were, and its secrets are masked before it is cut.**
 
 ## [0.3.1] — 2026-10-31
 

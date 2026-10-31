@@ -612,7 +612,7 @@ export function deriveActivity(turns: ChatTurn[]): ChatActivity {
   return { files: [...files.values()], sources: chatSources(turns) }
 }
 
-export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; message_id?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
+export interface HistMsg { role: string; content: string; ts?: string; variants?: { content: string; ts?: string }[]; variant_idx?: number; rewound?: { messages: { role: string; content: string; ts?: string }[]; ts?: string }[]; meta?: { tool_call_id?: string; approval_id?: string; input?: string; input_obj?: unknown; tool_input?: string; purpose?: string; risk?: string; kind?: string; blast_radius?: unknown; grant_agent?: string; reach?: string; deny_effect?: string; asked_for?: string; confirms?: unknown; output?: string; done?: boolean; tool?: string; detail?: string; resolved?: string; content_type?: string; raw_ref?: string; truncated?: boolean; original_length?: number; recovery_hints?: string[]; agent_error?: AgentError; ok?: boolean; pastes?: { seq: number; lines: number; content: string }[]; files?: string[]; image_delivery?: Record<string, 'image' | 'text'>; image_delivery_reason?: string; ran_prompt?: { name?: unknown; text?: unknown }; steered?: boolean; message_id?: string; original?: string; ui_label?: string; memory_citations?: MemoryCitation[]; skills_used?: SkillUsed[]; finish_reason?: string; model_substitution?: string; turn_telemetry?: { line?: string; model?: string; chosen?: string; duration_ms?: unknown }; context_fed?: { kind?: string; text?: string }; learned?: LearnedRecord[]; ungated?: string; note?: string; about_call?: string; question?: unknown } }
 
 /** The blocks a sent message of hers carries (`meta.pastes` on its row, `pastes` on a frame that
  *  tells a page of it), or undefined when it carries none. */
@@ -880,6 +880,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
         if (m.meta?.output != null) existing.output = m.meta.output
         if (m.meta?.done) existing.done = true
         if (m.meta?.input) existing.input = m.meta.input
+        if (m.meta?.input_obj) existing.inputObj = m.meta.input_obj
         // Only a POSITIVE declaration refines the kind, matching how the backend
         // correlates it across frames (`SeenToolCall`): a later row for the same
         // tool_call_id that omits the kind must not erase the one the opening row
@@ -895,7 +896,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
         const ungated = ungatedOf(m.meta)
         if (ungated) existing.ungated = ungated
       } else {
-        const seg: ToolSegment = { kind: 'tool', id, tool: toolName(m.meta, m.content), detail: m.meta?.detail, toolKind: m.meta?.kind, input: m.meta?.input, output: m.meta?.output, purpose: m.meta?.purpose, done: !!m.meta?.done, contentType: m.meta?.content_type, rawRef: m.meta?.raw_ref, truncated: m.meta?.truncated, originalLength: m.meta?.original_length, recoveryHints: m.meta?.recovery_hints, agentError: m.meta?.agent_error, ok: m.meta?.ok === false ? false : undefined, ungated: ungatedOf(m.meta) }
+        const seg: ToolSegment = { kind: 'tool', id, tool: toolName(m.meta, m.content), detail: m.meta?.detail, toolKind: m.meta?.kind, input: m.meta?.input, inputObj: m.meta?.input_obj, output: m.meta?.output, purpose: m.meta?.purpose, done: !!m.meta?.done, contentType: m.meta?.content_type, rawRef: m.meta?.raw_ref, truncated: m.meta?.truncated, originalLength: m.meta?.original_length, recoveryHints: m.meta?.recovery_hints, agentError: m.meta?.agent_error, ok: m.meta?.ok === false ? false : undefined, ungated: ungatedOf(m.meta) }
         toolIndex.set(id, seg)
         lastAssistant().segments.push(seg)
       }
