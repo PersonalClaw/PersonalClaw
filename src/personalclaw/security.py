@@ -1462,7 +1462,26 @@ class MaskingFormatter(logging.Formatter):
     came, and never left to the handler's error path, which writes a failing record's message and
     arguments to stderr unmasked; the sinks' handlers withhold on their own failures too
     (:class:`WithholdingHandler`).
+
+    *dated*: each line's time is the full local date and time, with milliseconds and the offset
+    (``2026-10-30 19:03:24.512-07:00``). ``gateway.log`` and the console a service manager keeps
+    write it (``cli``), and so does what the loop watch appends to them (``loop_watch``): the file
+    rotates at 2 MB, so a quiet install's holds weeks, and a line that named only its time of day
+    could be from any of them (#5728).
     """
+
+    def __init__(self, *args: Any, dated: bool = False, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._dated = dated
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        if not self._dated:
+            return super().formatTime(record, datefmt)
+        return (
+            datetime.fromtimestamp(record.created)
+            .astimezone()
+            .isoformat(sep=" ", timespec="milliseconds")
+        )
 
     def format(self, record: logging.LogRecord) -> str:
         try:
