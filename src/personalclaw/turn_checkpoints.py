@@ -170,6 +170,13 @@ CHANGED_BEFORE_BACKUP = "changed_before_backup"
 #: :func:`resume_incomplete_rewind`). A preview resumes a dead rewind in a worker thread, and two
 #: replays of one journal at once would race each other's renames.
 _REWIND_LOCK = threading.Lock()
+#: Held while a chat's old ``dashboard:`` folder joins its own (:func:`_join_legacy`).
+_JOIN_LOCK = threading.Lock()
+#: What became of one backup of the old folder as it joined (:func:`_join_entry`): it joined its
+#: turn, it was dropped on purpose (the newer of two backups of one file in a turn, or one whose
+#: bytes are gone from the old folder, which nothing writes any more), or it failed to join (its
+#: bytes could not be read), and the old folder stays for the next read to try again.
+_JOINED, _DROPPED, _FAILED = "joined", "dropped", "failed"
 
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -219,13 +226,35 @@ def _home() -> Path:
     return Path(config_dir())
 
 
+def store_key(session_key: str) -> str:
+    """The key a session's checkpoints are kept under, whichever form *session_key* comes in.
+
+    A dashboard chat goes by three keys. Its own (the chat runner's ``session.key``) opens each
+    turn and is the one a rewind reads. Its agent's runtime carries the ``dashboard:`` key, which
+    the native file tools back up under. Its transcript's file form is ``dashboard_<name>``. All
+    three are the chat's own key here, so the runner, the file tools and a rewind reach one folder
+    (#5726). Any other key, a loop's or another channel's, is kept as it is."""
+    from personalclaw.constants import DASHBOARD_SESSION_PREFIX, dashboard_key_from_file_form
+
+    key = dashboard_key_from_file_form((session_key or "").strip())
+    while key.startswith(DASHBOARD_SESSION_PREFIX):
+        key = key[len(DASHBOARD_SESSION_PREFIX) :]
+    return key or (session_key or "").strip()
+
+
 def session_slug(session_key: str) -> str:
-    """A filesystem-safe, collision-free directory name for *session_key*.
+    """A filesystem-safe, collision-free directory name for *session_key*, in any of its forms
+    (:func:`store_key`)."""
+    return _slug(store_key(session_key))
+
+
+def _slug(raw_key: str) -> str:
+    """The directory name for *raw_key* as given.
 
     The readable prefix keeps the store greppable by a human; the hash suffix is what makes
     it injective, so two keys that sanitize to the same characters still get separate trees.
     """
-    raw = (session_key or "unknown").strip()
+    raw = (raw_key or "unknown").strip()
     safe = _SLUG_RE.sub("-", raw).strip("-.")[:48] or "session"
     digest = hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:12]
     return f"{safe}-{digest}"
@@ -235,8 +264,20 @@ def store_root() -> Path:
     return _home() / CHECKPOINT_DIR_NAME
 
 
+def _store_folder(name: str) -> Path:
+    """The checkpoint store's folder *name*, refused with :class:`ValueError` unless its normalised
+    path sits under :func:`store_root`. Every name this module builds is a :func:`_slug`, one
+    ``[A-Za-z0-9._-]`` part, so none is refused; this is the check where a session key from a
+    request becomes a path, so no key reaches a folder outside the store."""
+    root = os.path.normpath(store_root())
+    folder = os.path.normpath(os.path.join(root, name))
+    if not folder.startswith(root + os.sep):
+        raise ValueError(f"{name!r} is not a folder of the checkpoint store")
+    return Path(folder)
+
+
 def session_dir(session_key: str) -> Path:
-    return store_root() / session_slug(session_key)
+    return _store_folder(session_slug(session_key))
 
 
 def _blob_dir(session_key: str) -> Path:
@@ -253,6 +294,108 @@ def _turn_dir(session_key: str, turn: int) -> Path:
 
 def _state_path(session_key: str) -> Path:
     return session_dir(session_key) / "state.json"
+
+
+def _legacy_dir(session_key: str) -> Path:
+    """Where a chat's file backups were kept before #5726: under its ``dashboard:`` key, apart
+    from its turns."""
+    from personalclaw.constants import DASHBOARD_SESSION_PREFIX
+
+    return _store_folder(_slug(DASHBOARD_SESSION_PREFIX + store_key(session_key)))
+
+
+def _join_legacy(session_key: str) -> int:
+    """Join the chat's old ``dashboard:`` folder into its own, and say how many backups joined.
+
+    Before #5726 the native file tools backed a chat's files up under its ``dashboard:`` key,
+    in a folder of their own, while its turns were opened under its own key, so a rewind found
+    none of them. Each backup joins the chat turn that was open when it was taken: the newest
+    turn that started at or before it. A turn already holding the same file keeps whichever
+    backup is older, which holds the bytes from before the turn first changed it. A backup older
+    than every turn the chat still keeps is dropped, as its turn was. The old folder goes once
+    everything in it has joined or been dropped so: a backup that failed to join keeps it, for the
+    next read to try again. Safe to run again after a stop: a backup that has joined is
+    recognised and left as it is. A chat with no folder of its own takes the old one whole."""
+    old, new = _legacy_dir(session_key), session_dir(session_key)
+    if old == new or not old.is_dir():
+        return 0
+    with _JOIN_LOCK:
+        if not old.is_dir():
+            return 0
+        if not new.exists():
+            old.rename(new)
+            state = _read_json(_state_path(session_key), {})
+            state["session_key"] = store_key(session_key)
+            _write_json(_state_path(session_key), state)
+            logger.info("turn_checkpoints: %s's backups moved to its own folder", session_key)
+            return sum(len(m.get("files") or []) for m in _manifests(new))
+        opened = sorted(
+            (float(m.get("started_at") or 0), int(m.get("turn") or 0)) for m in _manifests(new)
+        )
+        joined = failed = 0
+        for man in _manifests(old):
+            for entry in man.get("files") or []:
+                if not isinstance(entry, dict) or not entry.get("path"):
+                    continue
+                at = float(entry.get("captured_at") or man.get("started_at") or 0)
+                turn = next((t for started, t in reversed(opened) if started <= at), 0)
+                if not turn:
+                    continue  # older than every turn the chat keeps: dropped with its turn
+                became = _join_entry(session_key, old, turn, entry, man.get("roots"))
+                if became == _JOINED:
+                    joined += 1
+                elif became == _FAILED:
+                    failed += 1
+        if failed:
+            logger.warning(
+                "turn_checkpoints: %d of %s's backups could not join its turns; its old folder"
+                " is kept for the next read",
+                failed,
+                session_key,
+            )
+            return joined
+        shutil.rmtree(old, ignore_errors=True)
+        logger.info("turn_checkpoints: %d of %s's backups joined its turns", joined, session_key)
+        return joined
+
+
+def _manifests(folder: Path) -> list[dict]:
+    return [_read_json(t / "manifest.json", {}) for t in sorted(folder.glob("turn-*"))]
+
+
+def _join_entry(session_key: str, old: Path, turn: int, entry: dict, roots: object) -> str:
+    """Put *entry*, a backup from the old folder *old*, into the chat's *turn*; its bytes first.
+    Returns what became of it: ``_JOINED``, ``_DROPPED`` or ``_FAILED``."""
+    sha = entry.get("sha256")
+    if sha:
+        blob = _blob_dir(session_key) / f"{sha}.bin"
+        if not blob.exists():
+            try:
+                data = (old / "blobs" / f"{sha}.bin").read_bytes()
+            except FileNotFoundError:
+                logger.info("turn_checkpoints: a backup of %s had no bytes left", session_key)
+                return _DROPPED  # gone for good: no read would ever find them
+            except OSError:
+                logger.warning(
+                    "turn_checkpoints: a backup of %s could not be read", session_key, exc_info=True
+                )
+                return _FAILED
+            blob.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write_bytes(blob, data, mode=0o600)
+    man_path = _turn_dir(session_key, turn) / "manifest.json"
+    man = _read_json(man_path, {"turn": turn, "files": []})
+    files = [f for f in man.get("files") or [] if isinstance(f, dict)]
+    held = next((f for f in files if f.get("path") == entry["path"]), None)
+    if held is not None:
+        if float(held.get("captured_at") or 0) <= float(entry.get("captured_at") or 0):
+            return _DROPPED  # the turn keeps the older backup (or already holds this one)
+        files.remove(held)
+    files.append(entry)
+    man["files"] = files
+    kept: list = man["roots"] if isinstance(man.get("roots"), list) else []
+    man["roots"] = kept + [r for r in (roots if isinstance(roots, list) else []) if r not in kept]
+    _write_json(man_path, man)
+    return _JOINED
 
 
 # ── small JSON helpers (reads tolerate missing/corrupt) ─────────────────────────
@@ -472,6 +615,8 @@ def begin_turn(session_key: str, *, cwd: Path | str | None = None) -> int:
     if not b.enabled:
         return 0
     try:
+        # A join that fails must not cost the turn its checkpoint: it is tried again next read.
+        _join_quietly(session_key)
         base = Path(cwd).resolve() if cwd else None
         identity = None
         if base is not None and base.is_dir():
@@ -719,6 +864,15 @@ def _note_not_captured(session_key: str, target: Path, reason: str, *, cwd: str)
 # ── caps + pruning ─────────────────────────────────────────────────────────────
 
 
+def _join_quietly(session_key: str) -> None:
+    """:func:`_join_legacy` for a reader: a join that fails leaves the old folder for the next
+    read, and never fails the read."""
+    try:
+        _join_legacy(session_key)
+    except Exception:  # noqa: BLE001
+        logger.warning("turn_checkpoints: joining %s's backups failed", session_key, exc_info=True)
+
+
 def _turn_numbers(session_key: str) -> list[int]:
     sd = session_dir(session_key)
     if not sd.is_dir():
@@ -745,6 +899,7 @@ def recorded_file_entries(session_key: str, *, max_turns: int = 20) -> list[dict
     returned unchanged rather than reshaped: the account derives from recorded facts, and a
     reshaping pass here would be the first place to quietly reinterpret one.
     """
+    _join_quietly(session_key)
     out: list[dict] = []
     for t in _turn_numbers(session_key)[-max(1, max_turns) :]:
         man = _read_json(_turn_dir(session_key, t) / "manifest.json", {})
@@ -849,19 +1004,24 @@ def _make_room(session_key: str, incoming: int, b: _Bounds, *, keep_turn: int) -
 
 
 def prune_session(session_key: str) -> bool:
-    """Delete the whole checkpoint tree for *session_key* (called on session delete)."""
-    sd = session_dir(session_key)
-    if not sd.exists():
-        return False
-    shutil.rmtree(sd, ignore_errors=True)
-    return not sd.exists()
+    """Delete the whole checkpoint tree for *session_key* (called on session delete), the old
+    ``dashboard:`` folder of a chat's backups included (:func:`_join_legacy`)."""
+    gone = False
+    for sd in {session_dir(session_key), _legacy_dir(session_key)}:
+        if sd.exists():
+            shutil.rmtree(sd, ignore_errors=True)
+            gone = gone or not sd.exists()
+    return gone
 
 
 def prune_orphans(live_session_keys: list[str] | set[str]) -> int:
-    """Delete checkpoint trees whose session no longer exists. Returns trees removed."""
+    """Delete checkpoint trees whose session no longer exists. Returns trees removed. A live
+    chat's old ``dashboard:`` folder joins its own first, so its backups stay."""
     root = store_root()
     if not root.is_dir():
         return 0
+    for k in live_session_keys:
+        _join_quietly(k)
     keep = {session_slug(k) for k in live_session_keys}
     removed = 0
     for child in root.iterdir():
@@ -967,6 +1127,7 @@ def preview_rewind(session_key: str, turn: int) -> RewindPreview:
     *turn* with no backup, which the rewind leaves as it is (:func:`_name_unbacked_changes`).
     The second half walks the folder, so this is a worker thread's work, never the event loop's.
     """
+    _join_quietly(session_key)
     pv = _backed_up_preview(session_key, turn)
     if pv.turns_affected:
         _name_unbacked_changes(session_key, pv)
@@ -1370,8 +1531,10 @@ def apply_rewind(
 
     Acts on the backups alone (:func:`_backed_up_preview` when no *preview* is given), read as
     it runs, so it never walks the folder: a caller on the event loop gets a restore no turn can
-    start part way through.
+    start part way through. A chat's old ``dashboard:`` folder has joined its own by then: the
+    preview a rewind is confirmed from joins it, and this joins one no preview did.
     """
+    _join_quietly(session_key)
     with _REWIND_LOCK:
         return _apply_rewind(session_key, turn, preview)
 

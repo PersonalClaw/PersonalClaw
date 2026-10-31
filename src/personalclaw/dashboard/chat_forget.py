@@ -113,10 +113,10 @@ def purge_chat(
     transcript stayed.
 
     ``keys`` are every form of the chat's key the per-session stores may have been written under
-    (a turn's tool results and checkpoints are keyed by the canonical ``dashboard:`` key, some
-    paths by the bare name), and ``attachments`` the attached files to delete with it — only those
-    inside an attachment folder are touched. Best-effort, step by step: one store's failure never
-    keeps the others' traces.
+    (a turn's tool results are keyed by the canonical ``dashboard:`` key, some paths by the bare
+    name; the checkpoint store reads every form as the chat's own key), and ``attachments``
+    the attached files to delete with it — only those inside an attachment folder are touched.
+    Best-effort, step by step: one store's failure never keeps the others' traces.
     """
     kept = False
     if state.conversation_log:
