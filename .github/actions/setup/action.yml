@@ -65,9 +65,14 @@ runs:
             dash) ;;
             ffmpeg) ;;
             docker) ;;
-            *) echo "the setup action installs tmux, shellcheck and dash, and checks docker, not $tool" >&2; exit 1 ;;
+            *) echo "the setup action installs tmux, shellcheck, dash and ffmpeg, and checks docker, not $tool" >&2; exit 1 ;;
           esac
         done
+        # Each apt-get fetch is retried, and an install that still fails is the runner's package
+        # mirror, not the job's code: it fails this step under an `infrastructure` title, before
+        # any test runs, so a flaky mirror never reads as a test red.
+        apt_get() { sudo apt-get -o Acquire::Retries=3 "$@"; }
+        infra() { echo "::error title=infrastructure::$1"; exit 1; }
         updated=""
         for tool in $PROGRAMS; do
           if command -v "$tool" >/dev/null 2>&1; then continue; fi
@@ -75,9 +80,13 @@ runs:
           if [ "$tool" = docker ]; then echo "this runner image has no docker" >&2; exit 1; fi
           case "$RUNNER_OS" in
             Linux)
-              if [ -z "$updated" ]; then sudo apt-get update -qq; updated=yes; fi
-              sudo apt-get install -y --no-install-recommends "$tool" ;;
-            macOS) brew install "$tool" ;;
+              if [ -z "$updated" ]; then
+                apt_get update -qq || infra "apt-get update failed after its retries: $tool is not installed"
+                updated=yes
+              fi
+              apt_get install -y --no-install-recommends "$tool" ||
+                infra "apt-get could not install $tool after its retries" ;;
+            macOS) brew install "$tool" || infra "brew could not install $tool" ;;
             *) echo "no installer known for $tool on RUNNER_OS=$RUNNER_OS" >&2; exit 1 ;;
           esac
           command -v "$tool"

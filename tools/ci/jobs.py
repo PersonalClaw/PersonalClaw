@@ -203,6 +203,19 @@ PROGRAMS: dict[str, str] = {
     "docker": "docker",
 }
 
+
+#: What a toolchain word's program makes real: a job that names the word gets the variable that
+#: turns its tests' skip, for want of the program, into a failure, so a job that installs it is
+#: never green over tests that skipped. Set over the job's own env and each step's, so neither can
+#: unset it (#3918).
+REQUIRES: dict[str, tuple[str, str]] = {"ffmpeg": ("PERSONALCLAW_REQUIRE_FFMPEG", "1")}
+
+
+def required_env(job: Job) -> dict[str, str]:
+    """The variables :data:`REQUIRES` gives *job*, for each word its toolchain names."""
+    return {name: value for word, (name, value) in REQUIRES.items() if word in job.toolchain}
+
+
 #: The partner checkouts, by external input: where CI checks each out, under the root.
 PARTNERS: dict[str, str] = {"apps-partner": ".ci-apps"}
 
@@ -1911,7 +1924,12 @@ def run_one(
             (
                 argv,
                 step.workdir,
-                {**env, **_helper_env(argv, host), **_command_uv(job, host, scratch)},
+                {
+                    **env,
+                    **required_env(job),
+                    **_helper_env(argv, host),
+                    **_command_uv(job, host, scratch),
+                },
             )
         )
 
@@ -2342,7 +2360,10 @@ def _capabilities(
     home = host.root / WORK / "no-home"
     common = {**_base_env(job, host, options), **job.env}
     readings = []
-    for environ in [{**common, **step.env} for step in job.command] or [common]:
+    required = required_env(job)
+    for environ in [{**common, **step.env, **required} for step in job.command] or [
+        {**common, **required}
+    ]:
         seen = frozenset(environ.items())
         if seen not in memo:
             memo[seen] = dict(fingerprint(host.root, path=host.path, environ=environ, home=home))

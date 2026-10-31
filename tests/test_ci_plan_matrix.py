@@ -289,9 +289,10 @@ def test_an_entry_names_the_programs_the_setup_action_puts_on_path() -> None:
     by_id = {e["id"]: e for e in _real_entries("merge")}
     # run-job installs uv-sync, npm-ci and chromium itself and finds every other program on
     # PATH, so the setup action installs the ones a runner image may lack, in the catalogue's
-    # order: the installer's linters for static, tmux for the suites' real-daemon leg.
+    # order: the installer's linters for static, tmux for the suites' real-daemon leg, and on the
+    # Linux suite ffmpeg for its video tests (#3918; the macOS suite keeps their skip).
     assert by_id["static"]["programs"] == ["shellcheck", "dash"]
-    assert by_id["python-suite"]["programs"] == ["tmux"]
+    assert by_id["python-suite"]["programs"] == ["tmux", "ffmpeg"]
     assert by_id["python-suite-macos"]["programs"] == ["tmux"]
     assert by_id["web-unit"]["programs"] == []
 

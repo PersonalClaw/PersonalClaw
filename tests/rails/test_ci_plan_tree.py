@@ -229,31 +229,10 @@ _INPUT_ROWS = {
     "namespace-sandbox": ("src/personalclaw/sandbox.py", None),
 }
 
-#: The one merge-tier job whose catalogue entry lands in the merge after this rail's row for it
-#: (#3918). main's copy of this rail judges that merge's head, so the row is here first. Only
-#: while the entry is missing from the catalogue may the rows name it, and its own case skips;
-#: the merge that adds the entry deletes this allowance, and the rows match the tiers exactly.
-_FOLLOWER = "namespace-sandbox"
-
-
-def _named_rows(rows: set[str], catalogue_ids: set[str]) -> set[str]:
-    """The rows the tiers must match: all of them, less the follower while the catalogue has no
-    entry for it."""
-    return rows - {_FOLLOWER} if _FOLLOWER not in catalogue_ids else rows
-
 
 def test_the_rows_name_every_job_of_the_change_and_merge_tiers() -> None:
     planned = {j.id for t in ("change", "merge") for j in _CAT.tier(t)}
-    assert _named_rows(set(_INPUT_ROWS), {j.id for j in _CAT.jobs}) == planned
-
-
-def test_only_the_named_follower_may_be_a_row_ahead_of_its_entry() -> None:
-    """Planted both ways: the follower's row is let through only while its entry is missing,
-    and a row for any other job the catalogue lacks still fails the match."""
-    planned = {"static", "audit"}
-    assert _named_rows(planned | {_FOLLOWER}, planned) == planned
-    assert _named_rows(planned | {_FOLLOWER}, planned | {_FOLLOWER}) != planned
-    assert _named_rows(planned | {"some-other-job"}, planned) != planned
+    assert set(_INPUT_ROWS) == planned
 
 
 def test_the_catalogue_names_the_pinned_browser_run_once() -> None:
@@ -278,8 +257,6 @@ def test_the_pinned_browser_run_is_read_under_either_name_and_only_one(
 
 @pytest.mark.parametrize("job_id", sorted(_INPUT_ROWS))
 def test_a_declared_input_schedules_its_job(job_id: str) -> None:
-    if job_id == _FOLLOWER and job_id not in {j.id for j in _CAT.jobs}:
-        pytest.skip(f"{job_id}'s catalogue entry lands in the next merge (#3918)")
     reached, missed = _INPUT_ROWS[job_id]
     tier = "merge" if job_id in _MERGE else "change"
     p = _plan(reached, tier=tier)

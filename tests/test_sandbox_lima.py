@@ -1,22 +1,21 @@
 """Tests for the ``lima`` sandbox provider.
 
-Two layers:
+One layer:
 
 * **Pure-unit** (run everywhere, no Lima): command construction, host↔guest path translation,
   declared-env baking, the app-provider registration contract (``lima`` is NOT a core builtin),
   and the typed, reasoned no-Lima refusal. These are the command-construction + failure-
   honesty guarantees, asserted without a VM.
-* **Integration** (skipped unless ``limactl`` + a Running instance are present, and the run sets
-  ``PERSONALCLAW_TEST_CONTAINER_RUNTIME=1``: it runs a command in this machine's own VM,
-  ``tests/container_runtime.py``): a real ``limactl shell`` proving path translation end to end.
+* There is no integration layer. A real ``limactl shell`` run needed a Running Lima VM on the
+  machine and the container-runtime opt-in, so it ran on no CI job and was a skip everywhere
+  else: a check that could not fail (#3918). What it showed, the guest running in the translated
+  workdir, is the command construction and path translation the unit tests above assert.
 """
 
 from __future__ import annotations
 
-import asyncio
 import os
 
-import container_runtime
 import pytest
 
 from personalclaw.sandbox_providers import (
@@ -34,7 +33,6 @@ from personalclaw.sandbox_providers.lima import (
     LimaSandboxProvider,
     build_lima_argv,
     create_provider,
-    lima_available,
     lima_instance,
     translate_path,
 )
@@ -178,34 +176,6 @@ def test_available_flips_with_the_probe(monkeypatch):
         lambda instance, *, refresh: (True, ""),
     )
     assert LimaSandboxProvider().available() is True
-
-
-# ── integration (real limactl + Running instance) ───────────────────────────────
-
-# Asked as the module is imported, so it asks the opt-in first: `limactl list` reaches this
-# machine's VMs, and only a run that opted in may.
-_HAS_LIMA = bool(container_runtime.available("limactl")) and lima_available(refresh=True)
-_lima_only = pytest.mark.skipif(
-    not _HAS_LIMA,
-    reason=container_runtime.skip_reason(("limactl",)) or "no Running Lima instance",
-)
-
-
-@_lima_only
-@pytest.mark.asyncio
-async def test_guest_runs_with_translated_workdir(tmp_path):
-    """A real ``limactl shell`` runs in the (identity-mapped) guest workdir and returns output."""
-    provider = create_provider()
-    handle = provider.wrap(SandboxSpec(workspace_dir=str(tmp_path)), ["pwd"])
-    proc = await handle.exec(
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-    out, _ = await proc.communicate()
-    handle.cleanup()
-    assert proc.returncode == 0, out.decode()
-    assert translate_path(str(tmp_path)) in out.decode()
 
 
 def test_instance_env_override(monkeypatch):

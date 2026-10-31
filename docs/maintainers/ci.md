@@ -640,9 +640,12 @@ does not install
 (`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`, `ffmpeg`, `docker`), space-separated,
 as the plan's matrix gives them: every name is checked before anything installs, and any other
 name fails the step with nothing installed (none is read as a pattern); each one PATH lacks is
-then installed from the runner's package manager (`apt-get` on Linux, `brew` on macOS, nothing
-elsewhere), except `docker`, which is the runner image's and only checked for, so a runner
-without it fails the step; and empty, the default, installs none. `docker` is in the vocabulary
+then installed from the runner's package manager (`apt-get` on Linux, after one `apt-get update`
+and with `--no-install-recommends` and each fetch retried 3 times; `brew` on macOS; nothing
+elsewhere). An install that still fails fails the step under an `infrastructure` title before any
+test runs, so a flaky mirror never reads as a test red. `docker` is never installed: it is the
+runner image's and only checked for, so a runner without it fails the step. Empty, the default,
+installs none. `docker` is in the vocabulary
 before any job names it because the plan of a pull request is made by `main`'s `tools/ci`
 (`pr.yml`'s plan step): a toolchain word a job uses must be on `main` before the change that
 uses it, or the planner refuses that change's catalogue. `ffmpeg` (which brings `ffprobe`) is in the
@@ -1020,7 +1023,8 @@ reads it too, but it is what the Nix workflow builds and checks, a workflow of i
 catalogue job, so a change to it alone is named by no input and plans the whole tier.
 
 The list does not decide whether `python-suite` runs: it is a security job, so every plan holds
-it, as every plan holds `python-suite-macos` and `browse-live`. It decides which paths are known.
+it, as every plan holds `python-suite-macos`, `browse-live` and `namespace-sandbox`. It decides
+which paths are known.
 Because it names `src/`, a `src/` diff is known: the plan is not the whole tier, and
 `apps-contract` runs only when the diff reaches one of its inputs. So two kinds of rule now
 decide plans alone, and `tests/rails/test_ci_plan_tree.py` holds each across the tree:
@@ -1061,8 +1065,8 @@ that is no job's input but changes a job's result, and give it a reason that say
 `tools/ci/verdict.py` is the one function that turns a plan's job results into green or red. It
 is green only when the plan is not empty, every planned job has a result, every result for it on
 every attempt is `success`, and every result names the candidate's head and partner revisions.
-A per-job record names only the partners its own job read (`apps-contract`'s names the apps
-checkout, every other job's names none), so the verdict is given each planned key's partners
+A per-job record names only the partners its own job read (`apps-contract`'s and `browse-live`'s
+name the apps checkout, every other job's names none), so the verdict is given each planned key's partners
 (`--key-partners`, which the plan reads from the job's catalogue entry: its `revision` inputs),
 and a record must name exactly its key's, each one the candidate names, at the candidate's
 revision. Given none, a record is held to the candidate's partners exactly. A `needs` result
@@ -2383,6 +2387,9 @@ changes to tests, `tools/ci`, `scripts`, docs and the web.
   and the run is partial, and nothing of it, its install included, runs. The word is on `main`
   before the job that names it, as `docker` was. A machine of your own keeps the restriction:
   there the sandbox needs an AppArmor profile that allows user namespaces.
+  `namespace-sandbox` is the job that names it: the three files with namespace cases, run with
+  `PERSONALCLAW_REQUIRE_NAMESPACE_SANDBOX=1`, so a namespace the host still withholds is an error
+  there, never a skip (`tests/namespace_sandbox.py`).
 - **Electron's sandbox.** Off GitHub, a job whose toolchain names `electron` cannot run on a
   Linux host whose kernel withholds the user namespaces Chromium's sandbox needs: Ubuntu 24.04's
   `kernel.apparmor_restrict_unprivileged_userns = 1` (`tools/ci/sandbox_host.py`). Electron then

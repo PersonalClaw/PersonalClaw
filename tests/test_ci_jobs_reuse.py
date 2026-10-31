@@ -589,6 +589,24 @@ def test_each_job_has_the_capabilities_of_its_own_environment(repo, tmp_path):
     assert caps["web-unit"]["switch:PERSONALCLAW_TEST_CONTAINER_RUNTIME"] == "unset"
 
 
+def test_a_job_that_names_ffmpeg_reads_its_require_switch_as_set_and_one_without_as_unset(
+    repo, tmp_path, monkeypatch
+):
+    """The fingerprint reads each step's environment as run-job gives it, the variables a
+    toolchain word requires included (jobs.REQUIRES), so the switch run-job sets is read."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "ffmpeg").write_text("#!/bin/sh\n")
+    (bin_dir / "ffmpeg").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', os.defpath)}")
+    video = dataclasses.replace(_program("video", "pass"), toolchain=("ffmpeg",))
+    plain = _program("web-unit", "pass")
+    _, _, _, receipt = _tier(repo, tmp_path, video, plain, fingerprint=_reads_switches)
+    caps = {j["id"]: j["inputs"]["capabilities"] for j in receipt["jobs"]}
+    assert caps["video"]["switch:PERSONALCLAW_REQUIRE_FFMPEG"] == "set:1"
+    assert caps["web-unit"]["switch:PERSONALCLAW_REQUIRE_FFMPEG"] == "unset"
+
+
 def test_a_switch_one_step_sets_is_read_as_set_for_that_step(repo, tmp_path):
     """rails-checks' pytest step sets PERSONALCLAW_REQUIRE_NPM_TREE=1 in its own env: that step's
     capabilities read it set, the others' unset."""

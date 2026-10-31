@@ -77,6 +77,12 @@ _NO_APPS = (
     "skip and the rest run (#3918)"
 )
 
+_NO_NAMESPACES = (
+    "namespace-sandbox runs it on a runner whose user-namespace restriction it lifts, where its "
+    "namespace cases must run; the shards' run is its run everywhere else, where the host "
+    "withholds the namespaces and those cases skip, and its macOS and other cases run (#3918)"
+)
+
 #: Files a job runs by name that the shards keep collecting on purpose, each with why.
 #: ``(job, file): reason``, the job a catalogue id or ``<workflow> <job>``. An exemption whose
 #: file is no longer a copy fails, so the list shrinks with the tree.
@@ -93,6 +99,19 @@ EXEMPT_FILE_COPIES: Mapping[tuple[str, str], str] = {
     ),
     ("browse-live", "tests/test_browse_safety_script.py"): (
         f"{_NO_BROWSER}; it is security-marked, so no leg selects it out"
+    ),
+    ("namespace-sandbox", "tests/test_a_private_chat_changes_no_memory_document.py"): (
+        f"{_NO_NAMESPACES}; it is security-marked, so no leg selects it out"
+    ),
+    ("namespace-sandbox", "tests/test_a_temporary_chat_reads_no_memory_document.py"): (
+        _NO_NAMESPACES
+    ),
+    ("namespace-sandbox", "tests/test_the_home_fence_holds_its_names.py"): _NO_NAMESPACES,
+    ("browse-live", "tests/test_web_fetch.py"): (
+        "browse-live runs it over the first-party apps checkout, where its web-tools cases must "
+        "run; the shards' run is its run on every platform, in a core clone that has no apps, "
+        "where those cases skip and the rest run (#3918); it is security-marked, so no leg "
+        "selects it out"
     ),
 }
 
