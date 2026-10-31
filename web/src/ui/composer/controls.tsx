@@ -55,7 +55,8 @@ export function PillButton({ icon, label, dimension, open, toggle, wide = false,
       // otherwise announce "Agent: Agent".
       aria-label={label === dimension ? dimension : `${dimension}: ${label}`}
       data-type="label-s"
-      className={cx('flex min-w-0 items-center gap-1.5 h-9 rounded-pill px-m transition-colors', wide ? 'max-w-[var(--composer-pill-max-wide,16rem)]' : 'max-w-[var(--composer-pill-max,160px)]',
+      // The label gives up width when the row is tight (#5718); the icon keeps its size.
+      className={cx('flex min-w-0 items-center gap-1.5 h-9 rounded-pill px-m transition-colors [&>svg]:shrink-0', wide ? 'max-w-[var(--composer-pill-max-wide,16rem)]' : 'max-w-[var(--composer-pill-max,160px)]',
         open ? 'bg-surface-high text-on-surface'
           : disabledReason ? 'cursor-not-allowed text-on-surface-var opacity-40'
             : 'text-on-surface-var hover:bg-surface-high active:bg-surface-high')}
@@ -193,6 +194,7 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, se
   // chain served the turn, so a binding passed over looked like one that was used.
   const modelName = (m: string) => (data?.models ?? []).find((x) => x.name === m)?.model_name || m
   const modelLabel = onAuto ? (served ? `Auto · ${served.model}` : 'Auto') : modelName(model)
+  // The pill's hover text: where Auto ran, or else its label whole, which a tight row truncates (#5718).
   const pillTitle = showModel && onAuto && served
     ? `Auto — the latest turn ran on ${served.model}${served.chosen ? `, ${served.chosen}` : ''}.`
     : undefined
@@ -256,7 +258,7 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, se
       <Popover portal width={300} openSignal={openSignal} className="flex min-w-0" trigger={(open, toggle) => (
         <>
           <PillButton icon={showModel ? <Cpu size={16} strokeWidth={2} /> : <Bot size={16} strokeWidth={2} />} label={label} dimension={dimension}
-            open={open} wide={(showAgent && showModel) || (onAuto && !!served)} title={pillTitle}
+            open={open} wide={(showAgent && showModel) || (onAuto && !!served)} title={pillTitle ?? label}
             toggle={() => { if (!open) { setNote(''); setEffortOpen(false) } asking.current++; setQuestion(null); toggle() }} />
           {/* However the menu closes (Escape, a click outside), a question it was putting goes with
               it, and an answer read for it later switches nothing. */}

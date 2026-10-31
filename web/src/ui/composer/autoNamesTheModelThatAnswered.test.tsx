@@ -41,7 +41,8 @@ describe("the model pill's Auto names the model the latest turn ran on", () => {
     const data = { models: [{ name: 'plan-models:flat-chat', model_name: 'flat-chat', provider: 'plan-models' }] }
     render(<AgentModelPill data={data as never} agent="researcher" model="plan-models:flat-chat" effort="" onSelect={vi.fn()} served={SERVED} />)
     const pill = screen.getByRole('button', { name: 'Agent and model: researcher · flat-chat' })
-    expect(pill.getAttribute('title')).toBeNull()
+    // Its hover text is its own label whole, which a tight footer truncates (#5718), not the latest turn.
+    expect(pill.getAttribute('title')).toBe('researcher · flat-chat')
   })
 
   it('its Auto row names the chain the next turn takes', () => {
