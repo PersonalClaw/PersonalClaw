@@ -24,6 +24,7 @@ from typing import Any
 
 from aiohttp import web
 
+from personalclaw.request_validation import json_object_body
 from personalclaw.sel import sel_log_async
 from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_refusal
 
@@ -110,11 +111,8 @@ async def api_app_account_add(request: web.Request) -> web.Response:
     if isinstance(target, web.Response):
         return target
     name, _ = target
-    try:
-        body = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
-    label = body.get("label", "") if isinstance(body, dict) else None
+    body = await json_object_body(request)
+    label = body.get("label", "")
     if not isinstance(label, str) or len(label.strip()) > _LABEL_MAX:
         return web.json_response(
             {"error": f"label must be a string of at most {_LABEL_MAX} characters"}, status=400
@@ -195,10 +193,9 @@ async def api_app_account_config_put(request: web.Request) -> web.Response:
     if isinstance(account, web.Response):
         return account
     schema = manifest.settings
-    try:
-        values = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+    # A save is the whole form: no body is refused, never read as an empty form that clears
+    # every setting.
+    values = await json_object_body(request, empty_ok=False)
     stored = load_stored_account(name, account)
     # Written only over the copy the form was built from; no `await` between this check and the
     # write below.
@@ -212,8 +209,7 @@ async def api_app_account_config_put(request: web.Request) -> web.Response:
             _sel_log, "apps.config", refusal_outcome(stale), _named(name, account), request
         )
         return stale
-    if isinstance(values, dict):
-        values = preserve_unchanged_secrets(values, stored, schema)
+    values = preserve_unchanged_secrets(values, stored, schema)
     try:
         write_account_config(name, _shown(account), values, schema)
     except AppConfigError as exc:
@@ -294,10 +290,9 @@ async def api_app_account_capability_config_put(request: web.Request) -> web.Res
     if isinstance(found, web.Response):
         return found
     capability, schema = found
-    try:
-        values = await request.json()
-    except Exception:
-        return web.json_response({"error": "invalid JSON"}, status=400)
+    # A save is the whole form: no body is refused, never read as an empty form that clears
+    # every setting.
+    values = await json_object_body(request, empty_ok=False)
     stored = load_stored_capability(name, capability, account)
     # Written only over the copy the form was built from; no `await` between this check and the
     # write below.
@@ -316,8 +311,7 @@ async def api_app_account_capability_config_put(request: web.Request) -> web.Res
             request,
         )
         return stale
-    if isinstance(values, dict):
-        values = preserve_unchanged_secrets(values, stored, schema)
+    values = preserve_unchanged_secrets(values, stored, schema)
     try:
         write_capability_config(name, capability, values, schema, account)
     except AppConfigError as exc:
