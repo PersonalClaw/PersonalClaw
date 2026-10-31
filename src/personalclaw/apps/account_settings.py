@@ -104,3 +104,132 @@ def settings_refusals(manifest: AppManifest) -> list[str]:
             else:
                 declared_by[name] = path
     return errors
+
+
+# ── what a capability needs of its account, and an account's connections (#3842) ─────────────
+
+
+def _required_from(manifest: AppManifest, provider: Any) -> dict[str, Any]:
+    """The properties a capability's ``requiresAccountFields`` may name: the account's, or a
+    ``multiInstance`` capability's own instance schema."""
+    return _properties(provider.settingsSchema if provider.multiInstance else manifest.settings)
+
+
+def account_field_refusals(manifest: AppManifest) -> list[str]:
+    """What the manifest may not do with ``requiresAccountFields`` and ``connections``, each
+    naming the field."""
+    from personalclaw.apps.manifest import KEBAB_RE
+
+    errors: list[str] = []
+    for path, provider in manifest._provider_paths():
+        if "requiresAccountFields" in provider.not_lists:
+            errors.append(f"{path}.requiresAccountFields must be a list of account setting names")
+            continue
+        if not provider.requiresAccountFields:
+            continue
+        if not provider.multiInstance and not manifest.settings:
+            errors.append(
+                f"{path}.requiresAccountFields: an app with no account settings has no account "
+                "fields to require; declare them in settings"
+            )
+            continue
+        declared = _required_from(manifest, provider)
+        where = f"{path}.settingsSchema" if provider.multiInstance else "settings"
+        for name in provider.requiresAccountFields:
+            if name not in declared:
+                errors.append(
+                    f"{path}.requiresAccountFields names {name}, which {where} does not declare"
+                )
+    if "connections" in manifest.not_lists:
+        return [*errors, "connections must be a list of {id, label} objects"]
+    if not manifest.connections:
+        return errors
+    if not manifest.settings:
+        errors.append(
+            "connections are an account's, and only an app that declares account settings has "
+            "accounts; declare settings, or leave connections out"
+        )
+    if len(manifest.connections) < 2:
+        errors.append(
+            "connections lists an account's connections when it has more than one: with one, "
+            "leave it out and the account's health is that connection's"
+        )
+    seen: set[str] = set()
+    for i, entry in enumerate(manifest.connections):
+        cid = entry.get("id") if isinstance(entry, dict) else None
+        label = entry.get("label") if isinstance(entry, dict) else None
+        if not isinstance(cid, str) or not KEBAB_RE.match(cid):
+            errors.append(f"connections[{i}].id must be a kebab-case id, got: {cid!r}")
+        elif cid in seen:
+            errors.append(f"connections[{i}].id {cid!r} is declared twice")
+        else:
+            seen.add(cid)
+        if not isinstance(label, str) or not label.strip():
+            errors.append(f"connections[{i}].label must name the connection in plain words")
+    return errors
+
+
+def connection_ids(manifest: AppManifest) -> list[str]:
+    """The ids of an account's connections, in order; none when it has one."""
+    return [str(c["id"]) for c in manifest.connections if isinstance(c, dict) and c.get("id")]
+
+
+def _is_set(value: Any, held: set[str]) -> bool:
+    """Whether a stored setting holds something: a secret's reference counts when the credential
+    store holds its key, so no value is read."""
+    from personalclaw.config import secret_refs
+
+    key = secret_refs.ref_key(value)
+    if key is not None:
+        return key in held
+    return value not in (None, "", [], {})
+
+
+def missing_account_fields(
+    app: str,
+    capability: str,
+    account: str | None = None,
+    manifest: AppManifest | None = None,
+    held: set[str] | None = None,
+) -> list[str]:
+    """The fields *capability* requires (``requiresAccountFields``) that *account* (the first,
+    with ``None``) leaves empty, in the order declared. *held* is the credential store's key
+    names, when the caller has read them already (a list of every app's rows reads them once).
+
+    None for a capability that requires nothing, or a ``multiInstance`` one: its accounts are
+    its instances, and its ``requiresAccountFields`` is checked against its instance schema but
+    not enforced yet. Each instance's runs under its account when each account runs its own
+    (#3843), so an app should not count on it before then."""
+    from personalclaw.config.credentials import credential_names
+    from personalclaw.providers.settings import load_stored_account
+
+    if manifest is None:
+        from personalclaw.apps.app_manager import _manifest_of
+
+        manifest = _manifest_of(app)
+    if manifest is None:
+        return []
+    try:
+        ids = manifest.capability_ids()
+    except ValueError:
+        return []
+    provider = dict(zip(ids, manifest.all_providers())).get(capability)
+    if provider is None or provider.multiInstance or not provider.requiresAccountFields:
+        return []
+    stored = load_stored_account(app, account)
+    if held is None:
+        held = set(credential_names())
+    return [f for f in provider.requiresAccountFields if not _is_set(stored.get(f), held)]
+
+
+def needs_setup_sentence(manifest: AppManifest, fields: list[str]) -> str:
+    """What a capability that is not built says while *fields* are empty in its account: each by
+    the title its schema gives it, else its name."""
+    props = _properties(manifest.settings)
+    names = [
+        str((props.get(f) or {}).get("title") or f) if isinstance(props.get(f), dict) else f
+        for f in fields
+    ]
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    verb = "is" if len(names) == 1 else "are"
+    return f"Needs setup: the account's {listed} {verb} empty."

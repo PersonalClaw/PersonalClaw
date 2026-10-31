@@ -288,7 +288,7 @@ async def test_saving_the_fix_retries_a_provider_its_settings_had_failed(monkeyp
 
     class _Ext:
         def __init__(self, *, enabled: bool, error: str, hostable: bool = True):
-            self.enabled, self.error = enabled, error
+            self.enabled, self.error, self.capability = enabled, error, None
             self.manifest = SimpleNamespace(
                 core_compatibility=lambda: SimpleNamespace(admits=hostable)
             )
@@ -300,7 +300,10 @@ async def test_saving_the_fix_retries_a_provider_its_settings_had_failed(monkeyp
         def get(self, _name):
             return self.ext
 
-        def enable(self, name):
+        def list_for_app(self, _name):
+            return [self.ext]
+
+        def enable(self, name, capability=None):
             self.enabled_calls.append(name)
             self.ext.enabled, self.ext.error = True, ""
             return True

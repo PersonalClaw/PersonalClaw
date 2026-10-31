@@ -518,6 +518,10 @@ class _ToolsRegistry:
     def get(self, name):
         return _ToolsExt() if name == "fake-tools" else None
 
+    def list_for_app(self, name):
+        ext = self.get(name)
+        return [ext] if ext is not None else []
+
     def disable(self, name):  # pragma: no cover - not reached with enabled=False
         return None
 
@@ -637,6 +641,10 @@ class _AppExt:
 class _AppRegistry:
     def get(self, name):
         return _AppExt() if name == _APP else None
+
+    def list_for_app(self, name):
+        ext = self.get(name)
+        return [ext] if ext is not None else []
 
 
 @pytest.fixture

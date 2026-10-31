@@ -211,6 +211,30 @@ def _app_status(name: str) -> dict[str, Any]:
     }
 
 
+def _health_rows(names: list[str]) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """For each provider app in *names*, ``accounts``: each of its accounts with its connection's
+    health, the sentence and the last good contact (``apps.account_health``); ``capabilities``:
+    each capability's last good report, its note, and the account fields it requires that are
+    empty. They read the apps' account records and settings, the credential store's key names
+    (once for the whole list) and the secrets a sentence or note is masked against, so the list
+    builds them all in one call off the loop. An app whose rows cannot be read gets none: they
+    never break the list."""
+    from personalclaw.apps import account_health
+    from personalclaw.config.credentials import credential_names
+
+    held = set(credential_names()) if names else set()
+    rows = {}
+    for name in names:
+        try:
+            rows[name] = {
+                "accounts": account_health.accounts(name),
+                "capabilities": account_health.capabilities(name, held=held),
+            }
+        except (OSError, ValueError):
+            logger.debug("apps list: health of %s skipped", name, exc_info=True)
+    return rows
+
+
 def _runs_a_sidecar(manifest: dict[str, Any]) -> bool:
     """Whether any provider the raw manifest declares runs ``execution: "sidecar"``."""
     from personalclaw.apps.manifest import EXECUTION_SIDECAR
@@ -277,8 +301,18 @@ async def api_apps_list(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("apps list: update surfacing skipped", exc_info=True)
 
+    apps = list_apps()
+    # Each provider app's account health and capability rows (#3842), all read in one go off the
+    # loop: they read records, settings and the credential store. Best-effort, as above.
+    health: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    try:
+        providers = [a.get("name", "") for a in apps if _first_provider_raw(a.get("manifest", {}))]
+        health = await asyncio.to_thread(_health_rows, providers)
+    except Exception:
+        logger.debug("apps list: health rows skipped", exc_info=True)
+
     out: list[dict[str, Any]] = []
-    for app in list_apps():
+    for app in apps:
         manifest = app.get("manifest", {})
         name = app.get("name", "")
         # A provider app's settings live in Settings > Providers; a non-provider
@@ -393,6 +427,9 @@ async def api_apps_list(request: web.Request) -> web.Response:
                 # Where an Update starts when no newer version was found: the source the app
                 # was installed from, when an update can come from there ("" otherwise).
                 "updateSource": update_source_for(app),
+                # Each account's connection health, apart from its settings, and each
+                # capability's last good report and the account fields it waits for (#3842).
+                **(health.get(name) or {"accounts": [], "capabilities": []}),
                 **_app_status(name),
             }
         )

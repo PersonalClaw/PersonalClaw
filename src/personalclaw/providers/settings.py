@@ -182,6 +182,44 @@ def capability_secret_owner(
     return secret_refs.within_account(owner, secret_refs.account_owner(extension_name, account))
 
 
+def _save_changed(previous: dict[str, Any] | None, stored: dict[str, Any], wrote: set[str]) -> bool:
+    """Whether a save changed a record: its stored form differs from *previous*, or it gave a
+    secret a value (*wrote*, from ``secret_refs.store``), even under the key it had. No secret's
+    value is read to tell, so a value given again as it was counts as a change too."""
+    return stored != dict(previous or {}) or bool(wrote)
+
+
+def account_saved(
+    extension_name: str,
+    account: str | None,
+    previous: dict[str, Any] | None,
+    stored: dict[str, Any],
+    wrote: set[str],
+) -> None:
+    """Tell the account's health board a save changed its settings, when it did: what its
+    capabilities reported was about the settings it had (``apps.account_health``)."""
+    if _save_changed(previous, stored, wrote):
+        from personalclaw.apps import account_health
+
+        account_health.account_changed(extension_name, account)
+
+
+def capability_saved(
+    extension_name: str,
+    capability: str,
+    account: str | None,
+    previous: dict[str, Any] | None,
+    stored: dict[str, Any],
+    wrote: set[str],
+) -> None:
+    """Tell the health board a save changed *capability*'s own settings, when it did: a failure
+    it reported was about the settings it had (``apps.account_health``)."""
+    if _save_changed(previous, stored, wrote):
+        from personalclaw.apps import account_health
+
+        account_health.capability_changed(extension_name, capability, account)
+
+
 def _write_record(extension_name: str, account: str, record: dict[str, Any]) -> None:
     from personalclaw.providers.accounts import write_record
 
@@ -304,16 +342,20 @@ class ProviderSettings:
     def _save(
         extension_name: str, config: dict[str, Any], account: str | None = None
     ) -> dict[str, Any]:
+        previous = load_stored_account(extension_name, account)
+        wrote: set[str] = set()
         stored = secret_refs.store(
             config,
             owner=account_secret_owner(extension_name, account),
             declared=secret_refs.declared_app_fields(extension_name),
-            previous=load_stored_account(extension_name, account),
+            previous=previous,
+            wrote=wrote,
         )
         if account is None:
             _write(ProviderSettings.config_path(extension_name), stored)
         else:
             _write_part(extension_name, account, stored)
+        account_saved(extension_name, account, previous, stored, wrote)
         return stored
 
     @staticmethod
@@ -339,16 +381,20 @@ class ProviderSettings:
         extension_name: str, capability: str, config: dict[str, Any], account: str | None = None
     ) -> dict[str, Any]:
         _checked_capability(capability)
+        previous = load_stored_capability(extension_name, capability, account)
+        wrote: set[str] = set()
         stored = secret_refs.store(
             config,
             owner=capability_secret_owner(extension_name, capability, account),
             declared=secret_refs.declared_app_fields(extension_name),
-            previous=load_stored_capability(extension_name, capability, account),
+            previous=previous,
+            wrote=wrote,
         )
         if account is None:
             _write(ProviderSettings.capability_path(extension_name, capability), stored)
         else:
             _write_part(extension_name, account, stored, capability)
+        capability_saved(extension_name, capability, account, previous, stored, wrote)
         return stored
 
     @staticmethod
@@ -464,6 +510,9 @@ class ProviderSettings:
                 "name the account another id"
             )
         write_record(extension_name, acct, new_record(extension_name, acct, label))
+        from personalclaw.apps import account_health
+
+        account_health.added(extension_name, acct)
         return acct
 
     @staticmethod
@@ -480,6 +529,9 @@ class ProviderSettings:
         _record(extension_name, acct)
         removed = secret_refs.purge([account_secret_owner(extension_name, acct).prefix])
         record_path(extension_name, acct).unlink(missing_ok=True)
+        from personalclaw.apps import account_health
+
+        account_health.forget(extension_name, account=acct)
         return removed
 
     @staticmethod

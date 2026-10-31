@@ -48,6 +48,10 @@ class _FakeRegistry:
     def get(self, name):
         return _FakeExt() if name == "fake-channel" else None
 
+    def list_for_app(self, name):
+        ext = self.get(name)
+        return [ext] if ext is not None else []
+
 
 @asynccontextmanager
 async def _client(tmp_path: Path):

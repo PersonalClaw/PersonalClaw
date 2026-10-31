@@ -187,6 +187,10 @@ def after_update(
                 meta.capabilityMoves[was]["pending"] = names
                 started.append(was)
     _keep_tombstones(meta, new, before, after, moved)
+    from personalclaw.apps import account_health
+
+    for gone in set(before) - set(after):
+        account_health.forget(new.name, gone)
     if started and save is not None:
         save(meta)
     for was in started:

@@ -1157,6 +1157,33 @@ export interface AppSummary {
   updateSource?: string
   // The app's declared quality bar. `{}`/absent = declared nothing → no badges.
   quality?: AppQualityWire
+  /** Each account's connection health, apart from its settings (#3842); #3845 shows it. */
+  accounts?: AppAccountHealth[]
+  /** Each capability's last good report, its note, and the account fields it waits for. */
+  capabilities?: AppCapabilityReport[]
+}
+/** `unknown` until a capability has reported since the gateway started. */
+export type AppHealth = 'unknown' | 'connected' | 'signing_in' | 'refused' | 'unreachable'
+export interface AppConnectionHealth {
+  id: string
+  label: string
+  health: AppHealth
+  /** Why, for a failure or a sign-in; `""` otherwise. */
+  reason: string
+  /** The last good contact (ISO time), `null` when none since the start. */
+  lastOk: string | null
+}
+export interface AppAccountHealth extends AppConnectionHealth {
+  /** Each connection's, when the account has more than one; its own health is the worst. */
+  connections?: AppConnectionHealth[]
+}
+export interface AppCapabilityReport {
+  id: string
+  label: string
+  lastOk: string | null
+  note: string
+  /** The account fields it requires that its account leaves empty: it is not built until set. */
+  needsSetup: string[]
 }
 export interface AppDetail {
   name: string

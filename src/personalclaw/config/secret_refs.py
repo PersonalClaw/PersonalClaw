@@ -482,6 +482,7 @@ def store(
     owner: SecretOwner,
     declared: Iterable[str] = (),
     previous: Mapping[str, Any] | None = None,
+    wrote: set[str] | None = None,
 ) -> dict[str, Any]:
     """The STORED form of LOGICAL ``settings``, with each secret value moved into the store.
 
@@ -503,9 +504,15 @@ def store(
     key, a service-account JSON) is stored like any other; ``.env`` keeps it on one line, quoted.
     Surrounding whitespace is dropped — it is never part of a key or a token, and a pasted value
     often carries a trailing newline.
+
+    ``wrote``, when given, gets each key this write stored a value under: with the stored form
+    compared to ``previous``, it tells a caller whether the write changed anything, a value given
+    again under the same key included, and no value is read back to tell.
     """
     _refuse_foreign(settings or {}, owner, operation="secrets.store", advise=True)
-    return _move_into_store(settings, owner=owner, declared=declared, previous=previous)
+    return _move_into_store(
+        settings, owner=owner, declared=declared, previous=previous, wrote=wrote
+    )
 
 
 def _move_into_store(
@@ -514,6 +521,7 @@ def _move_into_store(
     owner: SecretOwner,
     declared: Iterable[str],
     previous: Mapping[str, Any] | None,
+    wrote: set[str] | None = None,
 ) -> dict[str, Any]:
     """:func:`store` without its judgment of references — see there."""
     out = dict(settings or {})
@@ -539,6 +547,8 @@ def _move_into_store(
         if get_credential(key) != value:
             raise OSError(f"the credential store did not keep {name!r}; nothing was written")
         out[name] = make_ref(key)
+        if wrote is not None:
+            wrote.add(key)
     _delete_orphans(previous, out, owner)
     return out
 

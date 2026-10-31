@@ -2349,6 +2349,10 @@ def uninstall(name: str, *, caller: str = "app_manager") -> bool:
     # Deactivate via the same teardown as disable, but audit it as an uninstall.
     ok = disable(name, caller=caller)
     if ok:
+        from personalclaw.apps import account_health
+
+        # Gone from every surface, so what its capabilities reported of its accounts goes too.
+        account_health.forget(name)
         _audit("uninstall", "ok", name, caller=caller)
     return ok
 
@@ -2654,6 +2658,9 @@ def force_uninstall(name: str, *, caller: str = "app_manager") -> bool:
     from personalclaw.config import secret_refs
 
     secrets_removed = secret_refs.purge(secret_refs.app_owned_prefixes(name))
+    from personalclaw.apps import account_health
+
+    account_health.forget(name)
     _audit(
         "force_uninstall", "ok", name, caller=caller, detail=f"secrets_removed={secrets_removed}"
     )

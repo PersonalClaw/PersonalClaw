@@ -156,6 +156,11 @@ class ProviderRegistry:
             ext.error = f"No type handler for provider type: {ext.provider_config.type}"
             logger.warning(ext.error)
             return False
+        missing = _needs_setup(ext)
+        if missing:
+            ext.error = missing
+            logger.info("Not enabling %s: %s", ext.key, missing)
+            return False
         try:
             # Cleared before the attempt, not after it: a handler that registers some of an
             # app's providers and has others refused reports those in `error` as it goes.
@@ -253,6 +258,22 @@ class ProviderRegistry:
 
     def list_by_type(self, provider_type: str) -> list[RegisteredProvider]:
         return [ext for ext in self.list_extensions() if ext.provider_config.type == provider_type]
+
+
+def _needs_setup(ext: RegisteredProvider) -> str:
+    """Why *ext* is not built yet, or ``""``: an account field its capability requires
+    (``requiresAccountFields``) is empty, and it says which. The app's other capabilities are
+    built as before (#3842)."""
+    from personalclaw.apps.account_settings import missing_account_fields, needs_setup_sentence
+
+    if not ext.capability or not ext.provider_config.requiresAccountFields:
+        return ""
+    try:
+        missing = missing_account_fields(ext.name, ext.capability, manifest=ext.manifest)
+    except (OSError, ValueError):
+        logger.warning("Could not read %s's account settings", ext.key, exc_info=True)
+        return ""
+    return needs_setup_sentence(ext.manifest, missing) if missing else ""
 
 
 def _settings_of(ext: Any) -> dict[str, Any]:
