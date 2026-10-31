@@ -306,6 +306,89 @@ def test_a_home_that_resolves_back_to_the_root_is_not_isolation(guard, root, env
     assert _refused(guard, "subprocess.Popen", *_popen(argv, env(root)))
 
 
+@pytest.fixture
+def started(tmp_path: Path) -> Path:
+    """The ``$HOME`` a run began with that isn't the real one: a run-job step's scratch home."""
+    home = tmp_path / "scratch"
+    home.mkdir()
+    return home
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        lambda s, t: {"HOME": str(s)},  # it inherits the run's own HOME
+        lambda s, t: {"HOME": str(s), "PERSONALCLAW_HOME": str(s / ".personalclaw")},  # names it
+        lambda s, t: {"HOME": str(s), "PERSONALCLAW_HOME": "~/.personalclaw"},  # by ~
+        lambda s, t: {
+            "HOME": str(t / "other"),
+            "PERSONALCLAW_HOME": str(s / ".personalclaw" / "x"),
+        },
+    ],
+)
+def test_a_child_that_resolves_the_home_its_run_began_with_is_refused(
+    root, started, tmp_path, env
+) -> None:
+    """🔴 Red before (#5743): under run-job a step's ``HOME`` is a scratch one, and a PersonalClaw
+    child that inherits it resolves that home's ``.personalclaw``, which every test of the step
+    shares. The guard passed it, since its ``HOME`` is not the real one, so a child that breadth
+    refused, where the run's ``HOME`` is the runner's own, passed in every Merge leg."""
+    guard = Guard(root, started_home=str(started))
+    argv = [sys.executable, "-m", "personalclaw", "gateway", "--help"]
+    try:
+        guard.audit("subprocess.Popen", _popen(argv, env(started, tmp_path)))
+    except RealHomeAccessError as refused:
+        assert "in the run's own home" in str(refused), refused
+    else:
+        pytest.fail("the child was let start with the run's own home")
+    (charged,) = guard.take_session()
+    said = f"{started / '.personalclaw'} — a PersonalClaw child process given the home every test"
+    assert charged.path.startswith(said), charged.path
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        lambda s, t: {"HOME": str(s), "PERSONALCLAW_HOME": str(t / "isolated")},
+        lambda s, t: {"HOME": str(t / "fake-home")},
+    ],
+)
+def test_a_child_given_its_own_home_passes_in_a_run_that_began_elsewhere(
+    root, started, tmp_path, env
+) -> None:
+    guard = Guard(root, started_home=str(started))
+    argv = [sys.executable, "-m", "personalclaw", "gateway", "--help"]
+    assert not _refused(guard, "subprocess.Popen", *_popen(argv, env(started, tmp_path)))
+
+
+def test_a_run_s_home_is_known_by_its_real_name_too(root, tmp_path) -> None:
+    """A run's scratch home reached through a link, as macOS's /var/folders is /private/var: a
+    child that names it by its real name, as a test that resolves it does, resolves the same
+    home and is refused just the same."""
+    real = tmp_path / "scratch-real"
+    real.mkdir()
+    link = tmp_path / "scratch-link"
+    link.symlink_to(real, target_is_directory=True)
+    guard = Guard(root, started_home=str(link))
+    argv = [sys.executable, "-m", "personalclaw"]
+    for env in (
+        {"HOME": str(real)},
+        {"HOME": str(tmp_path / "other"), "PERSONALCLAW_HOME": str(real / ".personalclaw")},
+        {"HOME": str(link)},
+    ):
+        assert _refused(guard, "subprocess.Popen", *_popen(argv, env)), env
+    assert not _refused(guard, "subprocess.Popen", *_popen(argv, {"HOME": str(tmp_path / "x")}))
+
+
+def test_a_run_that_began_in_the_real_home_judges_a_child_as_before(root, tmp_path) -> None:
+    """A local run and breadth's legs begin in the real home: there the run's own home is
+    ``root``, and a child is judged by it alone, with the refusal that names it."""
+    guard = Guard(root, started_home=str(root.parent))
+    argv = [sys.executable, "-m", "personalclaw"]
+    assert _refused(guard, "subprocess.Popen", *_popen(argv, {"HOME": str(root.parent)}))
+    assert not _refused(guard, "subprocess.Popen", *_popen(argv, {"HOME": str(tmp_path / "x")}))
+
+
 def test_an_inherited_environment_is_the_parent_s(guard, root, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(root.parent))
     monkeypatch.delenv("PERSONALCLAW_HOME", raising=False)
