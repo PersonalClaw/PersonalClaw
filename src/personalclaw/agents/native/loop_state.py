@@ -109,6 +109,11 @@ class LoopState:
     #: Something the user can see streamed in this attempt: a retry would show it twice.
     streamed: bool = False
     attempt_started: float = 0.0
+    #: When the attempt's answer came back, on the same clock as :attr:`attempt_started`.
+    answered_ms: float = 0.0
+    #: The inferences of this turn cut at the output limit while writing a tool call
+    #: (``owed_reply.CUT_CALLS_PER_TURN`` of them end the turn).
+    cut_calls: int = 0
     #: What the phase that just ran says the loop does next.
     next: Next | None = None
 

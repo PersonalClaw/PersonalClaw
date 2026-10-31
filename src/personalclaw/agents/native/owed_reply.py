@@ -58,6 +58,33 @@ def out_of_room_note(output_cap: int) -> str:
     )
 
 
+#: How many of a turn's inferences may be cut at the output limit while writing a tool call: the
+#: first is answered with the model's own note and the turn tries again; this one ends the turn.
+CUT_CALLS_PER_TURN = 2
+
+
+def cut_call_words(seconds: float, *, again: bool) -> str:
+    """What the card of a tool call says when the model's reply was cut at its output limit while
+    it wrote the call, *seconds* into its answer: for the person reading the chat, who is told
+    whether the agent goes on (*again*). The model is told why in its own words
+    (``correction_note(FailureMode.TOKEN_OVERFLOW)``), in its history and never on the card."""
+    from personalclaw.auth.lifetimes import duration_words
+
+    said = f"Cut off at the output limit after {duration_words(seconds)}."
+    return f"{said} Trying again." if again else said
+
+
+def cut_in_a_call(tool_calls: list[AgentEvent]) -> bool:
+    """Whether an inference stopped at its output cap while it wrote a tool call: a call that
+    carries a length stop and whose arguments do not read whole (the cut left only a prefix of
+    them), as the runtime reads one it answers without running (``_prepare_call``)."""
+    return any(
+        is_length_stop(getattr(c, "stop_reason", ""))
+        and read_tool_arguments(c.tool_input) is ARGUMENTS_UNREADABLE
+        for c in tool_calls
+    )
+
+
 def capped_at(usage: AgentEvent | None) -> int:
     """The output tokens an inference stopped at when it ran into its cap (a length stop), else 0:
     what the turn's terminal event names (``AgentEvent.output_cap``)."""

@@ -154,6 +154,10 @@ class _PreparedCall:
     #: Whether the call only reads (``loop_breaker.only_reads``): the one kind of call the loop
     #: breaker counts and refuses for repeating the same answer.
     reads: bool = False
+    #: What the call's card says in place of what the model is told, when that is not for the
+    #: person reading the chat: the words for a call cut at the output limit
+    #: (``owed_reply.cut_call_words``). ``""``: the card shows the observation itself.
+    shown: str = ""
 
 
 # Graduated failure/loop thresholds + the standard notices live in the
@@ -781,23 +785,24 @@ class NativeAgentRuntime(
             return STOP_MAX_TOKENS
         return "end_turn"
 
-    def _audit_inference_attempt(self, mode: FailureMode, **attempt: Any) -> None:
+    def _audit_inference_attempt(self, mode: FailureMode, **attempt: Any) -> str:
         """Record one exceptional inference attempt (``attempt_audit.inference_attempt``): every
         failed attempt, the outcome of a retry, and a call that ran into its output cap and no
-        guard recorded. Best-effort by contract: an audit failure must never take down the turn
-        it describes."""
+        guard recorded. Returns the row's ``audit_id``, ``""`` when it was not written.
+        Best-effort by contract: an audit failure must never take down the turn it describes."""
         try:
-            record_attempt(
-                inference_attempt(
-                    mode,
-                    served_ref=self.served_model_ref,
-                    model=self._definition.model or "",
-                    runtime_id=id(self),
-                    **attempt,
-                )
+            row = inference_attempt(
+                mode,
+                served_ref=self.served_model_ref,
+                model=self._definition.model or "",
+                runtime_id=id(self),
+                **attempt,
             )
+            record_attempt(row)
+            return row.audit_id
         except Exception:
             logger.debug("native: inference attempt audit failed", exc_info=True)
+            return ""
 
     def last_stop_report(self) -> dict:
         """What the last stop actually reached — the shape the dashboard stop handler consumes.
@@ -1021,7 +1026,7 @@ class NativeAgentRuntime(
 
     # ── concurrent dispatch under resource reservations ──
 
-    def _prepare_call(self, call: AgentEvent) -> "_PreparedCall":
+    def _prepare_call(self, call: AgentEvent, *, cut: str = "") -> "_PreparedCall":
         """Resolve a requested call's name, arguments, UI card and reservations.
 
         Pure and cheap — no I/O, no gate, no side effect — because the planner needs
@@ -1049,7 +1054,7 @@ class NativeAgentRuntime(
         # and the note names the one that actually happened. `FailureMode.TOKEN_OVERFLOW`'s
         # correction note has existed with zero writers since it was introduced; this is its first.
         raw_args = read_tool_arguments(call.tool_input)
-        arg_error = ""
+        arg_error = shown = ""
         if raw_args is ARGUMENTS_UNREADABLE:
             args = {}
             truncated = is_length_stop(getattr(call, "stop_reason", ""))
@@ -1059,6 +1064,8 @@ class NativeAgentRuntime(
                 else "Your tool call's arguments were not valid JSON, so the call could not be "
                 "made. Re-send the call with a complete, valid JSON arguments object."
             )
+            # The card says it for the person (*cut*, from the loop); the note is the model's.
+            shown = cut if truncated else ""
             logger.warning(
                 "tool %s: arguments unreadable (stop_reason=%r, truncated=%s) — reporting the "
                 "real defect rather than a missing argument",
@@ -1093,10 +1100,16 @@ class NativeAgentRuntime(
             bkey=params_key(tool_name, args),
             arg_error=arg_error,
             reads=not arg_error and only_reads(tool_name, "", args, self.declared(tool_name)),
+            shown=shown,
         )
 
-    async def _execute_tool_batch(self, tool_calls: list[AgentEvent]) -> AsyncIterator[AgentEvent]:
+    async def _execute_tool_batch(
+        self, tool_calls: list[AgentEvent], *, cut: str = ""
+    ) -> AsyncIterator[AgentEvent]:
         """Run one turn's requested calls, overlapping the ones that cannot collide.
+
+        *cut* is what the card of a call the model was cut off writing says
+        (``owed_reply.cut_call_words``), when this inference stopped at its output limit.
 
         Partitions into ordered waves (:mod:`dispatch_plan`) and runs wave *k* only
         after wave *k-1*, so the relative order of every non-disjoint pair is the order
@@ -1111,7 +1124,7 @@ class NativeAgentRuntime(
         read was being written by something that blew up" is not a state to guess at.
         """
         t0 = time.perf_counter()
-        prepped = [self._prepare_call(c) for c in tool_calls]
+        prepped = [self._prepare_call(c, cut=cut) for c in tool_calls]
         plan = dispatch_plan.plan(
             [p.reservations for p in prepped], max_width=self._max_tool_concurrency
         )
@@ -1436,7 +1449,7 @@ class NativeAgentRuntime(
             kind=EVENT_TOOL_RESULT,
             tool_call_id=call.tool_call_id,
             title=tool_name,
-            tool_output=result_str,
+            tool_output=prep.shown or result_str,
             tool_meta=meta or {},
         )
         self._messages.append(self._tool_result_msg(call, result_str))

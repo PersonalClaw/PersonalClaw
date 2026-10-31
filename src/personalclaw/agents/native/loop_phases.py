@@ -31,7 +31,14 @@ from personalclaw import run_processes, turn_streams
 from personalclaw.agents.native.failover import FAILOVER_MODES, TurnFallback, resending_cannot_help
 from personalclaw.agents.native.local_turn import take_local_turn
 from personalclaw.agents.native.loop_state import CANCELLED_BEFORE_RUN, LoopState, Next
-from personalclaw.agents.native.owed_reply import OwedReply, answered_row, capped_at
+from personalclaw.agents.native.owed_reply import (
+    CUT_CALLS_PER_TURN,
+    OwedReply,
+    answered_row,
+    capped_at,
+    cut_call_words,
+    cut_in_a_call,
+)
 from personalclaw.cancellation import CancelScope
 from personalclaw.guardrails.audit import now_ms
 from personalclaw.guardrails.failure import (
@@ -140,7 +147,7 @@ class LoopPhases:
 
         def _prompt_cache_enabled(self) -> bool: ...
 
-        def _audit_inference_attempt(self, mode: FailureMode, **attempt: Any) -> None: ...
+        def _audit_inference_attempt(self, mode: FailureMode, **attempt: Any) -> str: ...
 
         def _resolve_name(self, name: str) -> str: ...
 
@@ -151,7 +158,7 @@ class LoopPhases:
         def _take_steers(self) -> list[str]: ...
 
         def _execute_tool_batch(
-            self, tool_calls: list[AgentEvent]
+            self, tool_calls: list[AgentEvent], *, cut: str = ""
         ) -> AsyncIterator[AgentEvent]: ...
 
         @staticmethod
@@ -308,16 +315,22 @@ class LoopPhases:
                     async for ev in recovery:
                         yield ev
                 continue
-            # A capped call is recorded here when no guard did (a turn a person watches).
+            st.answered_ms = now_ms()
+            # A capped call is recorded here when no guard did (a turn a person watches), with the
+            # tokens and cost its usage says, and the turn's usage row names its row
+            # (``attempt_audit``).
             answered, passed, unrecorded = answered_row(st.usage, st.text, st.calls)
             if st.retried or st.fallbacks or unrecorded:
-                self._audit_inference_attempt(
+                row = self._audit_inference_attempt(
                     answered,
                     attempt=1 + int(st.retried) + st.fallbacks,
                     started_ms=st.attempt_started,
                     passed=passed,
                     fallback=st.fallbacks > 0,
+                    usage=st.usage if unrecorded else None,
                 )
+                if unrecorded and row:
+                    st.totals.audit_ids.append(row)
             break
         self._record_answer(st)
         st.next = Next.CONTINUE
@@ -602,9 +615,28 @@ class LoopPhases:
         this call would only fire between BATCHES, which is exactly the hole the per-call check
         closes.
         """
-        async for ev in self._execute_tool_batch(st.calls):
+        # A call the model was cut off in the middle of writing, at its output limit: its card says
+        # so, and whether the turn tries again. The second such cut ends the turn there, saying
+        # so, since asking again at the same limit would only meet it again.
+        cut = ""
+        if cut_in_a_call(st.calls):
+            st.cut_calls += 1
+            cut = cut_call_words(
+                max(0.0, st.answered_ms - st.attempt_started) / 1000.0,
+                again=st.cut_calls < CUT_CALLS_PER_TURN,
+            )
+        async for ev in self._execute_tool_batch(st.calls, cut=cut):
             st.totals.events += 1
             yield ev
+        if cut and st.cut_calls >= CUT_CALLS_PER_TURN and not self._cancelled:
+            yield st.ending(
+                self._final_stop_reason(st.usage),
+                output_cap=capped_at(st.usage),
+                context_usage_pct=self._last_context_pct,
+                served_model_ref=self.served_model_ref,
+            )
+            st.next = Next.RETURN
+            return
         st.next = Next.CONTINUE
 
     # ── 5. steer ──
