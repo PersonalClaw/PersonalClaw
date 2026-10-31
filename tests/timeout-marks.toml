@@ -10,6 +10,11 @@
 # (tools/ci/contract.py's overlaid_marks).
 
 [[mark]]
+site = "tests/rails/test_a_nested_pytest_keeps_a_basetemp_of_its_own_tree.py::test_every_nested_pytest_starts_through_the_helper"
+cap = 60
+reason = "a census of every test module for a pytest it starts; 26 s on CI at worst (breadth's rails-macos leg, 2026-10-31)"
+
+[[mark]]
 site = "tests/rails/test_keychain_namespace_census.py::test_every_keychain_call_names_the_homes_own_namespace"
 cap = 60
 reason = "a census of the package for every keychain call; 26 s on CI at worst (a merge leg, 2026-10-24)"
