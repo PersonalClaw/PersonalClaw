@@ -21,6 +21,7 @@ import ast
 from pathlib import Path
 
 import nested_pytest
+import pytest
 from rails_repo import REPO
 
 TESTS = REPO / "tests"
@@ -146,6 +147,7 @@ def stray(root: Path) -> list[str]:
     return out
 
 
+@pytest.mark.timeout(60)
 def test_every_nested_pytest_starts_through_the_helper():
     found = stray(REPO)
     assert not found, (
@@ -158,9 +160,14 @@ def test_every_nested_pytest_starts_through_the_helper():
 
 
 def test_every_allowed_site_still_spells_pytest():
+    """Parses only the files ALLOWED names: the census of every module is the test above's."""
+    named = {rel for rel, _ in ALLOWED}
+    files = [
+        path for path in sorted(TESTS.rglob("*.py")) if path.relative_to(REPO).as_posix() in named
+    ]
     seen = {
         (path.relative_to(REPO).as_posix(), scope)
-        for path in sorted(TESTS.rglob("*.py"))
+        for path in files
         for scope, _ in sites(path.read_text(encoding="utf-8"))
     }
     assert sorted(set(ALLOWED) - seen) == [], "an ALLOWED entry names nothing now; remove it"
