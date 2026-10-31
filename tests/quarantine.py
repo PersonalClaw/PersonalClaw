@@ -20,7 +20,9 @@ is recorded as a quarantined failure, in the terminal summary and as the junit p
 ``xfail_strict = true``. Nothing else is waived: ``tests/waiver_guard.py`` reads the list's names
 itself, imports nothing from here, and fails every test pytest waived as an expected failure that
 the list does not name, whether a source ``xfail`` mark, ``pytest.xfail()`` or a bug here waived
-it. An open issue alone waives nothing.
+it. An open issue alone waives nothing. On a pull request's run the verdict holds the waiver to
+the known failure: a quarantined failure whose test's run reads a file the pull request changes
+reads red (``tools/ci/verdict.py``, ``_unwaived``).
 
 A list that breaks a rule stops the session, and no test runs. Read from the source, before
 collection, with exit 4 (a usage error): more than :data:`CAP` entries, an entry expired or more

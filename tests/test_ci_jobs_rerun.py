@@ -847,6 +847,9 @@ def _on_github(root: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> j
     monkeypatch.setenv("RUNNER_TEMP", str(runner_temp))
     monkeypatch.setenv("GITHUB_RUN_ID", str(RUN_ID))
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+    # A run of no change (a dispatch's): on a pull request's run, given no changed list, the
+    # verdict waives no quarantined failure, so the runner's own event must not decide these.
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
     return jobs.Host(
         root=root, family="ubuntu-", path=os.environ.get("PATH", os.defpath), on_github=True
     )

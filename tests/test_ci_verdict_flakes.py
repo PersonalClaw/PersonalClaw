@@ -637,6 +637,91 @@ def test_past_its_cap_a_red_counts_more_than_it_names() -> None:
     assert found[0] == {"failed": 11} and len(found) == verdict.FAILED_NOTICES + 1 <= 10
 
 
+# ── A quarantined failure on a pull request's run (A5's second condition) ─────────────────────
+#
+# A quarantine entry waives the known failure it was made for. On a pull request's run it waives
+# nothing the pull request could have caused: a change to a file the quarantined test's run reads
+# (the flake rule's reading of it) makes that failure red.
+
+
+def _quarantined(key: str, *tests: str) -> str:
+    """A shard that passed, with *tests* failed under quarantine."""
+    return verdict.job_record(
+        key=key,
+        result=verdict.SUCCESS,
+        identity=verdict.Identity(HEAD, {}),
+        steps=[(PYTEST, 0, 30.0)],
+        run_id=RUN,
+        quarantined=list(tests),
+    )
+
+
+def _waived(changed: frozenset[str] | None, *tests: str) -> verdict.Verdict:
+    return _judge([_quarantined(ONE, *tests)], changed=changed, needs=_needs("success"), failed=())
+
+
+def test_a_quarantined_failure_the_pull_request_cannot_reach_is_green_and_listed() -> None:
+    judged = _waived(CHANGED, FLAKY)
+    assert judged.green and judged.reasons == ()
+    assert [(t.key, t.test, t.standing) for t in judged.tests] == [
+        (ONE, FLAKY, verdict.QUARANTINED)
+    ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("tests/test_timing.py", id="the test's own file"),
+        pytest.param("tests/conftest.py", id="a conftest above it"),
+        pytest.param("conftest.py", id="a conftest at the root"),
+        pytest.param("pyproject.toml", id="the pytest configuration"),
+    ],
+)
+def test_a_quarantined_failure_whose_run_reads_a_changed_file_is_red(path: str) -> None:
+    judged = _waived(CHANGED | {path}, FLAKY)
+    assert not judged.green and not judged.flakes
+    (reason,) = judged.reasons
+    assert (reason.key, reason.kind) == (ONE, verdict.UNWAIVED)
+    assert f"`{FLAKY}` failed under quarantine and its run reads `{path}`" in reason.detail
+    assert f"- `{ONE}`: {verdict.UNWAIVED} (" in verdict.summary(judged)
+
+
+def test_only_the_quarantined_failure_the_change_reaches_is_red() -> None:
+    judged = _waived(CHANGED | {"tests/test_other.py"}, FLAKY, OTHER)
+    assert [r.detail.split("`")[1] for r in judged.reasons] == [OTHER]
+
+
+def test_a_quarantined_failure_beside_a_changed_conftest_in_another_folder_is_green() -> None:
+    assert _waived(CHANGED | {"tests/web/conftest.py"}, FLAKY).green
+
+
+def test_a_quarantined_id_that_names_no_file_is_red_on_a_pull_request() -> None:
+    (reason,) = _waived(CHANGED, "no-file").reasons
+    assert reason.kind == verdict.UNWAIVED and "names no file of the repository" in reason.detail
+
+
+def test_without_a_changed_list_a_quarantined_failure_is_waived_as_on_main() -> None:
+    """A push to main, or a run given no changed list, has no change to hold it to."""
+    assert _waived(None, FLAKY).green
+    assert _waived(None, "no-file").green
+
+
+def test_a_changes_run_given_no_changed_list_waives_no_quarantined_failure() -> None:
+    results = verdict.from_job_records([_quarantined(k, FLAKY) if k == ONE else _record(k)
+                                        for k in PLAN])  # fmt: skip
+    judged = verdict.decide(PLAN, results, CANDIDATE, run_id=RUN, change_run=True)
+    (reason,) = judged.reasons
+    assert not judged.green and (reason.key, reason.kind) == (ONE, verdict.UNWAIVED)
+    assert "given no changed list" in reason.detail
+    assert verdict.decide(PLAN, results, CANDIDATE, run_id=RUN).green
+
+
+def test_an_unwaived_quarantined_failure_beside_a_flake_is_red_and_the_rule_says_why() -> None:
+    records = [_record(ONE, _test(FLAKY)), _quarantined(TWO, "tests/test_third.py::test_it")]
+    judged = _judge(records, changed=CHANGED | {"tests/test_third.py"})
+    _red(judged, f"`{TWO}` reads {verdict.UNWAIVED}, which no flake explains")
+
+
 # ── The command ──────────────────────────────────────────────────────────────────────────────
 
 

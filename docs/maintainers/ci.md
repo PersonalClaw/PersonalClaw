@@ -1175,7 +1175,16 @@ it), with the record's reason; on a pass, each `quarantined` failure an entry of
 `tests/quarantine.toml` waived. The verdict lists every one, by job, attempt and test, after its
 reasons. A job whose only failure is a flake reads red as a `failure`, with the flake listed,
 unless the flake rule below passes it, and the same failure under a valid quarantine entry is a
-pass that reads green, with the quarantined failure listed.
+pass that reads green, with the quarantined failure listed. On a pull request's run, given its
+changed paths (`--changed`), that holds only when the pull request changes no file the
+quarantined test's run reads, as the flake rule reads it (the test's own file, each conftest above
+it, the pytest configuration; for Vitest and end-to-end tests, theirs): a failure it could have
+caused reads red, `quarantined failure the change reads`, naming the file. A quarantine waives
+the known failure it was made for, never a new one. A pull request's or a queue commit's run
+given no changed list (its `ci-changes` or its jobs list could not be read) waives none: each
+quarantined failure is red, and says so. The verdict reads which run it judges from
+`GITHUB_EVENT_NAME`, which the runner sets and no step can overwrite. A push to main has no
+change to hold it to, and waives as before.
 
 **The flake rule.** Given a pull request's changed paths (`--changed`, NUL-separated) and its
 run's jobs on the attempt (`--jobs`, as `gh api --paginate --slurp` lists them), a run whose only
@@ -2911,7 +2920,10 @@ live in `tests/quarantine.py`, which `tests/conftest.py` loads in every session:
 - **A quarantined test still runs.** It is marked `xfail(strict=False)` at collection, so its
   failure is recorded as a quarantined failure, in the terminal summary and as the junit
   property `quarantine_issue`, instead of a red, and a pass stays a pass despite
-  `xfail_strict = true`. An open issue alone waives nothing.
+  `xfail_strict = true`. An open issue alone waives nothing. On a pull request's run the verdict
+  waives that failure only when the pull request changes no file the test's run reads ("The
+  failed tests the records name", above), so a quarantine never hides a regression the change
+  brings.
 - **Nothing else waives a failure.** `tests/waiver_guard.py` reads the list on its own, imports
   nothing from `tests/quarantine.py`, and fails every test pytest waived as an expected failure
   that the list does not name: a source `xfail` mark, strict or not, `pytest.xfail()` in a test
