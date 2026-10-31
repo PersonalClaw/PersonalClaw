@@ -805,6 +805,7 @@ class OllamaProvider(ModelProvider):
         tools: list[dict] | None = None,
         model: str | None = None,
         reasoning_effort: str = "",  # accepted for interface parity; Ollama has no effort axis
+        max_tokens: int | None = None,  # never sent: it does not declare takes_output_cap
     ) -> AsyncIterator[LLMEvent]:
         """Stream a stateless chat turn (:meth:`_complete_chat`), closable by :meth:`cancel`."""
         chat = self._complete_chat(messages, tools=tools, model=model)

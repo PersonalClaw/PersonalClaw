@@ -1614,7 +1614,8 @@ Examples:
     return parser
 
 
-#: What every gateway log line looks like, on the console and in ``gateway.log``.
+#: What every gateway log line looks like, on the console and in ``gateway.log``: its date and
+#: time (``security.MaskingFormatter``'s *dated*), level, logger and words.
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
@@ -1626,7 +1627,7 @@ def _console_log_handler() -> logging.Handler:
     from personalclaw.security import MaskedStreamHandler, MaskingFormatter
 
     handler = MaskedStreamHandler()
-    handler.setFormatter(MaskingFormatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
+    handler.setFormatter(MaskingFormatter(_LOG_FORMAT, dated=True))
     return handler
 
 
@@ -1638,7 +1639,7 @@ def _gateway_log_handler(log_file: Path) -> RotatingFileHandler:
     from personalclaw.security import MaskedRotatingFileHandler, MaskingFormatter
 
     handler = MaskedRotatingFileHandler(log_file, maxBytes=2 * 1024 * 1024, backupCount=3)
-    handler.setFormatter(MaskingFormatter(_LOG_FORMAT, datefmt="%H:%M:%S"))
+    handler.setFormatter(MaskingFormatter(_LOG_FORMAT, dated=True))
     return handler
 
 

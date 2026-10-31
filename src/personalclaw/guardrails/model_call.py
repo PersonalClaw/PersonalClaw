@@ -434,12 +434,16 @@ class ModelCallGuard(ModelProvider):
         tools: list[dict] | None = None,
         model: str | None = None,
         reasoning_effort: str = "",
+        max_tokens: int | None = None,
     ) -> AsyncIterator[LLMEvent]:
         # complete() is the native-loop path (structured messages), out of scope
         # for the v1 wrap — but budget + breaker still apply if reached.
         self._classify(_joined_content(messages))
+        # The cap goes only to an inner provider that takes one (``takes_output_cap``): one that
+        # takes none may have no such keyword, and is never sent one, whoever asked.
+        room = {"max_tokens": max_tokens} if self.takes_output_cap else {}
         inner = self._inner.complete(
-            messages, tools=tools, model=model, reasoning_effort=reasoning_effort
+            messages, tools=tools, model=model, reasoning_effort=reasoning_effort, **room
         )
         guarded = self._guarded(
             inner,
@@ -480,6 +484,12 @@ class ModelCallGuard(ModelProvider):
         """Explicit pass-through: the ABC's False default would answer for every guarded model,
         and the native loop would strip the reasoning a guarded model needs handed back."""
         return getattr(self._inner, "reads_reasoning", False) is True
+
+    @property
+    def takes_output_cap(self) -> bool:  # type: ignore[override]
+        """Explicit pass-through: the ABC's False default would answer for every guarded model,
+        and a guarded model that takes a cap for one request would never be given more room."""
+        return getattr(self._inner, "takes_output_cap", False) is True
 
     @property
     def compacts_in_process(self) -> bool:

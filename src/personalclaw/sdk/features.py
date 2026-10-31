@@ -82,6 +82,12 @@ nothing about declares what PersonalClaw's own wire sends it
 the channel (``forget_owner``), and answers the code that paired its owner in PersonalClaw's words
 (``CANNED_OWNER_PAIRED_REPLY``). A channel app that keeps only a paired owner declares it.
 
+``PER_CALL_OUTPUT_CAP``: a model provider that declares ``takes_output_cap`` is sent ``max_tokens``,
+an output cap for one request, in its ``complete``, and holds it to its own configured cap and its
+model's ceiling (``personalclaw.sdk.model.output_cap`` lets the configured cap win). PersonalClaw
+sends one once in a turn, on the request after a tool call was cut at the output limit, at twice
+what that call stopped at. A model app whose provider takes one declares it.
+
 ``PRE_TOOL_HOOKS``: a channel that runs a conversation itself asks the operator's blocking hooks
 about each call past the deny-list and before it approves or asks about it
 (``personalclaw.sdk.channel.ask_pre_tool_hooks``), and refuses a call they refuse. A channel app
@@ -128,6 +134,7 @@ from personalclaw.apps.core_features import (
     MESSAGES_RUN_ONCE,
     MODEL_EFFORTS,
     PAIRED_OWNER,
+    PER_CALL_OUTPUT_CAP,
     PRE_TOOL_HOOKS,
     RUNNING_LIST,
     TOOL_CALL_SCREEN,
@@ -154,6 +161,7 @@ __all__ = [
     "MESSAGES_RUN_ONCE",
     "MODEL_EFFORTS",
     "PAIRED_OWNER",
+    "PER_CALL_OUTPUT_CAP",
     "PRE_TOOL_HOOKS",
     "RUNNING_LIST",
     "TOOL_CALL_SCREEN",

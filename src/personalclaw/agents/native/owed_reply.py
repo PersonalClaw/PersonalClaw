@@ -16,7 +16,9 @@ the providers whose cap counts it. More room is not what changes, though it woul
 lever: the cap is the model instance's own setting, a hosted model's ceiling above it is not
 declared anywhere core can read, and a request over that ceiling is refused by the provider. A
 capped silence after that ask ends the turn at the cap, and the turn's ending names it
-(``llm.events.out_of_room``).
+(``llm.events.out_of_room``). Room is given in one case, by a provider that takes a cap for one
+request and knows its model's ceiling (``ModelProvider.takes_output_cap``): the try after a tool
+call cut at the output limit asks it for twice what that call stopped at.
 
 :class:`OwedReply` is one turn's account of that: whether the turn wrote anything, whether it has
 asked, and whether the request about to go out carries the note. The loop keeps it; the request
@@ -55,6 +57,33 @@ def out_of_room_note(output_cap: int) -> str:
         "tool. Go on now briefly, without extended reasoning: give your answer in a few sentences, "
         "or make the one tool call you need next. If you could not do what was asked, say what "
         "stopped you."
+    )
+
+
+#: How many of a turn's inferences may be cut at the output limit while writing a tool call: the
+#: first is answered with the model's own note and the turn tries again; this one ends the turn.
+CUT_CALLS_PER_TURN = 2
+
+
+def cut_call_words(seconds: float, *, again: bool) -> str:
+    """What the card of a tool call says when the model's reply was cut at its output limit while
+    it wrote the call, *seconds* into its answer: for the person reading the chat, who is told
+    whether the agent goes on (*again*). The model is told why in its own words
+    (``correction_note(FailureMode.TOKEN_OVERFLOW)``), in its history and never on the card."""
+    from personalclaw.auth.lifetimes import duration_words
+
+    said = f"Cut off at the output limit after {duration_words(seconds)}."
+    return f"{said} Trying again." if again else said
+
+
+def cut_in_a_call(tool_calls: list[AgentEvent]) -> bool:
+    """Whether an inference stopped at its output cap while it wrote a tool call: a call that
+    carries a length stop and whose arguments do not read whole (the cut left only a prefix of
+    them), as the runtime reads one it answers without running (``_prepare_call``)."""
+    return any(
+        is_length_stop(getattr(c, "stop_reason", ""))
+        and read_tool_arguments(c.tool_input) is ARGUMENTS_UNREADABLE
+        for c in tool_calls
     )
 
 

@@ -8,6 +8,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Changed
+
+- **A model app's provider can be asked for more output room on one request: a provider that declares `takes_output_cap` is sent `max_tokens` in its `complete()`, and holds it to its own configured cap and its model's ceiling. PersonalClaw sends one once in a turn, on the try after a tool call was cut at the output limit, at twice what that call stopped at. A provider that declares nothing is sent nothing new, and is asked again at its own limit, as before. Apps rely on it with the `per-call-output-cap` core feature (SDK additions no app has to change for).**
+
+### Fixed
+
+- **A tool call cut off at the model's output limit says so on its card: "Cut off at the output limit after 5 minutes. Trying again." The card showed the note written for the model, and nothing said the reply had hit its limit or that the agent would try again. A second cut in the same turn ends the turn there, with Retry, rather than asking again at the same limit. The model-call log's row for a cut attempt now has its tokens and cost.**
+- **A tool card shows the same fields after a reload as while its turn ran, however long the call's input. A call whose input ran past 4,000 characters, a command carrying a script or a file write, was stored cut off mid-JSON and rebuilt from that. Each value of a call's input now keeps up to 8,000 characters and says how many more there were, and its secrets are masked before it is cut.**
+- **Every line of `gateway.log`, and of the console a service manager keeps as the gateway's log, starts with its full local date and time, with milliseconds and the offset: `2026-10-30 19:03:24.512-07:00`. A line said only its time of day, and the file holds weeks of a quiet install's lines, so a warning's day could only be worked out by counting back from the end.**
+
 ## [0.3.1] — 2026-10-31
 
 A message you send now runs once, however many times it is sent, a chat that has gone quiet says for how long, and every page uses the window's full width, apart from the chat, which keeps its reading width. An app can offer more than one provider of a kind, each with its own settings, keep the settings they share once as account settings, hold more than one account, and show each account's connection health apart from its settings. An app's settings and account routes answer a malformed body with the API's standard error. The gateway no longer waits on the disk while it writes a security event, the sandbox check can no longer hang it, and each sandboxed command starts about 50 ms sooner. A burst of sign-in guesses now stops at the lockout's limit, a command whose network use the check couldn't read is now asked about like one reaching a host off Allowed hosts, an unattended run is held to its folders in such a command too, and automations and reports read their schedules for the time they decide. Scripts and apps that call the dashboard API need version 3 of it: read the breaking changes before you upgrade.

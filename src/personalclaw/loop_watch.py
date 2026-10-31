@@ -113,7 +113,7 @@ def _append(text: str) -> None:
     """Append *text*, as one ERROR record, to every log file the root logger writes, without taking
     a handler's lock; to stderr when it writes none. Masked either way, as every sink is."""
     record = logging.LogRecord(logger.name, logging.ERROR, __file__, 0, text, None, None)
-    masked = MaskingFormatter(_FORMAT)
+    masked = MaskingFormatter(_FORMAT, dated=True)
     files = [h for h in logging.getLogger().handlers if isinstance(h, logging.FileHandler)]
     if not files:
         _write(2, masked.format(record))
