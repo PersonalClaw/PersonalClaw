@@ -33,7 +33,8 @@ TALK = "a long planning conversation about the rename"
 
 
 async def _drafted(client, state, chat) -> None:
-    await client.post("/api/chat/sessions/c1/plan/activate")
+    # A running turn is stopped to plan ("Stop and plan"), which parks it.
+    await client.post("/api/chat/sessions/c1/plan/activate", json={"stop": True})
     chat.append("assistant", PLAN, "msg msg-a")
     chat.drain()
     chat_plan.maybe_submit_plan_draft(state, chat)

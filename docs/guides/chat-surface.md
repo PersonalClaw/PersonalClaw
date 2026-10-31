@@ -140,12 +140,16 @@ When that turn finishes, a review panel opens above the composer with the plan a
 
 While a plan is waiting for you, the task-mode pill **refuses** to leave Plan and says why:
 Approve and Cancel are the two ways out. Without that, the guarantee would be one click from
-decorative.
+decorative. Before the plan is drafted, picking another mode on the pill cancels it, as Cancel
+does, so the next answer is never taken for the plan.
 
-Ask for it while a turn is running and that run is **parked** — the queue is dropped and the
-turn is asked to stop at its next safe point, while the transcript is left untouched. The
-panel says the run is parked, and approving resumes it. Asking again later adds another step,
-which is how re-planning halfway through a task works.
+While a turn is running, the **+** menu offers two choices instead. **Plan after this turn**
+stops nothing: the turn runs to its end, the chat moves to Plan then, and your next message
+gets the plan (a message already queued behind the turn gets it). **Stop and plan** stops the
+turn as Stop does, with the same stop card in the transcript, and that run is **parked**: the
+queue is dropped and the transcript is otherwise left untouched. The panel says the run is
+parked, and approving resumes it. Asking again later adds another step, which is how
+re-planning halfway through a task works.
 
 ## 4. Let a queued message cut in
 

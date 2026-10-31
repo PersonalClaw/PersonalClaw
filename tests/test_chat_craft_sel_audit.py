@@ -326,7 +326,7 @@ class TestPlanModeSel:
         chat._stop_state = "idle"
         state.sessions.stop_turn = AsyncMock(return_value="soft")
         async with TestClient(TestServer(self._app(state))) as client:
-            r = await client.post("/api/chat/sessions/s1/plan/activate")
+            r = await client.post("/api/chat/sessions/s1/plan/activate", json={"stop": True})
             assert r.status == 200, await r.text()
             assert (await r.json())["parked"] is True
         events = _ops("chat.plan_activate")
