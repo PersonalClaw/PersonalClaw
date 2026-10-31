@@ -1,0 +1,60 @@
+# CodeQL alerts (0.4.0 A1): one issue for each new CodeQL alert open on main.
+#
+# Under the merge queue a queue commit is judged with its pull request's head's CodeQL analysis,
+# which sees neither what merged after the head's verdict nor what was queued ahead of it, so a
+# dataflow that only two pull requests bring together reaches main with no analysis having seen
+# it. When GitHub's CodeQL analysis of main completes (default setup's dynamic workflow, matched
+# by its run's path), `python -m tools.ci codeql-issues` keeps one issue for each alert open on
+# main made since the queue could first be used, titled "CodeQL alert #<n> on main: <rule>" and
+# labelled `codeql-alert`: it opens one, reopens its closed one when the alert opens again, and
+# closes an open one once its alert is fixed or dismissed. It writes only the issues this
+# workflow's account opened, and a body names the alert, its rule, its file and line and the pull
+# request that merged its commit, never the alert's message or code.
+#
+# A listener of main's CodeQL runs alone (`branches: [main]`), so no candidate's run starts it,
+# and GitHub runs it from main. Hourly besides, at its own slot, for a completion that started
+# nothing or a run that failed.
+name: CodeQL alerts
+
+on:
+  workflow_run:
+    workflows: ["CodeQL"]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "11 * * * *"  # hourly, at :11 UTC
+  workflow_dispatch:
+
+# One run at a time, never cancelled: a second would list the same alerts and open an alert's twice.
+concurrency:
+  group: codeql-alerts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  codeql-alerts:
+    if: >-
+      github.ref == 'refs/heads/main'
+      && (github.event_name != 'workflow_run'
+      || github.event.workflow_run.path == 'dynamic/github-code-scanning/codeql')
+    runs-on: ubuntu-24.04
+    # Ten pages of alerts, ten of issues, and two calls an issue it writes.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: read   # the code-scanning alerts open on main
+      issues: write           # the "CodeQL alert #<n> on main" issues this workflow opens, reopens and closes
+    steps:
+      - name: Runner identity
+        # The image this job ran on, so a runner image that moves is visible in the log.
+        run: echo "runner image ${ImageOS:?not a GitHub-hosted runner image} ${ImageVersion:?no image version} on ${RUNNER_OS} ${RUNNER_ARCH}"
+      # Main's own tools/ci, run on the image's python3: standard-library Python, nothing installed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: open, reopen and close the CodeQL alerts' issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -m tools.ci codeql-issues --repo "$GITHUB_REPOSITORY"

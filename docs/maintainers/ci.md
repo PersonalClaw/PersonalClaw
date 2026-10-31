@@ -2152,6 +2152,39 @@ workflow of its own so the collector holds no write.
 - **Its token.** `contents: read`, `actions: read` for the histories, and `issues: write`, an
   audited write.
 
+### The CodeQL alerts' issues
+
+Under the merge queue a queue commit is judged with its pull request's head's CodeQL analysis,
+which sees neither what merged after the head's verdict nor what was queued ahead of it. A
+dataflow that only two pull requests bring together (one a source, the other a sink) can reach
+`main` with no analysis having seen it. `.github/workflows/codeql-alerts.yml` makes that gap
+minutes long: it runs when GitHub's CodeQL analysis of `main` completes (default setup's dynamic
+workflow, matched by its run's path, with `branches: [main]` so no candidate's run starts it),
+hourly at :11 UTC behind that, and on dispatch, on `main` only and one run at a time. It keeps
+one issue for each new alert (`tools/ci/codeql_issues.py`, `python -m tools.ci codeql-issues`).
+
+- **What counts.** Each code-scanning alert open on `refs/heads/main` made on or after
+  2026-11-01, the day before main's merges could first be queued. The alerts open before that
+  are main's known ones, which no queue brought.
+- **One issue an alert.** An alert with no issue has one opened, titled
+  `CodeQL alert #<n> on main: <rule>` and labelled `codeql-alert`. An alert open again (fixed or
+  dismissed, then found again) has the newest of its closed issues reopened. Two open issues of
+  one alert keep the older, and the run warns with the other's number.
+- **Closing.** An open issue whose alert is no longer open on `main` is closed, with a comment that
+  says whether it was fixed or dismissed (and the dismissal's reason). That happens only when
+  every alert was read: a listing past ten pages closes nothing.
+- **Only its own issues.** As for the flaky tests: `github-actions[bot]` opened it, it carries the
+  label, its title is one the job gives, and it is no pull request. Every other issue is never
+  edited, reopened, closed or counted.
+- **What a body holds.** The alert's number and link, its rule and severity, the file and line of
+  its most recent instance, and that instance's commit with the pull request that merged it
+  (`commits/<sha>/pulls`). When a queue merged several at once, the alert may have come with an
+  earlier one. Nothing of the alert's message or the code it points at is copied in; each field is
+  one line.
+- **Its token.** `contents: read`, `security-events: read` for the alerts, and `issues: write`, an
+  audited write. No environment and no secret; it checks out `main`'s own tree without keeping
+  its credentials, and runs nothing a candidate wrote.
+
 ## The selection map
 
 `tools/ci/selection_map.py` (`python -m tools.ci selection-map --data <coverage database>
@@ -3344,6 +3377,7 @@ The audited writes today:
 | `breadth.yml` | `report` | `issues: write` | one issue per red nightly leg |
 | `flake-report.yml` | `report` | `issues: write` | the one "Weekly CI health" issue |
 | `flaky-tests.yml` | `flaky-tests` | `issues: write` | one issue per flaky test |
+| `codeql-alerts.yml` | `codeql-alerts` | `issues: write` | one issue per new CodeQL alert on main |
 | `settings-report.yml` | `report` | `issues: write` | the one "Repository settings drift" issue |
 
 ### The dependency audit

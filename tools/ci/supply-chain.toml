@@ -112,6 +112,13 @@ steps = ["open, edit, reopen and close the flaky tests' issues"]
 reason = "Keeps one issue per test that passed as a flake twice in 7 days, titled `Flaky test: <id>` and labelled `flaky-test`, and closes it after 14 days with none; it writes only the issues the workflow's own account opened, and runs only on main."
 
 [[audited_write]]
+workflow = "codeql-alerts.yml"
+job = "codeql-alerts"
+permission = "issues: write"
+steps = ["open, reopen and close the CodeQL alerts' issues"]
+reason = "Keeps one issue per CodeQL alert open on main since the merge queue could first be used, titled `CodeQL alert #<n> on main: <rule>` and labelled `codeql-alert`, and closes it once the alert is fixed or dismissed; it writes only the issues the workflow's own account opened, and runs only on main."
+
+[[audited_write]]
 workflow = "settings-report.yml"
 job = "report"
 permission = "issues: write"
