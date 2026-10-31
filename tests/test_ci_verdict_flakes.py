@@ -601,6 +601,42 @@ def test_a_changed_list_naming_no_path_is_refused(name: str) -> None:
         verdict.read_changed(f"docs/a.md\0{name}\0")
 
 
+# ── The failed tests a red names, for the controller's retry note (0.4.0 A5) ─────────────────
+
+
+def _notices(text: str) -> list[dict[str, Any]]:
+    prefix = f"::notice title={verdict.FAILED_NOTICE}::"
+    lines = text.splitlines()
+    assert all(line.startswith(prefix) for line in lines), lines
+    return [json.loads(line[len(prefix) :].replace("%25", "%")) for line in lines]
+
+
+def test_a_red_counts_its_failed_tests_then_names_each_in_one_notice_of_json() -> None:
+    odd = "tests/test_timing.py::test_it[100%]"
+    judged = _judge([_record(ONE, _test(odd, verdict.REPEATED_FAILURE))])
+    assert not judged.green
+    assert _notices(verdict.failed_notices(judged)) == [
+        {"failed": 1},
+        {"key": ONE, "attempt": 1, "test": odd, "standing": verdict.REPEATED_FAILURE},
+    ]
+
+
+def test_a_green_names_no_failed_test() -> None:
+    judged = _judge([_record(ONE, _test(FLAKY))])
+    assert judged.green and verdict.failed_notices(judged) == ""
+
+
+def test_a_red_with_no_failed_test_still_counts_none() -> None:
+    judged = _judge([], needs=_needs("cancelled"), failed=())
+    assert not judged.green and _notices(verdict.failed_notices(judged)) == [{"failed": 0}]
+
+
+def test_past_its_cap_a_red_counts_more_than_it_names() -> None:
+    many = [_test(f"tests/test_t{i}.py::test_it", verdict.REPEATED_FAILURE) for i in range(11)]
+    found = _notices(verdict.failed_notices(_judge([_record(ONE, *many)])))
+    assert found[0] == {"failed": 11} and len(found) == verdict.FAILED_NOTICES + 1 <= 10
+
+
 # ── The command ──────────────────────────────────────────────────────────────────────────────
 
 
@@ -698,7 +734,9 @@ def test_the_command_says_why_the_rule_passed_none(
     assert verdict.main(_files(tmp_path, records, failed=(ONE, TWO, THREE))) == 1
     out = capsys.readouterr().out
     assert "- the flake rule passed none: 3 failed tests passed alone" in out
-    assert "::notice" not in out
+    # No flake is named as passed; the red names its failed tests, for the retry note.
+    assert f"::notice title={verdict.FLAKE_NOTICE}::" not in out
+    assert f'::notice title={verdict.FAILED_NOTICE}::{{"failed": 3}}' in out
 
 
 # ── The ids the rule reads are the repository's paths ────────────────────────────────────────

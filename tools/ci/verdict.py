@@ -49,8 +49,10 @@ holding exactly ``result`` (a string) and ``outputs`` (an object). It refuses an
 
 ``python -m tools.ci verdict`` (or ``python3 -I tools/ci/verdict.py``, the way a trusted job runs
 the default branch's copy) reads a plan file and a needs file and exits 0 green, 1 red, 2 on input
-it cannot read. Every usage error is input it cannot read: there is no ``-h``, since a help page
-would exit 0 having judged nothing, and an option given twice is refused, not last-wins. When
+it cannot read. A red's every listed failed test is also one ``::notice``
+(:func:`failed_notices`), for the merge controller's retry note to read. Every usage error is
+input it cannot read: there is no ``-h``, since a help page would exit 0 having judged nothing,
+and an option given twice is refused, not last-wins. When
 ``$GITHUB_STEP_SUMMARY`` is set, the verdict's reasons, or why the input could not be read, are
 appended to it. ``--records`` adds one run's per-job records (:func:`read_records`), with
 ``--run-id`` naming that run and ``--key-partners`` each planned key's partners (a JSON object of
@@ -321,6 +323,13 @@ RESULTS_JOB = "results"
 #: The title of the annotation the verdict writes for each test the flake rule passed, which the
 #: merge controller reads to name them in its verdict.
 FLAKE_NOTICE = "flake passed"
+#: The title of the ``::notice`` a red verdict writes for each failed test it lists, for the merge
+#: controller's retry note (0.4.0 A5): its message is one JSON object, the test's ``key``,
+#: ``attempt``, ``test`` and ``standing``; the first notice counts them (``failed``).
+FAILED_NOTICE = "failed test"
+#: At most this many failed tests are named, after the count: GitHub keeps ten notices a step, so
+#: a reader that finds fewer than the count knows it did not read them all.
+FAILED_NOTICES = 8
 #: What every pytest test's run reads besides its own file and the conftests above it.
 PYTEST_CONFIG = ("pyproject.toml",)
 #: What every Vitest test's run reads besides its own file: the runner's configuration, and the
@@ -472,6 +481,17 @@ def _read_by(test: str, files: tuple[str, ...], prefixes: tuple[str, ...], chang
     if changed.startswith(E2E) and changed.endswith(".spec.ts"):
         return changed == test.split("::", 1)[0]
     return changed.startswith(prefixes)
+
+
+def changed_reads(test: str, changed: Iterable[str]) -> list[str] | str:
+    """The *changed* paths a run of *test* reads, sorted, as the flake rule reads them
+    (:func:`_reads`), or why it cannot tell: an id that names no file. The merge controller's
+    retry note (0.4.0 A5) reads a failed test so."""
+    found = _reads(test)
+    if isinstance(found, str):
+        return found
+    files, folders = found
+    return sorted(c for c in changed if _read_by(test, files, folders, c))
 
 
 def _ran_alone(argv: Sequence[str]) -> bool:
@@ -1314,6 +1334,24 @@ def flake_notices(verdict: Verdict) -> str:
     return "".join(out)
 
 
+def failed_notices(verdict: Verdict) -> str:
+    """On a red, one ``::notice`` titled :data:`FAILED_NOTICE` that counts the failed tests it
+    lists, then one per test, at most :data:`FAILED_NOTICES`; none on a green. Each message is one
+    line of JSON, escaped as a workflow command's message is (``%``, CR and LF)."""
+    if verdict.green:
+        return ""
+    items: list[dict[str, object]] = [{"failed": len(verdict.tests)}]
+    items += [
+        {"key": t.key, "attempt": t.attempt, "test": t.test, "standing": t.standing}
+        for t in verdict.tests[:FAILED_NOTICES]
+    ]
+    out = []
+    for item in items:
+        text = json.dumps(item, ensure_ascii=True).replace("%", "%25")
+        out.append(f"::notice title={FAILED_NOTICE}::{text}\n")
+    return "".join(out)
+
+
 # ── the command ───────────────────────────────────────────────────────────────────────────────
 
 
@@ -1545,6 +1583,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(_printable(summary(verdict)), end="")
     print(flake_notices(verdict), end="")
+    print(failed_notices(verdict), end="")
     _to_summary(_printable(summary(verdict, budget=SUMMARY_TESTS_BYTES)))
     return 0 if verdict.green else 1
 

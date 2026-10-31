@@ -2803,3 +2803,329 @@ def test_whether_merges_are_queued_is_read_from_main_s_rules(rules: Any, live: b
     if rules is not None:
         api.answers[f"/repos/{REPO}/rules/branches/main?per_page=100"] = rules
     assert mc.queue_live(api, REPO) is live
+
+
+# ── The retry budget (0.4.0 A5, R1) ─────────────────────────────────────────────────────────
+#
+# A red pull request verdict says which retry of its change it is and whether its red is
+# flake-class, and why. The note changes no conclusion. Each case is one planted red: a suite
+# shard failed, its results job named the failed test, and the pull request's earlier heads and
+# the open flaky-test issues answer one GraphQL read.
+
+FLAKY_TEST = "tests/test_timing.py::test_it_answers_in_time"
+EARLIER = "8" * 40
+OTHER_HEAD = "7" * 40
+SHARD = "python-suite (1/3)"
+RESULTS_RED = "attempt 1's `results` is 'failure'"
+
+
+class FakeRetry:
+    """The pull request's timeline (oldest first: a force-push as its earlier head and that
+    head's tree, a removal from main's merge queue as its reason) and the open flaky-test issues,
+    as the retry note's one GraphQL read answers."""
+
+    def __init__(
+        self,
+        heads: tuple[tuple[str, str], ...] = (),
+        flaky: tuple[str, ...] = (FLAKY_TEST,),
+        *,
+        timeline: tuple[dict[str, Any], ...] | None = None,
+        **issue: Any,
+    ) -> None:
+        self.timeline = (
+            [{"__typename": "HeadRefForcePushedEvent",
+              "beforeCommit": {"oid": s, "tree": {"oid": t}}} for s, t in heads]
+            if timeline is None
+            else list(timeline)
+        )  # fmt: skip
+        self.flaky, self.issue = flaky, issue
+        self.calls = 0
+
+    def __call__(self, text: str, variables: Mapping[str, object]) -> Any:
+        assert "HeadRefForcePushedEvent" in text and "RemovedFromMergeQueueEvent" in text
+        assert variables == {
+            "owner": "owner",
+            "name": "project",
+            "number": 12,
+            "label": "flaky-test",
+            "heads": mc.RETRY_HEADS,
+        }
+        self.calls += 1
+        author = {"login": "github-actions", "__typename": "Bot"}
+        issues = [
+            {"title": mc.flaky_title(f), "author": author, "authorAssociation": "NONE",
+             **self.issue}
+            for f in self.flaky
+        ]  # fmt: skip
+        return {"data": {"repository": {
+            "pullRequest": {"headRefOid": HEAD, "timelineItems": {"nodes": self.timeline}},
+            "issues": {"totalCount": len(issues), "nodes": issues},
+        }}}  # fmt: skip
+
+
+def _pushed(sha: str, tree: str) -> dict[str, Any]:
+    return {
+        "__typename": "HeadRefForcePushedEvent",
+        "beforeCommit": {"oid": sha, "tree": {"oid": tree}},
+    }
+
+
+def _removed(reason: str = "failed_checks") -> dict[str, Any]:
+    return {"__typename": "RemovedFromMergeQueueEvent", "reason": reason}
+
+
+def _failed(test: str = FLAKY_TEST, key: str = SHARD, standing: str = "flake") -> str:
+    return json.dumps({"key": key, "attempt": 1, "test": test, "standing": standing})
+
+
+def _counted(*notes: str, count: int | None = None) -> tuple[str, ...]:
+    """The results job's failed-test notices: the count first (by default, how many follow)."""
+    return (json.dumps({"failed": len(notes) if count is None else count}), *notes)
+
+
+def _retried(
+    *jobs: tuple[str, str, str | None], notes: tuple[str, ...] = _counted(_failed())
+) -> FakeApi:
+    """A red pull request run: by default one suite shard failed with one flaky test named."""
+    api = FakeApi()
+    api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+    api.jobs(1, *(jobs or ((SHARD, "completed", "failure"),)), ("results", "completed", "failure"))
+    api.flakes(1, *notes, title="failed test")
+    files = [{"filename": "README.md", "status": "modified", "patch": README_PATCH}]
+    api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    return api
+
+
+def _note(api: FakeApi, retry: FakeRetry | None = None) -> mc.Posting:
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(retry or FakeRetry(), APP, False))
+    found = outcome.posting
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", outcome
+    return found
+
+
+def _earlier(api: FakeApi, sha: str, conclusion: str = "failure", **check: Any) -> str:
+    """An earlier head with its newest verdict; its tree, the head's."""
+    _verdicts(api, sha, {"conclusion": conclusion, **check})
+    return api_tree_oid(HEAD, api)
+
+
+def test_a_first_flake_class_red_says_retry_0_of_2_and_why() -> None:
+    found = _note(_retried())
+    assert found.output["title"] == f"Red (retry 0 of 2, flake-class): {RESULTS_RED}"
+    summary = found.output["summary"]
+    assert "- retry 0 of 2\n" in summary
+    assert "- flake-class: 1 failed test(s), each with an open flaky-test issue" in summary
+
+
+def test_an_earlier_red_head_with_the_same_tree_is_a_retry() -> None:
+    api = _retried()
+    tree = _earlier(api, EARLIER)
+    found = _note(api, FakeRetry(((EARLIER, tree),)))
+    assert found.output["title"].startswith("Red (retry 1 of 2, flake-class): ")
+
+
+def test_an_earlier_red_head_with_the_same_lines_is_a_retry_and_two_spend_the_budget() -> None:
+    api = _retried()
+    tree = _earlier(api, EARLIER)
+    _earlier(api, OTHER_HEAD)
+    same = [{"filename": "README.md", "status": "modified", "patch": README_PATCH}]
+    api.answers[f"/repos/{REPO}/compare/main...{OTHER_HEAD}"] = {"files": same}
+    found = _note(api, FakeRetry(((OTHER_HEAD, "6" * 40), (EARLIER, tree))))
+    assert found.output["title"].startswith("Red (retry budget spent, flake-class): ")
+    assert (
+        "- retry budget spent: 2 retries of this change were red, so a person looks"
+        " (quarantine, fix or infrastructure)" in found.output["summary"]
+    )
+
+
+@pytest.mark.parametrize(
+    "conclusion, check, patch",
+    [
+        pytest.param("failure", {}, "@@ -1 +1 @@\n-hi\n+other", id="another-change"),
+        pytest.param("success", {}, README_PATCH, id="a-green-head"),
+        pytest.param(
+            "failure",
+            {"output": {"text": f"```{mc.WAITING_FENCE}\ncodeql\n```\n"}},
+            README_PATCH,
+            id="a-red-that-waited",
+        ),
+    ],
+)
+def test_an_earlier_head_that_is_no_red_retry_of_this_change_is_not_counted(
+    conclusion: str, check: dict, patch: str
+) -> None:
+    api = _retried()
+    _verdicts(api, OTHER_HEAD, {"conclusion": conclusion, **check})
+    files = [{"filename": "README.md", "status": "modified", "patch": patch}]
+    api.answers[f"/repos/{REPO}/compare/main...{OTHER_HEAD}"] = {"files": files}
+    found = _note(api, FakeRetry(((OTHER_HEAD, "6" * 40),)))
+    assert found.output["title"].startswith("Red (retry 0 of 2, flake-class): ")
+
+
+def test_a_rerun_attempt_is_a_retry() -> None:
+    api = _retried()
+    api.run(
+        event="pull_request", run_attempt=2, pull_requests=[{"number": 12, "head": {"sha": HEAD}}]
+    )
+    api.jobs(2, (SHARD, "completed", "failure"), ("results", "completed", "failure"))
+    api.flakes(2, *_counted(_failed()), title="failed test")
+    found = _note(api)
+    assert found.output["title"].startswith("Red (retry 1 of 2, flake-class): ")
+
+
+def test_each_removal_of_this_head_from_the_queue_for_failed_checks_is_a_retry() -> None:
+    api = _retried()
+    tree = _earlier(api, EARLIER, "success")
+    timeline = (
+        _removed(),  # of the earlier head: not this head's
+        _pushed(EARLIER, tree),
+        _removed(),
+        _removed("manually_removed"),
+        _removed("failed_checks"),
+    )
+    found = _note(api, FakeRetry(timeline=timeline))
+    assert found.output["title"].startswith("Red (retry budget spent, flake-class): ")
+
+
+def test_a_cancelled_or_timed_out_shard_with_no_failed_test_is_flake_class() -> None:
+    found = _note(_retried((SHARD, "completed", "cancelled"), notes=_counted()))
+    assert "- flake-class: 1 test job(s) cancelled or timed out" in found.output["summary"]
+
+
+@pytest.mark.parametrize(
+    "jobs, notes, flaky, says",
+    [
+        pytest.param((), _counted(_failed()), (), "has no flaky history", id="no-flaky-issue"),
+        pytest.param(
+            (), _counted(_failed("tests/test_readme.py::test_it")),
+            ("tests/test_readme.py::test_it",),
+            "reads `tests/test_readme.py`, which the pull request changes",
+            id="reads-a-changed-file",
+        ),
+        pytest.param(
+            (), _counted(_failed(standing="not classified")), (FLAKY_TEST,),
+            "is not classified", id="no-rerun-classified-it",
+        ),
+        pytest.param(
+            (), _counted(_failed(standing="quarantined")), (FLAKY_TEST,),
+            "is quarantined", id="a-quarantined-failure-the-change-reads",
+        ),
+        pytest.param(
+            (("rails (1/3)", "completed", "failure"),), _counted(_failed(key="rails (1/3)")),
+            (FLAKY_TEST,), "only a test job's red is flake-class", id="a-rail",
+        ),
+        pytest.param(
+            ((SHARD, "completed", "failure"),), _counted(), (FLAKY_TEST,),
+            "failed with no failed test named", id="a-failure-naming-no-test",
+        ),
+        pytest.param(
+            (), _counted(_failed(), count=11), (FLAKY_TEST,),
+            "its results job names 1 of its 11 failed tests", id="fewer-named-than-counted",
+        ),
+        pytest.param(
+            (), (_failed(),), (FLAKY_TEST,),
+            "names no one count of its failed tests", id="no-count",
+        ),
+        pytest.param(
+            (), (*_counted(_failed()), json.dumps({"failed": 1})), (FLAKY_TEST,),
+            "names no one count of its failed tests", id="two-counts",
+        ),
+        pytest.param(
+            (), ("not json",), (FLAKY_TEST,), "not one the verdict writes", id="an-odd-notice",
+        ),
+    ],
+)  # fmt: skip
+def test_a_red_that_is_not_flake_class_says_why(
+    jobs: tuple, notes: tuple[str, ...], flaky: tuple[str, ...], says: str
+) -> None:
+    api = _retried(*jobs, notes=notes)
+    if "test_readme" in says:
+        files = [{"filename": "tests/test_readme.py", "status": "modified", "patch": "@@ -1 +1 @@"}]
+        api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    found = _note(api, FakeRetry(flaky=flaky))
+    assert found.output["title"].startswith("Red (retry 0 of 2): ")
+    assert "- not flake-class: " in found.output["summary"]
+    assert says in found.output["summary"], found.output["summary"]
+
+
+def test_a_red_with_a_reason_beside_its_tests_is_not_flake_class() -> None:
+    api = _retried()
+    api.sign_off(HEAD, ("completed", "failure"))
+    found = _note(api)
+    assert "- not flake-class: its red is not its tests' alone: " in found.output["summary"]
+
+
+@pytest.mark.parametrize(
+    "author, association, counted",
+    [
+        pytest.param({"login": "someone", "__typename": "User"}, "NONE", False, id="anyone"),
+        pytest.param(
+            {"login": "someone", "__typename": "User"}, "CONTRIBUTOR", False, id="a-contributor"
+        ),
+        pytest.param({"login": "github-actions", "__typename": "User"}, "NONE", False,
+                     id="a-user-named-as-the-bot"),
+        pytest.param({"login": "owner", "__typename": "User"}, "OWNER", True, id="the-owner"),
+        pytest.param({"login": "m", "__typename": "User"}, "MEMBER", True, id="a-member"),
+        pytest.param({"login": "c", "__typename": "User"}, "COLLABORATOR", True,
+                     id="a-collaborator"),
+    ],
+)  # fmt: skip
+def test_a_flaky_issue_counts_only_when_the_workflow_or_a_maintainer_filed_it(
+    author: dict, association: str, counted: bool
+) -> None:
+    retry = FakeRetry(author=author, authorAssociation=association)
+    summary = _note(_retried(), retry).output["summary"]
+    assert ("- flake-class: " in summary) is counted, summary
+    assert ("has no flaky history" in summary) is not counted
+
+
+def test_two_entries_listing_one_queue_commit_post_a_named_red() -> None:
+    api, queue = _queued()
+    queue.entries.append(_entry(QUEUE, MAIN, 12, position=2))
+    found = _queue_red(api, queue)
+    assert "main's merge queue lists 2 entries for the one commit" in found.output["title"]
+
+
+def test_the_note_changes_no_conclusion_and_a_green_reads_nothing_for_it() -> None:
+    api = FakeApi()
+    api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+    retry = FakeRetry()
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(retry, APP, False))
+    assert outcome.posting is not None and outcome.posting.conclusion == "success"
+    assert retry.calls == 0 and "retry" not in outcome.posting.output["summary"]
+
+
+def test_a_run_naming_no_pull_request_says_its_retries_are_not_counted() -> None:
+    api = _retried()
+    api.run(event="pull_request", pull_requests=[])
+    found = _note(api)
+    assert found.output["title"] == f"Red: {RESULTS_RED}"
+    assert "- retries not counted: the run names no pull request" in found.output["summary"]
+
+
+def test_an_unread_answer_leaves_the_count_unread_and_the_red_as_it_is() -> None:
+    def broken(text: str, variables: Mapping[str, object]) -> Any:
+        raise OSError("HTTP 502")
+
+    api = _retried()
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(broken, APP, False))
+    assert outcome.posting is not None and outcome.posting.conclusion == "failure"
+    assert outcome.posting.output["title"] == f"Red: {RESULTS_RED}"
+    assert "- retries not counted: unread: " in outcome.posting.output["summary"]
+
+
+def test_a_red_that_only_waits_carries_no_note() -> None:
+    api = FakeApi()
+    api.run(event="pull_request", pull_requests=[{"number": 12, "head": {"sha": HEAD}}])
+    api.codeql(HEAD, status="in_progress")
+    retry = FakeRetry()
+    found = _note(api, retry)
+    assert retry.calls == 0 and "retr" not in found.output["summary"]
+
+
+def test_the_flaky_title_is_flaky_tests_own() -> None:
+    from tools.ci import flaky_issues
+
+    for test in (FLAKY_TEST, "tests/test_long.py::test_" + "x" * 300):
+        assert mc.flaky_title(test) == flaky_issues.title(test)
+    assert (mc.FLAKY_LABEL, mc.FLAKY_PREFIX) == (flaky_issues.LABEL, flaky_issues.PREFIX)
