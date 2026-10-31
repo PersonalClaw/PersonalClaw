@@ -499,6 +499,19 @@ def _is_bundled_app_module(in_src: str) -> bool:
     return in_src.startswith(_BUNDLED_APP_PREFIX)
 
 
+def _unit_of(in_src: str) -> str:
+    """The unit *in_src* belongs to: its top-level package, or a top-level module's own name.
+
+    ``config/loader.py`` is ``config`` and ``atomic_write.py`` is ``atomic_write``; the package's
+    own ``__init__.py`` is ``""``. A top-level module used to read as ``""``, the package root,
+    so no rule could name one as its lower layer, and most of the foundation is top-level modules.
+    """
+    head, _, rest = in_src.partition("/")
+    if rest:
+        return head
+    return "" if head == "__init__.py" else head.removesuffix(".py")
+
+
 @dataclass(frozen=True)
 class DirectionRule:
     """One declared layer-order rule: files in ``lower`` may not import ``upper``.
@@ -515,7 +528,7 @@ class DirectionRule:
     def applies_to(self, in_src: str) -> bool:
         if _is_bundled_app_module(in_src):
             return False  # not a core layer at all — see the helper
-        top = in_src.split("/")[0] if "/" in in_src else ""
+        top = _unit_of(in_src)
         if top in self.upper:
             return False  # the upper layer may of course import itself
         return self.lower == ("*",) or top in self.lower
@@ -575,6 +588,10 @@ def _imported_personalclaw_modules(path: Path, tree: ast.Module) -> list[str]:
     A relative import is the shape that hides a direction violation from grep (``from
     ..dashboard import x`` never contains the string ``personalclaw.dashboard``), so it is
     resolved here rather than skipped.
+
+    An import from the package itself (``from personalclaw import config``, or ``from . import
+    config`` in a top-level module) brings the modules it names, so each of them is listed too:
+    read as plain ``personalclaw``, the 778 such imports in the tree on 2026-10-31 named no module.
     """
     parent = path.resolve().parent
     rel_parent = parent.relative_to(_src_root()).as_posix()
@@ -587,11 +604,15 @@ def _imported_personalclaw_modules(path: Path, tree: ast.Module) -> list[str]:
             if node.level == 0:
                 if node.module and node.module.startswith("personalclaw"):
                     out.append(node.module)
+                    if node.module == "personalclaw":
+                        out.extend(f"personalclaw.{a.name}" for a in node.names if a.name != "*")
                 continue
             up = node.level - 1
             base = pkg_parts[: len(pkg_parts) - up] if up else list(pkg_parts)
             tail = [node.module] if node.module else []
             out.append(".".join(["personalclaw", *base, *tail]))
+            if not base and not tail:
+                out.extend(f"personalclaw.{a.name}" for a in node.names if a.name != "*")
     return out
 
 

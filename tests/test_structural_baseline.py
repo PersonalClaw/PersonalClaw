@@ -591,6 +591,36 @@ def test_the_import_direction_rule_resolves_relative_imports(tmp_path, monkeypat
     assert "personalclaw.sdk.model" in modules, modules
 
 
+def test_an_import_from_the_package_itself_names_each_module_it_brings(tmp_path, monkeypatch):
+    """``from personalclaw import config`` is how most modules here import another, and read as
+    plain ``personalclaw`` it named nothing, so no rule could see the HTTP layer imported that
+    way. Each module it brings is listed, from the absolute form and from ``from . import`` in a
+    top-level module alike."""
+    monkeypatch.setattr(gen, "_src_root", lambda: tmp_path)
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "from personalclaw import dashboard, config\nfrom . import sdk\n", encoding="utf-8"
+    )
+    tree = gen._parse(probe)
+    assert tree is not None
+    modules = gen._imported_personalclaw_modules(probe, tree)
+    for name in ("personalclaw.dashboard", "personalclaw.config", "personalclaw.sdk"):
+        assert name in modules, modules
+
+
+def test_a_top_level_module_is_a_unit_a_rule_can_name():
+    """A top-level module used to read as the package root, so a rule naming ``atomic_write``
+    as its lower layer applied to no file at all. Each top-level module is a unit of its own."""
+    assert gen._unit_of("config/loader.py") == "config"
+    assert gen._unit_of("atomic_write.py") == "atomic_write"
+    assert gen._unit_of("__init__.py") == ""
+    rule = gen.DirectionRule(
+        name="probe", lower=("atomic_write",), upper=("dashboard",), rationale="probe"
+    )
+    assert rule.applies_to("atomic_write.py") is True
+    assert rule.applies_to("config/loader.py") is False
+
+
 def test_the_upper_layer_may_import_itself():
     """``dashboard/`` importing ``dashboard/`` is not a violation, and neither is ``sdk/``
     importing ``sdk/``. A rule that flagged intra-layer imports would report hundreds of false
