@@ -289,7 +289,7 @@ export function SourcesPage({ onBack, onCreate }: { onBack: () => void; onCreate
         }
       />
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-2xl">
           {/* A failed fetch and an empty list are different facts, and telling a user they
               watch nothing when the truth is "we could not load it" is the worse of the two. */}
           {sources === undefined && error ? (

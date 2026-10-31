@@ -37,13 +37,13 @@ export function AgentCreatePage({ onBack, onCreated }: { onBack: () => void; onC
     <div className="flex h-full flex-col">
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New agent</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l pb-2xl">
           <AgentForm draft={draft} onChange={setDraft} />
           {err && <p ref={errRef} role="alert" className="mt-l text-danger text-[0.8125rem]">{err}</p>}
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-m">
-        <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex justify-end gap-s">
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !draft.name.trim()} disabledReason={!draft.name.trim() ? 'Enter an agent name first' : undefined}><Check size={16} /> Create agent</Button>
         </div>

@@ -22,8 +22,7 @@ import { api } from '../lib/api'
 // Dropping the label below the mobile breakpoint returns ~100px to every page header. The
 // indicator itself is preserved (the glyph and its warn tone still say "degraded"), and the
 // popover — which carries the real detail: each surface, its floor, its backlog — is
-// unchanged. This mirrors the precedent directly above it in the corner cluster: WidthPill
-// is already dropped on mobile for the same "the corner must not starve the page" reason.
+// unchanged: the corner must not starve the page.
 //
 // Asserted through matchMedia rather than a viewport, because `useIsMobile` reads
 // `matchMedia('(max-width: 768px)')` — jsdom has no layout, so the media query IS the

@@ -59,7 +59,7 @@ export function SourceCreatePage({ onBack, onCreated }: { onBack: () => void; on
     <div className="flex h-full flex-col">
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back to sources" size={40} onClick={onBack} /><PageTitle>Watch something</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-2xl">
           {kinds === undefined && error ? (
             <LoadError what="source kinds" error={error} onRetry={refresh} />
           ) : kinds === undefined || loading ? (
@@ -322,7 +322,7 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
     <div className="flex h-full flex-col">
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back to source kinds" size={40} onClick={onBack} /><PageTitle className="inline-flex items-center gap-s"><Icon size={18} aria-hidden /> New {kind.display_name.toLowerCase()}</PageTitle></div>} />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex flex-col gap-l px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex flex-col gap-l px-l py-l">
 
           <Field label="Name" hint="What you'll recognise this source by in your library.">
             <TextInput value={name} onChange={setName} placeholder={`${kind.display_name} · e.g. Product changelog`} autoFocus required />
@@ -446,7 +446,7 @@ function SourceForm({ kind, seed, onBack, onClose, onCreated }: {
           section. `ui/FormFooter` is the DETAIL-PANE bar (it bleeds `-mx-l` to a pane's
           edges), which is the wrong geometry for a full-height page. */}
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
-        <div className="mx-auto flex items-center justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex items-center justify-end gap-s">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={save} loading={saving} disabled={saving || !canSave}
             disabledReason={saving ? undefined : !name.trim() ? 'Give this source a name' : 'Fill in what to watch'}>

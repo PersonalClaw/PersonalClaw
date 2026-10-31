@@ -7,7 +7,7 @@ const doc: UiDoc = {
   name: 'ListControls',
   keywords: ['list', 'controls', 'search', 'filter', 'sort', 'toolbar', 'bar', 'segmented', 'page'],
   description:
-    'The canonical on-PAGE controls bar for a list section — a search box, an optional single-select filter strip, and optional extra controls (sort, chips), pinned just below the TopBar and centered to the content width. List controls live HERE, on the page, not in the header (the header keeps only structural view-switches + the primary action). Renders nothing when empty, so it can be passed unconditionally.',
+    'The canonical on-PAGE controls bar for a list section — a search box, an optional single-select filter strip, and optional extra controls (sort, chips), pinned just below the TopBar and spanning the pane. List controls live HERE, on the page, not in the header (the header keeps only structural view-switches + the primary action). Renders nothing when empty, so it can be passed unconditionally.',
   props: [
     { name: 'search', description: 'Optional search-box config ({ value, onChange, placeholder?, label?, autoFocus? }); omit for a filter-only bar. A stable input name is derived from the label/placeholder.' },
     { name: 'results', description: "How many rows the current search/filter leaves ({ count, noun, active }), announced politely in an sr-only role=status region. Typing in a list filter rewrites the page under the user, and NOTHING told a screen-reader user what happened — measured on six surfaces (knowledge, prompts, triggers, apps, skills, projects): filtering 26 rows to 25, or to a \"No matching items\" empty state, produced ZERO live regions every time. Renders \"25 items\" / \"1 item\" (singularised) / \"No matching items\", and stays silent while `active` is false so an idle list never announces its own length. Same pattern as FindBar's match counter." },
@@ -22,7 +22,7 @@ const doc: UiDoc = {
     { guidance: true, description: 'Use `filter` for a status/kind/scope narrowing strip; do not repurpose it as a view/mode switch (that belongs in the header).' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
   ],
-  anatomy: ['bottom-bordered shrink-0 container', 'centered content-width row', 'SearchField (flex-1)', 'Segmented filter strip', 'extra children (sort / chips)'],
+  anatomy: ['bottom-bordered shrink-0 container', 'full-width row', 'SearchField (flex-1)', 'Segmented filter strip', 'extra children (sort / chips)'],
 }
 
 export default doc

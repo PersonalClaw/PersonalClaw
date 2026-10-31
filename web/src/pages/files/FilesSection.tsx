@@ -351,10 +351,8 @@ export function FilesSection({ navigate, query: routeQuery, setQuery }: RoutePro
       {rootsErr && roots.length === 0 ? (
         <LoadError what="file roots" error={rootsErr} onRetry={refreshRoots} />
       ) : (
-      /* Workbench body is centered + bounded to the shell content-width preset
-         (the 'full' preset still fills — min(1600px,100%)); its internal columns
-         flex within that. */
-      <div className="mx-auto flex min-h-0 w-full flex-1" style={{ maxWidth: 'var(--content-width)' }}>
+      /* Workbench body spans the pane; its internal columns flex within it. */
+      <div className="mx-auto flex min-h-0 w-full flex-1">
             {/* editor column — tab strip + the focused file's viewer (fills width;
                 the explorer is a right-docked, hidable panel beside it) */}
             <div className="flex min-w-0 flex-1 flex-col">

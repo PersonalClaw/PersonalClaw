@@ -27,7 +27,7 @@ export function HomeOverview(route: RouteProps) {
           widgets landing one by one. It sits above every band's own loading state on purpose (the
           replay rule in `ui/motion/Entrance`), so a band's data landing re-renders inside a
           mounted group instead of remounting it and re-running the entrance. */}
-      <EntranceGroup className="mx-auto flex w-full flex-col gap-2xl px-l py-xl" style={{ maxWidth: 'var(--content-width)' }}>
+      <EntranceGroup className="mx-auto flex w-full flex-col gap-2xl px-l py-xl">
         {/* Every band renders inside a boundary (in `Section`), so a widget that throws shows
             "Couldn't show …" with Retry in its place and the other bands keep working. */}
         <EntranceRegion className="min-w-0">

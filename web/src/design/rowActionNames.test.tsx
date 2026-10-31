@@ -18,7 +18,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 // two or three words repeated with nothing to choose between them (WCAG 4.1.2). The visible label is
 // right as it is — on screen the subject is the row you are looking at — so the fix is the accessible
 // NAME only, composed the way the kit already composes it elsewhere: `ui/Toaster`
-// (`Dismiss: ${message}`), `ui/forms` (`Remove ${value}`), `ui/WidthPill` (`Content width: ${label}`),
+// (`Dismiss: ${message}`), `ui/forms` (`Remove ${value}`),
 // FileTree / AppsSection (`Actions for ${name}`). Drift, not a taste call — the convention exists.
 //
 // 🪤 A `title` IS NOT THE NAME WHEN THE BUTTON HAS TEXT. `RowAction`'s Reply button already carried

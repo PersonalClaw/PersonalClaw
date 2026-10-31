@@ -5,7 +5,7 @@ import { SearchField } from './SearchField'
 
 /** The canonical on-PAGE controls bar for a list section — search + an optional
  *  filter segmented + optional extra controls (sort, chips), pinned just below the
- *  TopBar and centered to the content width. List controls belong here, on the
+ *  TopBar and spanning the pane. List controls belong here, on the
  *  page, NOT in the header (the header keeps only structural view-switches + the
  *  primary action). Mirrors the chat-history layout so every list page reads the
  *  same. Render via WorkbenchLayout's `controls` slot, or inline above a body. */
@@ -44,7 +44,7 @@ export function ListControls({
   if (!search && !filter && !children) return null
   return (
     <div className="shrink-0 border-b border-outline-variant/30">
-      <div className="mx-auto flex w-full flex-wrap items-center gap-s px-l py-m" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto flex w-full flex-wrap items-center gap-s px-l py-m">
         {search && (
           <div className="min-w-[12rem] flex-1">
             <SearchField value={search.value} onChange={search.onChange}

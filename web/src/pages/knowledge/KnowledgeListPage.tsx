@@ -592,7 +592,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
       }
     >
       {stats && (
-        <div className="mx-auto w-full px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto w-full px-l pt-l">
           <div className="flex flex-wrap items-center gap-s">
             <StatChip icon={Database} label="items" value={stats.items} />
             <StatChip icon={Sparkles} label="entities" value={stats.entities} />
@@ -625,7 +625,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
           shared "Knowledge base is empty" state below is the right answer for every view, graph
           included; it was simply unreachable from one of them. */}
       {(view !== 'graph' || empty) && (
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-l py-l">
         {view === 'home' && !empty ? (
           // The home owns its OWN read, loading and error states (one shelves request, not the
           // item list), so it sits ahead of the list's gates: a failed item list must not blank a

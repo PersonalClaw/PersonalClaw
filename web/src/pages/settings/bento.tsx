@@ -272,7 +272,7 @@ export function Switch({ on, onToggle, label, disabled, disabledReason }: {
  *  `ariaLabel`, and this one took nothing — so its options announced a bare value ("Light",
  *  "Comfortable", "Warn+") with no axis and, because the active option is marked only by an
  *  inline background, no way to tell which one is on. Each option publishes
- *  `<dimension>: <value>` plus its pressed state, the shape `WidthPill`, `HeaderModePill`
+ *  `<dimension>: <value>` plus its pressed state, the shape `HeaderModePill`
  *  and the composer pills already use. Pass the row's VISIBLE label so screen and speech
  *  agree. */
 export function SegToggle<T extends string>({ value, options, onPick, ariaLabel }: {

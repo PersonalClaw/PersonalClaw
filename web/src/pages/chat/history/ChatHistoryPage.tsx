@@ -234,7 +234,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
           (list) or hosts a height-bounded board (board view) — the page itself
           never overflows. */}
       <div className="flex min-w-0 flex-1 min-h-0 flex-col">
-        <div className="mx-auto w-full px-l pt-l shrink-0" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto w-full px-l pt-l shrink-0">
           {/* Render the search/filter chrome whenever the list is loading OR
               non-empty — so the page paints fully (real controls + skeleton rows
               below) during load, and only the genuine empty-state hides it. */}
@@ -378,7 +378,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
             rooms list with a chat LoadError. */}
         {roomsScope ? (
           <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="mx-auto w-full px-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+            <div className="mx-auto w-full px-l pb-2xl">
               <RoomsScope rooms={roomsData} error={roomsError} loading={false}
                 onRefresh={refreshRooms} navigate={navigate} />
             </div>
@@ -410,17 +410,17 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
             }</div>
           : view === 'board' ? (
             // Board fills the remaining height; columns are height-bounded and
-            // each column's list scrolls on its own (kanban shell). Centered +
-            // bounded to the shell content-width preset like every other page.
+            // each column's list scrolls on its own (kanban shell). It spans the
+            // pane like every other page.
             <div className="flex-1 min-h-0 px-l pb-l">
-              <div className="mx-auto h-full w-full" style={{ maxWidth: 'var(--content-width)' }}>
+              <div className="mx-auto h-full w-full">
                 <TagBoard sessions={filtered} tags={tags} card={card} onMove={setColumnTag} />
               </div>
             </div>
           )
           : (
             <div className="flex-1 min-h-0 overflow-y-auto">
-              <div className="mx-auto w-full px-l pb-l flex flex-col gap-l" style={{ maxWidth: 'var(--content-width)' }}>
+              <div className="mx-auto w-full px-l pb-l flex flex-col gap-l">
                 {byFolder.map((g) => {
                   // Each folder group (incl. the ungrouped one) is a drop target:
                   // dropping a dragged chat sets its folder (null for ungrouped).

@@ -5,7 +5,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── A menu nobody could open, and two promises with nothing behind them ───────────────────────
 //
-// `ui/WidthPill` opened its options **only** on `onMouseEnter`. Driven on `#/dashboard`: focus the
+// The shell's content-width pill (removed since, #5718) opened its options **only** on `onMouseEnter`. Driven on `#/dashboard`: focus the
 // trigger, press Enter → `aria-expanded` stayed **false** and nothing appeared; the four options were
 // never in the DOM, so there was no keyboard route to the content-width control at all. WCAG 2.1.1.
 // Its options were always fine — real buttons with `aria-label` + `aria-pressed`; they were simply
@@ -13,7 +13,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //
 // 🪤 AND TWO TRIGGERS PROMISED A MENU THEY NEVER DELIVERED. Measured with each popover open:
 //
-//   ui/WidthPill         aria-haspopup="menu" → **0** role=menu, **0** menuitems
+//   the width pill       aria-haspopup="menu" → **0** role=menu, **0** menuitems
 //   ui/NotificationBell  aria-haspopup="menu" → **0** role=menu, **0** menuitems (it opens a panel of
 //                        notification ROWS, each with its own hit target and two actions)
 //
@@ -59,8 +59,8 @@ describe('an aria-haspopup trigger delivers what it promises', () => {
     expect(broken, `a trigger promises a popup it does not deliver:\n${broken.join('\n')}`).toEqual([])
   })
 
-  it('the two corrected triggers claim only a disclosure', () => {
-    for (const rel of ['ui/WidthPill.tsx', 'ui/NotificationBell.tsx']) {
+  it('the corrected trigger claims only a disclosure', () => {
+    for (const rel of ['ui/NotificationBell.tsx']) {
       const code = readSource(join(SRC, rel)).replace(/\/\/.*$/gm, '')
       expect(code, `${rel} must not re-add a false menu promise`).not.toMatch(/aria-haspopup/)
       expect(code, `${rel} still reports open/closed`).toMatch(/aria-expanded=\{open\}/)
@@ -83,10 +83,4 @@ describe('a disclosure is never hover-only', () => {
     expect(offenders, `hover-only disclosure — unreachable without a pointer:\n${offenders.join('\n')}`).toEqual([])
   })
 
-  it('the width pill closes on Escape and returns focus to its trigger', () => {
-    const src = readSource(join(SRC, 'ui/WidthPill.tsx'))
-    expect(src).toMatch(/e\.key === 'Escape'/)
-    expect(src).toMatch(/btnRef\.current\?\.focus\(\)/)
-    expect(src, 'and closes on an outside click').toMatch(/wrapRef\.current && !wrapRef\.current\.contains/)
-  })
 })

@@ -185,7 +185,7 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
       <AnimatePresence initial={false}>
         {expanded ? (
           <motion.div key="open" initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} transition={spring.spatialFast}
-            className="pointer-events-auto mx-auto flex w-full max-w-[var(--content-width)] flex-col overflow-hidden rounded-t-xl border border-b-0 border-outline-variant/50 bg-surface/95 shadow-2xl ring-1 ring-black/5 backdrop-blur-md"
+            className="pointer-events-auto mx-auto flex w-full flex-col overflow-hidden rounded-t-xl border border-b-0 border-outline-variant/50 bg-surface/95 shadow-2xl ring-1 ring-black/5 backdrop-blur-md"
             style={{ maxHeight: '50%' }}>
             <div className="flex shrink-0 items-center gap-2 border-b border-outline-variant/40 px-l py-2">
               <MessagesSquare size={15} className="text-primary" />
@@ -210,7 +210,7 @@ function CommentDeck({ comments, activeDocId, onSubmit }: {
           // off the bottom edge).
           <motion.button key="closed" type="button" onClick={() => setExpanded(true)}
             initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }} transition={spring.spatialFast}
-            className="pointer-events-auto relative mx-auto block w-full max-w-[var(--content-width)] text-left"
+            className="pointer-events-auto relative mx-auto block w-full text-left"
             style={{ paddingTop: peekCount * PEEK }}>
             {/* peeking edges of the underlying cards (up to 3), rising above the front */}
             {rest.slice(0, 3).map((c, i) => (

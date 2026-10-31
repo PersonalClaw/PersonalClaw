@@ -14,7 +14,7 @@ import { TaskForm, emptyDraft, draftToPayload, type TaskDraft } from './TaskForm
 const EMPTY_TASKS: TaskCollection = { tasks: [], total: 0, complete: true, owner: '' }
 
 /** Dedicated full-page create flow (not the sidebar, per the directive). The
- *  same TaskForm the edit panel uses, laid out at content width with a sticky
+ *  same TaskForm the edit panel uses, laid out across the pane with a sticky
  *  footer. On success, hands the new task back to the section to open it. */
 export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCreated: (t: TaskItem) => void }) {
   const [draft, setDraft] = useState<TaskDraft>(emptyDraft)
@@ -51,7 +51,7 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
     <div className="flex h-full flex-col">
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New task</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l pb-2xl">
           <PartialNotice className="mb-l" complete={collection?.complete ?? true} shown={allTasks.length}
             total={collection?.total ?? 0} what="tasks"
             detail="a prerequisite outside this window cannot be picked here" />
@@ -60,7 +60,7 @@ export function TaskCreatePage({ onBack, onCreated }: { onBack: () => void; onCr
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-m">
-        <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex justify-end gap-s">
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !draft.title.trim()} disabledReason={!draft.title.trim() ? 'Enter a task title first' : undefined}><Check size={16} /> Create task</Button>
         </div>

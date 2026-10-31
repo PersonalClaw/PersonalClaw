@@ -263,7 +263,7 @@ export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: P
         </SidePanel>
       )}
     >
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-l py-l">
         {items === undefined && loadErr ? (
           // Before the skeleton branch, or a failed first read spins it forever.
           <LoadError what="notifications" error={loadErr} onRetry={load} />

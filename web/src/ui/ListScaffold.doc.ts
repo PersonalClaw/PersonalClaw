@@ -9,7 +9,7 @@ const docs: UiDoc[] = [
     name: 'ListScaffold',
     keywords: ['list', 'scaffold', 'page', 'shell', 'topbar', 'destination', 'entity', 'skeleton', 'layout'],
     description:
-      'The shared shell for workspace/build list PAGES (design Tenet 2: a list is a destination page, not a cramped panel). A sparse TopBar with the title on the left and an action slot on the right, above a centered scrolling column at the customizable content width. Pair with the sibling skeleton + EmptyState pieces so every entity surface reads as one family.',
+      'The shared shell for workspace/build list PAGES (design Tenet 2: a list is a destination page, not a cramped panel). A sparse TopBar with the title on the left and an action slot on the right, above a scrolling column that spans the pane. Pair with the sibling skeleton + EmptyState pieces so every entity surface reads as one family.',
     props: [
       { name: 'title', description: 'Page title, rendered title-l in the TopBar left slot.' },
       { name: 'right', description: 'Fills the TopBar action slot (the page primary action / view switches).' },

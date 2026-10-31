@@ -51,7 +51,7 @@ export function PromptViewPage({ kind, name, onBack, navigate, query, setQuery }
         <PageTitle className="truncate">{name}</PageTitle>
       </div>} />
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l pb-2xl">
           {loaded === null ? (
             <div className="flex h-40 items-center justify-center"><Loader2 size={22} className="animate-spin text-on-surface-low" /></div>
           ) : loaded === 'missing' ? (

@@ -35,7 +35,7 @@ export function KnowledgeCreatePage({ onBack, onCreated }: { onBack: () => void;
       <div className="flex h-full flex-col">
         <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>Add knowledge</PageTitle></div>} />
         <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="mx-auto px-l py-2xl">
             <p data-type="body-m" className="text-on-surface-low mb-l text-center">What kind of knowledge are you adding?</p>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-m">
               {TYPES.map((t) => (
@@ -186,7 +186,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
           text, drop-zone for files, URL field for bookmarks), and inline tags.
           Cancel/Save live in the bottom bar. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex h-full min-h-0 flex-col gap-l px-l pt-l pb-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex h-full min-h-0 flex-col gap-l px-l pt-l pb-l">
 
           {/* Bookmark → its URL is the PRIMARY field (required; the page is scraped on
               save), so it leads — above the optional title — and gets autofocus. */}
@@ -314,7 +314,7 @@ function CreateForm({ type, onBack, onClose, onCreated }: { type: KnowledgeType;
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
-        <div className="mx-auto flex items-center justify-between gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex items-center justify-between gap-s">
           <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low"><FileText size={12} /> Saved to your knowledge library, then enriched automatically.</span>
           <div className="flex gap-s">
             {/* Leaving stops an upload still sending; one being added can no longer be stopped. */}

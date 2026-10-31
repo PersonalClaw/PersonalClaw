@@ -178,7 +178,7 @@ export function LoopsListPage({ onOpen, onCreate, onOpenCode, query, setQuery }:
       )}
     >
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-2xl">
           {(codeAtWork > 0 || codeUnread) && (
             <p data-type="body-s" className="mb-l flex flex-wrap items-center gap-xs text-on-surface-low">
               <Code2 size={14} className="shrink-0" />

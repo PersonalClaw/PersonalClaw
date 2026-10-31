@@ -774,7 +774,7 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
 }
 
 /** A header mode control that shows ONLY the current selection, and expands on
- *  hover into the full option list — the shell's WidthPill idiom, applied to a
+ *  hover into the full option list, applied to a
  *  header cluster control. Collapsed it's a single pill (active icon + label, or
  *  icon-only when the cluster is tight, mirroring HeaderControl); hovering (or
  *  keyboard-focusing) expands a floating menu of every option below the trigger,

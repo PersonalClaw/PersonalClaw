@@ -246,7 +246,7 @@ export function LearningPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           offset belongs to the PATTERN, not to this site, and `scrollRegionNamed` now asserts the
           quartet. */}
       <div tabIndex={0} role="group" aria-label="Capture and proposals" className="flex-1 overflow-y-auto focus-visible:-outline-offset-2">
-        <div className="mx-auto flex flex-col gap-xl px-l py-l pb-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex flex-col gap-xl px-l py-l pb-2xl">
           {err && <InlineError icon onDismiss={() => setErr('')}>{err}</InlineError>}
 
           {learningOff && <LearningOff onTurnedOn={refreshAll} />}

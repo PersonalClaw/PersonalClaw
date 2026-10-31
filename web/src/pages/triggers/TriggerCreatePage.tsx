@@ -255,7 +255,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
     <div className="flex h-full flex-col">
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>New trigger</PageTitle></div>} />
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-l pb-2xl flex flex-col gap-xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l pb-2xl flex flex-col gap-xl">
           {/* A seeded form looks exactly like a form someone else already filled in, which is
               disorienting if you do not know why. One quiet line names the preset and says the
               obvious thing out loud: nothing here is locked. */}
@@ -397,7 +397,7 @@ export function TriggerCreatePage({ onBack, onCreated, query, setQuery }: {
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-3">
-        <div className="mx-auto flex items-center justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex items-center justify-end gap-s">
           {saveReason && <p data-type="body-s" className="mr-auto min-w-0 text-on-surface-var">{saveReason}</p>}
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !canSave}

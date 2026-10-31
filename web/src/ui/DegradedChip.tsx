@@ -80,7 +80,7 @@ export function DegradedChip({ className }: {
   // 390px that left the header's content slot 28px for content wanting 259px, and the
   // corner painted over 22 of 37 surfaces' titles and controls. Icon-only below the
   // mobile breakpoint keeps the indicator (and its popover, which carries the real
-  // detail) while returning ~100px to the page. Same reasoning as WidthPill's drop above.
+  // detail) while returning ~100px to the page.
   const isMobile = useIsMobile()
 
   useVisiblePoll(() => {

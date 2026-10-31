@@ -86,10 +86,9 @@ export function AppFrame({ app, title, icon, src, mountFunction }: {
         </SidePanel>
       )}
     >
-      {/* The app's content region. Centered to the global content width like every
-          other page; the app mounts BELOW the header so it never hides behind the
+      {/* The app's content region. It spans the pane like every other page; the app mounts BELOW the header so it never hides behind the
           floating shell corners. */}
-      <div className="mx-auto h-full w-full" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto h-full w-full">
         <ContributedPage app={app} host={hostRef.current} src={src} mountFunction={mountFunction} />
       </div>
     </WorkbenchLayout>

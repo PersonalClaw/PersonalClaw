@@ -35,7 +35,7 @@ const docs: UiDoc[] = [
       { guidance: false, description: 'Do not drop or hardcode the `--shell-corner-r` / `--shell-corner-rh` vars it publishes — TopBar pads its right edge and SidePanel starts below the corner band using them, so overriding them causes overlap.' },
       { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens.' },
     ],
-    anatomy: ['absolutely-positioned top-right cluster (rounded inner corner, backdrop-blur)', 'terminal toggle', 'WidthPill (desktop only — dropped on mobile)', 'NotificationBell', 'ThemeControl', 'below 768 px: the terminal toggle and ThemeControl fold into one More menu (a vertical ⋮, unlike the … in a page header), and the 44 px targets sit edge to edge', 'DegradedChip (only while a surface is on its no-model floor)'],
+    anatomy: ['absolutely-positioned top-right cluster (rounded inner corner, backdrop-blur)', 'terminal toggle', 'NotificationBell', 'ThemeControl', 'below 768 px: the terminal toggle and ThemeControl fold into one More menu (a vertical ⋮, unlike the … in a page header), and the 44 px targets sit edge to edge', 'DegradedChip (only while a surface is on its no-model floor)'],
   },
 ]
 

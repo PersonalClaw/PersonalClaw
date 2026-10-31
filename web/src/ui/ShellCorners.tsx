@@ -4,11 +4,9 @@ import { MoreVertical, PanelLeftClose, PanelLeftOpen, SquareTerminal } from 'luc
 import { spring } from '../design/motion'
 import { ThemeControl, useThemeCycle } from './TopBar'
 import { MenuRow, Popover } from './Popover'
-import { WidthPill } from './WidthPill'
 import { NotificationBell } from './NotificationBell'
 import { NeedsYouBadge } from './NeedsYouBadge'
 import { DegradedChip } from './DegradedChip'
-import { useIsMobile } from '../app/useIsMobile'
 import { WidgetBoundary } from '../app/ErrorBoundary'
 import { accentChip } from '../design/accent'
 import { bindingLabel } from '../app/keymap'
@@ -114,9 +112,6 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
   const ref = useRef<HTMLDivElement>(null)
   useShellCornerWidth(ref, '--shell-corner-r')
   useShellCornerHeight(ref, '--shell-corner-rh')
-  // On mobile the content-width preset is force-ignored (always full width), so
-  // the width control has nothing to do — drop it from the corner cluster.
-  const isMobile = useIsMobile()
   const folds = useFoldsTheCorner()
   return (
     // Flush to the screen's top-right corner: the control cluster sits tight to
@@ -140,12 +135,6 @@ export function ShellCornerRight({ terminalOpen, onToggleTerminal, navigate }: {
         {/* Each control renders inside its own boundary: one that throws leaves a glyph and Retry
             in its slot, and its neighbours and the rest of the app keep working. With none, the
             System status popover throwing on one poll unmounted the whole app. */}
-        {!isMobile && (
-          <>
-            <span className="h-4 w-px bg-outline-variant/40" aria-hidden />
-            <WidgetBoundary what="the content width control" compact><WidthPill /></WidgetBoundary>
-          </>
-        )}
         <WidgetBoundary what="what waits on you" compact><NeedsYouBadge navigate={navigate} className={TOUCH_TARGET} /></WidgetBoundary>
         <WidgetBoundary what="notifications" compact><NotificationBell navigate={navigate} className={TOUCH_TARGET} /></WidgetBoundary>
         {!folds && <WidgetBoundary what="the theme control" compact><ThemeControl className={TOUCH_TARGET} /></WidgetBoundary>}

@@ -37,9 +37,6 @@ vi.mock('../lib/api', async (importOriginal) => {
 })
 vi.mock('../lib/useNeedsYou', () => ({ useNeedsYou: () => ({ rows: [{ id: 'one' }], data: {}, error: null }) }))
 vi.mock('../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
-// The content width control reads the appearance store, which this render has no provider for, and
-// the compact widths drop it from the corner anyway.
-vi.mock('../ui/WidthPill', () => ({ WidthPill: () => null }))
 
 const { ShellCornerLeft, ShellCornerRight } = await import('../ui/ShellCorners')
 const { StatusLine } = await import('./StatusLine')

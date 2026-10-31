@@ -119,13 +119,11 @@ export function TopBar({ left, right, below, keepCornerPadding = false, contentA
    *  not slide under it. Pages where the panel reaches the screen top can leave
    *  this off so the padding collapses (no dead gap). */
   keepCornerPadding?: boolean
-  /** Center the header's inner row to `--content-width` — the SAME centered
-   *  column the page body uses — instead of spanning the full corner-padded bar.
-   *  Set on pages whose header carries body-level controls (a breadcrumb + the
-   *  item's title/actions, e.g. the Knowledge detail page) so those line up with
-   *  the body column and track the global content-width toggle. The corner gaps
-   *  are kept as MIN padding so the row still clears the shell corners when the
-   *  content column is wider than the gap (the 'full' preset). */
+  /** Line the header's inner row up with the page body's own edge padding, instead of
+   *  spanning the full corner-padded bar. Set on pages whose header carries body-level
+   *  controls (a breadcrumb + the item's title/actions, e.g. the Knowledge detail page) so
+   *  those line up with the body below. The body spans the pane (#5718), so the corner
+   *  clearance is the row's padding as on every other bar. */
   contentAligned?: boolean
 }) {
   const panelOpen = useRightPanelOpen() && !keepCornerPadding
@@ -136,18 +134,11 @@ export function TopBar({ left, right, below, keepCornerPadding = false, contentA
   // flush-to-edge corner chrome (collapse tab / control cluster).
   const cornerL = cleared ? 'var(--spacing-l, 16px)' : 'calc(var(--shell-corner-l, 56px) + var(--spacing-m, 12px))'
   const cornerR = cleared || panelOpen ? 'var(--spacing-l, 16px)' : 'calc(var(--shell-corner-r, 140px) + var(--spacing-m, 12px))'
-  // contentAligned: align the row to the SAME centered content column the body uses, so the
-  // title/breadcrumb line up with the content below and track the width toggle. The body centers
-  // a `--content-width` column in the main pane via mx-auto; the equivalent gutter is
-  // `(100% - content-width)/2`. Pad by the LARGER of that gutter and the corner clearance: at
-  // narrow/default the gutter wins → the left edge matches the body column; at 'full' the corner
-  // clearance wins → the actions still clear the floating shell corner.
-  const gutter = 'calc((100% - var(--content-width)) / 2)'
-  const bandL = contentAligned ? `max(${cornerL}, ${gutter})` : cornerL
-  const bandR = contentAligned ? `max(${cornerR}, ${gutter})` : cornerR
+  const bandL = cornerL
+  const bandR = cornerR
   // Stacked, the row is under BOTH corners (the left tab is the taller one), so only the page's
   // own edge is kept on either side.
-  const edge = contentAligned ? `max(var(--spacing-l, 16px), ${gutter})` : 'var(--spacing-l, 16px)'
+  const edge = 'var(--spacing-l, 16px)'
   const underCorners = stacked && !cleared
   const padding = underCorners
     ? { paddingLeft: edge, paddingRight: edge, paddingTop: 'max(var(--shell-corner-lh, 52px), var(--shell-corner-rh, 44px))' }

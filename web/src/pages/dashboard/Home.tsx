@@ -374,7 +374,7 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
   return (
     <ListBesideDetail header={header} detail={detail} noun="Home">
       <section role="region" aria-label="Home" data-tour="approvals"
-        className="mx-auto flex w-full min-w-0 flex-col gap-l px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        className="mx-auto flex w-full min-w-0 flex-col gap-l px-l py-l">
         {status?.yolo ? (
           <p role="status" className="flex min-w-0 flex-wrap items-center gap-s">
             <StatusPill tone="warn" title="Every tool call is approved without asking.">

@@ -28,8 +28,7 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // expected to carry a pressed state, so its absence is not a violation to find. A name that
 // exists but does not say what it controls is invisible to both.
 //
-// The canonical form was already shipped three times over: `WidthPill` announces
-// `Content width: <preset>` + `aria-pressed`, `HeaderModePill` composes `<dimension>: <value>`,
+// The canonical form was already shipped twice over: `HeaderModePill` composes `<dimension>: <value>`,
 // and the composer pills do the same with a required `dimension` prop. `SegToggle` now takes a
 // REQUIRED `ariaLabel` for exactly that reason — typecheck stops an unnamed new call site
 // before this rail has to.
@@ -215,7 +214,7 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
    *  `m.downloaded === false` and `t.disabled === true` are not one-of-N groups. */
   /** Primitives that declare the selection state for their caller. A row rendered through one of these
    *  is satisfied by construction; each is proven to declare it in the test below. */
-  const DELEGATES = ['TileButton', 'SegToggle', 'SegPills', 'Segmented', 'WidthPill', 'MenuRow']
+  const DELEGATES = ['TileButton', 'SegToggle', 'SegPills', 'Segmented', 'MenuRow']
 
   function exclusiveGroups() {
     const LITERAL = /^(?:true|false|null|undefined|\d+)$/
@@ -423,7 +422,6 @@ describe('delegation is a real path, not a hole in the sweep', () => {
     SegToggle: 'pages/settings/bento.tsx',
     SegPills: 'pages/settings/settingsUI.tsx',
     Segmented: 'ui/Segmented.tsx',
-    WidthPill: 'ui/WidthPill.tsx',
     MenuRow: 'ui/Popover.tsx',
   }
 

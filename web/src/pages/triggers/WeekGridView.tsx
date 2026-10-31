@@ -86,7 +86,7 @@ export function WeekGridView({ onOpenTrigger }: { onOpenTrigger?: (triggerId: st
   const zoneCaptionText = week ? zoneCaption(viewerTz, week.server_tz) : ''
 
   return (
-    <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+    <div className="mx-auto px-l py-l">
       <div className="mb-m flex flex-wrap items-center justify-between gap-s">
         <div className="min-w-0">
           <div className="flex items-center gap-s">

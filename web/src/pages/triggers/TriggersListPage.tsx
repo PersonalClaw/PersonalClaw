@@ -263,14 +263,14 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
       {view === 'week' ? (
         <>
           {(review.length > 0 || reviewErr != null || restoreHolds.length > 0 || unreadable.length > 0) && (
-            <div className="mx-auto px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>{reviewPanel}</div>
+            <div className="mx-auto px-l pt-l">{reviewPanel}</div>
           )}
           {/* Click-through routes into the SAME side panel the list opens (`?open=<id>`), so a cell
               and a row lead to one inspector rather than two surfaces that drift apart. */}
           <WeekGridView onOpenTrigger={(id) => setQuery({ open: id, edit: null, run: null, view: 'list' })} />
         </>
       ) : (
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-l py-l">
         {reviewPanel}
         {loadFailed ? (
           <LoadError what="automations" error={listErr} onRetry={loadList} />

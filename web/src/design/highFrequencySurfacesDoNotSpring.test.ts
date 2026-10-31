@@ -39,7 +39,6 @@ const HIGH_FREQUENCY: Record<string, string> = {
   'ui/FilterRow.tsx': 'a filter menu row',
   'ui/HeaderActions.tsx': 'the header overflow menu and its controls',
   'ui/ProjectPicker.tsx': 'the project menu',
-  'ui/WidthPill.tsx': 'the content-width menu',
   'ui/composer/controls.tsx': 'the composer’s pill menus',
   'ui/NotificationBell.tsx': 'the bell, its badge and its list',
   'ui/SystemWidget.tsx': 'the System popover and its background-agent rows',
@@ -63,7 +62,6 @@ const DRAWS_A_MENU = [
   'ui/motion/ContextMenu.tsx',
   'ui/HeaderActions.tsx',
   'ui/ProjectPicker.tsx',
-  'ui/WidthPill.tsx',
   'ui/NotificationBell.tsx',
   'ui/SystemWidget.tsx',
 ]
