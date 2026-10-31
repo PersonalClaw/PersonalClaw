@@ -2924,6 +2924,12 @@ live in `tests/quarantine.py`, which `tests/conftest.py` loads in every session:
   waives that failure only when the pull request changes no file the test's run reads ("The
   failed tests the records name", above), so a quarantine never hides a regression the change
   brings.
+- **Adding an entry.** `python -m tools.ci quarantine add --nodeid <id> --issue <n> --assignee
+  <login> --reason <one line>` appends one entry, expiring 14 days out (`--days`, at most 14 for a
+  first entry; a renewal follows a recorded look and edits the entry inside the file's 30). It
+  refuses a rail, an id that is no test id, a test listed already and an eleventh entry before it
+  writes; then it reads the list again with these rules, and puts it back exactly as it was if
+  they refuse it (a security-marked test, an id that names no test as spelt).
 - **Nothing else waives a failure.** `tests/waiver_guard.py` reads the list on its own, imports
   nothing from `tests/quarantine.py`, and fails every test pytest waived as an expected failure
   that the list does not name: a source `xfail` mark, strict or not, `pytest.xfail()` in a test
