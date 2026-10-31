@@ -26,6 +26,7 @@ import pytest
 
 import personalclaw
 from personalclaw import _namespace_probe, sandbox
+from personalclaw.config import loader
 from personalclaw.self_update import python_child_argv
 
 #: Run in a process of its own, so the at-fork hook it adds dies with it. The security log's writer
@@ -126,6 +127,27 @@ def test_each_probe_asks_a_new_process_for_the_launchers_namespaces_in_its_order
     for _, how in on_linux:
         assert how["timeout"] == sandbox._NAMESPACE_PROBE_TIMEOUT
         assert how.get("preexec_fn") is None
+
+
+def test_each_probe_hands_its_child_the_home_this_process_is_in(
+    on_linux: list[tuple[list[str], dict[str, object]]],
+) -> None:
+    home = loader.resolve_config_dir()
+    there = home.exists()
+    sandbox._probe_unshare.__wrapped__()
+    sandbox._probe_unshare_net.__wrapped__()
+    assert len(on_linux) == 2
+    for _, how in on_linux:
+        assert how["env"] == {**os.environ, "PERSONALCLAW_HOME": str(home)}
+    assert home.exists() is there, "asking where the home is made it"
+
+
+def test_the_real_home_guard_lets_the_probes_child_start() -> None:
+    """🔴 Red without the home: the guard refused the child, a PersonalClaw interpreter given no
+    home of its own, because this test's home is chosen in this process, not in its environment.
+    Every Linux breadth leg went red on it (#5744). The child is real here; on a host with no
+    ``unshare`` it answers that it could not ask, which is unknown."""
+    assert sandbox._namespaces_take("user", "mount") in (True, False, None)
 
 
 def _child(answer: object):
