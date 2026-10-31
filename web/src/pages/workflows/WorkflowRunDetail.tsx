@@ -617,7 +617,7 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
         {loading && !run ? <Loading what="this run" /> : !run ? (
           <p data-type="body-s" className="text-on-surface-low">This run could not be loaded.</p>
         ) : (
-          <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
+          <div className="mx-auto flex flex-col gap-l">
             {/* Pending asks come FIRST: they are the only thing here a user can act on. */}
             {conts.map((c) => (
               <WorkflowAsk key={c.resume_token} continuation={c} runId={runId} busy={busy} onAnswer={answer}

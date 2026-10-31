@@ -184,7 +184,7 @@ export function AgentsListPage({ onCreate, query, setQuery }: { onCreate: () => 
         ]} />
       </ListControls>}
     >
-      <div className="mx-auto px-l py-l flex flex-col gap-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-l py-l flex flex-col gap-2xl">
         {!loaded && error ? (
           // A failed native read used to render "No native agents · Create an agent…" — the newcomer
           // empty state over a network failure. `loaded` (not `groups.length`) is the honest test:

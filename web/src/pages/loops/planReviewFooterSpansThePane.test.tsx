@@ -4,8 +4,8 @@
  *
  * It used to carry the content-width cap itself, so at any width preset narrower than the pane the
  * line stopped short on both sides. Measured at 1920 wide with the Default preset: the line ran
- * 508–1608, 1100px of a 1724px pane, with bare canvas past each end. Only the ROW of buttons keeps
- * to the content width, so they still line up with the step above.
+ * 508–1608, 1100px of a 1724px pane, with bare canvas past each end. The width preset is gone now
+ * (#5718), and the row of buttons spans the bar too.
  *
  * jsdom lays nothing out, so this pins the cause: no width cap on the bar or on any box it sits in,
  * and the cap on the row inside it.
@@ -43,7 +43,7 @@ describe('Plan Review\'s step bar spans the pane', () => {
   beforeEach(() => vi.resetModules())
   afterEach(() => { cleanup(); vi.doUnmock('./useRunStream'); vi.doUnmock('../../lib/api') })
 
-  it('🔴 runs its line edge to edge, and only its row of buttons keeps to the content width', async () => {
+  it('🔴 runs its line edge to edge, and its row of buttons spans it', async () => {
     vi.doMock('./useRunStream', () => ({ useRunStream: () => ({ connected: false }) }))
     vi.doMock('../../lib/api', async (orig) => {
       const real = await orig<Record<string, unknown>>()
@@ -75,10 +75,10 @@ describe('Plan Review\'s step bar spans the pane', () => {
     }
     expect(capped, 'a width cap on the bar or a box it sits in').toEqual([])
 
-    // The row: one box inside the bar, centred at the content width, holding both buttons.
+    // The row: one box inside the bar, spanning it (#5718), holding both buttons.
     const row = cancel.parentElement as HTMLElement
     expect(row.parentElement).toBe(bar)
-    expect(row.style.maxWidth).toBe('var(--content-width)')
+    expect(row.style.maxWidth).toBe('')
     expect(row.classList).toContain('mx-auto')
     expect(row.contains(forward)).toBe(true)
   })

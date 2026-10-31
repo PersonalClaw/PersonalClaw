@@ -320,7 +320,7 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
         {loading ? <Loading what="this workflow" /> : !def ? (
           <p data-type="body-s" className="text-on-surface-low">This definition could not be loaded.</p>
         ) : (
-          <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
+          <div className="mx-auto flex flex-col gap-l">
             {def.description && <p data-type="body-s" className="text-on-surface">{def.description}</p>}
 
             <Segmented

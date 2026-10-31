@@ -191,7 +191,8 @@
       ],
       "focus order": [
         "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\"",
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Inbox Operation Hook\" to <button .absolute.inset-#.-z-#> \"Inbox Tools — details\""
+        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Inbox Operation Hook\" to <button .absolute.inset-#.-z-#> \"Inbox Tools — details\"",
+        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Native Agents\" to <button .absolute.inset-#.-z-#> \"Native Filesystem Prompts — details\""
       ]
     }
   },
@@ -387,7 +388,8 @@
       ],
       "focus order": [
         "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\"",
-        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Inbox Operation Hook\" to <button .absolute.inset-#.-z-#> \"Inbox Tools — details\""
+        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Inbox Operation Hook\" to <button .absolute.inset-#.-z-#> \"Inbox Tools — details\"",
+        "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Native Agents\" to <button .absolute.inset-#.-z-#> \"Native Filesystem Prompts — details\""
       ]
     }
   }

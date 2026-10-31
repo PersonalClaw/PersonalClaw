@@ -310,7 +310,7 @@ export function ReportsPage({ onBack }: { onBack: () => void }) {
         }
       />
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-2xl">
           {creating && (
             <div className="mb-l">
               <ReportForm initial={blank()} onSaved={() => { setCreating(false); reload() }} onCancel={() => setCreating(false)} />

@@ -5,7 +5,6 @@ import { SCHEMES, getScheme, DEFAULT_SCHEME, type Scheme } from '../design/schem
 import { api, type ThemeRecord, type ThemeWrite } from '../lib/api'
 import type { Revisioned } from '../lib/staleWrite'
 import { useMode } from './theme'
-import { useIsMobile } from './useIsMobile'
 
 /** Persisted overrides (local, per-browser UI state):
  *   colors: { [varName]: { dark?: hex, light?: hex } }  — unsaved live edits
@@ -14,40 +13,14 @@ import { useIsMobile } from './useIsMobile'
  *  Anything absent falls back to the registry default. Saved custom themes are NOT
  *  stored here — they live server-side (/api/themes) so they are shareable and
  *  consistent across browsers and surfaces. There is exactly one theme home. */
-export type WidthPreset = 'narrow' | 'default' | 'wide' | 'full'
-/** Content-width presets — drive `--content-width` (the maxWidth every page's
- *  content column honors). Pages add their own sensible edge padding (`px-l`), so
- *  'full' is a true 100% (edge-to-edge minus that padding), not an artificial cap.
- *  'narrow' = focused reading; 'default' = comfortable; 'wide' = roomy. */
-export const WIDTH_PRESETS: Record<WidthPreset, string> = {
-  narrow: '768px',
-  default: '1100px',
-  wide: '1440px',
-  full: '100%',
-}
-
-/** Fixed caps for surfaces whose usable width must not follow the page content
- *  preference. These preserve the intended dimensions of the former
- *  default-preset offsets while keeping the shipped full-width preset page-only. */
+/** Fixed caps for surfaces with a designed width of their own: a page's main section spans the
+ *  pane (#5718), and these do not. Each is that surface's measure, not a preference. */
 export const SURFACE_WIDTHS = {
   modal: '1260px',
   expandedSidePanel: '1300px',
   snipOverlay: '1420px',
   loopCockpit: '1440px',
 } as const
-
-/** The factory default content width — ONE declaration, because there used to be two and they disagreed.
- *
- *  🪤 THE PRESET NAMED `'default'` IS NOT THE DEFAULT PRESET, and that is exactly how this happened. The
- *  shipped default is `'full'` (a pristine profile persists `widthPreset: 'full'` — driven and read back
- *  from `localStorage`), while two reads spelled their fallback `?? 'default'`, i.e. the 1100px cap. Those
- *  fallbacks were **unreachable**: `load()` returns `{ ...empty, ...stored }` or a clone of `empty`, so
- *  `widthPreset` is always set. Dead, and dangerous in the way dead defaults are — "tidying" the constant
- *  away would have silently re-capped every page from edge-to-edge to 1100px.
- *
- *  So the default is named once and read from here everywhere. A disagreement is now a type error rather
- *  than a comment nobody reads. */
-export const DEFAULT_WIDTH_PRESET: WidthPreset = 'full'
 
 /** A saved theme as it was stored when its colors were last applied here, saved, or updated — with
  *  the revision that read reported. `id` is its scheme id (`custom:<slug>`). */
@@ -58,7 +31,6 @@ interface Overrides {
   scalars: Record<string, number>
   selects: Record<string, string>
   scheme?: string
-  widthPreset?: WidthPreset
   /** 🔴 THE COPY THESE COLORS CAME FROM. "Update theme" rewrites the whole saved theme, so it names
    *  the revision of the copy it was built from (`lib/staleWrite.ts`) — and the colors it sends were
    *  seeded when the theme was APPLIED, possibly sessions ago, since they persist here. A revision
@@ -69,7 +41,7 @@ interface Overrides {
 }
 
 const KEY = 'appearance'
-const empty: Overrides = { colors: {}, scalars: {}, selects: {}, scheme: DEFAULT_SCHEME, widthPreset: DEFAULT_WIDTH_PRESET }
+const empty: Overrides = { colors: {}, scalars: {}, selects: {}, scheme: DEFAULT_SCHEME }
 
 /** Convert a server ThemeRecord ({dark:{var→hex}, light:{var→hex}}) into the
  *  picker's Scheme shape (colors keyed by var → {dark,light}). A saved theme's
@@ -121,6 +93,9 @@ function load(): Overrides {
     const raw = localStorage.getItem(KEY)
     if (raw) {
       const stored = { ...empty, ...JSON.parse(raw) }
+      // A content-width preset an older version saved is dropped, unread: a page's main section
+      // spans the pane now, and a screen with a width of its own designs it (#5718).
+      delete stored.widthPreset
       return { ...stored, selects: offeredSelects(stored.selects) }
     }
   } catch { /* ignore */ }
@@ -149,9 +124,6 @@ interface Ctx {
   setSelect: (varName: string, value: string) => void
   resetAll: () => void
   resetToken: (varName: string) => void
-  // content-width preset
-  widthPreset: WidthPreset
-  setWidthPreset: (p: WidthPreset) => void
   // schemes (curated + server-persisted custom themes, pooled)
   activeScheme: string
   allSchemes: Scheme[]
@@ -180,7 +152,6 @@ const AppearanceCtx = createContext<Ctx>(null as unknown as Ctx)
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { mode } = useMode()
-  const isMobile = useIsMobile()
   const [ov, setOv] = useState<Overrides>(load)
   const ovRef = useRef(ov)
   ovRef.current = ov
@@ -268,13 +239,6 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     if (fam) root.style.setProperty('--font-sans', FONTS[fam] ?? FONTS['dm-sans'])
     else root.style.removeProperty('--font-sans')
 
-    // ── content width preset (overrides the raw --content-width scalar) ──
-    // On a mobile viewport the preset is ignored — content always spans the full
-    // width (the narrow/default/wide caps would waste scarce horizontal space and
-    // leave dead gutters on a phone). The saved preset is preserved and re-applies
-    // as soon as the viewport grows back past the mobile breakpoint.
-    root.style.setProperty('--content-width', isMobile ? '100%' : WIDTH_PRESETS[ov.widthPreset ?? DEFAULT_WIDTH_PRESET])
-
     // ── Orthogonal theming attributes on <html> ──
     // data-theme = active palette identity. For a curated scheme it is the mechanism: it switches
     //   which override sheet is active. A saved theme's id (`custom:<slug>`) matches no sheet, so
@@ -284,7 +248,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     //   data-mode stays owned by theme.tsx (canonical; appSdk reads it) — untouched here.
     root.dataset.theme = ov.scheme ?? DEFAULT_SCHEME
     root.dataset.ui = ov.selects['--ui-density'] ?? 'comfortable'
-  }, [ov, mode, isMobile])
+  }, [ov, mode])
 
   // persist (debounced-ish: on every change; small payload)
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(ov)) } catch { /* ignore */ } }, [ov])
@@ -315,7 +279,6 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const setSelect = (varName: string, value: string) =>
     setOv((p) => ({ ...p, selects: { ...p.selects, [varName]: value } }))
   const resetAll = () => setOv(structuredClone(empty))
-  const setWidthPreset = (p: WidthPreset) => setOv((o) => ({ ...o, widthPreset: p }))
   const resetToken = (varName: string) =>
     setOv((p) => {
       const colors = { ...p.colors }; delete colors[varName]
@@ -394,7 +357,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AppearanceCtx.Provider value={{ colorValue, scalarValue, selectValue, setColor, setScalar, setSelect, resetAll, resetToken, widthPreset: ov.widthPreset ?? DEFAULT_WIDTH_PRESET, setWidthPreset, activeScheme, allSchemes, applyScheme, saveCustomScheme, currentColors: snapshotColors, themeBase, readCustomScheme, updateCustomScheme, revertCustomScheme, deleteCustomScheme, themesLoading }}>
+    <AppearanceCtx.Provider value={{ colorValue, scalarValue, selectValue, setColor, setScalar, setSelect, resetAll, resetToken, activeScheme, allSchemes, applyScheme, saveCustomScheme, currentColors: snapshotColors, themeBase, readCustomScheme, updateCustomScheme, revertCustomScheme, deleteCustomScheme, themesLoading }}>
       {children}
     </AppearanceCtx.Provider>
   )

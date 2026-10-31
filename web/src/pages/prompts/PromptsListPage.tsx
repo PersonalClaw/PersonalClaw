@@ -223,7 +223,7 @@ export function PromptsListPage({ onCreate, onOpen, navigate, query, setQuery }:
           </ListControls>
         : undefined}
     >
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-l py-l">
         {rows === null && loadErr ? (
           <LoadError what={isSnips ? 'snippets' : 'prompts'} error={loadErr} onRetry={load} />
         ) : loading ? <ListSkeleton rows={6} what={isSnips ? 'snippets' : 'prompts'} /> : count === 0 ? (

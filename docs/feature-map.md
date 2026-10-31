@@ -11,7 +11,7 @@ file and the app differ.
 
 | Route | Opens | In the sidebar | Palette | Linked from |
 |---|---|---|---|---|
-| `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 9 more |
+| `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 8 more |
 | `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 15 more |
 | `#/projects` | Projects | Projects | Projects | `pages/chat/header/ChatHeader.tsx`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/tasks/TasksSection.tsx` |
 | `#/library` | Library | Library | Library | none |
@@ -40,7 +40,7 @@ file and the app differ.
 | `#/loops` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/code` | Start a loop | not in the sidebar | Start a loop (Action) | `pages/chat/composer/useChatComposer.ts`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/projects/ProjectsSection.tsx` and 1 more |
 | `#/app` | app | not in the sidebar | none | `pages/apps/AppFrame.tsx`, `pages/apps/AppHostPage.tsx` |
-| `#/onboarding` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 9 more |
+| `#/onboarding` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 8 more |
 | `#/companion` | Companion | Companion, in the phone's drawer only | none | `app/nativePush.ts`, `app/personality.tsx`, `lib/data/keys.ts`, `lib/nativeNotifications.ts` and 2 more |
 | `#/buddy` | buddy | not in the sidebar | none | none |
 

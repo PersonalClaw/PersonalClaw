@@ -288,7 +288,7 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
         ) : !doc ? (
           <Loading what="this workflow" />
         ) : (
-          <div className="mx-auto flex max-w-[var(--content-width)] flex-col gap-l">
+          <div className="mx-auto flex flex-col gap-l">
             {copyMode && (
               <Field label="Name of your copy" hint={`${name} ships with PersonalClaw and stays as it is. Your copy is yours to change, and an update never touches it.`}>
                 <TextInput value={newName} onChange={(v) => { setNewName(v); setNameError('') }} mono maxLength={63} required />

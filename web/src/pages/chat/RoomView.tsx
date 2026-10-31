@@ -216,7 +216,7 @@ export function RoomView({ roomId, navigate, setQuery }: {
   if (data === undefined || !room) {
     return (
       <WorkbenchLayout topBar={<RoomTopBar title="Room" navigate={navigate} />}>
-        <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l">
           {error && hasApiCode(error, 'room_not_found') ? (
             <EmptyState
               icon={ROOM_ICON}
@@ -330,7 +330,7 @@ export function RoomView({ roomId, navigate, setQuery }: {
           // its content instead of scrolling, which would push the composer off the bottom of the
           // page. Spelled out here rather than relied on from an ancestor.
           className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex flex-col gap-xl px-l py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="mx-auto flex flex-col gap-xl px-l py-2xl">
             {lines.length === 0 ? (
               <EmptyState
                 icon={ROOM_ICON}
@@ -372,7 +372,7 @@ export function RoomView({ roomId, navigate, setQuery }: {
         </div>
 
         <div className="border-t border-outline-variant/40">
-          <div className="mx-auto flex flex-col gap-s px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="mx-auto flex flex-col gap-s px-l py-l">
             {actionError !== null && (
               <InlineLoadError what="that" error={actionError.error} onRetry={actionError.retry} />
             )}
@@ -532,7 +532,7 @@ function RoomBudgetControl({ roomId, declared, effective, max, onSet }: {
 function RoomsOffState({ navigate }: { navigate: (path: string) => void }) {
   return (
     <WorkbenchLayout topBar={<RoomTopBar title="Rooms" navigate={navigate} />}>
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-l py-l">
         <EmptyState
           icon={ROOM_ICON}
           title="Agent Rooms is switched off"

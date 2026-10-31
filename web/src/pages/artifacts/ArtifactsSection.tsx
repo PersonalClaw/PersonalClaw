@@ -246,11 +246,8 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
 
       {slug ? (
         // The split view: artifact left, chat right — stacked below `lg`,
-        // where a 26rem side panel would leave the preview unreadable. The reading
-        // column's `--content-width` cap is released while the panel is open, or the
-        // two halves would share one column's worth of space.
-        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col lg:flex-row"
-          style={{ maxWidth: iterateOpen ? undefined : 'var(--content-width)' }}>
+        // where a 26rem side panel would leave the preview unreadable.
+        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col lg:flex-row">
           {/* The CLOSING half of the library's shared-element morph — the same
               `artifact-<slug>` id the grid card carries, so the viewer flies out of that
               card's box and folds back into it on Back. The id is on this stable
@@ -273,7 +270,7 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
           )}
         </div>
       ) : (
-        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex min-h-0 w-full flex-1 flex-col">
           {/* toolbar — URL-backed filter state (shareable) */}
           <div className="flex flex-wrap items-center gap-m border-b border-outline/40 px-l py-2.5">
             <div className="w-64"><SearchField size="sm" value={q} onChange={setQ} placeholder="Search artifacts…" ariaLabel="Search artifacts" name="artifacts-search" /></div>

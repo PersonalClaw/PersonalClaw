@@ -19,9 +19,9 @@
  *  prose — puts its now-dead rule back into the shipped stylesheet. It did, until this
  *  was reworded.
  *
- *  WHY A TS MODULE AND NOT A CSS VAR IN tokens.css. `--content-width` is a var
- *  because the appearance store REWRITES it at runtime (the width-preset pill), so
- *  only CSS can hold it. This one is fixed, and one of its two consumers —
+ *  WHY A TS MODULE AND NOT A CSS VAR IN tokens.css. A token the appearance store
+ *  rewrites at runtime has to be a CSS var, since only CSS can hold it. This one is
+ *  fixed, and one of its two consumers —
  *  `ui/content/exporters.ts` — emits a self-contained HTML file that never loads
  *  this app's stylesheet, so it needs the value in JavaScript to inline. A CSS var
  *  could not serve that consumer, and defining the number in BOTH places would

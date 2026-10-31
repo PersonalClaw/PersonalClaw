@@ -548,9 +548,9 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
       }
       controls={
         // On-page controls: search (hidden on board/DAG, which present all rows) +
-        // the scope/status/sort filter popover. Centered to the content width.
+        // the scope/status/sort filter popover.
         <div className="shrink-0 border-b border-outline-variant/30">
-          <div className="mx-auto flex w-full items-center gap-s px-l py-m" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="mx-auto flex w-full items-center gap-s px-l py-m">
             {!FULL_WIDTH.includes(view) && (
               <div className="min-w-[12rem] flex-1">
                 <SearchField value={query} onChange={setQuery} placeholder="Search tasks" ariaLabel="Search tasks" />
@@ -578,12 +578,12 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         // Board fills height as a shell; centered + bounded to the shell width
         // preset (the 'full' preset still fills the area — min(1600px,100%)).
         <div className="flex-1 min-h-0 px-l py-l flex flex-col gap-s">
-          <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="mx-auto w-full">
             {moveError && <InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError>}
             <PartialNotice complete={collection?.complete ?? true} shown={tasks?.length ?? 0} total={collection?.total ?? 0}
               what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />
           </div>
-          <div className="mx-auto h-full min-h-0 w-full" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="mx-auto h-full min-h-0 w-full">
             {/* Error FIRST: `tasks === null` also satisfies the skeleton and the empty branch, so a
                 later test would be unreachable. Removing the swallow above is only half the fix —
                 without this branch a failed load would hang on the skeleton forever instead. */}
@@ -608,8 +608,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         // graph names itself too, via `DagView`'s own `role="group"` + label, so keeping one here
         // would announce the same region twice.
         <div className="flex-1 overflow-y-auto">
-          {/* every view (incl. DAG) honors the shell content-width preset */}
-          <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="mx-auto px-l py-l">
             {moveError && <div className="mb-s"><InlineError animated icon onDismiss={() => setMoveError('')}>{moveError}</InlineError></div>}
             <PartialNotice className="mb-s" complete={collection?.complete ?? true} shown={tasks?.length ?? 0} total={collection?.total ?? 0}
               what="tasks" detail="dependencies on the ones outside this window are not shown, so a blocked task can read as unblocked" />

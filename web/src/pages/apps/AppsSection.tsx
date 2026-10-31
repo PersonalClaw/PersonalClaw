@@ -826,7 +826,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
           </ListControls>
         ) : undefined}
       >
-        <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l">
           {isStore ? (
             /* The Store is a two-column surface on a wide viewport — the
                persistent category/source rail, then the card grid. The rail is

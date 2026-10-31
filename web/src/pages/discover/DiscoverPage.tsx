@@ -75,7 +75,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
         />
       }
     >
-      <div className="mx-auto flex flex-col gap-l px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto flex flex-col gap-l px-l py-l">
         {/* Deliberately OUTSIDE every branch below. Discover is the progressive-
             disclosure arm, and the tour is the one thing on it that is never earned and
             never used up: a user who dismissed every tip, or who switched tips off

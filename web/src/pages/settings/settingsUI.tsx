@@ -234,7 +234,7 @@ export { Toggle } from '../../ui/Toggle'
  *  screen-reader user heard 26 indistinguishable sets of four bare buttons with no way to tell which
  *  rule they belonged to or which mode was live (WCAG 4.1.2, level A).
  *
- *  This is the form `SegToggle`, `WidthPill`, `TokenControls` and `HeaderModePill` already ship —
+ *  This is the form `SegToggle`, `TokenControls` and `HeaderModePill` already ship —
  *  `<dimension>: <value>` plus `aria-pressed` — and it is required for the same reason SegToggle's is:
  *  typecheck stops an unnamed new call site before a rail has to. The VISIBLE label is untouched. */
 export function SegPills<T extends string>({ value, onChange, options, ariaLabel }: {

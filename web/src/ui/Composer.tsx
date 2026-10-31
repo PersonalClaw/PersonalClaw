@@ -170,7 +170,9 @@ export function Composer({
   const sel = selection
   // The footer's controls in two groups: what the next message is (`+`, and who answers it), then
   // how the turn runs (the reply style, and the host's task mode and Execution Boundary). Wide, they
-  // share one wrapping row beside the send cluster. On a phone (#3808: at 390 the footer wrapped a
+  // share one row beside the send cluster; in the chat's reading column (768 px, #5718) that row is
+  // tight, so it never wraps and the first group gives up width first, its pill truncating its label.
+  // On a phone (#3808: at 390 the footer wrapped a
   // row per control, `+` alone on the first, and the composer grew from 276 px to 316) the first
   // group keeps the first row beside the send cluster, the pill truncating its label rather than
   // wrapping under `+`, and the second group takes the row below, its pills capped at 5.25rem
@@ -183,7 +185,7 @@ export function Composer({
   // A host with no first group (the loop composer) keeps the one wrapping row at every width.
   const twoRows = isMobile && hasLead
   const lead = (
-    <div data-composer-lead className={cx('flex min-w-0 flex-nowrap items-center gap-xs', twoRows && 'flex-1 basis-[6.5rem]')}>
+    <div data-composer-lead className={cx('flex min-w-0 flex-nowrap items-center gap-xs', twoRows ? 'flex-1 basis-[6.5rem]' : 'shrink-[100]')}>
       {controls.attach && <PlusMenu onAttach={() => fileRef.current?.click()} onOpenPrompts={onOpenPrompts} extra={plusMenuExtra} />}
       {/* One pill for who answers: the agent, the model and, for a model that declares levels,
           the reasoning effort. `/agent`, `/model` and `/effort` each open it; `/effort` opens its
@@ -337,7 +339,7 @@ export function Composer({
   )
 
   return (
-    <div ref={rootRef} className="relative w-full" style={{ maxWidth: 'var(--content-width)' }}>
+    <div ref={rootRef} className="relative w-full">
       {/* Under the decorative light, two "awake" states drive the composer's motion,
           both scaled through expr() (bold rises tall, refined barely): FOCUS = "rises
           to meet you"; DRAG-OVER = "opens its arms to receive" — a bigger lift + fuller
@@ -474,7 +476,7 @@ export function Composer({
 
           <div data-composer-footer={twoRows ? 'two-rows' : 'one-row'}
             className={cx('flex items-end justify-between', twoRows ? 'flex-wrap gap-x-s gap-y-xs' : 'gap-s')}>
-            <div data-composer-row={twoRows ? undefined : 'lead'} className={twoRows ? 'contents' : 'flex min-w-0 flex-wrap items-center gap-xs'}>
+            <div data-composer-row={twoRows ? undefined : 'lead'} className={twoRows ? 'contents' : cx('flex min-w-0 items-center gap-xs', hasLead ? 'flex-nowrap' : 'flex-wrap')}>
               <div data-composer-row={twoRows ? 'lead' : undefined} className="contents">{lead}</div>
               {hasRest && (
                 <div data-composer-row={twoRows ? 'rest' : undefined}

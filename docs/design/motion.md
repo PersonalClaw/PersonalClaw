@@ -747,10 +747,6 @@ counts), `ui/navRailIsInstant.test.tsx`, `design/countsDoNotPop.test.tsx`,
 | `ui/SystemWidget.tsx` | menu entrance (scale and rise) | the System popover drops and scales in |
 | `ui/TileButton.tsx` | press scale (`whileTap`) | press scale on a button; the pressed state shows by colour, instantly |
 | `ui/TokenControls.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
-| `ui/WidthPill.tsx` | row cascade (`stagger()` or a per-index delay) | rows cascade on a list the owner opens repeatedly |
-| `ui/WidthPill.tsx` | menu entrance (scale and rise) | the width menu scales and rises in |
-| `ui/WidthPill.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
-| `ui/WidthPill.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |
 | `ui/chat/MessageUser.tsx` | message entrance | the sent message's entrance (a message send) |
 | `ui/composer/controls.tsx` | press scale (`whileTap`) | press scale on a rail item, tab, list row or menu item |
 | `ui/content/ContentSurface.tsx` | sliding selection indicator (`layoutId`) | selection indicator slides on every rail, tab or option change |

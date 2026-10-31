@@ -118,7 +118,7 @@ export function RowAction({
    *  visible text stays the verb — on screen the subject is the row you are looking at.
    *
    *  The kit already composes names this way elsewhere: `ui/Toaster` (`Dismiss: ${message}`),
-   *  `ui/forms` (`Remove ${value}`), `ui/WidthPill` (`Content width: ${label}`), and FileTree /
+   *  `ui/forms` (`Remove ${value}`), and FileTree /
    *  AppsSection (`Actions for ${name}`). Omit it only for a SINGLETON action (one per widget, no
    *  row to disambiguate). */
   ariaLabel?: string

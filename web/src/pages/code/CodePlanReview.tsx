@@ -280,7 +280,7 @@ export function CodePlanReview({ draft, onBack, onLaunched, embedded = false }: 
         right={<HeaderActions><HeaderControl icon={ChevronLeft} label="Back" onClick={onBack} priority="primary" /></HeaderActions>} />}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">
-        <div className="mx-auto flex w-full flex-col gap-4" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex w-full flex-col gap-4">
           {!project && loadErr ? (
             <LoadError what="project" error={loadErr} onRetry={() => setAttempt((n) => n + 1)} />
           ) : !project ? (

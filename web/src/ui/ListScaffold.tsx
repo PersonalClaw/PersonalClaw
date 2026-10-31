@@ -24,7 +24,7 @@ export function ListScaffold({ title, right, children, bodyClassName }: {
     <div className="flex h-full flex-col">
       <TopBar left={<PageTitle>{title}</PageTitle>} right={right} />
       <div className="flex-1 overflow-y-auto">
-        <div className={bodyClassName ?? 'mx-auto px-l py-2xl'} style={{ maxWidth: 'var(--content-width)' }}>
+        <div className={bodyClassName ?? 'mx-auto px-l py-2xl'}>
           {children}
         </div>
       </div>

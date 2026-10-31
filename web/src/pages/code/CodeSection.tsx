@@ -355,7 +355,7 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
         <InlineError icon className="mx-l mt-2" onDismiss={() => setActionErr(null)}>{actionErr}</InlineError>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto px-l py-l">
-        <div className="mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto w-full">
           {projects === undefined && loadErr ? (
             // First-load failure — distinct from a genuine empty list. This surface WROTE the
             // pattern; it now uses the shared primitive so the other 100+ useQuery

@@ -139,9 +139,6 @@ export const TOKENS: Token[] = [
   sel('--font-family', 'Font family', 'Typography', 'dm-sans', ['dm-sans', 'inter', 'mono', 'system']),
 
   // ── Layout ──
-  // NOTE: --content-width is driven by the Account → Content width PRESET
-  // (Narrow/Default/Full), not a raw slider, so it's intentionally not a tunable
-  // token here.
   // Density axis (orthogonal to palette + dark/light): appearance.tsx maps this
   // select to the <html> data-ui attribute, whose tokens.css blocks re-scale the
   // whole app's spacing/radius (and, for cli, the font family). comfortable = default.

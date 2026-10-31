@@ -42,10 +42,10 @@ const PHONES = [320, 360, 390, 412, 600, 768] as const
 /** The composer's height at #3804's measurement: no taller than before. */
 const MAX_COMPOSER_H: Record<number, number> = { 390: 276, 1280: 156 }
 
-async function pinTheChat(page: Page, measured = false): Promise<void> {
+async function pinTheChat(page: Page, measured = false, detail: object = measured ? MEASURED : DETAIL): Promise<void> {
   await page.route(`**/api/chat/sessions/${KEY}`, (route) =>
     route.request().method() === 'GET'
-      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(measured ? MEASURED : DETAIL) })
+      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(detail) })
       : route.fallback())
   if (measured) {
     await page.route('**/api/usage/totals?*', (route) =>
@@ -150,6 +150,40 @@ for (const screen of ['a new chat', 'a chat with a turn', 'a chat with a measure
       expect(f.height, `the composer's height at 1280, against #3804's ${MAX_COMPOSER_H[1280]}`).toBeLessThanOrEqual(MAX_COMPOSER_H[1280])
     })
   })
+}
+
+// ── IN THE CHAT'S READING COLUMN THE FOOTER KEEPS ONE ROW, WHATEVER THE NAMES IN IT ────────────────
+//
+// The chat's composer sits in its reading column (768 px, #5718), so a real model's or agent's name
+// makes its row tight. The agent-and-model pill gives up width first, truncating its label with the
+// whole of it on hover, and nothing wraps: a thread answered by a long model, with every control the
+// composer carries (the Context control among them), and a new chat started with a long agent's name.
+const LONG_MODEL = 'claude-opus-5-5'
+const ANSWERED_BY_LONG_MODEL = {
+  ...MEASURED,
+  messages: [MEASURED.messages[0], { ...MEASURED.messages[1], meta: { turn_telemetry: { model: LONG_MODEL } } }],
+}
+const LONG_AGENT = 'research-assistant-for-the-weekly-reading-digest'
+for (const width of [1280, 1920] as const) {
+  for (const [screen, name] of [['a thread a long model answered', LONG_MODEL], ['a new chat with a long agent', LONG_AGENT]] as const) {
+    test(`at ${width}, ${screen}: every control on one row, the pill truncating`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+      if (name === LONG_MODEL) await pinTheChat(page, true, ANSWERED_BY_LONG_MODEL)
+      await gotoRoute(page, name === LONG_MODEL ? `chat/${KEY}` : `chat?agent=${LONG_AGENT}`)
+      await expect(page.getByRole('button', { name: /^Execution boundary: / })).toBeVisible()
+      const f = await readFooter(page)
+      const pill = f.byName.pill
+      expect(pill, 'the agent-and-model pill is in the composer').not.toBeNull()
+      expect(pill!.name, 'its name carries the long label').toContain(name)
+      if (name === LONG_MODEL) expect(f.byName.context, 'the Context control is in the composer').not.toBeNull()
+      expectNothingCollides(f)
+      for (const b of f.controls) expect(sameRow(b, pill!), `${where(b)} shares the one row`).toBe(true)
+      const pillButton = page.getByRole('button', { name: /^Agent and model: / }).first()
+      expect(await pillButton.getAttribute('title') ?? '', 'the whole label is on hover').toContain(name)
+      const icon = await pillButton.locator('svg').first().evaluate((e) => e.getBoundingClientRect().width)
+      expect(icon, 'the label gives up width, the icon keeps its 16 px').toBeGreaterThanOrEqual(15.5)
+    })
+  }
 }
 
 // The loop composer keeps main's one wrapping row: at 390 its two pills wrap beside the send

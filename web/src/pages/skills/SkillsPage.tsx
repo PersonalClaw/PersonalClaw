@@ -63,7 +63,7 @@ function ProposalsView({ toggle }: { toggle: React.ReactNode }) {
         />
       }
     >
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-l py-l">
         <SkillProposals />
       </div>
     </ListBesideDetail>
@@ -161,7 +161,7 @@ function Installed({ toggle, onBrowse, query, setQuery }: { toggle: React.ReactN
           body: <SkillInspector skill={open} onDeleted={() => { setOpenKey(''); load() }} onSaved={load} />,
         }}
       >
-        <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l">
           {/* The learning summary block. Above the list, INSIDE the content column so it
               shares the list's measure. Renders itself away when learning is off or nothing
               was learned in the window, so it costs a fresh install nothing. */}
@@ -359,7 +359,7 @@ function Browse({ toggle, query, setQuery }: { toggle: React.ReactNode } & Pick<
         body: <MarketplaceDetail result={open} installed={installedIds.has(open.id) || !!open.installed} onInstalled={() => setInstalledIds((s) => new Set(s).add(open.id))} />,
       }}
     >
-      <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-l py-l">
         {loading ? <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={15} className="animate-spin" /> Searching…</div>
           : searchErr ? <LoadError what="skill search results" error={searchErr} onRetry={search} />
           : results === null ? <EmptyState icon={Store} title="Browse skills" hint={`Search ${marketplace || 'all marketplaces'} for skills to install — the agent loads them when relevant.`} />

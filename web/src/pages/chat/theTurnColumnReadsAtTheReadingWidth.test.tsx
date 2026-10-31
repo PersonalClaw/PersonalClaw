@@ -1,16 +1,16 @@
 // @module-tag tree-scan
 /**
- * A chat's turns sit in one centred reading column whose width is the `--reading-width` token,
- * whatever content width the owner picked (#3820: "Reading stays around 720 to 780 px").
+ * A chat's turns sit in one centred reading column whose width is the `--reading-width` token
+ * (#3820: "Reading stays around 720 to 780 px").
  *
- * Before, the turn column took `--content-width`, the page-width preset, and the shipped preset is
- * `full`, so at 1280 the turns ran the width of the window. The preset still sets the other pages
- * and the chat's composer; it no longer widens a thread's turns.
+ * Before, the turn column took `--content-width`, the page-width preset, and the shipped preset was
+ * `full`, so at 1280 the turns ran the width of the window. The preset is gone (#5718): every page's
+ * main section spans the pane, and the chat's turns read at their own width.
  *
  * jsdom lays nothing out, so this resolves what the browser would: the column's `max-width` is
  * followed through the stylesheet's declarations, with the custom properties the appearance store
  * writes on `<html>` laid over them (an inline declaration wins), at each width the issue names
- * (1280, and the compact 320, 390 and 412) and under each width preset.
+ * (1280, and the compact 320, 390 and 412), and with each preset an older version may have saved.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
@@ -99,8 +99,9 @@ function resolved(value: string): string {
   return resolveValue(map, value)
 }
 
-async function openChat(preset: string): Promise<void> {
-  localStorage.setItem('appearance', JSON.stringify({ widthPreset: preset }))
+/** Opens the chat; `saved` is a content-width preset an older version stored, which nothing reads now. */
+async function openChat(saved?: string): Promise<void> {
+  if (saved) localStorage.setItem('appearance', JSON.stringify({ widthPreset: saved }))
   const { ChatPage } = await import('../ChatPage')
   const { AppearanceProvider } = await import('../../app/appearance')
   render(
@@ -120,8 +121,8 @@ async function turnColumn(): Promise<HTMLElement> {
   return column
 }
 
-/** `column`'s cap resolves to the reading width, and is read from the token itself, so a preset
- *  that happens to equal it (`narrow` is 768px too) cannot pass for it. Returns the cap. */
+/** `column`'s cap resolves to the reading width, and is read from the token itself, so another
+ *  width that happens to equal it cannot pass for it. Returns the cap. */
 function expectReadingWidth(column: HTMLElement): string {
   const cap = resolved(column.style.maxWidth)
   expect(cap, `the column's max-width (${column.style.maxWidth}) resolves to the reading width`).toBe(DEFAULT)
@@ -176,29 +177,30 @@ describe('the reading width is one token', () => {
 
 })
 
-describe('the turn column is the reading width, whatever the width preset', () => {
-  it(`at ${DESKTOP} px with the shipped full preset, the column is ${DEFAULT}, not the window`, async () => {
+describe('the turn column is the reading width', () => {
+  it(`at ${DESKTOP} px the column is ${DEFAULT}, not the window`, async () => {
     atWidth(DESKTOP)
-    await openChat('full')
+    await openChat()
     const column = await turnColumn()
-    expect(document.documentElement.style.getPropertyValue('--content-width'), 'the full preset is in force').toBe('100%')
+    expect(document.documentElement.style.getPropertyValue('--content-width'), 'no page-width preset is written').toBe('')
     expect(document.documentElement.style.getPropertyValue(TOKEN), 'the appearance store leaves the reading width alone').toBe('')
     const cap = expectReadingWidth(column)
     expect(Number.parseFloat(cap), 'and binds: it is narrower than the window').toBeLessThan(DESKTOP)
   })
 
-  for (const preset of ['narrow', 'default', 'wide'] as const) {
-    it(`at ${DESKTOP} px with the ${preset} preset, the column is still ${DEFAULT}`, async () => {
+  for (const saved of ['narrow', 'default', 'wide', 'full'] as const) {
+    it(`at ${DESKTOP} px with a ${saved} preset an older version saved, the column is still ${DEFAULT}`, async () => {
       atWidth(DESKTOP)
-      await openChat(preset)
+      await openChat(saved)
       expectReadingWidth(await turnColumn())
+      expect(document.documentElement.style.getPropertyValue('--content-width'), 'and the saved preset is not read').toBe('')
     })
   }
 
   for (const width of COMPACT) {
     it(`at ${width} px the column reads the same token, wider than the screen, so it takes the screen's width`, async () => {
       atWidth(width)
-      await openChat('full')
+      await openChat()
       const column = await turnColumn()
       const cap = expectReadingWidth(column)
       expect(Number.parseFloat(cap)).toBeGreaterThan(width)
@@ -210,7 +212,7 @@ describe('the turn column is the reading width, whatever the width preset', () =
   it(`while the history loads, the placeholder turns sit in the same ${DEFAULT} column`, async () => {
     atWidth(DESKTOP)
     hd.pending = true
-    await openChat('full')
+    await openChat()
     const placeholder = await screen.findByRole('status', { busy: true })
     await waitFor(() => expect(placeholder.style.maxWidth).not.toBe(''))
     expectReadingWidth(placeholder)

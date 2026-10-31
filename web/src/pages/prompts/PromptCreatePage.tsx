@@ -56,12 +56,11 @@ export function PromptCreatePage({ onBack, onCreated, mode = 'user' }: {
       <TopBar left={<div className="flex items-center gap-s"><IconButton icon={ArrowLeft} label="Back" size={40} onClick={onBack} /><PageTitle>{isSnippet ? 'New snippet' : 'New prompt'}</PageTitle></div>} />
       {/* Split view: authoring form (left) + a sticky preview/reference rail
           (right). The rail collapses below the form on narrow viewports. Body,
-          header, and footer all honor the SAME --content-width preference so the
-          three bands align (a hardcoded cap here left the body as a centered
-          island floating away from its full-width header/footer). */}
+          header, and footer all span the pane, so the three bands align (a
+          hardcoded cap here left the body as a centered island floating away
+          from its full-width header/footer). */}
       <div className="flex-1 overflow-hidden">
-        <div className="mx-auto flex h-full flex-col gap-l overflow-y-auto px-l py-l lg:flex-row lg:gap-xl lg:overflow-hidden"
-          style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex h-full flex-col gap-l overflow-y-auto px-l py-l lg:flex-row lg:gap-xl lg:overflow-hidden">
           <div className="flex min-w-0 flex-1 flex-col gap-l lg:overflow-y-auto lg:pb-2xl lg:pr-xs">
             {!isSnippet && (
               <div className="flex items-center gap-m">
@@ -90,7 +89,7 @@ export function PromptCreatePage({ onBack, onCreated, mode = 'user' }: {
         </div>
       </div>
       <div className="shrink-0 border-t border-outline-variant/40 bg-surface/95 px-l py-m">
-        <div className="mx-auto flex justify-end gap-s" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex justify-end gap-s">
           <Button variant="ghost" onClick={onBack}>Cancel</Button>
           <Button onClick={create} loading={saving} loadingLabel="Creating…" disabled={saving || !name.trim()} disabledReason={!name.trim() ? 'Enter a name first' : undefined}><Check size={16} /> {isSnippet ? 'Create snippet' : 'Create prompt'}</Button>
         </div>

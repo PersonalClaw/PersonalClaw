@@ -128,8 +128,9 @@ Top to bottom:
   the "Continue on" hand-offs), the Session map and Activity, and the overflow (Save as starter,
   New chat). Configuration never appears here.
 - **The reading column**, around 720 to 780 px whatever the window's width (`--reading-width`,
-  768 px, in `web/src/design/tokens.css`), holds the turns. Code, tables, diffs and artifacts open
-  beside it in an adjustable split that remembers its size; a compact window stacks them under it.
+  768 px, in `web/src/design/tokens.css`), holds the turns and the composer under them. Code,
+  tables, diffs and artifacts open beside it in an adjustable split that remembers its size; a
+  compact window stacks them under it.
   A reply's code block, diff or table opens there from its own Open beside, in the chat's pane host
   (`web/src/ui/PaneHost.tsx`, `pane-host-chat-w`), and the address names it: `?beside=<block>` is
   the split, its absence is the thread read in its column alone

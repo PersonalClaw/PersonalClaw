@@ -25,7 +25,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
 /** Design subpage. Cleanly separated concerns:
  *   1. COLOR SCHEME — pick a curated scheme (swatches) or fork your own. Colors only.
  *   2. BACKDROP & MOTION — the 3D dot-wave surface + animation, as their own controls.
- *   3. LAYOUT & SHAPE — content width + corner roundness.
+ *   3. SHAPE — corner roundness.
  *  A scheme encapsulates ONLY colors; backdrop/motion/layout live outside it. */
 export function DesignPanel() {
   const { activeScheme, allSchemes, saveCustomScheme, deleteCustomScheme, themesLoading, resetAll } = useAppearance()
@@ -176,7 +176,7 @@ export function DesignPanel() {
       <ControlSection title="Backdrop & motion" icon={Boxes} subtitle="The 3D dot-wave surface and animation — independent of the color scheme."
         note="The animated backdrop is off by default; Background below turns it on, and Claw Arcade brings it." groups={BACKDROP_GROUPS} />
 
-      {/* ── 4. SHAPE ── (content width is a preset in Account → Layout) */}
+      {/* ── 4. SHAPE ── */}
       <ControlSection title="Layout & shape" icon={LayoutIcon} subtitle="Interface density (comfortable / dense / CLI) and corner roundness." groups={LAYOUT_GROUPS} />
 
       <div>

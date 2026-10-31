@@ -43,7 +43,7 @@ export function SettingsHome({ go }: { go: (id: string) => void }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full px-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto w-full px-2xl">
           {/* Search across all settings + the data on every card. Pinned to the top
               of the scroll area (its own surface bg masks cards sliding under it),
               with a constant gap below so the first row never crowds it. */}

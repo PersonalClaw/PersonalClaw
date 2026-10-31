@@ -121,7 +121,7 @@ function DetailPane({ detail, compact, noun }: { detail: CapabilityDetail; compa
         {!compact && <IconButton icon={X} label="Close" size={34} iconSize={18} onClick={detail.onClose} />}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>{detail.body}</div>
+        <div className="mx-auto px-l py-l">{detail.body}</div>
       </div>
     </section>
   )

@@ -4,7 +4,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 // ── Nine numbers with nothing saying what they count ────────────────────────────────────────────
 //
 // The rail island's metric labels were gated `hidden @min-[1520px]:inline`. That is a CONTAINER
-// width, not a viewport one — the island tracks `--content-width`, so it runs ~230px narrower than
+// width, not a viewport one — the island tracks the content column, so it runs ~230px narrower than
 // the window. Measured on a demo-seeded gateway at `#/dashboard`, four viewports, the island's own
 // width and how many of the nine labels actually painted:
 //

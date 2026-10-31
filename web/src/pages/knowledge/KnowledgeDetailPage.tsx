@@ -227,7 +227,7 @@ export function KnowledgeDetailPage({ id, onBack, onOpenItem, query, setQuery }:
           without w-full the column collapses to its content's intrinsic width — looking
           cramped even at the 'full' (100%) width preset. w-full makes it fill up to
           max-width (the toggle), then mx-auto centers any remainder. */}
-      <div className="mx-auto flex h-full min-h-0 w-full flex-col px-l pt-l" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto flex h-full min-h-0 w-full flex-col px-l pt-l">
         {loadErr ? (
           // Not "no longer exists": the load failed, so offer the retry rather than assert a deletion.
           <LoadError what="knowledge item" error={loadErr} onRetry={() => setReloadKey((k) => k + 1)} />

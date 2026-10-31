@@ -9,7 +9,7 @@ import { MemoryPanel } from '../settings/MemoryPanel'
 export function MemoryPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQuery'>) {
   return (
     <div className="h-full min-w-0 overflow-y-auto">
-      <div className="mx-auto px-2xl py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="mx-auto px-2xl py-2xl">
         <MemoryPanel query={query} setQuery={setQuery} />
       </div>
     </div>

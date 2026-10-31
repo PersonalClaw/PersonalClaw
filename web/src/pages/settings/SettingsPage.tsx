@@ -169,7 +169,7 @@ export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = fal
     )
   }
 
-  // A subpage: breadcrumb header + the panel, centered to the content width.
+  // A subpage: breadcrumb header + the panel, spanning the pane.
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -197,7 +197,7 @@ export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = fal
         }
       />
       <div className="min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto px-2xl py-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-2xl py-2xl">
           {duringSetup && <SecurityControlsNav current={current.id} />}
           {current.render({ go, navigate, query, setQuery })}
         </div>

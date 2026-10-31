@@ -52,12 +52,7 @@ vi.mock('../lib/useChatSocket', () => ({
   useChatSocket: () => {},
 }))
 
-import {
-  AppearanceProvider,
-  DEFAULT_WIDTH_PRESET,
-  SURFACE_WIDTHS,
-  WIDTH_PRESETS,
-} from '../app/appearance'
+import { AppearanceProvider, SURFACE_WIDTHS } from '../app/appearance'
 import { LoopCockpitPage } from '../pages/loops/LoopCockpitPage'
 import { Modal } from './Modal'
 import { SidePanel } from './SidePanel'
@@ -75,20 +70,20 @@ function cappedAncestor(node: HTMLElement): HTMLElement {
 }
 
 function expectRealCap(node: HTMLElement, expected: string) {
-  expect(DEFAULT_WIDTH_PRESET).toBe('full')
-  expect(WIDTH_PRESETS[DEFAULT_WIDTH_PRESET]).toBe('100%')
-  expect(document.documentElement.style.getPropertyValue('--content-width')).toBe('100%')
+  // The old page preset a profile saved writes nothing: pages span the pane (#5718).
+  expect(document.documentElement.style.getPropertyValue('--content-width')).toBe('')
   expect(node.style.maxWidth).toBe(expected)
   expect(node.style.maxWidth).toMatch(/^\d+px$/)
 }
 
 beforeEach(() => {
   localStorage.clear()
-  localStorage.setItem('appearance', JSON.stringify({ widthPreset: 'full' }))
+  // A profile an older version saved, with the content-width preset it had then.
+  localStorage.setItem('appearance', JSON.stringify({ widthPreset: 'narrow' }))
   document.documentElement.removeAttribute('style')
 })
 
-describe('dialogs and overlays keep real caps under the shipped full-width page preset', () => {
+describe('dialogs and overlays keep their own caps while every page spans the pane', () => {
   it('caps Modal with its own width token', () => {
     mount(<Modal title="Token dialog" onClose={() => {}}><span>Modal body</span></Modal>)
     expectRealCap(screen.getByRole('dialog', { name: 'Token dialog' }), SURFACE_WIDTHS.modal)

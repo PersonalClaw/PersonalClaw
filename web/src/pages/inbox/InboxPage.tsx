@@ -497,7 +497,7 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
           const failing = polled.flatMap((s) => (s.error ? [{ name: s.name, label: s.label, error: s.error }] : []))
           const named = (s: { label?: string; name: string }) => s.label || s.name
           return (
-            <EntranceRegion className="mx-auto w-full px-l" style={{ maxWidth: 'var(--content-width)' }}>
+            <EntranceRegion className="mx-auto w-full px-l">
               <div data-type="body-s" className="flex flex-col gap-1 rounded-md px-m py-2" style={{ background: 'var(--color-surface-container)' }}>
                 <div className="flex items-center gap-s">
                   <span className="relative flex size-2 shrink-0">
@@ -530,7 +530,7 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
             The region wraps it rather than replacing it: the tour anchor and the centered
             column stay one element, so neither the tour nor the layout learns about motion. */}
         <EntranceRegion>
-        <div data-tour="inbox" className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div data-tour="inbox" className="mx-auto px-l py-l">
         {/* The triage DIGEST card. Above the list rather than
             beside it: the digest is the summary of everything below, and a digest a user has to
             scroll past their inbox to find is a digest they read after doing the work by hand.

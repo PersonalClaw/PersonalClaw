@@ -21,7 +21,6 @@
 - main:
   - button "Collapse sidebar"
   - button "Open terminal"
-  - 'button "Content width: Full"'
   - button "# waiting on you — open Home"
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'

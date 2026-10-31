@@ -501,7 +501,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack, embedded = false }: 
     <div className="flex h-full flex-col">
       {header}
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l">
           <AnimatePresence mode="wait">
             <motion.div key={step} initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} transition={spring.spatialFast}>
               {onLaunch ? (
@@ -572,7 +572,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack, embedded = false }: 
           because a gate/judge confidence fell below threshold — surface it so the user knows the
           run will now pause for them, rather than silently changing posture. */}
       {review.demotedReason && (
-        <div role="status" className="shrink-0 px-l pb-1" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
+        <div role="status" className="shrink-0 px-l pb-1" style={{ marginInline: 'auto', width: '100%' }}>
           <div data-type="body-s" className="rounded-lg px-4 py-2.5 flex items-start gap-2" style={{ background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)', color: 'var(--color-warning)' }}>
             <AlertTriangle size={15} className="shrink-0 mt-0.5" />
             <span>Switched to per-stage approval — {review.demotedReason} You’ll be asked to approve each step as it runs.</span>
@@ -583,7 +583,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack, embedded = false }: 
       {/* Shared-understanding confirmation: the gate that precedes spec emission. A
           plain acknowledge clears it (the plan then finalizes); it never blocks the walk chrome. */}
       {review.confirmation && (
-        <div role="alert" className="shrink-0 px-l pb-1" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
+        <div role="alert" className="shrink-0 px-l pb-1" style={{ marginInline: 'auto', width: '100%' }}>
           <div data-type="body-s" className="rounded-lg px-4 py-2.5 flex items-center gap-2" style={{ background: 'color-mix(in srgb, var(--color-info) 10%, transparent)' }}>
             <Check size={15} className="shrink-0 text-info" />
             <span className="flex-1 text-on-surface">{review.confirmation}</span>
@@ -594,7 +594,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack, embedded = false }: 
 
       {/* Launch rejection (e.g. server-side pre-flight validation failed). */}
       {launchError && onLaunch && (
-        <div role="alert" className="shrink-0 px-l pb-1" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
+        <div role="alert" className="shrink-0 px-l pb-1" style={{ marginInline: 'auto', width: '100%' }}>
           <div data-type="body-s" className="rounded-lg px-4 py-2.5" style={{ background: 'color-mix(in srgb, var(--color-error) 8%, transparent)', color: 'var(--color-error)' }}>{launchError}</div>
         </div>
       )}
@@ -602,7 +602,7 @@ export function LoopPlanReview({ draft, onLaunched, onBack, embedded = false }: 
       {/* A launch refused because the loop changed since this screen read it. Reapplying saves the
           change onto what is stored and then launches — Launch is what the user pressed. */}
       {held && (
-        <div className="shrink-0 px-l pb-xs" style={{ marginInline: 'auto', width: '100%', maxWidth: 'var(--content-width)' }}>
+        <div className="shrink-0 px-l pb-xs" style={{ marginInline: 'auto', width: '100%' }}>
           <StaleWriteNotice guard={guard} what="This loop" />
         </div>
       )}
@@ -612,12 +612,12 @@ export function LoopPlanReview({ draft, onLaunched, onBack, embedded = false }: 
           its Submit advances), so a competing outer bar would double the controls. While a refused
           launch is held, the walk stays here: an edit made on another step would not be part of
           what the notice reapplies.
-          The bar's hairline runs the pane's full width, like every create page's footer; only its
-          row of buttons keeps to the content width. Capped as a whole, the line stopped short on
-          both sides at any width preset narrower than the pane. */}
+          The bar's hairline runs the pane's full width, like every create page's footer. Capped as
+          a whole, the line once stopped short on both sides at a width preset narrower than the
+          pane. */}
       {!onQuestions && (
         <div className="shrink-0 border-t border-outline-variant/30 py-m">
-          <div className="mx-auto flex w-full items-center justify-between px-l" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="mx-auto flex w-full items-center justify-between px-l">
             <Button variant="ghost" size="sm" onClick={() => step === 0 ? onBack() : setStep((s) => s - 1)}
               disabled={held} disabledReason={HELD_REASON}>
               <ArrowLeft size={15} /> {step === 0 ? 'Cancel' : 'Back'}

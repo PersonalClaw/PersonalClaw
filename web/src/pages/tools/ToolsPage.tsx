@@ -625,7 +625,7 @@ export function ToolsPage({ query, setQuery }: Pick<RouteProps, 'query' | 'setQu
       }}
     >
       <>
-        <div className="mx-auto px-l py-l" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto px-l py-l">
           {tools === null && loadErr ? (
             <LoadError what="tools" error={loadErr} onRetry={load} />
           ) : groups === null ? <ListSkeleton rows={6} what="tools" /> : groups.length === 0 ? (

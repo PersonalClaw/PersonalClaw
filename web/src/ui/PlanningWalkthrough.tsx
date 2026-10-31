@@ -434,7 +434,7 @@ export function PlanningWalkthrough({ id, cfg, onReady, onBack, onCancel, onStop
           hero (wide main column); the planner's live activity is a secondary side
           rail (narrow, full-height) since the events matter less than the plan. */}
       <div className="min-h-0 flex-1 px-l py-l">
-        <div className="mx-auto flex h-full min-h-0 w-full flex-col gap-4 lg:flex-row" style={{ maxWidth: 'var(--content-width)' }}>
+        <div className="mx-auto flex h-full min-h-0 w-full flex-col gap-4 lg:flex-row">
           {/* MAIN: the plan — compact steps rail + the current step's artifact gate */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
             {approvals}

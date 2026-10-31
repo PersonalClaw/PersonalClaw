@@ -259,11 +259,9 @@
   --dot-density: 1;
   --dot-size: 1;
 
-  /* ── main content max-width (every page's content column, the Chat composer among them) ── */
-  --content-width: 820px;
-  /* ── the reading column: a chat's turns, centred, at one width whatever the window's.
-     Fixed, so not in the registry, and nothing writes it at runtime: the width preset above
-     still sets the pages and the chat's composer, but no longer widens a thread's turns
+  /* ── the reading column: a chat's turns and its composer, centred, at one width whatever the
+     window's. Fixed, so not in the registry, and nothing writes it at runtime: a page's main
+     section spans the pane (#5718), and a thread reads here instead
      (web/REDESIGN.md §5, "around 720 to 780 px"). A whole column, bubbles and code included,
      so wider than the prose measure (design/measure.ts), which caps a line of running text. ── */
   --reading-width: 768px;
@@ -556,8 +554,8 @@
    Each level re-scales the SPINE multipliers (--space-scale, --radius-scale)
    the spacing/radius tokens already ride, so density falls out app-wide for
    free — no per-component density px. `comfortable` is the default (:root
-   values stand). Composes with the appearance-owned --content-width /
-   --expressiveness (dense + full-width + bold coexist).
+   values stand). Composes with the appearance-owned
+   --expressiveness (dense + bold coexist).
    ════════════════════════════════════════════════════════════════════════ */
 [data-ui="dense"] {
   --space-scale: 0.8;    /* tighter gaps/padding app-wide */

@@ -14,8 +14,7 @@ import { FormSkeleton, InlineLoadError } from '../../ui/ListScaffold'
 /** Account / identity settings. Self-hosted single-user → the two identities are
  *  the operator's name (SERVER-side DashboardConfig.user_name, follows the user
  *  across machines) and the assistant's name (agent.bot_name — the {{bot_name}}
- *  prompt var), plus a re-trigger for onboarding.
- *  (Content width is a shell control now — the top-right corner pill — not here.) */
+ *  prompt var), plus a re-trigger for onboarding. */
 /* `suggestHandle` moved to `app/identity` when first-run onboarding began asking for
    the handle too: two surfaces suggesting a slug from the display name need
    ONE rule, not a copy each. The server stays authoritative either way — it
