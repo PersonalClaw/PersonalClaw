@@ -41,6 +41,7 @@ from personalclaw.security import (
     redact_for_display,
     redact_values_for_display,
 )
+from personalclaw.sel import sel_log_async
 from personalclaw.triggers import listing
 
 
@@ -1277,7 +1278,8 @@ async def _create_lifecycle(
     if granted:
         store.update(hook.id, {"capabilities": hook.capabilities})
         trigger_consent.audit_created_grant(request, f"{_LIFECYCLE}:{hook.id}", granted)
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="trigger.create",
         outcome="success",
@@ -1450,7 +1452,8 @@ async def _create_schedule(state: DashboardState, body: dict, request: web.Reque
         row = store.get(raw_id)
 
     state.push_refresh("crons")
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="trigger.create",
         outcome="success",
@@ -1482,7 +1485,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             from personalclaw.triggers import review as _review
 
             _review.forget(raw, base_dir=store.base_dir)
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=request.get("user", "dashboard"),
                 operation="trigger.delete",
                 outcome="success",
@@ -1495,7 +1499,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
             hook = store.get(raw)
             if not store.delete(raw):
                 return web.json_response({"error": "not found"}, status=404)
-            _sel().log_api_access(
+            await sel_log_async(
+                _sel().log_api_access,
                 caller=request.get("user", "dashboard"),
                 operation="trigger.delete",
                 outcome="success",
@@ -1520,7 +1525,8 @@ async def api_trigger_detail(request: web.Request) -> web.Response:
 
         _review.forget(raw, base_dir=store.base_dir)
         state.push_refresh("crons")
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=request.get("user", "dashboard"),
             operation="trigger.delete",
             outcome="success",
@@ -1962,7 +1968,8 @@ async def api_triggers_resume_restored(request: web.Request) -> web.Response:
     resumed, kept = restore_hold.resume_all(_trigger_store())
     if resumed:
         state.push_refresh("crons")
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="trigger.resume_restored",
         outcome="success",

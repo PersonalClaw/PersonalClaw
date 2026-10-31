@@ -1,5 +1,6 @@
 """Inbox API handlers — message inbox management and setup wizard."""
 
+import copy
 import dataclasses
 import json
 import logging
@@ -28,7 +29,7 @@ from personalclaw.inbox import (
 from personalclaw.inbox_service import DRAFT_INSTRUCTIONS_MAX_CHARS
 from personalclaw.request_validation import bool_field, json_object_body, string_field
 from personalclaw.security import MaskConflict, keep_masked_spans
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -565,9 +566,14 @@ async def api_inbox_update(request: web.Request) -> web.Response:
         return web.json_response({"error": "not found"}, status=404)
     if status is not None:
         set_item_status(state, inbox, [updated], status)
+    # The frame and the answer are this save's, taken with it: a save landing while the row is
+    # written changes the same live row.
+    _announce_unless_moved(state, updated, status_before)
+    updated = copy.deepcopy(updated)
 
     try:
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key="dashboard:inbox",
             tool_name="inbox_update",
             outcome="success",
@@ -577,7 +583,6 @@ async def api_inbox_update(request: web.Request) -> web.Response:
     except Exception:
         logger.warning("SEL audit failed for inbox update", exc_info=True)
 
-    _announce_unless_moved(state, updated, status_before)
     return web.json_response(_redact_item(updated.to_dict()))
 
 
@@ -599,9 +604,11 @@ async def api_inbox_restore(request: web.Request) -> web.Response:
         return web.json_response({"error": "item is not filtered"}, status=409)
 
     restore_filtered(state, inbox, [item])
+    item = copy.deepcopy(item)  # as restored, not as a change during its row leaves it
 
     try:
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key="dashboard:inbox",
             tool_name="inbox_restore",
             outcome="success",
@@ -675,7 +682,8 @@ async def api_inbox_dismiss_all(request: web.Request) -> web.Response:
     # express — it trains the ranker exactly like dismissing each row would have, in one write.
     answered = _dismiss(state, inbox_state, swept)
     try:
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key="dashboard:inbox",
             tool_name="inbox_dismiss_all",
             outcome="success",
@@ -742,7 +750,8 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
     if not outcome:
         logger.warning("Draft failed for %s", item_id)
         try:
-            sel().log_tool_invocation(
+            await sel_log_async(
+                sel().log_tool_invocation,
                 session_key="dashboard:inbox",
                 tool_name="inbox_draft",
                 outcome="failure",
@@ -752,8 +761,12 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
         except Exception:
             logger.warning("SEL audit failed for inbox draft failure", exc_info=True)
         return web.json_response({"error": "not found or draft failed"}, status=404)
+    shown = _redact_item(outcome.item.to_dict())  # the draft as written, and its frame with it
+    if outcome.wrote:
+        state.broadcast_ws("inbox_item_updated", shown)
     try:
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key="dashboard:inbox",
             tool_name="inbox_draft",
             outcome="success",
@@ -764,9 +777,6 @@ async def api_inbox_draft(request: web.Request) -> web.Response:
         )
     except Exception:
         logger.warning("SEL audit failed for inbox draft success", exc_info=True)
-    shown = _redact_item(outcome.item.to_dict())
-    if outcome.wrote:
-        state.broadcast_ws("inbox_item_updated", shown)
     return web.json_response({"item": shown, "drafting": outcome.report()})
 
 
@@ -1053,7 +1063,8 @@ async def api_inbox_attachment(request: web.Request) -> web.StreamResponse:
             message=f"{record.get('name') or 'This attachment'} was not kept: {why}.",
             status=404,
         )
-    sel().log_api_access(
+    await sel_log_async(
+        sel().log_api_access,
         caller=request.get("user", "dashboard"),
         operation="inbox.attachment_download",
         outcome="allowed",
@@ -1541,8 +1552,11 @@ async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
     outcome = await pc.apply_item(
         item, store=inbox, state=state, edited=edited, installer=installer
     )
+    _announce_unless_moved(state, item, status_before)
+    shown = _redact_item(item.to_dict())  # as applied, with its frame, ahead of the row
     try:
-        sel().log_tool_invocation(
+        await sel_log_async(
+            sel().log_tool_invocation,
             session_key="dashboard:inbox",
             tool_name="inbox_proposal_apply",
             outcome="success" if outcome.ok else "failure",
@@ -1552,8 +1566,4 @@ async def api_inbox_proposal_apply(request: web.Request) -> web.Response:
     except Exception:
         logger.warning("SEL audit failed for proposal apply", exc_info=True)
 
-    _announce_unless_moved(state, item, status_before)
-    return web.json_response(
-        {**outcome.to_dict(), "item": _redact_item(item.to_dict())},
-        status=200,
-    )
+    return web.json_response({**outcome.to_dict(), "item": shown}, status=200)

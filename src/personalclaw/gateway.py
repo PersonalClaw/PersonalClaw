@@ -100,7 +100,7 @@ from personalclaw.security import (
     redact_credentials,
     redact_exfiltration_urls,
 )
-from personalclaw.sel import sel
+from personalclaw.sel import sel, sel_log_async
 from personalclaw.session import SessionManager
 from personalclaw.skills import SkillsLoader
 from personalclaw.subagent import (
@@ -693,7 +693,7 @@ class GatewayOrchestrator:
             ):
                 if grant_row is not None:
                     try:
-                        sel().log_api_access(**grant_row)
+                        await sel_log_async(sel().log_api_access, **grant_row)
                     except Exception:
                         logger.warning("SEL audit failed for a %s approval", grant, exc_info=True)
                 if self.dashboard_state:
@@ -3041,7 +3041,8 @@ class GatewayOrchestrator:
                         text,
                         channel,
                     )
-                    sel().log_api_access(
+                    await sel_log_async(
+                        sel().log_api_access,
                         caller="heartbeat",
                         operation="commitment_deliver",
                         outcome="approved",
@@ -3630,6 +3631,26 @@ class GatewayOrchestrator:
                     return {"channel_link": link}
         return None
 
+    async def _still_open(self, session_name: str, found: Any, operation: str) -> Any:
+        """The chat a heartbeat result's ``approved`` row named, if it is still open, else None.
+
+        The row is written off the event loop (#5605), so the chat can be closed while it is. The
+        result then goes nowhere: a ``not_found`` row says the chat went away during the row, and
+        nothing lands in a chat that is gone."""
+        again = self.dashboard_state.resolve_session(session_name) if self.dashboard_state else None
+        if again is not None and again.key == found.key:
+            return again
+        await sel_log_async(
+            sel().log_api_access,
+            caller="heartbeat",
+            operation=operation,
+            outcome="not_found",
+            source="gateway",
+            resources=f"requested={session_name},closed_during_row={found.key}",
+        )
+        logger.warning("Heartbeat target session %s closed while its row was written", found.key)
+        return None
+
     async def _deliver_result(
         self,
         title: str,
@@ -3691,13 +3712,19 @@ class GatewayOrchestrator:
                     # Lazy import avoids circular dependency (chat → gateway)
                     from personalclaw.dashboard.chat import run_chat
 
-                    sel().log_api_access(
+                    await sel_log_async(
+                        sel().log_api_access,
                         caller="heartbeat",
                         operation="heartbeat_prompt_deliver",
                         outcome="approved",
                         source="gateway",
                         resources=f"requested={session_name},resolved={session.key}",
                     )
+                    session = await self._still_open(
+                        session_name, session, "heartbeat_prompt_deliver"
+                    )
+                    if session is None:
+                        return
                     # A heartbeat's result, delivered into the chat for its agent to act on: no
                     # one typed it, so it teaches nothing as a person's words.
                     ran = session.enqueue_or_run_prompt(
@@ -3717,7 +3744,8 @@ class GatewayOrchestrator:
                             session.queue_depth,
                         )
                 else:
-                    sel().log_api_access(
+                    await sel_log_async(
+                        sel().log_api_access,
                         caller="heartbeat",
                         operation="heartbeat_prompt_deliver",
                         outcome="not_found",
@@ -3735,20 +3763,27 @@ class GatewayOrchestrator:
             if self.dashboard_state:
                 session = self.dashboard_state.resolve_session(session_name)
                 if session:
-                    sel().log_api_access(
+                    await sel_log_async(
+                        sel().log_api_access,
                         caller="heartbeat",
                         operation="heartbeat_inject_deliver",
                         outcome="approved",
                         source="gateway",
                         resources=f"requested={session_name},resolved={session.key}",
                     )
+                    session = await self._still_open(
+                        session_name, session, "heartbeat_inject_deliver"
+                    )
+                    if session is None:
+                        return
                     session.append("assistant", f"{title}\n\n{result_text}", "msg msg-a")
                     self.dashboard_state.push_sessions_update()
                     self.dashboard_state.notify(
                         notification_kinds.HEARTBEAT, title, body, meta={"session": session.key}
                     )
                 else:
-                    sel().log_api_access(
+                    await sel_log_async(
+                        sel().log_api_access,
                         caller="heartbeat",
                         operation="heartbeat_inject_deliver",
                         outcome="not_found",

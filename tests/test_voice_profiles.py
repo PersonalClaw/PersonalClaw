@@ -456,6 +456,50 @@ class TestConsentRevocationBlocks:
         assert vb.binding_warning(design, "channel:slack") == ""
 
 
+class TestAConsentChangeIsShownInTheOrderItWasMade:
+    @pytest.mark.asyncio
+    async def test_a_rename_while_the_consent_row_is_written_is_the_last_one_shown(
+        self, home, tmp_path, monkeypatch
+    ):
+        """The consent row is written off the event loop (#5605), so a rename can land while it
+        is. Broadcast after the row, the consent's copy of the profile, which still had the old
+        name, went out after the rename's and was the last the page was sent. It goes out with
+        the change now, ahead of its row."""
+        import asyncio
+        import threading
+
+        profile = vp.create_profile(name="Mine", kind="clone")
+        held, release = threading.Event(), threading.Event()
+
+        class _HoldsTheConsentRow(_FakeSel):
+            def log_api_access(self, **kwargs):
+                if kwargs.get("operation") == "voice_profile.consent.record":
+                    held.set()
+                    release.wait(2)  # on main the row is on the loop: this holds the loop instead
+                super().log_api_access(**kwargs)
+
+        log = _HoldsTheConsentRow()
+        monkeypatch.setattr("personalclaw.dashboard.handlers.sel", lambda: log)
+        state = _FakeState()
+        app = _app(home, tmp_path, monkeypatch, state=state)
+        async with TestClient(TestServer(app)) as client:
+            recording = asyncio.ensure_future(
+                client.post(
+                    f"/api/voice/profiles/{profile.id}/consent",
+                    json={"consent_text": "I consent to cloning my voice"},
+                )
+            )
+            assert await asyncio.to_thread(held.wait, 5)
+            renamed = await client.put(f"/api/voice/profiles/{profile.id}", json={"name": "Ours"})
+            assert renamed.status == 200
+            release.set()
+            assert (await recording).status == 200
+
+        shown = [data for kind, data in state.events if kind == "voice_profile_updated"]
+        assert [data["name"] for data in shown] == ["Mine", "Ours"]
+        assert shown[-1]["consent_recorded_at"], "the rename's copy carries the consent too"
+
+
 # ── rail 4: resumable ref-audio upload ─────────────────────────────────────
 
 

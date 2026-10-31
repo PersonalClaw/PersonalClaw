@@ -19,6 +19,7 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.history import SEARCH_MIN_CHARS
 from personalclaw.http_errors import json_error
 from personalclaw.mcp_discovery import discover_servers_to_sync, sync_to_agent_config
+from personalclaw.sel import sel_log_async
 from personalclaw.validation import sanitize_string
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,8 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
     reach = memory_reads.reach_of(state, approval_answer.work_of_request(request))
     asking, app = reach.keys, reach.app
     if reach.blank:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=asking[0],
             operation="sessions.recall",
             outcome="denied",
@@ -248,7 +250,8 @@ async def api_sessions_recall(request: web.Request) -> web.Response:
         return web.json_response({"result": said, "query": q, "chats": []})
     someone = memory_writes.asker()
     if someone:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=asking[0] if asking else "dashboard",
             operation="sessions.recall",
             outcome="denied",
@@ -518,7 +521,8 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     session_key = approval_answer.work_of_request(request)
     if not session_key:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller="unknown",
             operation="session_tool_policy",
             outcome="denied",
@@ -552,7 +556,8 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
         agent_name = state.sessions.get_agent(session_key)
 
     if not agent_name:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=session_key,
             operation="session_tool_policy",
             outcome="denied",
@@ -563,7 +568,8 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
 
     # Sanitize agent_name to prevent path traversal
     if "/" in agent_name or "\\" in agent_name or ".." in agent_name:
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=session_key,
             operation="session_tool_policy",
             outcome="denied",
@@ -586,7 +592,8 @@ async def api_session_tool_policy(request: web.Request) -> web.Response:
     if not isinstance(policy, dict):
         return web.json_response({})
 
-    _sel().log_api_access(
+    await sel_log_async(
+        _sel().log_api_access,
         caller=session_key,
         operation="session_tool_policy",
         outcome="ok",

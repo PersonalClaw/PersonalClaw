@@ -265,6 +265,44 @@ async def test_dismiss_and_mute_still_record_for_a_real_item(env):
     assert inbox_state.muted_threads, "muting a real item stopped working"
 
 
+@pytest.mark.asyncio
+async def test_a_save_answers_and_shows_its_own_draft_when_another_lands_under_its_row(
+    env, monkeypatch
+):
+    """The save's security row is written off the event loop (#5605), so a second save can land
+    while it is. Taken after the row, the first save's answer and frame were read off the row the
+    second had changed: both said the second draft, and the page was sent it twice. They are
+    taken with the change now, ahead of the row."""
+    import asyncio
+    import threading
+
+    st, _, _, _ = env
+    held, release = threading.Event(), threading.Event()
+
+    class _HoldsTheFirstRow:
+        rows: list[dict] = []
+
+        def log_tool_invocation(self, **row):
+            self.rows.append(row)
+            if len(self.rows) == 1:
+                held.set()
+                release.wait(2)  # on main the row is on the loop: this holds the loop instead
+
+    log = _HoldsTheFirstRow()
+    monkeypatch.setattr(h, "sel", lambda: log)
+    first = asyncio.ensure_future(_put(st, {"draft": "First"}))
+    assert await asyncio.to_thread(held.wait, 5)
+    second = asyncio.ensure_future(_put(st, {"draft": "Second"}))
+    await asyncio.sleep(0.05)
+    release.set()
+    (status, answer), (status2, answer2) = await asyncio.gather(first, second)
+
+    assert (status, answer["draft"]) == (200, "First")
+    assert (status2, answer2["draft"]) == (200, "Second")
+    frames = [payload["draft"] for kind, payload in st.broadcasts if kind == "inbox_item_updated"]
+    assert frames == ["First", "Second"]
+
+
 def test_the_store_refuses_a_bad_value_on_its_own(env):
     """The store validates for its own sake, not as a backstop to the handler.
 

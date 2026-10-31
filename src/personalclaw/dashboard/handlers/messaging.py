@@ -22,6 +22,7 @@ from personalclaw.dashboard.state import (
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import RequestValidationError, bool_field
 from personalclaw.security import is_sensitive_path, redact_credentials, redact_exfiltration_urls
+from personalclaw.sel import sel_log_async
 from personalclaw.subagent_persistence import _agent_dir, read_state
 from personalclaw.subagent_reach import reader_of
 from personalclaw.validation import (
@@ -472,7 +473,8 @@ async def api_notification_trust(request: web.Request) -> web.Response:
         or note.get("raised_by_app")
         or not channel_trust.owner_was_asked_about(provider, sender_id)
     ):
-        _sel().log_api_access(
+        await sel_log_async(
+            _sel().log_api_access,
             caller=request.get("user", "dashboard"),
             operation="channel.sender_answer",
             outcome="denied",
@@ -769,7 +771,8 @@ async def api_send_message(request: web.Request) -> web.Response:
 
     # --- Authorization gates (before any side effects) ---
     if target_channel and not is_tracked_channel(target_channel):
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="send_message",
             outcome="denied",
@@ -787,7 +790,8 @@ async def api_send_message(request: web.Request) -> web.Response:
         )
 
     if target_user and not is_allowed_user(target_user):
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="send_message",
             outcome="denied",
@@ -1001,7 +1005,8 @@ async def api_send_message(request: web.Request) -> web.Response:
                 if (target_channel or target_user)
                 else ("session=origin" if sent_session else "fallback=owner_dm")
             )
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key="dashboard",
                 tool_name="send_message",
                 outcome=(
@@ -1072,7 +1077,8 @@ async def api_channel_profile(request: web.Request) -> web.Response:
 
     # Authorization first (deny-by-default) — owner-only (multi-user disabled).
     if not channels_taking(user_id, user=True):
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="read_channel_profile",
             outcome="denied",
@@ -1086,7 +1092,8 @@ async def api_channel_profile(request: web.Request) -> web.Response:
 
     delivery = delivery_for(provider)
     if delivery is None:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="read_channel_profile",
             outcome="error",
@@ -1101,7 +1108,8 @@ async def api_channel_profile(request: web.Request) -> web.Response:
     history: list[float] = getattr(state, "_profile_lookup_times", [])
     history = [t for t in history if now - t < 60]
     if len(history) >= 5:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="read_channel_profile",
             outcome="denied",
@@ -1118,7 +1126,8 @@ async def api_channel_profile(request: web.Request) -> web.Response:
         profile = await delivery.resolve_user_profile(user_id)
     except Exception:
         logger.exception("channel-profile: failed for %s", user_id)
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key="dashboard",
             tool_name="read_channel_profile",
             outcome="error",
@@ -1135,7 +1144,8 @@ async def api_channel_profile(request: web.Request) -> web.Response:
             val, _ = redact_credentials(val)
             profile[key] = val
 
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key="dashboard",
         tool_name="read_channel_profile",
         outcome="completed",
