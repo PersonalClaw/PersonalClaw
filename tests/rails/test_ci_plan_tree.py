@@ -212,7 +212,11 @@ _INPUT_ROWS = {
     "python-suite": ("src/personalclaw/app.py", None),
     "python-suite-macos": ("src/personalclaw/app.py", None),
     "client": ("packages/personalclaw-client-py/src/x.py", "docs/vision.md"),
-    "web-unit": ("web/src/App.tsx", "docs/vision.md"),
+    # The web, desktop and mobile tests plan for their own workspace: a desktop change plans no
+    # web suite, and a web change no mobile tests.
+    "web-unit": ("web/src/App.tsx", "desktop/main.js"),
+    "desktop-unit": ("desktop/main.js", "src/personalclaw/app.py"),
+    "mobile-unit": ("mobile/test/connect.test.mjs", "web/src/App.tsx"),
     "web-build": ("web/src/App.tsx", "docs/vision.md"),
     "desktop-smoke": ("desktop/main.js", "src/personalclaw/app.py"),
     "package": ("setup.cfg", "docs/vision.md"),

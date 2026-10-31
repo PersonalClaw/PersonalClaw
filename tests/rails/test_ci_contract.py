@@ -8490,6 +8490,8 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "shard-union-canary": _Mapped(("shard-union-canary",), ("breadth",)),
     "client": _Mapped((), ("change", "merge")),
     "web-unit": _Mapped((), ("change", "merge"), reuse="tree"),
+    "desktop-unit": _Mapped((), ("change", "merge"), reuse="tree"),
+    "mobile-unit": _Mapped((), ("change", "merge"), reuse="tree"),
     "web-build": _Mapped((), ("merge",), reuse="tree"),
     "package": _Mapped((), ("merge",)),
     "e2e": _Mapped((), ("merge",)),

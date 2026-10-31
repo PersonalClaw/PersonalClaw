@@ -1,5 +1,5 @@
-"""``client``, ``package``, ``audit``, ``web-unit`` and ``web-build`` declare the paths they read
-as their inputs (#3945).
+"""``client``, ``package``, ``audit``, ``web-unit``, ``desktop-unit``, ``mobile-unit`` and
+``web-build`` declare the paths they read as their inputs (#3945).
 
 Each took the whole tree, so every change planned it. Each now lists what it reads, and this rail
 holds the list to a census of those reads, so a docs-only change plans none of them while a
@@ -14,9 +14,10 @@ change to what one reads still plans it:
 - **audit**: the graphs ``tools/ci/audit.py`` audits, read from the module itself: ``uv.lock``,
   each npm lock ``npm_graphs`` finds with the ``package.json`` beside it, the root's workspaces'
   manifests, and its waivers.
-- **web-unit** and **web-build**: the npm workspaces their ``npm run`` steps run in (read from the
-  root's scripts), every path the workspaces' code names outside them, followed into each script
-  it names, and what their step scripts read.
+- **web-unit**, **desktop-unit**, **mobile-unit** and **web-build**: the npm workspaces their
+  ``npm run`` steps run in (read from the root's scripts), every path the workspaces' code names
+  outside them, followed into each script it names, and what their step scripts read. The web,
+  desktop and mobile tests are three jobs, so each plans only for what its own workspace reads.
 
 Each job also reads what its toolchain reads at the root: uv its settings (``pyproject.toml``,
 ``.python-version``) and Node its version (``.nvmrc``, the setup action's ``node-version-file``).
@@ -71,7 +72,7 @@ from tools.ci import audit, catalogue
 from tools.ci import plan as planner
 
 _CAT = catalogue.read(REPO)
-_JOBS = ("client", "package", "audit", "web-unit", "web-build")
+_JOBS = ("client", "package", "audit", "web-unit", "desktop-unit", "mobile-unit", "web-build")
 
 #: What each toolchain word reads at the root: uv its settings, for every command it runs there,
 #: and the setup action Node's version (``node-version-file``).
@@ -453,6 +454,8 @@ _CENSUS = {
     "package": package_reads,
     "audit": audit_reads,
     "web-unit": web_reads,
+    "desktop-unit": web_reads,
+    "mobile-unit": web_reads,
     "web-build": web_reads,
 }
 
@@ -537,13 +540,13 @@ def test_the_wheel_check_loads_the_manifest_script_by_its_path() -> None:
 
 
 def test_a_docs_only_change_plans_none_of_them() -> None:
-    """A docs page no job reads plans none of the five; the docs the web tests read still plan
+    """A docs page no job reads plans none of them; the docs the web tests read still plan
     the web jobs."""
     areas = catalogue.read_areas(REPO, _CAT)
     for tier in ("change", "merge"):
         p = planner.plan(_CAT, tier, ["docs/maintainers/ci.md"], overrides=areas, root=REPO)
         assert not p.full, p.full_reasons
-        assert not {"client", "package", "audit", "web-unit", "web-build"} & set(p.jobs), (
+        assert not set(_JOBS) & set(p.jobs), (
             tier,
             p.jobs,
         )
@@ -575,13 +578,21 @@ def _without(job_id: str, dropped: str) -> tuple[str, ...]:
         ("audit", "tools/ci/audit-baseline.toml", "tools/ci/audit-baseline.toml"),
         ("audit", ".nvmrc", ".nvmrc"),
         ("web-unit", "web/", "web"),
-        ("web-unit", "mobile/", "mobile"),
+        ("web-unit", "mobile/package.json", "mobile/package.json"),
         ("web-unit", "src/", "src"),
         ("web-unit", "docs/feature-map.md", "docs/feature-map.md"),
         ("web-unit", "docs/design/buddy/poses/", "docs/design/buddy/poses"),
         ("web-unit", "scripts/spa_dist_freshness.py", "scripts/spa_dist_freshness.py"),
-        ("web-unit", "scripts/lib/named_home.mjs", "scripts/lib/named_home.mjs"),
         ("web-unit", ".nvmrc", ".nvmrc"),
+        ("desktop-unit", "desktop/", "desktop"),
+        ("desktop-unit", "tools/ci/", "tools/ci"),
+        ("desktop-unit", "web/src/", "web/src"),
+        ("desktop-unit", "scripts/lib/named_home.mjs", "scripts/lib/named_home.mjs"),
+        ("desktop-unit", "docs/brand/marks.json", "docs/brand/marks.json"),
+        ("desktop-unit", "web/package.json", "web/package.json"),
+        ("mobile-unit", "mobile/", "mobile"),
+        ("mobile-unit", "desktop/package.json", "desktop/package.json"),
+        ("mobile-unit", ".nvmrc", ".nvmrc"),
         ("web-build", "desktop/", "desktop"),
         ("web-build", "scripts/check_asset_licenses.py", "scripts/check_asset_licenses.py"),
         ("web-build", "tests/fixtures/", "tests/fixtures"),

@@ -959,19 +959,23 @@ overrides (`--areas`, beside the catalogue by default):
 base, so a move names both the path it left and the path it reached.
 
 `desktop-smoke`, `apps-contract`, `python-suite`, `image`, `client`, `package`, `audit`,
-`web-unit` and `web-build` name their inputs; every other job declares the whole tree today, the
+`web-unit`, `desktop-unit`, `mobile-unit` and `web-build` name their inputs; every other job declares the whole tree today, the
 browser run's less what cannot reach it. `client`'s are its folder and uv's settings at the root
 (`pyproject.toml`, `.python-version`). `package`'s are what setuptools reads (its config, `src/`,
 the README, the licence) with the web workspace and the root's npm manifests `web/dist` is built
 from, and what `verify_wheel.py` names, followed into each script it names. `audit`'s are what it
 audits: `uv.lock` and `pyproject.toml`, every npm manifest and lock, and its own code and waivers.
-`web-unit`'s and `web-build`'s are the workspaces their `npm run` steps run in, every workspace's
-manifest (npm reads each on every run), and what that code names outside them: `src/`, which the
-parity tests read, the design docs, brand files and guides the tests hold the app to, and the
-scripts it runs. One run of each job's steps under a file-read recorder found no read of a tracked
+`web-unit`'s, `desktop-unit`'s, `mobile-unit`'s and `web-build`'s are the workspaces their
+`npm run` steps run in, every workspace's manifest (npm reads each on every run), and what that
+code names outside them: `src/`, which the web parity tests read, the design docs, brand files and
+guides the tests hold the app to, and the scripts they run. The web, desktop and mobile tests are
+three jobs, each on its own workspace's reads: a desktop change plans no web suite, a backend
+change no desktop or mobile tests, and only a mobile change (or the npm manifests) plans the
+mobile tests. `desktop-unit` still reads `web/src/` (its rig-measure script walks it) and
+`tools/ci/` (its Electron install test). One run of each job's steps under a file-read recorder found no read of a tracked
 path outside those lists but `mobile/package.json`, now listed, and `web-build`'s licence check,
 whose whole-tree half is `static`'s on every change. `tests/rails/test_ci_job_inputs_tree.py` holds
-each of the five to a census of its reads, with a planted read per form the census follows and a
+each of the seven to a census of its reads, with a planted read per form the census follows and a
 dropped entry per list. A docs page none of them reads plans none of them.
 
 Three workflows of their own, no catalogue job, start by a `paths:` filter instead of the plan:
@@ -2522,8 +2526,8 @@ Each step runs through `tools/ci/run.py`, which runs one command from an empty e
 - **To force a fresh run,** pass `--no-reuse`: every job runs, no recorded pass is read, and each
   clean pass is still recorded. `make check` (a working-tree run) and `run-job` neither read nor
   write the store.
-- **What a gate can reuse:** of the merge tier's jobs only `rails`, `rails-checks`, `web-unit` and
-  `web-build` are `tree`. Both suite jobs are security posture, and the others are `never` or
+- **What a gate can reuse:** of the merge tier's jobs only `rails`, `rails-checks`, `web-unit`,
+  `desktop-unit`, `mobile-unit` and `web-build` are `tree`. Both suite jobs are security posture, and the others are `never` or
   live, so a second `make gate` on an unchanged tree still runs every one of those.
 
 - **The key** is a sha256 over every input a job's result depends on: the job id, its entry's

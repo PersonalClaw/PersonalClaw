@@ -33,6 +33,8 @@ jobs = [
   "python-suite-macos",
   "client",
   "web-unit",
+  "desktop-unit",
+  "mobile-unit",
   "web-build",
   "desktop-smoke",
   "package",
@@ -718,47 +720,39 @@ command = [
 # run-job sets VITEST_MAX_WORKERS to the runner's core count before the vitest steps:
 # workers = "auto", and workers_env names the variable it sets.
 #
-# Each of web-unit and web-build reads the workspaces its steps run in, what their code names
-# outside them (the backend's sources its parity tests read, the design docs and brand files its
-# tests hold the app to, the scripts it runs), and what its step scripts and toolchain read
-# (tests/rails/test_ci_job_inputs_tree.py).
+# Each of web-unit, desktop-unit, mobile-unit and web-build reads the workspaces its steps run in,
+# what their code names outside them (the backend's sources its parity tests read, the design docs
+# and brand files its tests hold the app to, the scripts it runs), and what its step scripts and
+# toolchain read (tests/rails/test_ci_job_inputs_tree.py). The web, desktop and mobile tests are
+# three jobs, so each plans only for what its own workspace reads, and the desktop tests' 2
+# minutes run beside the web suite's 9 instead of after them.
 [[job]]
 id = "web-unit"
 tiers = ["change", "merge"]
 inputs = [
   ".nvmrc",
   "CHANGELOG.md",
-  "desktop/",
+  "desktop/package.json",
   "docs/agents/acp-parity.md",
   "docs/architecture/widgets.md",
-  "docs/brand/marks.json",
-  "docs/brand/personalclaw-mark.png",
-  "docs/brand/render_marks.mjs",
   "docs/design/buddy/copy.md",
-  "docs/design/buddy/decisions/rig-measure.mjs",
   "docs/design/buddy/interruption-matrix.json",
   "docs/design/buddy/poses/",
-  "docs/design/buddy/render_stills.mjs",
-  "docs/design/buddy/stills.json",
   "docs/design/motion.md",
   "docs/feature-map.md",
-  "docs/guides/companion-apps.md",
-  "docs/guides/desktop.md",
   "docs/guides/getting-started.md",
   "docs/research/learning-benchmark-protocol.md",
   "harness/fanout_measure.py",
-  "mobile/",
+  "mobile/package.json",
   "package-lock.json",
   "package.json",
   "scripts/lib/app_validate_form.mjs",
-  "scripts/lib/named_home.mjs",
   "scripts/spa_dist_freshness.py",
   "src/",
-  "tools/ci/",
   "web/",
 ]
 external_inputs = []
-toolchain = ["node", "npm-ci", "electron"]
+toolchain = ["node", "npm-ci"]
 cache = ["npm"]
 security = "ordinary"
 reuse = "tree"
@@ -773,7 +767,66 @@ command = [
   { argv = ["npm", "run", "typecheck:web"] },
   { argv = ["npm", "run", "test:web"] },
   { argv = ["npm", "run", "design:detect"] },
+]
+
+[[job]]
+id = "desktop-unit"
+tiers = ["change", "merge"]
+inputs = [
+  ".nvmrc",
+  "desktop/",
+  "docs/brand/marks.json",
+  "docs/brand/personalclaw-mark.png",
+  "docs/brand/render_marks.mjs",
+  "docs/design/buddy/decisions/rig-measure.mjs",
+  "docs/design/buddy/render_stills.mjs",
+  "docs/design/buddy/stills.json",
+  "docs/guides/companion-apps.md",
+  "docs/guides/desktop.md",
+  "mobile/package.json",
+  "package-lock.json",
+  "package.json",
+  "scripts/lib/named_home.mjs",
+  "scripts/spa_dist_freshness.py",
+  "tools/ci/",
+  "web/e2e/fixtures/home/",
+  "web/e2e/fixtures/scripted-chat.json",
+  "web/package.json",
+  "web/public/claw.svg",
+  "web/src/",
+]
+external_inputs = []
+toolchain = ["node", "npm-ci", "electron"]
+cache = ["npm"]
+security = "ordinary"
+reuse = "tree"
+timeout_min = 20
+needs_node = true
+prepush = false  # the desktop shell's tests: CI is their gate, not the pre-push hook
+command = [
   { argv = ["npm", "run", "test:desktop"], env = { PCLAW_REQUIRE_ELECTRON = "1" } },
+]
+
+[[job]]
+id = "mobile-unit"
+tiers = ["change", "merge"]
+inputs = [
+  ".nvmrc",
+  "desktop/package.json",
+  "mobile/",
+  "package-lock.json",
+  "package.json",
+  "web/package.json",
+]
+external_inputs = []
+toolchain = ["node", "npm-ci"]
+cache = ["npm"]
+security = "ordinary"
+reuse = "tree"
+timeout_min = 15
+needs_node = true
+prepush = false  # the mobile app's tests: CI is their gate, not the pre-push hook
+command = [
   { argv = ["npm", "run", "test:mobile"] },
 ]
 
