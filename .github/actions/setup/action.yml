@@ -20,8 +20,9 @@ inputs:
   programs:
     description: >-
       The programs of a catalogue job's toolchain that run-job finds on PATH and does not install
-      (tools/ci/plan.py SETUP_PROGRAMS: tmux, shellcheck, dash), space-separated, as the plan's
-      matrix names them. Each one PATH lacks is installed from the runner's package manager.
+      (tools/ci/plan.py SETUP_PROGRAMS: tmux, shellcheck, dash, ffmpeg, and docker, which it only
+      checks for), space-separated, as the plan's matrix names them. Each one PATH lacks is installed
+      from the runner's package manager.
       Empty installs none.
     default: ""
 runs:
@@ -62,6 +63,7 @@ runs:
             tmux) ;;
             shellcheck) ;;
             dash) ;;
+            ffmpeg) ;;
             docker) ;;
             *) echo "the setup action installs tmux, shellcheck and dash, and checks docker, not $tool" >&2; exit 1 ;;
           esac

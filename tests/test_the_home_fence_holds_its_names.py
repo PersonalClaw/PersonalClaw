@@ -38,6 +38,7 @@ import threading
 import time
 from pathlib import Path
 
+import namespace_sandbox
 import pytest
 
 import personalclaw.config.loader as loader
@@ -161,17 +162,6 @@ def test_macos_the_shell_still_works_inside_the_home(home):
     assert (home / "workspace" / "d" / "e").is_dir() and (home / "workspace" / "p").is_dir()
 
 
-def _linux_sandbox_works() -> bool:
-    if sys.platform != "linux":
-        return False
-    from personalclaw.sandbox import _probe_unshare
-
-    works = _probe_unshare()
-    if works is None:  # never a skip: an unanswered check would hide the test
-        raise RuntimeError("the sandbox's namespace check did not answer")
-    return works
-
-
 def _launch(home: Path, command: str) -> subprocess.CompletedProcess:
     from personalclaw.sandbox import namespace_argv
 
@@ -182,10 +172,7 @@ def _launch(home: Path, command: str) -> subprocess.CompletedProcess:
         os.unlink(argv[1])
 
 
-linux_only = pytest.mark.skipif(
-    not _linux_sandbox_works(),
-    reason="needs the Linux namespace sandbox (user + mount namespaces)",
-)
+linux_only = namespace_sandbox.needs_it()
 
 
 @linux_only

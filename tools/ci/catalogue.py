@@ -103,7 +103,13 @@ TOOLCHAINS = frozenset(
         "tmux",
         "shellcheck",
         "dash",
+        # ffmpeg and ffprobe, from the runner's package manager (the setup action): the tests that
+        # build and read a video skip without them (#3918).
+        "ffmpeg",
         "docker",
+        # The user namespaces a GitHub-hosted Linux runner withholds, lifted for the job's own run
+        # (tools/ci/allow_userns.sh); a job that names it cannot run anywhere else (#3918).
+        "userns",
     }
 )
 
@@ -147,6 +153,10 @@ INSTALLS: tuple[tuple[tuple[str, ...], str], ...] = (
     # Electron's binary, which `npm ci` does not download (tools/ci/install_electron.sh, which also
     # gives Chromium's setuid sandbox helper its bit on a Linux runner).
     (("sh", "tools/ci/install_electron.sh"), "electron"),
+    # The user namespaces a GitHub-hosted Linux runner withholds (tools/ci/allow_userns.sh): a
+    # step that ran it would change a kernel setting wherever the job runs, a machine of your own
+    # included, so it is only ever an install, which run-job runs on such a runner alone.
+    (("sh", "tools/ci/allow_userns.sh"), "userns"),
 )
 
 #: What a toolchain installs that a job's ``needs_*`` flag says it needs: the two agree.

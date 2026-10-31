@@ -26,14 +26,14 @@ import json
 from pathlib import Path
 
 import pytest
+from app_roots import first_party_app
 
-_REPO = Path(__file__).resolve().parents[2]
 # apps/native/<provider>-action/app.json  ↔  action_providers/<module>.py
 _NATIVE_APPS = Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "apps" / "native"
 _ACTION_PKG = Path(__file__).resolve().parents[1] / "src" / "personalclaw" / "action_providers"
-# The webhook action moved to a standalone workspace app (apps/webhook-action) —
-# NOT native. Kept in the parity sweep because it was the original drift bug.
-_WORKSPACE_APPS = _REPO / "apps"
+# The webhook action moved to a standalone first-party app (webhook-action), NOT native,
+# read from the apps checkout (app_roots.first_party_app). Kept in the parity sweep because
+# it was the original drift bug.
 
 # provider key → (manifest app.json path, executor .py path). Native providers live
 # under apps/native/<key>-action; webhook is a workspace app.
@@ -54,12 +54,8 @@ _NATIVE_KEYS = {
 def _provider_paths(key: str) -> tuple[Path, Path]:
     """Return (manifest, executor) paths for a provider key."""
     if key == "webhook":
-        if not _WORKSPACE_APPS.is_dir():  # standalone core clone — workspace app absent
-            pytest.skip("webhook-action app dir not present (standalone clone)")
-        return (
-            _WORKSPACE_APPS / "webhook-action" / "app.json",
-            _WORKSPACE_APPS / "webhook-action" / "provider.py",
-        )
+        app = first_party_app("webhook-action")
+        return app / "app.json", app / "provider.py"
     return (_NATIVE_APPS / f"{key}-action" / "app.json", _ACTION_PKG / _NATIVE_KEYS[key])
 
 

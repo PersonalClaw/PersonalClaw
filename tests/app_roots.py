@@ -1,6 +1,6 @@
 """What ``test_apps_import_boundary.py`` shares with the suite's other tests.
 
-``_app_roots``.
+``_app_roots``, and :func:`first_party_app` for a test that needs one of the first-party apps.
 
 Kept here, beside the suite, so a test that is not a rail can import them without importing
 a rail (rails live in ``tests/rails/``, which only the rails job collects)."""
@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+
+import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -103,3 +105,44 @@ def _app_roots() -> list[Path]:
         seen.add(key)
         out.append(r)
     return out
+
+
+#: Where the first-party apps are, as the gateway reads it too: a checkout of PersonalClawApps.
+FIRST_PARTY_APPS_DIR = "PERSONALCLAW_FIRST_PARTY_APPS_DIR"
+#: Set where a run has the apps checked out (the merge tier's ``apps-contract`` job): a test that
+#: needs a first-party app then fails when it cannot find one, instead of skipping.
+REQUIRE_FIRST_PARTY_APPS = "PERSONALCLAW_REQUIRE_FIRST_PARTY_APPS"
+
+
+def first_party_apps_dir() -> Path | None:
+    """The first-party apps checkout: :data:`FIRST_PARTY_APPS_DIR` when it names one, else the
+    nearest workspace-level clone (:func:`_sibling_apps_root`), else ``None``."""
+    env = os.environ.get(FIRST_PARTY_APPS_DIR, "").strip()
+    if env and _holds_app_bundles(Path(env).expanduser()):
+        return Path(env).expanduser().resolve()
+    return _sibling_apps_root()
+
+
+def first_party_app(name: str, *, module_level: bool = False) -> Path:
+    """The directory of the first-party app *name*.
+
+    A core clone has no apps checkout, so a test that reads an app skips there. Read that way on
+    every CI run, such a test never ran anywhere (#3918), so the job that checks the apps out sets
+    :data:`REQUIRE_FIRST_PARTY_APPS`, and there a missing app fails the test instead."""
+    root = first_party_apps_dir()
+    if root is not None and (root / name / "app.json").is_file():
+        return root / name
+    why = (
+        f"the first-party app {name!r} is not here: no apps checkout was found "
+        f"({FIRST_PARTY_APPS_DIR}, or a PersonalClawApps clone beside this one)"
+    )
+    skip_unless_required(why, module_level=module_level)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def skip_unless_required(why: str, *, module_level: bool = False) -> None:
+    """Skip a test that needs the first-party apps with *why*; fail it with *why* where
+    :data:`REQUIRE_FIRST_PARTY_APPS` says the apps are checked out."""
+    if os.environ.get(REQUIRE_FIRST_PARTY_APPS) == "1":
+        pytest.fail(f"{why}, and {REQUIRE_FIRST_PARTY_APPS}=1 requires it", pytrace=False)
+    pytest.skip(why, allow_module_level=module_level)

@@ -458,7 +458,7 @@ def _plan(
 #: has: ``run-job`` installs ``uv-sync``, ``npm-ci`` and ``chromium`` itself, the action sets up
 #: ``uv`` and ``node`` from the entry's ``python`` and ``node``, and ``run-job`` finds every other
 #: program on PATH or cannot run.
-SETUP_PROGRAMS: tuple[str, ...] = ("tmux", "shellcheck", "dash", "docker")
+SETUP_PROGRAMS: tuple[str, ...] = ("tmux", "shellcheck", "dash", "ffmpeg", "docker")
 
 #: The workflow job that runs the stage-1 entries a later entry waits for, and the one that runs
 #: every other stage-1 entry beside it. Stage ``k`` from 2 is run by ``test-<k>``.

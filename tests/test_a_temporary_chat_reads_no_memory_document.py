@@ -44,6 +44,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import namespace_sandbox
 import pytest
 
 import personalclaw.config.loader as loader
@@ -419,17 +420,6 @@ def test_macos_a_temporary_chats_command_cannot_read_the_memory_folders(home):
             assert PREFERENCE in _seatbelt(reads[0]).stdout
 
 
-def _linux_sandbox_works() -> bool:
-    if sys.platform != "linux":
-        return False
-    from personalclaw.sandbox import _probe_unshare
-
-    works = _probe_unshare()
-    if works is None:  # never a skip: an unanswered check would hide the test
-        raise RuntimeError("the sandbox's namespace check did not answer")
-    return works
-
-
 def _launch(command: str) -> subprocess.CompletedProcess:
     from personalclaw.sandbox import namespace_argv
 
@@ -440,9 +430,7 @@ def _launch(command: str) -> subprocess.CompletedProcess:
         os.unlink(argv[1])
 
 
-@pytest.mark.skipif(
-    not _linux_sandbox_works(), reason="needs the Linux namespace sandbox (user + mount namespaces)"
-)
+@namespace_sandbox.needs_it()
 def test_linux_a_temporary_chats_command_cannot_read_the_memory_folders(home):
     ws = os.path.realpath(_workspace(home))
     with memory_writes.derived_from(KEY, memory_mode="temporary"):

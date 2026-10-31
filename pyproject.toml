@@ -312,6 +312,10 @@ dev = [
     # lean. The extra whose exclusion from dev/test IS deliberate says so explicitly
     # ([keychain], above); this one never did.
     "personalclaw[openai]",
+    # The `anthropic` SDK, for the same reason as `openai` above: the test that an Anthropic chat to
+    # a denied host is refused is `importorskip("anthropic")`-gated, so with `--extra dev` alone it
+    # skipped on every CI run and checked nothing (#3918). The container ships this extra.
+    "personalclaw[anthropic]",
     # Formatter/linter majors are pinned to the SAME major CI resolves from uv.lock,
     # because CI runs `uv sync --locked` while the documented dev install is
     # `pip install -e ".[dev]"` — which ignores the lock and resolves freely. An

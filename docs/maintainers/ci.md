@@ -573,7 +573,7 @@ the `breadth.yml` jobs it maps to, in both directions, and every entry to the re
 - An install is toolchain, never a step: `uv sync`, `npm ci`, the Playwright browser install and
   Electron's binary (`sh tools/ci/install_electron.sh`, which `npm ci` does not run) are
   refused as steps, and each install an entry's toolchain names (`uv-sync`, `npm-ci`, `chromium`,
-  `electron`) is one its `breadth.yml` jobs run; `run-job` runs each of a change or merge entry's
+  `electron`, `userns`) is one its `breadth.yml` jobs run; `run-job` runs each of a change or merge entry's
   installs itself (`INSTALL_ARGV`). Each entry names every install it needs, so no entry leans
   on another job's installs.
 - The cap, the runner, the Python (the one `setup-uv` sets before the entry's steps), the
@@ -637,7 +637,7 @@ workflow, one a release tag's push starts, or one either calls), which uses no s
 release path restores no uv cache at all: each of its setup-uv steps sets `enable-cache: false`.
 `programs` names the programs of a catalogue job's toolchain that `run-job` finds on PATH and
 does not install
-(`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`, `docker`), space-separated,
+(`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`, `ffmpeg`, `docker`), space-separated,
 as the plan's matrix gives them: every name is checked before anything installs, and any other
 name fails the step with nothing installed (none is read as a pattern); each one PATH lacks is
 then installed from the runner's package manager (`apt-get` on Linux, `brew` on macOS, nothing
@@ -645,7 +645,9 @@ elsewhere), except `docker`, which is the runner image's and only checked for, s
 without it fails the step; and empty, the default, installs none. `docker` is in the vocabulary
 before any job names it because the plan of a pull request is made by `main`'s `tools/ci`
 (`pr.yml`'s plan step): a toolchain word a job uses must be on `main` before the change that
-uses it, or the planner refuses that change's catalogue. Each job keeps the rest itself:
+uses it, or the planner refuses that change's catalogue. `ffmpeg` (which brings `ffprobe`) is in the
+vocabulary before the suite names it for the same reason: the tests that build and read a video
+skip without it (#3918). Each job keeps the rest itself:
 
 - the checkout, before the action, because a local action loads only from a checkout;
 - the Runner identity step, first, so a failed checkout still logs the image. The runner
@@ -2370,6 +2372,17 @@ changes to tests, `tools/ci`, `scripts`, docs and the web.
   `incomplete: N jobs could not run here` (exit 2). A job that is not green for any other
   reason (red, not run for `--fail-fast`, an interruption or memory, or run with no record)
   keeps the verdict red, and red wins over both.
+- **The user namespaces (`userns`).** A job whose toolchain names `userns` runs the sandbox's own
+  namespace tests, which GitHub's Ubuntu 24.04 runners would skip: their
+  `kernel.apparmor_restrict_unprivileged_userns = 1` withholds the user and mount namespaces the
+  launcher needs (#3918). Its install, `tools/ci/allow_userns.sh`, sets that to 0 for the job's
+  own run, on a throwaway runner. run-job runs it only on a GitHub-hosted Linux runner
+  (`jobs.github_hosted_linux`), and gives it that runner's `GITHUB_ACTIONS` and
+  `RUNNER_ENVIRONMENT`, which it refuses to run without. On any other machine, a developer's or
+  a self-hosted runner, the job cannot run here (`jobs.USERNS_ELSEWHERE`), so `make gate` names it
+  and the run is partial, and nothing of it, its install included, runs. The word is on `main`
+  before the job that names it, as `docker` was. A machine of your own keeps the restriction:
+  there the sandbox needs an AppArmor profile that allows user namespaces.
 - **Electron's sandbox.** Off GitHub, a job whose toolchain names `electron` cannot run on a
   Linux host whose kernel withholds the user namespaces Chromium's sandbox needs: Ubuntu 24.04's
   `kernel.apparmor_restrict_unprivileged_userns = 1` (`tools/ci/sandbox_host.py`). Electron then

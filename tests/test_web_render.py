@@ -16,6 +16,7 @@ import socket
 import sys
 
 import pytest
+from app_roots import first_party_app
 
 from personalclaw.net.client import FetchResponse
 from personalclaw.web import fetch as wf
@@ -38,11 +39,8 @@ def _web_tool_provider_cls():
     the app loader imports an installed app's provider module."""
     import importlib.util
     import sys
-    from pathlib import Path
 
-    app_dir = Path(__file__).resolve().parents[2] / "apps" / "web-tools"
-    if not app_dir.is_dir():  # standalone core clone — the web-tools app isn't present
-        pytest.skip("web-tools app dir not present (standalone clone)")
+    app_dir = first_party_app("web-tools")
     uniq = "_pclaw_app_web_tools__provider"
     if uniq in sys.modules:
         return sys.modules[uniq].WebToolProvider

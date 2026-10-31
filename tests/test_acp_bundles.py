@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from app_roots import first_party_app
 
 from personalclaw.agents.registry import get_agent_provider_class
 from personalclaw.llm.acp_agent import ACP_AGENT_CAPABILITY
@@ -35,9 +36,7 @@ from personalclaw.llm.registry import get_default_registry, reset_default_regist
 # Load their provider modules the way the app loader does (from the app dir under a
 # namespaced module name) so this suite keeps exercising the real bundle wiring +
 # its integration with the core ACP-agent registry.
-_APPS_DIR = Path(__file__).resolve().parents[2] / "apps"
-if not _APPS_DIR.is_dir():  # standalone core clone — the agent-app bundles aren't present
-    pytest.skip("workspace apps/ dir not present (standalone clone)", allow_module_level=True)
+_APPS_DIR = first_party_app("claude-code-agent", module_level=True).parent
 
 
 def _load_app_provider(app_name: str):
