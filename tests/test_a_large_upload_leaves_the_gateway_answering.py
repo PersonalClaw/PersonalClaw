@@ -2271,6 +2271,23 @@ _LOWEST = """
             os.nice(19)
 """
 
+
+def _shared_cpu() -> int:
+    """The CPU a crowded child and one busy process share on Linux: the lowest this process may
+    run on, which a child it starts may run on too, so both name it without being told."""
+    return min(os.sched_getaffinity(0))
+
+
+#: A child's step, after :func:`lowest`, onto the CPU one busy process holds (:func:`_crowded`'s
+#: ``shared``): the thread that takes it, and every thread it starts after, run there alone. On
+#: a runner with a CPU the crowd left free, the thread beside the loop ran on that CPU (it used
+#: 99%, 83% and 65% of a CPU in three tries of run 41200090289). Linux only: macOS has no
+#: affinity to set, and its background band does the crowding there.
+_PIN = """
+    if hasattr(os, "sched_setaffinity"):
+        os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
+"""
+
 #: The probe, asking no health check, over the starved request.
 _STARVED_CHILD = (
     textwrap.dedent("""
@@ -2308,11 +2325,14 @@ def _seen(probe: _Probe) -> SimpleNamespace:
     )
 
 
-def _crowded(child: str, home, *args: str, hold: float) -> dict:
+def _crowded(child: str, home, *args: str, hold: float, shared: bool = False) -> dict:
     """Runs ``child`` on the scratch ``home`` once it is up, with every CPU taken by a process of
     its own for at most ``hold`` seconds, and returns the one line of JSON it prints. What the
     child says on stderr goes to a file beside ``home``, and a child that fails, or prints
-    nothing, fails the test with the end of it."""
+    nothing, fails the test with the end of it.
+
+    ``shared``: on Linux, the first busy process is held to :func:`_shared_cpu`, which a child
+    that pins itself there (:data:`_PIN`) then has to share with it, whatever CPU is left free."""
     said = home.parent / "child-stderr.txt"
     with open(said, "w", encoding="utf-8") as stderr:
         child_process = subprocess.Popen(
@@ -2333,6 +2353,8 @@ def _crowded(child: str, home, *args: str, hold: float) -> dict:
             )
         for one in busy:
             assert one.stdout.read(1) == b"b", "a busy process never started"
+        if shared and hasattr(os, "sched_setaffinity"):
+            os.sched_setaffinity(busy[0].pid, {_shared_cpu()})
         child_process.stdin.write("go\n")
         child_process.stdin.flush()
         out = child_process.stdout.readline()
@@ -2374,6 +2396,7 @@ def _until_crowded(
     measured,
     required=None,
     required_premise="",
+    shared=False,
 ) -> dict:
     """Runs ``child`` crowded (:func:`_crowded`) up to :data:`_TRIES` times, each try in a folder
     of its own, until ``holds`` says its ``premise`` held, and returns that try's line. A premise
@@ -2386,7 +2409,7 @@ def _until_crowded(
     for n in range(_TRIES):
         where = tmp_path / f"try-{n}"
         where.mkdir()
-        seen = _crowded(child, where / "home", *args(where), hold=_HOLD)
+        seen = _crowded(child, where / "home", *args(where), hold=_HOLD, shared=shared)
         assert seen["status"] == 200, f"premise: the request answered; {seen['says']}"
         measures.append(measured(seen))
         met = met or required is None or required(seen)
@@ -2520,6 +2543,8 @@ _BESIDE_A_READY_THREAD_CHILD = (
     from personalclaw.dashboard import handlers_system
     """)
     + textwrap.dedent(_LOWEST)
+    + "def pin():\n"
+    + textwrap.indent(textwrap.dedent(_PIN), "    ")
     + textwrap.dedent("""
     async def main():
         held = upload._HeldHealthCheck()
@@ -2540,6 +2565,7 @@ _BESIDE_A_READY_THREAD_CHILD = (
             async with TestClient(TestServer(app)) as client:
                 probe = upload._Probe(client)
                 lowest()
+                pin()
                 beside = threading.Thread(target=hash_beside)
                 beside.start()
 
@@ -2586,6 +2612,7 @@ def test_a_block_beside_a_thread_that_waits_for_a_cpu_still_fails_the_probe(tmp_
         holds=lambda seen: seen["share"] < 0.5,
         measure="the share of a CPU the thread beside used",
         measured=lambda seen: f"{seen['share']:.0%}",
+        shared=True,
     )
     says = f"the thread beside used {seen['share']:.0%} of a CPU during the block; {seen['says']}"
     assert seen["worst_step"] >= _BOUND, f"the step missed the block; {says}"
@@ -2703,7 +2730,7 @@ def test_a_came_and_went_run_whose_ended_threads_time_never_arrives_fails(
     lines = iter(counted)
     ran = []
 
-    def planted(child, home, *args, hold):
+    def planted(child, home, *args, hold, shared=False):
         ran.append(home)
         return {
             "status": 200,
