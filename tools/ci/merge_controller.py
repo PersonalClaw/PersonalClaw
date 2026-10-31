@@ -9,9 +9,11 @@ candidate's files are never fetched or checked out (``trust.compare_trees``).
 ``decide`` judges the run and writes the check run it would post. The rules, each failing
 closed; a red names every rule the head fails, so one verdict says all it must fix:
 
-1. The run is this repository's ``.github/workflows/merge.yml``, completed, on a ``pull_request``
-   or a dispatch. Any other run posts nothing: another workflow named Merge, which a candidate
-   can add, a push to ``main`` or a schedule. Only a run of merge.yml itself can bring a verdict.
+1. The run is this repository's ``.github/workflows/merge.yml``, completed, on a ``pull_request``,
+   a dispatch, or a queue commit of main's merge queue (``merge_group``, judged by the rules under
+   "A queue commit" below). Any other run posts nothing: another workflow named Merge, which a
+   candidate can add, a push to ``main`` or a schedule. Only a run of merge.yml itself can bring a
+   verdict.
 2. A head that changes a definition (``trust``), compared with ``main``'s tip, is judged by two
    things, both green (#4584 step 4): its own run, by every rule here, which shows the change
    works as written; and ``main``'s CI contract over its definitions, which shows it weakens
@@ -31,7 +33,10 @@ closed; a red names every rule the head fails, so one verdict says all it must f
    contract judged the head against the ``main`` it would land on. A head that is behind is
    red whatever else holds, and its definitions are not compared: against ``main``'s tip, a head
    ``main`` has moved past would read as changing every definition ``main`` changed since. So no
-   contract runs for it until it updates.
+   contract runs for it until it updates. Once main's rules queue its merges (a ``merge_queue``
+   rule, :func:`queue_live`) this rule is the queue's: a head may be behind, its definitions are
+   compared with the commit it was built on, and the tree that lands is its queue commit's, which
+   has a verdict of its own.
 
 **The contract run.** ``contract-branch`` points the branch ``contract-run/<head>`` at
 ``main``'s tip with the controller App's token, and ``dispatch`` runs ``main``'s
@@ -89,6 +94,31 @@ trusted-run branch the old path left).
    judged them), and the digests of the run's ``ci-record-*`` artifacts as the API reports them.
    A run with no record artifact has no evidence, so no green.
 
+**A queue commit** (0.4.0 A1). GitHub builds one for each entry of main's merge queue: the entry's
+pull request squashed on main's tip, or on the queue commit of the entry ahead. Its merge.yml run
+(``merge_group``) is judged by rules 2, 4 and 7 as a pull request's run is, and by these, each
+failing closed, all read through the API:
+
+- **Which entry.** The run's branch is ``gh-readonly-queue/main/pr-<n>-<commit>``
+  (:data:`QUEUE_BRANCH`), whose commit is the one the queue built it on, never the pull request's
+  head. Main's merge queue, read once (:data:`QUEUE_QUERY`), lists an entry whose queue commit is
+  the run's head, for pull request ``<n>``, open into main, built on that commit. A queue commit
+  no entry lists any more (removed, or its group rebuilt) is judged by nothing: no verdict waits
+  for it.
+- **What it is built on.** Its one parent is that commit, and that commit is main's tip or the
+  queue commit of the entry directly ahead. Each of those is on main already or carries its own
+  verdict before GitHub merges past it, so every tree main reaches was judged (this replaces
+  rule 3).
+- **What it brings.** Its change against that parent is exactly its pull request's: the same
+  ``+/-`` lines in the same files (:func:`change_reasons`).
+- **Its pull request's head.** The App's newest verdict on the pull request's head is green. That
+  verdict holds the head's dependency review, its sign-off check and CodeQL, each of the pull
+  request's own change, which the queue commit's change is.
+- **Its definitions** are compared with main's tip, so a definition an entry ahead changed counts,
+  and main's CI contract runs over the queue commit itself whenever they differ.
+- **Once.** A queue commit's verdict that waits on nothing is final: it is never posted again, so
+  no later look can turn a commit already on main red.
+
 The verdict is ``success`` or ``failure``, never neutral, and an answer the API would not give is
 ``failure``, named as unread. ``post`` sends the check run with the controller App's token, and
 refuses a body that is not one completed ``merge-verdict`` check run.
@@ -122,9 +152,18 @@ from . import merge_verdict, trust, verdict, workflows
 
 #: The run that brings a verdict: merge.yml, by its path in this repository.
 MERGE_WORKFLOW = f".github/workflows/{workflows.MERGE}"
-#: The events whose merge.yml run judges a pull request's head: the pull request itself, and a
-#: dispatch of the head's branch (how a merge run is started until #3915's flip).
-JUDGED_EVENTS = frozenset({"pull_request", "workflow_dispatch"})
+#: The events whose merge.yml run judges a head: the pull request itself, a dispatch of the
+#: head's branch (how a merge run is started until #3915's flip), and a queue commit of main's
+#: merge queue.
+JUDGED_EVENTS = frozenset({"pull_request", "workflow_dispatch", "merge_group"})
+#: A queue commit's run, by its event.
+QUEUE_EVENT = "merge_group"
+#: A queue commit's branch, as its run's ``head_branch`` names it: main's queue, the entry's pull
+#: request, and the commit the queue built it on, its one parent (main's tip or the queue commit of
+#: the entry ahead). It is never the pull request's head.
+QUEUE_BRANCH = re.compile(
+    r"gh-readonly-queue/main/pr-(?P<number>[1-9][0-9]*)-(?P<built_on>[0-9a-f]{40})"
+)
 #: The dependency review: a pull_request_target workflow, so the run is main's copy.
 DEPENDENCY_REVIEW = ".github/workflows/dependency-review.yml"
 #: The sign-off check: a pull_request_target workflow too, so the run is main's copy.
@@ -262,6 +301,8 @@ def read_run(get: Get, repo: str, run_id: int) -> Run | str:
     branch = str(run.get("head_branch") or "")
     if run.get("event") == "workflow_dispatch" and branch.startswith(TRUSTED_PREFIX):
         return f"run {run_id} is a trusted run of the old path, which #4584 step 4 replaced"
+    if run.get("event") == QUEUE_EVENT and not QUEUE_BRANCH.fullmatch(branch):
+        return f"run {run_id} is a queue run on {branch!r}, which names no entry of main's queue"
     event, url = str(run.get("event")), str(run.get("html_url") or "")
     return Run(run_id, attempt, head, event, url, branch)
 
@@ -395,6 +436,29 @@ def behind_by(get: Get, repo: str, base: str, head: str) -> int:
     return count
 
 
+def queue_live(get: Get, repo: str) -> bool:
+    """Whether main's rules queue its merges: a ``merge_queue`` rule among the rules that apply to
+    main. Read from the rules themselves, so it is true exactly when GitHub queues them. An answer
+    this cannot read is no: rule 3 then holds, the stricter reading."""
+    try:
+        rules = _read(get, f"/repos/{repo}/rules/branches/main?per_page={_PER_PAGE}")
+    except Unread:
+        return False
+    return isinstance(rules, list) and any(
+        isinstance(r, Mapping) and r.get("type") == "merge_queue" for r in rules
+    )
+
+
+def merge_base(get: Get, repo: str, base: str, head: str) -> str:
+    """The commit a head was built on: its merge base with ``base``, as the comparison names it."""
+    answer = _read(get, f"/repos/{repo}/compare/{base}...{head}")
+    found = answer.get("merge_base_commit") if isinstance(answer, Mapping) else None
+    sha = found.get("sha") if isinstance(found, Mapping) else None
+    if not isinstance(sha, str) or not _SHA.fullmatch(sha):
+        raise Unread(f"the comparison of {head} with main names no merge base")
+    return sha
+
+
 def evidence(get: Get, repo: str, run: Run) -> dict[str, str]:
     """Each ``ci-record-*`` artifact of the run, by name, to the digest the API reports."""
     found: dict[str, str] = {}
@@ -445,6 +509,17 @@ class Outcome:
     dispatch: str | None = None
     base: str | None = None
     cleanup: str | None = None
+
+
+@dataclass(frozen=True)
+class Queue:
+    """What judging under main's merge queue needs beyond the REST reads: the queue's one read,
+    the App whose verdicts count, and whether main's rules queue its merges (:func:`queue_live`,
+    which drops rule 3 for a pull request's head)."""
+
+    query: Query
+    app: int
+    live: bool = False
 
 
 def _red(run: Run, reasons: list[str], head: str, moved: list[Moved] | None = None) -> Posting:
@@ -943,7 +1018,13 @@ def _latest_merge_run(get: Get, repo: str, **query: str) -> int | None:
     return max(ids) if ids else None
 
 
-def decide_review(get: Get, repo: str, run: Mapping[str, Any], controller_revision: str) -> Outcome:
+def decide_review(
+    get: Get,
+    repo: str,
+    run: Mapping[str, Any],
+    controller_revision: str,
+    queue: Queue | None = None,
+) -> Outcome:
     """A completed Dependency review or DCO run: judge its head again (:func:`rejudge`)."""
     head = run.get("head_sha")
     if run.get("event") != "pull_request_target" or not isinstance(head, str):
@@ -952,10 +1033,12 @@ def decide_review(get: Get, repo: str, run: Mapping[str, Any], controller_revisi
         )
     if not _SHA.fullmatch(head):
         raise Unread(f"run {run.get('id')} of {run.get('path')} names no head")
-    return rejudge(get, repo, head, controller_revision)
+    return rejudge(get, repo, head, controller_revision, queue)
 
 
-def judge_check(get: Get, repo: str, check_id: int, controller_revision: str) -> Outcome:
+def judge_check(
+    get: Get, repo: str, check_id: int, controller_revision: str, queue: Queue | None = None
+) -> Outcome:
     """A completed check run: only the ``CodeQL`` summary check, from GitHub's code scanning
     App, wakes the poster, and only to judge its head again. Its conclusion is never read."""
     check = _read(get, f"/repos/{repo}/check-runs/{check_id}")
@@ -967,16 +1050,21 @@ def judge_check(get: Get, repo: str, check_id: int, controller_revision: str) ->
     head = check.get("head_sha")
     if not isinstance(head, str) or not _SHA.fullmatch(head):
         raise Unread(f"check run {check_id} names no head")
-    return rejudge(get, repo, head, controller_revision)
+    return rejudge(get, repo, head, controller_revision, queue)
 
 
-def rejudge(get: Get, repo: str, head: str, controller_revision: str) -> Outcome:
-    """Judge a head again from its own completed pull_request Merge run, and for a head that
-    changes a definition, the contract run that run's verdict waits for."""
+def rejudge(
+    get: Get, repo: str, head: str, controller_revision: str, queue: Queue | None = None
+) -> Outcome:
+    """Judge a head again from its own completed pull_request Merge run, or a queue commit from
+    its own merge_group run, and for one that changes a definition, the contract run that run's
+    verdict waits for."""
     own = _latest_merge_run(get, repo, head_sha=head, event="pull_request")
+    if own is None and queue is not None:
+        own = _latest_merge_run(get, repo, head_sha=head, event=QUEUE_EVENT)
     if own is None:
         return Outcome(why=f"{head} has no completed Merge run of its own to judge yet")
-    return decide(get, repo, own, controller_revision)
+    return decide(get, repo, own, controller_revision, queue)
 
 
 # ── A Merge run that has started: its contract beside it ──────────────────────────────────────
@@ -1028,8 +1116,9 @@ def start_contract(get: Get, repo: str, run_id: int) -> Outcome:
     when none ran for the head at main's tip. It starts one only when all of these hold, each read
     through the API by the run's id (only :data:`START_READS` of the run):
 
-    1. the run is this repository's merge.yml, on ``pull_request``, attempt 1, running or done
-       (a re-run's start starts nothing: its completion does, if no contract ran);
+    1. the run is this repository's merge.yml, on ``pull_request`` or a queue commit's
+       ``merge_group``, attempt 1, running or done (a re-run's start starts nothing: its
+       completion does, if no contract ran);
     2. a job of attempt 1 ran on a runner (:func:`started`), so the head's own run passed the
        approval gate, as the contract has always needed;
     3. the head is not behind main, and it changes a CI definition against main's tip;
@@ -1043,10 +1132,10 @@ def start_contract(get: Get, repo: str, run_id: int) -> Outcome:
     owner = repository.get("full_name") if isinstance(repository, Mapping) else None
     if owner != repo or run["path"] != MERGE_WORKFLOW:
         return Outcome(why=f"run {run_id} is not {repo}'s {MERGE_WORKFLOW}")
-    if run["event"] != "pull_request":
+    if run["event"] not in ("pull_request", QUEUE_EVENT):
         return Outcome(
             why=f"run {run_id} is a {run['event']!r} run: a contract starts only from a pull"
-            " request's own run"
+            " request's own run or a queue commit's"
         )
     if _int(run["run_attempt"]) != 1:
         return Outcome(
@@ -1080,17 +1169,21 @@ def start_contract(get: Get, repo: str, run_id: int) -> Outcome:
     )
 
 
-def wake(get: Get, repo: str, head: str, controller_revision: str) -> Outcome:
+def wake(
+    get: Get, repo: str, head: str, controller_revision: str, queue: Queue | None = None
+) -> Outcome:
     """A contract run's ``wake`` job: judge its head again, by the one judge a Merge run's
     completion calls (:func:`rejudge`, then :func:`decide`). ``wake`` runs after the contract job
     has completed, and the contract is judged by that job (:func:`contract_run`), so nothing is
     waited for. The head is only which one to judge: everything is read again through the API."""
     if not _SHA.fullmatch(head):
         return Outcome(why=f"{head!r} is not a full commit id")
-    return rejudge(get, repo, head, controller_revision)
+    return rejudge(get, repo, head, controller_revision, queue)
 
 
-def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome:
+def judge(
+    get: Get, repo: str, run_id: int, controller_revision: str, queue: Queue | None = None
+) -> Outcome:
     """What a completed run of a workflow the poster follows does: a Merge run is judged; a
     Dependency review, DCO, CodeQL or contract run judges its head again."""
     run = _read(get, f"/repos/{repo}/actions/runs/{run_id}")
@@ -1101,7 +1194,7 @@ def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome
     if owner == repo and run.get("path") in (DEPENDENCY_REVIEW, DCO_CHECK):
         if run.get("status") != "completed":
             return Outcome(why=f"run {run_id} is {run.get('status')!r}, not completed")
-        return decide_review(get, repo, run, controller_revision)
+        return decide_review(get, repo, run, controller_revision, queue)
     if owner == repo and run.get("path") == CONTRACT_WORKFLOW:
         branch = str(run.get("head_branch") or "")
         named = branch.removeprefix(CONTRACT_PREFIX)
@@ -1109,15 +1202,15 @@ def judge(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome
             return Outcome(why=f"run {run_id} is not a completed dispatch of the contract")
         if not branch.startswith(CONTRACT_PREFIX) or not _SHA.fullmatch(named):
             return Outcome(why=f"run {run_id} is on {branch!r}, which names no head")
-        return rejudge(get, repo, named, controller_revision)
+        return rejudge(get, repo, named, controller_revision, queue)
     if owner == repo and str(run.get("path", "")).startswith(CODEQL_WORKFLOW):
         head = run.get("head_sha")
         if run.get("status") != "completed" or not isinstance(head, str):
             return Outcome(why=f"run {run_id} is not a completed CodeQL analysis")
         if not _SHA.fullmatch(head):
             raise Unread(f"CodeQL run {run_id} names no head")
-        return rejudge(get, repo, head, controller_revision)
-    return decide(get, repo, run_id, controller_revision)
+        return rejudge(get, repo, head, controller_revision, queue)
+    return decide(get, repo, run_id, controller_revision, queue)
 
 
 def _newest_verdict(get: Get, repo: str, head: str, app: int) -> Mapping[str, Any] | None:
@@ -1225,6 +1318,7 @@ def judge_waiting(
     *,
     limit: int | None = None,
     skip: frozenset[str] = frozenset(),
+    queue: Queue | None = None,
 ) -> list[Outcome]:
     """Every open pull request into main whose newest merge verdict, the controller App's, is a
     red that still waits (on CodeQL, or on its contract run, whose completion wakes nothing): judge
@@ -1237,20 +1331,33 @@ def judge_waiting(
 
     With ``limit`` (a poster run woken by something else), only the first ``limit`` heads the one
     read names, past ``skip``, are judged again, and a read that gives no answer judges none: the
-    schedule's own sweep reads every head."""
+    schedule's own sweep reads every head.
+
+    Once main's merges are queued (``queue.live``), each built queue commit of main's merge queue
+    whose verdict waits is judged again first, by the same ``limit`` and ``skip``."""
+    changed: list[Outcome] = []
+    if queue is not None and queue.live:
+        # A queue commit whose verdict waits on its contract run: the run's wake judges it, and
+        # this is the sweep behind that wake, as it is for a pull request's head.
+        built = [e.queue_commit for e in queue_entries(queue.query, repo) if e.queue_commit]
+        for commit in [c for c in built if c not in skip][: limit if limit is not None else None]:
+            newest = _newest_verdict(get, repo, commit, app)
+            if newest is not None and _waiting(newest):
+                outcome = rejudge(get, repo, commit, controller_revision, queue)
+                if outcome.posting is not None:
+                    changed.append(outcome)
     waiting = waiting_heads(query, repo, app) if query is not None else None
     if limit is not None:
         if waiting is None:
             print("the one read of the open heads gave no answer: no waiting head judged here")
-            return []
+            return changed
         waiting = [h for h in waiting if h not in skip][:limit]
     if waiting is not None and not waiting:
         print("no open pull request's merge verdict still waits: nothing to judge again")
-        return []
+        return changed
     if query is not None and waiting is None:
         print("the one read of the open heads gave no answer: reading each head")
     pulls = _all_pages(get, f"/repos/{repo}/pulls?state=open&base=main")[:SWEEP_LIMIT]
-    changed: list[Outcome] = []
     for pull in pulls:
         head = pull.get("head")
         sha = head.get("sha") if isinstance(head, Mapping) else None
@@ -1261,7 +1368,7 @@ def judge_waiting(
         newest = _newest_verdict(get, repo, sha, app)
         if newest is None or not _waiting(newest):
             continue
-        outcome = rejudge(get, repo, sha, controller_revision)
+        outcome = rejudge(get, repo, sha, controller_revision, queue)
         output = newest.get("output")
         was: Mapping[str, Any] = output if isinstance(output, Mapping) else {}
         # The summary too: a head red for another reason keeps its title when its wait ends.
@@ -1311,7 +1418,9 @@ def stale_branches(get: Get, repo: str, now: datetime.datetime, base: str) -> li
     return sorted(stale)
 
 
-def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcome:
+def decide(
+    get: Get, repo: str, run_id: int, controller_revision: str, queue: Queue | None = None
+) -> Outcome:
     """What this run's completion does (the module's rules)."""
     if not _SHA.fullmatch(controller_revision):
         raise ValueError(f"the controller revision must be a full commit id: {controller_revision}")
@@ -1319,6 +1428,8 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
     if isinstance(found, str):
         return Outcome(why=found)
     run = found
+    if run.event == QUEUE_EVENT:
+        return decide_queue(get, repo, run, controller_revision, queue)
     head = run.head_sha
     changed: list[str] = []
     contract: Contract | None = None
@@ -1331,7 +1442,15 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         base = main_tip(get, repo)
         tree_oid, head_tree = api_tree(get, repo, head)
         behind = behind_by(get, repo, base, head)
-        if behind:
+        if behind and queue is not None and queue.live:
+            # Under main's merge queue a head may be behind: the tree that lands is its queue
+            # commit's, judged on its own. Its definitions are compared with the commit it was
+            # built on, so it reads as changing only what it changes.
+            built_on = merge_base(get, repo, base, head)
+            _, base_tree = api_tree(get, repo, built_on)
+            comparison = trust.compare_trees(base_tree, head_tree, base=built_on, head=head)
+            changed = [] if comparison.trusted else [c.path for c in comparison.changes]
+        elif behind:
             # Its definitions are not compared: against main's tip, a head main has moved past
             # reads as changing every definition main changed since. It updates before any run
             # of it counts, so no contract runs for it either.
@@ -1414,7 +1533,11 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
             f"Judged by its own Merge run: every attempt of Merge run {run.url or run.id} "
             "was green.",
             *ran,
-            "- the head is up to date with main",
+            (
+                "- the head is up to date with main"
+                if not behind
+                else "- the head is behind main, which the merge queue tests it on before it lands"
+            ),
             "- its dependency review passed",
             "- its sign-off check (DCO) passed",
             "- CodeQL analysed every language main has, and found no alert it brings",
@@ -1441,6 +1564,288 @@ def decide(get: Get, repo: str, run_id: int, controller_revision: str) -> Outcom
         summary=summary,
     )
     posting = Posting(head, "success", output, run.url, f"{run.id}/{run.attempt}")
+    return Outcome(posting=posting, cleanup=cleanup)
+
+
+# ── A queue commit of main's merge queue (0.4.0 A1) ─────────────────────────────────────────
+
+#: Main's merge queue in one read: each entry's place, its queue commit and the commit it was
+#: built on, and its pull request's number, state, base and head. An entry the queue has not
+#: built yet has no commits.
+QUEUE_QUERY = """
+query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    mergeQueue(branch: "main") {
+      entries(first: 100) {
+        totalCount
+        nodes {
+          position
+          headCommit { oid }
+          baseCommit { oid }
+          pullRequest { number state baseRefName headRefOid }
+        }
+      }
+    }
+  }
+}
+"""
+#: A comparison that changes this many files or more is more than the API lists whole.
+COMPARE_FILES = 300
+
+
+@dataclass(frozen=True)
+class Entry:
+    """One entry of main's merge queue, as GitHub lists it."""
+
+    position: int
+    #: The commit the queue built for it, and the commit it built it on ("" before it is built).
+    queue_commit: str
+    built_on: str
+    number: int
+    state: str
+    base: str
+    pr_head: str
+
+
+def queue_entries(query: Query, repo: str) -> list[Entry]:
+    """Main's merge queue, in its order, from one GraphQL read; :class:`Unread` for any answer
+    this does not read whole."""
+    owner, name = repo.split("/", 1)
+    try:
+        answer = query(QUEUE_QUERY, {"owner": owner, "name": name})
+        queue = answer["data"]["repository"]["mergeQueue"]
+        if queue is None:
+            return []
+        listed = queue["entries"]
+        if int(listed["totalCount"]) != len(listed["nodes"]):
+            raise Unread("main's merge queue holds more entries than one read lists")
+        found = []
+        for node in listed["nodes"]:
+            pull = node["pullRequest"]
+            queue_commit, built_on = (
+                str((node[key] or {}).get("oid") or "") for key in ("headCommit", "baseCommit")
+            )
+            if not all(c == "" or _SHA.fullmatch(c) for c in (queue_commit, built_on)):
+                raise Unread("an entry of main's merge queue names a commit that is no commit id")
+            head = str(pull["headRefOid"])
+            if not _SHA.fullmatch(head):
+                raise Unread(f"pull request {pull['number']} in main's merge queue names no head")
+            found.append(
+                Entry(
+                    int(node["position"]),
+                    queue_commit,
+                    built_on,
+                    int(pull["number"]),
+                    str(pull["state"]),
+                    str(pull["baseRefName"]),
+                    head,
+                )
+            )
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise Unread(f"main's merge queue gave no answer this reads: {exc}") from exc
+    return sorted(found, key=lambda e: e.position)
+
+
+def commit_parents(get: Get, repo: str, sha: str) -> list[str]:
+    commit = _read(get, f"/repos/{repo}/git/commits/{sha}")
+    parents = commit.get("parents") if isinstance(commit, Mapping) else None
+    if not isinstance(parents, list):
+        raise Unread(f"commit {sha} lists no parents")
+    found = [p.get("sha") if isinstance(p, Mapping) else None for p in parents]
+    if not all(isinstance(p, str) and _SHA.fullmatch(p) for p in found):
+        raise Unread(f"commit {sha} names a parent that is no commit id")
+    return [str(p) for p in found]
+
+
+def _change(get: Get, repo: str, base: str, head: str) -> dict[tuple[str, str], object]:
+    """Each file the comparison ``base...head`` changes, by its path and the path it came from:
+    its ``+/-`` lines, or, where the API gives no patch (a binary file, or a patch too long to
+    send), the blob it ends as."""
+    answer = _read(get, f"/repos/{repo}/compare/{base}...{head}")
+    files = answer.get("files") if isinstance(answer, Mapping) else None
+    if not isinstance(files, list):
+        raise Unread(f"the comparison {base}...{head} lists no files")
+    if len(files) >= COMPARE_FILES:
+        raise Unread(f"the comparison {base}...{head} changes {COMPARE_FILES} files or more")
+    found: dict[tuple[str, str], object] = {}
+    for item in files:
+        path = item.get("filename") if isinstance(item, Mapping) else None
+        if not isinstance(path, str) or not path:
+            raise Unread(f"the comparison {base}...{head} names a file without a path")
+        key = (path, str(item.get("previous_filename") or path))
+        patch = item.get("patch")
+        if isinstance(patch, str):
+            lines = [line for line in patch.splitlines() if line[:1] in ("+", "-")]
+            found[key] = sorted(lines)
+        else:
+            found[key] = ("blob", str(item.get("sha") or ""))
+    return found
+
+
+def change_reasons(
+    get: Get, repo: str, built_on: str, queue_commit: str, pr_head: str
+) -> list[str]:
+    """Why the queue commit's change against the commit it was built on is not exactly its pull
+    request's own change (the head against its merge base with main): the same files, each with
+    the same ``+/-`` lines. Context lines are not compared, so a change that applies on a moved
+    base is still the same change."""
+    queued = _change(get, repo, built_on, queue_commit)
+    own = _change(get, repo, "main", pr_head)
+    reasons: list[str] = []
+    for key in sorted(set(queued) | set(own)):
+        path = key[0]
+        if key not in own:
+            reasons.append(f"the queue commit changes `{path}`, which its pull request does not")
+        elif key not in queued:
+            reasons.append(f"the queue commit leaves out its pull request's change to `{path}`")
+        elif queued[key] != own[key]:
+            reasons.append(f"the queue commit changes `{path}` otherwise than its pull request")
+    return reasons
+
+
+def decide_queue(
+    get: Get, repo: str, run: Run, controller_revision: str, queue: Queue | None
+) -> Outcome:
+    """A queue commit's run (the module's "A queue commit" rules)."""
+    if queue is None:
+        return Outcome(why=f"run {run.id} is a queue run, judged only with the queue's read")
+    named = QUEUE_BRANCH.fullmatch(run.branch)
+    if named is None:
+        return Outcome(why=f"run {run.id} is on {run.branch!r}, which names no queue entry")
+    number, built_on, sha = int(named["number"]), named["built_on"], run.head_sha
+    try:
+        newest = _newest_verdict(get, repo, sha, queue.app)
+    except Unread as exc:
+        return Outcome(why=f"queue commit {sha}'s verdicts are unread, so none is posted: {exc}")
+    if newest is not None and not _waiting(newest):
+        return Outcome(why=f"queue commit {sha} has its verdict: it is never posted again")
+    contract: Contract | None = None
+    changed: list[str] = []
+    reasons: list[str] = []
+    try:
+        entries = queue_entries(queue.query, repo)
+        mine = [e for e in entries if e.queue_commit == sha]
+        if not mine:
+            return Outcome(why=f"{sha} is no entry of main's merge queue now: nothing waits on it")
+        (entry,) = mine
+        base = main_tip(get, repo)
+        ahead = [e for e in entries if e.position < entry.position and e.queue_commit]
+        expected = ahead[-1].queue_commit if ahead else base
+        if entry.number != number:
+            reasons.append(f"the queue lists it for #{entry.number}, its branch names #{number}")
+        if (entry.state, entry.base) != ("OPEN", "main"):
+            reasons.append(
+                f"#{entry.number} is {entry.state} into {entry.base}, not open into main"
+            )
+        parents = commit_parents(get, repo, sha)
+        if parents != [built_on] or entry.built_on != built_on:
+            reasons.append(
+                f"it is built on {', '.join(parents) or 'nothing'}, the queue says "
+                f"{entry.built_on or 'nothing'} and its branch {built_on}: not one commit"
+            )
+        if built_on != expected:
+            reasons.append(
+                f"it is built on {built_on}, which is neither main's tip nor the queue commit of"
+                " the entry ahead, so a tree main would reach was never judged"
+            )
+        verdict = _newest_verdict(get, repo, entry.pr_head, queue.app)
+        if verdict is None or verdict.get("conclusion") != "success":
+            said = "missing" if verdict is None else repr(verdict.get("conclusion"))
+            reasons.append(
+                f"its pull request's head {entry.pr_head} has no green merge verdict ({said})"
+            )
+        reasons += change_reasons(get, repo, built_on, sha, entry.pr_head)
+        tree_oid, queue_tree = api_tree(get, repo, sha)
+        _, base_tree = api_tree(get, repo, base)
+        comparison = trust.compare_trees(base_tree, queue_tree, base=base, head=sha)
+        changed = [] if comparison.trusted else [c.path for c in comparison.changes]
+        failing, labels = results_reasons(get, repo, run)
+        reasons += failing
+        if changed:
+            contract = contract_run(get, repo, sha, base)
+            if contract is not None and contract.status == "completed":
+                if contract.conclusion != "success":
+                    reasons.append(
+                        "main's CI contract fails on its definitions: contract run "
+                        f"{contract.url or contract.id} is {contract.conclusion!r}"
+                    )
+        records = evidence(get, repo, run) if not reasons else {}
+        if not reasons and not records:
+            reasons.append(f"the run has no `{RECORD_PREFIX}*` artifact, so no evidence")
+        flakes = passed_flakes(get, repo, run) if not reasons else []
+    except (Unread, trust.Refused) as exc:
+        return Outcome(posting=_red(run, [*reasons, f"unread: {exc}"], sha))
+    # A queue commit that changes a definition: main's contract runs over it, at main's tip, and
+    # its verdict waits for it, as a pull request's head's does. GitHub built it from an entry a
+    # maintainer queued, so no approval gate stands before it.
+    start = sha if changed and contract is None else None
+    judged = changed and contract is not None and contract.status == "completed"
+    cleanup = CONTRACT_PREFIX + sha if judged else None
+    if changed and not judged:
+        running = (
+            "is started"
+            if contract is None
+            else f"is {contract.status!r}: contract run {contract.url or contract.id}"
+        )
+        reasons.append(f"{WAITING_CONTRACT}{running}")
+    if reasons:
+        return Outcome(posting=_red(run, reasons, sha), dispatch=start, base=base, cleanup=cleanup)
+    toolchain = {
+        "runner": ",".join(labels) or "unnamed",
+        "definitions": base,
+        "queue_pull_request": str(entry.number),
+        "queue_pull_request_head": entry.pr_head,
+        "queue_built_on": built_on,
+        "queue_pull_request_verdict": str(verdict.get("id") if verdict else ""),
+    }
+    ran = [f"- the definitions that ran are main's at `{base}`"]
+    if changed and contract is not None:
+        toolchain = {**toolchain, "definitions": sha, "contract": contract.url or str(contract.id)}
+        ran = [
+            f"- the definitions that ran are its own: it changes {len(changed)} "
+            f"({_names(changed)}) against main's tip",
+            f"- main's CI contract at `{base}` passed over them: contract run "
+            f"{contract.url or contract.id}",
+        ]
+    receipt = {
+        "controller_revision": controller_revision,
+        "head_sha": sha,
+        "tree_oid": tree_oid,
+        "external_revisions": {},
+        "toolchain": toolchain,
+        "evidence_digests": records,
+    }
+    summary = "\n".join(
+        [
+            f"Judged by its own Merge run: every attempt of Merge run {run.url or run.id} "
+            "was green.",
+            f"- the queue commit of #{entry.number}, built on `{built_on}`, which is "
+            + ("main's tip" if built_on == base else "the queue commit of the entry ahead"),
+            "- its change is its pull request's own, file by file and line by line",
+            f"- its pull request's head `{entry.pr_head}` has a green merge verdict, which holds"
+            " its dependency review, its sign-off check and CodeQL",
+            *ran,
+            f"- {len(records)} job records, their digests in the receipt below",
+            *(
+                [
+                    f"- the flake rule passed {len(flakes)} failed test(s), each of which passed"
+                    " alone in a new process, in a file this change does not touch: "
+                    + ", ".join(f"`{n}`" for n in flakes)
+                ]
+                if flakes
+                else []
+            ),
+        ]
+    )
+    output = merge_verdict.render_output(
+        receipt,
+        title=(
+            f"Green: every planned job passed on #{entry.number}'s queue commit"
+            + flakes_note(flakes)
+        )[:255],
+        summary=summary,
+    )
+    posting = Posting(sha, "success", output, run.url, f"{run.id}/{run.attempt}")
     return Outcome(posting=posting, cleanup=cleanup)
 
 
@@ -1657,20 +2062,34 @@ def main(
     if args.command == "decide":
         if args.waiting and not args.controller_app_id:
             parser.error("--waiting needs --controller-app-id")
+        # The one read is the live API's; a test's reader, given alone, answers every read.
+        graph = query if query is not None else None if get else github_graphql(token)
+        # A queue commit is judged with the queue's read and the App whose verdicts count, and
+        # whether main's rules queue merges is read from those rules.
+        queue = (
+            Queue(graph, args.controller_app_id, queue_live(reader, args.repo))
+            if graph is not None and args.controller_app_id
+            else None
+        )
         try:
             if args.run_id is not None:
-                outcomes = [judge(reader, args.repo, args.run_id, args.controller_revision)]
+                outcomes = [judge(reader, args.repo, args.run_id, args.controller_revision, queue)]
             elif args.head is not None:
-                outcomes = [wake(reader, args.repo, args.head, args.controller_revision)]
+                outcomes = [wake(reader, args.repo, args.head, args.controller_revision, queue)]
             elif args.check_run_id is not None:
                 outcomes = [
-                    judge_check(reader, args.repo, args.check_run_id, args.controller_revision)
+                    judge_check(
+                        reader, args.repo, args.check_run_id, args.controller_revision, queue
+                    )
                 ]
             else:
-                # The one read is the live API's; a test's reader, given alone, answers every read.
-                graph = query if query is not None else None if get else github_graphql(token)
                 outcomes = judge_waiting(
-                    reader, args.repo, args.controller_app_id, args.controller_revision, graph
+                    reader,
+                    args.repo,
+                    args.controller_app_id,
+                    args.controller_revision,
+                    graph,
+                    queue=queue,
                 )
         except Unread as exc:
             print(f"::error title=merge verdict unread::{exc}")
@@ -1687,7 +2106,6 @@ def main(
             # Whatever woke this run, a few heads whose red still waits are judged again too: the
             # schedule fires far less often than it says, and a contract run wakes nothing.
             mine = frozenset({single.posting.head_sha} if single.posting else set())
-            graph = query if query is not None else None if get else github_graphql(token)
             try:
                 outcomes += judge_waiting(
                     reader,
@@ -1697,6 +2115,7 @@ def main(
                     graph,
                     limit=WAITING_PER_RUN,
                     skip=mine,
+                    queue=queue,
                 )
             except Unread as exc:
                 print(f"::warning title=no waiting heads::{exc}")

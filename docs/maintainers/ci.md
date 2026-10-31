@@ -299,9 +299,33 @@ nothing of the candidate is fetched or checked out), the comparison with `main` 
 artifact digests. The rules, each failing closed; a red names every one the head fails, so one
 verdict says all it must fix:
 
-- **Which runs post:** only this repository's `merge.yml`, completed, on a `pull_request` or a
-  dispatch. Another workflow named Merge, which a candidate can add, a push and a schedule post
-  nothing.
+- **Which runs post:** only this repository's `merge.yml`, completed, on a `pull_request`, a
+  dispatch, or a queue commit of main's merge queue (`merge_group`, below). Another workflow named
+  Merge, which a candidate can add, a push and a schedule post nothing.
+- **A queue commit** (0.4.0 A1, #5805). GitHub builds one for each entry of main's merge queue:
+  the entry's pull request squashed on main's tip or on the queue commit of the entry ahead. Its
+  run is judged by the rules here a pull request's is, and by these, all through the API:
+  - **its entry:** the run's branch, `gh-readonly-queue/main/pr-<n>-<commit>`, names the pull
+    request and the commit the queue built it on, never the pull request's head, and the run
+    lists no pull request. So main's merge queue, read once, must list an entry whose queue
+    commit is the run's head, for pull request `<n>`, open into main, built on that commit. A
+    queue commit no entry lists any more gets no verdict: nothing waits on it;
+  - **what it is built on:** its one parent is that commit, which is main's tip or the queue
+    commit of the entry directly ahead. Each of those is on main already or has its own verdict
+    before GitHub merges past it, so every tree main reaches was judged. This takes the place
+    of the up-to-date rule below;
+  - **what it brings:** its change against that parent is exactly its pull request's, file by
+    file with the same `+/-` lines;
+  - **its pull request's head** has a green verdict, which holds that head's dependency review,
+    sign-off check and CodeQL, each of the pull request's own change;
+  - **its definitions** are compared with main's tip, so a definition an entry ahead changed
+    counts, and main's contract runs over the queue commit itself;
+  - **once:** a queue commit's verdict that waits on nothing is never posted again, so no later
+    look can turn a commit already on main red.
+
+  Once main's rules queue its merges (a `merge_queue` rule among the rules for `main`, read
+  from the API, so exactly when GitHub queues them), a pull request's head may be behind main: its definitions are
+  compared with the commit it was built on, and its queue commit is what lands.
 - **A head that changes a CI definition,** against `main`'s tip, is judged by two things, both
   green (#4584 step 4): its own run, by every rule here, which shows the change works as
   written; and `main`'s CI contract over its definitions, which shows it weakens nothing
@@ -1441,10 +1465,18 @@ these hold:
   change starts no run, so a run made for another pull request on the same head, or before a
   retarget to `main`, may have tested another base.
 
+A push whose commit has a `merge_group` run of `merge.yml` (a queue commit, 0.4.0 A1) is
+answered by those runs alone: yes only when the commit contains the previous `main` commit and
+the first attempt of every such run on exactly that commit concluded `success`. Once main's
+rules queue its merges (a `merge_queue` rule for `main`, read from the API), that is the only yes: a commit
+with no queue run of its own, with only a green re-run, or whose tree another commit's run
+tested, is no. Only the queue's first entry has its pull request's head tree; every later one
+holds the entries ahead too.
+
 Anything else, and any error, is no. `changes` reads the answer: exactly `tested=true` plans
 `[tier.merge] every_push` alone (the security corpus, `apps-contract` and `browse-live`), and
-anything else the whole merge tier. So a push behind its base, a merge queue's commit or a
-direct push runs the whole tier, the macOS suite included.
+anything else the whole merge tier. So a push behind its base or a direct push runs the whole
+tier, the macOS suite included.
 
 The check is `tools/ci/tree_tested.py`, and the copy that runs is the previous `main` commit's,
 read from the API at `github.event.before`. It is standard-library Python, run on the image's

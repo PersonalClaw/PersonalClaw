@@ -28,6 +28,7 @@ TREE = "d" * 40
 WORKFLOW = "ci.yml"
 RUNS = f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs"
 EVENTS = f"/repos/{REPO}/issues/7/events"
+RULES = f"/repos/{REPO}/rules/branches/main"
 
 
 def _answers() -> dict[str, Any]:
@@ -66,6 +67,8 @@ def _answers() -> dict[str, Any]:
             ],
         },
         EVENTS: [{"event": "labeled"}, {"event": "review_requested"}],
+        # Main's rules: no merge queue yet.
+        RULES: [{"type": "pull_request"}, {"type": "required_status_checks"}],
         f"/repos/{REPO}/actions/runs/900/attempts/1": {
             "status": "completed",
             "conclusion": "success",
@@ -277,3 +280,108 @@ def test_it_imports_only_the_standard_library() -> None:
         if line.startswith(("import ", "from ")) and not line.startswith("from __future__")
     }
     assert imported <= set(sys.stdlib_module_names), imported - set(sys.stdlib_module_names)
+
+
+# ── A queue commit of main's merge queue (0.4.0 A1) ───────────────────────────────────────────
+
+
+def _queued(conclusion: str = "success", **run: Any) -> dict[str, Any]:
+    """The pushed commit is a queue commit: a merge_group run of the workflow ran on it, and no
+    pull request's head shares its tree (the queue's second entry)."""
+    answers = _answers()
+    answers[f"/repos/{REPO}/commits/{HEAD}"] = {"commit": {"tree": {"sha": "e" * 40}}}
+    queue = {"id": 950, "run_number": 60, "head_sha": SHA, "event": "merge_group", **run}
+    answers[RUNS] = {"total_count": 1, "workflow_runs": [queue]}
+    answers[f"/repos/{REPO}/compare/{BEFORE}...{SHA}"] = {"behind_by": 0, "ahead_by": 2}
+    answers[f"/repos/{REPO}/actions/runs/950/attempts/1"] = {
+        "status": "completed",
+        "conclusion": conclusion,
+        "html_url": "https://example.com/runs/950",
+    }
+    return answers
+
+
+def test_a_queue_commit_whose_queue_run_was_green_on_its_first_attempt_is_tested() -> None:
+    verdict = _decide(_queued())
+    assert verdict.tested, verdict.reason
+    assert (verdict.tree, verdict.run) == (TREE, 950)
+    assert "every ci.yml merge_group run on it (950) passed on its first attempt" in verdict.reason
+
+
+@pytest.mark.parametrize("conclusion", ["failure", "cancelled"])
+def test_a_queue_commit_whose_queue_run_was_not_green_first_time_is_not_tested(
+    conclusion: str,
+) -> None:
+    """A flake the verdict passed is a red first attempt: the push replays it per job instead."""
+    verdict = _decide(_queued(conclusion))
+    assert not verdict.tested
+    assert f"concluded {conclusion}" in verdict.reason
+
+
+def test_a_queue_run_on_another_commit_answers_by_the_pull_request_rules() -> None:
+    """Only a queue run on exactly the pushed commit counts; without one, today's rules hold."""
+    answers = _queued(head_sha="f" * 40)
+    verdict = _decide(answers)
+    assert not verdict.tested
+    assert "no ci.yml pull_request run of #7's head" not in verdict.reason
+    assert "the pushed tree is not #7's head tree" in verdict.reason
+
+
+def test_a_queue_commit_that_does_not_contain_the_previous_main_is_not_tested() -> None:
+    answers = _queued()
+    answers[f"/repos/{REPO}/compare/{BEFORE}...{SHA}"] = {"behind_by": 1, "ahead_by": 2}
+    verdict = _decide(answers)
+    assert not verdict.tested
+    assert "does not contain the previous main" in verdict.reason
+
+
+# The push's two plants for the queue (A4's 7 and 8): only a green first attempt of a queue run
+# on exactly the pushed commit is tested once main's merges are queued.
+
+
+def test_plant_7_a_green_first_attempt_of_the_queue_run_on_the_pushed_commit_is_tested() -> None:
+    assert _decide_live(_queued()).tested
+
+
+def _decide_live(answers: dict[str, Any]) -> tt.Verdict:
+    """The same push, once main's rules queue its merges."""
+    answers[RULES] = [{"type": "merge_queue"}, *answers[RULES]]
+    return _decide(answers)
+
+
+def _green_rerun_only(answers: dict[str, Any]) -> None:
+    answers[f"/repos/{REPO}/actions/runs/950/attempts/1"]["conclusion"] = "failure"
+    answers[f"/repos/{REPO}/actions/runs/950/attempts/2"] = {
+        "status": "completed",
+        "conclusion": "success",
+    }
+
+
+def _same_tree_elsewhere(answers: dict[str, Any]) -> None:
+    """No queue run on the pushed commit; the pull request's head has its tree and a green run."""
+    answers.update(_answers())
+
+
+def test_main_s_rules_unread_is_no() -> None:
+    answers = _answers()
+    answers[RULES] = {"message": "Not Found"}
+    verdict = _decide(answers)
+    assert not verdict.tested and "rules are not a list" in verdict.reason
+
+
+@pytest.mark.parametrize(
+    "plant",
+    [_no_runs, _green_rerun_only, _same_tree_elsewhere],
+    ids=["no queue run", "only a green re-run", "a green run of another commit with its tree"],
+)
+def test_plant_8_every_other_push_under_the_queue_is_not_tested(plant) -> None:
+    answers = _queued()
+    plant(answers)
+    verdict = _decide_live(answers)
+    assert not verdict.tested, verdict.reason
+
+
+def test_before_the_queue_is_live_the_pull_request_rules_still_answer() -> None:
+    """The same answers as plant 8's last case, read before the flip: today's yes."""
+    assert _decide(_answers()).tested
+    assert not _decide_live(_answers()).tested
