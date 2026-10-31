@@ -69,7 +69,7 @@ from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
 from personalclaw.command_operands import _scan, _Scan, _tail, _value_words
-from personalclaw.command_unsplit import unsplit_network
+from personalclaw.command_unsplit import unsplit_effects
 from personalclaw.shell_syntax import Redirect, Simple, Word, lex, simple_commands
 
 # ── What a command does ──────────────────────────────────────────────────────────────────────────
@@ -207,17 +207,23 @@ def _names_a_delete(command: str) -> bool:
 def _unsplit(command: str, depth: int) -> CommandEffects:
     """What a line this reader cannot split into commands establishes: nothing, but that a delete
     program it names removes a path this reading cannot name, and where its parts reach the
-    network (:func:`~personalclaw.command_unsplit.unsplit_network`, each read with this reader)."""
+    network and what they write (:func:`~personalclaw.command_unsplit.unsplit_effects`)."""
     return (
         _UNREAD
         | CommandEffects(removes_unread=_names_a_delete(command))
-        | unsplit_network(
+        | unsplit_effects(
             command,
             depth,
             read=_text_effects,
             assignments=_assignments,
+            moves=_MOVES,
+            runs_code=_runs_code,
+            changes_environment=_changes_environment,
+            under=_under,
+            relayed=_relayed,
             nothing=_READ,
             held=_NETWORK,
+            writes=_WRITES,
             max_depth=_MAX_DEPTH,
         )
     )

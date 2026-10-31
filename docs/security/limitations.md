@@ -941,11 +941,25 @@ What the reading does not see:
 - **A program's own requests.** `npx` fetches the package it is told to, and that package's code
   reaches whatever it reaches; a tool reads its own configuration (`.npmrc`, `pip.conf`, `~/.ssh/config`)
   for where to go. A script the command runs (`python probe.py`) reaches and writes what it likes.
-- **A command it cannot read.** A command substitution, a subshell, a background job, or a program
-  the reading does not know (a script, `make`) establishes nothing it reaches or writes, so neither
-  the network nor the writes bound holds it: the run's approval mode decides it, as it decides any
-  other call. Only a delete is held when it cannot be read, and only by name: such a line that names
-  `rm`, `rmdir`, `unlink` or `find … -delete` asks you.
+- **A command it cannot read whole.** A line with a subshell, a group, a command or process
+  substitution or a background job is read in its parts: the commands inside them, and the line
+  with them taken out. Each part's hosts and paths are held as any command's are. A part the
+  reading still cannot read (a `case` branch, a function, `$'…'`), or one that runs a program its
+  text does not name (`$(which curl) …`), reaches a host and writes a path it does not name: an
+  attended run asks, and an unattended one is refused. Where a part runs is followed only roughly.
+  Once a part moves the shell (`cd`, `eval`, `source`), a relative path in the other parts is one
+  it cannot place, and once a part changes what programs are given (`export`, an assignment),
+  nothing the other parts write is; so `cd sub && ( echo y > notes.txt )`, which writes inside the
+  run's folder, is still refused in an unattended run. The network is held more loosely: a variable
+  one part sets, such as a proxy, is not applied to the hosts another part names, so
+  `export https_proxy=…; ( curl http://localhost/x )` reaches the listed `localhost` unasked
+  though the proxy carries it elsewhere, until the reading knows where each part sits. A delete in
+  such a line is held by name as well: one that names `rm`, `rmdir`, `unlink` or
+  `find … -delete` asks you.
+- **A program it does not know.** A program the reading does not know (a script, `make`), or one a
+  line it can split names by a variable (`$CURL`), establishes nothing it reaches or writes, so
+  neither the network nor the writes bound holds it: the run's approval mode decides it, as it
+  decides any other call.
 - **What a program deletes itself.** A script (`python cleanup.py`), an interpreter's own call
   (`shutil.rmtree`) or a tool whose configuration names what it removes deletes what its command
   line does not say; `rsync --delete` and `git clean` remove what is inside a folder, not the folder,

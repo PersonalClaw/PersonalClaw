@@ -12,6 +12,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The app settings and account routes answer a malformed body with the standard error envelope (`invalid_json`, or `invalid_body` for a body that is no object), and adding an account needs no body.**
 
+### Fixed
+
+- **An unattended run is now refused a write outside its folders in a command the check couldn't read, such as one with a subshell, a group, a `$(…)` or a background `&`. The check read writes only from a command it could split, so `( echo x > ~/elsewhere )`, `echo x > ~/elsewhere &` or `{ cp a ~/notes/a; }` wrote outside the run's folders unasked. A write inside them still runs. A part the check still can't read, or one that runs a program it can't name, counts as a write it can't check, and once one part moves the shell with `cd` or changes its variables, a relative path in the others does too.**
+
 ## [0.3.1] — 2026-10-31
 
 A message you send now runs once, however many times it is sent, a chat that has gone quiet says for how long, and every page uses the window's full width, apart from the chat, which keeps its reading width. An app can offer more than one provider of a kind, each with its own settings, keep the settings they share once as account settings, hold more than one account, and show each account's connection health apart from its settings. The gateway no longer waits on the disk while it writes a security event, the sandbox check can no longer hang it, and each sandboxed command starts about 50 ms sooner. A burst of sign-in guesses now stops at the lockout's limit, a command whose network use the check couldn't read is now asked about like one reaching a host off Allowed hosts, and automations and reports read their schedules for the time they decide. Scripts and apps that call the dashboard API need version 3 of it: read the breaking changes before you upgrade.
