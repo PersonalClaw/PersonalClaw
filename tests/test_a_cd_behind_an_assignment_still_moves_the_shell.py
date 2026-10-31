@@ -5,7 +5,7 @@ leading ``cd`` is read as the folder, and a relative path after any other move n
 an unattended run is refused it. The move was recognised by the command's first word, and behind
 a leading assignment that word is the assignment: ``FOO=1 cd /x && echo y > f`` read ``f`` as a
 path in the folder the command starts in, though bash changes directory there. So
-``X=1 cd ~/.ssh && echo k >> authorized_keys`` passed an unattended run's write bound as a write
+``X=1 cd /srv && echo y >> notes.txt`` passed an unattended run's write bound as a write
 inside its own folder. The same held for ``eval``, ``command cd``, ``builtin cd`` and ``pushd``,
 and for a move behind one of the shell's reserved words, which run the command after them in the
 shell itself: ``time cd /x``, ``! cd /x``, ``if cd /x; then …``, ``while cd /x; do …``, and a ``cd``
@@ -96,13 +96,13 @@ def test_a_cd_behind_a_compound_commands_word_loses_where_a_relative_path_lies(w
 
 @pytest.mark.asyncio
 async def test_an_unattended_run_is_refused_a_write_behind_an_assigned_cd(tmp_path):
-    """🔴 Red on main: the issue's own line."""
+    """🔴 Red on main: the issue's line, in a folder no credential-path rule names."""
     _allow_hosts()
 
     events, invoked, _ = await _run(
         tmp_path,
         "bash",
-        {"command": "X=1 cd ~/.ssh && echo k >> authorized_keys"},
+        {"command": "X=1 cd /srv && echo y >> notes.txt"},
         unattended=True,
     )
 
