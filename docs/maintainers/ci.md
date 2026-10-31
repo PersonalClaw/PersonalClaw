@@ -690,7 +690,7 @@ and import only the standard library, as everything `python -m tools.ci` imports
 Every entry declares:
 
 - `id`;
-- `tiers`, from `change`, `merge`, `breadth`, `weekly` and `release`;
+- `tiers`, from `change`, `entry`, `merge`, `breadth`, `weekly` and `release`;
 - `inputs`, as git pathspecs;
 - `external_inputs`: what the job reads that the tree does not pin, such as the apps checkout,
   the advisory feed, the package index or the shard history;
@@ -797,6 +797,13 @@ A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
   twice, and every one of `catalogue.EVERY_PUSH_JOBS` (the security corpus and
   `apps-contract`) the tier runs. A catalogue that names none plans the whole tier for a tested
   push.
+- **entry:** what a pull request's run must pass to enter the merge queue, once the queue
+  gates `main`. The merge tier stays the whole gate: the queue's run plans it, judged by main's
+  plan. `[tier.entry] jobs` lists the tier's jobs, checked both ways as the merge list is.
+  Every one is a merge-tier job too, and the list must hold `rails`, `rails-checks` and
+  `security` (`catalogue.ENTRY_NEEDS_JOBS`), so a pull request enters the queue with every
+  rail held, each in one leg, and the security corpus run. The table is optional: a catalogue
+  without it runs no job in the tier, and nothing plans the tier yet.
 - **change:** the fast jobs, run before a commit.
 - **breadth:** the checks run on `main` that are too slow or too wide for every pull request,
   among them the security corpus again, on Linux and on macOS.
@@ -814,7 +821,7 @@ a pull request's catalogue is refused when it:
 - drops a `security` or `live` job main has, by removing its entry or renaming it, unless main's
   copy marks that entry `retiring = "#<issue>"`;
 - turns one of those jobs `ordinary`, or no longer `live`;
-- takes one out of a tier main runs it in (adding a tier is fine);
+- takes one out of a tier main runs it in (adding a tier is fine), except the `entry` tier;
 - runs no security job in the `breadth` tier while main runs one there, whatever main marks.
 
 So a security or live job leaves in two merges. The first marks it `retiring`, naming the issue
@@ -823,6 +830,11 @@ pull request drops the entry, and only that: main's mark allows the drop, never 
 posture or tiers to a job that stays. A mark the pull request adds in the change that drops the
 entry is its own, not main's, so it allows nothing. An ordinary job leaves in one merge, and a
 new job needs nothing from main.
+
+A security or live job may leave the `entry` tier in one merge: the merge tier, which the
+queue's run plans, still holds it, so the evidence a merge is judged by never shrinks. The
+exemption names that tier alone, and never covers `security`, which with `rails` and
+`rails-checks` the entry tier always holds.
 
 **In `merge.yml`,** the `changes` job's `catalogue-check` step runs `python -m tools.ci
 catalogue-check --catalogue <the checkout's> --against <main's>` from the folder the plan step
