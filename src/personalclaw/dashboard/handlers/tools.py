@@ -15,6 +15,7 @@ from personalclaw.http_errors import json_error
 from personalclaw.providers.failure_copy import relayed_failure_copy
 from personalclaw.request_validation import bool_field, require_bool, require_string
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
+from personalclaw.sel import sel_log_async
 
 if TYPE_CHECKING:
     from personalclaw.tool_providers.base import ToolProvider, ToolResult
@@ -520,7 +521,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         checker = checker_for(app_name)
         if checker is None or not checker.can_use_mcp_tool(str(body.get("tool") or "")):
             try:
-                _sel().log_tool_invocation(
+                await sel_log_async(
+                    _sel().log_tool_invocation,
                     session_key=session_keys.APP.key(app_name),
                     agent="",
                     source="tool_invoke",
@@ -586,7 +588,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     _pkey = (getattr(_tool_def, "provider", "") or "") or provider.name
     if tool_prefs.is_disabled(_pkey, tool_name):
         try:
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key=work_of_request(request) or "internal",
                 agent="",
                 source="tool_invoke",
@@ -619,7 +622,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     denied = screened.reason if screened.action == TOOL_DENY else ""
     if denied:
         try:
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key=work_of_request(request) or "internal",
                 agent="",
                 source="tool_invoke",
@@ -664,7 +668,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         why = _shown(refused.error) or f"{tool_name} refused this call before it ran"
         control = refusal_audit(refused.metadata or {})
         try:
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key=caller,
                 agent="",
                 source="tool_invoke",
@@ -725,7 +730,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     # that may be destructive.
     if _risk in MAY_DESTROY and str(body.get("confirm_risk") or "") != "destructive":
         try:
-            _sel().log_tool_invocation(
+            await sel_log_async(
+                _sel().log_tool_invocation,
                 session_key=caller,
                 agent="",
                 source="tool_invoke",
@@ -762,7 +768,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
         with _as_its_work(request):
             result = await provider.invoke(tool_name, arguments)
     except Exception as exc:
-        _sel().log_tool_invocation(
+        await sel_log_async(
+            _sel().log_tool_invocation,
             session_key=caller,
             agent="",
             source="tool_invoke",
@@ -782,7 +789,8 @@ async def api_tool_invoke(request: web.Request) -> web.Response:
     # A control of the tool can still refuse as the call starts (a pattern added since the check):
     # the same one row, `refused`, never an `error` with no reason.
     control = refusal_audit(result.metadata or {})
-    _sel().log_tool_invocation(
+    await sel_log_async(
+        _sel().log_tool_invocation,
         session_key=caller,
         agent="",
         source="tool_invoke",

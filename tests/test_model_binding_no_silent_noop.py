@@ -136,6 +136,31 @@ async def test_unknown_provider_rejected_on_a_fresh_config(store):
     assert "Nonexistent" in body["error"]
 
 
+@pytest.mark.asyncio
+async def test_an_unknown_provider_is_not_bound_when_its_refusal_cannot_be_written(
+    store, monkeypatch
+):
+    """The refusal's security row is awaited off the event loop (#5605). When that write can't be
+    made (the log's thread gone at shutdown), the request fails and the dead ref is still not
+    bound. Awaited inside the guard's own ``try``, the failure read as an unreadable config, the
+    guard was skipped, and the ref was stored before the next row failed."""
+    _config(store, dashboard={})
+
+    async def _cannot_write(*_a, **_k):
+        raise RuntimeError("cannot schedule new futures after shutdown")
+
+    monkeypatch.setattr(mr, "sel_log_async", _cannot_write, raising=False)
+    try:
+        status, _body = await _put({"models": ["Nonexistent:foo"]})
+    except RuntimeError:
+        status = None
+    assert status != 200
+    # Read as stored: the reading path prunes a ref whose provider is unknown, so it would read as
+    # unbound however it was saved.
+    stored = uc.active_models_path()
+    assert not stored.exists() or "Nonexistent:foo" not in stored.read_text(encoding="utf-8")
+
+
 # ── 3. the deliberate non-check, pinned so nobody "tightens" it ───────────────
 
 

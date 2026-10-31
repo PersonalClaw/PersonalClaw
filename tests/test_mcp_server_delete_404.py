@@ -77,3 +77,38 @@ async def test_delete_existing_server_still_200s_and_removes_it(tmp_path, monkey
     body = json.loads(resp.body)
     assert body == {"ok": True, "name": "real-srv", "removed": True}
     assert "real-srv" not in json.loads(mc_path.read_text())["mcpServers"]
+
+
+@pytest.mark.asyncio
+async def test_a_server_added_while_the_removals_row_is_written_keeps_its_probe(
+    tmp_path, monkeypatch
+):
+    """The removal's row is written in the log's own thread, awaited (#5605). The removed server's
+    last probe is forgotten before that row, so a server added under the name while the row is
+    written, and probed, keeps what its own probe said."""
+    import asyncio
+    import threading
+
+    from personalclaw import mcp_discovery
+    from personalclaw.dashboard.handlers import mcp as mcp_mod
+
+    mc_path = _isolate(mcp_mod, monkeypatch)
+    mc_path.write_text(json.dumps({"mcpServers": {"real-srv": {"command": "x"}}}))
+    held, release = threading.Event(), threading.Event()
+
+    def log_api_access(**row):
+        if row.get("operation") == "mcp_server_remove":
+            held.set()
+            release.wait(5)
+
+    monkeypatch.setattr(mcp_mod.sel(), "log_api_access", log_api_access, raising=False)
+    monkeypatch.setattr(mcp_discovery, "_probe_cache", {"real-srv": "the removed server's probe"})
+    try:
+        removal = asyncio.ensure_future(mcp_mod.api_mcp_server_detail(_delete_request("real-srv")))
+        assert await asyncio.to_thread(held.wait, 5), "the removal's row was never written"
+        mcp_discovery._probe_cache["real-srv"] = "the new server's probe"
+        release.set()
+        assert (await removal).status == 200
+        assert mcp_discovery._probe_cache.get("real-srv") == "the new server's probe"
+    finally:
+        release.set()

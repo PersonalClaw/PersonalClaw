@@ -364,3 +364,63 @@ class TestHostileNameRejection:
         # The good tool went through
         assert "tools" in actions
         assert "legit-tool" in actions["tools"]
+
+
+class TestAnApplyWhileItsRowsAreWritten:
+    """An apply's rows are written in the log's own thread, awaited (#5605), inside the loop that
+    holds `_get_mcp_lock()`, as on main. The lock is held across them: another write to mcp.json
+    sent while an apply's row is written waits for the whole apply, never lands between two of
+    its changes."""
+
+    @pytest.mark.asyncio
+    async def test_a_tool_switched_meanwhile_waits_for_the_whole_apply(self, tmp_path, monkeypatch):
+        import asyncio
+        import threading
+
+        import personalclaw.agent
+        from personalclaw.dashboard.handlers import mcp as mcp_mod
+
+        mc_path = tmp_path / "personalclaw.mcp.json"
+        monkeypatch.setattr(mcp_mod, "_canonical_mcp_json", lambda: mc_path)
+        monkeypatch.setattr(mcp_mod, "_cc_global_json", lambda: tmp_path / "cc_global.json")
+        monkeypatch.setattr(personalclaw.agent, "rebuild_agent_config", MagicMock())
+        mc_path.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "one": {"command": "x", "disabled": True},
+                        "two": {"command": "y", "disabled": True},
+                    }
+                }
+            )
+        )
+        held, release = threading.Event(), threading.Event()
+
+        def log_api_access(**row):
+            if row.get("operation") == "mcp_scope_apply" and not held.is_set():
+                held.set()
+                release.wait(5)
+
+        monkeypatch.setattr(mcp_mod.sel(), "log_api_access", log_api_access, raising=False)
+        changes = [{"name": "one", "personalclaw": True}, {"name": "two", "personalclaw": True}]
+        try:
+            applying = asyncio.ensure_future(
+                mcp_mod.api_mcp_apply(_make_request({"changes": changes}))
+            )
+            assert await asyncio.to_thread(held.wait, 5), "the apply's first row was never written"
+            switching = asyncio.ensure_future(
+                mcp_mod.api_mcp_toggle_tool(
+                    _make_request({"server": "two", "tool": "t", "enabled": False})
+                )
+            )
+            await asyncio.sleep(0.3)
+            meanwhile = json.loads(mc_path.read_text())["mcpServers"]["two"]
+            assert "disabledTools" not in meanwhile, "the switch wrote between the apply's changes"
+            assert meanwhile.get("disabled") is True, "the apply's second change ran early"
+            release.set()
+            assert json.loads((await applying).body)["ok"] is True
+            assert (await switching).status == 200
+        finally:
+            release.set()
+        two = json.loads(mc_path.read_text())["mcpServers"]["two"]
+        assert two.get("disabled") is not True and two.get("disabledTools") == ["t"], two
