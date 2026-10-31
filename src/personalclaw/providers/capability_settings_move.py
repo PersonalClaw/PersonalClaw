@@ -74,3 +74,98 @@ def move_capability_settings() -> dict[str, list[str]]:
             moved[app] = fields
             logger.info("app %s: moved %s into its capabilities' settings", app, ", ".join(fields))
     return moved
+
+
+# ── a capability renamed or retired by an update (#3841) ────────────────────────────────────────
+
+
+def move_on_rename(app: str, old: str, new: str) -> None:
+    """Carry *old*'s own settings and secrets to *new* in every account of *app*, when an update
+    renames the capability (``renamedFrom``). A ``capability_lifecycle`` mover: idempotent, and a
+    stop at any point is finished by the next run.
+
+    In each account, four steps, in this order: store the secrets under *new*'s owner, write
+    *new*'s settings, delete *old*'s, then purge *old*'s keys. Settings *new* already holds are
+    kept (the move then only deletes *old*'s and purges its keys), and with nothing under *old*
+    the run only purges what a stop left behind.
+
+    Each account's secrets are read and stored as that account's own, as every read of them is:
+    a record that references another account's key fails its account's move, and copies
+    nothing. An account whose move fails is logged and the others still move; the first failure
+    is raised once every account has run, so the move stays pending and the next run tries the
+    accounts again."""
+    from personalclaw.providers.accounts import FIRST, further_accounts
+
+    failed: list[Exception] = []
+    for account in [None, *further_accounts(app)]:
+        try:
+            _move_one(app, old, new, account)
+        except Exception as exc:  # noqa: BLE001 — one account's failure must not hold the rest
+            logger.warning(
+                "app %s: moving %s to %s in account %s failed",
+                app,
+                old,
+                new,
+                account or FIRST,
+                exc_info=True,
+            )
+            failed.append(exc)
+    if failed:
+        raise failed[0]
+
+
+def _move_one(app: str, old: str, new: str, account: str | None) -> None:
+    from personalclaw.providers.settings import (
+        ProviderSettings,
+        _record,
+        _write,
+        _write_record,
+        capability_secret_owner,
+        load_stored_capability,
+    )
+
+    was = capability_secret_owner(app, old, account)
+    to = capability_secret_owner(app, new, account)
+
+    def stored_for_new() -> dict[str, Any]:
+        values = secret_refs.resolve(load_stored_capability(app, old, account), owner=was)
+        return secret_refs.store(
+            values, owner=to, declared=secret_refs.declared_app_fields(app), previous=None
+        )
+
+    if account is None:
+        old_path = ProviderSettings.capability_path(app, old)
+        new_path = ProviderSettings.capability_path(app, new)
+        if new_path.is_symlink():
+            raise OSError(f"{new_path} is a link: settings are never written through one")
+        if old_path.is_file() and not old_path.is_symlink():
+            if not new_path.exists():
+                _write(new_path, stored_for_new())
+            old_path.unlink()
+    else:
+        record = _record(app, account)
+        held = record["capabilities"]
+        if old in held:
+            if new not in held:
+                held[new] = stored_for_new()
+            del held[old]
+            _write_record(app, account, record)
+    secret_refs.purge([was.prefix])
+
+
+def remove_on_retire(app: str, capability: str) -> None:
+    """Delete a retired capability's own settings and secrets in every account of *app*
+    (``ProviderSettings.remove_capability``). A ``capability_lifecycle`` remover: idempotent."""
+    from personalclaw.providers.settings import ProviderSettings
+
+    ProviderSettings.remove_capability(app, capability)
+
+
+def _register() -> None:
+    from personalclaw.apps import capability_lifecycle
+
+    capability_lifecycle.register_mover(move_on_rename)
+    capability_lifecycle.register_remover(remove_on_retire)
+
+
+_register()

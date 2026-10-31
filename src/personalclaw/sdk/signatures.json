@@ -2285,6 +2285,15 @@
   },
   "kind": "class",
   "members": {
+   "add_account": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "label"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
+    ],
+    "returns": "str"
+   },
    "capability_path": {
     "kind": "staticmethod",
     "params": [
@@ -2293,6 +2302,14 @@
     ],
     "returns": "Path"
    },
+   "clear_account": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
+    ],
+    "returns": "int"
+   },
    "config_path": {
     "kind": "staticmethod",
     "params": [
@@ -2300,20 +2317,37 @@
     ],
     "returns": "Path"
    },
+   "list_accounts": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"}
+    ],
+    "returns": "list[dict[str, str]]"
+   },
    "load": {
     "kind": "staticmethod",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
-     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "capability"}
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "capability"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
     ],
     "returns": "dict[str, Any]"
    },
    "load_account": {
     "kind": "staticmethod",
     "params": [
-     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"}
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
     ],
     "returns": "dict[str, Any]"
+   },
+   "remove_account": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "account"}
+    ],
+    "returns": "int"
    },
    "remove_capability": {
     "kind": "staticmethod",
@@ -2327,7 +2361,17 @@
     "kind": "staticmethod",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
-     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "config"}
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "config"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
+    ],
+    "returns": "None"
+   },
+   "save_account": {
+    "kind": "staticmethod",
+    "params": [
+     {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "config"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
     ],
     "returns": "None"
    },
@@ -2336,7 +2380,8 @@
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
      {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"},
-     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "config"}
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "config"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
     ],
     "returns": "None"
    },
@@ -2344,7 +2389,8 @@
     "kind": "staticmethod",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
-     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"}
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
     ],
     "returns": "dict[str, Any]"
    },
@@ -2352,7 +2398,8 @@
     "kind": "staticmethod",
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
-     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"}
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
     ],
     "returns": "dict[str, Any]"
    },
@@ -2361,7 +2408,8 @@
     "params": [
      {"annotation": "str", "kind": "positional_or_keyword", "name": "extension_name"},
      {"annotation": "str", "kind": "positional_or_keyword", "name": "capability"},
-     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"}
+     {"annotation": "dict[str, Any]", "kind": "positional_or_keyword", "name": "partial"},
+     {"annotation": "str | None", "default": "None", "kind": "positional_or_keyword", "name": "account"}
     ],
     "returns": "dict[str, Any]"
    },

@@ -57,7 +57,7 @@ import json
 import logging
 import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -119,12 +119,21 @@ class SecretOwner:
 
     prefix: str
     app: str | None
+    #: When set, the only prefixes a reference in this record may resolve: one account of an app
+    #: with accounts holds that account's keys alone, never another account's (#3842).
+    scope: tuple[str, ...] = ()
 
     def key(self, field_name: str) -> str:
         return f"{self.prefix}{_segment(field_name, 32)}"
 
     def owns(self, key: str) -> bool:
         return key.startswith(self.prefix)
+
+    def owns_directly(self, key: str) -> bool:
+        """Whether ``key`` is one of this record's own fields, not a key of a record nested under
+        its prefix (a capability's, #3842). A field's key is the prefix plus one segment, which
+        never holds ``__``; a nested owner's prefix always does."""
+        return self.owns(key) and "__" not in key[len(self.prefix) :]
 
     def holds(self, key: str) -> bool:
         """Whether a reference in this record may resolve ``key``: a key stored under the
@@ -133,6 +142,8 @@ class SecretOwner:
         key's name cannot say whose server minted it."""
         if self.owns(key):
             return True
+        if self.scope:
+            return key.startswith(self.scope)
         if self.app is not None:
             return key.startswith(app_owned_prefixes(self.app))
         return _core_holds(key)
@@ -167,22 +178,33 @@ def app_owner(app: str) -> SecretOwner:
     return SecretOwner(f"{OWNED_KEY_PREFIX}APP_{_app_part(app)}__", app=app)
 
 
-def account_owner(app: str) -> SecretOwner:
-    """An app's account settings, the part every capability shares (``data/config.json``,
-    #3842). The same prefix as :func:`app_owner`, so a key stored before the split stays where
-    it is and an older core still resolves it."""
-    return app_owner(app)
+def account_owner(app: str, account: str | None = None) -> SecretOwner:
+    """An app's account settings, the part every capability shares (#3842). The app's.
+
+    The first account (``None``, ``data/config.json``) has :func:`app_owner`'s prefix, so a key
+    stored before the split stays where it is and an older core still resolves it. A further
+    account is an instance-store record, so it has :func:`instance_owner`'s, which every core
+    already holds as the app's. Each account's capabilities nest under it
+    (:func:`capability_owner`), so its own fields are the keys it
+    :meth:`~SecretOwner.owns_directly`."""
+    return app_owner(app) if account is None else instance_owner(app, account)
 
 
-def capability_owner(app: str, capability: str) -> SecretOwner:
-    """One capability's own settings (``data/capabilities/<id>.json``, #3842). The app's.
+def within_account(owner: SecretOwner, account: SecretOwner) -> SecretOwner:
+    """*owner*, holding only *account*'s keys (its own and its capabilities'): in an app with
+    accounts, a record of one account resolves nothing of another's (#3842)."""
+    return replace(owner, scope=(account.prefix,))
 
-    Nested under the app's own prefix, so the app holds it as before (and so does an older core,
-    which resolves any key under that prefix as the app's), and removing the capability deletes
-    exactly its keys (:func:`purge` over :attr:`SecretOwner.prefix`)."""
-    return SecretOwner(
-        f"{app_owner(app).prefix}CAP_{_segment(capability, 16)}_{_digest(capability)}__", app=app
-    )
+
+def capability_owner(app: str, capability: str, account: str | None = None) -> SecretOwner:
+    """One capability's own settings for one account (#3842). The app's.
+
+    Nested under the account's prefix, so the app holds it as before (and so does an older core,
+    which resolves any key under the app's prefixes as the app's), removing the capability deletes
+    exactly its keys (:func:`purge` over :attr:`SecretOwner.prefix`), and removing an account
+    deletes its capabilities' with its own."""
+    parent = account_owner(app, account).prefix
+    return SecretOwner(f"{parent}CAP_{_segment(capability, 16)}_{_digest(capability)}__", app=app)
 
 
 def instance_owner(app: str, instance_id: str) -> SecretOwner:
@@ -524,7 +546,10 @@ def _move_into_store(
 def _delete_orphans(
     previous: Mapping[str, Any] | None, current: Mapping[str, Any], owner: SecretOwner
 ) -> None:
-    before = {k for v in (previous or {}).values() if (k := ref_key(v)) and owner.owns(k)}
+    """Delete each key of *owner*'s own that *previous* referenced and *current* no longer does.
+    Only a key the record owns directly: one nested under its prefix is another record's (an
+    account's capability, #3842), and a reference to it dropped here leaves it where it is."""
+    before = {k for v in (previous or {}).values() if (k := ref_key(v)) and owner.owns_directly(k)}
     after = {k for v in current.values() if (k := ref_key(v))}
     for key in sorted(before - after):
         delete_credential(key)
@@ -548,6 +573,21 @@ def count_owned(prefixes: Iterable[str]) -> int:
     """How many stored secrets live under ``prefixes``. Names only; no value is read."""
     wanted = tuple(prefixes)
     return sum(1 for k in credential_names() if k.startswith(wanted))
+
+
+def count_direct(owner: SecretOwner) -> int:
+    """How many stored secrets are *owner*'s own fields, leaving out every record nested under
+    its prefix (:meth:`SecretOwner.owns_directly`). Names only; no value is read."""
+    return sum(1 for k in credential_names() if owner.owns_directly(k))
+
+
+def purge_direct(owner: SecretOwner) -> int:
+    """Delete *owner*'s own fields' secrets and none nested under its prefix: clearing an app's
+    first account leaves its capabilities' keys, which sit under the same prefix (#3842)."""
+    doomed = [k for k in credential_names() if owner.owns_directly(k)]
+    for key in doomed:
+        delete_credential(key)
+    return len(doomed)
 
 
 def purge(prefixes: Iterable[str]) -> int:

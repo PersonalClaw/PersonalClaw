@@ -904,9 +904,10 @@ older core installed with two providers of one type and no ids is **held off**: 
 enable refuse it with the sentence naming the field, its files untouched, until an update names
 each one. An update that **renames** a capability declares the old id in `renamedFrom`; each store
 keyed by capability registers a mover, which carries `<app>/<old>` to `<app>/<new>` once, and
-`installed.json` keeps the move (`capabilityMoves`), so it never runs twice. A move a mover fails
-stays `pending` with that mover's name, and the gateway runs only the movers still pending again
-when it next starts its apps, so a mover must be idempotent. An id an update **drops** stays in
+`installed.json` keeps the move (`capabilityMoves`), so it never runs twice. The move is written
+there `pending` on every mover before any runs, and each mover that finishes is struck off, so a
+move a mover fails, or that a stop cuts short, stays `pending` with the movers left, and the gateway
+runs only those again when it next starts its apps, so a mover must be idempotent. An id an update **drops** stays in
 `installed.json` as a tombstone (`retiredCapabilities`, with its last label, the version that
 dropped it and whether the app `declared` it retired), and a read of it
 (`GET /api/providers/{name}/capabilities/{id}`) says what it was and when it went. A later version
@@ -938,6 +939,29 @@ pass at gateway start (`providers/capability_settings_move.py`) carries each cap
 setting out of the shared file into that capability's, writing the capability's file
 first and the shared file last, so a stop half way is finished by the next start. `load(app)`
 with no capability and `setup.configSchema` go at the v0.4.0 cut (#5665).
+
+**An app that declares `settings` can have more than one account** (#3842,
+`providers/accounts.py`). Its first account (`default`) is the settings above. Each further one is a
+record in the instance store, `extensions/<app>/instances/<id>.json`, with `kind: "account"` and the
+same two parts, `account` and `capabilities`. `validate` refuses `settings` beside a
+`multiInstance` provider, so an app has accounts or instances, never both. Nothing is inherited
+across accounts: `ProviderSettings.load(app, capability, account)` reads one account's settings and
+that capability's own in it. Every secret is its account's: a further account's owner is
+`secret_refs.instance_owner`, its capabilities' nest under it, and in an app with accounts a record
+resolves only its own account's keys (`secret_refs.within_account`). `remove_account` deletes
+exactly its prefix. `clear_account` and a whole save of an account delete only that account's own
+fields' keys (`SecretOwner.owns_directly`), never a capability's nested under its prefix. The routes
+are `/api/apps/{name}/accounts` and `/api/apps/{name}/accounts/{account}/...`. A further account is
+stored and read there, but nothing runs on it yet: the registry builds each capability from the
+first account, and a provider per capability and account comes with the switches (#3843).
+
+When an update renames a capability (`renamedFrom`), `capability_settings_move.move_on_rename`
+carries its settings and secrets to the new id in every account, as a `capability_lifecycle` mover.
+It takes four steps: store the secrets under the new owner, write the new settings, delete the old,
+then purge the old keys. So a stop after any step is finished by the next run, and settings the new
+id already holds are kept. A capability the app declares retired has its settings deleted in every
+account (`capability_lifecycle.register_remover`). One dropped without saying so keeps them, in case
+it comes back.
 
 A tool provider is registered under its app's name, and every tool it lists passes the tool
 seam before a model request carries it: a schema outside the portable profile is repaired or

@@ -102,17 +102,10 @@ def register_app_routes(app: web.Application) -> None:
     app.router.add_get("/api/apps/{name}/uninstall-preview", api_app_uninstall_preview)
     app.router.add_get("/api/apps/{name}/config", api_app_config_get)
     app.router.add_put("/api/apps/{name}/config", api_app_config_put)
-    from personalclaw.dashboard.handlers.app_capability_config import (
-        api_app_capability_config_get,
-        api_app_capability_config_put,
-    )
+    from personalclaw.dashboard.handlers import app_accounts, app_capability_config
 
-    app.router.add_get(
-        "/api/apps/{name}/capabilities/{capability}/config", api_app_capability_config_get
-    )
-    app.router.add_put(
-        "/api/apps/{name}/capabilities/{capability}/config", api_app_capability_config_put
-    )
+    app_capability_config.register_routes(app)
+    app_accounts.register_routes(app)
     app.router.add_post("/api/apps/{name}/agent-run", api_app_agent_run)
     app.router.add_get("/api/apps/{name}/agent-run/{run_id}", api_app_agent_run_status)
     app.router.add_post("/api/apps/{name}/token", api_app_token)

@@ -1,6 +1,9 @@
 {"site": "GET /api/agent-marketplace/agents/{name}", "reason": "plain detail; marketplace.get rejects absence"}
 {"site": "GET /api/agent-providers/{id}/agents", "reason": "registry rejects unknown ids; the built-in runtime intentionally has no catalog"}
 {"site": "GET /api/agents/detail/{name}", "reason": "plain detail; agent-file resolver rejects absence"}
+{"site": "GET /api/apps/{name}/accounts", "reason": "the installed manifest resolves the app before its accounts are listed, so a ghost app is a 404 and an app with no account settings a 409, never an empty list (driven in test_app_accounts.py)", "added": "2026-10-29"}
+{"site": "GET /api/apps/{name}/accounts/{account}/capabilities/{capability}/config", "reason": "the installed manifest resolves the app, then the account's record and the capability, before any settings are read, so a ghost app, an account it does not have or a capability it does not declare is a 404, never an empty answer; this is child detail (driven in test_app_accounts.py)", "added": "2026-10-29"}
+{"site": "GET /api/apps/{name}/accounts/{account}/config", "reason": "the installed manifest resolves the app and then the account's record before its settings are read, so a ghost app or an account it does not have is a 404, never an empty answer; this is child detail (driven in test_app_accounts.py)", "added": "2026-10-29"}
 {"site": "GET /api/apps/{name}/agent-run/{run_id}", "reason": "run lookup is app-owned and rejects absent or cross-app run ids"}
 {"site": "GET /api/apps/{name}/capabilities/{capability}/config", "reason": "the installed manifest resolves the app and then the capability before its settings are read, so a ghost app or a capability it does not declare is a 404, never an empty answer; this is child detail (driven in test_account_and_capability_settings.py)", "added": "2026-10-29"}
 {"site": "GET /api/apps/{name}/config", "reason": "resolves the installed app manifest before reading config"}

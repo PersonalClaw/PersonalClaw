@@ -288,7 +288,7 @@ describe('the census of saves that replace what they read', () => {
     // The control: the reader finds the writes it was written over, a wrapper among them.
     expect(census.writes).toContain('savePrompt')
     expect(census.writes, 'a method that only calls a revisioned one is revisioned too').toContain('setProjectionRules')
-    expect(census.writes).toHaveLength(35)
+    expect(census.writes).toHaveLength(37)
   })
 
   it('every caller holds the guard, shows the notice, and is reached from a route', () => {

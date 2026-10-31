@@ -76,11 +76,47 @@ def _checked_capability(capability: str) -> str:
     return capability
 
 
-def load_stored_capability(extension_name: str, capability: str) -> dict[str, Any]:
-    """One capability's own settings file as it is on disk (secret fields are references), never
-    read through a link, as :func:`load_stored`. Raises :class:`ValueError` for a string that is
-    not a capability id (:func:`_checked_capability`), and reads nothing."""
+class NoSuchAccount(ValueError):
+    """The app has no further account by that id (#3842). A :class:`ValueError`, so every caller
+    that refuses a bad id refuses this one too."""
+
+
+def _account(account: str | None) -> str | None:
+    """*account* as stored: ``None`` for the first account (``None`` or ``"default"``), else the
+    further account's checked id (:func:`~personalclaw.providers.accounts.checked_account`)."""
+    from personalclaw.providers.accounts import FIRST, checked_account
+
+    return None if account is None or account == FIRST else checked_account(account)
+
+
+def _record(extension_name: str, account: str) -> dict[str, Any]:
+    from personalclaw.providers.accounts import read_record
+
+    record = read_record(extension_name, account)
+    if record is None:
+        raise NoSuchAccount(f"{extension_name!r} has no account {account!r}")
+    return record
+
+
+def load_stored_account(extension_name: str, account: str | None = None) -> dict[str, Any]:
+    """One account's settings as stored (secret fields are references): the first account's file,
+    :func:`load_stored`, or a further account's record. Raises :class:`NoSuchAccount` for an
+    account the app does not have, and :class:`ValueError` for a string that is no account id."""
+    acct = _account(account)
+    return load_stored(extension_name) if acct is None else _record(extension_name, acct)["account"]
+
+
+def load_stored_capability(
+    extension_name: str, capability: str, account: str | None = None
+) -> dict[str, Any]:
+    """One capability's own settings for one account as stored (secret fields are references),
+    never read through a link, as :func:`load_stored`. Raises :class:`ValueError` for a string that
+    is not a capability id (:func:`_checked_capability`) or not an account id, and reads nothing."""
     name = f"{_checked_capability(capability)}.json"
+    acct = _account(account)
+    if acct is not None:
+        own = _record(extension_name, acct)["capabilities"].get(capability)
+        return own if isinstance(own, dict) else {}
     root = app_dir(extension_name)
     try:
         data = json.loads(read_app_owned_text(root, "data", "capabilities", name))
@@ -94,9 +130,12 @@ def load_stored_capability(extension_name: str, capability: str) -> dict[str, An
     return data if isinstance(data, dict) else {}
 
 
-def _capability_ids(extension_name: str) -> list[str]:
-    """The ids of the capabilities whose settings files exist (a file not named for an id is no
-    capability's)."""
+def _capability_ids(extension_name: str, account: str | None = None) -> list[str]:
+    """The ids of the capabilities one account holds settings for (a file or key not named for an
+    id is no capability's)."""
+    if account is not None:
+        held = _record(extension_name, account)["capabilities"]
+        return sorted(c for c in held if isinstance(c, str) and KEBAB_RE.match(c))
     folder = app_dir(extension_name) / "data" / "capabilities"
     if folder.is_symlink() or not folder.is_dir():
         return []
@@ -113,6 +152,52 @@ def _write(path: Path, stored: dict[str, Any]) -> None:
     if path.parent.is_symlink() or path.is_symlink():
         raise OSError(f"{path} is a link: settings are never written through one")
     atomic_write(path, json.dumps(stored, indent=2) + "\n")
+
+
+def _has_accounts(extension_name: str) -> bool:
+    manifest = secret_refs._app_manifest(extension_name)
+    return bool(manifest is not None and manifest.settings)
+
+
+def account_secret_owner(
+    extension_name: str, account: str | None = None
+) -> secret_refs.SecretOwner:
+    """Who one account's secrets belong to (``secret_refs.account_owner``). In an app with
+    accounts it holds that account's keys alone, so a reference in one account never resolves
+    another's (``secret_refs.within_account``); an app without keeps holding every key it owns."""
+    owner = secret_refs.account_owner(extension_name, account)
+    if account is None and not _has_accounts(extension_name):
+        return owner
+    return secret_refs.within_account(owner, owner)
+
+
+def capability_secret_owner(
+    extension_name: str, capability: str, account: str | None = None
+) -> secret_refs.SecretOwner:
+    """Who one capability's own secrets belong to in one account, held to that account's keys as
+    :func:`account_secret_owner` is."""
+    owner = secret_refs.capability_owner(extension_name, capability, account)
+    if account is None and not _has_accounts(extension_name):
+        return owner
+    return secret_refs.within_account(owner, secret_refs.account_owner(extension_name, account))
+
+
+def _write_record(extension_name: str, account: str, record: dict[str, Any]) -> None:
+    from personalclaw.providers.accounts import write_record
+
+    write_record(extension_name, account, record)
+
+
+def _write_part(
+    extension_name: str, account: str, stored: dict[str, Any], capability: str | None = None
+) -> None:
+    """Write one part of a further account's record: its account settings, or *capability*'s."""
+    record = _record(extension_name, account)
+    if capability is None:
+        record["account"] = stored
+    else:
+        record["capabilities"][capability] = stored
+    _write_record(extension_name, account, record)
 
 
 def _homes(extension_name: str) -> dict[str, str]:
@@ -137,7 +222,12 @@ def _split(config: dict[str, Any], homes: dict[str, str]) -> tuple[dict[str, Any
 
 
 class ProviderSettings:
-    """Read/write per-extension config with schema validation."""
+    """Read/write per-extension config with schema validation.
+
+    Every call takes an optional ``account`` (#3842): ``None`` (or ``"default"``) is the app's
+    first account, the one every app had before accounts; a further account is one
+    :meth:`add_account` made (``providers/accounts.py``). An account the app does not have raises
+    :class:`NoSuchAccount`."""
 
     @staticmethod
     def config_path(extension_name: str) -> Path:
@@ -148,45 +238,54 @@ class ProviderSettings:
 
     @staticmethod
     def capability_path(extension_name: str, capability: str) -> Path:
-        """Where one capability's own settings live (#3842), beside the account's file. Raises
-        :class:`ValueError` for a string that is not a capability id."""
+        """Where one capability's own settings live for the first account (#3842), beside the
+        account's file. Raises :class:`ValueError` for a string that is not a capability id."""
         name = f"{_checked_capability(capability)}.json"
         return app_dir(extension_name) / "data" / "capabilities" / name
 
     @staticmethod
-    def load(extension_name: str, capability: str | None = None) -> dict[str, Any]:
-        """The settings with every secret field holding its VALUE: *capability*'s (the account's
+    def load(
+        extension_name: str, capability: str | None = None, account: str | None = None
+    ) -> dict[str, Any]:
+        """The settings with every secret field holding its VALUE: *capability*'s (its account's
         merged with its own), or, with none, the account's merged with every capability's, the one
-        dict every app read before its settings had two parts (kept until the v0.4.0 cut).
+        dict every app read before its settings had two parts (kept until the v0.4.0 cut). One
+        account's alone: nothing is inherited from another.
 
         Raises :class:`~personalclaw.config.secret_refs.ForeignSecretReference` when the file
-        references a credential another owner holds, and :class:`ValueError` (reading nothing) for a
-        *capability* that is not a capability id."""
+        references a credential another owner holds, and :class:`ValueError` (reading nothing) for
+        a *capability* that is not a capability id or an *account* the app does not have."""
         if capability is not None:
             _checked_capability(capability)
-        merged = ProviderSettings.load_account(extension_name)
-        for cid in [capability] if capability else _capability_ids(extension_name):
-            merged.update(ProviderSettings._load_capability(extension_name, cid))
+        acct = _account(account)
+        merged = ProviderSettings.load_account(extension_name, acct)
+        for cid in [capability] if capability else _capability_ids(extension_name, acct):
+            merged.update(ProviderSettings._load_capability(extension_name, cid, acct))
         return merged
 
     @staticmethod
-    def load_account(extension_name: str) -> dict[str, Any]:
-        """The account settings every capability of the app shares, secrets as their VALUES."""
+    def load_account(extension_name: str, account: str | None = None) -> dict[str, Any]:
+        """One account's settings, the ones every capability of the app shares, secrets as their
+        VALUES."""
+        acct = _account(account)
         return secret_refs.resolve(
-            load_stored(extension_name), owner=secret_refs.account_owner(extension_name)
+            load_stored_account(extension_name, acct),
+            owner=account_secret_owner(extension_name, acct),
         )
 
     @staticmethod
-    def _load_capability(extension_name: str, capability: str) -> dict[str, Any]:
+    def _load_capability(
+        extension_name: str, capability: str, account: str | None = None
+    ) -> dict[str, Any]:
         return secret_refs.resolve(
-            load_stored_capability(extension_name, capability),
-            owner=secret_refs.capability_owner(extension_name, capability),
+            load_stored_capability(extension_name, capability, account),
+            owner=capability_secret_owner(extension_name, capability, account),
         )
 
     @staticmethod
-    def save(extension_name: str, config: dict[str, Any]) -> None:
+    def save(extension_name: str, config: dict[str, Any], account: str | None = None) -> None:
         """Persist ``config`` with each secret value moved into the credential store: each
-        setting into the account's file or its capability's, by what the manifest declares.
+        setting into the account's part or its capability's, by what the manifest declares.
 
         A whole write: every capability that owns a setting has its own replaced too, so one whose
         settings ``config`` leaves out is cleared, its secrets with them.
@@ -194,95 +293,206 @@ class ProviderSettings:
         Raises :class:`ValueError` for a value no credential can hold (a NUL character) or a
         reference to another owner's credential, and nothing is written.
         """
+        acct = _account(account)
         homes = _homes(extension_name)
-        account, capabilities = _split(config, homes)
-        ProviderSettings._save(extension_name, account)
+        own, capabilities = _split(config, homes)
+        ProviderSettings._save(extension_name, own, acct)
         for cid in sorted(set(homes.values())):
-            ProviderSettings._save_capability(extension_name, cid, capabilities.get(cid, {}))
+            ProviderSettings._save_capability(extension_name, cid, capabilities.get(cid, {}), acct)
 
     @staticmethod
-    def _save(extension_name: str, config: dict[str, Any]) -> dict[str, Any]:
+    def _save(
+        extension_name: str, config: dict[str, Any], account: str | None = None
+    ) -> dict[str, Any]:
         stored = secret_refs.store(
             config,
-            owner=secret_refs.account_owner(extension_name),
+            owner=account_secret_owner(extension_name, account),
             declared=secret_refs.declared_app_fields(extension_name),
-            previous=load_stored(extension_name),
+            previous=load_stored_account(extension_name, account),
         )
-        _write(ProviderSettings.config_path(extension_name), stored)
+        if account is None:
+            _write(ProviderSettings.config_path(extension_name), stored)
+        else:
+            _write_part(extension_name, account, stored)
         return stored
 
     @staticmethod
-    def save_capability(extension_name: str, capability: str, config: dict[str, Any]) -> None:
-        """Replace *capability*'s own settings with ``config``, each secret value moved into the
-        credential store under the capability's owner. Raises as :meth:`save` does, and
-        :class:`ValueError` for a *capability* that is not a capability id."""
-        ProviderSettings._save_capability(extension_name, capability, config)
+    def save_account(
+        extension_name: str, config: dict[str, Any], account: str | None = None
+    ) -> None:
+        """Replace one account's own settings with ``config``, each secret value moved into the
+        credential store under the account's owner; its capabilities' stay as they are. Raises as
+        :meth:`save` does."""
+        ProviderSettings._save(extension_name, config, _account(account))
+
+    @staticmethod
+    def save_capability(
+        extension_name: str, capability: str, config: dict[str, Any], account: str | None = None
+    ) -> None:
+        """Replace *capability*'s own settings for one account with ``config``, each secret value
+        moved into the credential store under the capability's owner. Raises as :meth:`save` does,
+        and :class:`ValueError` for a *capability* that is not a capability id."""
+        ProviderSettings._save_capability(extension_name, capability, config, _account(account))
 
     @staticmethod
     def _save_capability(
-        extension_name: str, capability: str, config: dict[str, Any]
+        extension_name: str, capability: str, config: dict[str, Any], account: str | None = None
     ) -> dict[str, Any]:
         _checked_capability(capability)
         stored = secret_refs.store(
             config,
-            owner=secret_refs.capability_owner(extension_name, capability),
+            owner=capability_secret_owner(extension_name, capability, account),
             declared=secret_refs.declared_app_fields(extension_name),
-            previous=load_stored_capability(extension_name, capability),
+            previous=load_stored_capability(extension_name, capability, account),
         )
-        _write(ProviderSettings.capability_path(extension_name, capability), stored)
+        if account is None:
+            _write(ProviderSettings.capability_path(extension_name, capability), stored)
+        else:
+            _write_part(extension_name, account, stored, capability)
         return stored
 
     @staticmethod
-    def update(extension_name: str, partial: dict[str, Any]) -> dict[str, Any]:
-        """Merge ``partial`` into the saved settings, each setting into the account's part or its
-        capability's; returns them all with each secret's VALUE, as :meth:`load` with no
-        capability does.
+    def update(
+        extension_name: str, partial: dict[str, Any], account: str | None = None
+    ) -> dict[str, Any]:
+        """Merge ``partial`` into one account's saved settings, each setting into the account's
+        part or its capability's; returns them all with each secret's VALUE, as :meth:`load` with
+        no capability does.
 
         Merged over the STORED form, so a secret ``partial`` does not mention stays exactly the
         reference it is, and one it carries back as a reference (a masked form's untouched
         field) is kept — never read out and written again."""
-        account, capabilities = _split(partial, _homes(extension_name))
-        if account or not capabilities:
-            ProviderSettings.update_account(extension_name, account)
-        for cid, own in capabilities.items():
-            ProviderSettings.update_capability(extension_name, cid, own)
-        return ProviderSettings.load(extension_name)
+        acct = _account(account)
+        own, capabilities = _split(partial, _homes(extension_name))
+        if own or not capabilities:
+            ProviderSettings.update_account(extension_name, own, acct)
+        for cid, part in capabilities.items():
+            ProviderSettings.update_capability(extension_name, cid, part, acct)
+        return ProviderSettings.load(extension_name, account=acct)
 
     @staticmethod
-    def update_account(extension_name: str, partial: dict[str, Any]) -> dict[str, Any]:
-        """Merge ``partial`` into the account settings; returns them with each secret's VALUE."""
-        current = load_stored(extension_name)
+    def update_account(
+        extension_name: str, partial: dict[str, Any], account: str | None = None
+    ) -> dict[str, Any]:
+        """Merge ``partial`` into one account's settings; returns them with each secret's VALUE."""
+        acct = _account(account)
+        current = load_stored_account(extension_name, acct)
         current.update(partial)
-        stored = ProviderSettings._save(extension_name, current)
-        return secret_refs.resolve(stored, owner=secret_refs.account_owner(extension_name))
+        stored = ProviderSettings._save(extension_name, current, acct)
+        return secret_refs.resolve(stored, owner=account_secret_owner(extension_name, acct))
 
     @staticmethod
     def update_capability(
-        extension_name: str, capability: str, partial: dict[str, Any]
+        extension_name: str, capability: str, partial: dict[str, Any], account: str | None = None
     ) -> dict[str, Any]:
-        """Merge ``partial`` into *capability*'s own settings; returns them with each secret's
-        VALUE (its own only: :meth:`load` with the capability adds the account's). Raises
-        :class:`ValueError`, writing nothing, for a *capability* that is not a capability id."""
-        current = load_stored_capability(extension_name, capability)
+        """Merge ``partial`` into *capability*'s own settings for one account; returns them with
+        each secret's VALUE (its own only: :meth:`load` with the capability adds the account's).
+        Raises :class:`ValueError`, writing nothing, for a *capability* that is not a capability
+        id or an *account* the app does not have."""
+        acct = _account(account)
+        current = load_stored_capability(extension_name, capability, acct)
         current.update(partial)
-        stored = ProviderSettings._save_capability(extension_name, capability, current)
+        stored = ProviderSettings._save_capability(extension_name, capability, current, acct)
         return secret_refs.resolve(
-            stored, owner=secret_refs.capability_owner(extension_name, capability)
+            stored, owner=capability_secret_owner(extension_name, capability, acct)
         )
 
     @staticmethod
     def remove_capability(extension_name: str, capability: str) -> int:
-        """Delete *capability*'s own settings and exactly its secrets; the account's and every
-        other capability's stay. Returns how many secrets were deleted. Raises :class:`ValueError`,
-        deleting nothing, for a *capability* that is not a capability id."""
+        """Delete *capability*'s own settings and exactly its secrets, in every account; each
+        account's own and every other capability's stay. Returns how many secrets were deleted.
+        Raises :class:`ValueError`, deleting nothing, for a *capability* that is not a capability
+        id."""
+        from personalclaw.providers.accounts import further_accounts
+
         _checked_capability(capability)
-        removed = secret_refs.purge(
-            [secret_refs.capability_owner(extension_name, capability).prefix]
-        )
-        path = ProviderSettings.capability_path(extension_name, capability)
-        if path.is_file() and not path.is_symlink():
-            path.unlink()
+        removed = 0
+        for acct in [None, *further_accounts(extension_name)]:
+            removed += secret_refs.purge(
+                [capability_secret_owner(extension_name, capability, acct).prefix]
+            )
+            if acct is not None:
+                record = _record(extension_name, acct)
+                if record["capabilities"].pop(capability, None) is not None:
+                    _write_record(extension_name, acct, record)
+                continue
+            path = ProviderSettings.capability_path(extension_name, capability)
+            if path.is_file() and not path.is_symlink():
+                path.unlink()
         return removed
+
+    # ── accounts ────────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def list_accounts(extension_name: str) -> list[dict[str, str]]:
+        """The app's accounts, the first (``"default"``) then each further one, by id and label."""
+        from personalclaw.providers.accounts import FIRST, further_accounts
+
+        rows = [{"id": FIRST, "label": ""}]
+        for acct in further_accounts(extension_name):
+            label = _record(extension_name, acct).get("display_name", "")
+            rows.append({"id": acct, "label": str(label or "")})
+        return rows
+
+    @staticmethod
+    def add_account(extension_name: str, label: str = "", account: str | None = None) -> str:
+        """Add a further account, with no settings yet; returns its id (*account*, else a new
+        one). Raises :class:`ValueError` for an id that is not a further account's, one the app
+        already has, or one whose file holds anything else (a multi-instance record an earlier
+        version left shares the folder, and its key prefix): nothing is written over."""
+        from personalclaw.providers.accounts import (
+            new_account_id,
+            new_record,
+            read_record,
+            record_path,
+            write_record,
+        )
+
+        if not _has_accounts(extension_name):
+            raise ValueError(
+                f"{extension_name!r} declares no account settings, so it keeps one account"
+            )
+        acct = _account(account) if account is not None else new_account_id()
+        if acct is None:
+            raise ValueError("the first account is always there, and is never added")
+        if read_record(extension_name, acct) is not None:
+            raise ValueError(f"{extension_name!r} already has an account {acct!r}")
+        path = record_path(extension_name, acct)
+        if path.exists() or path.is_symlink():
+            raise ValueError(
+                f"{extension_name!r} already keeps a record under {acct!r} that is no account: "
+                "name the account another id"
+            )
+        write_record(extension_name, acct, new_record(extension_name, acct, label))
+        return acct
+
+    @staticmethod
+    def remove_account(extension_name: str, account: str) -> int:
+        """Remove a further account: exactly its secrets, its capabilities' with them, then its
+        record. Every other account's keys stay, the first account's included. The first account
+        is never removed (:meth:`clear_account` empties it). Returns how many secrets were deleted.
+
+        The secrets go first, so a stop half way leaves a record whose secrets read as absent,
+        and running it again finishes it."""
+        from personalclaw.providers.accounts import checked_account, record_path
+
+        acct = checked_account(account)
+        _record(extension_name, acct)
+        removed = secret_refs.purge([account_secret_owner(extension_name, acct).prefix])
+        record_path(extension_name, acct).unlink(missing_ok=True)
+        return removed
+
+    @staticmethod
+    def clear_account(extension_name: str, account: str | None = None) -> int:
+        """Empty one account's own settings, and delete exactly its own secrets: never a key of a
+        capability nested under its prefix, which is not the account's to clear. Returns how many
+        secrets were deleted."""
+        acct = _account(account)
+        owner = account_secret_owner(extension_name, acct)
+        before = secret_refs.count_direct(owner)
+        ProviderSettings._save(extension_name, {}, acct)
+        secret_refs.purge_direct(owner)  # one no reference named any more
+        return before
 
     @staticmethod
     def validate(config: dict[str, Any], schema: dict[str, Any]) -> list[str]:

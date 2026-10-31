@@ -941,6 +941,23 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     "PUT /api/apps/{name}/capabilities/{capability}/config": AppMay(
         _WRITES_OWN_SETTINGS, owns=_OWN_APP
     ),
+    "GET /api/apps/{name}/accounts": AppMay("lists the app's own accounts", owns=_OWN_APP),
+    "POST /api/apps/{name}/accounts": AppMay("adds an account to the app's own", owns=_OWN_APP),
+    "DELETE /api/apps/{name}/accounts/{account}": AppMay(
+        "removes one of the app's own accounts, with exactly its credentials", owns=_OWN_APP
+    ),
+    "GET /api/apps/{name}/accounts/{account}/config": AppMay(
+        "reads one of the app's own accounts, its credentials masked", owns=_OWN_APP
+    ),
+    "PUT /api/apps/{name}/accounts/{account}/config": AppMay(_WRITES_OWN_SETTINGS, owns=_OWN_APP),
+    "GET /api/apps/{name}/accounts/{account}/capabilities/{capability}/config": AppMay(
+        "reads one capability's own settings in one of the app's own accounts, its credentials "
+        "masked",
+        owns=_OWN_APP,
+    ),
+    "PUT /api/apps/{name}/accounts/{account}/capabilities/{capability}/config": AppMay(
+        _WRITES_OWN_SETTINGS, owns=_OWN_APP
+    ),
     "POST /api/apps/message": AppMay(
         "the app-to-app broker — the target must be in the sender's `appMessaging`"
     ),

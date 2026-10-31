@@ -92,23 +92,48 @@ def validate_config(values: dict[str, Any], schema: dict[str, Any]) -> list[str]
 
 
 def write_capability_config(
-    name: str, capability: str, values: dict[str, Any], schema: dict[str, Any]
+    name: str,
+    capability: str,
+    values: dict[str, Any],
+    schema: dict[str, Any],
+    account: str | None = None,
 ) -> dict[str, Any]:
-    """Validate then persist one capability's own settings (#3842), as :func:`write_config` does
-    the account's: unknown keys refused, each secret stored under the capability's owner. Raises
-    :class:`AppConfigError` on invalid input; returns the saved values on success."""
+    """Validate then persist one capability's own settings for one account (#3842), as
+    :func:`write_config` does the account's: unknown keys refused, each secret stored under the
+    capability's owner. Raises :class:`AppConfigError` on invalid input; returns the saved values
+    on success."""
     from personalclaw.providers.settings import ProviderSettings
 
+    _checked(values, schema)
+    try:
+        ProviderSettings.save_capability(name, capability, values, account)
+    except ValueError as exc:
+        raise AppConfigError(str(exc)) from exc
+    return values
+
+
+def write_account_config(
+    name: str, account: str, values: dict[str, Any], schema: dict[str, Any]
+) -> dict[str, Any]:
+    """Validate then persist a further account's own settings (#3842), as :func:`write_config`
+    does the first account's. Raises :class:`AppConfigError` on invalid input; returns the saved
+    values on success."""
+    from personalclaw.providers.settings import ProviderSettings
+
+    _checked(values, schema)
+    try:
+        ProviderSettings.save_account(name, values, account)
+    except ValueError as exc:
+        raise AppConfigError(str(exc)) from exc
+    return values
+
+
+def _checked(values: Any, schema: dict[str, Any]) -> None:
     if not isinstance(values, dict):
         raise AppConfigError("config must be a JSON object")
     errors = validate_config(values, schema)
     if errors:
         raise AppConfigError("; ".join(errors))
-    try:
-        ProviderSettings.save_capability(name, capability, values)
-    except ValueError as exc:
-        raise AppConfigError(str(exc)) from exc
-    return values
 
 
 def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
@@ -120,10 +145,12 @@ def write_config(name: str, values: dict[str, Any], schema: dict[str, Any]) -> d
     errors = validate_config(values, schema)
     if errors:
         raise AppConfigError("; ".join(errors))
+    from personalclaw.providers.settings import account_secret_owner
+
     try:
         stored = secret_refs.store(
             values,
-            owner=secret_refs.app_owner(name),
+            owner=account_secret_owner(name),
             declared=sensitive_field_names(schema) | secret_refs.declared_app_fields(name),
             previous=read_stored(name),
         )

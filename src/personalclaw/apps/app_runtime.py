@@ -87,8 +87,9 @@ def start_installed(*, gateway: bool = True) -> list[str]:
     a newer core, in the desktop app one that runs a Python child the app cannot start, and one
     whose capabilities this core cannot tell apart (``capability_lifecycle.hold_off_reason``).
 
-    The gateway first runs again each capability move an update left pending because a store's
-    mover failed (:func:`_retry_pending_moves`), so an app starts with its stores under its new ids.
+    The gateway first runs again each capability move an update left pending, because a store's
+    mover failed or the update was stopped while one ran (:func:`_retry_pending_moves`), so an app
+    starts with its stores under its new ids.
 
     ``gateway=False`` is the same walk for a process that is not the gateway, such as a CLI
     command that resolves a model: each enabled app's code and registrations
