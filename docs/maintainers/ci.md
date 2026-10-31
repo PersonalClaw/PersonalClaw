@@ -637,7 +637,7 @@ workflow, one a release tag's push starts, or one either calls), which uses no s
 release path restores no uv cache at all: each of its setup-uv steps sets `enable-cache: false`.
 `programs` names the programs of a catalogue job's toolchain that `run-job` finds on PATH and
 does not install
-(`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`, `docker`), space-separated,
+(`tools/ci/plan.py`'s `SETUP_PROGRAMS`: `tmux`, `shellcheck`, `dash`, `ffmpeg`, `docker`), space-separated,
 as the plan's matrix gives them: every name is checked before anything installs, and any other
 name fails the step with nothing installed (none is read as a pattern); each one PATH lacks is
 then installed from the runner's package manager (`apt-get` on Linux, `brew` on macOS, nothing
@@ -645,7 +645,9 @@ elsewhere), except `docker`, which is the runner image's and only checked for, s
 without it fails the step; and empty, the default, installs none. `docker` is in the vocabulary
 before any job names it because the plan of a pull request is made by `main`'s `tools/ci`
 (`pr.yml`'s plan step): a toolchain word a job uses must be on `main` before the change that
-uses it, or the planner refuses that change's catalogue. Each job keeps the rest itself:
+uses it, or the planner refuses that change's catalogue. `ffmpeg` (which brings `ffprobe`) is in the
+vocabulary before the suite names it for the same reason: the tests that build and read a video
+skip without it (#3918). Each job keeps the rest itself:
 
 - the checkout, before the action, because a local action loads only from a checkout;
 - the Runner identity step, first, so a failed checkout still logs the image. The runner

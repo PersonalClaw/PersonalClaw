@@ -271,7 +271,7 @@ def test_a_head_that_only_adds_a_toolchain_word_passes(head: Path) -> None:
         '    "docker": "docker",\n',
         '    "docker": "docker",\n    "jq": "jq",\n',
     )
-    _edit(head, "tools/ci/plan.py", '"dash", "docker")', '"dash", "docker", "jq")')
+    _edit(head, "tools/ci/plan.py", '"docker")', '"docker", "jq")')
     # The control: the word everywhere but the setup action's list is red, so the rail reads it.
     assert judged() != 0
     _edit(

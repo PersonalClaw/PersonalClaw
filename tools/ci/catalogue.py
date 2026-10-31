@@ -103,6 +103,9 @@ TOOLCHAINS = frozenset(
         "tmux",
         "shellcheck",
         "dash",
+        # ffmpeg and ffprobe, from the runner's package manager (the setup action): the tests that
+        # build and read a video skip without them (#3918).
+        "ffmpeg",
         "docker",
         # The user namespaces a GitHub-hosted Linux runner withholds, lifted for the job's own run
         # (tools/ci/allow_userns.sh); a job that names it cannot run anywhere else (#3918).

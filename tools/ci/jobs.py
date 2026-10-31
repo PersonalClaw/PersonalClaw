@@ -199,6 +199,7 @@ PROGRAMS: dict[str, str] = {
     "tmux": "tmux",
     "shellcheck": "shellcheck",
     "dash": "dash",
+    "ffmpeg": "ffmpeg",
     "docker": "docker",
 }
 
