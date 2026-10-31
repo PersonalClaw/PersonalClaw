@@ -111,12 +111,14 @@ jobs:
       || (github.event_name == 'workflow_run'
       && github.event.action == 'completed'
       && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'merge_group'
       || github.event.workflow_run.event == 'pull_request_target'
       || (github.event.workflow_run.event == 'dynamic'
       && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))
       || (github.event_name == 'workflow_run'
       && github.event.action == 'in_progress'
-      && github.event.workflow_run.event == 'pull_request'
+      && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'merge_group')
       && github.event.workflow_run.path == '.github/workflows/merge.yml')))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -208,12 +210,14 @@ jobs:
       || (github.event_name == 'workflow_run'
       && github.event.action == 'completed'
       && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'merge_group'
       || github.event.workflow_run.event == 'pull_request_target'
       || (github.event.workflow_run.event == 'dynamic'
       && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))
       || (github.event_name == 'workflow_run'
       && github.event.action == 'in_progress'
-      && github.event.workflow_run.event == 'pull_request'
+      && (github.event.workflow_run.event == 'pull_request'
+      || github.event.workflow_run.event == 'merge_group')
       && github.event.workflow_run.path == '.github/workflows/merge.yml'))))
       && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')
     runs-on: ubuntu-24.04

@@ -666,7 +666,18 @@ def test_the_command_refuses_the_rules_lists_on_a_push(
     monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
     assert verdict.main(_files(tmp_path, [_record(ONE, _test(FLAKY))])) == 2
-    assert "on a pull request's run only" in capsys.readouterr().err
+    assert "on a pull request's or a queue commit's run only" in capsys.readouterr().err
+
+
+def test_the_command_reads_the_rules_lists_on_a_queue_commit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """merge.yml hands them over on a queue commit's run (0.4.0 A1), so the flake rule holds
+    there as on a pull request's."""
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    assert verdict.main(_files(tmp_path, [_record(ONE, _test(FLAKY))])) == 0
+    assert f"::notice title=flake passed::{FLAKY} ({ONE})" in capsys.readouterr().out
 
 
 def test_the_command_reads_the_two_lists_together(

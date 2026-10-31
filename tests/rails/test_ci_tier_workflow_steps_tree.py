@@ -247,8 +247,8 @@ def _run_plan(
         "PUSH_PLAN": push_plan,
         # What the tiers' JUDGE gives: the commit a push to main replaced, else empty.
         "JUDGE": judge,
-        # What the tiers' COMPARED gives where a step names it: main, but for a queue commit.
-        **({"COMPARED": "main"} if "COMPARED" in step["env"] else {}),
+        # What the tiers' COMPARED gives: main, but for a queue commit.
+        "COMPARED": "main",
         "GITHUB_EVENT_NAME": "workflow_dispatch",
         "GITHUB_REF": "refs/heads/feature",
         "GITHUB_REPOSITORY": _REPO,
@@ -320,11 +320,20 @@ def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) ->
         "JUDGE": _JUDGE if workflow == "merge.yml" else "",
     }
     # What the changed paths are compared with (0.4.0 A1): main, but for merge.yml's queue
-    # commit, the commit the queue built it on. It lands in two merges, so both are read here.
+    # commit, the commit the queue built it on.
     compared = _COMPARED if workflow == "merge.yml" else "main"
-    assert step.get("env") in (want, {**want, "COMPARED": compared})
+    assert step.get("env") == {**want, "COMPARED": compared}
     assert step.get("shell") is None and _workflow(workflow).get("defaults") is None
     assert "${{" not in step["run"], "an expression pasted into the shell"
+
+
+def test_the_flake_rules_changed_paths_step_reads_only_the_two_commits_it_checks() -> None:
+    # The step refuses a checkout that is not the pull request's test merge or the entry's queue
+    # commit by these two alone (0.4.0 A1): no other value may reach it.
+    assert _step("merge.yml", "changes", "changed").get("env") == {
+        "PR_HEAD": "${{ github.event.pull_request.head.sha }}",
+        "QUEUE_BASE": "${{ github.event.merge_group.base_sha }}",
+    }
 
 
 def test_both_workflows_plan_with_the_same_step() -> None:
