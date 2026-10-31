@@ -38,6 +38,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A provider added or removed while a Knowledge search, a task lookup, or the list of image, video or diarization providers is being read no longer ends that call with an error. Each read the live set of providers while it waited on one of them, so a provider coming or going meanwhile broke the read off; each now reads the providers as they stood when it started.**
 - **With mid-turn messages set to Replace (Settings → Chat), a message that stops the running answer now runs as soon as that answer stops. It was queued only after the stop finished, and an answer that ended during the stop had already looked for a next message and found none, so the message waited until something else was sent.**
 - **Guesses at the sign-in password, or at a new device's code, sent all at once from one address now stop at the lockout's limit. Every guess in such a burst passed the limit before the first one was counted, so the limit held only for guesses sent one after another.**
+- **A command whose network use the check couldn't read, such as one with a subshell, a `$(…)` or a background `&`, is now asked about, or refused when unattended, like any command reaching a host off Allowed hosts. The check read hosts only from a command it could split, so YOLO, Trust or an unattended run's grant let `( server & ); curl` to any host run unasked. A listed host in such a command still runs unasked.**
 
 ### For maintainers
 

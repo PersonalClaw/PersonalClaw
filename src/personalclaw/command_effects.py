@@ -69,6 +69,7 @@ from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
 from personalclaw.command_operands import _scan, _Scan, _tail, _value_words
+from personalclaw.command_unsplit import unsplit_network
 from personalclaw.shell_syntax import Redirect, Simple, Word, lex, simple_commands
 
 # ── What a command does ──────────────────────────────────────────────────────────────────────────
@@ -203,23 +204,36 @@ def _names_a_delete(command: str) -> bool:
     return bool(names & _REMOVERS) or ("find" in names and "-delete" in words)
 
 
-def _unsplit(command: str) -> CommandEffects:
+def _unsplit(command: str, depth: int) -> CommandEffects:
     """What a line this reader cannot split into commands establishes: nothing, but that a delete
-    program it names removes a path this reading cannot name."""
-    return _UNREAD | CommandEffects(removes_unread=_names_a_delete(command))
+    program it names removes a path this reading cannot name, and where its parts reach the
+    network (:func:`~personalclaw.command_unsplit.unsplit_network`, each read with this reader)."""
+    return (
+        _UNREAD
+        | CommandEffects(removes_unread=_names_a_delete(command))
+        | unsplit_network(
+            command,
+            depth,
+            read=_text_effects,
+            assignments=_assignments,
+            nothing=_READ,
+            held=_NETWORK,
+            max_depth=_MAX_DEPTH,
+        )
+    )
 
 
 def _text_effects(command: str, depth: int) -> CommandEffects:
     if not isinstance(command, str) or not command.strip():
         return _UNREAD
     if depth > _MAX_DEPTH:
-        return _unsplit(command)
+        return _unsplit(command, depth)
     tokens = lex(command)
     if tokens is None:
-        return _unsplit(command)
+        return _unsplit(command, depth)
     simple = simple_commands(tokens)
     if not simple:
-        return _unsplit(command)
+        return _unsplit(command, depth)
     effects = _READ
     base, base_glob = "", -1
     if len(simple) > 1 and _is_leading_cd(simple[0]):
