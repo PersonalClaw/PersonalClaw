@@ -2473,3 +2473,333 @@ def test_a_wake_dispatched_with_a_malformed_head_posts_nothing(
         f"/repos/{REPO}/git/matching-refs/heads/{mc.TRUSTED_PREFIX}",
     }
     assert set(api.calls) <= sweep, set(api.calls) - sweep
+
+
+# ── A queue commit of main's merge queue (0.4.0 A1) ───────────────────────────────────────────
+
+APP = 5444147
+QUEUE = "e" * 40
+AHEAD = "9" * 40
+README_PATCH = "@@ -1 +1 @@\n-hi\n+changed"
+
+
+def _verdicts(api: FakeApi, commit: str, *checks: Mapping[str, Any]) -> None:
+    """The App's merge verdicts on a commit, as the newest-verdict read lists them."""
+    query = urllib.parse.urlencode(
+        {"check_name": "merge-verdict", "app_id": APP, "filter": "latest", "per_page": 100}
+    )
+    listed = [{"id": 700 + n, "app": {"id": APP}, "status": "completed", **c} for n, c in
+              enumerate(checks)]  # fmt: skip
+    api.answers[f"/repos/{REPO}/commits/{commit}/check-runs?{query}"] = {"check_runs": listed}
+
+
+def _entry(
+    queue_commit: str, built_on: str, number: int = 12, position: int = 1, **pull: Any
+) -> dict[str, Any]:
+    return {
+        "position": position,
+        "headCommit": {"oid": queue_commit} if queue_commit else None,
+        "baseCommit": {"oid": built_on} if built_on else None,
+        "pullRequest": {
+            "number": number,
+            "state": "OPEN",
+            "baseRefName": "main",
+            "headRefOid": HEAD,
+            **pull,
+        },
+    }
+
+
+class FakeQueue:
+    """Main's merge queue, as its one GraphQL read answers."""
+
+    def __init__(self, *entries: dict[str, Any]) -> None:
+        self.entries = list(entries)
+
+    def __call__(self, text: str, variables: Mapping[str, object]) -> Any:
+        assert "mergeQueue" in text and variables == {"owner": "owner", "name": "project"}
+        nodes = list(self.entries)
+        return {"data": {"repository": {"mergeQueue": {"entries": {
+            "totalCount": len(nodes), "nodes": nodes}}}}}  # fmt: skip
+
+
+def _queued(built_on: str = MAIN, number: int = 12) -> tuple[FakeApi, FakeQueue]:
+    """A green queue commit: #12's head squashed on ``built_on``, its run green, its pull
+    request's head green, and its change the pull request's own."""
+    api = FakeApi()
+    api.run(
+        event="merge_group",
+        head_sha=QUEUE,
+        head_branch=f"gh-readonly-queue/main/pr-{number}-{built_on}",
+    )
+    api.tree(QUEUE, {MERGE_PATH: MERGE_YML, "README.md": "changed\n"}, parents=(built_on,))
+    files = [
+        {"filename": "README.md", "status": "modified", "patch": README_PATCH, "sha": "1" * 40}
+    ]
+    api.answers[f"/repos/{REPO}/compare/{built_on}...{QUEUE}"] = {"files": files}
+    api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    _verdicts(api, QUEUE)
+    _verdicts(api, HEAD, {"conclusion": "success"})
+    return api, FakeQueue(_entry(QUEUE, built_on, number))
+
+
+def _judge_queue(api: FakeApi, queue: FakeQueue, live: bool = True) -> mc.Posting | str:
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(queue, APP, live))
+    return outcome.posting or outcome.why
+
+
+def _queue_red(api: FakeApi, queue: FakeQueue) -> mc.Posting:
+    found = _judge_queue(api, queue)
+    assert isinstance(found, mc.Posting) and found.conclusion == "failure", found
+    assert found.head_sha == QUEUE
+    return found
+
+
+def test_a_green_queue_commit_posts_success_on_the_queue_commit_with_its_receipt() -> None:
+    found = _judge_queue(*_queued())
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert found.head_sha == QUEUE
+    assert found.output["title"] == "Green: every planned job passed on #12's queue commit"
+    receipt = merge_verdict.read_receipt(mc.check_body(found.body()))
+    assert receipt.head_sha == QUEUE and receipt.tree_oid == api_tree_oid(QUEUE, _queued()[0])
+    assert receipt.toolchain["queue_pull_request"] == "12"
+    assert receipt.toolchain["queue_pull_request_head"] == HEAD
+    assert receipt.toolchain["queue_built_on"] == MAIN
+    assert receipt.toolchain["definitions"] == MAIN
+    assert "built on `" + MAIN + "`, which is main's tip" in found.output["summary"]
+
+
+def test_a_queue_commit_built_on_the_entry_ahead_is_judged_green() -> None:
+    api, queue = _queued(built_on=AHEAD)
+    queue.entries.insert(0, _entry(AHEAD, MAIN, number=11, position=1))
+    queue.entries[1]["position"] = 2
+    found = _judge_queue(api, queue)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+    assert "the queue commit of the entry ahead" in found.output["summary"]
+
+
+def test_a_queue_run_without_the_queues_read_posts_nothing() -> None:
+    api, _queue = _queued()
+    assert "judged only with the queue's read" in str(_decide(api))
+
+
+def test_a_queue_run_whose_branch_names_no_entry_posts_nothing() -> None:
+    api, queue = _queued()
+    api.answers[f"/repos/{REPO}/actions/runs/{RUN}"][
+        "head_branch"
+    ] = f"gh-readonly-queue/main/{HEAD}"
+    assert "names no entry of main's queue" in str(_judge_queue(api, queue))
+
+
+def test_a_queue_commit_the_queue_no_longer_lists_posts_nothing() -> None:
+    api, _queue = _queued()
+    assert "no entry of main's merge queue now" in str(_judge_queue(api, FakeQueue()))
+
+
+def test_a_queue_commit_whose_branch_names_another_pull_request_is_red() -> None:
+    api, queue = _queued()
+    queue.entries[0]["pullRequest"]["number"] = 13
+    assert (
+        "the queue lists it for #13, its branch names #12"
+        in _queue_red(api, queue).output["summary"]
+    )
+
+
+def test_a_queue_commit_whose_parent_is_not_the_commit_it_was_built_on_is_red() -> None:
+    api, queue = _queued()
+    api.tree(QUEUE, {MERGE_PATH: MERGE_YML, "README.md": "changed\n"}, parents=(MAIN, AHEAD))
+    assert "not one commit" in _queue_red(api, queue).output["summary"]
+
+
+def test_a_queue_commit_built_past_a_gap_in_the_queue_is_red() -> None:
+    """Built on main's tip while an entry ahead of it is queued: main would reach the entry
+    ahead's tree and then this one's, and this one's run never saw the entry ahead."""
+    api, queue = _queued()
+    queue.entries.insert(0, _entry(AHEAD, MAIN, number=11, position=1))
+    queue.entries[1]["position"] = 2
+    found = _queue_red(api, queue)
+    assert "neither main's tip nor the queue commit of the entry ahead" in found.output["summary"]
+
+
+@pytest.mark.parametrize("verdict", [None, "failure"])
+def test_a_queue_commit_whose_pull_requests_head_is_not_green_is_red(verdict: str | None) -> None:
+    api, queue = _queued()
+    if verdict is None:
+        _verdicts(api, HEAD)
+    else:
+        _verdicts(api, HEAD, {"conclusion": verdict})
+    found = _queue_red(api, queue)
+    assert f"its pull request's head {HEAD} has no green merge verdict" in found.output["summary"]
+
+
+@pytest.mark.parametrize(
+    "queued, said",
+    [
+        ([{"filename": "README.md", "patch": README_PATCH},
+          {"filename": "extra.py", "patch": "@@ -0,0 +1 @@\n+x = 1"}],
+         "the queue commit changes `extra.py`, which its pull request does not"),
+        ([], "the queue commit leaves out its pull request's change to `README.md`"),
+        ([{"filename": "README.md", "patch": "@@ -1 +1 @@\n-hi\n+other"}],
+         "the queue commit changes `README.md` otherwise than its pull request"),
+    ],
+)  # fmt: skip
+def test_a_queue_commit_whose_change_is_not_its_pull_requests_is_red(
+    queued: list[dict[str, str]], said: str
+) -> None:
+    api, queue = _queued()
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{QUEUE}"] = {"files": queued}
+    assert said in _queue_red(api, queue).output["summary"]
+
+
+def test_a_change_that_applies_on_a_moved_base_is_still_the_same_change() -> None:
+    """The context lines differ when the entry ahead changed the lines around it; the +/- lines
+    are what is compared."""
+    api, queue = _queued()
+    moved = "@@ -4,3 +4,3 @@ a line the entry ahead added\n context\n-hi\n+changed\n context"
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{QUEUE}"] = {
+        "files": [{"filename": "README.md", "patch": moved}]
+    }
+    found = _judge_queue(api, queue)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+
+
+def _queue_changes_a_definition(api: FakeApi) -> str:
+    """The queue commit changes a definition; the path its contract runs are listed at."""
+    files = {MERGE_PATH: MERGE_YML, "README.md": "changed\n", "tools/ci/verdict.py": "x = 1\n"}
+    api.tree(QUEUE, files, parents=(MAIN,))
+    return (
+        f"/repos/{REPO}/actions/workflows/contract.yml/runs?branch=contract-run%2F{QUEUE}"
+        "&event=workflow_dispatch&per_page=100"
+    )
+
+
+def test_a_queue_commit_that_changes_a_definition_waits_on_main_s_contract_over_it() -> None:
+    api, queue = _queued()
+    runs = _queue_changes_a_definition(api)
+    api.answers[runs] = {"total_count": 0, "workflow_runs": []}
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(queue, APP, True))
+    assert outcome.posting is not None and outcome.posting.conclusion == "failure"
+    assert mc.WAITING_CONTRACT in outcome.posting.output["summary"]
+    assert outcome.dispatch == QUEUE and outcome.base == MAIN
+
+
+@pytest.mark.parametrize("conclusion", ["success", "failure"])
+def test_a_queue_commit_s_contract_run_decides_its_definitions(conclusion: str) -> None:
+    api, queue = _queued()
+    runs = _queue_changes_a_definition(api)
+    run = {"id": 5151, "path": mc.CONTRACT_WORKFLOW, "event": "workflow_dispatch",
+           "head_branch": mc.CONTRACT_PREFIX + QUEUE, "head_sha": MAIN,
+           "display_title": mc.CONTRACT_TITLE.format(head=QUEUE), "status": "completed",
+           "run_attempt": 1, "html_url": "u"}  # fmt: skip
+    api.answers[runs] = {"total_count": 1, "workflow_runs": [run]}
+    api.answers[f"/repos/{REPO}/actions/runs/5151/attempts/1/jobs?per_page=100&page=1"] = {
+        "total_count": 1,
+        "jobs": [{"name": "contract", "status": "completed", "conclusion": conclusion}],
+    }
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(queue, APP, True))
+    assert outcome.posting is not None
+    assert outcome.posting.conclusion == conclusion
+    assert outcome.cleanup == mc.CONTRACT_PREFIX + QUEUE
+    if conclusion == "success":
+        receipt = merge_verdict.read_receipt(mc.check_body(outcome.posting.body()))
+        assert receipt.toolchain["definitions"] == QUEUE
+
+
+def test_a_contract_run_at_an_older_main_tip_does_not_count_for_a_queue_commit() -> None:
+    """A rails change merged since the contract ran: its pass is stale (CORE condition 2)."""
+    api, queue = _queued()
+    runs = _queue_changes_a_definition(api)
+    old = {"id": 5152, "path": mc.CONTRACT_WORKFLOW, "event": "workflow_dispatch",
+           "head_branch": mc.CONTRACT_PREFIX + QUEUE, "head_sha": AHEAD,
+           "display_title": mc.CONTRACT_TITLE.format(head=QUEUE), "status": "completed",
+           "conclusion": "success", "run_attempt": 1}  # fmt: skip
+    api.answers[runs] = {"total_count": 1, "workflow_runs": [old]}
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(queue, APP, True))
+    assert outcome.posting is not None and outcome.posting.conclusion == "failure"
+    assert outcome.dispatch == QUEUE, "it runs again at main's tip"
+
+
+@pytest.mark.parametrize("final", ["success", "failure"])
+def test_a_queue_commit_s_final_verdict_is_never_posted_again(final: str) -> None:
+    """CORE condition 1: once a queue commit's verdict waits on nothing, no later look posts on
+    it, so a commit already on main cannot be turned red."""
+    api, queue = _queued()
+    _verdicts(api, QUEUE, {"conclusion": final, "output": {"text": ""}})
+    api.jobs(1, ("results", "completed", "failure"))
+    assert "never posted again" in str(_judge_queue(api, queue))
+
+
+def test_a_queue_commit_whose_verdict_waits_is_judged_again() -> None:
+    api, queue = _queued()
+    waits = {"text": f"```{mc.WAITING_FENCE}\ncontract\n```\n"}
+    _verdicts(api, QUEUE, {"conclusion": "failure", "output": waits})
+    found = _judge_queue(api, queue)
+    assert isinstance(found, mc.Posting) and found.conclusion == "success", found
+
+
+def test_a_queue_commit_s_red_run_is_red() -> None:
+    api, queue = _queued()
+    api.jobs(1, ("results", "completed", "failure"))
+    assert "attempt 1's `results` is 'failure'" in _queue_red(api, queue).output["summary"]
+
+
+@pytest.mark.parametrize("live", [True, False])
+def test_under_the_queue_a_head_behind_main_is_not_red_for_being_behind(live: bool) -> None:
+    api = FakeApi()
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{HEAD}"] = {
+        "behind_by": 3,
+        "merge_base_commit": {"sha": AHEAD},
+    }
+    api.tree(AHEAD, {MERGE_PATH: MERGE_YML, "README.md": "hi\n"})
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, mc.Queue(FakeQueue(), APP, live))
+    assert outcome.posting is not None
+    if live:
+        assert outcome.posting.conclusion == "success", outcome.posting.output
+        assert "the merge queue tests it on before it lands" in outcome.posting.output["summary"]
+    else:
+        assert outcome.posting.conclusion == "failure"
+        assert "3 commits behind main" in outcome.posting.output["title"]
+
+
+def test_a_queue_commit_is_judged_again_from_its_own_queue_run() -> None:
+    api, queue = _queued()
+    _merge_runs(api, f"head_sha={QUEUE}&event=pull_request&status=completed&per_page=100", [])
+    _merge_runs(api, f"head_sha={QUEUE}&event=merge_group&status=completed&per_page=100", [RUN])
+    outcome = mc.wake(api, REPO, QUEUE, CONTROLLER, mc.Queue(queue, APP, True))
+    assert outcome.posting is not None and outcome.posting.head_sha == QUEUE
+    assert outcome.posting.conclusion == "success"
+
+
+@pytest.mark.parametrize("live", [True, False])
+def test_the_sweep_judges_a_waiting_queue_commit_again_once_merges_are_queued(live: bool) -> None:
+    api, queue = _queued()
+    waits = {"text": f"```{mc.WAITING_FENCE}\ncontract\n```\n"}
+    _verdicts(api, QUEUE, {"conclusion": "failure", "output": waits})
+    _merge_runs(api, f"head_sha={QUEUE}&event=pull_request&status=completed&per_page=100", [])
+    _merge_runs(api, f"head_sha={QUEUE}&event=merge_group&status=completed&per_page=100", [RUN])
+    changed = mc.judge_waiting(
+        api, REPO, APP, CONTROLLER, None, limit=3, queue=mc.Queue(queue, APP, live)
+    )
+    posted = [o.posting for o in changed if o.posting is not None]
+    if live:
+        assert [(p.head_sha, p.conclusion) for p in posted] == [(QUEUE, "success")]
+    else:
+        assert posted == [], "before the flip there is no queue to sweep"
+
+
+@pytest.mark.parametrize(
+    "rules, live",
+    [
+        ([{"type": "pull_request"}, {"type": "merge_queue"}], True),
+        ([{"type": "pull_request"}, {"type": "required_status_checks"}], False),
+        ({"message": "Not Found"}, False),
+        (None, False),
+    ],
+    ids=["a merge queue rule", "none", "an answer of another shape", "no answer"],
+)
+def test_whether_merges_are_queued_is_read_from_main_s_rules(rules: Any, live: bool) -> None:
+    """Exactly when GitHub queues main's merges; an answer it cannot read keeps rule 3."""
+    api = FakeApi()
+    if rules is not None:
+        api.answers[f"/repos/{REPO}/rules/branches/main?per_page=100"] = rules
+    assert mc.queue_live(api, REPO) is live
