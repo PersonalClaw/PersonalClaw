@@ -8,17 +8,9 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
-### Changed
-
-- **The app settings and account routes answer a malformed body with the standard error envelope (`invalid_json`, or `invalid_body` for a body that is no object), and adding an account needs no body.**
-
-### Fixed
-
-- **An unattended run is now refused a write outside its folders in a command the check couldn't read, such as one with a subshell, a group, a `$(…)` or a background `&`. The check read writes only from a command it could split, so `( echo x > ~/elsewhere )`, `echo x > ~/elsewhere &` or `{ cp a ~/notes/a; }` wrote outside the run's folders unasked. A write inside them still runs. A part the check still can't read, or one that runs a program it can't name, counts as a write it can't check, and once one part moves the shell with `cd` or changes its variables, a relative path in the others does too.**
-
 ## [0.3.1] — 2026-10-31
 
-A message you send now runs once, however many times it is sent, a chat that has gone quiet says for how long, and every page uses the window's full width, apart from the chat, which keeps its reading width. An app can offer more than one provider of a kind, each with its own settings, keep the settings they share once as account settings, hold more than one account, and show each account's connection health apart from its settings. The gateway no longer waits on the disk while it writes a security event, the sandbox check can no longer hang it, and each sandboxed command starts about 50 ms sooner. A burst of sign-in guesses now stops at the lockout's limit, a command whose network use the check couldn't read is now asked about like one reaching a host off Allowed hosts, and automations and reports read their schedules for the time they decide. Scripts and apps that call the dashboard API need version 3 of it: read the breaking changes before you upgrade.
+A message you send now runs once, however many times it is sent, a chat that has gone quiet says for how long, and every page uses the window's full width, apart from the chat, which keeps its reading width. An app can offer more than one provider of a kind, each with its own settings, keep the settings they share once as account settings, hold more than one account, and show each account's connection health apart from its settings. An app's settings and account routes answer a malformed body with the API's standard error. The gateway no longer waits on the disk while it writes a security event, the sandbox check can no longer hang it, and each sandboxed command starts about 50 ms sooner. A burst of sign-in guesses now stops at the lockout's limit, a command whose network use the check couldn't read is now asked about like one reaching a host off Allowed hosts, an unattended run is held to its folders in such a command too, and automations and reports read their schedules for the time they decide. Scripts and apps that call the dashboard API need version 3 of it: read the breaking changes before you upgrade.
 
 ### ⚠️ Breaking changes — read before upgrading
 
@@ -43,6 +35,7 @@ A message you send now runs once, however many times it is sent, a chat that has
 - **An app that declares account settings can have more than one account. For now a further account is only stored: each capability still runs on the first account. Each is a full copy of the account settings and of each capability's own, and a capability reads only the account it runs under (`ProviderSettings.load(app, capability, account)`, `ProviderSettings.list_accounts`, `add_account`, `remove_account`, `clear_account`, and `/api/apps/{name}/accounts`). Every secret is its account's, and removing an account deletes exactly its own. An update that renames a capability carries its settings and secrets to the new id in every account, and one the app declares retired has them deleted (SDK additions no app has to change for).**
 - **Every page uses the window's full width, apart from the chat, whose turns and composer keep their reading column. The Content width control is gone, and a saved choice is no longer read.**
 - **An app's accounts show their connection's health apart from their settings: connected, signing in, refused or unreachable, with the sentence and the last good contact, on `/api/apps`. A capability reports it (`personalclaw.sdk.health`), and its failure stays until that capability next succeeds. An account with two connections (reading and sending mail) shows each. A capability may list the account settings it needs (`requiresAccountFields`): while one is empty it is not started and says which, and the account's other capabilities run (SDK additions no app has to change for).**
+- **The app settings and account routes answer a malformed body with the standard error envelope (`invalid_json`, or `invalid_body` for a body that is no object), and adding an account needs no body.**
 
 ### Fixed
 
@@ -57,6 +50,8 @@ A message you send now runs once, however many times it is sent, a chat that has
 - **With mid-turn messages set to Replace (Settings → Chat), a message that stops the running answer now runs as soon as that answer stops. It was queued only after the stop finished, and an answer that ended during the stop had already looked for a next message and found none, so the message waited until something else was sent.**
 - **Guesses at the sign-in password, or at a new device's code, sent all at once from one address now stop at the lockout's limit. Every guess in such a burst passed the limit before the first one was counted, so the limit held only for guesses sent one after another.**
 - **A command whose network use the check couldn't read, such as one with a subshell, a `$(…)` or a background `&`, is now asked about, or refused when unattended, like any command reaching a host off Allowed hosts. The check read hosts only from a command it could split, so YOLO, Trust or an unattended run's grant let `( server & ); curl` to any host run unasked. A listed host in such a command still runs unasked.**
+- **An unattended run is now refused a write outside its folders in a command the check couldn't read, such as one with a subshell, a group, a `$(…)` or a background `&`. The check read writes only from a command it could split, so `( echo x > ~/elsewhere )`, `echo x > ~/elsewhere &` or `{ cp a ~/notes/a; }` wrote outside the run's folders unasked. A write inside them still runs. A part the check still can't read, or one that runs a program it can't name, counts as a write it can't check, and once one part moves the shell with `cd` or changes its variables, a relative path in the others does too.**
+- **A `cd`, `pushd` or `eval` after a variable assignment or a shell keyword (`NAME=value cd …`, `time cd …`, `if cd …; then`) now counts as moving the shell, so an unattended run's relative write after it is one the check can't place, as after any other move. The check found a move only in a command's first word, so it read such a write as one in the folder the command started in.**
 
 ### For maintainers
 
