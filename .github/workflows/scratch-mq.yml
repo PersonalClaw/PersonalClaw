@@ -1,0 +1,38 @@
+# Scratch: a proof of GitHub's merge queue on a scratch base branch. The branch, its pull
+# requests and the ruleset that queues them are deleted once the proof is read.
+name: Scratch merge queue proof
+
+on:
+  pull_request:
+    branches: [scratch/mq-base]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  scratch-mq-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: what this run is
+        run: |
+          echo "event=$GITHUB_EVENT_NAME ref=$GITHUB_REF sha=$GITHUB_SHA"
+          jq -c '{merge_group: (.merge_group // null | if . then {head_sha, head_ref, base_sha, base_ref, head_commit: (.head_commit // {} | {id, message, author})} else null end)}' "$GITHUB_EVENT_PATH"
+          git log --format='%H parents=%P author=%an committer=%cn | %s' -6
+      - name: the entry that is slow
+        # Only the entry whose own commit adds SLOW waits, so the entries behind it finish first.
+        if: github.event_name == 'merge_group'
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -qx SLOW; then echo "slow entry"; sleep 240; fi
+      - name: every run takes a minute
+        run: sleep 45
+      - name: the planted red
+        if: github.event_name == 'merge_group'
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -qx FAIL; then echo "planted red"; exit 1; fi
