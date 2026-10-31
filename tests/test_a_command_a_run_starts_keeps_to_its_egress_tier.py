@@ -129,8 +129,11 @@ def reach(tmp_path, service):
 
 def _os_sandbox_takes_the_network() -> bool:
     """Whether this host's command sandbox can take a command's network away: macOS sandbox-exec,
-    or Linux user and mount namespaces that allow a network namespace too."""
-    sandbox.reset_backend()
+    or Linux user and mount namespaces that allow a network namespace too.
+
+    Read from the check as conftest settled it (``tests/sandbox_host_facts.py``), never asked
+    afresh: this runs as the module is imported, before any test has a home, and on Linux a fresh
+    check starts a PersonalClaw child that the real-home guard refuses for want of one (#5744)."""
     backend = sandbox.detect_backend("auto")
     takes = sandbox._probe_unshare_net() if backend == "namespace" else backend == "sandbox-exec"
     if backend == sandbox.UNCHECKED or takes is None:  # never a skip: it would hide the test

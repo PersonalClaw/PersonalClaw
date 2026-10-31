@@ -580,8 +580,15 @@ def _namespaces_take(*names: str) -> bool | None:
     Only the child's own refusal (``_namespace_probe.REFUSED``) is a no. A child that does not
     answer within :data:`_NAMESPACE_PROBE_TIMEOUT`, cannot be started, is killed, or exits any
     other way is unknown, and an unknown is never read as no: that would turn the sandbox off.
+
+    The child is handed the home this process is in (``PERSONALCLAW_HOME``, resolved and not
+    made), as the upload scan's child is. It reads nothing there, but a PersonalClaw interpreter
+    left to find its own home finds the default one, which need not be this process's: a test's
+    home is chosen in the process, not in its environment, and the tests' real-home guard refuses
+    a child that would find the owner's (#5744).
     """
     from personalclaw._namespace_probe import REFUSED, TAKEN
+    from personalclaw.config.loader import resolve_config_dir
     from personalclaw.self_update import python_child_argv
 
     try:
@@ -590,6 +597,7 @@ def _namespaces_take(*names: str) -> bool | None:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=dict(os.environ, PERSONALCLAW_HOME=str(resolve_config_dir())),
             timeout=_NAMESPACE_PROBE_TIMEOUT,
             check=False,
         )
