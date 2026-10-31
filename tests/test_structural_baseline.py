@@ -213,6 +213,11 @@ def test_every_threshold_records_its_rationale():
     for rule in committed[gen.RATCHET_IMPORT_DIRECTION]["rules"]:
         assert len(rule["rationale"]) > 200, f"{rule['name']} has no real rationale"
         assert rule["upper"], f"{rule['name']} names no upper layer — it ratchets nothing"
+    foundation = committed[gen.RATCHET_IMPORT_DIRECTION]["foundation"]
+    assert foundation, "the foundation names no unit"
+    for unit, reason in foundation.items():
+        # Each membership says which claim a reviewer can check: a role, or a measurement.
+        assert reason.startswith(("role: ", "measured: ")) and len(reason) > 40, (unit, reason)
     for family in committed[gen.RATCHET_DUPLICATION]["families"]:
         assert len(family["rationale"]) > 200, f"{family['name']} has no real rationale"
 
@@ -651,6 +656,65 @@ def test_a_dead_name_in_the_layer_map_fires_vacuity(monkeypatch):
     monkeypatch.setattr(gen, "ENTRY_POINT_UNITS", (*gen.ENTRY_POINT_UNITS, "cli_long_gone"))
     failures = gen.vacuity_failures(gen.RATCHET_IMPORT_DIRECTION)
     assert len(failures) == 1 and "cli_long_gone" in failures[0], failures
+
+
+def _write_tree(root: Path, files: dict[str, str]) -> Path:
+    """A synthetic ``src/personalclaw`` under *root*, for a render pointed at it."""
+    src = root / "src" / "personalclaw"
+    for rel, body in files.items():
+        path = src / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    return src
+
+
+def test_a_foundation_unit_that_imports_a_domain_unit_reds(tmp_path):
+    """The foundation may import only itself. The import here is the shape the census could not
+    see before: a top-level module importing through the package itself. Its red names the two
+    fixes: move the shared piece down, or declare a unit that imports only the foundation."""
+    src = _write_tree(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "atomic_write.py": "import os\n",
+            "config/__init__.py": "",
+            "dashboard/__init__.py": "",
+            "workflows/__init__.py": "from personalclaw import dashboard\n",
+            "probe_helper.py": "from personalclaw import config\n",
+        },
+    )
+    with gen._rooted(tmp_path):
+        before = {"per_file": gen.scan_upward_edges().rows}
+        (src / "atomic_write.py").write_text(
+            "from personalclaw import probe_helper, workflows\n", encoding="utf-8"
+        )
+        after = {"per_file": gen.scan_upward_edges().rows}
+        failures = gen.regressions_import_direction(before, after)
+    assert len(failures) == 1 and failures[0].startswith(
+        "src/personalclaw/atomic_write.py"
+    ), failures
+    assert "foundation-imports-only-foundation -> personalclaw.workflows" in failures[0]
+    assert "if ['probe_helper'] belong(s) in the foundation" in failures[0], failures[0]
+
+
+def test_a_unit_below_the_entry_points_that_imports_one_reds(tmp_path):
+    """A unit below the entry points that imports one leans on the whole gateway. An entry point
+    importing another is the layer composing itself, and stays green."""
+    src = _write_tree(
+        tmp_path,
+        {"__init__.py": "", "gateway.py": "", "cli_run.py": "", "workflows/__init__.py": ""},
+    )
+    with gen._rooted(tmp_path):
+        before = {"per_file": gen.scan_upward_edges().rows}
+        (src / "workflows" / "__init__.py").write_text(
+            "from personalclaw import gateway\n", encoding="utf-8"
+        )
+        (src / "cli_run.py").write_text("from personalclaw import gateway\n", encoding="utf-8")
+        after = {"per_file": gen.scan_upward_edges().rows}
+        failures = gen.regressions_import_direction(before, after)
+    assert len(failures) == 1, failures
+    assert failures[0].startswith("src/personalclaw/workflows/__init__.py"), failures
+    assert "nothing-below-the-entry-points-imports-them -> personalclaw.gateway" in failures[0]
 
 
 def _real_counts() -> dict[str, int]:

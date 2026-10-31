@@ -518,6 +518,7 @@ def _unit_of(in_src: str) -> str:
 #: it only by a line here. Declared units must exist (``vacuity_failures``), so a rename cannot
 #: leave a dead name standing in for a layer.
 ENTRY_POINT_UNITS: tuple[str, ...] = (
+    "__main__",
     "app_cli",
     "cli",
     "cli_app_new",
@@ -532,6 +533,40 @@ ENTRY_POINT_UNITS: tuple[str, ...] = (
     "gateway",
 )
 
+#: The foundation: the units every other layer stands on, each with the reason it is one. A unit is
+#: here either by ROLE (the plan's four and ``net``: settings, security, the event log, the one
+#: atomic write, the egress chokepoint), whose own upward imports are the debt the foundation rule
+#: grandfathers, or by MEASUREMENT on 2026-10-31: imported by 5 or more units, importing 3 or fewer,
+#: and infrastructure by what it does. Membership changes only by a line here, never on its own: a
+#: new unit is a domain unit until someone declares it.
+FOUNDATION_UNITS: dict[str, str] = {
+    "config": "role: the settings every layer reads (imported by 159; 28 upward imports are debt)",
+    "security": "role: the built-in security controls (imported by 123; 13 upward imports: debt)",
+    "sel": "role: the security event log (imported by 71 units; 8 upward imports are debt)",
+    "atomic_write": "role: the one atomic file write (imported by 81 units; imports only config)",
+    "net": "role: the one outbound network chokepoint (imported by 39; 5 upward imports are debt)",
+    "session_keys": "measured: every session key kind; imported by 34 units, imports 1",
+    "constants": "measured: constants shared by the CLI and the gateway; imported by 24, imports 1",
+    "cancellation": "measured: a turn's one stop signal; imported by 27 units, imports 1",
+    "record_files": "measured: a JSON record file with one lock; imported by 28 units, imports 3",
+    "safety_flags": "measured: strict booleans for safety controls; imported by 28, imports none",
+    "notification_kinds": "measured: the notification kind registry; imported by 25, imports none",
+    "instants": "measured: stored timestamps with their offset; imported by 21, imports none",
+    "env": "measured: environment helpers for child processes; imported by 19, imports none",
+    "home_paths": "measured: a path in the user's home, from ~; imported by 15, imports none",
+    "record_ids": "measured: an untrusted record id to a path in its store; imported by 15, none",
+    "errors": "measured: the what/why/fix error envelope; imported by 10 units, imports none",
+    "http_errors": "measured: the one wire error emitter and its codes; imported by 10, none",
+    "token_estimate": "measured: the chars-per-token estimates; imported by 10 units, imports none",
+    "bounded_log": "measured: logs that keep their newest rows; imported by 20 units, imports 2",
+    "sqlite_compat": "measured: the one SQLite binding; imported by 18 units, imports 1",
+    "identity": "measured: the owner's attribution name; imported by 15 units, imports 1",
+    "timezones": "measured: the one wall-clock timezone resolver; imported by 10 units, imports 1",
+    "textfmt": "measured: provider-neutral LLM text helpers; imported by 11 units, imports 1",
+    "shell_syntax": "measured: how a shell splits a command line; imported by 9, imports none",
+    "filled_secrets": "measured: what a filled secret keeps, masked; imported by 5, imports 1",
+}
+
 
 @dataclass(frozen=True)
 class DirectionRule:
@@ -540,6 +575,8 @@ class DirectionRule:
     ``lower == ("*",)`` means "every unit except the ones named in ``upper``" — the
     whole-core form used for the rules whose lower layer is "all of core". ``beside`` leaves
     units out of that whole-core lower layer: the layers above ``upper``, which may import it.
+    ``upper == ("*",)`` means "every unit outside ``lower``": a layer that may import only
+    itself.
     """
 
     name: str
@@ -559,10 +596,12 @@ class DirectionRule:
         return self.lower == ("*",) or top in self.lower
 
 
-# The layer order, lowest first. Deliberately SMALL: three rules with measured, non-zero
-# populations plus one leaf-isolation rule, each naming the defect it catches. This is not a
-# full layering of 66 packages — a map that large would be a design document masquerading as
-# a lint, and its first false red would get the whole gate deleted.
+# The layer order, lowest first: the foundation (FOUNDATION_UNITS), the domain (every other unit,
+# deliberately NOT ordered within itself), the surfaces (``dashboard``, ``sdk``) and the entry
+# points (ENTRY_POINT_UNITS). Deliberately SMALL: five rules, each naming the defect it catches.
+# This is not a full layering of the 358 units — a map that large would be a design document
+# masquerading as a lint, and its first false red would get the whole gate deleted. The domain
+# is pulled apart by the import-cycle ratchet, not by an ordering.
 DIRECTION_RULES: tuple[DirectionRule, ...] = (
     DirectionRule(
         name="ledger-is-a-leaf",
@@ -607,6 +646,30 @@ DIRECTION_RULES: tuple[DirectionRule, ...] = (
             "core — the provider-boundary tenet inverted. Measured 10 edges across 7 files."
         ),
     ),
+    DirectionRule(
+        name="foundation-imports-only-foundation",
+        lower=tuple(FOUNDATION_UNITS),
+        upper=("*",),
+        rationale=(
+            "The foundation is what every layer stands on, so it may import only itself. A "
+            "foundation unit that imports a domain unit puts the whole domain under everything "
+            "that imports it, which is how one import cycle came to hold 268 of the 358 units: "
+            "config, imported by 159 units, imports apps, agents, providers and workflows. "
+            "Measured 73 edges across 17 files on 2026-10-31, grandfathered as a floor; each one "
+            "cut is a cheap first cut of that cycle."
+        ),
+    ),
+    DirectionRule(
+        name="nothing-below-the-entry-points-imports-them",
+        lower=("*",),
+        upper=ENTRY_POINT_UNITS,
+        rationale=(
+            "The entry points compose every layer below them, so a unit below that imports one "
+            "leans on the whole gateway or CLI, and could reach the HTTP surface through it "
+            "without a single edge the HTTP rule would count. Measured 2 edges across 2 files on "
+            "2026-10-31."
+        ),
+    ),
 )
 
 
@@ -648,6 +711,7 @@ def scan_upward_edges() -> Scan:
     """``{repo-relative path: {"edges": N, "violations": ["rule -> module", ...]}}``."""
     per_file: dict[str, dict[str, Any]] = {}
     inspected: set[str] = set()
+    units = census_units()
     for path in _src_py_files():
         tree = _parse(path)
         if tree is None:
@@ -658,6 +722,14 @@ def scan_upward_edges() -> Scan:
         modules = _imported_personalclaw_modules(path, tree)
         for rule in DIRECTION_RULES:
             if not rule.applies_to(in_src):
+                continue
+            if rule.upper == ("*",):
+                # Any unit outside the layer; a name the package exports that is no unit (its
+                # ``__version__``) is not an import of one.
+                for mod in modules:
+                    unit = mod.split(".")[1] if mod.count(".") else ""
+                    if unit in units and unit not in rule.lower:
+                        found.append(f"{rule.name} -> {mod}")
                 continue
             for upper in rule.upper:
                 prefix = f"personalclaw.{upper}"
@@ -686,6 +758,8 @@ def _import_direction_block() -> dict[str, Any]:
             }
             for r in DIRECTION_RULES
         ],
+        "foundation": dict(sorted(FOUNDATION_UNITS.items())),
+        "entry_points": sorted(ENTRY_POINT_UNITS),
         "per_file": per_file,
         "totals": {
             "edges": sum(int(e["edges"]) for e in per_file.values()),
@@ -712,8 +786,45 @@ def regressions_import_direction(baseline: dict[str, Any], current: dict[str, An
         lines.append(
             f"{rel}: upward imports rose {was} -> {now}; new layer violation(s): {new} "
             "— invert the dependency (move the shared piece down), do not raise the count"
+            + _foundation_hint(new)
         )
     return lines
+
+
+def _foundation_hint(violations: list[str]) -> str:
+    """For a foundation unit's new import of a unit that itself imports only the foundation: the
+    other fix, declaring that unit, which is a reviewed line and never automatic."""
+    rule = "foundation-imports-only-foundation -> "
+    targets = {v.removeprefix(rule).split(".")[1] for v in violations if v.startswith(rule)}
+    if not targets:
+        return ""
+    graph = unit_imports()
+    fits = sorted(t for t in targets if graph.get(t, set()) <= set(FOUNDATION_UNITS))
+    if not fits:
+        return ""
+    return (
+        f"; or, if {fits} belong(s) in the foundation (each imports only foundation units), add "
+        "it to FOUNDATION_UNITS with its reason in this change"
+    )
+
+
+def unit_imports() -> dict[str, set[str]]:
+    """Each unit's imports of the other units: every file's, lazy ones and package imports too."""
+    units = census_units()
+    graph: dict[str, set[str]] = {unit: set() for unit in units}
+    for path in _src_py_files():
+        in_src = _in_src(path)
+        if _is_bundled_app_module(in_src):
+            continue
+        tree = _parse(path)
+        if tree is None:
+            continue
+        own = _unit_of(in_src)
+        for mod in _imported_personalclaw_modules(path, tree):
+            unit = mod.split(".")[1] if mod.count(".") else ""
+            if unit in units and unit != own:
+                graph.setdefault(own, set()).add(unit)
+    return graph
 
 
 # ── Ratchet 3: duplicate-implementation counter ──────────────────────────────
@@ -1133,7 +1244,7 @@ def census_units() -> set[str]:
 
 def _declared_units() -> set[str]:
     """Every unit the layer map names: each rule's layers, and each declared layer."""
-    named = set(ENTRY_POINT_UNITS)
+    named = set(ENTRY_POINT_UNITS) | set(FOUNDATION_UNITS)
     for rule in DIRECTION_RULES:
         named.update(rule.lower, rule.upper, rule.beside)
     return named - {"*"}
