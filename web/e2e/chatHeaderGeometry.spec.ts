@@ -232,12 +232,12 @@ test.describe('the chat header fits at every width', () => {
 
 // ── THE TURNS READ AT THE READING WIDTH ─────────────────────────────────────────────────────────
 //
-// The transcript's turn column takes `--reading-width`, not the page-width preset, so a thread reads
+// The transcript's turn column takes `--reading-width`, the chat's own width, so a thread reads
 // at one width however wide the window is (#3820). `theTurnColumnReadsAtTheReadingWidth.test.tsx`
 // pins the cause in jsdom, which lays nothing out; this measures the result where it is drawn. At
 // the goldens' 1280 the column the turns sit in is as wide as the token resolves to, narrower than
-// the window, and centred in the transcript's scroller. On a tree whose column took the preset, the
-// shipped `full` preset ran it the scroller's whole width.
+// the window, and centred in the transcript's scroller. When the column took the old page-width
+// preset, the shipped `full` ran it the scroller's whole width.
 
 interface TurnColumn {
   viewport: number

@@ -1209,7 +1209,7 @@ function FullscreenModal({ title, onClose, children }: { title: string; onClose:
         <IconButton icon={X} label="Close fullscreen" size={32} iconSize={18} onClick={onClose} />
       </div>
       <div className="flex-1 overflow-auto p-l" onClick={(e) => e.stopPropagation()}>
-        <div className="mx-auto" style={{ maxWidth: 'var(--content-width, 56rem)' }}>{children}</div>
+        <div className="mx-auto">{children}</div>
       </div>
     </div>
   )

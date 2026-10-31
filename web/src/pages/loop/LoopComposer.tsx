@@ -364,7 +364,7 @@ export function LoopComposer({ onCreated, onHistory, initialProjectId, initialKi
             <p data-type="body-m" className="text-on-surface-low text-center max-w-[480px]">{cur.blurb}</p>
           </motion.div>
 
-          <div className="flex w-full flex-col items-center gap-l" style={{ maxWidth: 'var(--content-width)' }}>
+          <div className="flex w-full flex-col items-center gap-l">
             <ComposerStage
               ref={composerRef}
               value={task} onChange={setTask} onSend={submit}

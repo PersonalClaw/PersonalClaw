@@ -78,7 +78,7 @@ export function ComposerFold({ folded, onUnfold, composerRef, draft, onType, chi
   return (
     <>
       {folded && (
-        <span ref={lineRef} className="pointer-events-auto mx-auto flex justify-center" style={{ maxWidth: 'var(--content-width)' }}>
+        <span ref={lineRef} className="pointer-events-auto mx-auto flex justify-center" style={{ maxWidth: 'var(--reading-width)' }}>
           <Button variant="secondary" size="sm" onClick={() => editorOf(composerRef)?.focus()}
             title={`Unfold the composer (${bindingLabel('reading-mode')})`}
             className="max-w-full shadow-md">
@@ -91,7 +91,7 @@ export function ComposerFold({ folded, onUnfold, composerRef, draft, onType, chi
       <div ref={regionRef} data-composer-region data-folded={folded}
         onFocusCapture={folded ? onUnfold : undefined}
         className="mx-auto flex flex-col items-center"
-        style={folded ? { ...FOLDED, maxWidth: 'var(--content-width)' } : { maxWidth: 'var(--content-width)' }}>
+        style={folded ? { ...FOLDED, maxWidth: 'var(--reading-width)' } : { maxWidth: 'var(--reading-width)' }}>
         {children}
       </div>
     </>

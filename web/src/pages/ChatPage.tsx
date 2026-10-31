@@ -259,7 +259,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 <MessagesSkeleton />
               </div>
               <div className="relative shrink-0 px-l pb-l">
-                <div className="mx-auto flex flex-col items-center" style={{ maxWidth: 'var(--content-width)' }}>
+                <div className="mx-auto flex flex-col items-center" style={{ maxWidth: 'var(--reading-width)' }}>
                   {stage}
                 </div>
               </div>
@@ -299,7 +299,7 @@ function ChatSession({ sessionId, navigate, query, setQuery, projectId: initialP
                 {/* What the running turn is doing now, pinned here above the composer whatever the
                     transcript's scroll, and gone when it ends. Outside the transcript's scroll, it
                     takes its own height, so it never covers the last message. */}
-                <div className="pointer-events-auto mx-auto w-full" style={{ maxWidth: 'var(--content-width)' }}>
+                <div className="pointer-events-auto mx-auto w-full" style={{ maxWidth: 'var(--reading-width)' }}>
                   {/* A turn whose last frame said how it ended is over, though its stream has not closed. */}
                   <TurnStatusRow running={stream.streaming && !stream.turnEnding} phase={stream.turnPhase} line={stream.turnLine}
                     startedAt={stream.turnStart ? Date.parse(stream.turnStart) || null : null} usage={stream.turnUsage}

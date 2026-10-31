@@ -337,7 +337,7 @@ export function Composer({
   )
 
   return (
-    <div ref={rootRef} className="relative w-full" style={{ maxWidth: 'var(--content-width)' }}>
+    <div ref={rootRef} className="relative w-full">
       {/* Under the decorative light, two "awake" states drive the composer's motion,
           both scaled through expr() (bold rises tall, refined barely): FOCUS = "rises
           to meet you"; DRAG-OVER = "opens its arms to receive" — a bigger lift + fuller

@@ -33,7 +33,7 @@ type ComposerStageProps = ComposerProps & {
 export const ComposerStage = forwardRef<HTMLDivElement, ComposerStageProps>(function ComposerStage({ settled = false, ...props }, ref) {
   const morph = settled ? INSTANT : { ...physics.fluid, stiffness: 200 + expr(80, 0.4) }
   return (
-    <motion.div ref={ref} layoutId="composer-stage" data-composer-stage transition={morph} className="relative z-10 w-full" style={{ maxWidth: 'var(--content-width)' }}>
+    <motion.div ref={ref} layoutId="composer-stage" data-composer-stage transition={morph} className="relative z-10 w-full">
       <Composer {...props} settled={settled} />
     </motion.div>
   )

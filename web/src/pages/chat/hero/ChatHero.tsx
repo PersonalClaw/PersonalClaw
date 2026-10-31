@@ -152,7 +152,7 @@ export function ChatHero({ name, stage, onPickStarter, onPickSuggestion }: {
         <AgentOrb phase="idle" size={64} className="group-has-[[data-voice-orb]]/hero:hidden" />
         <h1 data-type="display-s" className="text-on-surface text-center">{greeting(name)}</h1>
       </motion.div>
-      <div className="flex w-full flex-col items-center gap-2xl" style={{ maxWidth: 'var(--content-width)' }}>
+      <div className="flex w-full flex-col items-center gap-2xl" style={{ maxWidth: 'var(--reading-width)' }}>
         {stage}
         <ExplainCard />
         <StarterChips onPick={onPickStarter} />

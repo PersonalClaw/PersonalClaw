@@ -111,8 +111,8 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
           )}
         </AnimatePresence>
         <SelectionQuote scrollRef={scrollRef} onQuote={quoteToComposer} attributionFor={attributionForNode} />
-        {/* The turn column is the reading width (`--reading-width`), not the page's content-width
-            preset: a thread reads at one width however wide the window is.
+        {/* The turn column is the reading width (`--reading-width`), as is the composer under it:
+            a thread reads at one width however wide the window is.
             `--composer-fold-room`: reading mode's folded composer floats over the transcript's end,
             so the end makes room for it (`composer/ComposerFold`). */}
         <div className="mx-auto flex flex-col gap-2xl px-l py-2xl"
