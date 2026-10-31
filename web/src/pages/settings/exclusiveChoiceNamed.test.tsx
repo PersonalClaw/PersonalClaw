@@ -307,8 +307,9 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // them is the point: if either swaps its primitive for a raw button, it appears here unmarked.
     // 17 was the equality-only population; the membership spelling added six more (see the floor
     // asserted in the test below, which is the one that would catch that matcher silently matching
-    // nothing — the whole population floor is too coarse to notice six missing).
-    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(23)
+    // nothing — the whole population floor is too coarse to notice six missing). 22 since the shell's
+    // content-width pill, one of the 23, was removed with its file (#5718).
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(22)
     for (const rel of ['pages/settings/NotificationRulesMatrix.tsx', 'pages/settings/PersonalityPicker.tsx']) {
       expect(groups.map((g) => g.rel), `${rel} delegates, and must still be COUNTED`).toContain(rel)
     }
