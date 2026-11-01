@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.3.3] — 2026-11-01
+
+A model call that a loop, a subagent or background work makes is now scanned before it leaves the machine, as one-shot calls were. Behind a trusted proxy, the sign-in lockout counts each visitor on its own. An Inbox reply goes out once, a skill proposal whose install is refused says why and stays waiting, an app install that fails during setup offers a copy of its error, and deleting a chat removes the lessons learned from its turns. A model that thinks has room to think and still answer on the Anthropic wire, a loop breaker stop in an agent CLI chat ends only the turn that looped, and push-to-talk records in the desktop tab you are using. A refused request leaves a line in the gateway log, a knowledge item the embedding model refused as too long is not sent again on every pass, and morning triage leaves a chat's own workflow runs out of the digest. A chat's pending self-model observation starts fresh after the upgrade, as its name moves to SHA-256.
+
 ### Changed
 
 - **A chat's pending self-model observation and a new skill proposal's id are named by a SHA-256 digest of the chat, no longer MD5 or SHA-1, so an observation pending in a chat left open across the upgrade starts fresh from its next turn, while proposals already filed keep their ids and the learned evidence keeps its rows.**
