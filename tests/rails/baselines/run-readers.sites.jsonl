@@ -1,0 +1,99 @@
+{"site": "src/personalclaw/action_providers/run_workflow_provider.py::RunWorkflowActionProvider.execute", "reason": "its own run: the run its step belongs to, named by the dispatch, and whether a run of the workflow it starts is going (a count)", "added": "2026-11-01"}
+{"site": "src/personalclaw/action_providers/run_workflow_provider.py::_run_of_step", "reason": "its own run: the run whose step it dispatches, named by the dispatch (`base.run_identity`), never by the step", "added": "2026-11-01"}
+{"site": "src/personalclaw/approval_grants.py::batch_allowed", "reason": "its own run: the batch a spawn belongs to, named by its `workflow:<run>` key, for whether its start was allowed", "added": "2026-11-01"}
+{"site": "src/personalclaw/approval_source.py::_run_of", "reason": "wording: the run an approval came from, named by the approval itself, for the sentence that asks", "added": "2026-11-01"}
+{"site": "src/personalclaw/approval_source.py::loop_name_of", "reason": "another store's: the loop store's `get`, which this module binds under the run store's name", "added": "2026-11-01"}
+{"site": "src/personalclaw/apps/app_work.py::of_run_id", "reason": "its own run: whose app's work a step's run is, by the id its dispatch names; an unreadable record fails closed", "added": "2026-11-01"}
+{"site": "src/personalclaw/cli_project.py::_gather", "reason": "the owner's command line: a project's export, run by the owner in a terminal", "added": "2026-11-01"}
+{"site": "src/personalclaw/dashboard/approval_owner.py::_run_ended", "reason": "status only: whether the run an approval's session belongs to has ended, for refusing a late answer", "added": "2026-11-01"}
+{"site": "src/personalclaw/dashboard/handlers/learning.py::_judge_calibration", "reason": "counts only: judge verdict counts and error buckets over recent runs, for the learning page", "added": "2026-11-01"}
+{"site": "src/personalclaw/dashboard/handlers/loop_routes.py::_run_backed", "reason": "a loop route's run-backed loop: the run a loop id names, for the Loops page", "added": "2026-11-01"}
+{"site": "src/personalclaw/dashboard/handlers/trigger_runs.py::_run_asked", "reason": "another store's runs: an automation's own fire record, not a workflow run", "added": "2026-11-01"}
+{"site": "src/personalclaw/dashboard/handlers/triggers.py::api_trigger_history_detail", "reason": "another store's runs: an automation's run history (`ScheduleRunStore`)", "added": "2026-11-01"}
+{"site": "src/personalclaw/evals/field_metrics.py::_template_run_signals", "reason": "counts only: per template, whether a person approved its gates without editing", "added": "2026-11-01"}
+{"site": "src/personalclaw/evals/harvest.py::harvestable_runs", "reason": "evaluation: a template's terminal runs, as candidate eval cases (`case_from_run` screens their inputs)", "added": "2026-11-01"}
+{"site": "src/personalclaw/evals/learning_bench.py::latest_report", "reason": "another store's: the learning benchmark's own report folders", "added": "2026-11-01"}
+{"site": "src/personalclaw/evals/model_watchdog.py::top_templates", "reason": "counts only: the most-run template names", "added": "2026-11-01"}
+{"site": "src/personalclaw/evals/skills_bench.py::consulted_runs", "reason": "ids only: the runs whose ledger consulted a skill, by run, node and reference", "added": "2026-11-01"}
+{"site": "src/personalclaw/investigate.py::_resolve_schedule_run", "reason": "another store's runs: an automation's run history (`ScheduleRunStore`)", "added": "2026-11-01"}
+{"site": "src/personalclaw/learning/attribution.py::_terminal_runs_for", "reason": "learning: a template's terminal runs, for an accepted change's harm verdict (status and counts)", "added": "2026-11-01"}
+{"site": "src/personalclaw/learning/consumer_liveness.py::sweep", "reason": "learning: whether a template's published output was read, counted per template", "added": "2026-11-01"}
+{"site": "src/personalclaw/learning/mining.py::positive_path_candidates", "reason": "learning: a template's successful runs' step names, mined into a template proposal", "added": "2026-11-01"}
+{"site": "src/personalclaw/learning/outcome_resolver.py::resolve", "reason": "learning: grades each run's open outcome questions and files the lessons", "added": "2026-11-01"}
+{"site": "src/personalclaw/learning/refiner_tools.py::gather_evidence", "reason": "learning: a template's run failures, screened and fenced, as the template refiner's evidence", "added": "2026-11-01"}
+{"site": "src/personalclaw/learning/run_end.py::_mine_tier_migration", "reason": "learning: a template's sibling runs' trajectory statistics, for a tier proposal (counts)", "added": "2026-11-01"}
+{"site": "src/personalclaw/learning/skill_promotion.py::_run_refusal", "reason": "status only: whether the run a promotion names is complete", "added": "2026-11-01"}
+{"site": "src/personalclaw/memory_writes.py::run_of_step", "reason": "its own run: the run whose step a session key names (`ownership.parse_owned`)", "added": "2026-11-01"}
+{"site": "src/personalclaw/proactive/collect.py::collect_runs", "reason": "asks through `_run_item`: the digest's reader (`_digest_reads`) goes to it, and it asks `chat_runs.reads`", "added": "2026-11-01"}
+{"site": "src/personalclaw/proactive/collect.py::current_item", "reason": "asks through `_run_item`: the digest's reader (`_digest_reads`) goes to it, and it asks `chat_runs.reads`", "added": "2026-11-01"}
+{"site": "src/personalclaw/proactive/digest_state.py::_digest", "reason": "the digest's own run: the triage workflow's latest run, which is no chat's", "added": "2026-11-01"}
+{"site": "src/personalclaw/proactive/digest_state.py::find_schedule", "reason": "another store's: the trigger store's `get`, for the digest's schedule", "added": "2026-11-01"}
+{"site": "src/personalclaw/running_now.py::_finished_row", "reason": "names only: a finished run's title, for its row in the Running now list", "added": "2026-11-01"}
+{"site": "src/personalclaw/running_now.py::_runs", "reason": "the Running now list: every live run, as a row named the way it is named while it runs", "added": "2026-11-01"}
+{"site": "src/personalclaw/started_work.py::end_started", "reason": "maintenance: ends what a stopped turn's own sessions started", "added": "2026-11-01"}
+{"site": "src/personalclaw/tasks/hierarchy_handlers.py::_run_rows", "reason": "a project's board: the runs bound to the project, as board rows", "added": "2026-11-01"}
+{"site": "src/personalclaw/tasks/hierarchy_handlers.py::api_projects_export", "reason": "a project's export: the runs bound to the project, in its archive", "added": "2026-11-01"}
+{"site": "src/personalclaw/triggers/loop.py::_apply_resume", "reason": "maintenance: an automation's resume of the run it targets", "added": "2026-11-01"}
+{"site": "src/personalclaw/triggers/tools.py::_running_workflow_runs", "reason": "ids and names: the runs going now, for an automation's refusal to offer", "added": "2026-11-01"}
+{"site": "src/personalclaw/triggers/tools.py::_workflow_run", "reason": "status only: whether the run an automation would wait on is going", "added": "2026-11-01"}
+{"site": "src/personalclaw/waiting.py::_gates", "reason": "asks through its reader: the waiting list is cut to what each reader reads (`Reach`: an agent reads its own chat's items)", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/audit.py::audit", "reason": "asks through its callers: they pass `only`, the ids `chat_runs.live_runs_read` gives a reader that is not you", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/automation_version.py::_run_named", "reason": "its own run: the run whose work an automation version binds, by the id its record names", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/batch_start.py::resume", "reason": "maintenance: whether a batch the gateway left asking has started (a count)", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/batch_start.py::task_of_chat", "reason": "its own run: the batch run an agent's own key names, for the chat it reports to", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/chat_runs.py::whose", "reason": "the rule itself: whose chat's run a run is, judged at its tree's root", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/context_block.py::staged_spec_echo", "reason": "asks through its caller: the MCP dispatch echoes only a run `chat_runs.reads_id` lets it read", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/deliverable.py::_earlier_run", "reason": "a start's check: whether the run a new run continues is an earlier run of the same workflow", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/engine.py::_restriction_skip", "reason": "maintenance: the engine reads its own run's memory mode", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/engine.py::dispatch_subworkflow", "reason": "maintenance: the engine starts its own child run and waits on it", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/handlers.py::_attention_scopes", "reason": "counts only: per-template attention statistics over recent runs", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/handlers.py::_template_run_stats", "reason": "counts only: a template's clean runs and whether its evaluator ever rejected", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/handlers.py::api_def_ledger", "reason": "ids, status and totals: a template's recent runs on its ledger tab", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/handlers.py::nodding_revocation_cause", "reason": "counts only: judge verdict statistics per template, for the nodding-gate revocation", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/input_secrets.py::_redact_runs", "reason": "maintenance: rewrites a secret's value out of every run record", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/loop_view.py::get_loop_view", "reason": "a loop route's run-backed loop: the loop row for the run a loop id names", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/overlap.py::drain", "reason": "maintenance: the engine's queue of starts waiting for a workflow's run to end", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/overlap.py::queued_names", "reason": "maintenance: the engine's queue of starts waiting for a workflow's run to end", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/overlap.py::queued_runs", "reason": "maintenance: the engine's queue of starts waiting for a workflow's run to end", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/private_runs.py::_ended_trees", "reason": "maintenance: finds the runs of Temporary and Incognito chats that ended, to remove them", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/provisioning.py::run_workdir", "reason": "its own run: the folder a step of the run works in, from the run's own record", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/provisioning.py::step_documents", "reason": "its own run: the documents folder of the run a spawn's key names", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/provisioning.py::step_reads", "reason": "its own run: the folders a step of the run a spawn's key names reads", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/replay.py::replay_run", "reason": "the owner's command line: `personalclaw workflow replay`", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/restricted_calls.py::its_own_run", "reason": "the rule for a restricted session: whether the run it names is its own", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/review_service.py::apply_triage", "reason": "asks through its route, which `_of_its_chat` wraps", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/review_service.py::review_findings", "reason": "asks through its route, which `_of_its_chat` wraps", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/run_budget.py::child_usage", "reason": "maintenance: what a run's own child run booked", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/run_budget.py::spent", "reason": "maintenance: what a run and the runs it started booked against its caps", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/run_cockpit.py::introspect", "reason": "asks through its route, which `_of_its_chat` wraps; its template card counts the template's other runs", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/run_cockpit.py::ledger_rails", "reason": "asks through its route, which `_of_its_chat` wraps", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/run_cockpit.py::run_deliverable", "reason": "asks through its route, which `_of_its_chat` wraps", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/run_cockpit.py::template_trajectory", "reason": "counts only: a template's trajectory signatures across its recent runs", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::_default_eligibility", "reason": "counts only: a template's judge verdicts, for whether it may become its kind's default", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::_reentry", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::_status_of", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::accept_dropped_file", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::cancel_run", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::delete_run", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::drop_status", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::edit_run", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::fork_run", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::inspect_node", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::observe", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::outbox", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::output", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::pause_run", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::pending_steering", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::preview_edit", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::resolve_confirmation", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::resume_run", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::set_policy_overrides", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::start_draft_run", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::start_run", "reason": "a start: the run it just started, for its completion line", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::status", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::steer_run", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/service.py::workspace_review", "reason": "asks through its callers: the routes `_of_its_chat` wraps and the MCP dispatch, which asks `chat_runs.hidden` of any call naming a run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/watchdog.py::WorkflowWatchdog._boot_sweep", "reason": "maintenance: decides the crash survivors before adoption", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/watchdog.py::WorkflowWatchdog._end_runs_whose_loop_ended", "reason": "maintenance: ends the runs whose loop is over", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/watchdog.py::WorkflowWatchdog._poll_once", "reason": "maintenance: the supervisor's poll over every live run", "added": "2026-11-01"}
+{"site": "src/personalclaw/workflows/watchdog.py::prune_runs", "reason": "maintenance: retention, oldest runs first", "added": "2026-11-01"}
