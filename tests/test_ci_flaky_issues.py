@@ -42,9 +42,11 @@ def _history(
     tested: tuple[str, ...] = (),
     extra: tuple[dict, ...] = (),
     version: int = telemetry.VERSION,
+    queued: bool = False,
 ) -> None:
     """One push's history: its own record naming *flaky* as flakes, and, when *tested* names any,
-    its tested pull request run's record (run ``run_id + 1000``) naming those."""
+    its tested pull request run's record (run ``run_id + 1000``) naming those. *queued*: a merge
+    queue run's instead, on commit ``f"{run_id:040x}"``."""
     head = {f: None for f in telemetry.RUN_FIELDS}
     head.update(
         kind="run",
@@ -55,9 +57,16 @@ def _history(
         workflow="merge.yml",
         event="push",
         branch="main",
+        sha=f"{run_id:040x}",
         created_at=_day(days_ago),
         jobs=[],
     )
+    if queued:
+        head.update(
+            event=telemetry.QUEUE_EVENT,
+            branch=f"gh-readonly-queue/main/pr-{run_id}-{'c' * 40}",
+            queue={"pull_request": run_id, "head_sha": "d" * 40},
+        )
 
     def record(tests: tuple[str, ...]) -> dict:
         return {
@@ -122,6 +131,23 @@ class FakeGh:
     def writes(self) -> list[tuple[str, ...]]:
         return [c for c in self.calls if "-X" in c]
 
+    def comparing(self, merged: frozenset[int]) -> Any:
+        """This ``gh``, answering a commit's comparison with main: ``ahead`` for the commit of
+        each run in *merged*, ``diverged`` for any other, recording each as a call."""
+
+        def gh(*args: str) -> str:
+            url = args[1] if len(args) > 1 else ""
+            if args[:1] == ("api",) and "/compare/" in url:
+                self.calls.append(args)
+                sha = url.split("/compare/")[1].split("...")[0]
+                return "ahead\n" if int(sha, 16) in merged else "diverged\n"
+            return self(*args)
+
+        return gh
+
+    def compared(self) -> list[str]:
+        return [c[1] for c in self.calls if len(c) > 1 and "/compare/" in c[1]]
+
 
 def _issue(
     number: int,
@@ -143,9 +169,13 @@ def _issue(
     return issue
 
 
-def _run(window: Path, gh: FakeGh) -> flaky_issues.Plan:
+def _run(window: Path, gh: FakeGh, merged: frozenset[int] = frozenset()) -> flaky_issues.Plan:
+    """The plan, with *merged* the queue runs whose commits are on main."""
     found = flaky_issues.read(window)
-    whole = flaky_issues.complete(window / fetch.STATUS) and flaky_issues.covers(found, TODAY)
+    on_main = flaky_issues.on_main(REPO, gh.comparing(merged))
+    whole = flaky_issues.complete(window / fetch.STATUS) and flaky_issues.covers(
+        flaky_issues.proved(found, on_main), TODAY
+    )
     done = flaky_issues.plan(
         found.flakes,
         flaky_issues.own_issues(REPO, gh),
@@ -283,6 +313,117 @@ def test_a_flake_in_the_last_fourteen_days_keeps_its_issue_open(tmp_path: Path) 
     _status(window, fetched=3)
     gh = FakeGh([_issue(7, FLAKY)])
     assert _run(window, gh) == flaky_issues.Plan()
+
+
+# ── the merge queue's runs ────────────────────────────────────────────────────────────────────
+
+
+def test_a_queue_run_s_flakes_open_an_issue_though_its_commit_never_reached_main(
+    tmp_path: Path,
+) -> None:
+    """Opening only asks a person to look, so every queue run's flakes count."""
+    window = tmp_path / "w"
+    _history(window, 101, 1, flaky=(FLAKY,), queued=True)
+    _history(window, 102, 2, flaky=(FLAKY,), queued=True)
+    _status(window, fetched=2)
+    gh = FakeGh()
+    done = _run(window, gh)
+    assert [name for name, _ in done.open] == [flaky_issues.title(FLAKY)]
+
+
+def test_a_queue_run_s_flake_keeps_an_issue_open_though_its_commit_never_reached_main(
+    tmp_path: Path,
+) -> None:
+    window = tmp_path / "w"
+    _history(window, 101, 15)
+    _history(window, 102, 10, flaky=(FLAKY,), queued=True)
+    _history(window, 103, 1)
+    _status(window, fetched=3)
+    assert _run(window, FakeGh([_issue(7, FLAKY)])) == flaky_issues.Plan()
+
+
+def test_a_queue_run_that_never_reached_main_closes_nothing(tmp_path: Path) -> None:
+    """Main's own histories stop three days back; only a queue run is fresh, and its commit is
+    not on main, so the window does not hold the last two days and nothing is closed."""
+    window = tmp_path / "w"
+    _history(window, 101, 15)
+    _history(window, 102, 3)
+    _history(window, 103, 1, queued=True)
+    _status(window, fetched=3)
+    gh = FakeGh([_issue(7, FLAKY)])
+    assert _run(window, gh).close == ()
+    assert gh.compared() == [f"repos/{REPO}/compare/{103:040x}...main"]
+    assert gh.writes() == []
+
+
+def test_a_queue_run_on_main_counts_toward_the_window_s_days(tmp_path: Path) -> None:
+    window = tmp_path / "w"
+    _history(window, 101, 15)
+    _history(window, 102, 3)
+    _history(window, 103, 1, queued=True)
+    _status(window, fetched=3)
+    gh = FakeGh([_issue(7, FLAKY)])
+    assert _run(window, gh, merged=frozenset({103})).close == (7,)
+
+
+def test_a_queue_run_on_main_can_be_the_oldest_day_too(tmp_path: Path) -> None:
+    window = tmp_path / "w"
+    _history(window, 101, 15, queued=True)
+    _history(window, 102, 16, queued=True)
+    _history(window, 103, 1)
+    _status(window, fetched=3)
+    assert _run(window, FakeGh([_issue(7, FLAKY)])).close == ()
+    gh = FakeGh([_issue(7, FLAKY)])
+    assert _run(window, gh, merged=frozenset({101})).close == (7,)
+    assert gh.compared() == [
+        f"repos/{REPO}/compare/{102:040x}...main",
+        f"repos/{REPO}/compare/{101:040x}...main",
+    ], "the oldest first, until one is on main"
+
+
+def test_a_window_main_s_own_histories_span_asks_nothing_of_a_queue_run(tmp_path: Path) -> None:
+    window = tmp_path / "w"
+    _history(window, 101, 15)
+    _history(window, 102, 10, queued=True)
+    _history(window, 103, 1)
+    _status(window, fetched=3)
+    gh = FakeGh([_issue(7, FLAKY)])
+    assert _run(window, gh).close == (7,)
+    assert gh.compared() == []
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["behind", "diverged", "", "ahead-ish", subprocess.CalledProcessError(1, ["gh"])],
+    ids=["behind", "diverged", "empty", "another-word", "unread"],
+)
+def test_a_commit_main_does_not_hold_is_not_on_main(answer: object) -> None:
+    def gh(*args: str) -> str:
+        if isinstance(answer, BaseException):
+            raise answer
+        return f"{answer}\n"
+
+    assert flaky_issues.on_main(REPO, gh)("a" * 40) is False
+
+
+@pytest.mark.parametrize("status", ["identical", "ahead"])
+def test_a_commit_main_is_or_holds_is_on_main(status: str) -> None:
+    asked: list[tuple[str, ...]] = []
+
+    def gh(*args: str) -> str:
+        asked.append(args)
+        return f"{status}\n"
+
+    assert flaky_issues.on_main(REPO, gh)("a" * 40) is True
+    assert asked == [("api", f"repos/{REPO}/compare/{'a' * 40}...main", "--jq", ".status")]
+
+
+@pytest.mark.parametrize("sha", ["", "main", "a" * 39, "A" * 40, "a" * 40 + "...x"])
+def test_a_commit_that_is_no_full_id_is_never_asked_about(sha: str) -> None:
+    def gh(*args: str) -> str:
+        raise AssertionError(args)
+
+    assert flaky_issues.on_main(REPO, gh)(sha) is False
 
 
 # ── a fix that did not hold ───────────────────────────────────────────────────────────────────

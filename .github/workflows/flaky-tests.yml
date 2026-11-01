@@ -8,7 +8,9 @@
 # 7 days, titled
 # "Flaky test: <id>" and labelled `flaky-test`. It edits that test's open issue, reopens its
 # closed one when two flakes came after it closed, or opens one; and it closes an open one after
-# 14 days with no flake, only when the window holds all 14 days. It writes only the issues this
+# 14 days with no flake, only when the window holds all 14 days. A merge queue run's flakes count
+# like any run's, but its history counts toward those 14 days only once its commit is on main
+# (the comparison the job token's `contents: read` reads). It writes only the issues this
 # workflow's account opened, and a body holds the test's id, its counts and its runs' links,
 # never a log line.
 #

@@ -68,8 +68,13 @@ def test_the_collect_job_starts_no_runner_for_a_run_that_does_not_count() -> Non
     assert _normal(written[3:-2]) == _normal(telemetry.collect_condition())
 
 
-def test_the_collector_follows_main_only() -> None:
-    assert _collector()[True]["workflow_run"]["branches"] == ["main"]
+def test_the_collector_follows_main_and_the_merge_queue_s_refs_for_main_only() -> None:
+    """Main, and the queue's refs for main, whose runs the job's ``if:`` and ``counts()`` read
+    whole: no other branch's run starts the workflow."""
+    assert _collector()[True]["workflow_run"]["branches"] == ["main", "gh-readonly-queue/main/**"]
+    assert telemetry.QUEUE_REF_PREFIX.startswith("gh-readonly-queue/main/")
+    # What the job's ``if:`` lets start is a prefix of every ref ``counts()`` takes.
+    assert telemetry.QUEUE_REF.pattern.startswith(telemetry.QUEUE_REF_PREFIX)
 
 
 def _step(job: str, uses: str) -> dict:

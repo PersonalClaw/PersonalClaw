@@ -380,6 +380,27 @@ def test_an_archive_over_the_limit_is_never_downloaded_nor_kept(tmp_path: Path) 
     assert _refused(out, "telemetry-history-200-1.zip: ", "passes 32 bytes")
 
 
+#: A merge queue commit's ref for main, as a queue run's branch.
+QUEUE_REF = f"gh-readonly-queue/main/pr-5801-{'c' * 40}"
+
+
+def test_a_queue_run_s_history_is_fetched_from_its_own_listing(tmp_path: Path) -> None:
+    """A queue run is on the queue's ref, which no branch filter names: merge.yml's runs are
+    listed by that event too, and its history is kept like a push's."""
+    gh = Gh()
+    gh.collector(30, "workflow_run", 1)
+    head = {"event": "merge_group", "branch": QUEUE_REF}
+    gh.artifact(30, "telemetry-history-300-1", _history_zip(300, 1, **head))
+    gh.source(300, 1, event="merge_group", head_branch=QUEUE_REF)
+    got = _fetch(gh, tmp_path / "window")
+    assert (got.fetched, got.refused) == (1, 0), _status(tmp_path / "window")
+    listed = [a for a in gh.asked if f"/workflows/{workflows.MERGE}/runs?" in a]
+    assert any("branch=main" in a for a in listed) and any("event=merge_group" in a for a in listed)
+    assert not any(
+        "event=merge_group" in a for a in gh.asked if "/workflows/breadth.yml/runs?" in a
+    ), "breadth is no workflow the queue runs"
+
+
 @pytest.mark.parametrize(
     ("head", "source", "why"),
     [
@@ -387,6 +408,16 @@ def test_an_archive_over_the_limit_is_never_downloaded_nor_kept(tmp_path: Path) 
         pytest.param({"event": "pull_request"}, {}, "is not a counted run", id="a-pr-event"),
         pytest.param({"branch": "feature-x"}, {}, "is not a counted run", id="another-branch"),
         pytest.param({"workflow": "nix.yml"}, {}, "is not a counted run", id="another-workflow"),
+        pytest.param(
+            {"event": "merge_group"}, {}, "is not a counted run", id="a-queue-run-on-main"
+        ),
+        pytest.param(
+            {"event": "merge_group", "branch": "gh-readonly-queue/main/pr-1-ccccccc"},
+            {},
+            "is not a counted run",
+            id="a-queue-run-on-a-short-ref",
+        ),
+        pytest.param({"branch": QUEUE_REF}, {}, "is not a counted run", id="a-push-on-a-queue-ref"),
         pytest.param({"run_id": 301}, {}, "describes run 301", id="another-runs-history"),
         pytest.param({"schema": "another"}, {}, "not a", id="another-schema"),
         pytest.param({"version": 99}, {}, "not a", id="a-version-it-does-not-read"),
@@ -411,6 +442,12 @@ def test_an_archive_over_the_limit_is_never_downloaded_nor_kept(tmp_path: Path) 
             {"head_branch": "feature-x"},
             "is not a run its workflow's listing shows",
             id="listed-on-another-branch",
+        ),
+        pytest.param(
+            {"event": "merge_group", "branch": QUEUE_REF},
+            {"event": "merge_group", "head_branch": f"gh-readonly-queue/release/pr-1-{'c' * 40}"},
+            "is not a run its workflow's listing shows",
+            id="a-queue-run-listed-for-another-base",
         ),
         pytest.param(
             {},

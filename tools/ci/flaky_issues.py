@@ -31,6 +31,13 @@ its histories unread, the oldest was made :data:`CLOSE_DAYS` or more days ago an
 within :data:`FRESH_DAYS`. A short window, or one the collector stopped filling, closes nothing. A
 pull request that says ``Fixes #N`` closes it through GitHub's own keywords.
 
+**Queue runs** (``telemetry.QUEUE_EVENT``). A merge queue run tests what is enqueued for main, and
+its commit reaches main only when its group is not torn down. Its flakes count as any run's, so
+they open, edit and reopen issues and keep one open: each only asks a person to look. But a close
+stops people watching, so a queue run's history counts toward the window's span only once its
+commit is on main (:func:`proved`, asked of the API only for a history that would widen the span
+main's own histories give). A commit that cannot be read is not on main.
+
 **No log text.** A body holds the test's id, in a fence longer than any run of backticks in it,
 the counts, and each flake's run link and day. Nothing else of a history is read into it: a
 history holds no failure message, and a record's ``why`` is never read.
@@ -41,6 +48,7 @@ Standard library only, like every file in ``tools/ci``.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime
 import hashlib
 import json
@@ -100,11 +108,14 @@ class Flake:
 
 @dataclass(frozen=True, slots=True)
 class Window:
-    """The window's flakes, and when its oldest and newest histories' runs were made."""
+    """The window's flakes, when its oldest and newest histories' runs were made (a queue run's
+    only once :func:`proved` finds its commit on main), and each queue run's history: when its run
+    was made and the commit it ran on."""
 
     flakes: tuple[Flake, ...]
     first: datetime.datetime | None
     last: datetime.datetime | None
+    queued: tuple[tuple[datetime.datetime, str], ...] = ()
 
 
 def read(window: Path) -> Window:
@@ -113,11 +124,15 @@ def read(window: Path) -> Window:
     refuses the whole window, as the weekly report does."""
     seen: dict[tuple[str, int, int], Flake] = {}
     made: list[datetime.datetime] = []
+    queued: list[tuple[datetime.datetime, str]] = []
     try:
         for path in report.sources(window, report.HISTORY_NAME):
             head, own, tested = report.run_records(path)
             at = _when(head.get("created_at"), path.name)
-            made.append(at)
+            if head.get("event") == telemetry.QUEUE_EVENT:
+                queued.append((at, str(head.get("sha") or "")))
+            else:
+                made.append(at)
             run_id, attempt = int(head["run_id"]), int(head["attempt"])
             for line in own:
                 for test in _flaky(line):
@@ -129,7 +144,52 @@ def read(window: Path) -> Window:
     except report.SchemaError as exc:
         raise Refused(str(exc)) from None
     found = sorted(seen.values(), key=lambda f: (f.test, f.at, f.run_id, f.attempt))
-    return Window(tuple(found), min(made, default=None), max(made, default=None))
+    return Window(
+        tuple(found), min(made, default=None), max(made, default=None), tuple(sorted(queued))
+    )
+
+
+def proved(found: Window, on_main: Callable[[str], bool]) -> Window:
+    """The window with the queue runs whose commits are on main counted toward its span: the
+    oldest such history older than main's own oldest, and the newest newer than its newest.
+    Only those are asked about, in that order, so a window main's own histories span asks
+    nothing; each other queue run counts for flakes alone."""
+    first, last = found.first, found.last
+    for at, sha in found.queued:
+        if first is not None and at >= first:
+            break
+        if on_main(sha):
+            first = at
+            break
+    for at, sha in reversed(found.queued):
+        if last is not None and at <= last:
+            break
+        if on_main(sha):
+            last = at
+            break
+    return dataclasses.replace(found, first=first, last=last)
+
+
+#: A full commit id, as a queue run's history names the commit it ran on.
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
+def on_main(repo: str, gh: Callable[..., str]) -> Callable[[str], bool]:
+    """Whether a commit is on main: main is it, or holds it (the API's comparison of the commit
+    with main says ``identical`` or ``ahead``). A commit that cannot be read, or that is no full
+    id, is not."""
+
+    def ask(sha: str) -> bool:
+        if not _COMMIT.fullmatch(sha):
+            return False
+        try:
+            status = gh("api", f"repos/{repo}/compare/{sha}...main", "--jq", ".status").strip()
+        except (subprocess.SubprocessError, OSError) as exc:
+            print(f"::warning title=a queue run's commit not read::{sha}: {exc}")
+            return False
+        return status in ("identical", "ahead")
+
+    return ask
 
 
 def _when(value: object, where: str) -> datetime.datetime:
@@ -439,7 +499,9 @@ def main(argv: list[str] | None = None) -> int:
     today = report.today()
     try:
         found = read(args.window)
-        whole = complete(args.window / fetch.STATUS) and covers(found, today)
+        whole = complete(args.window / fetch.STATUS) and covers(
+            proved(found, on_main(args.repo, _gh)), today
+        )
         done = plan(
             found.flakes,
             own_issues(args.repo, _gh),

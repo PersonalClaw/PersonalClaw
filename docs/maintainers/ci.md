@@ -1890,8 +1890,18 @@ the shard planner and the weekly report read it.
 
 - **`collect`** runs when a CI, Merge or Breadth run completes. It counts only main's own runs: a
   CI or Merge run of a commit landing on `main`, and Breadth's scheduled or dispatched run on `main`, from this
-  repository. It decides that from the run itself before it lists any artifact, and the job's
+  repository. It also counts Merge's run on a merge queue commit for `main` (`merge_group`): its
+  branch must be the queue's ref, `gh-readonly-queue/main/pr-<number>-<40 hex>`, read whole
+  (`telemetry.QUEUE_REF`), and the workflow's `branches:` and `if:` let it start by that prefix.
+  It decides that from the run itself before it lists any artifact, and the job's
   `if:` holds the same rule, so a pull request's run starts no collector and is never collected.
+- **A queue run** (version 7) tests what is enqueued for `main`: `main`, the entries ahead and
+  one pull request. Its commit reaches `main` only when its group is not torn down, so its run
+  line's `queue` names the pull request: the number from the ref (the run lists none) and the
+  head the API gives at collection, null when it can't be read. Every other run's `queue` is
+  null. The fetch lists `merge.yml`'s queue runs by their event, since no branch filter names
+  them, and so does the shard planner, by when each was made among `main`'s own. Their seconds
+  and their flakes count as any run's; only the flaky-tests job's close waits for proof (below).
   It writes `history-<run>-<attempt>.jsonl`: a first line naming the schema and its version,
   with the facts only the Actions API knows (queue delay, setup, time to the first failed job,
   verdict time, runner-minutes, cancelled work, artifact volume, schedule lag, one entry per
@@ -1939,8 +1949,9 @@ the shard planner and the weekly report read it.
   where none was recorded), which the planner weighs seconds by.
 - **Versions.** Version 3 added the run line's `cpus` and nothing else, version 4 the job
   record lines and nothing else, version 5 the run line's `tested_by` and nothing else, and
-  version 6 the tested run's `tested_record` lines and nothing else. The planner, the report and
-  the parity check read versions 1 to 6, so a history kept from before reads as one whose reports
+  version 6 the tested run's `tested_record` lines and nothing else, and version 7 the run line's
+  `queue` and nothing else. The planner, the report and
+  the parity check read versions 1 to 7, so a history kept from before reads as one whose reports
   recorded no CPU model, whose run carried no job records and that no pull request run's suite or
   records filled in, and they refuse anything newer. The planner and the parity check read test
   lines alone; the report checks a `tested_record` line's shape and counts it in no figure, and
@@ -2157,6 +2168,12 @@ workflow of its own so the collector holds no write.
   or dropped), the oldest history is 14 days old or more and the newest at most 2. A window the
   collector stopped filling closes nothing. A pull request that says `Fixes #N` closes it
   through GitHub.
+- **Queue runs.** A merge queue run's flakes count as any run's, so they open, edit and reopen
+  issues and keep one open: each only asks a person to look. A close stops people watching, so a
+  queue run's history counts toward the 14 days only once its commit is on `main`: `main` is it
+  or holds it, as the API's comparison of the two says (`identical` or `ahead`), read only for a
+  history that would widen the span `main`'s own histories give. A commit that can't be read is
+  not on `main`.
 - **Only its own issues.** An issue is the job's when `github-actions[bot]` opened it, it carries
   the label, its title is one the job gives, and it is no pull request. It lists them through the
   issues API, never search. Every other issue is never edited, reopened, closed or counted.

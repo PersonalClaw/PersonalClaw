@@ -2,9 +2,10 @@
 #
 # After a Merge or Breadth run completes, `collect` writes that attempt's history: a run line
 # with the facts only the Actions API knows, then one line per test case of the attempt's junit
-# reports. It counts a push to main's run of Merge and a scheduled or dispatched Breadth run on
-# main, from this repository, and decides that from the run itself before listing any artifact,
-# so a pull request's run is never collected. The job's `if:` holds the same rule per workflow
+# reports. It counts a push to main's run of Merge, Merge's run on a merge queue commit for main
+# (its history names the pull request), and a scheduled or dispatched Breadth run on main, from
+# this repository, and decides that from the run itself before listing any artifact, so a pull
+# request's run is never collected. The job's `if:` holds the same rule per workflow
 # and event, so such a run starts no runner at all. A tested push runs no suite, so its history
 # also takes the first attempt of the pull request run that tested its tree, by tree-check's
 # rules (tools/ci/tree_tested.py), from this repository and on that pull request's head.
@@ -28,8 +29,10 @@ on:
     workflows: ["Merge", "Breadth"]
     types: [completed]
     # A pull request's run never starts this workflow at all. A fork's run from a branch it
-    # named main still does, so the job's `if:` checks the repository too.
-    branches: [main]
+    # named main still does, so the job's `if:` checks the repository too. The merge queue's
+    # runs of Merge are on its own refs for main (gh-readonly-queue/main/pr-<N>-<sha>), which the
+    # second pattern lets start it; telemetry.counts() reads such a ref whole.
+    branches: [main, "gh-readonly-queue/main/**"]
   schedule:
     - cron: "47 10 * * *"  # daily, after Breadth's 09:37 slot and clear of the other slots
   workflow_dispatch:
@@ -47,16 +50,21 @@ permissions:
 jobs:
   collect:
     # telemetry.collect_condition(), word for word: telemetry.counts()'s rule, per workflow and
-    # event. tests/rails/test_ci_telemetry_schedules.py holds the two equal.
+    # event, each event on its own branch (a queue run's ref by its prefix here, whole in
+    # counts()). tests/rails/test_ci_telemetry_schedules.py holds the two equal.
     if: >-
       ${{ github.event_name == 'workflow_run'
-      && github.event.workflow_run.head_branch == 'main'
       && github.event.workflow_run.head_repository.full_name == github.repository
       && ((github.event.workflow_run.path == '.github/workflows/breadth.yml'
-           && (github.event.workflow_run.event == 'schedule'
-               || github.event.workflow_run.event == 'workflow_dispatch'))
+           && ((github.event.workflow_run.event == 'schedule'
+                && github.event.workflow_run.head_branch == 'main')
+               || (github.event.workflow_run.event == 'workflow_dispatch'
+                   && github.event.workflow_run.head_branch == 'main')))
           || (github.event.workflow_run.path == '.github/workflows/merge.yml'
-              && (github.event.workflow_run.event == 'push'))) }}
+              && ((github.event.workflow_run.event == 'merge_group'
+                   && startsWith(github.event.workflow_run.head_branch, 'gh-readonly-queue/main/pr-'))
+                  || (github.event.workflow_run.event == 'push'
+                      && github.event.workflow_run.head_branch == 'main')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

@@ -225,6 +225,8 @@ FILES = ["tests/test_a.py", "tests/sub/test_s.py", "tests/test_ab.py"]
 LEG = shards.Leg("test-shard", "ci.yml", "junit-test-shard-", 4)
 LINUX = "linux-x86_64-3.12.15"
 REPO_ID = 1
+#: A merge queue ref for main, as a queue run's branch.
+_QUEUE_REF = f"gh-readonly-queue/main/pr-5801-{'a' * 40}"
 
 
 def _zip(name: str, data: bytes, *, deflate: bool = False) -> bytes:
@@ -303,6 +305,10 @@ class _Gh:
         self.broken = False
         #: Each workflow's runs, when the runs are not every workflow's (``histories``' keys).
         self.listings: dict[str, list[int]] | None = None
+        #: Each workflow's merge queue runs, listed by their event.
+        self.queued: dict[str, list[int]] = {}
+        #: A run's branch, when it is not main (or, for a queue run, the queue's ref).
+        self.branches: dict[int, str] = {}
 
     def text(self, *args: str) -> str:
         path = next(a for a in args[1:] if not a.startswith("-"))
@@ -310,12 +316,29 @@ class _Gh:
         if self.broken:
             raise subprocess.CalledProcessError(1, ["gh", *args])
         if "/runs?" in path:
-            assert "branch=main" in path and "status=completed" in path, path
-            runs = list(self.histories)
-            if self.listings is not None:
-                runs = self.listings.get(path.split("/workflows/")[1].split("/")[0], [])
+            assert "status=completed" in path, path
+            workflow = path.split("/workflows/")[1].split("/")[0]
+            if f"event={telemetry.QUEUE_EVENT}" in path:
+                runs, event = self.queued.get(workflow, []), telemetry.QUEUE_EVENT
+            else:
+                assert "branch=main" in path, path
+                runs, event = list(self.histories), "push"
+                if self.listings is not None:
+                    runs = self.listings.get(workflow, [])
+            # As gh's --jq answers: one JSON list a run; a higher id was made later.
             return "\n".join(
-                f"{r} {self.conclusions.get(r, 'success')} {self.owners.get(r, 'o/r')}"
+                json.dumps(
+                    [
+                        r,
+                        self.conclusions.get(r, "success"),
+                        self.owners.get(r, "o/r"),
+                        event,
+                        self.branches.get(
+                            r, _QUEUE_REF if event == telemetry.QUEUE_EVENT else "main"
+                        ),
+                        f"{r:012d}",
+                    ]
+                )
                 for r in sorted(runs, reverse=True)
             )
         if "/actions/runs/" in path and "?" not in path:
@@ -791,6 +814,9 @@ def test_a_wide_file_in_the_record_lands_by_its_75th_percentile() -> None:
     assert "1 wide file by its 75th percentile" in said, said
 
 
+#: Each run's seconds for one test: their median is 4.0 over any three of them.
+SECONDS = ((60, 4.0), (50, 3.8), (40, 4.5), (30, 4.0))
+
 #: A leg of main's push runs in either shape, as merge.yml's shard-plan names it.
 PUSH_LEG = shards.Leg.parse(f"test-shard:{workflows.MAIN_PUSH_NAME}:junit-test-shard-:4")
 
@@ -817,7 +843,41 @@ def test_a_main_push_leg_reads_merge_yml_s_push_runs() -> None:
     gh.listings = {workflows.MERGE: [60, 50, 40, 30]}
     durations, said = _record(gh).durations(PUSH_LEG, FILES)
     assert durations == {"tests/test_a.py": 4.0} and "telemetry runs 50, 40, 30" in said, said
-    assert _listed(gh) == [workflows.MERGE]
+    assert _listed(gh) == [workflows.MERGE, workflows.MERGE], "its runs on main, then its queue's"
+
+
+def test_the_merge_queue_s_runs_are_read_beside_main_s_newest_first() -> None:
+    """Once the merge queue gates main, the suite runs on its commits rather than on a tested
+    push, so merge.yml's queue runs hold the durations: listed by their event, each on the queue's
+    ref for main, and read by when they were made among main's own."""
+    t = "tests.test_a::t"
+    gh = _Gh({run: _history(run, ("junit-test-shard-1", t, secs)) for run, secs in SECONDS})
+    gh.listings = {workflows.MERGE: [50, 30]}
+    gh.queued = {workflows.MERGE: [60, 40]}
+    durations, said = _record(gh).durations(PUSH_LEG, FILES)
+    assert "telemetry runs 60, 50, 40" in said, said
+    assert durations == {"tests/test_a.py": 4.0}, durations
+
+
+@pytest.mark.parametrize(
+    "branch",
+    [
+        "main",
+        f"gh-readonly-queue/release/pr-5801-{'a' * 40}",
+        "gh-readonly-queue/main/pr-5801-aaaaaaa",
+        f"gh-readonly-queue/main/pr-5801-{'a' * 40}-x",
+        f"gh-readonly-queue/main/pr-0-{'a' * 40}",
+    ],
+    ids=["main", "another-base", "short-sha", "a-longer-ref", "no-pull-request"],
+)
+def test_a_queue_run_on_any_other_branch_is_skipped(branch: str) -> None:
+    t = "tests.test_a::t"
+    gh = _Gh({run: _history(run, ("junit-test-shard-1", t, secs)) for run, secs in SECONDS})
+    gh.listings = {workflows.MERGE: [50, 30]}
+    gh.queued = {workflows.MERGE: [60, 40]}
+    gh.branches = {60: branch}
+    _, said = _record(gh).durations(PUSH_LEG, FILES)
+    assert "telemetry runs 50, 40, 30" in said, said
 
 
 def test_a_main_push_leg_with_no_history_names_its_workflow() -> None:

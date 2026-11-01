@@ -76,6 +76,15 @@ def _run(**changes: object) -> dict:
     return run
 
 
+#: A merge queue commit's ref for main, as a queue run's branch, and the run itself.
+QUEUED_PR = 5801
+QUEUE_REF = f"gh-readonly-queue/main/pr-{QUEUED_PR}-{'c' * 40}"
+
+
+def _queue_run(**changes: object) -> dict:
+    return _run(**{"event": "merge_group", "head_branch": QUEUE_REF, **changes})
+
+
 def _attempt(started: str, ended: str, conclusion: str) -> dict:
     """``actions/runs/<id>/attempts/<n>``: that attempt's own start, end and conclusion."""
     return {"run_started_at": started, "updated_at": ended, "conclusion": conclusion}
@@ -131,6 +140,8 @@ class FakeGh:
         self.events: list[dict] = []
         #: Other runs, by id: the run object, its first attempt, and its artifacts.
         self.others: dict[int, dict] = {}
+        #: Each pull request's head, by number, as ``pulls/<n>`` answers; unknown is Not Found.
+        self.pull_heads: dict[int, str] = {QUEUED_PR: "d" * 40}
 
     def _artifact(
         self,
@@ -193,6 +204,11 @@ class FakeGh:
             return json.dumps({"total_count": len(self.head_runs), "workflow_runs": self.head_runs})
         if path.startswith("repos/o/r/issues/"):
             return json.dumps(self.events)
+        if path.startswith("repos/o/r/pulls/"):
+            number = int(path.rsplit("/", 1)[1])
+            if number not in self.pull_heads:
+                raise subprocess.CalledProcessError(1, ["gh", "api", path], "", "Not Found")
+            return json.dumps({"number": number, "head": {"sha": self.pull_heads[number]}})
         for ident, other in self.others.items():
             base = f"repos/o/r/actions/runs/{ident}"
             if path == base:
@@ -280,6 +296,34 @@ def _collect(tmp_path: Path, monkeypatch, gh: FakeGh, attempt: int = 1) -> tuple
         pytest.param(
             _run(name="CI", path=f"{telemetry.WORKFLOWS}/ci.yml"), id="the deleted ci.yml's push"
         ),
+        # A queue run counts only on the queue's own ref for a commit of main, read whole.
+        pytest.param(_queue_run(head_branch="main"), id="a queue run on main"),
+        pytest.param(
+            _queue_run(head_branch=f"gh-readonly-queue/release/pr-1-{'c' * 40}"),
+            id="a queue run for another base",
+        ),
+        pytest.param(
+            _queue_run(head_branch="gh-readonly-queue/main/pr-1-ccccccc"), id="a short sha"
+        ),
+        pytest.param(
+            _queue_run(head_branch=f"{QUEUE_REF}/more"), id="a ref that only starts as one"
+        ),
+        pytest.param(
+            _queue_run(head_branch=f"gh-readonly-queue/main/pr-0-{'c' * 40}"),
+            id="no pull request",
+        ),
+        pytest.param(
+            _queue_run(head_branch=f"gh-readonly-queue/main/pr-1-{'C' * 40}"),
+            id="a sha not as git writes it",
+        ),
+        pytest.param(
+            _queue_run(head_repository={"full_name": "someone/fork"}), id="a fork's queue run"
+        ),
+        pytest.param(
+            _queue_run(name="Breadth", path=telemetry.BREADTH_PATH),
+            id="breadth on a queue ref",
+        ),
+        pytest.param(_run(head_branch=QUEUE_REF), id="a push to a queue ref"),
     ],
 )
 def test_a_run_that_does_not_count_is_never_read(run: dict, tmp_path: Path, monkeypatch) -> None:
@@ -303,11 +347,53 @@ def test_a_run_that_does_not_count_is_never_read(run: dict, tmp_path: Path, monk
             _run(name="Breadth", path=telemetry.BREADTH_PATH, event="workflow_dispatch"),
             id="breadth dispatched on main",
         ),
+        pytest.param(_queue_run(), id="merge.yml on a merge queue commit for main"),
     ],
 )
 def test_a_run_that_counts_is_written(run: dict, tmp_path: Path, monkeypatch) -> None:
     code, lines = _collect(tmp_path, monkeypatch, FakeGh(run))
     assert code == 0 and lines and lines[0]["kind"] == "run"
+
+
+def test_a_queue_run_s_history_names_its_pull_request(tmp_path: Path, monkeypatch) -> None:
+    """The number from the ref, since the run lists no pull request; the head from the API."""
+    gh = FakeGh(_queue_run())
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and lines[0]["branch"] == QUEUE_REF
+    assert lines[0]["queue"] == {"pull_request": QUEUED_PR, "head_sha": "d" * 40}
+    assert f"repos/o/r/pulls/{QUEUED_PR}" in gh.asked
+
+
+def test_a_queue_run_whose_pull_request_cannot_be_read_names_no_head(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gh = FakeGh(_queue_run())
+    gh.pull_heads = {}
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and lines[0]["queue"] == {"pull_request": QUEUED_PR, "head_sha": None}
+
+
+def test_every_other_run_is_no_queue_run(tmp_path: Path, monkeypatch) -> None:
+    gh = FakeGh()
+    _, lines = _collect(tmp_path, monkeypatch, gh)
+    assert lines[0]["queue"] is None
+    assert not any("/pulls/" in a for a in gh.asked), gh.asked
+
+
+@pytest.mark.parametrize(
+    ("event", "branch", "counted"),
+    [
+        ("merge_group", QUEUE_REF, True),
+        ("merge_group", "main", False),
+        ("push", "main", True),
+        ("push", QUEUE_REF, False),
+        ("schedule", "main", True),
+        ("merge_group", None, False),
+    ],
+)
+def test_each_event_counts_on_its_own_branch(event: str, branch: object, counted: bool) -> None:
+    assert telemetry.counted_branch(event, branch) is counted
+    assert telemetry.queued_pull(branch) == (QUEUED_PR if branch == QUEUE_REF else None)
 
 
 # ── the one schema ────────────────────────────────────────────────────────────────────────────
@@ -829,7 +915,7 @@ def test_the_run_line_maps_each_report_to_the_cpu_model_it_ran_on(
     gh.artifacts.append(gh._artifact(13, "junit-test-shard-2", _junit(PASSED)))
     _, lines = _collect(tmp_path, monkeypatch, gh)
     head = lines[0]
-    assert head["version"] >= 3 and telemetry.VERSION == 6
+    assert head["version"] >= 3 and telemetry.VERSION == 7
     assert head["cpus"] == {"junit-test-shard-1": "EPYC 7763", "junit-test-shard-2": None}
     assert "cpus" in telemetry.RUN_FIELDS
     for line in lines[1:]:
@@ -852,16 +938,17 @@ def test_a_report_whose_processes_disagree_on_the_cpu_model_writes_nothing(
     assert code == 1 and lines == []
 
 
-def test_the_schema_is_version_six_and_every_reader_accepts_versions_one_to_five() -> None:
+def test_the_schema_is_version_seven_and_every_reader_accepts_versions_one_to_six() -> None:
     """Version 3 only added the run line's ``cpus``, version 4 only the record lines, version 5
-    only the run line's ``tested_by``, and version 6 only the tested run's record lines, so a
-    history kept from before any of them stays readable for as long as it is kept, and nothing
-    newer is guessed at."""
-    assert telemetry.VERSION == 6
-    assert telemetry.READS == frozenset({1, 2, 3, 4, 5, 6})
-    assert telemetry.TESTED_RECORDS_SINCE == telemetry.VERSION
+    only the run line's ``tested_by``, version 6 only the tested run's record lines, and version 7
+    only the run line's ``queue``, so a history kept from before any of them stays readable for as
+    long as it is kept, and nothing newer is guessed at."""
+    assert telemetry.VERSION == 7
+    assert telemetry.READS == frozenset({1, 2, 3, 4, 5, 6, 7})
+    assert telemetry.TESTED_RECORDS_SINCE == 6
+    assert telemetry.QUEUE_SINCE == telemetry.VERSION
     assert "cpus" in telemetry.RUN_FIELDS and "records" not in telemetry.RUN_FIELDS
-    assert telemetry.RUN_FIELDS[-1] == "tested_by"
+    assert telemetry.RUN_FIELDS[-2:] == ("tested_by", "queue")
     assert telemetry.RECORD_FIELDS == ("kind", "key", "result", "rerun", "quarantined")
 
 
@@ -1711,7 +1798,7 @@ def test_a_tested_push_s_history_holds_the_pull_request_run_s_records(
     _their_record(gh, 63, "suite (1/2)", _job_record("suite (1/2)", run_id=OTHER))
     code, lines = _collect(tmp_path, monkeypatch, gh)
     assert code == 0
-    assert lines[0]["version"] == 6 and lines[0]["tested_by"]["run_id"] == OTHER
+    assert lines[0]["version"] == 7 and lines[0]["tested_by"]["run_id"] == OTHER
     assert [(r["key"], r["result"]) for r in _record_lines(lines)] == [("lint", "success")]
     tested = [line for line in lines if line["kind"] == telemetry.TESTED_RECORD]
     assert [set(t) for t in tested] == [set(telemetry.TESTED_RECORD_FIELDS)] * 2
