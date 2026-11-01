@@ -923,6 +923,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "reply_has_open_answer": (
         "The reply still has a place left for your answer, so it was not sent."
     ),
+    # 409: the row was already answered (its `replied_at`, also in the error) and not reopened
+    # since, so a second Send, from another tab or device still showing the draft, is not sent.
+    "reply_already_sent": "This message was already answered; reopen it to reply again.",
     # ── an Inbox message's attachment (handlers_inbox.api_inbox_attachment) ──
     # Two codes because the row's panel says two different things: the row or attachment named
     # does not exist, or the attachment is listed and was never kept (too large, past the count,

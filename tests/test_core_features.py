@@ -36,6 +36,7 @@ from personalclaw.sdk.features import (
     PER_CALL_OUTPUT_CAP,
     PRE_TOOL_HOOKS,
     RUNNING_LIST,
+    THINKING_OUTPUT_CAP,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
@@ -66,6 +67,7 @@ OFFERED_ONCE = {
     "per-call-output-cap",
     "pre-tool-hooks",
     "running-list",
+    "thinking-output-cap",
     "tool-call-screen",
     "turns-name-their-channel",
     "turns-name-who-asked",
@@ -94,6 +96,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "PER_CALL_OUTPUT_CAP",
         "PRE_TOOL_HOOKS",
         "RUNNING_LIST",
+        "THINKING_OUTPUT_CAP",
         "TOOL_CALL_SCREEN",
         "TURNS_NAME_THEIR_CHANNEL",
         "TURNS_NAME_WHO_ASKED",
@@ -121,6 +124,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     assert TURNS_NAME_WHO_ASKED == "turns-name-who-asked"
     assert RUNNING_LIST == "running-list"
+    assert THINKING_OUTPUT_CAP == "thinking-output-cap"
     assert WAITING_LIST == "waiting-list"
     for name in (
         ADAPTIVE_THINKING,
@@ -138,6 +142,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         PER_CALL_OUTPUT_CAP,
         PRE_TOOL_HOOKS,
         RUNNING_LIST,
+        THINKING_OUTPUT_CAP,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,
@@ -1193,6 +1198,19 @@ def _per_call_output_cap_holds() -> None:
     assert model.caps == [None, 2 * CAP]
 
 
+def _thinking_output_cap_holds() -> None:
+    """The SDK says what output cap a request sends when nothing set one, as core's Anthropic wire
+    sends it: room to think and answer for a model that thinks adaptively, 4,096 for any other,
+    never above a ceiling the app knows."""
+    from personalclaw.sdk.model import default_output_cap
+
+    assert default_output_cap("claude-opus-5-5") == 32_000
+    assert default_output_cap("global.anthropic.claude-sonnet-5-20251101-v1:0") == 32_000
+    assert default_output_cap("claude-opus-5-5", ceiling=16_000) == 16_000
+    for model_id in ("claude-sonnet-4-5", "gpt-5", ""):
+        assert default_output_cap(model_id) == 4096, model_id
+
+
 #: The check that holds each offered feature to its contract. A name without one fails below.
 WITNESSES = {
     ACCOUNT_SETTINGS: _account_settings_hold,
@@ -1213,6 +1231,7 @@ WITNESSES = {
     PER_CALL_OUTPUT_CAP: _per_call_output_cap_holds,
     PRE_TOOL_HOOKS: _pre_tool_hooks_hold,
     RUNNING_LIST: _running_list_holds,
+    THINKING_OUTPUT_CAP: _thinking_output_cap_holds,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,
     TURNS_NAME_WHO_ASKED: _turns_name_who_asked_holds,

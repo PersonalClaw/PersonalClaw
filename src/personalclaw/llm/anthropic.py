@@ -36,6 +36,7 @@ from personalclaw.llm.base import (
     ModelProvider,
     wire_temperature,
 )
+from personalclaw.llm.build_kwargs import default_output_cap, positive_count
 from personalclaw.llm.catalog import (
     SAMPLING_PARAMETERS,
     refused_sampling,
@@ -575,7 +576,7 @@ class AnthropicProvider(ModelProvider):
         model: str,
         credential: Credential | None = None,
         base_url: str | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int = 0,
         extra_options: dict[str, object] | None = None,
     ) -> None:
         # Lazy import on purpose. Do NOT lift to module top.
@@ -591,7 +592,8 @@ class AnthropicProvider(ModelProvider):
         self._anthropic_module = anthropic
         self._model = model
         self._base_url = base_url
-        self._max_tokens = max_tokens
+        # The cap the caller set; 0, none set: each request then sends its model's default (`_cap`).
+        self._max_tokens = positive_count(max_tokens)
         self._extra_options: dict[str, object] = dict(extra_options or {})
         # The served context window this binding DECLARES (``entry.options``'
         # ``context_window``) — the escape hatch for a self-hosted endpoint whose real
@@ -651,6 +653,12 @@ class AnthropicProvider(ModelProvider):
     def unsent_options(self) -> dict[str, str]:
         """The sampling options a ``stream()`` request leaves off because the model refuses them."""
         return self._unsent(self._model, thinking=False)
+
+    def _cap(self, model: str) -> int:
+        """The ``max_tokens`` a request to *model* sends: the cap this provider was built with,
+        else the model's default (:func:`build_kwargs.default_output_cap`), which leaves a model
+        that thinks room to think and still answer."""
+        return self._max_tokens or default_output_cap(model)
 
     def _unsent(self, model: str, *, thinking: bool) -> dict[str, str]:
         """The extra options a request to ``model`` leaves off, each with the reason.
@@ -739,7 +747,7 @@ class AnthropicProvider(ModelProvider):
         request_kwargs: dict[str, Any] = {
             "model": model,
             "messages": self._history,
-            "max_tokens": self._max_tokens,
+            "max_tokens": self._cap(model),
         }
         self._add_options(request_kwargs, unsent=self._unsent(self._model, thinking=False))
 
@@ -903,7 +911,7 @@ class AnthropicProvider(ModelProvider):
         request_kwargs: dict[str, Any] = {
             "model": served_model,
             "messages": anth_messages,
-            "max_tokens": self._max_tokens,
+            "max_tokens": self._cap(served_model),
         }
         if system_prompt:
             request_kwargs["system"] = system_prompt
@@ -914,7 +922,7 @@ class AnthropicProvider(ModelProvider):
         # default. A budget-shape request that continues a tool call whose assistant turn carries
         # no thinking block of this model's is refused with thinking on, so that request goes
         # without it.
-        reasoning = _thinking_request(served_model, reasoning_effort, self._max_tokens)
+        reasoning = _thinking_request(served_model, reasoning_effort, request_kwargs["max_tokens"])
         if reasoning.get("thinking", {}).get("type") == "enabled" and _continues_without_thinking(
             anth_messages
         ):

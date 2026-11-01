@@ -625,8 +625,11 @@ def origin_refusal(request: web.Request) -> web.Response:
     is the same for both, so a client that branches on it still can.
 
     Refused before the surface reads it, so the surface writes no row for it: it is a row of the
-    inbound audit here, as each surface's own refusals are, and so of the Security log too.
+    inbound audit here, as each surface's own refusals are, and so of the Security log too. It is
+    refused outside token auth as well, so it says its own line in the gateway log here
+    (``refusal_log.say_refused``).
     """
+    from personalclaw.dashboard.refusal_log import say_refused
     from personalclaw.http_errors import json_error
     from personalclaw.inbound import audit
     from personalclaw.inbound.auth import off_machine_refusal, surface_of_path
@@ -639,4 +642,5 @@ def origin_refusal(request: web.Request) -> web.Response:
             status=403,
             refused="a request from another address that carries no browser origin",
         )
+    say_refused(request, "auth_origin_not_allowed")
     return json_error("auth_origin_not_allowed", message=sentence or None, status=403)

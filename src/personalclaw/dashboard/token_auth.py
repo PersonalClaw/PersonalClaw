@@ -42,6 +42,7 @@ from personalclaw.auth.lifetimes import (  # noqa: F401 — duration_words is re
 from personalclaw.config.loader import _DEFAULT_PORT
 from personalclaw.dashboard.origin import is_loopback, is_private_network
 from personalclaw.dashboard.owner_token_url import script_tag as owner_token_script
+from personalclaw.dashboard.refusal_log import flush_refusal_lines, say_refused
 
 # The doors a session is issued through and the reasons one ends, re-exported so every mint
 # site and sign-out names them from this module. Constants and classes only: the store's
@@ -2557,6 +2558,13 @@ def flush_success_tally() -> None:
     _SUCCESSES.flush()
 
 
+def flush_auth_logs() -> None:
+    """Write what token auth still holds, on gateway stop: every open success window's summary,
+    and the gateway log's count of each refusal window still open."""
+    flush_success_tally()
+    flush_refusal_lines()
+
+
 def _log_auth(
     request: web.Request,
     user_id: str,
@@ -2576,6 +2584,8 @@ def _log_auth(
     tallied — and so written — as the two actors they are.
     """
     caller = user_id or request.remote or "unknown"
+    if outcome not in AUDIT_OUTCOME_SUCCESS:
+        say_refused(request, reason)
     if outcome in AUDIT_OUTCOME_SUCCESS and not _SUCCESSES.record(
         caller=caller,
         operation=operation,

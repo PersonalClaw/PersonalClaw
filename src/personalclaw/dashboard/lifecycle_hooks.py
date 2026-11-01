@@ -496,12 +496,12 @@ def register_lifecycle_hooks(app: web.Application) -> None:
     app.on_cleanup.append(_discovery_shutdown)
 
     async def _auth_tally_shutdown(app_: web.Application) -> None:
-        """Write the summary row of every still-open authentication window on gateway stop, so
-        the successes of the last quarter hour are counted rather than lost with the process."""
+        """On gateway stop, write every still-open authentication window's summary row and the
+        gateway log's count of the last minute's refusals, so neither is lost with the process."""
         try:
-            from personalclaw.dashboard.token_auth import flush_success_tally
+            from personalclaw.dashboard.token_auth import flush_auth_logs
 
-            flush_success_tally()
+            flush_auth_logs()
         except Exception:
             logger.debug("auth success tally flush failed", exc_info=True)
 

@@ -1,6 +1,7 @@
 """Property tests for dashboard token authentication."""
 
 import json
+import logging
 import string
 from unittest.mock import MagicMock, patch
 
@@ -1058,3 +1059,134 @@ async def test_internal_path_cookie_auth_no_secret_header_records_reason_not_err
     assert granted["outcome"] == "granted"
     assert granted["error"] == ""
     assert granted["metadata"] == {"reason": "cookie auth (no secret header)"}
+
+
+# -- A refusal leaves a line in the gateway log --
+#
+# The security log held every refusal, and the gateway log none: it runs at WARNING with aiohttp's
+# access log held there, so an operator reading `personalclaw logs` after a user reported a 403
+# found no trace of it.
+
+
+@pytest.fixture()
+def refusal_lines(monkeypatch):
+    """A fresh set of windows, so a refusal an earlier test made is not counted into this one's."""
+    from personalclaw.dashboard import refusal_log
+
+    lines = refusal_log.RefusalLines()
+    monkeypatch.setattr(refusal_log, "REFUSALS", lines)
+    return lines
+
+
+def _gateway_warnings(caplog) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING and r.name.startswith("personalclaw")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_request_leaves_one_line_in_the_gateway_log(refusal_lines, caplog) -> None:
+    """🔴 Red before: the 403 wrote its security log row and no log line at all."""
+    mw = token_auth_middleware()
+    with caplog.at_level(logging.WARNING):
+        resp = await mw(_make_request(path="/api/sessions"), _ok_handler)
+
+    assert resp.status == 403
+    (line,) = _gateway_warnings(caplog)
+    assert line.startswith("Refused GET /api/sessions from 127.0.0.1: ")
+    assert line.endswith("Its full record: personalclaw security events.")
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_line_never_carries_the_credential_or_the_query(
+    refusal_lines, caplog
+) -> None:
+    presented = "pc_not-a-real-token.abc123"
+    req = _make_request(path="/api/sessions", query={"token": presented})
+    req.rel_url = URL(f"/api/sessions?token={presented}&q=private-words")
+    mw = token_auth_middleware()
+    with caplog.at_level(logging.WARNING):
+        assert (await mw(req, _ok_handler)).status == 403
+
+    (line,) = _gateway_warnings(caplog)
+    assert "GET /api/sessions from" in line
+    assert presented not in line and "?" not in line and "private-words" not in line
+
+
+@pytest.mark.asyncio
+async def test_a_burst_of_refusals_is_one_line_and_a_count(refusal_lines, caplog) -> None:
+    """A scan costs one line per caller and reason in a window, then one count when it closes."""
+    mw = token_auth_middleware()
+    with caplog.at_level(logging.WARNING):
+        for _ in range(50):
+            req = _make_request(path="/api/sessions", remote="10.0.0.9")
+            assert (await mw(req, _ok_handler)).status == 403
+        assert len(_gateway_warnings(caplog)) == 1
+        refusal_lines.flush()
+
+    first, count = _gateway_warnings(caplog)
+    assert first.startswith("Refused GET /api/sessions from 10.0.0.9: ")
+    assert count.startswith("Refused 49 more request(s) from 10.0.0.9 within 60s: ")
+
+
+def test_refusals_from_many_callers_are_bounded_too(caplog) -> None:
+    """Past the open-window limit, further callers are counted together, so a scan from many
+    addresses is bounded as one from a single address is."""
+    from personalclaw.dashboard.refusal_log import RefusalLines
+
+    lines = RefusalLines(max_open=3)
+    with caplog.at_level(logging.WARNING):
+        for i in range(10):
+            lines.say(_make_request(path="/api/sessions", remote=f"10.0.1.{i}"), "auth_required")
+        lines.flush()
+
+    said = _gateway_warnings(caplog)
+    assert len(said) == 5, said
+    assert "Refusals from further callers are counted" in said[3]
+    assert said[4].startswith("Refused 6 more request(s) from other callers within 60s.")
+
+
+@pytest.mark.asyncio
+async def test_a_file_routes_refused_path_is_said_too(refusal_lines, caplog) -> None:
+    """The file routes refuse a path themselves, past token auth: the middleware just inside it
+    says their 403s, with the code the body carries and without the path asked for."""
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from personalclaw.dashboard.handlers import api_browse_dirs
+    from personalclaw.dashboard.refusal_log import refusal_line_middleware
+
+    app = web.Application(middlewares=[refusal_line_middleware])
+    app.router.add_get("/api/browse-dirs", api_browse_dirs)
+    with (
+        patch("personalclaw.dashboard.handlers.sel", MagicMock()),
+        caplog.at_level(logging.WARNING),
+    ):
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get("/api/browse-dirs?path=/etc")
+            assert resp.status == 403
+
+    (line,) = _gateway_warnings(caplog)
+    assert line.startswith("Refused GET /api/browse-dirs from 127.0.0.1: path_protected (")
+    assert "/etc" not in line
+
+
+def test_an_origin_refusal_is_said_too(refusal_lines, caplog) -> None:
+    """🔴 Red before: the origin check refuses a state-changing request outside token auth, and
+    outside the middleware inside it, so its 403 left no line: a proxy that drops `Origin`, or a
+    sign-in from another origin."""
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.origin import origin_refusal
+
+    request = make_mocked_request(
+        "POST", "/api/auth/login?next=/x", headers={"Origin": "http://evil.example"}
+    )
+    with caplog.at_level(logging.WARNING):
+        resp = origin_refusal(request)
+
+    assert resp.status == 403
+    (line,) = _gateway_warnings(caplog)
+    assert line.startswith("Refused POST /api/auth/login from ")
+    assert ": auth_origin_not_allowed. " in line and "next=" not in line

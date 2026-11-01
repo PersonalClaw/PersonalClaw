@@ -43,6 +43,7 @@ from personalclaw.guardrails.loop_breaker import (
     CIRCUIT_THRESHOLD,
     WARN_THRESHOLD,
     LoopBreaker,
+    circuit_message,
     configured_circuit_threshold,
     normalize_call_args,
     params_key,
@@ -132,18 +133,40 @@ class TestTheBreakerLivesForTheSession:
     def test_failures_accumulate_across_turns_so_the_circuit_is_reachable(self):
         """The unreachable rung: an unattended loop failing the same tool for twenty turns.
         Simulated as twenty turns of two failures — a per-turn breaker would have reported
-        2 every time and never tripped; the session-scoped one reaches the ceiling."""
+        2 every time and never tripped; the session-scoped one reaches the ceiling, once: the
+        stop clears what tripped it, so the turns after it are not stopped at their first call.
+        A breaker cleared at every turn's start would never trip, so it cannot pass this."""
         from personalclaw.dashboard.state import _ChatSession
 
         s = _ChatSession("dashboard:loop")
         key = params_key("Bash", {"command": _BOOM})
+        stops = []
         for _turn in range(20):
-            breaker = s._acp_breaker  # exactly what _run_chat now reads, once per turn
-            breaker.record(key, True)
-            breaker.record(key, True)
-        assert s._acp_breaker.total_failures == 40
-        assert s._acp_breaker.total_failures > CIRCUIT_THRESHOLD
-        assert s._acp_breaker.circuit_tripped() is True
+            breaker = s._acp_breaker  # exactly what run_chat reads, once per turn
+            breaker.begin_turn()
+            for _call in range(2):
+                breaker.record(key, True)
+                if said := breaker.stop_sentence():
+                    stops.append(said)
+                    breaker.clear_tripped()
+        # The 31st failure is the first call of the 16th turn in a row with failures.
+        tripped_at = CIRCUIT_THRESHOLD + 1
+        assert stops == [circuit_message(tripped_at, (tripped_at + 1) // 2)]
+        assert "over this chat's last 16 turns" in stops[0]
+        assert s._acp_breaker.total_failures == 40 - tripped_at
+
+    def test_a_turn_with_no_failed_call_ends_the_failure_run(self):
+        """A long coding chat whose tests fail now and then is not the loop the chat-long total
+        exists for: a turn that ran without a failed call starts the count again."""
+        from personalclaw.dashboard.state import _ChatSession
+
+        s = _ChatSession("dashboard:tests-fail-sometimes")
+        key = params_key("Bash", {"command": "pytest -q"})
+        for turn in range(40):
+            s._acp_breaker.begin_turn()
+            s._acp_breaker.record(key, turn % 2 == 0)
+            assert s._acp_breaker.stop_sentence() == ""
+        assert s._acp_breaker.total_failures == 1  # only the last failing turn's
 
     def test_a_fresh_breaker_per_turn_would_not_have_tripped(self):
         """The counter-factual, asserted so the fix's necessity is visible in the suite
@@ -183,6 +206,8 @@ class TestTheBreakerLivesForTheSession:
         ).read_text()
         assert "_acp_breaker = session._acp_breaker" in src
         assert "_acp_breaker = LoopBreaker()" not in src
+        assert "_acp_breaker.begin_turn()" in src
+        assert "_acp_breaker.clear_tripped()" in src
 
 
 def _write_home(tmp_path, monkeypatch, cfg: dict):

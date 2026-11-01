@@ -875,6 +875,7 @@ async def start_dashboard(
     from personalclaw.dashboard.consent_ask import consent_ask_middleware
     from personalclaw.dashboard.invalid_id_gate import invalid_id_middleware
     from personalclaw.dashboard.memory_write_gate import memory_write_middleware
+    from personalclaw.dashboard.refusal_log import refusal_line_middleware
     from personalclaw.dashboard.request_boundary import request_boundary_middleware
 
     # Explicit middleware ordering — self-documenting and immune to future insertions
@@ -895,6 +896,9 @@ async def start_dashboard(
                 ),
             ]
         ),
+        # Says in the gateway log a 403 answered inside token auth (which says its own): an app's
+        # refusal, a file route's refused path. See refusal_log.py.
+        refusal_line_middleware,
         app_permission_middleware,
         # The owner's consent question as an answer to a client that asks one, and as the 400
         # refusal to any other. OUTSIDE the security log's audit, which records the refusal as the

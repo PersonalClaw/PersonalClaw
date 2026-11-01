@@ -30,6 +30,7 @@ notice.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Callable, Sequence
 
@@ -81,6 +82,44 @@ TERMINAL_HINTS = (
     "not found",
     "unsupported model",
 )
+
+
+#: Substrings that mark a failure of ONE text as the model refusing that text for its size. The
+#: same text is refused however often it is sent, so it is not retried, and its caller may hold it
+#: back until the text or the model changes (``KnowledgeStore.reembed_all``).
+INPUT_REFUSAL_HINTS = (
+    "input token",
+    "too long",
+    "too large",
+    "max input",
+    "context length",
+    "request too big",
+)
+#: Two hints too loose as words: the status a server answers a body too large for it with, as a
+#: whole number (not a digit run that holds it: "after 4130 ms"), and "exceeds" a few words from
+#: what it exceeds, a size ("exceeds the retry budget" is not one). A text called refused is held
+#: back until it or the model changes, so a hint errs toward "not a refusal".
+_SIZE_STATUS = re.compile(r"(?<!\d)413(?!\d)")
+_SIZE_WORD = r"(?:tokens?|length|size|limit|characters?|bytes?)"
+_EXCEEDS_A_SIZE = re.compile(
+    rf"\b{_SIZE_WORD}\W+(?:\w+\W+){{0,3}}?exceeds?\b|\bexceeds?\W+(?:\w+\W+){{0,3}}?{_SIZE_WORD}\b"
+)
+
+#: Words that make a failure something other than a size refusal, whatever else it says: a rate
+#: limit's "too many requests", a spent quota.
+_NOT_A_REFUSAL = ("too many requests", "rate limit", "rate-limit", "throttl", "quota", "429")
+
+
+def refuses_the_text(exc: BaseException) -> bool:
+    """Whether *exc*, raised for one text, is the model refusing that text for its size."""
+    text = str(exc).lower()
+    if any(h in text for h in _NOT_A_REFUSAL):
+        return False
+    return (
+        any(h in text for h in INPUT_REFUSAL_HINTS)
+        or bool(_SIZE_STATUS.search(text))
+        or bool(_EXCEEDS_A_SIZE.search(text))
+    )
 
 
 def batch_size_from_config() -> int:
@@ -142,8 +181,13 @@ def embed_texts(
     batch_size: int | None = None,
     retry_budget: int | None = None,
     sleep: Callable[[float], None] | None = None,
+    refused: set[int] | None = None,
 ) -> list[list[float] | None]:
     """Embed `texts`, returning a list of the SAME LENGTH, positionally aligned.
+
+    *refused*, when given, collects the index of each text the model refused for its size on
+    its own (:func:`refuses_the_text`), sent once and not retried: a caller that keeps vectors
+    holds such a text back until it or the model changes, rather than send it again each pass.
 
     `embed_many` is the batch entry point (`EmbeddingProvider.embed_batch` via the registry).
     `embed_one` is the per-text fallback for a provider that has no batch path — the result is
@@ -185,6 +229,7 @@ def embed_texts(
             embed_one=embed_one,
             budget=budget,
             sleep=sleeper,
+            refused=refused,
         )
     return out
 
@@ -197,6 +242,7 @@ def _embed_group(
     embed_one: Callable[[str], list[float] | None] | None,
     budget: int,
     sleep: Callable[[float], None],
+    refused: set[int] | None = None,
 ) -> None:
     """Embed one group with retries, bisecting on a group-shaped failure. Never raises."""
     if not group:
@@ -216,6 +262,14 @@ def _embed_group(
                     exc,
                 )
                 return
+            if refuses_the_text(exc):
+                if len(group) == 1:
+                    # The model refused this one text for its size: again would be refused again.
+                    logger.warning("embed batching: the model refused a text for its size: %s", exc)
+                    if refused is not None:
+                        refused.add(group[0][0])
+                    return
+                break  # a size refusal is no blip: split the group rather than send it again
             if attempt + 1 < budget:
                 delay = BACKOFF_BASE_SECS * (2**attempt)
                 logger.debug(
@@ -249,12 +303,16 @@ def _embed_group(
             mid,
             len(group) - mid,
         )
-        _embed_group(
-            group[:mid], out, embed_many=embed_many, embed_one=embed_one, budget=budget, sleep=sleep
-        )
-        _embed_group(
-            group[mid:], out, embed_many=embed_many, embed_one=embed_one, budget=budget, sleep=sleep
-        )
+        for half in (group[:mid], group[mid:]):
+            _embed_group(
+                half,
+                out,
+                embed_many=embed_many,
+                embed_one=embed_one,
+                budget=budget,
+                sleep=sleep,
+                refused=refused,
+            )
         return
 
     # A single text that will not embed. Left as None — the caller stores a vector-less chunk,

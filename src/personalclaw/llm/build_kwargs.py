@@ -51,3 +51,26 @@ def output_cap(configured: object, per_call: object, default: int | None = None)
     Only a positive count is a cap (:func:`positive_count`).
     """
     return positive_count(configured) or positive_count(per_call) or default
+
+
+#: The output cap of a request to a model that thinks, when neither the operator nor the call
+#: set one. Its thinking is spent out of the same cap, and at 4,096 a model that reasons at length
+#: spends it all before it writes a word or makes a call, and the turn ends with no answer. Every
+#: model that thinks adaptively allows at least 64,000.
+THINKING_OUTPUT_CAP = 32_000
+
+#: The output cap of a request to any other model, when nothing set one.
+DEFAULT_OUTPUT_CAP = 4096
+
+
+def default_output_cap(model_id: str, ceiling: object = None) -> int:
+    """The output cap of a request to *model_id* when neither the operator nor the call set one:
+    :data:`THINKING_OUTPUT_CAP` for a model that thinks adaptively (``catalog.thinks_adaptively``:
+    Opus 5.5 always thinks, and the newest Sonnet, Haiku and Fable do by default), else
+    :data:`DEFAULT_OUTPUT_CAP`. Never above *ceiling*, the most a request to the model may ask
+    for, when the caller knows it."""
+    from personalclaw.llm.catalog import thinks_adaptively
+
+    cap = THINKING_OUTPUT_CAP if thinks_adaptively(model_id) else DEFAULT_OUTPUT_CAP
+    most = positive_count(ceiling)
+    return min(cap, most) if most else cap

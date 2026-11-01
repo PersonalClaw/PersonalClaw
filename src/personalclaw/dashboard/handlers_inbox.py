@@ -843,7 +843,9 @@ async def api_inbox_send(request: web.Request) -> web.Response:
 
     A reply that still holds a place a drafted reply left for her answer (``[your answer: …]``,
     :func:`personalclaw.reply_answers.open_answers`) is refused with ``422
-    reply_has_open_answer`` naming each one, before it goes anywhere.
+    reply_has_open_answer`` naming each one, before it goes anywhere. A row already answered
+    (``replied_at``) and not reopened since is refused with ``409 reply_already_sent``: the panel
+    hides Send on a settled row, but only in the tab that saw it settle.
     """
     from personalclaw.reply_answers import open_answers, unsent_sentence
 
@@ -872,6 +874,12 @@ async def api_inbox_send(request: web.Request) -> web.Response:
     if not getattr(item, "can_reply", False):
         return web.json_response(
             {"error": "this item's source does not support replies"}, status=400
+        )
+    # Answered already and not reopened since: a Send from another tab or device still showing the
+    # draft would give the sender the reply twice, or start a second turn in the posting chat.
+    if getattr(item, "replied_at", 0) and item.status not in OPEN_STATUSES:
+        return json_error(
+            "reply_already_sent", status=409, error_extra={"replied_at": item.replied_at}
         )
     # The sender would get the mark itself: it goes once she has answered there, or taken it out.
     left = open_answers(text)

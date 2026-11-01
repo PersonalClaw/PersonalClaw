@@ -470,6 +470,7 @@ class KnowledgeStore:
         self.db.row_factory = sqlite3.Row
         self.graph = SimpleDiGraph()
         self._init_schema()
+        self._init_embed_refusals()
         self._migrate()
         # The chunk ANN index lives in THIS database file, so a chunk write and its
         # vector write travel together instead of needing a sidecar's consistency story.
@@ -487,6 +488,24 @@ class KnowledgeStore:
         self.db.statement_check = memory_writes.check_statement
         self._load_graph()
         self.settle_embedding_verdicts()
+
+    def _init_embed_refusals(self) -> None:
+        """The table of items whose text the embedding model refused for its size, as each item
+        stood (``item_updated_at``) and for that model. The derived refresh drains items with no
+        vector in id order, so a refused item came first every pass and was sent again, and a
+        batch's worth of them at the front held back every item behind them.
+        ``reembed_all(only_missing=True)`` passes over a refused item until its text (its
+        ``updated_at``) or the model changes. Its own statement, beside ``_init_schema``'s, on
+        every open: ``IF NOT EXISTS`` is the migration for a library written before it."""
+        self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS embed_refusals (
+                item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                model_id TEXT,
+                provider TEXT,
+                item_updated_at TEXT NOT NULL,
+                refused_at TEXT NOT NULL
+            );
+        """)
 
     def _init_schema(self):
         self.db.executescript("""
@@ -4434,22 +4453,41 @@ class KnowledgeStore:
         ``on_progress(done, total)`` still fires once per item, in order, for job-progress
         streaming — grouping makes it coarser in TIME, not in call count. Items whose
         embedding fails are left vector-less and fall back to keyword/FTS retrieval; they are
-        never corrupted and never deleted. Returns counts.
+        never corrupted and never deleted. An item the model refused for its size is remembered
+        (``embed_refusals``), and *only_missing* passes over it until its text or the model
+        changes, rather than sending it again on every pass. Returns counts.
         """
         # The same "text-bearing" test `count_items_missing_embedding` uses, so the backlog a
         # pass drains is exactly the backlog the counters report. Without it a genuinely empty
         # item would be selected every batch, fail to embed, and hold the pass open forever.
-        sql = "SELECT id, title, summary, content FROM items WHERE status = 'active'"
+        fp = active_fingerprint()
+        stamp = fp.params if fp is not None else (None, None)
+        sql = "SELECT id, title, summary, content, updated_at FROM items WHERE status = 'active'"
         params: tuple[Any, ...] = ()
+        held = 0
         if only_missing:
             sql += " AND embedding IS NULL AND (COALESCE(title,'') != '' OR COALESCE(content,'') != '')"  # noqa: E501
+            # Not one the model refused for its size, as it stands now and for this model.
+            refused_now = (
+                "EXISTS (SELECT 1 FROM embed_refusals r WHERE r.item_id = items.id "
+                "AND r.model_id IS ? AND r.provider IS ? AND r.item_updated_at = items.updated_at)"
+            )
+            sql += f" AND NOT {refused_now}"
+            params = tuple(stamp)
+            held = int(
+                self.db.execute(
+                    f"SELECT COUNT(*) FROM items WHERE status = 'active' AND embedding IS NULL "
+                    f"AND {refused_now}",
+                    tuple(stamp),
+                ).fetchone()[0]
+            )
         sql += " ORDER BY id"
         if limit is not None:
             sql += " LIMIT ?"
-            params = (max(1, int(limit)),)
+            params = (*params, max(1, int(limit)))
         rows = self.db.execute(sql, params).fetchall()
         total = len(rows)
-        done = reembedded = failed = 0
+        done = reembedded = failed = refused = 0
         embedded_ids: list[str] = []
         from personalclaw.knowledge.embed_batch import batch_size_from_config, embed_texts
         from personalclaw.knowledge.embedder import compose_item_text, floats_to_bytes
@@ -4458,8 +4496,6 @@ class KnowledgeStore:
         embed_many = active_batch_embed_fn(embedder)
         embed_one = self._item_embed_one(embedder)
         size = batch_size_from_config()
-        fp = active_fingerprint()
-        stamp = fp.params if fp is not None else (None, None)
 
         for start in range(0, total, size):
             group = rows[start : start + size]
@@ -4476,17 +4512,32 @@ class KnowledgeStore:
             # refusing its whole group. Such an item counts as failed, exactly as before.
             embeddable = [i for i, t in enumerate(texts) if t.strip()]
             vectors: list[list[float] | None] = [None] * len(texts)
+            too_long: set[int] = set()
             if embeddable:
                 # `size` matches the slice, so this is one group per call — the outer loop
                 # owns the grouping precisely so progress streams while it runs.
+                said_no: set[int] = set()
                 got = embed_texts(
                     [texts[i] for i in embeddable],
                     embed_many=embed_many,
                     embed_one=embed_one,
                     batch_size=size,
+                    refused=said_no,
                 )
                 for i, vec in zip(embeddable, got):
                     vectors[i] = vec
+                too_long = {embeddable[i] for i in said_no}
+            for index in sorted(too_long):
+                if stamp[0] is None:
+                    continue  # no model to remember the refusal against
+                r = group[index]
+                self.db.execute(
+                    "INSERT OR REPLACE INTO embed_refusals "
+                    "(item_id, model_id, provider, item_updated_at, refused_at) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (r["id"], *stamp, r["updated_at"], utc_now_iso()),
+                )
+                refused += 1
             for r, vec in zip(group, vectors):
                 if vec:
                     # With the model that wrote it, in the same statement (the rule for a
@@ -4506,7 +4557,15 @@ class KnowledgeStore:
         self.db.commit()
         # An item this gave its first vector no longer "has no embeddings".
         self.retire_embedding_verdicts(embedded_ids)
-        return {"reembedded": reembedded, "failed": failed, "total": total}
+        # `refused`: failed items the model refused for their size this time, among `failed`;
+        # `held`: items it refused before, passed over (`embed_refusals`), not among `total`.
+        return {
+            "reembedded": reembedded,
+            "failed": failed,
+            "total": total,
+            "refused": refused,
+            "held": held,
+        }
 
     # -- Chunk-vector fingerprinting ---------------------------------------------
 

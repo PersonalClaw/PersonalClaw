@@ -271,7 +271,7 @@ def test_reembed_all_embeds_the_library_in_one_batch_call(store, monkeypatch):
 
     res = store.reembed_all(UnifiedEmbedder(_vec), on_progress=lambda d, t: progress.append((d, t)))
 
-    assert res == {"reembedded": 5, "failed": 0, "total": 5}
+    assert res == {"reembedded": 5, "failed": 0, "total": 5, "refused": 0, "held": 0}
     assert len(calls) == 1 and len(calls[0]) == 5  # one call for five items
     # on_progress still fires once per item, in order — job-progress streaming is unchanged.
     assert progress == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
@@ -298,7 +298,7 @@ def test_reembed_all_vectors_match_the_per_item_embed_for_item_path(store):
     ids = [_add(store, t, c, summary=s) for t, c, s in cases]
 
     res = store.reembed_all(embedder)
-    assert res == {"reembedded": 2, "failed": 0, "total": 2}
+    assert res == {"reembedded": 2, "failed": 0, "total": 2, "refused": 0, "held": 0}
 
     blobs = _item_blobs(store)
     for (title, content, summary), iid in zip(cases, ids):
@@ -322,7 +322,7 @@ def test_reembed_all_leaves_a_failing_item_vector_less_without_corrupting_the_re
 
     res = store.reembed_all(UnifiedEmbedder(_vec), on_progress=lambda d, t: progress.append((d, t)))
 
-    assert res == {"reembedded": 1, "failed": 1, "total": 2}
+    assert res == {"reembedded": 1, "failed": 1, "total": 2, "refused": 0, "held": 0}
     assert progress == [(1, 2), (2, 2)]  # progress fires for the failure too
     blobs = _item_blobs(store)
     assert blobs[bad] is None  # left vector-less, not corrupted and not deleted
