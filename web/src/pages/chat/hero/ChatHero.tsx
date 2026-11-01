@@ -57,12 +57,12 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
   // `e2e/helpers.ts`'s `LOADING_SELECTOR` counts, so the settle barrier waits for the strip instead
   // of photographing the hero mid-flight. The settled render is unchanged, so no baseline moves.
   //
-  // The placeholder mirrors the real strip's geometry — same flex container, same `maxWidth`, pill
+  // The placeholder mirrors the real strip's geometry — same flex container, same full width, pill
   // heights matching the chips' `py-2` + `text-[0.8125rem]` box — so the swap is a text change
   // inside a stable layout rather than a second reflow of everything above it.
   if (loading && !data) {
     return (
-      <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }} role="status" aria-busy="true">
+      <div className="flex w-full flex-wrap justify-center gap-2" role="status" aria-busy="true">
         <LoadingStatus what="prompt suggestions" />
         {['w-[132px]', 'w-[104px]', 'w-[168px]', 'w-[148px]', 'w-[120px]', 'w-[156px]'].map((w) => (
           <Skeleton key={w} className={`h-[37px] ${w} rounded-pill`} />
@@ -73,7 +73,7 @@ function SuggestionChips({ onPick }: { onPick: (s: string) => void }) {
   if (!items.length) return null
   return (
     <div className="flex flex-col items-center gap-s">
-      <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
+      <div className="flex w-full flex-wrap justify-center gap-2">
         {items.map((s, i) => (
           <motion.button key={i} type="button" onClick={() => onPick(s)}
             variants={fadeEnter} initial="initial" animate="animate"
@@ -111,7 +111,7 @@ function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
       <div className="flex w-full flex-col items-center gap-2" role="status" aria-busy="true">
         <LoadingStatus what="your starters" />
         <Skeleton className="h-4 w-24" />
-        <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
+        <div className="flex w-full flex-wrap justify-center gap-2">
           {['w-[146px]', 'w-[118px]', 'w-[162px]'].map((w) => (
             <Skeleton key={w} className={`h-[37px] ${w} rounded-pill`} />
           ))}
@@ -123,7 +123,7 @@ function StarterChips({ onPick }: { onPick: (t: SessionTemplate) => void }) {
   return (
     <div className="flex w-full flex-col items-center gap-2">
       <p className="text-[0.75rem] text-on-surface-low">Your starters</p>
-      <div className="flex flex-wrap justify-center gap-2" style={{ maxWidth: 720 }}>
+      <div className="flex w-full flex-wrap justify-center gap-2">
         {items.map((t) => (
           <motion.button key={t.id} type="button" onClick={() => onPick(t)}
             title={t.first_prompt || t.name}
@@ -152,7 +152,7 @@ export function ChatHero({ name, stage, onPickStarter, onPickSuggestion }: {
         <AgentOrb phase="idle" size={64} className="group-has-[[data-voice-orb]]/hero:hidden" />
         <h1 data-type="display-s" className="text-on-surface text-center">{greeting(name)}</h1>
       </motion.div>
-      <div className="flex w-full flex-col items-center gap-2xl" style={{ maxWidth: 'var(--reading-width)' }}>
+      <div className="flex w-full flex-col items-center gap-2xl">
         {stage}
         <ExplainCard />
         <StarterChips onPick={onPickStarter} />

@@ -230,28 +230,29 @@ test.describe('the chat header fits at every width', () => {
   }
 })
 
-// ── THE TURNS READ AT THE READING WIDTH ─────────────────────────────────────────────────────────
+// ── THE TURNS SPAN THE PANE ─────────────────────────────────────────────────────────────────────
 //
-// The transcript's turn column takes `--reading-width`, the chat's own width, so a thread reads
-// at one width however wide the window is (#3820). `theTurnColumnReadsAtTheReadingWidth.test.tsx`
-// pins the cause in jsdom, which lays nothing out; this measures the result where it is drawn. At
-// the goldens' 1280 the column the turns sit in is as wide as the token resolves to, narrower than
-// the window, and centred in the transcript's scroller. When the column took the old page-width
-// preset, the shipped `full` ran it the scroller's whole width.
+// The transcript's turn column, and the composer under it, take the chat pane's whole width inside
+// its inner padding, so a thread uses the room the window gives it. They were held to a 768 px
+// column (#3820) and no longer are. `theChatSpansItsPane.test.tsx` pins the cause in jsdom, which
+// lays nothing out; this measures the result where it is drawn, at the goldens' 1280 and the phone
+// contract's 390: the column's painted width is the scroller's less its two inner gaps, and the
+// gaps are the same on both sides and no wider than the padding.
 
 interface TurnColumn {
   viewport: number
   turns: number
-  /** `--reading-width` as declared on `<html>`, for the message. */
-  declared: string
-  /** The same token, resolved to pixels by the browser on a probe's border box. */
-  readingWidth: number
   /** The turn column's painted width. */
   column: number
-  /** The scroller's content box, which the column centres in. */
+  /** The scroller's content box, which the column fills. */
   scroller: number
   leftGap: number
   rightGap: number
+  /** The column's own inline padding, left and right, which the gaps may hold and nothing more. */
+  padLeft: number
+  padRight: number
+  /** The composer's painted width, and the pane width it sits under. */
+  composer: number
 }
 
 /** Read the turn column in ONE evaluate, so every number shares a layout pass. */
@@ -260,44 +261,45 @@ async function readTurnColumn(page: Page): Promise<TurnColumn> {
     const scroller = document.querySelector<HTMLElement>('[data-transcript-scroll]')
     const turns = scroller ? Array.from(scroller.querySelectorAll('[data-transcript-turn]')) : []
     const column = turns[0]?.parentElement
-    if (!scroller || !column) throw new Error('no turn in the transcript scroller')
-    const probe = document.createElement('div')
-    probe.style.cssText = 'position:fixed;top:0;left:0;visibility:hidden;box-sizing:border-box;width:var(--reading-width)'
-    document.body.appendChild(probe)
-    const readingWidth = probe.getBoundingClientRect().width
-    probe.remove()
+    const composer = document.querySelector<HTMLElement>('[data-tour="chat"]')
+    if (!scroller || !column || !composer) throw new Error('no turn in the transcript scroller, or no composer')
     const c = column.getBoundingClientRect()
     const s = scroller.getBoundingClientRect()
     const left = s.left + scroller.clientLeft
     const right = left + scroller.clientWidth
+    const style = getComputedStyle(column)
     const r1 = (n: number) => Math.round(n * 10) / 10
     return {
       viewport: window.innerWidth,
       turns: turns.filter((t) => t.parentElement === column).length,
-      declared: getComputedStyle(document.documentElement).getPropertyValue('--reading-width').trim(),
-      readingWidth: r1(readingWidth),
       column: r1(c.width),
       scroller: r1(scroller.clientWidth),
       leftGap: r1(c.left - left),
       rightGap: r1(right - c.right),
+      padLeft: r1(Number.parseFloat(style.paddingLeft)),
+      padRight: r1(Number.parseFloat(style.paddingRight)),
+      composer: r1(composer.getBoundingClientRect().width),
     }
   })
 }
 
-test.describe("the chat's turns read at the reading width", () => {
-  test('1280px — the turn column is --reading-width wide, narrower than the window, and centred', async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 900 })
-    await pinTheChat(page)
-    await gotoRoute(page, `chat/${KEY}`)
-    await expect(page.locator('[data-transcript-turn]'), 'the chat never showed its turns').toHaveCount(DETAIL.messages.length)
-    const g = await readTurnColumn(page)
-    const report = `column ${g.column}px in a ${g.scroller}px scroller (gaps ${g.leftGap} / ${g.rightGap}), ` +
-      `--reading-width ${g.readingWidth}px (declared "${g.declared}"), viewport ${g.viewport}px`
-    expect(g.viewport, 'the viewport did not apply').toBe(1280)
-    expect(g.turns, `the turns are not all in one column: ${report}`).toBe(DETAIL.messages.length)
-    expect(Math.abs(g.column - g.readingWidth), `the turn column is not the reading width: ${report}`).toBeLessThanOrEqual(0.5)
-    expect(g.readingWidth, `--reading-width resolves to no width: ${report}`).toBeGreaterThan(0)
-    expect(g.column, `the turn column runs the window's width: ${report}`).toBeLessThan(g.scroller)
-    expect(Math.abs(g.leftGap - g.rightGap), `the turn column is not centred: ${report}`).toBeLessThanOrEqual(1)
-  })
+test.describe("the chat's turns span the pane", () => {
+  for (const width of [1280, 390] as const) {
+    test(`${width}px — the turn column fills the transcript's scroller, and the composer is as wide`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 })
+      await pinTheChat(page)
+      await gotoRoute(page, `chat/${KEY}`)
+      await expect(page.locator('[data-transcript-turn]'), 'the chat never showed its turns').toHaveCount(DETAIL.messages.length)
+      const g = await readTurnColumn(page)
+      const report = `column ${g.column}px in a ${g.scroller}px scroller (gaps ${g.leftGap} / ${g.rightGap}, ` +
+        `padding ${g.padLeft} / ${g.padRight}), composer ${g.composer}px, viewport ${g.viewport}px`
+      expect(g.viewport, 'the viewport did not apply').toBe(width)
+      expect(g.turns, `the turns are not all in one column: ${report}`).toBe(DETAIL.messages.length)
+      expect(g.leftGap, `the turn column stops short of the scroller's left edge: ${report}`).toBeLessThanOrEqual(0.5)
+      expect(g.rightGap, `the turn column stops short of the scroller's right edge: ${report}`).toBeLessThanOrEqual(0.5)
+      expect(Math.abs(g.column - g.scroller), `the turn column is narrower than the pane: ${report}`).toBeLessThanOrEqual(1)
+      expect(g.padLeft, `the turn column lost its inner padding: ${report}`).toBeGreaterThan(0)
+      expect(g.composer, `the composer is held narrower than the turns: ${report}`).toBeGreaterThanOrEqual(g.column - g.padLeft - g.padRight - 1)
+    })
+  }
 })

@@ -106,7 +106,8 @@ new chrome.
 **Rules**
 
 - The work surface gets at least ~75% of the window with the sidebar open, and ~90% in focus mode.
-- Widths follow intent. Reading stays around 720 to 780 px. Code, tables, diffs, artifacts and
+- Widths follow intent. Reading stays around 720 to 780 px, except in a chat, whose thread spans
+  its pane (§5 convention 1). Code, tables, diffs, artifacts and
   review use an adjustable split that remembers its size. A compact window stacks them without
   clipping either.
 - Place by scope: global things in global chrome, page things in the page header, object things on
@@ -141,9 +142,10 @@ new chrome.
 
 ## 5. Conventions to match
 
-1. **One calm conversation column.** A thread reads in one centred column, around 720 to 780 px
-   whatever the window's width. A line stays readable at any width, and the eye returns to the same
-   place after every turn.
+1. **One conversation that spans its pane.** A thread takes its pane's full width, inside the
+   pane's padding (#5865): the turns with their tables and code, the composer, and a new chat's
+   prompts. A wider window shows more of a reply at once, and a sent message's bubble, at 80% of the
+   column, keeps the question on the right and the answer on the left.
 2. **Quiet chrome, neutral surfaces, one accent.** The sidebar, toolbar, headers and status line are
    neutral tones with no decoration. Coral means the agent is alive: it marks the agent at work, and
    besides that only the primary action, focus and selection. When colour means "alive" or "act

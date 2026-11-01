@@ -10,7 +10,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [0.3.4] — 2026-11-01
 
-An A2A client reads only the tasks it started, and its retry key names only its own request. Which search provider each search use goes to is yours: an installed app can no longer change it or test a provider. Every sign-in link PersonalClaw prints or opens names the exact address the gateway listens on. The agent's file tools, the Files view and the shell's screen refuse a project's secret files by name in every approval mode, so a step like copying `.env.example` to `.env` is now yours to do, and the git settings file and what runs at your login are yours to change. A command started in a folder takes only credentials from that folder's `.env`, and the shell's screen holds a glob it did not expand, and a bash action's payload keys, to stricter rules.
+An A2A client reads only the tasks it started, and its retry key names only its own request. Which search provider each search use goes to is yours: an installed app can no longer change it or test a provider. Every sign-in link PersonalClaw prints or opens names the exact address the gateway listens on. The agent's file tools, the Files view and the shell's screen refuse a project's secret files by name in every approval mode, so a step like copying `.env.example` to `.env` is now yours to do, and the git settings file and what runs at your login are yours to change. A command started in a folder takes only credentials from that folder's `.env`, and the shell's screen holds a glob it did not expand, and a bash action's payload keys, to stricter rules. A chat spans its pane's full width: its conversation, its composer and a new chat's prompts.
+
+### Changed
+
+- **A chat spans its pane's full width, inside the pane's padding: its turns, with their tables, code and tool cards, the composer and its toolbar, and a new chat's greeting, cards and prompt suggestions. They were held to a 768 px column centred in the pane; a sent message's bubble is still 80% of the column, and the editor that resends it matches.**
 
 ### Fixed
 

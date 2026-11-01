@@ -31,15 +31,15 @@ export function UserEditor({ initial, onSubmit, onCancel, replacesLater = false,
           else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSubmit(v) }
         }}
         className="w-full resize-none rounded-2xl bg-surface-container px-5 py-4 text-on-surface text-[1.0625rem] leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-primary"
-        style={{ maxWidth: 452 }} />
+        style={{ maxWidth: '80%' }} />
       {replacesLater && (
-        <p id={noticeId} data-type="caption" className="flex w-full items-start gap-1.5 text-on-surface-var" style={{ maxWidth: 452 }}>
+        <p id={noticeId} data-type="caption" className="flex w-full items-start gap-1.5 text-on-surface-var" style={{ maxWidth: '80%' }}>
           <Rewind size={12} className="mt-0.5 shrink-0" />
           <span>Resending replaces everything below this message. {replacedTurnsAreKept(canFork)}</span>
         </p>
       )}
       {failure && (
-        <div className="w-full" style={{ maxWidth: 452 }}>
+        <div className="w-full" style={{ maxWidth: '80%' }}>
           <InlineError icon multiline>{failure}</InlineError>
         </div>
       )}

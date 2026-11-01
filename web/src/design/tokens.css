@@ -259,13 +259,6 @@
   --dot-density: 1;
   --dot-size: 1;
 
-  /* ── the reading column: a chat's turns and its composer, centred, at one width whatever the
-     window's. Fixed, so not in the registry, and nothing writes it at runtime: a page's main
-     section spans the pane (#5718), and a thread reads here instead
-     (web/REDESIGN.md §5, "around 720 to 780 px"). A whole column, bubbles and code included,
-     so wider than the prose measure (design/measure.ts), which caps a line of running text. ── */
-  --reading-width: 768px;
-
   /* ── spacing (4px base × the customizable --space-scale multiplier, mirroring
      --radius-scale) — so the `data-ui` density axis can tighten the WHOLE app's
      spacing by re-scaling one var (comfortable=1, dense≈0.8, cli≈0.7). ── */
