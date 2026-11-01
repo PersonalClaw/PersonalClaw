@@ -365,7 +365,9 @@ def test_the_step_summary_lists_failed_tests_within_its_bound_and_the_log_lists_
     assert written.startswith("### Verdict: red\n")
     assert "- `suite (1/2)`: failure (attempt 1)" in written
     assert "- `suite (2/2)`: failure (attempt 1)" in written
-    assert out.count("tests/test_x.py::test_") == 3000
+    # The log's list, apart from the notices that name the first few for the retry note.
+    listed = "".join(line for line in out.splitlines(True) if not line.startswith("::notice "))
+    assert listed.count("tests/test_x.py::test_") == 3000
     shown = written.count("tests/test_x.py::test_")
     assert 0 < shown < 3000
     assert written.endswith(f"- {3000 - shown} more failed tests: the log lists every one.\n")

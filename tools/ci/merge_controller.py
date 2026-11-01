@@ -119,6 +119,20 @@ failing closed, all read through the API:
 - **Once.** A queue commit's verdict that waits on nothing is final: it is never posted again, so
   no later look can turn a commit already on main red.
 
+**The retry note** (0.4.0 A5). A change gets :data:`RETRIES` retries, and the red after them goes
+to a person. A red verdict on a pull request's run whose reasons do not all wait says which retry
+of its change it is and whether its red is flake-class (:func:`retry`), in its title right after
+``Red`` and in its summary; the lane's tooling retries a flake-class red by itself while the budget
+lasts. The count is the run's attempts after the first, each earlier head of the pull request
+(read from its force-pushes) whose newest verdict is a red that waits on nothing and that has the
+head's tree or its ``+/-`` lines, and each removal of the head as it is now from main's merge
+queue for failed checks. A red is flake-class only when every reason is the ``results`` job's,
+every job that did not pass is a suite, end-to-end or web-unit job's, failed in tests its
+``results`` job names (``verdict.FAILED_NOTICE``, all of them, by its count) or cancelled or timed
+out with none, and each failed test was classified by its rerun, reads no file the pull request
+changes, and has an open flaky-test issue the workflow or a maintainer filed
+(:func:`flake_class`). The note changes no conclusion, and one it cannot read says so.
+
 The verdict is ``success`` or ``failure``, never neutral, and an answer the API would not give is
 ``failure``, named as unread. ``post`` sends the check run with the controller App's token, and
 refuses a body that is not one completed ``merge-verdict`` check run.
@@ -135,6 +149,7 @@ import argparse
 import base64
 import binascii
 import datetime
+import hashlib
 import http.client
 import json
 import os
@@ -278,6 +293,9 @@ class Run:
     url: str
     #: The branch the run was dispatched on.
     branch: str = ""
+    #: The pull request of this repository the run lists with the run's head as its head, for
+    #: the retry note (0.4.0 A5); None for a run that lists none (a fork's, a dispatch, a queue's).
+    pull: int | None = None
 
 
 def read_run(get: Get, repo: str, run_id: int) -> Run | str:
@@ -304,7 +322,16 @@ def read_run(get: Get, repo: str, run_id: int) -> Run | str:
     if run.get("event") == QUEUE_EVENT and not QUEUE_BRANCH.fullmatch(branch):
         return f"run {run_id} is a queue run on {branch!r}, which names no entry of main's queue"
     event, url = str(run.get("event")), str(run.get("html_url") or "")
-    return Run(run_id, attempt, head, event, url, branch)
+    pulls = run.get("pull_requests")
+    numbers = [
+        _int(p.get("number"))
+        for p in (pulls if isinstance(pulls, list) else [])
+        if isinstance(p, Mapping)
+        and isinstance(p.get("head"), Mapping)
+        and p["head"].get("sha") == head
+    ]
+    pull = numbers[0] if len(numbers) == 1 and numbers[0] else None
+    return Run(run_id, attempt, head, event, url, branch, pull)
 
 
 def results_reasons(get: Get, repo: str, run: Run) -> tuple[list[str], list[str]]:
@@ -522,13 +549,24 @@ class Queue:
     live: bool = False
 
 
-def _red(run: Run, reasons: list[str], head: str, moved: list[Moved] | None = None) -> Posting:
+def _red(
+    run: Run,
+    reasons: list[str],
+    head: str,
+    moved: list[Moved] | None = None,
+    retried: Retry | str | None = None,
+) -> Posting:
     note = [f"- {moved_note(moved)}"] if moved else []
+    if isinstance(retried, Retry):
+        note += [f"- {line}" for line in retried.lines()]
+    elif retried:
+        note.append(f"- retries not counted: {retried}")
     summary = "\n".join(
         ["This head's merge verdict is red:", "", *[f"- {r}" for r in reasons], *note, ""]
         + [f"From Merge run {run.url or run.id}, attempt {run.attempt}."]
     )
-    title = f"Red: {reasons[0]}" + (f" ({moved_note(moved)})" if moved else "")
+    label = f" ({retried.label()})" if isinstance(retried, Retry) else ""
+    title = f"Red{label}: {reasons[0]}" + (f" ({moved_note(moved)})" if moved else "")
     output = {"title": title[:255], "summary": summary}
     waiting = [r for r in reasons if r.startswith(WAITING)]
     if waiting:
@@ -1507,8 +1545,12 @@ def decide(
         )
         reasons.append(f"{WAITING_CONTRACT}{running}")
     if reasons:
+        retried = _retry_note(get, repo, run, tree_oid, failing, reasons, queue)
         return Outcome(
-            posting=_red(run, reasons, head, moved), dispatch=start, base=base, cleanup=cleanup
+            posting=_red(run, reasons, head, moved, retried),
+            dispatch=start,
+            base=base,
+            cleanup=cleanup,
         )
     toolchain = {"runner": ",".join(labels) or "unnamed", "definitions": base}
     ran = [f"- the definitions that ran are main's at `{base}`"]
@@ -1565,6 +1607,290 @@ def decide(
     )
     posting = Posting(head, "success", output, run.url, f"{run.id}/{run.attempt}")
     return Outcome(posting=posting, cleanup=cleanup)
+
+
+# ── The retry budget (0.4.0 A5) ────────────────────────────────────────────────────────────
+#
+# A change gets at most RETRIES retries, and the red after them goes to a person. A red pull
+# request verdict says which retry it is and whether its red is flake-class, so the lane's
+# tooling retries a flake-class red by itself while the budget lasts. It is a note only: no count
+# turns a red green or a green red, and every rule above stands as it is.
+
+#: Retries a change gets; the red after them goes to a person (quarantine, fix or infrastructure).
+RETRIES = 2
+#: The pull request's earlier heads read for the count, newest first.
+RETRY_HEADS = 10
+#: The jobs whose failed test, or cancelled or timed-out shard, a red may be flake-class for: the
+#: suites, the end-to-end tests and the web unit tests, each by its catalogue id.
+FLAKE_CLASS_JOBS = ("python-suite", "python-suite-macos", "e2e", "e2e-shard", "web-unit")
+#: The failed tests' standings a flake-class red may hold: a rail's, a security test's and one no
+#: rerun classified are never flake-class, nor is a quarantined failure the change reads.
+_FLAKE_STANDINGS = frozenset({verdict.FLAKE, verdict.REPEATED_FAILURE})
+#: The flaky-test issues ``flaky-tests.yml`` keeps (``tools/ci/flaky_issues.py``): their label,
+#: their title's start and its limit. A failing test has a flaky history when one is open.
+FLAKY_LABEL = "flaky-test"
+FLAKY_PREFIX = "Flaky test: "
+_FLAKY_TITLE_LIMIT = 256
+#: Who may file a flaky-test issue that counts: the flaky-tests workflow's account, or a
+#: maintainer (as ``release_tag`` reads a leg's issue). Anyone can open an issue of any title.
+FLAKY_BOT = "github-actions"
+_MAINTAINERS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+#: Why main's merge queue removes an entry whose checks failed (``RemovedFromMergeQueueEvent``).
+QUEUE_REMOVED_RED = "failed_checks"
+#: A pull request's earlier heads (each one its force-pushes replaced) and its removals from main's
+#: merge queue, in the order they came, and the open flaky-test issues, in one read.
+RETRY_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $label: String!, $heads: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      timelineItems(
+        itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT], last: $heads
+      ) {
+        nodes {
+          __typename
+          ... on HeadRefForcePushedEvent { beforeCommit { oid tree { oid } } }
+          ... on RemovedFromMergeQueueEvent { reason }
+        }
+      }
+    }
+    issues(states: OPEN, labels: [$label], first: 100) {
+      totalCount
+      nodes { title authorAssociation author { login __typename } }
+    }
+  }
+}
+"""
+
+
+def flaky_title(test: str) -> str:
+    """A test's flaky-test issue title, as ``flaky_issues.title`` writes it."""
+    whole = FLAKY_PREFIX + test
+    if len(whole) <= _FLAKY_TITLE_LIMIT:
+        return whole
+    tail = f"… ({hashlib.sha256(test.encode('utf-8')).hexdigest()[:16]})"
+    return FLAKY_PREFIX + test[: _FLAKY_TITLE_LIMIT - len(FLAKY_PREFIX) - len(tail)] + tail
+
+
+@dataclass(frozen=True)
+class Retry:
+    """What a red verdict says of its retries: which one this red is, and whether it is
+    flake-class and why."""
+
+    count: int
+    flake_class: bool
+    why: str
+
+    def lines(self) -> list[str]:
+        spent = self.count >= RETRIES
+        return [
+            (
+                f"retry budget spent: {self.count} retries of this change were red, so a person"
+                " looks (quarantine, fix or infrastructure)"
+                if spent
+                else f"retry {self.count} of {RETRIES}"
+            ),
+            ("flake-class: " if self.flake_class else "not flake-class: ") + self.why,
+        ]
+
+    def label(self) -> str:
+        """What the red's title says, right after ``Red``, where no long reason cuts it off."""
+        count = (
+            "retry budget spent" if self.count >= RETRIES else f"retry {self.count} of {RETRIES}"
+        )
+        return count + (", flake-class" if self.flake_class else "")
+
+
+@dataclass(frozen=True)
+class Timeline:
+    """What the retry note reads of a pull request: its earlier heads with their trees, newest
+    first; how many times main's merge queue removed its head for failed checks since the head
+    last changed; and the titles of the open flaky-test issues the workflow or a maintainer
+    filed."""
+
+    heads: tuple[tuple[str, str], ...]
+    removed: int
+    flaky: frozenset[str]
+
+
+def _counted_issue(issue: Mapping[str, Any]) -> bool:
+    author = issue.get("author") or {}
+    by_bot = author.get("login") == FLAKY_BOT and author.get("__typename") == "Bot"
+    return by_bot or issue.get("authorAssociation") in _MAINTAINERS
+
+
+def _retry_read(query: Query, repo: str, number: int) -> Timeline:
+    """The pull request's :class:`Timeline`, from one GraphQL read."""
+    owner, name = repo.split("/", 1)
+    variables = {"owner": owner, "name": name, "number": number, "label": FLAKY_LABEL}
+    try:
+        answer = query(RETRY_QUERY, {**variables, "heads": RETRY_HEADS})
+        repository = answer["data"]["repository"]
+        heads: list[tuple[str, str]] = []
+        removed = 0
+        # Newest first: a removal before any force-push read so far was of the head as it is now.
+        for node in reversed(repository["pullRequest"]["timelineItems"]["nodes"]):
+            if node.get("__typename") == "RemovedFromMergeQueueEvent":
+                red = str(node.get("reason") or "").lower() == QUEUE_REMOVED_RED
+                removed += 1 if red and not heads else 0
+                continue
+            before = node.get("beforeCommit") or {}
+            sha = str(before.get("oid") or "")
+            tree = str((before.get("tree") or {}).get("oid") or "")
+            if not (_SHA.fullmatch(sha) and _SHA.fullmatch(tree)):
+                raise Unread("a force-push of the pull request names no earlier head")
+            heads.append((sha, tree))
+        issues = repository["issues"]
+        if int(issues["totalCount"]) != len(issues["nodes"]):
+            raise Unread("more open flaky-test issues than one read lists")
+        titles = frozenset(str(i["title"]) for i in issues["nodes"] if _counted_issue(i))
+    except (OSError, KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise Unread(f"the pull request's heads gave no answer this reads: {exc}") from exc
+    return Timeline(tuple(heads), removed, titles)
+
+
+def failed_tests(get: Get, repo: str, job_id: int) -> list[Mapping[str, Any]] | str:
+    """The failed tests a ``results`` job names (one ``verdict.FAILED_NOTICE`` each), or why they
+    cannot all be named."""
+    named: list[Mapping[str, Any]] = []
+    counts: list[object] = []
+    for note in _all_pages(get, f"/repos/{repo}/check-runs/{job_id}/annotations"):
+        if note.get("title") != verdict.FAILED_NOTICE or note.get("annotation_level") != "notice":
+            continue
+        try:
+            item = json.loads(str(note.get("message") or ""))
+        except ValueError:
+            return "a failed test's notice is not one the verdict writes"
+        if isinstance(item, Mapping) and set(item) == {"failed"}:
+            counts.append(item["failed"])
+            continue
+        if not isinstance(item, Mapping) or not all(
+            isinstance(item.get(k), str) and item[k] for k in ("key", "test", "standing")
+        ):
+            return "a failed test's notice is not one the verdict writes"
+        named.append(item)
+    # A step's annotations are capped, so the count is what says every failed test was read.
+    if len(counts) != 1 or not isinstance(counts[0], int) or isinstance(counts[0], bool):
+        return "its results job names no one count of its failed tests"
+    if counts[0] != len(named):
+        return f"its results job names {len(named)} of its {counts[0]} failed tests"
+    return named
+
+
+def _flake_job(name: str) -> bool:
+    return any(name == j or name.startswith(f"{j} (") for j in FLAKE_CLASS_JOBS)
+
+
+def flake_class(
+    get: Get,
+    repo: str,
+    run: Run,
+    others: list[str],
+    changed: Mapping[tuple[str, str], object],
+    flaky: frozenset[str],
+) -> tuple[bool, str]:
+    """Whether the run's red is flake-class (0.4.0 A5, with CORE's first condition), and why:
+    every reason is its ``results`` job's; every job of the last attempt that did not pass is a
+    suite, end-to-end or web-unit job's, failed in its tests or cancelled or timed out with none
+    failed; and each failed test was classified by its rerun, reads no file the pull request
+    changes, and has a flaky history: an open flaky-test issue. Anything else goes to a person."""
+    if others:
+        return False, f"its red is not its tests' alone: {others[0]}"
+    jobs = _pages(get, f"/repos/{repo}/actions/runs/{run.id}/attempts/{run.attempt}/jobs", "jobs")
+    judges = [_int(j.get("id")) for j in jobs if j.get("name") == RESULTS_JOB]
+    if len(judges) != 1 or judges[0] is None:
+        return (
+            False,
+            f"attempt {run.attempt} has no one `{RESULTS_JOB}` job naming its failed tests",
+        )
+    failed: dict[str, str] = {}
+    for job in jobs:
+        name, conclusion = str(job.get("name") or ""), job.get("conclusion")
+        if name == RESULTS_JOB or conclusion in ("success", "skipped", "neutral"):
+            continue
+        if not _flake_job(name):
+            return False, f"`{name}` is {conclusion!r}, and only a test job's red is flake-class"
+        failed[name] = str(conclusion)
+    if not failed:
+        return False, "no test job failed, was cancelled or timed out"
+    tests = failed_tests(get, repo, judges[0])
+    if isinstance(tests, str):
+        return False, tests
+    keys = {str(t["key"]) for t in tests}
+    for name, conclusion in sorted(failed.items()):
+        if conclusion == "failure" and name not in keys:
+            return False, f"`{name}` failed with no failed test named"
+        if conclusion not in ("failure", "cancelled", "timed_out"):
+            return False, f"`{name}` is {conclusion!r}"
+        if conclusion != "failure" and name in keys:
+            return False, f"`{name}` is {conclusion} with a failed test in it"
+    paths = {p for key in changed for p in key}
+    for t in tests:
+        test, standing = str(t["test"]), str(t["standing"])
+        if standing not in _FLAKE_STANDINGS:
+            return False, f"`{test}` is {standing}"
+        hit = verdict.changed_reads(test, paths)
+        if isinstance(hit, str):
+            return False, hit
+        if hit:
+            return False, f"`{test}` reads `{hit[0]}`, which the pull request changes"
+        if flaky_title(test) not in flaky:
+            return False, (
+                f"`{test}` has no flaky history (no open flaky-test issue the workflow or a"
+                " maintainer filed)"
+            )
+    if not tests:
+        return True, f"{len(failed)} test job(s) cancelled or timed out, with no failed test"
+    return True, (
+        f"{len(tests)} failed test(s), each with an open flaky-test issue and reading no file the"
+        " pull request changes"
+    )
+
+
+def _retry_note(
+    get: Get,
+    repo: str,
+    run: Run,
+    tree_oid: str,
+    failing: list[str],
+    reasons: list[str],
+    queue: Queue | None,
+) -> Retry | str | None:
+    """The retry note on a pull request's red (:func:`retry`): none on another run's red, or on a
+    red whose every reason waits, which is no red to retry yet; why it is unread, when it is."""
+    if run.event != "pull_request" or all(r.startswith(WAITING) for r in reasons):
+        return None
+    try:
+        return retry(get, repo, run, tree_oid, [r for r in reasons if r not in failing], queue)
+    except (Unread, trust.Refused) as exc:
+        return f"unread: {exc}"
+
+
+def retry(
+    get: Get, repo: str, run: Run, tree_oid: str, others: list[str], queue: Queue | None
+) -> Retry | str:
+    """What the red verdict on a pull request's run says of its retries, or why it says nothing
+    but that. The count is the run's attempts after the first, and each earlier head of the pull
+    request whose newest verdict is a red that waits on nothing and that has the head's tree or
+    makes its change, the same ``+/-`` lines in the same files; and each time main's merge queue
+    removed the head as it is now for failed checks, since a re-enqueue is a retry."""
+    if queue is None:
+        return "no GraphQL read was given"
+    if run.pull is None:
+        return "the run names no pull request of this repository"
+    timeline = _retry_read(queue.query, repo, run.pull)
+    own = _change(get, repo, "main", run.head_sha)
+    count = run.attempt - 1 + timeline.removed
+    for sha, tree in timeline.heads:
+        if sha == run.head_sha:
+            continue
+        check = _newest_verdict(get, repo, sha, queue.app)
+        if check is None or check.get("conclusion") != "failure" or _waiting(check):
+            continue
+        if tree == tree_oid or _change(get, repo, "main", sha) == own:
+            count += 1
+    ok, why = flake_class(get, repo, run, others, own, timeline.flaky)
+    return Retry(count, ok, why)
 
 
 # ── A queue commit of main's merge queue (0.4.0 A1) ─────────────────────────────────────────
@@ -1727,6 +2053,8 @@ def decide_queue(
         mine = [e for e in entries if e.queue_commit == sha]
         if not mine:
             return Outcome(why=f"{sha} is no entry of main's merge queue now: nothing waits on it")
+        if len(mine) != 1:
+            raise Unread(f"main's merge queue lists {len(mine)} entries for the one commit {sha}")
         (entry,) = mine
         base = main_tip(get, repo)
         ahead = [e for e in entries if e.position < entry.position and e.queue_commit]

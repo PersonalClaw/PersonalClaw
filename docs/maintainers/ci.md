@@ -326,6 +326,27 @@ verdict says all it must fix:
   Once main's rules queue its merges (a `merge_queue` rule among the rules for `main`, read
   from the API, so exactly when GitHub queues them), a pull request's head may be behind main: its definitions are
   compared with the commit it was built on, and its queue commit is what lands.
+- **The retry note** (0.4.0 A5, #5809). A change gets 2 retries; the red after them goes to a
+  person (quarantine, fix or infrastructure). A red on a pull request's run whose reasons do not
+  all wait says, right after `Red` in its title and in its summary, `retry n of 2` (or `retry
+  budget spent`) and whether it is flake-class, and why. It changes no conclusion; one it cannot
+  read says `retries not counted` and why.
+  - **The count:** the run's attempts after the first; each earlier head of the pull request
+    (its force-pushes, among the newest 10 events) whose newest verdict is a red that waits on
+    nothing and that has the head's tree or its `+/-` lines in the same files; and each time main's
+    merge queue removed the head as it is now for failed checks, since a re-enqueue is a retry.
+  - **Flake-class:** every reason is the `results` job's; every job that did not pass is a
+    `python-suite`, `python-suite-macos`, `e2e`, `e2e-shard` or `web-unit` job's, failed in tests
+    its `results` job names or cancelled or timed out with none; and each failed test was
+    classified by its rerun (a flake or a repeated failure, never a rail's, a security test's, an
+    unclassified or a quarantined one), reads no file the pull request changes (as the flake rule
+    reads it), and has a flaky history: an open `Flaky test: <id>` issue that the flaky-tests
+    workflow's account or a maintainer (owner, member, collaborator) filed, since anyone can open
+    an issue of any title. A failure on main in the last 7 days is not read yet, so fewer reds are
+    flake-class, never more. A red's verdict writes one `::notice` titled `failed test` that counts
+    its failed tests, then one per test (one JSON object each, at most 8): a step keeps ten
+    notices, so a red whose named tests fall short of the count is not flake-class. A queue entry
+    two entries list is a named red, never a crash.
 - **A head that changes a CI definition,** against `main`'s tip, is judged by two things, both
   green (#4584 step 4): its own run, by every rule here, which shows the change works as
   written; and `main`'s CI contract over its definitions, which shows it weakens nothing
