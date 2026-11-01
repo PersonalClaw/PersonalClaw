@@ -25,7 +25,9 @@ they name, whenever she uses a repository, outside any sandbox:
 * the ``.git`` file a linked worktree or a submodule keeps in place of the folder, which names the
   folder git reads all of the above from;
 * the owner's own git settings, which git reads in every repository (``~/.gitconfig``, and
-  ``git/config`` in ``$XDG_CONFIG_HOME``), and the machine's (an ``etc/gitconfig``).
+  ``git/config`` in ``$XDG_CONFIG_HOME``), and the machine's (an ``etc/gitconfig``), and the file
+  ``GIT_CONFIG_GLOBAL`` or ``GIT_CONFIG_SYSTEM`` names for git to read in place of either
+  (:func:`named_git_settings`).
 
 A git folder is one named ``.git`` (a submodule's and a linked worktree's folders inside it
 included), or any folder git would take for one, as it takes a bare repository: it holds ``HEAD``
@@ -125,6 +127,10 @@ GIT_MODULES = ".gitmodules"
 #: ``etc/gitconfig`` beside an installed git).
 GIT_SYSTEM_SETTINGS: tuple[str, str] = ("etc", "gitconfig")
 
+#: The variables that name another file for git to read in place of the owner's git settings or
+#: the machine's.
+GIT_SETTINGS_VARIABLES: tuple[str, ...] = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM")
+
 #: The startup files of the owner's shells, by name in her home folder: what each runs as her every
 #: time it starts (sh's and bash's, zsh's, ksh's, and the csh family's).
 SHELL_STARTUP_FILES: tuple[str, ...] = (
@@ -197,11 +203,26 @@ def _real(path: Path | str) -> str:
     return os.path.realpath(os.path.expanduser(str(path)))
 
 
+def named_git_settings() -> list[str]:
+    """The files git reads in place of the owner's or the machine's git settings because the
+    environment names them (:data:`GIT_SETTINGS_VARIABLES`), absolute, ``~`` written out. Read
+    from the environment at each call, as :func:`owners_own` reads ``$XDG_CONFIG_HOME``. A
+    relative value, which git would read from wherever it runs, and the null device, which keeps no
+    settings, name nothing here."""
+    named: list[str] = []
+    for variable in GIT_SETTINGS_VARIABLES:
+        value = os.path.expanduser(os.environ.get(variable, "").strip())
+        if os.path.isabs(value) and _real(value) != _real(os.devnull):
+            named.append(value)
+    return named
+
+
 def owners_own() -> list[tuple[str, bool, str]]:
     """The owner's own files in her home folder that make her tools run commands as her, each as
     ``(path, is_dir, kind)``, absolute as her tools name them: her git settings, which git reads
     in every repository (``~/.gitconfig``, and ``git/config`` in ``$XDG_CONFIG_HOME``,
-    ``~/.config`` when unset), and her shells' startup files (:data:`SHELL_STARTUP_FILES` in her
+    ``~/.config`` when unset, and the files the environment names in place of them,
+    :func:`named_git_settings`), and her shells' startup files (:data:`SHELL_STARTUP_FILES` in her
     home folder, zsh's in ``$ZDOTDIR`` as well, and fish's). Read from the environment at each
     call, as her tools read it, and the home folder as the sandbox's profile reads it, so the two
     name the same files."""
@@ -213,6 +234,7 @@ def owners_own() -> list[tuple[str, bool, str]]:
         (os.path.join(user, ".gitconfig"), False, GIT),
         (os.path.join(xdg, "git", "config"), False, GIT),
     ]
+    own += [(path, False, GIT) for path in named_git_settings()]
     own += [(os.path.join(user, name), False, SHELL) for name in SHELL_STARTUP_FILES]
     zdotdir = os.path.expanduser(os.environ.get("ZDOTDIR", "").strip())
     if os.path.isabs(zdotdir):

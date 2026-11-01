@@ -18,6 +18,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The agent's file tools, the Files view and the shell's screen refuse a project's secret files by their names, wherever they sit: `.env` and its variants such as `.env.local` and `prod.env`, `.envrc`, a `secrets` data file such as `secrets.json` or `secrets.yaml`, `credentials*.json`, `service-account*.json`, `.npmrc`, `.pypirc` and `.netrc`. In every approval mode the agent can't read, write or name one, so a step like copying `.env.example` to `.env` is yours to do. A template such as `.env.example`, and a source module such as `secrets.py`, still read.**
 - **The shell's credential screen refuses a glob it did not expand, past its bounds on folders listed or paths matched, when that glob could reach a protected place or name. A glob that could reach none still runs.**
 - **A bash action's payload key written in capitals no longer reaches its command, unless it is one of PersonalClaw's own (`PC_…`, which a workflow's steps use), nor does one that names a variable a program reads whatever its case (a proxy, npm's settings) or one of the families that decide which code a program runs; the warning names each key left out and why. Lowercase and camelCase keys reach the command as before.**
+- **The git settings file `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_SYSTEM` names in place of the usual one is the owner's, as `~/.gitconfig` is: the agent's file tools and shell refuse a change to it, and the macOS sandbox denies writing it.**
 
 ## [0.3.3] — 2026-11-01
 

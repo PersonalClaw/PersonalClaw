@@ -89,6 +89,9 @@ export const GATEWAY_UNSET = [
   // the XDG folders, and zsh's startup folder (`owner_only`, `sandbox`, `outside_home`)
   'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR',
   'ZDOTDIR',
+  // the git settings files the environment names in place of the usual ones
+  // (`owner_only.named_git_settings`)
+  'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM',
   // tmux's socket folder for a home whose own socket path is too long (`tmux_substrate`)
   'TMUX_TMPDIR',
   // PersonalClaw's own overrides that name a folder or file outside the home

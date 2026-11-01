@@ -705,8 +705,10 @@ own git and her own shell run what they hold, outside any sandbox.
   `config.worktree`, `commondir` (where a linked worktree's settings and hooks are), the `hooks/`
   folder, and the steps of a rebase in progress (`rebase-merge/git-rebase-todo`). In a working tree:
   `.gitmodules`, and the `.git` file a linked worktree or a submodule keeps in place of the folder.
-  And the owner's own git settings, `~/.gitconfig` and `git/config` in `$XDG_CONFIG_HOME`, and the
-  machine's (an `etc/gitconfig`). Names are compared regardless of case, as a case-insensitive disk
+  And the owner's own git settings, `~/.gitconfig` and `git/config` in `$XDG_CONFIG_HOME`, the
+  machine's (an `etc/gitconfig`), and the file `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_SYSTEM` names for
+  git to read in place of either, read from the environment as the other settings are (a relative
+  value and the null device name none). Names are compared regardless of case, as a case-insensitive disk
   opens them. The rest of a repository stays the agent's: `.gitignore`, `.gitattributes`,
   `.git/info/exclude` and every file of the project.
 - **The shell's.** The startup files of sh, bash, zsh, ksh and the csh family in her home folder
@@ -729,7 +731,8 @@ startup file in the agent's own shell (`source ~/.zshrc`).
 
 The fence holds less of them. The macOS profile denies writes to the owner's own git settings and
 shell startup files that sit in her home folder, at every level, in both spellings of a link into a
-dotfiles folder, and pins that folder so it cannot be moved aside; the ones deeper in `~/.config`
+dotfiles folder, and pins that folder so it cannot be moved aside, and the git settings file the
+environment names, wherever it is; the ones deeper in `~/.config`
 are held by the screen alone, since holding them would mean refusing to make `~/.config` where a
 program's first run needs it. The Linux launcher holds none of the owner's own files: it could
 only by making her whole home folder read-only. And neither platform fences a repository's: git

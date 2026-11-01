@@ -1509,14 +1509,16 @@ def _owners_own_fence() -> tuple[list[str], list[str]]:
 
     The ones deeper down (``git/config`` and fish's, in ``~/.config``) are left to the screen:
     holding them would mean refusing to make ``~/.config`` where it is missing, which many programs
-    do on their first run."""
-    from personalclaw.owner_only import owners_own
+    do on their first run. A git settings file the environment names in place of the usual one
+    (``owner_only.named_git_settings``) is held wherever it is: the owner keeps it there."""
+    from personalclaw.owner_only import named_git_settings, owners_own
 
     home = os.path.abspath(str(Path.home()))
+    elsewhere = {os.path.abspath(path) for path in named_git_settings()}
     files: list[str] = []
     for path, is_dir, _kind in owners_own():
         named = os.path.abspath(path)
-        if not is_dir and os.path.dirname(named) == home:
+        if not is_dir and (os.path.dirname(named) == home or named in elsewhere):
             files.extend((named, os.path.realpath(named)))
     files = list(dict.fromkeys(files))
     folders = [folder for target in files for folder in _renameable_from(os.path.dirname(target))]
