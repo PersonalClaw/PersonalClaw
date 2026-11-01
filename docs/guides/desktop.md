@@ -421,6 +421,9 @@ the goal composer. On a screen with no composer (Settings, say) it does nothing 
 recording into nowhere, which also means the capture indicator is never lit somewhere you cannot
 see what it is feeding.
 
+With more than one tab open (⌘T), a press goes to the tab you are using; pressed from another
+app, it goes to the tab you used last. Each tab's composer records on its own.
+
 The shortcut is configurable in **Settings → Speech & Transcription → Hands-free voice**.
 The default is `⌘⇧Space`. A shortcut needs at least one modifier: a bare key would be
 taken away from every other app on your machine, so PersonalClaw refuses to bind one. If
@@ -436,7 +439,7 @@ requesting an accessibility-level input tap, which PersonalClaw does not do.
 
 The practical difference is that you cannot hold the chord down. So that a forgotten
 toggle cannot leave the microphone open indefinitely, a capture that runs past two
-minutes is stopped for you.
+minutes is stopped for you, in each tab on its own.
 
 ### While it is capturing you can always see it
 
