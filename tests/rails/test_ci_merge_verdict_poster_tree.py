@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import Counter
 from typing import Any
 
 import pytest
@@ -103,7 +104,35 @@ _CONTRACT_BESIDE_LINES = (
 )
 _WAKES_BESIDE = " ".join(_BESIDE_LINES)
 _CONTRACT_IF_BESIDE = " ".join(_CONTRACT_BESIDE_LINES)
-_WAKES_BY_SHAPE = {_AFTER: _WAKES, _BESIDE: _WAKES_BESIDE}
+#: The queue shape (0.4.0 A1): the beside shape's triggers, and its condition with a queue
+#: commit's Merge run (``merge_group``) taken as a pull request's is, on its completion and on its
+#: start. It lands in two merges: these rows first, then the poster, which takes the beside shape
+#: out of here.
+_QUEUE = "queue"
+_QUEUE_RUN = "|| github.event.workflow_run.event == 'merge_group'"
+_STARTS = "&& github.event.workflow_run.event == 'pull_request'"
+_QUEUE_LINES = tuple(
+    part
+    for line in _BESIDE_LINES
+    for part in (
+        (line, _QUEUE_RUN)
+        if line == "&& (github.event.workflow_run.event == 'pull_request'"
+        else (
+            ("&& (github.event.workflow_run.event == 'pull_request'", f"{_QUEUE_RUN})")
+            if line == _STARTS
+            else (line,)
+        )
+    )
+)
+_CONTRACT_QUEUE_LINES = (
+    f"({_QUEUE_LINES[0]}",
+    *_QUEUE_LINES[1:-1],
+    f"{_QUEUE_LINES[-1]})",
+    "&& (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')",
+)
+_WAKES_QUEUE = " ".join(_QUEUE_LINES)
+_CONTRACT_IF_QUEUE = " ".join(_CONTRACT_QUEUE_LINES)
+_WAKES_BY_SHAPE = {_AFTER: _WAKES, _BESIDE: _WAKES_BESIDE, _QUEUE: _WAKES_QUEUE}
 #: What the beside shape's concurrency group keys a dispatch on: the head it names, empty for any
 #: other event (a context the concurrency row models, unlike ``inputs``).
 _HEAD_KEY = "${{ github.event.inputs.head }}"
@@ -111,7 +140,11 @@ _HEAD_KEY = "${{ github.event.inputs.head }}"
 #: ``in_progress`` again as its jobs start, and a completion that shared their group would queue
 #: behind them.
 _ACTION_KEY = "${{ github.event.action }}"
-_CONTRACT_IF_BY_SHAPE = {_AFTER: _CONTRACT_IF, _BESIDE: _CONTRACT_IF_BESIDE}
+_CONTRACT_IF_BY_SHAPE = {
+    _AFTER: _CONTRACT_IF,
+    _BESIDE: _CONTRACT_IF_BESIDE,
+    _QUEUE: _CONTRACT_IF_QUEUE,
+}
 #: The beside shape's decision: a started run is decided by ``--start`` alone, before anything
 #: else, and a wake by ``--head``.
 _START_BRANCH = re.compile(
@@ -186,6 +219,8 @@ def _problems(text: str) -> list[str]:
     jobs = data.get("jobs") or {}
     if set(jobs) != {"post", "contract"}:
         return [*found, f"has jobs {sorted(jobs)}"]
+    if shape == _BESIDE and (jobs["post"] or {}).get("if") == _WAKES_QUEUE:
+        shape = _QUEUE
     found += _contract_problems(jobs["contract"], shape)
     job = jobs["post"]
     if job.get("if") != _WAKES_BY_SHAPE[shape]:
@@ -221,9 +256,9 @@ def _problems(text: str) -> list[str]:
         found.append("no step decides the verdict")
     elif (decide.get("env") or {}).get("GH_TOKEN") != "${{ github.token }}":
         found.append("the decision reads with a token other than the job's own")
-    elif shape == _BESIDE:
+    elif shape in (_BESIDE, _QUEUE):
         found += _beside_decide_problems(decide)
-    if shape == _BESIDE:
+    if shape in (_BESIDE, _QUEUE):
         group = data.get("concurrency") or {}
         if _HEAD_KEY not in str(group.get("group")) or group.get("cancel-in-progress") is not False:
             found.append(
@@ -608,6 +643,31 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
         "in_progress",
     ),
     (
+        "a queue commit's Merge run",
+        "workflow_run",
+        {"event": "merge_group", "head_branch": "gh-readonly-queue/main/pr-7-ab"},
+        "queue",
+        "completed",
+    ),
+    (
+        "a queue commit's Merge run starting",
+        "workflow_run",
+        {
+            "event": "merge_group",
+            "path": _MERGE_PATH,
+            "head_branch": "gh-readonly-queue/main/pr-7-ab",
+        },
+        "queue",
+        "in_progress",
+    ),
+    (
+        "another workflow named Merge starting on a queue commit",
+        "workflow_run",
+        {"event": "merge_group", "path": ".github/workflows/merge-copy.yml"},
+        "never",
+        "in_progress",
+    ),
+    (
         "a contract run's wake, a dispatch of the poster on main",
         "workflow_dispatch",
         {"ref": "refs/heads/main"},
@@ -626,13 +686,17 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
 _DELIVERS = {
     _AFTER: frozenset({"completed", "check", "schedule"}),
     _BESIDE: frozenset({"completed", "check", "schedule", "in_progress", "dispatch"}),
+    _QUEUE: frozenset({"completed", "check", "schedule", "in_progress", "dispatch"}),
 }
 #: MERGE_VERDICT_LIVE as the repository may hold it: before the flip, after it, and unset.
 _LIVE = ("false", "true", None)
 
 
-def _wanted(kind: str, live: str | None) -> bool:
-    return kind == "always" or (kind == "head" and live == "true")
+def _wanted(kind: str, live: str | None, shape: str = _AFTER) -> bool:
+    """Whether the shape's condition takes a runner for an event of this kind: a queue commit's
+    run (``queue``) is taken as a pull request's head's is, and only in the queue shape."""
+    queued = kind == "queue" and shape == _QUEUE
+    return kind == "always" or ((kind == "head" or queued) and live == "true")
 
 
 def _tokens(expr: str) -> list[str]:
@@ -733,17 +797,17 @@ def _wake_problems(where: str, expr: str, shape: str = _AFTER) -> list[str]:
     """Each event that starts the shape's runs, as the condition answers it, with
     MERGE_VERDICT_LIVE each way, against whether it can judge a head then."""
     return [
-        f"{where} {'takes no runner for' if _wanted(e[3], live) else 'takes a runner for'} {e[0]}"
-        f" with MERGE_VERDICT_LIVE {live!r}"
+        f"{where} {'takes no runner for' if _wanted(e[3], live, shape) else 'takes a runner for'}"
+        f" {e[0]} with MERGE_VERDICT_LIVE {live!r}"
         for e in _EVENTS
         if e[4] in _DELIVERS[shape]
         for live in _LIVE
-        if _answers(expr, e, live) is not _wanted(e[3], live)
+        if _answers(expr, e, live) is not _wanted(e[3], live, shape)
     ]
 
 
 _SHAPED_EVENTS = [
-    (shape, e) for shape in (_AFTER, _BESIDE) for e in _EVENTS if e[4] in _DELIVERS[shape]
+    (shape, e) for shape in (_AFTER, _BESIDE, _QUEUE) for e in _EVENTS if e[4] in _DELIVERS[shape]
 ]
 
 
@@ -754,14 +818,14 @@ _SHAPED_EVENTS = [
 def test_the_wake_condition_takes_a_runner_only_for_what_can_judge_a_head(
     shape: str, event: tuple[str, str, dict[str, Any], str, str], live: str | None
 ) -> None:
-    assert _answers(_WAKES_BY_SHAPE[shape], event, live) is _wanted(event[3], live), event[0]
+    assert _answers(_WAKES_BY_SHAPE[shape], event, live) is _wanted(event[3], live, shape), event[0]
 
 
 def test_the_conditions_read_only_the_fields_they_name() -> None:
     """What either condition reads of an event: its name, its action, its ref, the run's event,
     branch and path, the check's App and name, and the variable. Nothing a fork's author names but
     the branch, which only a dispatch's and CodeQL's clauses read."""
-    for expr in (_WAKES, _WAKES_BESIDE):
+    for expr in (_WAKES, _WAKES_BESIDE, _WAKES_QUEUE):
         read = {t for t in _tokens(expr) if t.startswith(("github.", "vars."))}
         assert read <= {
             "github.event_name",
@@ -777,7 +841,8 @@ def test_the_conditions_read_only_the_fields_they_name() -> None:
     fork = next(e for e in _EVENTS if e[0].startswith("a fork's"))
     plain = next(e for e in _EVENTS if e[0] == "a pull request's Merge run starting")
     for live in _LIVE:
-        assert _answers(_WAKES_BESIDE, fork, live) is _answers(_WAKES_BESIDE, plain, live)
+        for expr in (_WAKES_BESIDE, _WAKES_QUEUE):
+            assert _answers(expr, fork, live) is _answers(expr, plain, live)
 
 
 def test_the_evaluator_reads_the_condition_it_judges() -> None:
@@ -1046,6 +1111,7 @@ def _beside_poster() -> str:
     that make it so, so these controls read both trees."""
     text = _WORKFLOW.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
+    # The queue shape has the beside shape's triggers: either is itself.
     if _shape(data.get("on", data.get(True))) == _BESIDE:
         return text
     # The post job's condition, then the contract job's: unpacking refuses any other number.
@@ -1110,10 +1176,32 @@ def test_the_folded_conditions_read_as_the_expressions() -> None:
     for lines, expr in (
         (_BESIDE_LINES, _WAKES_BESIDE),
         (_CONTRACT_BESIDE_LINES, _CONTRACT_IF_BESIDE),
+        (_QUEUE_LINES, _WAKES_QUEUE),
+        (_CONTRACT_QUEUE_LINES, _CONTRACT_IF_QUEUE),
     ):
         assert yaml.safe_load("job:\n" + _folded(lines))["job"]["if"] == expr
     poster = yaml.safe_load(_beside_poster())["jobs"]
-    assert (poster["post"]["if"], poster["contract"]["if"]) == (_WAKES_BESIDE, _CONTRACT_IF_BESIDE)
+    assert (poster["post"]["if"], poster["contract"]["if"]) in (
+        (_WAKES_BESIDE, _CONTRACT_IF_BESIDE),
+        (_WAKES_QUEUE, _CONTRACT_IF_QUEUE),
+    )
+
+
+def test_the_queue_shape_takes_a_queue_commit_s_run_as_a_heads() -> None:
+    """The queue shape's condition is the beside shape's with a queue commit's Merge run taken
+    on its completion and its start, and nothing else: the rows a poster in it is held to."""
+    assert Counter(_QUEUE_LINES) - Counter(_BESIDE_LINES) == Counter(
+        [_QUEUE_RUN, "&& (github.event.workflow_run.event == 'pull_request'", f"{_QUEUE_RUN})"]
+    )
+    assert Counter(_BESIDE_LINES) - Counter(_QUEUE_LINES) == Counter([_STARTS])
+    beside = _beside_poster()
+    posts, contracts = _IF_BLOCK.findall(beside)
+    queued = beside.replace(posts, _folded(_QUEUE_LINES), 1)
+    queued = queued.replace(contracts, _folded(_CONTRACT_QUEUE_LINES), 1)
+    assert _problems(queued) == []
+    # A queue shape whose contract job's condition is the beside shape's, in either tree.
+    half = queued.replace(_folded(_CONTRACT_QUEUE_LINES), _folded(_CONTRACT_BESIDE_LINES), 1)
+    assert any("contract" in p for p in _problems(half)), _problems(half)
 
 
 @pytest.mark.parametrize(

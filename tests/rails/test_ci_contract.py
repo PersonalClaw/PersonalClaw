@@ -10943,6 +10943,38 @@ def _candidate_push(
     return _CandidateRun(label, candidate, "push", head, {"github": github})
 
 
+def _candidate_queue(
+    label: str, candidate: str, number: int, built_on: str, head: str, run: int, attempt: int = 1
+) -> _CandidateRun:
+    """A queue commit's run (``merge_group``, 0.4.0 A1): GitHub's squash of pull request
+    ``number`` on ``built_on`` (main's tip, or the queue commit of the entry ahead), on the queue's
+    branch, which names the pull request and that commit, never the pull request's head. The
+    queue commit is its own candidate: its tree is the one main may reach."""
+    branch = f"gh-readonly-queue/main/pr-{number}-{built_on}"
+    github = {
+        "repository": _REPO_SLUG,
+        "event_name": "merge_group",
+        "ref": f"refs/heads/{branch}",
+        "ref_name": branch,
+        "sha": head,
+        "head_ref": "",
+        "base_ref": "",
+        "run_id": str(9700 + run),
+        "run_number": str(run),
+        "run_attempt": str(attempt),
+        "event": {
+            "action": "checks_requested",
+            "merge_group": {
+                "head_sha": head,
+                "head_ref": f"refs/heads/{branch}",
+                "base_sha": built_on,
+                "base_ref": "refs/heads/main",
+            },
+        },
+    }
+    return _CandidateRun(label, candidate, "merge_group", head, {"github": github})
+
+
 def _listener_run(run: _CandidateRun) -> _CandidateRun:
     """The ``workflow_run`` event a candidate run's completion starts in a listener."""
     github = run.context["github"]
@@ -11017,13 +11049,31 @@ _PUSH_RUNS: tuple[_CandidateRun, ...] = (
     _candidate_push("a push to feature-b", "pr42", "feature-b", "b1", 9),
 )
 
+#: Queue commits: #41's on main's tip, run again and re-run; #42's on #41's; and #41's again
+#: after the queue rebuilt it (a new commit), each its own candidate.
+_QUEUE_RUNS: tuple[_CandidateRun, ...] = (
+    _candidate_queue("#41's queue commit", "q41", 41, _MAIN_SHA, "q41a", 21),
+    _candidate_queue("#41's queue commit, run again", "q41", 41, _MAIN_SHA, "q41a", 22),
+    _candidate_queue(
+        "#41's queue commit, re-run as attempt 2", "q41", 41, _MAIN_SHA, "q41a", 21, 2
+    ),
+    _candidate_queue("#42's queue commit, on #41's", "q42", 42, "q41a", "q42a", 23),
+    _candidate_queue("#41's queue commit, rebuilt", "q41b", 41, _MAIN_SHA, "q41b", 24),
+)
+
 _CANDIDATE_RUNS: tuple[_CandidateRun, ...] = (
     *_pr_runs("pull_request"),
     *_pr_runs("pull_request_target"),
     *_PUSH_RUNS,
+    *_QUEUE_RUNS,
     *(
         _listener_run(r)
-        for r in (*_pr_runs("pull_request"), *_pr_runs("pull_request_target"), *_PUSH_RUNS)
+        for r in (
+            *_pr_runs("pull_request"),
+            *_pr_runs("pull_request_target"),
+            *_PUSH_RUNS,
+            *_QUEUE_RUNS,
+        )
     ),
 )
 
@@ -11099,8 +11149,9 @@ def _listens_to(trigger: object, names: set[str]) -> set[str]:
 def _candidate_kinds(workflows: list[tuple[str, dict]]) -> dict[str, set[str]]:
     """Per workflow, the candidate runs it takes part in: ``pull_request`` and
     ``pull_request_target`` (an opening event of a pull request), ``push`` (a push to a branch
-    other than main), ``workflow_run:<kind>`` (a listener of a workflow that takes part in
-    ``<kind>``), and for a called workflow, whatever its callers take part in."""
+    other than main), ``merge_group`` (a queue commit of main's merge queue),
+    ``workflow_run:<kind>`` (a listener of a workflow that takes part in ``<kind>``), and for a
+    called workflow, whatever its callers take part in."""
     kinds: dict[str, set[str]] = {}
     for name, wf in workflows:
         triggers = _triggers(wf)
@@ -11110,6 +11161,8 @@ def _candidate_kinds(workflows: list[tuple[str, dict]]) -> dict[str, set[str]]:
                 own.add(event)
         if "push" in triggers and not _main_or_tags_only(triggers["push"]):
             own.add("push")
+        if "merge_group" in triggers:
+            own.add("merge_group")
         kinds[name] = own
     by_name = {str(wf.get("name", "")): file for file, wf in workflows if wf.get("name")}
     # Read from each workflow's own kinds, so a glob that matches the listener itself reads
@@ -11322,6 +11375,26 @@ CONCURRENCY_KEYS_ON_THE_CANDIDATE = _toolchain_row(
                       _plant("", _PR_YML, _JOBS, _adds_job(
                           "  called:\n    uses: ./.github/workflows/reusable.yml\n")).plant),
                 expect="reusable.yml: the group 'reusable-lane' is shared by"),
+        # A queue commit's run (0.4.0 A1) keys on its commit: the queue's base is shared by
+        # every entry built on it, and its branch names the commit under it, not its own.
+        Control("a queue run in one group keyed on the queue's base",
+                _new_workflow(f"{_WORKFLOWS}/queue-check.yml",
+                              "name: Queue check\non:\n  merge_group:\n"
+                              "concurrency:\n  group: q-${{ github.event.merge_group.base_ref }}\n"
+                              "permissions: {}\njobs: {}\n"),
+                expect="#41's queue commit"),
+        Control("a queue run keyed on the commit it was built on",
+                _new_workflow(f"{_WORKFLOWS}/queue-check.yml",
+                              "name: Queue check\non:\n  merge_group:\n"
+                              "concurrency:\n  group: q-${{ github.event.merge_group.base_sha }}\n"
+                              "permissions: {}\njobs: {}\n"),
+                expect="rebuilt"),
+        Control("a queue run keyed on its queue commit",
+                _new_workflow(f"{_WORKFLOWS}/queue-check.yml",
+                              "name: Queue check\non:\n  merge_group:\n"
+                              "concurrency:\n  group: q-${{ github.sha }}\n"
+                              "  cancel-in-progress: false\npermissions: {}\njobs: {}\n"),
+                fails=False),
         # A GitHub re-run keeps its run id and commit and raises run_attempt.
         _plant("a group keyed on the run attempt", _NIX, _NIX_GROUP,
                _NIX_GROUP.replace("group: nix-", "group: nix-${{ github.run_attempt }}-"),
@@ -13348,6 +13421,37 @@ else
   echo "::warning title=no changed list::the test merge's changed paths could not be read, so the flake rule passes no flake"
 fi
 """,  # noqa: E501
+        "a pull request's or a queue commit's changed paths, for the flake rule": r"""
+set -uo pipefail
+out="$RUNNER_TEMP/changed-paths/changed.z"
+mkdir -p "$RUNNER_TEMP/changed-paths"
+parents=$(git cat-file -p HEAD | sed -n 's/^parent //p' | tr '\n' ' ')
+read -r main head extra <<< "$parents"
+if [ "${GITHUB_EVENT_NAME:-}" = merge_group ]; then
+  if [ -n "${head:-}" ] || [ "$main" != "$QUEUE_BASE" ]; then
+    echo "::warning title=no changed list::the checkout is not this entry's queue commit, so the flake rule passes no flake"
+    exit 0
+  fi
+elif [ -z "${head:-}" ] || [ -n "${extra:-}" ] || [ "$head" != "$PR_HEAD" ]; then
+  echo "::warning title=no changed list::the checkout is not this pull request's test merge, so the flake rule passes no flake"
+  exit 0
+fi
+if git fetch --no-tags --depth=1 origin "$main" \
+   && git diff --name-only -z --no-renames "$main" HEAD > "$out" && [ -s "$out" ]; then
+  echo "ok=true" >> "$GITHUB_OUTPUT"
+else
+  echo "::warning title=no changed list::the test merge's changed paths could not be read, so the flake rule passes no flake"
+fi
+""",  # noqa: E501
+        "the changed paths, against what the run compares with": r"""
+set -uo pipefail
+listed="$RUNNER_TEMP/changed.json"
+changed="$RUNNER_TEMP/changed.txt"
+gh api --paginate "repos/${GITHUB_REPOSITORY}/compare/${COMPARED}...${HEAD_SHA}" \
+  --jq '.files[].filename | @json' > "$listed" || : > "$listed"
+python3 -c 'import json, sys; names = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]; assert all(isinstance(n, str) and "\0" not in n for n in names); sys.stdout.write("".join(n + "\0" for n in names))' "$listed" > "$changed" || : > "$changed"
+echo "enumerated $(tr -cd '\000' < "$changed" | wc -c) changed path(s)"
+""",  # noqa: E501
         "the changed paths, against main's tip": r"""
 set -uo pipefail
 listed="$RUNNER_TEMP/changed.json"
@@ -13543,6 +13647,19 @@ if [ -f "$RUNNER_TEMP/superseded.json" ]; then
   proof="$RUNNER_TEMP/superseded.json"
 fi
 """,  # noqa: E501
+        "the flake rule's two lists, on a pull request or a queue commit only": r"""
+flakes=()
+case "${GITHUB_EVENT_NAME:-}" in pull_request|merge_group) judged=yes ;; *) judged="" ;; esac
+if [ -n "$judged" ] && [ -f "$RUNNER_TEMP/changes/changed.z" ]; then
+  if gh api --paginate --slurp \
+       "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" \
+       > "$RUNNER_TEMP/jobs.json"; then
+    flakes=(--changed "$RUNNER_TEMP/changes/changed.z" --jobs "$RUNNER_TEMP/jobs.json")
+  else
+    echo "::warning title=no jobs list::this run's jobs could not be listed, so the flake rule passes no flake"
+  fi
+fi
+""",  # noqa: E501
         "the flake rule's two lists, on a pull request only": r"""
 # The flake rule's two lists, on a pull request only: its changed paths, and this run's
 # jobs on this attempt. Without both, the verdict passes no flake.
@@ -13590,18 +13707,32 @@ _FLAKE_VERDICT = (
     "main's verdict.py, given the flake rule's lists",
 )
 _PLAIN_VERDICT = ("main's verdict.py, over the plan's keys, needs and the run's records",)
+#: The flake rule's verdict step on a queue commit too (0.4.0 A1): the queue takes the pull
+#: request's flake rule. It lands in two merges, so both verdict steps are listed meanwhile.
+_QUEUE_FLAKE_VERDICT = (
+    "the verdict's inputs, read",
+    "the flake rule's two lists, on a pull request or a queue commit only",
+    "main's verdict.py, given the flake rule's lists",
+)
+#: The plan step, its changed paths compared with main's tip, or (0.4.0 A1) with what the run
+#: compares with: main, or a queue commit's queue base. Both are listed until merge.yml's merge.
+_PLAN_STEP_TAIL = (
+    "main's tools/ci, archived beside the checkout, or no plan",
+    "a push's plan, by the tree check's answer, or no plan",
+    "main's planner, over this checkout's catalogue, as a matrix",
+    "the keys and the stage jobs' matrices, read back before they are published",
+)
+_PLAN_AGAINST_MAIN = ("the changed paths, against main's tip", *_PLAN_STEP_TAIL)
+_PLAN_COMPARED = ("the changed paths, against what the run compares with", *_PLAN_STEP_TAIL)
+_QUEUE_CHANGED = ("a pull request's or a queue commit's changed paths, for the flake rule",)
 _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
     _PLAN_JOB: (
         ("the runner's identity",),
         ("the apps repository's head, read once for the run, or no partner",),
         ("the pull request's changed paths, for the flake rule",),
-        (
-            "the changed paths, against main's tip",
-            "main's tools/ci, archived beside the checkout, or no plan",
-            "a push's plan, by the tree check's answer, or no plan",
-            "main's planner, over this checkout's catalogue, as a matrix",
-            "the keys and the stage jobs' matrices, read back before they are published",
-        ),
+        _QUEUE_CHANGED,
+        _PLAN_AGAINST_MAIN,
+        _PLAN_COMPARED,
         ("the push's replay, in shadow, beside the tree check (merge.yml's)",),
         ("main's check of this run's catalogue (merge.yml's)",),
     ),
@@ -13619,6 +13750,7 @@ _TIER_STEPS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("main's superseded.py, over the suite shards a newer push to main replaced",),
         ("main's verdict.py, over the plan's keys, needs and the run's records",),
         _FLAKE_VERDICT,
+        _QUEUE_FLAKE_VERDICT,
     ),
 }
 
@@ -13650,13 +13782,21 @@ _TIER_STEP_LINES: dict[str, dict[tuple[str, ...], tuple[str, ...]]] = {
 #: when it runs. A step a row names lands in two merges (#4584 step 4): these rows first, with
 #: the step here, then the workflow, which takes it out of here. None waits today.
 _TIER_OPTIONAL_STEPS: dict[str, frozenset[tuple[str, ...]]] = {
-    _PLAN_JOB: frozenset({("the pull request's changed paths, for the flake rule",)}),
-    _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT}),
+    _PLAN_JOB: frozenset(
+        {
+            ("the pull request's changed paths, for the flake rule",),
+            _QUEUE_CHANGED,
+            _PLAN_AGAINST_MAIN,
+            _PLAN_COMPARED,
+        }
+    ),
+    _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT, _QUEUE_FLAKE_VERDICT}),
 }
 #: Listed steps of which each tier workflow's job runs exactly one: its results job's verdict,
 #: with the flake rule's lists or without them (merge.yml's moves to them in its own merge).
 _TIER_ONE_OF: dict[str, frozenset[tuple[str, ...]]] = {
-    _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT}),
+    _PLAN_JOB: frozenset({_PLAN_AGAINST_MAIN, _PLAN_COMPARED}),
+    _RESULTS_JOB: frozenset({_PLAIN_VERDICT, _FLAKE_VERDICT, _QUEUE_FLAKE_VERDICT}),
 }
 _STAGE_ALLOWED = (_RUNNER_IDENTITY_LINE, _RUN_JOB_LINE)
 #: The actions a stage job's steps use besides its two lines: the checkouts, the setup action,
@@ -13844,6 +13984,12 @@ _PLAIN_CALL = _tier_run(
 _FLAKE_CALL = _tier_run(
     _TIER_LINES[_RESULTS_JOB]["the flake rule's two lists, on a pull request only"]
 ) + _tier_run(_TIER_LINES[_RESULTS_JOB]["main's verdict.py, given the flake rule's lists"])
+#: The same on a queue commit too (0.4.0 A1), as merge.yml spells it after its own merge.
+_QUEUE_FLAKE_CALL = _tier_run(
+    _TIER_LINES[_RESULTS_JOB][
+        "the flake rule's two lists, on a pull request or a queue commit only"
+    ]
+) + _tier_run(_TIER_LINES[_RESULTS_JOB]["main's verdict.py, given the flake rule's lists"])
 _PARTNER_STEP = "      - name: the partner heads the run tests against\n"
 #: merge.yml's changes step for the flake rule, as the wiring adds it.
 _CHANGED_STEP = (
@@ -13864,7 +14010,9 @@ def _wired(text: str) -> str:
     if _CHANGED_STEP.splitlines(True)[0] not in text:
         assert _PARTNER_STEP in text, f"no {_PARTNER_STEP!r} to add the changed-paths step before"
         text = text.replace(_PARTNER_STEP, _CHANGED_STEP + _PARTNER_STEP, 1)
-    assert _FLAKE_CALL in text, "merge.yml runs neither form of the verdict step"
+    assert (
+        _FLAKE_CALL in text or _QUEUE_FLAKE_CALL in text
+    ), "merge.yml runs neither form of the verdict step"
     return text
 
 
@@ -13876,7 +14024,7 @@ def _with_a_line_of_its_own(text: str) -> str:
 
 def _no_verdict_call(text: str) -> str:
     """The workflow's verdict step without its call, in whichever form it runs."""
-    for call in (_PLAIN_CALL, _FLAKE_CALL):
+    for call in (_PLAIN_CALL, _FLAKE_CALL, _QUEUE_FLAKE_CALL):
         if call in text:
             return text.replace(call, "", 1)
     raise AssertionError("the workflow runs neither form of the verdict step")
@@ -14975,6 +15123,20 @@ PR_YML_CARRIES_NO_PUSH_STAGE = Row(
 _TRUSTED_OR_CALLED = {"pull_request_target", "workflow_run", "workflow_call"}
 
 
+#: merge.yml's queue trigger (0.4.0 A1), as the workflow spells it after its own merge.
+_QUEUE_TRIGGER = "  merge_group:\n    types: [checks_requested]\n"
+
+
+def _with_the_queue(text: str) -> str:
+    """merge.yml's text with the queue commit's trigger, whether the tree already has it or not."""
+    if _QUEUE_TRIGGER in text:
+        return text
+    assert text.count("  workflow_dispatch: {}\n") == 1, "merge.yml's dispatch is not once"
+    return text.replace(
+        "  workflow_dispatch: {}\n", "  workflow_dispatch: {}\n" + _QUEUE_TRIGGER, 1
+    )
+
+
 def _permission_writes(where: str, value: object) -> list[str]:
     if value is None:
         return []
@@ -14989,11 +15151,19 @@ def _permission_writes(where: str, value: object) -> list[str]:
     ]
 
 
-#: Each tier workflow's triggers: a pull request's run and a dispatch, and merge.yml's push stage.
-_TIER_TRIGGERS = {
-    "pr.yml": {"pull_request", "workflow_dispatch"},
-    "merge.yml": {"pull_request", "push", "workflow_dispatch"},
+#: Each tier workflow's triggers: a pull request's run and a dispatch, and merge.yml's push stage
+#: and (0.4.0 A1) its queue commit's run, ``merge_group``. That trigger lands in two merges: these
+#: rows first, with merge.yml's set without it here too, then the workflow, which takes that set
+#: out of here.
+_TIER_TRIGGERS: dict[str, tuple[frozenset[str], ...]] = {
+    "pr.yml": (frozenset({"pull_request", "workflow_dispatch"}),),
+    "merge.yml": (
+        frozenset({"pull_request", "push", "workflow_dispatch"}),
+        frozenset({"pull_request", "push", "workflow_dispatch", "merge_group"}),
+    ),
 }
+#: How a tier workflow names the queue's one event: a queue commit whose checks GitHub asks for.
+_QUEUE_TRIGGERS: tuple[object, ...] = (None, {}, {"types": ["checks_requested"]})
 
 
 def tier_trust_violations(root: Path) -> list[str]:
@@ -15009,13 +15179,21 @@ def tier_trust_violations(root: Path) -> list[str]:
         for trigger in sorted(triggers & _TRUSTED_OR_CALLED):
             bad.append(f"{name} runs on {trigger}, a trusted or called run of candidate code")
         want = _TIER_TRIGGERS[name]
-        if triggers != want:
-            bad.append(f"{name} runs on {sorted(triggers)}, not {sorted(want)}")
+        if triggers not in want:
+            sets = " or ".join(str(sorted(w)) for w in want)
+            bad.append(f"{name} runs on {sorted(triggers)}, not {sets}")
+        if "merge_group" in triggers and _triggers(workflow)["merge_group"] not in _QUEUE_TRIGGERS:
+            bad.append(f"{name} takes a merge_group event other than checks_requested")
         if "permissions" not in workflow:
             bad.append(f"{name} declares no permissions, so its token is the repository's default")
         bad += _permission_writes(name, workflow.get("permissions"))
         for job_id, job in _trust_jobs(workflow).items():
             bad += _permission_writes(f"{name} job {job_id}", job.get("permissions"))
+            # A queue commit's run is the base repository's, as a branch's pull request's is: a
+            # job with an environment would hold that environment's secrets wherever its branch
+            # policy let the queue's branch in.
+            if "environment" in job:
+                bad.append(f"{name} job {job_id} deploys to an environment: the verdict needs none")
         # The secrets context in any spelling GitHub reads (`secrets.X`, `secrets['X']`,
         # `toJSON(secrets)`, any case) or a call's `secrets:`; comments are not read.
         if re.search(r"\bsecrets\b", json.dumps(workflow, default=str), flags=re.I):
@@ -15040,10 +15218,23 @@ THE_TIER_WORKFLOWS_TAKE_NO_TRUST = Row(
                expect="pr.yml runs on ['pull_request', 'push', 'workflow_dispatch'], not"),
         _plant("merge.yml without its pull request run", _MERGE_YML,
                "  pull_request: {}\n", "",
-               expect="merge.yml runs on ['push', 'workflow_dispatch'], not"),
+               expect="'push', 'workflow_dispatch'], not"),
         _plant("a schedule on merge.yml", _MERGE_YML, "  workflow_dispatch: {}\n",
                "  workflow_dispatch: {}\n  schedule:\n    - cron: '0 3 * * *'\n",
-               expect="merge.yml runs on ['pull_request', 'push', 'schedule',"),
+               expect="'pull_request', 'push', 'schedule', 'workflow_dispatch'], not"),
+        Control("merge.yml with the queue commit's run, whichever the tree holds",
+                _edited(_MERGE_YML, _with_the_queue), fails=False),
+        _plant("a queue commit's run on pr.yml", _PR_YML, "  workflow_dispatch: {}\n",
+               "  workflow_dispatch: {}\n  merge_group:\n    types: [checks_requested]\n",
+               expect="pr.yml runs on ['merge_group', 'pull_request', 'workflow_dispatch'], not"),
+        Control("merge.yml's queue run taking another type",
+                _edited(_MERGE_YML, lambda t: _with_the_queue(t).replace(
+                    "types: [checks_requested]", "types: [checks_requested, destroyed]", 1)),
+                expect="merge.yml takes a merge_group event other than checks_requested"),
+        _plant_in_job("an environment on a tier job", _MERGE_YML, "results",
+                      "    runs-on: ubuntu-24.04\n",
+                      "    runs-on: ubuntu-24.04\n    environment: ci-controller\n",
+                      expect="merge.yml job results deploys to an environment"),
         _plant("a write for the verdict", _MERGE_YML,
                "      checks: read     # a cancelled shard's annotations",
                "      checks: write    # a cancelled shard's annotations",
