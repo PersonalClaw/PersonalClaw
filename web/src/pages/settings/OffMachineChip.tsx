@@ -6,8 +6,9 @@ export const OFF_MACHINE_LABEL = 'off this machine'
 
 /** What the chip means, in full: its accessible name's second half, and its title. */
 export const OFF_MACHINE_REASON =
-  'Runs on another machine, so its prompts leave this one: they get the outbound scan your ' +
-  'settings ask for, and it is not counted as free unless its price is $0.'
+  'Runs on another machine, so its prompts leave this one: what your automations, loops, ' +
+  'subagents and background work send it gets the outbound scan your settings ask for, and it ' +
+  'is not counted as free unless its price is $0.'
 
 /** A model a model server lists that does not run on this machine (`runs_here: false`): one an
  *  Ollama answers from its cloud, or any model of a server on another machine. It stands where a

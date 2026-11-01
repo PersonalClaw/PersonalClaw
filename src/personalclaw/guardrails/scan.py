@@ -21,9 +21,15 @@ local providers):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
-from dataclasses import dataclass
+import threading
+from collections import OrderedDict
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from typing import Any
 
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -167,12 +173,18 @@ def _redact_pii(text: str) -> str:
     return "".join(out)
 
 
-def scan_outbound(text: str, *, mode: str) -> ScanResult:
+def scan_outbound(text: str, *, mode: str, personal: str = "ladder") -> ScanResult:
     """Scan ``text`` for secrets/PII and apply the ``mode`` ladder.
 
     ``mode`` is ``warn`` | ``redact`` | ``block`` (an unknown value is treated as
     ``warn`` — the least surprising, never a silent hard block). Detection always
     runs; the mode only decides what happens to a finding.
+
+    *personal* is what the mode does to an email or a phone number: ``ladder``, what it does to a
+    secret, or ``note``, where they are counted and named but never replaced or refused. A
+    structured request (:func:`scan_request`) notes them: what its tools read is full of digit runs
+    the phone check reads as numbers (file sizes, ids, timestamps, port lists), and an address a
+    task names is one the model is meant to use.
     """
     if not text:
         return ScanResult(text=text, findings=0)
@@ -223,7 +235,9 @@ def scan_outbound(text: str, *, mode: str) -> ScanResult:
         return ScanResult(text=text, findings=0)
 
     mode = mode if mode in ("warn", "redact", "block") else "warn"
-    if mode == "block":
+    # What the mode acts on: every finding, less the emails and phone numbers *personal* notes.
+    acted = findings - (pii_count if personal == "note" else 0)
+    if mode == "block" and acted:
         logger.warning("outbound scan: %d finding(s) → BLOCK (%s)", findings, ",".join(categories))
         return ScanResult(
             text=text,
@@ -237,13 +251,13 @@ def scan_outbound(text: str, *, mode: str) -> ScanResult:
         # The injection is reported but NOT redacted away (see the note above): the text keeps
         # whatever secret/PII redaction applies, and the caller learns an injection was present.
         return ScanResult(
-            text=_redact_pii(cleaned_both),
+            text=cleaned_both if personal == "note" else _redact_pii(cleaned_both),
             findings=findings,
             categories=tuple(categories),
             injection=bool(inj_group),
             injection_group=inj_group,
         )
-    # warn: proceed with the original text, just record it.
+    # warn, or block with only noted findings: proceed with the original text, just record it.
     logger.info("outbound scan: %d finding(s) → WARN (%s)", findings, ",".join(categories))
     return ScanResult(
         text=text,
@@ -252,3 +266,179 @@ def scan_outbound(text: str, *, mode: str) -> ScanResult:
         injection=bool(inj_group),
         injection_group=inj_group,
     )
+
+
+@dataclass
+class RequestScan:
+    """The outcome of scanning one structured request (:func:`scan_request`)."""
+
+    #: The messages to send: the caller's own where the scan changed nothing, a copy where it did.
+    messages: list[dict]
+    #: The request's verdict, every part's together. ``text`` is the parts as sent, in order.
+    result: ScanResult
+    #: The same parts as the caller gave them, joined the same way.
+    original: str
+
+
+#: Past this many characters not yet scanned, a request's scan is long enough (some 15 ms) to keep
+#: off the event loop (:func:`unscanned_chars`).
+SCAN_OFF_LOOP_CHARS = 20_000
+#: Room for a long loop's whole history: past it, a walk in order would evict each part just
+#: before it is read again, and every call would scan everything.
+_PART_MEMO_MAX = 4096
+#: Parts scanned lately, by digest and mode, with the text the scan changed them to (``None``:
+#: unchanged, so no part's text is held here unless the scan rewrote it).
+_part_memo: OrderedDict[tuple[bytes, str], tuple[ScanResult, str | None]] = OrderedDict()
+_part_memo_lock = threading.Lock()
+
+
+def _memo_key(text: str, mode: str) -> tuple[bytes, str]:
+    return hashlib.sha256(text.encode("utf-8", "surrogatepass")).digest(), mode
+
+
+def _scan_part(text: str, mode: str) -> ScanResult:
+    """:func:`scan_outbound` of one part, remembered by its digest: a loop sends its whole history
+    on every call, so each call scans only the text it adds. Returns *text* itself when the scan
+    changed nothing."""
+    key = _memo_key(text, mode)
+    with _part_memo_lock:
+        held = _part_memo.get(key)
+        if held is not None:
+            _part_memo.move_to_end(key)
+    if held is None:
+        result = scan_outbound(text, mode=mode, personal="note")
+        held = (replace(result, text=""), None if result.text == text else result.text)
+        with _part_memo_lock:
+            _part_memo[key] = held
+            while len(_part_memo) > _PART_MEMO_MAX:
+                _part_memo.popitem(last=False)
+    verdict, changed = held
+    return replace(verdict, text=text if changed is None else changed)
+
+
+def _scanned(value: Any, scan: Callable[[str], str]) -> Any:
+    """*value* with each text in it scanned: a string, a list's items, and a part's ``text`` or
+    ``content`` (a text part's, a tool result's). The same object when nothing changed."""
+    if isinstance(value, str):
+        return scan(value)
+    if isinstance(value, list):
+        items = [_scanned(item, scan) for item in value]
+        return value if all(a is b for a, b in zip(items, value)) else items
+    if isinstance(value, dict):
+        changed = {}
+        for key in ("text", "content"):
+            if key in value:
+                new = _scanned(value[key], scan)
+                if new is not value[key]:
+                    changed[key] = new
+        return {**value, **changed} if changed else value
+    return value
+
+
+def _scanned_json(value: Any, scan: Callable[[str], str]) -> Any:
+    """A decoded JSON value with each string in it scanned (never a key). The same object when
+    nothing changed."""
+    if isinstance(value, str):
+        return scan(value)
+    if isinstance(value, list):
+        items = [_scanned_json(item, scan) for item in value]
+        return value if all(a is b for a, b in zip(items, value)) else items
+    if isinstance(value, dict):
+        out = {k: _scanned_json(v, scan) for k, v in value.items()}
+        return value if all(out[k] is value[k] for k in value) else out
+    return value
+
+
+def _scanned_arguments(raw: str, scan: Callable[[str], str]) -> str:
+    """A tool call's arguments with each string in them scanned, still JSON: a redaction lands
+    inside a string, never across the quotes around it. Arguments that do not read as JSON (a
+    call cut off mid-way) are scanned as the text they are."""
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return scan(raw)
+    new = _scanned_json(value, scan)
+    return raw if new is value else json.dumps(new, ensure_ascii=False)
+
+
+def _scanned_message(message: Any, scan: Callable[[str], str]) -> Any:
+    """One message with its text scanned: its content, and an assistant's tool calls' arguments.
+    A model's reasoning record is opaque, its signature over it, and goes as it is."""
+    if not isinstance(message, dict):
+        return message
+    out = _scanned(message, scan)
+    calls = message.get("tool_calls")
+    if isinstance(calls, list):
+        new_calls: list[Any] = []
+        for call in calls:
+            function = call.get("function") if isinstance(call, dict) else None
+            raw = function.get("arguments") if isinstance(function, dict) else None
+            if isinstance(function, dict) and isinstance(raw, str):
+                new = _scanned_arguments(raw, scan)
+                if new is not raw:
+                    call = {**call, "function": {**function, "arguments": new}}
+            new_calls.append(call)
+        if any(a is not b for a, b in zip(new_calls, calls)):
+            out = {**out, "tool_calls": new_calls}
+    return out
+
+
+def unscanned_chars(messages: list[dict], *, mode: str) -> int:
+    """How many characters of a request :func:`scan_request` has not scanned lately at *mode*:
+    the text it would scan now, rather than remember."""
+    pending = 0
+
+    def measure(text: str) -> str:
+        nonlocal pending
+        if _memo_key(text, mode) not in _part_memo:
+            pending += len(text)
+        return text
+
+    for message in messages or []:
+        _scanned_message(message, measure)
+    return pending
+
+
+def scan_request(messages: list[dict], *, mode: str) -> RequestScan:
+    """Scan each text part of a structured request and apply the ``mode`` ladder to the whole
+    request: the system, user and tool text this machine supplies, and what a model wrote, which
+    can carry text the scan would have caught (an answer from a model on this machine, which only
+    warns, or from a call made before the history was scanned). Secrets, suspicious links and an
+    injection get the mode; emails and phone numbers are noted (``personal="note"``).
+
+    Each part is scanned on its own (:func:`_scan_part`), so a part is sent as the same bytes on
+    every call it is in and a prompt cache's prefix holds. A changed part goes in a copy of its
+    message: the caller's list and messages are never changed. Any part's block blocks the
+    request."""
+    sent: list[str] = []
+    given: list[str] = []
+    findings = 0
+    categories: list[str] = []
+    blocked = False
+    group = ""
+    injection = False
+
+    def scan(text: str) -> str:
+        nonlocal findings, blocked, injection, group
+        if not text:
+            return text
+        result = _scan_part(text, mode)
+        given.append(text)
+        sent.append(result.text)
+        findings += result.findings
+        categories.extend(c for c in result.categories if c not in categories)
+        blocked = blocked or result.blocked
+        if result.injection and not injection:
+            injection, group = True, result.injection_group
+        return result.text
+
+    out = [_scanned_message(message, scan) for message in messages or []]
+    result = ScanResult(
+        text="\n\n".join(sent),
+        findings=findings,
+        blocked=blocked,
+        categories=tuple(categories),
+        injection=injection,
+        injection_group=group,
+    )
+    return RequestScan(messages=out, result=result, original="\n\n".join(given))
