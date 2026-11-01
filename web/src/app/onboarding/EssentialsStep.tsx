@@ -337,8 +337,10 @@ export function EssentialsStep({ readiness, onDone, onSkip, onProgress }: {
   }, [onProgress])
 
   // The ONE consent path every Store install takes. It records the lane only after the
-  // user confirmed in the dialog and the install committed.
+  // user confirmed in the dialog and the install committed. Inside setup, so a failure offers
+  // no control that would open a chat setup holds back.
   const consent = useAppInstall({
+    inSetup: true,
     onInstalled: () => {
       const pending = pendingRef.current
       if (pending) recordInstall(pending.entry, pending.lane)
