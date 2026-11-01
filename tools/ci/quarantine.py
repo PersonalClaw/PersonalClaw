@@ -17,7 +17,8 @@ case does not exist as spelt) is put back exactly as it was, and their words are
 only collection shows (a mark a hook adds, a case that is gone) is checked by the run of the pull
 request that adds the entry, as every run checks it.
 
-It writes only the list, appending one ``[[entry]]`` table and keeping every line above it.
+It writes only the list, appending one ``[[entry]]`` table and keeping every byte above it; a
+refusal puts back the bytes it found, or no file when there was none.
 Standard library only, like every file in ``tools/ci``.
 """
 
@@ -131,9 +132,14 @@ def add(
 ) -> str:
     """Append the entry to *root*'s list and return it, or put the list back and refuse."""
     path = root / LIST
-    before = path.read_text(encoding="utf-8") if path.is_file() else ""
+    # The list as it is on disk, bytes and all (its line endings, a missing final newline, or no
+    # list at all), so a refusal puts back exactly that.
+    raw = path.read_bytes() if path.is_file() else None
     try:
+        before = (raw or b"").decode("utf-8")
         data = tomllib.loads(before)
+    except UnicodeDecodeError as exc:
+        raise Refused(f"{LIST} is not UTF-8: {exc}") from exc
     except tomllib.TOMLDecodeError as exc:
         raise Refused(f"{LIST} does not parse: {exc}") from exc
     entries = data.get("entry", [])
@@ -152,16 +158,25 @@ def add(
     expires = (day or today()) + datetime.timedelta(days=days)
     text = entry_text(nodeid, issue, assignee, expires, reason)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(before + ("" if not before or before.endswith("\n") else "\n") + text, "utf-8")
+    gap = b"" if not raw or raw.endswith(b"\n") else b"\n"
+    path.write_bytes((raw or b"") + gap + text.encode("utf-8"))
     try:
         problems = _judged(root)
     except (Refused, subprocess.SubprocessError, OSError):
-        path.write_text(before, encoding="utf-8")
+        _put_back(path, raw)
         raise
     if problems:
-        path.write_text(before, encoding="utf-8")
+        _put_back(path, raw)
         raise Refused("\n".join(problems))
     return text
+
+
+def _put_back(path: Path, raw: bytes | None) -> None:
+    """The list exactly as :func:`add` found it: its bytes, or no file when there was none."""
+    if raw is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_bytes(raw)
 
 
 def main(argv: list[str] | None = None) -> int:

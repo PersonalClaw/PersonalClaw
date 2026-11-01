@@ -1178,9 +1178,11 @@ unless the flake rule below passes it, and the same failure under a valid quaran
 pass that reads green, with the quarantined failure listed. On a pull request's run, given its
 changed paths (`--changed`), that holds only when the pull request changes no file the
 quarantined test's run reads, as the flake rule reads it (the test's own file, each conftest above
-it, the pytest configuration; for Vitest and end-to-end tests, theirs): a failure it could have
-caused reads red, `quarantined failure the change reads`, naming the file. A quarantine waives
-the known failure it was made for, never a new one. A pull request's or a queue commit's run
+it, the pytest configuration; for Vitest and end-to-end tests, theirs): a failure the change
+reaches through those, the test's own files, reads red, `quarantined failure the change reads`,
+naming the file. A quarantine waives the known failure it was made for, never one the change
+reaches through the test's own files. What the test reaches beyond them (a module it imports,
+say) the selection map will name, once the flake rule and this read it (#5809). A pull request's or a queue commit's run
 given no changed list (its `ci-changes` or its jobs list could not be read) waives none: each
 quarantined failure is red, and says so. The verdict reads which run it judges from
 `GITHUB_EVENT_NAME`, which the runner sets and no step can overwrite. A push to main has no

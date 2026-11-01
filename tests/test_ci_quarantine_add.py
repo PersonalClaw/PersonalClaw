@@ -161,6 +161,33 @@ def test_a_list_without_a_final_newline_gains_one_before_the_entry(tmp_path: Pat
     assert [e["nodeid"] for e in _entries(root)] == [TIMING]
 
 
+def test_a_refused_list_is_put_back_byte_for_byte(tmp_path: Path) -> None:
+    """Line endings, a missing final newline and every other byte come back as they were."""
+    raw = HEADER.replace("\n", "\r\n").rstrip("\r\n").encode("utf-8")
+    root = _root(tmp_path)
+    (root / quarantine.LIST).write_bytes(raw)
+    with pytest.raises(quarantine.Refused, match="no such test"):
+        _add(root, "tests/test_timing.py::test_gone")
+    assert (root / quarantine.LIST).read_bytes() == raw
+
+
+def test_a_refusal_with_no_list_leaves_no_list(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    (root / quarantine.LIST).unlink()
+    with pytest.raises(quarantine.Refused, match="is security-marked"):
+        _add(root, "tests/test_guarded.py::test_it")
+    assert not (root / quarantine.LIST).exists()
+
+
+def test_a_list_that_is_not_utf8_is_refused_untouched(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    raw = HEADER.encode("utf-8") + b"# caf\xe9\n"
+    (root / quarantine.LIST).write_bytes(raw)
+    with pytest.raises(quarantine.Refused, match="is not UTF-8"):
+        _add(root)
+    assert (root / quarantine.LIST).read_bytes() == raw
+
+
 # ── the command ───────────────────────────────────────────────────────────────────────────────
 
 

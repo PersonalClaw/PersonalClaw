@@ -30,7 +30,7 @@ every one of them in the verdict. A pass that a quarantine entry waived a failur
 but on a pull request's run, given its changed paths, only when the pull request changes no file
 the quarantined test's run reads; one it reads is red (:data:`UNWAIVED`, :func:`_unwaived`), and
 so is every one on such a run given no changed list: a quarantine waives a known failure, never
-one the change could cause. A failure reads red, but for
+one the change reaches through the test's own files. A failure reads red, but for
 one thing: on a pull request's run, given its changed paths and the run's jobs, the flake rule
 (:func:`_pass_flakes`) passes a run whose only failures are at most :data:`MAX_FLAKES` tests that
 each passed alone in a new process, in a file the pull request does not change, and names each
@@ -499,11 +499,12 @@ def changed_reads(test: str, changed: Iterable[str]) -> list[str] | str:
 
 
 def _unwaived(tests: Sequence[FailedTest], changed: frozenset[str] | None) -> list[Reason]:
-    """A red for each quarantined failure a pull request's change could have caused: its test's
-    run reads a file the pull request changes (:func:`_reads`, as the flake rule reads it), its id
-    names no file to tell, or the run of a change was given no changed list (*changed* None) to
-    show it does not. A quarantine entry waives the failure it was made for, so a change to its
-    test, a conftest above it or the runner's configuration is judged as if it had none."""
+    """A red for each quarantined failure a pull request's change reaches through the test's own
+    files: its test's run reads a file the pull request changes (:func:`_reads`, as the flake
+    rule reads it), its id names no file to tell, or the run of a change was given no changed
+    list (*changed* None) to show it does not. A quarantine entry waives the failure it was made
+    for, so a change to its test, a conftest above it or the runner's configuration is judged as
+    if it had none."""
     reasons: list[Reason] = []
     for t in tests:
         if t.standing != QUARANTINED:
@@ -914,7 +915,8 @@ NOT_CLASSIFIED = "not classified"
 QUARANTINED = "quarantined"
 #: Why a quarantined failure is listed and not red.
 WAIVED = "a quarantine entry waived it"
-#: The red of a quarantined failure a pull request's change could have caused (:func:`_unwaived`).
+#: The red of a quarantined failure a pull request's change reaches through the test's own files
+#: (:func:`_unwaived`).
 UNWAIVED = "quarantined failure the change reads"
 #: The events whose run is a change's (a pull request's, or a queue commit's of main's merge
 #: queue): there a quarantine waives a failure only given the changed list that shows it may.
