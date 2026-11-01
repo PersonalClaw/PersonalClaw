@@ -158,6 +158,13 @@ exit 1
 """
 
 _PYTHON = """#!/bin/sh
+if [ "$1" = "-m" ] && [ "$2" = "tools.ci" ] && [ "$3" = "plan-tier" ]; then
+  for a in "$@"; do printf '%s\\n' "$a"; done > "$STUB/tier.argv"
+  if [ -f "$STUB/tier" ]; then
+    cat "$STUB/tier"
+    exit "$(cat "$STUB/tier-rc")"
+  fi
+fi
 if [ "$1" = "-m" ] && [ "$2" = "tools.ci" ] && [ "$3" = "plan" ]; then
   pwd > "$STUB/planner.cwd"
   for a in "$@"; do printf '%s\\n' "$a"; done > "$STUB/planner.argv"
@@ -179,6 +186,7 @@ class Ran:
     argv: list[str] | None
     cwd: str | None
     runner_temp: Path
+    tier_argv: list[str] | None = None
 
     @property
     def published(self) -> dict[str, str]:
@@ -214,13 +222,22 @@ def _run_plan(
     push_plan: str = "",
     judge: str = "",
     checkout: Path = REPO,
+    tier: str | None = None,
+    tier_rc: int = 0,
+    event: str = "workflow_dispatch",
+    queue_live: str = "",
 ) -> Ran:
     """Run ``workflow``'s plan step once, over ``checkout`` (this one by default). ``gh`` lists
     the ``changed`` names as ``--jq '... | @json'`` prints them, or ``listing`` as it is.
     ``answer`` plants the planner's stdout, ``rc`` and ``err``; without one the real planner runs
-    from the archived judge."""
+    from the archived judge. ``tier`` plants ``plan-tier``'s stdout and ``tier_rc``; without one
+    the judge's own answers for ``event`` and ``queue_live``, which read nothing unless the
+    variable is ``true``."""
     stub, bin_, temp = _stubs(tmp)
     shutil.copy(judge_tar, stub / "judge.tar")
+    if tier is not None:
+        (stub / "tier").write_text(tier, encoding="utf-8", newline="")
+        (stub / "tier-rc").write_text(str(tier_rc))
     if answer is not None:
         (stub / "answer").write_text(answer, encoding="utf-8", newline="")
         (stub / "rc").write_text(str(rc))
@@ -249,7 +266,9 @@ def _run_plan(
         "JUDGE": judge,
         # What the tiers' COMPARED gives: main, but for a queue commit.
         "COMPARED": "main",
-        "GITHUB_EVENT_NAME": "workflow_dispatch",
+        # What merge.yml's QUEUE_LIVE gives: the repository's MERGE_QUEUE_LIVE, unset here.
+        "QUEUE_LIVE": queue_live,
+        "GITHUB_EVENT_NAME": event,
         "GITHUB_REF": "refs/heads/feature",
         "GITHUB_REPOSITORY": _REPO,
         "GITHUB_WORKSPACE": str(checkout),
@@ -258,7 +277,7 @@ def _run_plan(
         "RUNNER_TEMP": str(temp),
     }
     done = _bash(step["run"], tmp, env, checkout)
-    argv, cwd = stub / "planner.argv", stub / "planner.cwd"
+    argv, cwd, tier_argv = stub / "planner.argv", stub / "planner.cwd", stub / "tier.argv"
     return Ran(
         rc=done.returncode,
         lines=output.read_text(encoding="utf-8").split("\n")[:-1],
@@ -266,6 +285,7 @@ def _run_plan(
         argv=argv.read_text().splitlines() if argv.exists() else None,
         cwd=cwd.read_text().strip() if cwd.exists() else None,
         runner_temp=temp,
+        tier_argv=tier_argv.read_text().splitlines() if tier_argv.exists() else None,
     )
 
 
@@ -322,7 +342,10 @@ def test_the_plan_step_reads_only_the_env_the_harness_gives_it(workflow: str) ->
     # What the changed paths are compared with (0.4.0 A1): main, but for merge.yml's queue
     # commit, the commit the queue built it on.
     compared = _COMPARED if workflow == "merge.yml" else "main"
-    assert step.get("env") == {**want, "COMPARED": compared}
+    # merge.yml asks main's plan-tier which tier this run plans (0.4.0 A4a), with the
+    # repository's variable through the env, never in the shell.
+    queue = {"QUEUE_LIVE": "${{ vars.MERGE_QUEUE_LIVE }}"} if workflow == "merge.yml" else {}
+    assert step.get("env") == {**want, "COMPARED": compared, **queue}
     assert step.get("shell") is None and _workflow(workflow).get("defaults") is None
     assert "${{" not in step["run"], "an expression pasted into the shell"
 
@@ -345,6 +368,86 @@ def test_both_workflows_plan_with_the_same_step() -> None:
         **merge,
         "env": {**merge["env"], "JUDGE": ""},
     }
+
+
+# ── which tier a run plans (0.4.0 A4a) ───────────────────────────────────────────────────────
+
+
+def _planned_tier(ran: Ran) -> str:
+    assert ran.argv is not None, ran.log
+    return ran.argv[ran.argv.index("plan") + 1]
+
+
+@pytest.mark.parametrize("answer", ["entry", "merge"])
+def test_merge_yml_plans_the_tier_main_s_plan_tier_names(
+    tmp_path: Path, judge_tar: Path, answer: str
+) -> None:
+    ran = _run_plan(
+        tmp_path,
+        "merge.yml",
+        judge_tar,
+        tier=f"{answer}\n",
+        event="pull_request",
+        queue_live="true",
+    )
+    assert ran.rc == 0, ran.log
+    assert _planned_tier(ran) == answer
+    assert ran.tier_argv == [
+        "-m",
+        "tools.ci",
+        "plan-tier",
+        "--event",
+        "pull_request",
+        "--queue-var",
+        "true",
+        "--repo",
+        _REPO,
+    ]
+    assert f"this run plans the {answer} tier" in ran.log
+
+
+@pytest.mark.parametrize(
+    ("tier", "tier_rc"),
+    [("queue\n", 0), ("", 0), ("entry\nmerge\n", 0), ("change\n", 0), ("entry\n", 1)],
+    ids=["another-tier", "nothing", "two-answers", "the-change-tier", "a-failed-answer"],
+)
+def test_an_answer_that_is_no_tier_plans_nothing(
+    tmp_path: Path, judge_tar: Path, tier: str, tier_rc: int
+) -> None:
+    ran = _run_plan(
+        tmp_path,
+        "merge.yml",
+        judge_tar,
+        tier=tier,
+        tier_rc=tier_rc,
+        event="pull_request",
+        queue_live="true",
+    )
+    _no_plan(ran)
+    assert ran.argv is None, "the planner ran with no tier"
+
+
+@pytest.mark.parametrize("event", ["merge_group", "push", "pull_request", "workflow_dispatch"])
+def test_main_s_own_plan_tier_plans_the_merge_tier_while_the_variable_is_unset(
+    tmp_path: Path, judge_tar: Path, event: str
+) -> None:
+    """The judge's real plan-tier, as every run plans until the queue is live: the variable
+    unset reads nothing and answers the merge tier, whatever the event."""
+    ran = _run_plan(
+        tmp_path, "merge.yml", judge_tar, event=event, push_plan="full" if event == "push" else ""
+    )
+    assert ran.rc == 0, ran.log
+    assert _planned_tier(ran) == "merge"
+
+
+def test_pr_yml_plans_its_own_tier_and_never_asks_plan_tier(
+    tmp_path: Path, judge_tar: Path
+) -> None:
+    ran = _run_plan(
+        tmp_path, "pr.yml", judge_tar, tier="entry\n", event="pull_request", queue_live="true"
+    )
+    assert ran.rc == 0, ran.log
+    assert _planned_tier(ran) == "change" and ran.tier_argv is None
 
 
 @pytest.mark.parametrize("workflow", sorted(_TIERS))

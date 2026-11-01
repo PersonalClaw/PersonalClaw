@@ -49,6 +49,34 @@ jobs = [
 ]
 every_push = ["browse-live", "security", "apps-contract"]
 
+# The jobs a pull request's run must pass to enter the merge queue, once the queue gates main
+# (`plan-tier`: MERGE_QUEUE_LIVE is true and main's rules hold a merge_queue rule; until then a
+# pull request's run plans the merge tier). The merge tier less python-suite-macos, which the
+# queue's run of the merge tier and breadth's nightly suite-macos still run. Every job here is a
+# merge-tier job, and rails, rails-checks and security never leave (catalogue.ENTRY_NEEDS_JOBS).
+[tier.entry]
+jobs = [
+  "static",
+  "rails",
+  "rails-checks",
+  "python-suite",
+  "client",
+  "web-unit",
+  "web-build",
+  "desktop-smoke",
+  "package",
+  "image",
+  "e2e",
+  "e2e-shard",
+  "e2e-pinned",
+  "ui-quality",
+  "browse-live",
+  "security",
+  "namespace-sandbox",
+  "apps-contract",
+  "audit",
+]
+
 # The two suite jobs come first in this file: a plan lists a stage's entries in this order, and
 # merge.yml's test job starts its first ten, so the run's longest entries start at once (the
 # contract's 14-job row holds every suite shard within that cap). A run here (`make gate`) still
@@ -71,7 +99,7 @@ every_push = ["browse-live", "security", "apps-contract"]
 # tests/rails.
 [[job]]
 id = "python-suite"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
 ".dockerignore",
 ".env.example",
@@ -171,7 +199,7 @@ command = [
 # npm install.
 [[job]]
 id = "static"
-tiers = ["change", "merge"]
+tiers = ["change", "entry", "merge"]
 inputs = [":(glob)**"]
 external_inputs = []
 toolchain = ["uv-sync", "shellcheck", "dash"]
@@ -200,7 +228,7 @@ command = [
 # (tests/site_baseline.py), so a recorded pass is keyed by the base as well as the tree.
 [[job]]
 id = "rails"
-tiers = ["change", "merge"]
+tiers = ["change", "entry", "merge"]
 inputs = [":(glob)**"]
 external_inputs = []
 toolchain = ["uv-sync", "node"]
@@ -226,7 +254,7 @@ command = [
 # legs without it is refused.
 [[job]]
 id = "rails-checks"
-tiers = ["change", "merge"]
+tiers = ["change", "entry", "merge"]
 inputs = [":(glob)**"]
 external_inputs = []
 toolchain = ["uv-sync", "node", "npm-ci"]
@@ -249,7 +277,7 @@ command = [
 # tier's third security job, and nightly. No suite shard collects these files (JOB_OWNED).
 [[job]]
 id = "security"
-tiers = ["change", "merge", "breadth"]
+tiers = ["change", "entry", "merge", "breadth"]
 inputs = [":(glob)**"]
 external_inputs = []
 toolchain = ["uv-sync"]
@@ -273,7 +301,7 @@ command = [
 # never a skip. Security posture: fence tests, never reused or rerun, and in every plan.
 [[job]]
 id = "namespace-sandbox"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [":(glob)**"]
 external_inputs = []
 toolchain = ["uv-sync", "userns"]
@@ -694,7 +722,7 @@ command = [
 # (tests/rails/test_ci_job_inputs_tree.py).
 [[job]]
 id = "client"
-tiers = ["change", "merge"]
+tiers = ["change", "entry", "merge"]
 inputs = ["packages/personalclaw-client-py/", "pyproject.toml", ".python-version"]
 external_inputs = ["package-index"]
 toolchain = ["uv"]
@@ -724,7 +752,7 @@ command = [
 # (tests/rails/test_ci_job_inputs_tree.py).
 [[job]]
 id = "web-unit"
-tiers = ["change", "merge"]
+tiers = ["change", "entry", "merge"]
 inputs = [
   ".nvmrc",
   "CHANGELOG.md",
@@ -779,7 +807,7 @@ command = [
 
 [[job]]
 id = "web-build"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   ".nvmrc",
   "ASSET_LICENSES.json",
@@ -841,7 +869,7 @@ command = [
 # drives (tests/rails/test_ci_job_inputs_tree.py).
 [[job]]
 id = "package"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   "src/",
   "web/",
@@ -890,7 +918,7 @@ command = [
 # package index and is never reused by tree.
 [[job]]
 id = "image"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   "deploy/docker/",
   ".dockerignore",
@@ -942,7 +970,7 @@ command = [
 # which plan the whole tier.
 [[job]]
 id = "e2e"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   ":(glob)**",
   ":(exclude)docs/",
@@ -971,7 +999,7 @@ command = [
 # it runs beside `e2e` after the legs, so the merge tier keeps its stages.
 [[job]]
 id = "ui-quality"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   ":(glob)**",
   ":(exclude)docs/",
@@ -1005,7 +1033,7 @@ command = [
 # keeps every blob for the merge.
 [[job]]
 id = "e2e-shard"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   ":(glob)**",
   ":(exclude)docs/",
@@ -1041,7 +1069,7 @@ command = [
 # one it cannot run, and `run-pinned` refuses any host that is not linux/amd64.
 [[job]]
 id = "e2e-pinned"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   ":(glob)**",
   ":(exclude)docs/",
@@ -1071,7 +1099,7 @@ command = [
 # check answers (every_push).
 [[job]]
 id = "browse-live"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [":(glob)**"]
 external_inputs = ["browser-download", "apps-partner"]
 toolchain = ["uv-sync", "node", "npm-ci", "chromium"]
@@ -1106,7 +1134,7 @@ command = [
 # own reason. A fast unpackaged smoke, never a packaged-release test: the release rehearsal is that.
 [[job]]
 id = "desktop-smoke"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   "desktop/",
   "web/",
@@ -1131,7 +1159,7 @@ command = [
 
 [[job]]
 id = "apps-contract"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 inputs = [
   "src/personalclaw/sdk/",
   "scripts/apps_sdk_contract.py",
@@ -1162,7 +1190,7 @@ command = [
 # leg's issue and holds a release (the release gate's breadth check).
 [[job]]
 id = "audit"
-tiers = ["merge"]
+tiers = ["entry", "merge"]
 nightly = "audit-nightly"
 inputs = [
   "uv.lock",

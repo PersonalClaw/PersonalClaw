@@ -2392,10 +2392,12 @@ def _suite_step(job: catalogue.Job, word: str) -> catalogue.Step | None:
 
 
 def macos_leg_violations(tree: Tree) -> list[str]:
-    """``python-suite-macos`` runs ``python-suite``'s split suite, in the same tiers and whenever
-    it runs: on a pull request's merge run and on a push to main no green pull-request run tested
-    (the merge tier's push stage plans it beside every other merge job). That it runs on macOS,
-    and in the merge tier, the catalogue's loader holds: it is security evidence."""
+    """``python-suite-macos`` runs ``python-suite``'s split suite, in the same tiers but the entry
+    tier, and whenever it runs: on the merge queue's run and a pull request's merge run, and on a
+    push to main no green run tested (the merge tier's push stage plans it beside every other
+    merge job). It leaves the entry tier, a pull request's run once the queue gates main (0.4.0
+    A4: the queue's run and breadth's night hold it). That it runs on macOS, and in the merge
+    tier, the catalogue's loader holds: it is security evidence."""
     try:
         cat = catalogue.load(tree.get(catalogue.CATALOGUE, ""), catalogue.CATALOGUE)
     except catalogue.CatalogueError as exc:
@@ -2405,8 +2407,11 @@ def macos_leg_violations(tree: Tree) -> list[str]:
     except KeyError:
         return [f"the catalogue has no {_SUITE_MACOS} beside {_SUITE}"]
     bad: list[str] = []
-    if macos.tiers != ubuntu.tiers:
-        bad.append(f"{_SUITE_MACOS} runs in {macos.tiers}, {_SUITE} in {ubuntu.tiers}")
+    if macos.tiers != tuple(t for t in ubuntu.tiers if t != catalogue.ENTRY_TIER):
+        bad.append(
+            f"{_SUITE_MACOS} runs in {macos.tiers}, {_SUITE} in {ubuntu.tiers}: the same tiers"
+            f" but {catalogue.ENTRY_TIER}"
+        )
     pushed = [j in (cat.every_push or ()) for j in (_SUITE_MACOS, _SUITE)]
     if pushed[0] != pushed[1]:
         bad.append(f"{_SUITE_MACOS} and {_SUITE} differ in whether every push to main runs them")
@@ -4871,6 +4876,21 @@ ROWS: tuple[Row, ...] = (
                 expect="python-suite-macos runs in ('merge', 'breadth'), python-suite in",
             ),
             _plants(
+                "the macOS suite back in a pull request's run, the entry tier",
+                catalogue.CATALOGUE,
+                (
+                    (
+                        'id = "python-suite-macos"\ntiers = ["merge"]',
+                        'id = "python-suite-macos"\ntiers = ["entry", "merge"]',
+                    ),
+                    (
+                        "[tier.entry]\njobs = [\n",
+                        '[tier.entry]\njobs = [\n  "python-suite-macos",\n',
+                    ),
+                ),
+                expect="python-suite-macos runs in ('entry', 'merge'), python-suite in",
+            ),
+            _plants(
                 "the macOS suite out of the merge tier",
                 catalogue.CATALOGUE,
                 (
@@ -5287,12 +5307,13 @@ ROWS: tuple[Row, ...] = (
                 catalogue.CATALOGUE,
                 (
                     (
-                        'id = "e2e-shard"\ntiers = ["merge"]\n',
-                        'id = "e2e-shard"\ntiers = ["merge"]\nplatform = "macos-26"\n',
+                        'id = "e2e-shard"\ntiers = ["entry", "merge"]\n',
+                        'id = "e2e-shard"\ntiers = ["entry", "merge"]\nplatform = "macos-26"\n',
                     ),
                     (
-                        'id = "rails"\ntiers = ["change", "merge"]\n',
-                        'id = "rails"\ntiers = ["change", "merge"]\nplatform = "macos-26"\n',
+                        'id = "rails"\ntiers = ["change", "entry", "merge"]\n',
+                        'id = "rails"\ntiers = ["change", "entry", "merge"]\n'
+                        'platform = "macos-26"\n',
                     ),
                 ),
                 expect=f"the merge tier's run holds {_MACOS_SHARDS + 5} macOS runners, more than"
@@ -8456,12 +8477,14 @@ _MAPPED_PREFIXES = ("",)
 _PINNED_BROWSER = ("e2e-stateful", "e2e-pinned")
 
 _CATALOGUE_JOBS: dict[str, _Mapped] = {
-    "static": _Mapped((), ("change", "merge")),
-    "rails": _Mapped((), ("change", "merge"), reuse="tree"),
-    "rails-checks": _Mapped((), ("change", "merge"), reuse="tree"),
-    "python-suite": _Mapped((), ("merge",), security="security"),
+    "static": _Mapped((), ("change", "entry", "merge")),
+    "rails": _Mapped((), ("change", "entry", "merge"), reuse="tree"),
+    "rails-checks": _Mapped((), ("change", "entry", "merge"), reuse="tree"),
+    "python-suite": _Mapped((), ("entry", "merge"), security="security"),
     "python-suite-macos": _Mapped((), ("merge",), security="security"),
-    "security": _Mapped(("security",), ("change", "merge", "breadth"), security="security"),
+    "security": _Mapped(
+        ("security",), ("change", "entry", "merge", "breadth"), security="security"
+    ),
     "security-macos": _Mapped(("security-macos",), ("breadth",), security="security"),
     "suite-ubuntu": _Mapped(("ubuntu",), ("breadth",), security="security"),
     "suite-macos": _Mapped(("macos",), ("breadth",), security="security"),
@@ -8488,25 +8511,25 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "planned-ids-random-order": _Mapped(("planned-ids-random-order",), ("breadth",)),
     "shard-union": _Mapped(("shard-union",), ("breadth",)),
     "shard-union-canary": _Mapped(("shard-union-canary",), ("breadth",)),
-    "client": _Mapped((), ("change", "merge")),
-    "web-unit": _Mapped((), ("change", "merge"), reuse="tree"),
-    "web-build": _Mapped((), ("merge",), reuse="tree"),
-    "package": _Mapped((), ("merge",)),
-    "e2e": _Mapped((), ("merge",)),
-    "e2e-shard": _Mapped((), ("merge",)),
-    **{name: _Mapped((), ("merge",)) for name in _PINNED_BROWSER},
-    "ui-quality": _Mapped((), ("merge",)),
-    "desktop-smoke": _Mapped((), ("merge",)),
-    "browse-live": _Mapped((), ("merge",), security="security", live=True),
-    "apps-contract": _Mapped((), ("merge",)),
+    "client": _Mapped((), ("change", "entry", "merge")),
+    "web-unit": _Mapped((), ("change", "entry", "merge"), reuse="tree"),
+    "web-build": _Mapped((), ("entry", "merge"), reuse="tree"),
+    "package": _Mapped((), ("entry", "merge")),
+    "e2e": _Mapped((), ("entry", "merge")),
+    "e2e-shard": _Mapped((), ("entry", "merge")),
+    **{name: _Mapped((), ("entry", "merge")) for name in _PINNED_BROWSER},
+    "ui-quality": _Mapped((), ("entry", "merge")),
+    "desktop-smoke": _Mapped((), ("entry", "merge")),
+    "browse-live": _Mapped((), ("entry", "merge"), security="security", live=True),
+    "apps-contract": _Mapped((), ("entry", "merge")),
     # The sandbox's own namespace tests, on a runner whose user-namespace restriction its `userns`
     # install lifts (#3918). Security posture: it runs fence tests, so it is never reused or rerun.
     # The row is on main before the entry, which a second change adds, as a toolchain word is.
-    "namespace-sandbox": _Mapped((), ("merge",), security="security"),
-    "audit": _Mapped((), ("merge",), live=True),
+    "namespace-sandbox": _Mapped((), ("entry", "merge"), security="security"),
+    "audit": _Mapped((), ("entry", "merge"), live=True),
     # The gateway image's build and smoke (#3917), which merge.yml runs through run-job. Its
     # Dockerfile's apt installs are pinned by no lock, so it is never reused.
-    "image": _Mapped((), ("merge",)),
+    "image": _Mapped((), ("entry", "merge")),
 }
 
 #: Each mapped job is at most one entry's, so a run: line of it is one entry's step or none.
@@ -9131,14 +9154,16 @@ def _catalogue_scaffold(root: Path) -> None:
 
 def _without_merge_list(root: Path) -> None:
     """The tree's catalogue with its [tier.merge] table, the header, its list and its every_push
-    line, removed."""
+    line, removed, and the [tier.entry] table, a list of merge-tier jobs, with it."""
     path = root / catalogue.CATALOGUE
     text = path.read_text(encoding="utf-8")
-    start = text.index("[tier.merge]\n")
-    end = text.index("]\n", text.index("jobs = [", start)) + 2
-    if text.startswith("every_push = ", end):
-        end = text.index("\n", end) + 1
-    _write(root, catalogue.CATALOGUE, text[:start] + text[end:])
+    for table in ("[tier.merge]\n", "[tier.entry]\n"):
+        start = text.index(table)
+        end = text.index("]\n", text.index("jobs = [", start)) + 2
+        if text.startswith("every_push = ", end):
+            end = text.index("\n", end) + 1
+        text = text[:start] + text[end:]
+    _write(root, catalogue.CATALOGUE, text)
 
 
 def _pinned_named(name: str, new: str, fails: bool = True, expect: str = "") -> Control:
@@ -9359,7 +9384,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "a merge tier without the rails job",
             catalogue.CATALOGUE,
-            'id = "rails"\ntiers = ["change", "merge"]',
+            'id = "rails"\ntiers = ["change", "entry", "merge"]',
             'id = "rails"\ntiers = ["change"]',
             expect="the merge tier lacks the rails job",
         ),
@@ -9443,9 +9468,10 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
             catalogue.CATALOGUE,
             (
                 ('  "audit",\n]', "]"),
-                ('id = "audit"\ntiers = ["merge"]', 'id = "audit"\ntiers = ["breadth"]'),
+                ('  "audit",\n]', "]"),
+                ('id = "audit"\ntiers = ["entry", "merge"]', 'id = "audit"\ntiers = ["breadth"]'),
             ),
-            expect="audit: tiers are breadth, and this row says merge",
+            expect="audit: tiers are breadth, and this row says entry, merge",
         ),
         _plant(
             "a live entry no longer live",
@@ -9489,7 +9515,7 @@ EVERY_CATALOGUE_COMMAND_IS_THE_WORKFLOWS = Row(
         _plant(
             "the merge tier's list naming a job that does not claim merge",
             catalogue.CATALOGUE,
-            'id = "audit"\ntiers = ["merge"]',
+            'id = "audit"\ntiers = ["entry", "merge"]',
             'id = "audit"\ntiers = ["breadth"]',
             expect="audit: [tier.merge] lists it, and it is no job whose tiers claim merge",
         ),
@@ -10547,7 +10573,10 @@ _MERGE_STAGE_GROUP = (
 )
 _CATALOGUE_JOB_NAMED_MERGE_VERDICT = _both(
     _plant("", catalogue.CATALOGUE, 'id = "client"\n', 'id = "merge-verdict"\n').plant,
-    _plant("", catalogue.CATALOGUE, '  "client",\n', '  "merge-verdict",\n').plant,
+    _both(
+        _plant("", catalogue.CATALOGUE, '  "client",\n', '  "merge-verdict",\n').plant,
+        _plant("", catalogue.CATALOGUE, '  "client",\n', '  "merge-verdict",\n').plant,
+    ),
 )
 
 NO_CANDIDATE_POSTS_THE_MERGE_VERDICT = _toolchain_row(
@@ -12944,14 +12973,14 @@ def owning_job_violations(root: Path) -> list[str]:
     return bad
 
 
-_STATIC = 'id = "static"\ntiers = ["change", "merge"]'
+_STATIC = 'id = "static"\ntiers = ["change", "entry", "merge"]'
 #: static's entry down to its lint_feedback flag, which only a change-tier job may set.
 _STATIC_ENTRY = (
     f"{_STATIC}\n"
     'inputs = [":(glob)**"]\nexternal_inputs = []\ntoolchain = ["uv-sync", "shellcheck", "dash"]\n'
     'cache = ["uv"]\nsecurity = "ordinary"\nlint_feedback = true\n'
 )
-_RAILS_CHECKS = 'id = "rails-checks"\ntiers = ["change", "merge"]'
+_RAILS_CHECKS = 'id = "rails-checks"\ntiers = ["change", "entry", "merge"]'
 _VALIDATE_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "validate", "--strict"] },\n'
 _SCAN_STEP = '  { argv = ["uv", "run", "python", "-m", "harness", "scan"] },\n'
 _RAILS_MACOS_PYTEST = (
@@ -13022,8 +13051,9 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             "static held to the change tier only, so merge scans no tree",
             catalogue.CATALOGUE,
             (
-                (_STATIC_ENTRY, _STATIC_ENTRY.replace('"change", "merge"', '"change"')),
+                (_STATIC_ENTRY, _STATIC_ENTRY.replace('"change", "entry", "merge"', '"change"')),
                 ('[tier.merge]\njobs = [\n  "static",\n', "[tier.merge]\njobs = [\n"),
+                ('[tier.entry]\njobs = [\n  "static",\n', "[tier.entry]\njobs = [\n"),
             ),
             expect="the whole-tree harness scan runs in no job of the merge tier",
         ),
@@ -13131,7 +13161,7 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             "rails-checks held to the merge tier only",
             catalogue.CATALOGUE,
             _RAILS_CHECKS,
-            'id = "rails-checks"\ntiers = ["merge"]',
+            'id = "rails-checks"\ntiers = ["entry", "merge"]',
             expect="the gate aggregate runs in no job of the change tier",
         ),
         _plant(
@@ -13146,8 +13176,8 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
             catalogue.CATALOGUE,
             (
                 (
-                    'id = "security"\ntiers = ["change", "merge", "breadth"]',
-                    'id = "security"\ntiers = ["change", "merge"]',
+                    'id = "security"\ntiers = ["change", "entry", "merge", "breadth"]',
+                    'id = "security"\ntiers = ["change", "entry", "merge"]',
                 ),
                 (
                     'id = "security-macos"\ntiers = ["breadth"]',
@@ -13159,8 +13189,8 @@ EACH_OWNING_JOB_IS_IN_EVERY_TIER_THAT_NEEDS_IT = Row(
         _plant(
             "the security corpus held out of the change tier",
             catalogue.CATALOGUE,
-            'id = "security"\ntiers = ["change", "merge", "breadth"]',
-            'id = "security"\ntiers = ["merge", "breadth"]',
+            'id = "security"\ntiers = ["change", "entry", "merge", "breadth"]',
+            'id = "security"\ntiers = ["entry", "merge", "breadth"]',
             expect="the security corpus runs in no job of the change tier",
         ),
         _plant(
@@ -13444,6 +13474,20 @@ if ! { rm -rf "$judge" && mkdir -p "$judge" \
   exit 1
 fi
 """,  # noqa: E501
+        "the tier main's plan-tier names for merge.yml's run, or no plan": r"""
+tier="$TIER"
+if [ "$TIER" = merge ]; then
+  tier=$(cd "$judge" && python3 -m tools.ci plan-tier --event "${GITHUB_EVENT_NAME:-}" \
+           --queue-var "${QUEUE_LIVE:-}" --repo "$GITHUB_REPOSITORY") || tier=""
+  case "$tier" in
+    entry|merge) echo "this run plans the $tier tier" ;;
+    *)
+      echo "::error title=no plan::main's planner named no tier for this run, so nothing is planned and the verdict is red."
+      exit 1
+      ;;
+  esac
+fi
+""",  # noqa: E501
         "a push's plan, by the tree check's answer, or no plan": r"""
 case "$PUSH_PLAN" in
   "") mode="" ;;
@@ -13457,7 +13501,7 @@ esac
 """,  # noqa: E501
         "main's planner, over this checkout's catalogue, as a matrix": r"""
 : > "$RUNNER_TEMP/plan.err"
-answer=$(cd "$judge" && python3 -m tools.ci plan "$TIER" \
+answer=$(cd "$judge" && python3 -m tools.ci plan "$tier" \
            --catalogue "$GITHUB_WORKSPACE/tools/ci/catalogue.toml" \
            --trusted-areas "$judge/tools/ci/areas.toml" \
            --root "$GITHUB_WORKSPACE" --paths "$changed" -z \
@@ -13645,9 +13689,10 @@ _QUEUE_FLAKE_VERDICT = (
     "main's verdict.py, given the flake rule's lists",
 )
 #: The plan step, its changed paths compared with what the run compares with (0.4.0 A1): main, or
-#: a queue commit's queue base.
+#: a queue commit's queue base; and its tier, merge.yml's as main's plan-tier names it (A4a).
 _PLAN_STEP_TAIL = (
     "main's tools/ci, archived beside the checkout, or no plan",
+    "the tier main's plan-tier names for merge.yml's run, or no plan",
     "a push's plan, by the tree check's answer, or no plan",
     "main's planner, over this checkout's catalogue, as a matrix",
     "the keys and the stage jobs' matrices, read back before they are published",
@@ -14647,8 +14692,8 @@ THE_TIER_WORKFLOWS_RUN_THEIR_TIERS_MATRIX = Row(
         _plant("results renamed merge-verdict", _MERGE_YML, "\n  results:\n",
                "\n  merge-verdict:\n", expect="runs under the check name merge-verdict"),
         _plant("the suite's shards in the change tier too", catalogue.CATALOGUE,
-               'id = "python-suite"\ntiers = ["merge"]\n',
-               'id = "python-suite"\ntiers = ["change", "merge"]\n',
+               'id = "python-suite"\ntiers = ["entry", "merge"]\n',
+               'id = "python-suite"\ntiers = ["change", "entry", "merge"]\n',
                expect="python-suite is planned in both pr.yml's tier and merge.yml's"),
         Control("a catalogue job named merge-verdict, which a stage job's name would read",
                 _CATALOGUE_JOB_NAMED_MERGE_VERDICT,

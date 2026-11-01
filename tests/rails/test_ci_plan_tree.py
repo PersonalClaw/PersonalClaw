@@ -473,6 +473,52 @@ def test_the_entry_tier_never_lets_go_of_the_rails_their_check_or_the_corpus() -
         assert needs <= set(_plan(path, tier=catalogue.ENTRY_TIER).jobs), path
 
 
+#: The merge-tier jobs a pull request's run leaves to the merge queue's run and breadth's night
+#: (0.4.0 A4, owner-approved 10-31): the entry tier is the merge tier less exactly these. A4b adds
+#: python-suite once A3's selected run is on the pull request.
+LEFT_TO_THE_QUEUE = frozenset({"python-suite-macos"})
+
+
+def test_the_entry_tier_is_the_merge_tier_less_what_the_queue_alone_runs() -> None:
+    """A job the entry tier drops, or one it takes back, is named here: thinning a pull request's
+    run is a decision of its own, and the merge tier, which the queue's run plans, still holds
+    every job."""
+    entry = {j.id for j in _CAT.tier(catalogue.ENTRY_TIER)}
+    assert _MERGE - entry == LEFT_TO_THE_QUEUE, sorted(_MERGE ^ entry)
+    assert entry <= _MERGE
+
+
+#: A path of each kind a plan reads: docs alone, the backend, the frontend, and one that plans the
+#: whole tier.
+_ONE_OF_EACH = ("docs/vision.md", "src/personalclaw/app.py", "web/src/App.tsx", "tools/ci/plan.py")
+
+
+def test_no_entry_plan_runs_the_macos_suite_and_every_merge_plan_does() -> None:
+    """The macOS suite holds all five macOS runners for a run: it leaves every pull request's
+    run, a docs-only one included, and stays in every queue run's, whatever changed (a security
+    job is in every plan of its tier)."""
+    for path in _ONE_OF_EACH:
+        assert "python-suite-macos" not in _plan(path, tier=catalogue.ENTRY_TIER).jobs, path
+        assert "python-suite-macos" in _plan(path).jobs, path
+
+
+#: Each full suite breadth runs every night, with the runner family it runs on.
+NIGHTLY_SUITES = {"suite-ubuntu": "ubuntu-", "suite-macos": "macos-"}
+
+
+def test_each_full_suite_still_runs_every_night_on_each_platform() -> None:
+    """With the macOS suite off the pull request's run, a regression it would catch is caught in
+    the queue for one Python and overnight for the other: breadth keeps both full suites, each
+    a security job on its own platform, and breadth.yml keeps its schedule."""
+    breadth = {j.id: j for j in _CAT.tier("breadth")}
+    for job_id, family in NIGHTLY_SUITES.items():
+        assert job_id in breadth, f"{job_id} left the breadth tier"
+        assert breadth[job_id].platform.startswith(family), (job_id, breadth[job_id].platform)
+        assert breadth[job_id].security == "security", job_id
+    on = yaml.safe_load((REPO / ".github/workflows/breadth.yml").read_text(encoding="utf-8"))[True]
+    assert on.get("schedule"), "breadth.yml no longer runs on a schedule"
+
+
 def test_a_src_diff_is_known_and_leaves_apps_contract_out() -> None:
     """python-suite names src/, so a backend diff is a known path: the plan is not the whole
     tier, and apps-contract, whose inputs are the SDK's, is left out."""

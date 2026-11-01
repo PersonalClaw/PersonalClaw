@@ -244,9 +244,11 @@ CONTROLS = (
         "security dropped from the merge tier",
         _edit(
             catalogue.CATALOGUE,
+            # Out of the merge tier's list, then the entry tier's, which holds only merge jobs.
+            ('  "browse-live",\n  "security",\n', '  "browse-live",\n'),
             ('  "browse-live",\n  "security",\n', '  "browse-live",\n'),
             (
-                'id = "security"\ntiers = ["change", "merge", "breadth"]',
+                'id = "security"\ntiers = ["change", "entry", "merge", "breadth"]',
                 'id = "security"\ntiers = ["breadth"]',
             ),
         ),
@@ -290,8 +292,9 @@ CONTROLS = (
         _edit(
             catalogue.CATALOGUE,
             (
-                'id = "security"\ntiers = ["change", "merge", "breadth"]',
-                'id = "security"\ntiers = ["change", "merge", "breadth"]\nplatform = "macos-26"',
+                'id = "security"\ntiers = ["change", "entry", "merge", "breadth"]',
+                'id = "security"\ntiers = ["change", "entry", "merge", "breadth"]\n'
+                'platform = "macos-26"',
             ),
         ),
         # The loader refuses it first: the merge tier's security evidence is a ubuntu-* run.

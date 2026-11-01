@@ -827,7 +827,11 @@ A local run's reuse of a recorded pass is under [Verdict reuse](#verdict-reuse).
   Every one is a merge-tier job too, and the list must hold `rails`, `rails-checks` and
   `security` (`catalogue.ENTRY_NEEDS_JOBS`), so a pull request enters the queue with every
   rail held, each in one leg, and the security corpus run. The table is optional: a catalogue
-  without it runs no job in the tier, and nothing plans the tier yet.
+  without it runs no job in the tier. Today it is the merge tier less `python-suite-macos`, which
+  the queue's run of the merge tier and breadth's nightly `suite-macos` still run
+  (`tests/rails/test_ci_plan_tree.py`'s `LEFT_TO_THE_QUEUE` names each job the tier leaves to
+  the queue, and that rail also holds breadth's two full suites to their nights). Until the queue
+  gates `main`, no run plans it: `merge.yml` asks `plan-tier`, below.
 - **change:** the fast jobs, run before a commit.
 - **breadth:** the checks run on `main` that are too slow or too wide for every pull request,
   among them the security corpus again, on Linux and on macOS.
@@ -999,7 +1003,9 @@ rules are read with `GH_TOKEN` by the merge controller's `queue_live`, and only 
 check holds. A rule it cannot read counts as no queue. Either check alone prints `merge`: the
 variable without the rule would plan the entry tier for a pull request that still merges
 straight to `main`. The merge queue's own runs, pushes and every other event print `merge`.
-Nothing calls it yet.
+`merge.yml`'s plan step asks main's copy (the judge folder) before it plans, with
+`MERGE_QUEUE_LIVE` passed in its env, and an answer that is neither tier plans nothing, so the
+run is red. `pr.yml` shares the step and plans the change tier without asking.
 
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
@@ -1083,8 +1089,9 @@ publication-hygiene tests' real-tree runs moving to `tests/rails`. Narrowing ano
 change of its own: its inputs, the reason, and a planted path in `tests/rails/test_ci_plan_tree.py`,
 which also plants a path per override and finds the override's reason in its plan.
 
-**In the tier workflows,** the `changes` job plans the workflow's tier over what the commit
-changed against `main`'s tip, passed NUL-separated so a name with a newline in it stays one name
+**In the tier workflows,** the `changes` job plans the workflow's tier (for `merge.yml`, the tier
+`plan-tier` names: the entry tier for a pull request's run once the queue gates `main`) over
+what the commit changed against `main`'s tip, passed NUL-separated so a name with a newline in it stays one name
 (see "The tier workflows"). The planner that runs is `main`'s, never the checkout's: the step
 fetches `main`'s tip, archives its `tools/ci` into a folder of its own and runs it there over the
 checkout's catalogue and overrides, so a pull request's catalogue is its input and never its
