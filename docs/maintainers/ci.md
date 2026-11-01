@@ -327,8 +327,8 @@ verdict says all it must fix:
   from the API, so exactly when GitHub queues them), a pull request's head may be behind main: its definitions are
   compared with the commit it was built on, and its queue commit is what lands.
 - **The retry note** (0.4.0 A5, #5809). A change gets 2 retries; the red after them goes to a
-  person (quarantine, fix or infrastructure). A red on a pull request's run whose reasons do not
-  all wait says, right after `Red` in its title and in its summary, `retry n of 2` (or `retry
+  person (quarantine, fix or infrastructure). A red on a pull request's run or a queue commit's
+  whose reasons do not all wait says, right after `Red` in its title and in its summary, `retry n of 2` (or `retry
   budget spent`) and whether it is flake-class, and why. It changes no conclusion; one it cannot
   read says `retries not counted` and why.
   - **The count:** the run's attempts after the first; each earlier head of the pull request
@@ -347,6 +347,11 @@ verdict says all it must fix:
     its failed tests, then one per test (one JSON object each, at most 8): a step keeps ten
     notices, so a red whose named tests fall short of the count is not flake-class. A queue entry
     two entries list is a named red, never a crash.
+  - **A queue commit's red** carries the same note, so the lane's tooling can re-enqueue a
+    flake-class red: its pull request's removals from the queue and the run's attempts count, and
+    the pull request's earlier heads are held to its head's tree and change, as on its own red.
+    Its failed tests are read against the queue commit's own change against its parent, which is
+    what they ran on.
 - **A head that changes a CI definition,** against `main`'s tip, is judged by two things, both
   green (#4584 step 4): its own run, by every rule here, which shows the change works as
   written; and `main`'s CI contract over its definitions, which shows it weakens nothing
