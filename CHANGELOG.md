@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.3.4] — 2026-11-01
+
+An A2A client reads only the tasks it started, and its retry key names only its own request. Which search provider each search use goes to is yours: an installed app can no longer change it or test a provider. Every sign-in link PersonalClaw prints or opens names the exact address the gateway listens on. The agent's file tools, the Files view and the shell's screen refuse a project's secret files by name in every approval mode, so a step like copying `.env.example` to `.env` is now yours to do, and the git settings file and what runs at your login are yours to change. A command started in a folder takes only credentials from that folder's `.env`, and the shell's screen holds a glob it did not expand, and a bash action's payload keys, to stricter rules.
+
 ### Fixed
 
 - **An A2A client's retry key names only its own request: a second client that sends the same `messageId` or `idempotencyKey` gets a task of its own, never the first client's task or its outputs.**
