@@ -45,6 +45,10 @@ main's, unless main marks it retiring, is refused, and plans nothing either.
 ``--outputs`` prints ``full=true|false`` and ``jobs=<JSON list>`` as GitHub output lines on
 stdout, and the plan on stderr.
 
+``python -m tools.ci plan-tier`` prints the tier a run plans (:func:`tier_for`): ``entry`` for a
+pull request's once the merge queue gates main, ``merge`` for every other run, and ``merge`` for
+anything it cannot read.
+
 ``--matrix`` prints the plan as a job matrix (:func:`matrix`): one entry per planned job and
 shard, keyed as ``run-job`` keys its record, each with the stage it runs in after the planned
 jobs whose output it uses. With ``--outputs`` it adds ``matrix=<JSON>`` (the ``include`` list a
@@ -67,6 +71,7 @@ import functools
 import io
 import json
 import math
+import os
 import posixpath
 import re
 import statistics
@@ -787,6 +792,50 @@ def trusted_overrides(
             continue
         out.append(Override(o.paths, o.jobs, o.whole_tier, reason))
     return tuple(out)
+
+
+#: A repository as ``--repo`` names it: ``owner/name``.
+_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+
+
+def tier_for(event: str, queue_var: str, queue_live: Callable[[], bool]) -> str:
+    """The tier a run of ``event`` plans: the entry tier for a pull request's once the merge queue
+    gates main, the merge tier for every other run. Gated is both at once: the repository's
+    ``MERGE_QUEUE_LIVE`` is ``true``, and ``queue_live()`` says main's rules hold a merge_queue rule
+    (read only then). Either alone plans the merge tier: the variable without the rule would plan
+    the entry tier for a pull request that still merges straight to main, with no queue run of the
+    merge tier. The merge queue's own runs and pushes always plan the merge tier."""
+    if event != "pull_request" or queue_var != "true":
+        return "merge"
+    return catalogue.ENTRY_TIER if queue_live() else "merge"
+
+
+def tier_main(argv: list[str]) -> int:
+    """``python -m tools.ci plan-tier --event E --queue-var V --repo R``: the tier, on stdout.
+    Main's rules are read with ``GH_TOKEN`` by the merge controller's reader, which reads a rule it
+    cannot read as no queue, so this prints ``merge`` for it. Exit 0 with a tier, 2 when the
+    arguments cannot be read (nothing is printed)."""
+    # Imported when called, as ``python -m tools.ci merge-controller`` is: the planner itself
+    # reads nothing from the API.
+    from . import merge_controller, merge_verdict
+
+    parser = argparse.ArgumentParser(
+        prog="python -m tools.ci plan-tier",
+        description="Print the tier a run plans: entry or merge.",
+    )
+    parser.add_argument("--event", required=True, help="the run's github.event_name")
+    parser.add_argument("--queue-var", required=True, help="the repository's MERGE_QUEUE_LIVE")
+    parser.add_argument("--repo", required=True, help="owner/name, whose main's rules are read")
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) and exc.code else 2
+    if not _REPO.fullmatch(args.repo):
+        print(f"--repo must be OWNER/NAME: {args.repo!r}", file=sys.stderr)
+        return 2
+    get = merge_verdict.github_get(merge_controller.API, os.environ.get("GH_TOKEN", ""))
+    print(tier_for(args.event, args.queue_var, lambda: merge_controller.queue_live(get, args.repo)))
+    return 0
 
 
 def main(argv: list[str]) -> int:
