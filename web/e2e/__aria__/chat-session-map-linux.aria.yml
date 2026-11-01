@@ -97,7 +97,6 @@
   - button "Branch from here"
   - button "Speak"
   - status
-  - button "Jump to latest message"
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto
