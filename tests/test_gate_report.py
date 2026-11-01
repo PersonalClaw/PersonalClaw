@@ -1,7 +1,7 @@
 """Aggregate-gate report tests.
 
-``scripts/gate_report.py`` runs the six drift/inert gates (config-baseline,
-inert-surface, docs-lint, and the three structural ratchets) and reports EVERY failure in
+``scripts/gate_report.py`` runs the seven drift/inert gates (config-baseline,
+inert-surface, docs-lint, and the four structural ratchets) and reports EVERY failure in
 one run — the "aggregate, don't short-circuit" ergonomic. These tests prove the contract:
 
   * three INDEPENDENT failures all surface in a single ``run_all_gates()`` call — none masked;
@@ -31,13 +31,14 @@ from scripts.gate_report import GateResult, main, render_report, run_all_gates
 
 # The three drift/inert gates this module seeds failures for.
 _GATE_NAMES = ["config-baseline", "inert-surface", "docs-lint"]
-# Every gate the aggregate registers, in order. The three structural ratchets come last;
+# Every gate the aggregate registers, in order. The four structural ratchets come last;
 # they are asserted by NAME here so a future registration can neither drop one silently nor
 # reorder the table.
 _ALL_GATE_NAMES = _GATE_NAMES + [
     "structural-size",
     "structural-import-direction",
     "structural-duplication",
+    "structural-import-cycle",
 ]
 
 
@@ -120,12 +121,16 @@ _STRUCTURAL_CLEAN = {
     },
     structural_gen.RATCHET_IMPORT_DIRECTION: {"per_file": {}},
     structural_gen.RATCHET_DUPLICATION: {"per_file": {}},
+    structural_gen.RATCHET_IMPORT_CYCLE: {
+        "outside": ["synthetic_leaf"],
+        "_live": {"members": [], "units": 0, "startup_units": 0, "ties": {}},
+    },
 }
 
 
 @pytest.fixture
 def gates(monkeypatch, tmp_path):
-    """Every one of the six gates on stubs that pass: a committed baseline and a fresh render or
+    """Every one of the seven gates on stubs that pass: a committed baseline and a fresh render or
     inventory of the test's own, so no gate reads the real tree. The rails job runs the gates on
     the real tree once (``scripts/gate_report.py``); these tests prove how the aggregate reports
     them. A seed or a raise a test adds replaces one stub; the real comparisons do the rest."""
@@ -151,7 +156,8 @@ def gates(monkeypatch, tmp_path):
 
 def _seed_structural(monkeypatch, ratchet: str) -> None:
     """Make one structural ratchet fail by its REAL comparison: the current inventory gains one
-    band entrant, one upward edge or one re-derivation over the clean committed baseline."""
+    band entrant, one upward edge, one re-derivation or one clean unit taken into the import
+    cycle over the clean committed baseline."""
     current = json.loads(json.dumps(_STRUCTURAL_CLEAN))
     if ratchet == structural_gen.RATCHET_SIZE:
         current[ratchet]["watch_band_members"] = ["src/personalclaw/synthetic_giant.py"]
@@ -159,6 +165,8 @@ def _seed_structural(monkeypatch, ratchet: str) -> None:
         current[ratchet]["per_file"] = {
             "src/personalclaw/synthetic_edge.py": {"edges": 1, "violations": ["up:synthetic"]}
         }
+    elif ratchet == structural_gen.RATCHET_IMPORT_CYCLE:
+        current[ratchet]["_live"]["members"] = ["synthetic_hub", "synthetic_leaf"]
     else:
         current[ratchet]["per_file"] = {
             "src/personalclaw/synthetic_copy.py": {"count": 1, "sites": ["synthetic:site"]}
@@ -202,8 +210,9 @@ def test_three_independent_failures_all_surface_in_one_run(gates, monkeypatch, t
     assert main() == 1
 
 
-def test_all_six_gates_fail_at_once_and_each_is_reported(gates, monkeypatch, tmp_path, capsys):
-    """No gate masks another: all six seeded at once, all six FAIL in one run and one table."""
+def test_all_seven_gates_fail_at_once_and_each_is_reported(gates, monkeypatch, tmp_path, capsys):
+    """No gate masks another: all seven seeded at once, all seven FAIL in one run and one
+    table."""
     _seed_config_drift(monkeypatch, tmp_path)
     _seed_inert_drift(monkeypatch, tmp_path)
     _seed_docs_drift(monkeypatch, tmp_path)
@@ -216,7 +225,7 @@ def test_all_six_gates_fail_at_once_and_each_is_reported(gates, monkeypatch, tmp
     assert all(not r.ok and r.failures for r in results), results
     assert not any("raised" in line for r in results for line in r.failures), results
     assert main() == 1
-    assert "SUMMARY: 6 of 6 gate(s) FAILED" in capsys.readouterr().out
+    assert "SUMMARY: 7 of 7 gate(s) FAILED" in capsys.readouterr().out
 
 
 #: How each gate is made to raise: the call its body makes first, replaced by one that raises.
@@ -240,7 +249,7 @@ _RAISERS = {
 @pytest.mark.parametrize("raiser", _ALL_GATE_NAMES)
 def test_a_raising_gate_is_captured_and_does_not_stop_the_others(gates, monkeypatch, raiser):
     """A gate that RAISES is reported as a failure, and every OTHER gate still runs and passes —
-    the non-short-circuit guarantee, for each of the six gates in turn."""
+    the non-short-circuit guarantee, for each of the seven gates in turn."""
 
     def boom(*_args):
         raise RuntimeError("synthetic gate explosion")
@@ -281,6 +290,9 @@ def test_an_all_pass_run_exits_0_with_every_gate_pass(gates, capsys):
     assert out.count("PASS") == len(_ALL_GATE_NAMES)
     assert "FAIL" not in out
     assert f"SUMMARY: all {len(_ALL_GATE_NAMES)} gate(s) passed." in out
+    # The import cycle's size is reported beneath the table, and gates nothing.
+    assert "structural-import-cycle: the biggest import cycle holds 0 units" in out
+    assert "(information, not gated)" in out
 
 
 def test_report_renders_every_failure_in_one_table():

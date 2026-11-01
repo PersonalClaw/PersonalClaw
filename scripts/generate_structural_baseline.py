@@ -7,8 +7,8 @@ silently; a family we have already unified once gets re-derived a thirteenth tim
 nothing counts. None of those show up in a unit test — the code works. Only a *census of
 the shape of the tree* sees them.
 
-This generator IS that census. It measures three structural properties of production
-``src/personalclaw`` and commits them to ``structural-baseline.json`` as three INDEPENDENT
+This generator IS that census. It measures four structural properties of production
+``src/personalclaw`` and commits them to ``structural-baseline.json`` as four INDEPENDENT
 shrink-only ratchets:
 
   * ``structural-size`` — a per-file size ceiling no file may exceed, plus a shrink-only
@@ -18,10 +18,12 @@ shrink-only ratchets:
     an upper one; each file's upward-edge count may only shrink.
   * ``structural-duplication`` — a duplicate-implementation counter for the families this
     codebase has repeatedly re-derived (HTTP error envelope, verdict types, durable write).
+  * ``structural-import-cycle`` — the units outside the biggest import cycle. One of them
+    inside it is the red; the cycle's size is reported, never gated (``_CYCLE_RATIONALE``).
 
-Each ratchet is its own gate in ``scripts/gate_report.py`` (the aggregate), so three
-independent structural failures report as THREE failures in one run — one red never hides
-the other two.
+Each ratchet is its own gate in ``scripts/gate_report.py`` (the aggregate), so four
+independent structural failures report as FOUR failures in one run — one red never hides
+the other three.
 
 ⚠️  FORBIDDEN-TO-RAISE RULE (the whole point — do not weaken it): when a ratchet reds
     because a counter ROSE, the fix is to FIX THE CODE — split the file, invert the import,
@@ -71,9 +73,10 @@ the other two.
     * **Total line count of ``src/``.** A growing project grows; a total-lines ratchet would
       red on every feature and teach the team to regenerate baselines, which is the habit
       that kills every other ratchet in this file.
-    * **Import CYCLES.** Worth having and genuinely separate: a cycle is a different defect
-      (initialization order) from a direction violation (layer inversion), and it needs a
-      strongly-connected-component pass rather than a per-edge rule. Its own change.
+    * **The import cycle's SIZE.** The cycle is ratcheted (``structural-import-cycle``): a
+      unit outside it may not join it. Its size is not, because a new module the dashboard
+      imports that imports config joins it by construction, so a count that may only fall would
+      red ordinary features. The size is printed in the gate report and read at each release.
 
 # how to update
     Regenerate ONLY when a counter LEGITIMATELY SHRANK (a file was split, an upward import
@@ -111,7 +114,7 @@ import contextlib
 import contextvars
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -145,7 +148,8 @@ MIN_CENSUS_PY_FILES = 800
 RATCHET_SIZE = "structural-size"
 RATCHET_IMPORT_DIRECTION = "structural-import-direction"
 RATCHET_DUPLICATION = "structural-duplication"
-RATCHETS = (RATCHET_SIZE, RATCHET_IMPORT_DIRECTION, RATCHET_DUPLICATION)
+RATCHET_IMPORT_CYCLE = "structural-import-cycle"
+RATCHETS = (RATCHET_SIZE, RATCHET_IMPORT_DIRECTION, RATCHET_DUPLICATION, RATCHET_IMPORT_CYCLE)
 
 # A render may be pointed at another tree (a test's fixture) for one call. With no override,
 # every reader below sees this checkout exactly as before.
@@ -499,32 +503,109 @@ def _is_bundled_app_module(in_src: str) -> bool:
     return in_src.startswith(_BUNDLED_APP_PREFIX)
 
 
+def _unit_of(in_src: str) -> str:
+    """The unit *in_src* belongs to: its top-level package, or a top-level module's own name.
+
+    ``config/loader.py`` is ``config`` and ``atomic_write.py`` is ``atomic_write``; the package's
+    own ``__init__.py`` is ``""``. A top-level module used to read as ``""``, the package root,
+    so no rule could name one as its lower layer, and most of the foundation is top-level modules.
+    """
+    head, _, rest = in_src.partition("/")
+    if rest:
+        return head
+    return "" if head == "__init__.py" else head.removesuffix(".py")
+
+
+#: The entry points: the outermost layer, which starts the gateway and the CLI and so composes
+#: every layer below it, the HTTP surface included. An entry point importing the dashboard points
+#: down on purpose, so it is a declared layer rather than a grandfathered edge, and a unit joins
+#: it only by a line here. Declared units must exist (``vacuity_failures``), so a rename cannot
+#: leave a dead name standing in for a layer.
+ENTRY_POINT_UNITS: tuple[str, ...] = (
+    "__main__",
+    "app_cli",
+    "cli",
+    "cli_app_new",
+    "cli_chat",
+    "cli_commands",
+    "cli_config",
+    "cli_doctor",
+    "cli_project",
+    "cli_run",
+    "cli_server",
+    "cli_setup",
+    "gateway",
+)
+
+#: The foundation: the units every other layer stands on, each with the reason it is one. A unit is
+#: here either by ROLE (the plan's four and ``net``: settings, security, the event log, the one
+#: atomic write, the egress chokepoint), whose own upward imports are the debt the foundation rule
+#: grandfathers, or by MEASUREMENT on 2026-10-31: imported by 5 or more units, importing 3 or fewer,
+#: and infrastructure by what it does. Membership changes only by a line here, never on its own: a
+#: new unit is a domain unit until someone declares it.
+FOUNDATION_UNITS: dict[str, str] = {
+    "config": "role: the settings every layer reads (imported by 159; 28 upward imports are debt)",
+    "security": "role: the built-in security controls (imported by 123; 13 upward imports: debt)",
+    "sel": "role: the security event log (imported by 71 units; 8 upward imports are debt)",
+    "atomic_write": "role: the one atomic file write (imported by 81 units; imports only config)",
+    "net": "role: the one outbound network chokepoint (imported by 39; 5 upward imports are debt)",
+    "session_keys": "measured: every session key kind; imported by 34 units, imports 1",
+    "constants": "measured: constants shared by the CLI and the gateway; imported by 24, imports 1",
+    "cancellation": "measured: a turn's one stop signal; imported by 27 units, imports 1",
+    "record_files": "measured: a JSON record file with one lock; imported by 28 units, imports 3",
+    "safety_flags": "measured: strict booleans for safety controls; imported by 28, imports none",
+    "notification_kinds": "measured: the notification kind registry; imported by 25, imports none",
+    "instants": "measured: stored timestamps with their offset; imported by 21, imports none",
+    "env": "measured: environment helpers for child processes; imported by 19, imports none",
+    "home_paths": "measured: a path in the user's home, from ~; imported by 15, imports none",
+    "record_ids": "measured: an untrusted record id to a path in its store; imported by 15, none",
+    "errors": "measured: the what/why/fix error envelope; imported by 10 units, imports none",
+    "http_errors": "measured: the one wire error emitter and its codes; imported by 10, none",
+    "token_estimate": "measured: the chars-per-token estimates; imported by 10 units, imports none",
+    "bounded_log": "measured: logs that keep their newest rows; imported by 20 units, imports 2",
+    "sqlite_compat": "measured: the one SQLite binding; imported by 18 units, imports 1",
+    "identity": "measured: the owner's attribution name; imported by 15 units, imports 1",
+    "timezones": "measured: the one wall-clock timezone resolver; imported by 10 units, imports 1",
+    "textfmt": "measured: provider-neutral LLM text helpers; imported by 11 units, imports 1",
+    "shell_syntax": "measured: how a shell splits a command line; imported by 9, imports none",
+    "filled_secrets": "measured: what a filled secret keeps, masked; imported by 5, imports 1",
+}
+
+
 @dataclass(frozen=True)
 class DirectionRule:
     """One declared layer-order rule: files in ``lower`` may not import ``upper``.
 
-    ``lower == ("*",)`` means "every package except the ones named in ``upper``" — the
-    whole-core form used for the two rules whose lower layer is "all of core".
+    ``lower == ("*",)`` means "every unit except the ones named in ``upper``" — the
+    whole-core form used for the rules whose lower layer is "all of core". ``beside`` leaves
+    units out of that whole-core lower layer: the layers above ``upper``, which may import it.
+    ``upper == ("*",)`` means "every unit outside ``lower``": a layer that may import only
+    itself.
     """
 
     name: str
     lower: tuple[str, ...]
     upper: tuple[str, ...]
     rationale: str
+    beside: tuple[str, ...] = ()
 
     def applies_to(self, in_src: str) -> bool:
         if _is_bundled_app_module(in_src):
             return False  # not a core layer at all — see the helper
-        top = in_src.split("/")[0] if "/" in in_src else ""
+        top = _unit_of(in_src)
         if top in self.upper:
             return False  # the upper layer may of course import itself
+        if top in self.beside:
+            return False  # a layer above the upper one, which imports it on purpose
         return self.lower == ("*",) or top in self.lower
 
 
-# The layer order, lowest first. Deliberately SMALL: three rules with measured, non-zero
-# populations plus one leaf-isolation rule, each naming the defect it catches. This is not a
-# full layering of 66 packages — a map that large would be a design document masquerading as
-# a lint, and its first false red would get the whole gate deleted.
+# The layer order, lowest first: the foundation (FOUNDATION_UNITS), the domain (every other unit,
+# deliberately NOT ordered within itself), the surfaces (``dashboard``, ``sdk``) and the entry
+# points (ENTRY_POINT_UNITS). Deliberately SMALL: five rules, each naming the defect it catches.
+# This is not a full layering of the 358 units — a map that large would be a design document
+# masquerading as a lint, and its first false red would get the whole gate deleted. The domain
+# is pulled apart by the import-cycle ratchet, not by an ordering.
 DIRECTION_RULES: tuple[DirectionRule, ...] = (
     DirectionRule(
         name="ledger-is-a-leaf",
@@ -543,14 +624,17 @@ DIRECTION_RULES: tuple[DirectionRule, ...] = (
         name="core-must-not-import-the-http-surface",
         lower=("*",),
         upper=("dashboard",),
+        beside=ENTRY_POINT_UNITS,
         rationale=(
             "``dashboard/`` is the aiohttp + SPA surface. Domain code that imports a handler "
             "module inverts the dependency: the domain can no longer be exercised without "
             "standing up the web app, which is how a feature ends up reachable ONLY through "
             "one route and invisible to the CLI, the MCP surface and the harness. Measured 56 "
             "edges across 26 files, most of them entry-point composition (gateway, cli_*) "
-            "that is legitimately downward-facing. Shrink-only GRANDFATHERS those instead of "
-            "an exemption list — an allowlist is a thing that rots, a measured floor is not."
+            "that is legitimately downward-facing. Shrink-only grandfathered those at first, "
+            "because an allowlist rots and a measured floor does not. The entry points are now "
+            "a declared layer above the surface (ENTRY_POINT_UNITS), so their 19 edges left "
+            "the floor on 2026-10-31: 27 edges remain, all of them below the entry points."
         ),
     ),
     DirectionRule(
@@ -566,6 +650,30 @@ DIRECTION_RULES: tuple[DirectionRule, ...] = (
             "core — the provider-boundary tenet inverted. Measured 10 edges across 7 files."
         ),
     ),
+    DirectionRule(
+        name="foundation-imports-only-foundation",
+        lower=tuple(FOUNDATION_UNITS),
+        upper=("*",),
+        rationale=(
+            "The foundation is what every layer stands on, so it may import only itself. A "
+            "foundation unit that imports a domain unit puts the whole domain under everything "
+            "that imports it, which is how one import cycle came to hold 268 of the 358 units: "
+            "config, imported by 159 units, imports apps, agents, providers and workflows. "
+            "Measured 73 edges across 17 files on 2026-10-31, grandfathered as a floor; each one "
+            "cut is a cheap first cut of that cycle."
+        ),
+    ),
+    DirectionRule(
+        name="nothing-below-the-entry-points-imports-them",
+        lower=("*",),
+        upper=ENTRY_POINT_UNITS,
+        rationale=(
+            "The entry points compose every layer below them, so a unit below that imports one "
+            "leans on the whole gateway or CLI, and could reach the HTTP surface through it "
+            "without a single edge the HTTP rule would count. Measured 2 edges across 2 files on "
+            "2026-10-31."
+        ),
+    ),
 )
 
 
@@ -575,23 +683,36 @@ def _imported_personalclaw_modules(path: Path, tree: ast.Module) -> list[str]:
     A relative import is the shape that hides a direction violation from grep (``from
     ..dashboard import x`` never contains the string ``personalclaw.dashboard``), so it is
     resolved here rather than skipped.
+
+    An import from the package itself (``from personalclaw import config``, or ``from . import
+    config`` in a top-level module) brings the modules it names, so each of them is listed too:
+    read as plain ``personalclaw``, the 778 such imports in the tree on 2026-10-31 named no module.
     """
+    return _resolved(path, ast.walk(tree))
+
+
+def _resolved(path: Path, nodes: Iterable[ast.AST]) -> list[str]:
+    """The ``personalclaw.*`` modules the import statements among *nodes* name, resolved."""
     parent = path.resolve().parent
     rel_parent = parent.relative_to(_src_root()).as_posix()
     pkg_parts = [] if rel_parent == "." else rel_parent.split("/")
     out: list[str] = []
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Import):
             out.extend(a.name for a in node.names if a.name.startswith("personalclaw"))
         elif isinstance(node, ast.ImportFrom):
             if node.level == 0:
                 if node.module and node.module.startswith("personalclaw"):
                     out.append(node.module)
+                    if node.module == "personalclaw":
+                        out.extend(f"personalclaw.{a.name}" for a in node.names if a.name != "*")
                 continue
             up = node.level - 1
             base = pkg_parts[: len(pkg_parts) - up] if up else list(pkg_parts)
             tail = [node.module] if node.module else []
             out.append(".".join(["personalclaw", *base, *tail]))
+            if not base and not tail:
+                out.extend(f"personalclaw.{a.name}" for a in node.names if a.name != "*")
     return out
 
 
@@ -599,6 +720,7 @@ def scan_upward_edges() -> Scan:
     """``{repo-relative path: {"edges": N, "violations": ["rule -> module", ...]}}``."""
     per_file: dict[str, dict[str, Any]] = {}
     inspected: set[str] = set()
+    units = census_units()
     for path in _src_py_files():
         tree = _parse(path)
         if tree is None:
@@ -609,6 +731,14 @@ def scan_upward_edges() -> Scan:
         modules = _imported_personalclaw_modules(path, tree)
         for rule in DIRECTION_RULES:
             if not rule.applies_to(in_src):
+                continue
+            if rule.upper == ("*",):
+                # Any unit outside the layer; a name the package exports that is no unit (its
+                # ``__version__``) is not an import of one.
+                for mod in modules:
+                    unit = mod.split(".")[1] if mod.count(".") else ""
+                    if unit in units and unit not in rule.lower:
+                        found.append(f"{rule.name} -> {mod}")
                 continue
             for upper in rule.upper:
                 prefix = f"personalclaw.{upper}"
@@ -632,10 +762,13 @@ def _import_direction_block() -> dict[str, Any]:
                 "name": r.name,
                 "lower": list(r.lower),
                 "upper": list(r.upper),
+                "beside": list(r.beside),
                 "rationale": r.rationale,
             }
             for r in DIRECTION_RULES
         ],
+        "foundation": dict(sorted(FOUNDATION_UNITS.items())),
+        "entry_points": sorted(ENTRY_POINT_UNITS),
         "per_file": per_file,
         "totals": {
             "edges": sum(int(e["edges"]) for e in per_file.values()),
@@ -662,8 +795,45 @@ def regressions_import_direction(baseline: dict[str, Any], current: dict[str, An
         lines.append(
             f"{rel}: upward imports rose {was} -> {now}; new layer violation(s): {new} "
             "— invert the dependency (move the shared piece down), do not raise the count"
+            + _foundation_hint(new)
         )
     return lines
+
+
+def _foundation_hint(violations: list[str]) -> str:
+    """For a foundation unit's new import of a unit that itself imports only the foundation: the
+    other fix, declaring that unit, which is a reviewed line and never automatic."""
+    rule = "foundation-imports-only-foundation -> "
+    targets = {v.removeprefix(rule).split(".")[1] for v in violations if v.startswith(rule)}
+    if not targets:
+        return ""
+    graph = unit_imports()
+    fits = sorted(t for t in targets if graph.get(t, set()) <= set(FOUNDATION_UNITS))
+    if not fits:
+        return ""
+    return (
+        f"; or, if {fits} belong(s) in the foundation (each imports only foundation units), add "
+        "it to FOUNDATION_UNITS with its reason in this change"
+    )
+
+
+def unit_imports() -> dict[str, set[str]]:
+    """Each unit's imports of the other units: every file's, lazy ones and package imports too."""
+    units = census_units()
+    graph: dict[str, set[str]] = {unit: set() for unit in units}
+    for path in _src_py_files():
+        in_src = _in_src(path)
+        if _is_bundled_app_module(in_src):
+            continue
+        tree = _parse(path)
+        if tree is None:
+            continue
+        own = _unit_of(in_src)
+        for mod in _imported_personalclaw_modules(path, tree):
+            unit = mod.split(".")[1] if mod.count(".") else ""
+            if unit in units and unit != own:
+                graph.setdefault(own, set()).add(unit)
+    return graph
 
 
 # ── Ratchet 3: duplicate-implementation counter ──────────────────────────────
@@ -956,11 +1126,231 @@ def regressions_duplication(baseline: dict[str, Any], current: dict[str, Any]) -
     return lines
 
 
+# ── Ratchet 4: the import cycle may not take in a unit it does not hold ──────
+
+#: Why the cycle ratchet records the units OUTSIDE the biggest cycle, not its size.
+_CYCLE_RATIONALE = (
+    "One import cycle holds most of core: on 2026-10-31, 268 of the 358 units over every import, "
+    "and 71 counting only the imports that run at startup. A unit in it can't be built, tested or "
+    "moved without the rest. The size can't be the gated number: a new module the dashboard "
+    "imports that imports config joins the cycle by construction, and 3 of the 9 units added in "
+    "the week before this ratchet did, so a count that may only fall would red ordinary features "
+    "that no change to their own module could fix. What a PR can always do is keep a clean unit "
+    "clean, so the baseline records the units outside the cycle, and one of them inside it is the "
+    "red. A unit leaving the cycle, and a new unit made outside it, is recorded by running this "
+    "generator in that commit. The size and its startup figure are printed in the gate report, "
+    "ungated, and read at each release cut."
+)
+
+
+def _is_type_checking(test: ast.expr) -> bool:
+    """``if TYPE_CHECKING:`` or ``if typing.TYPE_CHECKING:``, exactly. Any other test that names
+    it (``if not TYPE_CHECKING:``) runs its body at startup."""
+    if isinstance(test, ast.Name):
+        return test.id == "TYPE_CHECKING"
+    return (
+        isinstance(test, ast.Attribute)
+        and test.attr == "TYPE_CHECKING"
+        and isinstance(test.value, ast.Name)
+        and test.value.id == "typing"
+    )
+
+
+def _startup_nodes(tree: ast.Module) -> list[ast.AST]:
+    """The import statements that run when the module is imported: module level and class
+    bodies, both branches of an ``if`` and every arm of a ``try``, but not a function's body or
+    an ``if TYPE_CHECKING`` block."""
+    found: list[ast.AST] = []
+
+    def walk(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                found.append(node)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            elif isinstance(node, ast.If) and _is_type_checking(node.test):
+                walk(node.orelse)
+            elif isinstance(node, ast.Try):
+                walk(node.body)
+                for handler in node.handlers:
+                    walk(handler.body)
+                walk(node.orelse)
+                walk(node.finalbody)
+            else:
+                for field_name in ("body", "orelse", "finalbody"):
+                    inner = getattr(node, field_name, None)
+                    if isinstance(inner, list):
+                        walk([n for n in inner if isinstance(n, ast.stmt)])
+
+    walk(tree.body)
+    return found
+
+
+@dataclass(frozen=True)
+class UnitGraph:
+    """Which unit imports which, and the first file that does: over every import, and over the
+    imports that run at startup."""
+
+    every: dict[str, set[str]]
+    startup: dict[str, set[str]]
+    sites: dict[tuple[str, str], str]
+
+
+def _unit_graph() -> tuple[frozenset[str], UnitGraph]:
+    """The unit graph and the files read to build it (every census file, bundled apps' too,
+    whose imports are left out the way the direction ratchet leaves them out)."""
+    units = census_units()
+    every: dict[str, set[str]] = {unit: set() for unit in units}
+    startup: dict[str, set[str]] = {unit: set() for unit in units}
+    sites: dict[tuple[str, str], str] = {}
+    inspected: set[str] = set()
+    for path in _src_py_files():
+        tree = _parse(path)
+        if tree is None:
+            continue
+        inspected.add(_rel(path))
+        in_src = _in_src(path)
+        own = _unit_of(in_src)
+        if own not in units or _is_bundled_app_module(in_src):
+            continue
+        for graph, modules in (
+            (every, _imported_personalclaw_modules(path, tree)),
+            (startup, _resolved(path, _startup_nodes(tree))),
+        ):
+            for mod in modules:
+                unit = mod.split(".")[1] if mod.count(".") else ""
+                if unit in units and unit != own:
+                    graph[own].add(unit)
+                    if graph is every:
+                        sites.setdefault((own, unit), _rel(path))
+    return frozenset(inspected), UnitGraph(every, startup, sites)
+
+
+def biggest_cycle(graph: dict[str, set[str]]) -> list[str]:
+    """The units of the biggest import cycle, sorted: the biggest strongly connected component of
+    two or more units (Tarjan, iterative), or none when the graph has no cycle. A tie goes to the
+    component whose first unit sorts first, so the answer never depends on order."""
+    index: dict[str, int] = {}
+    low: dict[str, int] = {}
+    on_stack: set[str] = set()
+    stack: list[str] = []
+    best: list[str] = []
+    counter = 0
+    for root in sorted(graph):
+        if root in index:
+            continue
+        index[root] = low[root] = counter
+        counter += 1
+        stack.append(root)
+        on_stack.add(root)
+        work = [(root, iter(sorted(graph[root])))]
+        while work:
+            node, children = work[-1]
+            for child in children:
+                if child not in index:
+                    index[child] = low[child] = counter
+                    counter += 1
+                    stack.append(child)
+                    on_stack.add(child)
+                    work.append((child, iter(sorted(graph[child]))))
+                    break
+                if child in on_stack:
+                    low[node] = min(low[node], index[child])
+            else:
+                work.pop()
+                if work:
+                    parent = work[-1][0]
+                    low[parent] = min(low[parent], low[node])
+                if low[node] == index[node]:
+                    component: list[str] = []
+                    while True:
+                        member = stack.pop()
+                        on_stack.discard(member)
+                        component.append(member)
+                        if member == node:
+                            break
+                    component.sort()
+                    if len(component) < 2:
+                        continue
+                    if len(component) > len(best) or (
+                        len(component) == len(best) and component[0] < best[0]
+                    ):
+                        best = component
+    return best
+
+
+def scan_import_cycle() -> Scan:
+    """``{"members": [...], "outside": [...], "startup_units": N}`` for the unit graph."""
+    inspected, graph = _unit_graph()
+    members = biggest_cycle(graph.every)
+    return Scan(
+        inspected,
+        {
+            "members": members,
+            "outside": sorted(set(graph.every) - set(members)),
+            "startup_units": len(biggest_cycle(graph.startup)),
+            "ties": {unit: _ties(unit, set(members), graph) for unit in members},
+        },
+    )
+
+
+def _import_cycle_block() -> dict[str, Any]:
+    return cycle_block_from(scan(RATCHET_IMPORT_CYCLE))
+
+
+def cycle_block_from(result: Scan) -> dict[str, Any]:
+    """The cycle ratchet's block. ``outside`` and the rationale are the baseline; ``_live`` holds
+    the figures the render leaves out (``build_baseline``), so a new unit inside the cycle never
+    asks for a regeneration."""
+    rows = result.rows
+    return {
+        "outside": list(rows["outside"]),
+        "rationale": _CYCLE_RATIONALE,
+        "_live": {
+            "members": list(rows["members"]),
+            "units": len(rows["members"]),
+            "startup_units": int(rows["startup_units"]),
+            "ties": dict(rows["ties"]),
+        },
+    }
+
+
+def cycle_information(current: dict[str, Any]) -> str:
+    """The gate report's information line for the cycle: its size, never gated."""
+    live = current["_live"]
+    return (
+        f"the biggest import cycle holds {live['units']} units ({live['startup_units']} counting "
+        f"only startup imports); {len(current['outside'])} units are outside it"
+    )
+
+
+def _ties(unit: str, members: set[str], graph: UnitGraph) -> str:
+    """The import edges that tie *unit* into the cycle, each with the file that makes it."""
+    out = sorted(v for v in graph.every.get(unit, set()) if v in members)
+    into = sorted(u for u in members if unit in graph.every.get(u, set()))
+    parts = [f"{graph.sites[(unit, v)]} imports {v}" for v in out[:3]]
+    parts += [f"{graph.sites[(u, unit)]} imports {unit}" for u in into[:3]]
+    return f" ({'; '.join(parts)})" if parts else ""
+
+
+def regressions_import_cycle(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
+    """Units the baseline records outside the cycle that are inside it now, sorted."""
+    members = set(current["_live"]["members"])
+    ties = current["_live"].get("ties", {})
+    lines: list[str] = []
+    for unit in sorted(set(baseline["outside"]) & members):
+        lines.append(
+            f"{unit}: was outside the import cycle and joined it{ties.get(unit, '')} — cut the "
+            "import that pulled it in, do not regenerate to bless it"
+        )
+    return lines
+
+
 # ── Inventory, vacuity, ratchet dispatch ─────────────────────────────────────
 
 
 def build_inventory(root: Path | None = None) -> dict[str, Any]:
-    """Render all three structural ratchet baselines as a deterministic, JSON-safe dict.
+    """Render all four structural ratchet baselines as a deterministic, JSON-safe dict.
 
     *root* points the census at another tree (a test fixture); with no *root* it reads this
     checkout.
@@ -978,12 +1368,20 @@ def build_inventory(root: Path | None = None) -> dict[str, Any]:
             RATCHET_SIZE: _size_block(),
             RATCHET_IMPORT_DIRECTION: _import_direction_block(),
             RATCHET_DUPLICATION: _duplication_block(),
+            RATCHET_IMPORT_CYCLE: _import_cycle_block(),
         }
 
 
 def build_baseline(root: Path | None = None) -> str:
-    """Render the inventory as a deterministic JSON string (sorted, trailing newline)."""
-    return json.dumps(build_inventory(root), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    """Render the inventory as a deterministic JSON string (sorted, trailing newline). A block's
+    ``_live`` figures are left out: they change with every new unit, and only the comparison
+    and the gate report read them."""
+    inventory = build_inventory(root)
+    rendered = {
+        name: {k: v for k, v in block.items() if k != "_live"} if isinstance(block, dict) else block
+        for name, block in inventory.items()
+    }
+    return json.dumps(rendered, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
 
 
 _SCAN_CACHE: dict[str, tuple[tuple[object, object, Path], Scan]] = {}
@@ -1005,6 +1403,7 @@ def scan(ratchet: str) -> Scan:
         RATCHET_SIZE: scan_sizes,
         RATCHET_IMPORT_DIRECTION: scan_upward_edges,
         RATCHET_DUPLICATION: scan_duplicates,
+        RATCHET_IMPORT_CYCLE: scan_import_cycle,
     }
     if ratchet not in builders:
         raise ValueError(f"unknown structural ratchet {ratchet!r}; known: {list(RATCHETS)}")
@@ -1065,15 +1464,36 @@ def vacuity_failures(ratchet: str | None = None) -> list[str]:
                 f"{name}: VACUITY — inspected no file from {missed}. A whole sub-package left "
                 "the walk while the file count stayed plausible."
             )
+            continue
+        if name == RATCHET_IMPORT_DIRECTION:
+            dead = sorted(_declared_units() - census_units())
+            if dead:
+                failures.append(
+                    f"{name}: VACUITY — the layer map names {dead}, and no such unit exists. A "
+                    "rule over a dead name guards nothing: rename it in the map, or drop it."
+                )
     return failures
+
+
+def census_units() -> set[str]:
+    """Every unit the census holds (:func:`_unit_of`), the package root left out."""
+    return {_unit_of(_in_src(path)) for path in _src_py_files()} - {""}
+
+
+def _declared_units() -> set[str]:
+    """Every unit the layer map names: each rule's layers, and each declared layer."""
+    named = set(ENTRY_POINT_UNITS) | set(FOUNDATION_UNITS)
+    for rule in DIRECTION_RULES:
+        named.update(rule.lower, rule.upper, rule.beside)
+    return named - {"*"}
 
 
 def ratchet_failures(ratchet: str, baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
     """Every failure line for ONE ratchet: its vacuity failures first, then its backslides.
 
     Scoped to a single ratchet on purpose — that is what lets ``scripts/gate_report.py``
-    register the three as three INDEPENDENT gates, so three simultaneous structural failures
-    report as three rather than the first one hiding the rest.
+    register the four as four INDEPENDENT gates, so four simultaneous structural failures
+    report as four rather than the first one hiding the rest.
     """
     if ratchet not in RATCHETS:
         raise ValueError(f"unknown structural ratchet {ratchet!r}; known: {list(RATCHETS)}")
@@ -1082,6 +1502,7 @@ def ratchet_failures(ratchet: str, baseline: dict[str, Any], current: dict[str, 
         RATCHET_SIZE: regressions_size,
         RATCHET_IMPORT_DIRECTION: regressions_import_direction,
         RATCHET_DUPLICATION: regressions_duplication,
+        RATCHET_IMPORT_CYCLE: regressions_import_cycle,
     }[ratchet]
     return failures + comparer(baseline[ratchet], current[ratchet])
 
@@ -1106,6 +1527,18 @@ def stale_high(ratchet: str, baseline: dict[str, Any], current: dict[str, Any]) 
                 f"watch band: committed {len(base['watch_band_members'])} members > current "
                 f"{len(now['watch_band_members'])}; {departed} left the band (a split landed)"
             )
+        return lines
+    if ratchet == RATCHET_IMPORT_CYCLE:
+        members = set(now["_live"]["members"])
+        added = sorted(set(now["outside"]) - set(base["outside"]))
+        if added:
+            lines.append(
+                f"outside the import cycle now, and not recorded: {added} (a unit left the cycle, "
+                "or a new one was made outside it) — regenerate to keep them out"
+            )
+        gone = sorted(set(base["outside"]) - set(now["outside"]) - members)
+        if gone:
+            lines.append(f"recorded outside the import cycle, and no longer a unit: {gone}")
         return lines
     key = "edges" if ratchet == RATCHET_IMPORT_DIRECTION else "count"
     for rel, entry in sorted(base["per_file"].items()):
@@ -1144,6 +1577,7 @@ def main() -> None:
         f"  {RATCHET_DUPLICATION}: {dup['sites']} re-derived sites in {dup['files']} files "
         f"{dup['by_family']}"
     )
+    print(f"  {RATCHET_IMPORT_CYCLE}: {cycle_information(inventory[RATCHET_IMPORT_CYCLE])}")
 
 
 if __name__ == "__main__":

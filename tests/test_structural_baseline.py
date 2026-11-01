@@ -213,6 +213,11 @@ def test_every_threshold_records_its_rationale():
     for rule in committed[gen.RATCHET_IMPORT_DIRECTION]["rules"]:
         assert len(rule["rationale"]) > 200, f"{rule['name']} has no real rationale"
         assert rule["upper"], f"{rule['name']} names no upper layer — it ratchets nothing"
+    foundation = committed[gen.RATCHET_IMPORT_DIRECTION]["foundation"]
+    assert foundation, "the foundation names no unit"
+    for unit, reason in foundation.items():
+        # Each membership says which claim a reviewer can check: a role, or a measurement.
+        assert reason.startswith(("role: ", "measured: ")) and len(reason) > 40, (unit, reason)
     for family in committed[gen.RATCHET_DUPLICATION]["families"]:
         assert len(family["rationale"]) > 200, f"{family['name']} has no real rationale"
 
@@ -223,7 +228,7 @@ def test_the_deliberate_non_ratchets_are_recorded_as_decisions():
     an oversight — or delete the reasoning and leave the list."""
     doc = gen.__doc__ or ""
     assert "what this deliberately does NOT ratchet" in doc
-    for omission in ("tests/", "complexity", "web/", "apps", "Total line count", "Import CYCLES"):
+    for omission in ("tests/", "complexity", "web/", "apps", "Total line count", "cycle's SIZE"):
         assert omission in doc, f"the deliberate-omission list lost {omission!r}"
 
 
@@ -259,20 +264,25 @@ def _clean_structural() -> dict:
         },
         gen.RATCHET_IMPORT_DIRECTION: {"per_file": {}},
         gen.RATCHET_DUPLICATION: {"per_file": {}},
+        gen.RATCHET_IMPORT_CYCLE: {
+            "outside": [],
+            "_live": {"members": [], "units": 0, "startup_units": 0, "ties": {}},
+        },
     }
 
 
-def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, tmp_path):
+def test_four_simultaneous_structural_violations_report_as_four(monkeypatch, tmp_path):
     """The ratchets report THROUGH the aggregate, so one red does not hide the others — proven,
     not asserted, and registration proven in the same breath (a ratchet that exists only as a
     pytest test is invisible to ``make gates``).
 
     ONE violation per structural ratchet at the same time (a new band entrant, a new upward
-    import, a new re-derivation) against a clean committed baseline; the real comparison
-    functions do the work. All three gates must come back FAIL in a SINGLE ``run_all_gates()``
-    call, and the rendered table must carry all three. The other three gates and the vacuity
-    check are stubbed to pass: the rails job runs every gate on the real tree once
-    (``scripts/gate_report.py``), and this test is about how the aggregate reports them.
+    import, a new re-derivation, a clean unit taken into the import cycle) against a clean
+    committed baseline; the real comparison functions do the work. All four gates must come back
+    FAIL in a SINGLE ``run_all_gates()`` call, and the rendered table must carry all four. The
+    other three gates and the vacuity check are stubbed to pass: the rails job runs every gate on
+    the real tree once (``scripts/gate_report.py``), and this test is about how the aggregate
+    reports them.
     """
     from scripts import generate_config_baseline as config_gen
     from scripts import generate_docs_lint_baseline as docs_gen
@@ -290,7 +300,9 @@ def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, t
     monkeypatch.setattr(docs_gen, "build_inventory", lambda: {"per_file": {}})
 
     committed = tmp_path / "structural-baseline.json"
-    committed.write_text(json.dumps(_clean_structural()) + "\n", encoding="utf-8")
+    baseline = _clean_structural()
+    baseline[gen.RATCHET_IMPORT_CYCLE]["outside"] = ["synthetic_leaf"]
+    committed.write_text(json.dumps(baseline) + "\n", encoding="utf-8")
     victim_size = "src/personalclaw/synthetic_giant.py"
     victim_import = "src/personalclaw/synthetic_edge.py"
     victim_dup = "src/personalclaw/synthetic_copy.py"
@@ -300,6 +312,7 @@ def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, t
         victim_import: {"edges": 1, "violations": ["up:synthetic"]}
     }
     current[gen.RATCHET_DUPLICATION]["per_file"] = {victim_dup: {"count": 1, "sites": ["s:1"]}}
+    current[gen.RATCHET_IMPORT_CYCLE]["_live"]["members"] = ["synthetic_hub", "synthetic_leaf"]
     monkeypatch.setattr(gen, "baseline_path", lambda: committed)
     monkeypatch.setattr(gen, "build_inventory", lambda: json.loads(json.dumps(current)))
     monkeypatch.setattr(gen, "vacuity_failures", lambda ratchet=None: [])
@@ -316,13 +329,14 @@ def test_three_simultaneous_structural_violations_report_as_three(monkeypatch, t
     assert any(victim_size in ln for ln in results[gen.RATCHET_SIZE].failures)
     assert any(victim_import in ln for ln in results[gen.RATCHET_IMPORT_DIRECTION].failures)
     assert any(victim_dup in ln for ln in results[gen.RATCHET_DUPLICATION].failures)
+    assert any("synthetic_leaf" in ln for ln in results[gen.RATCHET_IMPORT_CYCLE].failures)
 
-    # All three appear in the ONE rendered table — the point of reporting through the
+    # All four appear in the ONE rendered table — the point of reporting through the
     # aggregate, with the three stubbed gates passing beside them.
     report = gate_report.render_report(list(results.values()))
     for ratchet in gen.RATCHETS:
         assert f"{ratchet} FAIL (" in report
-    assert "SUMMARY: 3 of 6 gate(s) FAILED" in report, report
+    assert "SUMMARY: 4 of 7 gate(s) FAILED" in report, report
 
 
 # ── Vacuity: a rail that matches nothing looks clean ─────────────────────────
@@ -591,6 +605,36 @@ def test_the_import_direction_rule_resolves_relative_imports(tmp_path, monkeypat
     assert "personalclaw.sdk.model" in modules, modules
 
 
+def test_an_import_from_the_package_itself_names_each_module_it_brings(tmp_path, monkeypatch):
+    """``from personalclaw import config`` is how most modules here import another, and read as
+    plain ``personalclaw`` it named nothing, so no rule could see the HTTP layer imported that
+    way. Each module it brings is listed, from the absolute form and from ``from . import`` in a
+    top-level module alike."""
+    monkeypatch.setattr(gen, "_src_root", lambda: tmp_path)
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "from personalclaw import dashboard, config\nfrom . import sdk\n", encoding="utf-8"
+    )
+    tree = gen._parse(probe)
+    assert tree is not None
+    modules = gen._imported_personalclaw_modules(probe, tree)
+    for name in ("personalclaw.dashboard", "personalclaw.config", "personalclaw.sdk"):
+        assert name in modules, modules
+
+
+def test_a_top_level_module_is_a_unit_a_rule_can_name():
+    """A top-level module used to read as the package root, so a rule naming ``atomic_write``
+    as its lower layer applied to no file at all. Each top-level module is a unit of its own."""
+    assert gen._unit_of("config/loader.py") == "config"
+    assert gen._unit_of("atomic_write.py") == "atomic_write"
+    assert gen._unit_of("__init__.py") == ""
+    rule = gen.DirectionRule(
+        name="probe", lower=("atomic_write",), upper=("dashboard",), rationale="probe"
+    )
+    assert rule.applies_to("atomic_write.py") is True
+    assert rule.applies_to("config/loader.py") is False
+
+
 def test_the_upper_layer_may_import_itself():
     """``dashboard/`` importing ``dashboard/`` is not a violation, and neither is ``sdk/``
     importing ``sdk/``. A rule that flagged intra-layer imports would report hundreds of false
@@ -598,7 +642,195 @@ def test_the_upper_layer_may_import_itself():
     rule = next(r for r in gen.DIRECTION_RULES if r.upper == ("dashboard",))
     assert rule.applies_to("workflows/handlers.py") is True
     assert rule.applies_to("dashboard/handlers/core.py") is False
-    assert rule.applies_to("gateway.py") is True, "top-level modules are part of core"
+    assert rule.applies_to("agent.py") is True, "top-level modules are part of core"
+
+
+def test_an_entry_point_imports_the_http_surface_on_purpose():
+    """The gateway and the CLI start the dashboard, so their imports of it point down: they are
+    the declared layer above it, not edges the HTTP rule grandfathers. A domain module, and a
+    top-level one beside them, is still held to the rule, and so is the published facade."""
+    rule = next(r for r in gen.DIRECTION_RULES if r.upper == ("dashboard",))
+    for entry in ("gateway.py", "cli_server.py", "cli_doctor.py", "app_cli.py"):
+        assert rule.applies_to(entry) is False, entry
+    for below in ("agent.py", "workflows/engine.py", "sdk/channel.py", "gateway_services.py"):
+        assert rule.applies_to(below) is True, below
+    facade = next(r for r in gen.DIRECTION_RULES if r.upper == ("sdk",))
+    assert facade.applies_to("app_cli.py") is True, "an entry point may not lean on the facade"
+
+
+def test_a_dead_name_in_the_layer_map_fires_vacuity(monkeypatch):
+    """A unit renamed away leaves its old name in the map, guarding nothing while the gate reads
+    clean. Every name the layer map declares must be a unit the census holds."""
+    assert gen.vacuity_failures(gen.RATCHET_IMPORT_DIRECTION) == []
+    monkeypatch.setattr(gen, "ENTRY_POINT_UNITS", (*gen.ENTRY_POINT_UNITS, "cli_long_gone"))
+    failures = gen.vacuity_failures(gen.RATCHET_IMPORT_DIRECTION)
+    assert len(failures) == 1 and "cli_long_gone" in failures[0], failures
+
+
+def _write_tree(root: Path, files: dict[str, str]) -> Path:
+    """A synthetic ``src/personalclaw`` under *root*, for a render pointed at it."""
+    src = root / "src" / "personalclaw"
+    for rel, body in files.items():
+        path = src / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    return src
+
+
+def test_a_foundation_unit_that_imports_a_domain_unit_reds(tmp_path):
+    """The foundation may import only itself. The import here is the shape the census could not
+    see before: a top-level module importing through the package itself. Its red names the two
+    fixes: move the shared piece down, or declare a unit that imports only the foundation."""
+    src = _write_tree(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "atomic_write.py": "import os\n",
+            "config/__init__.py": "",
+            "dashboard/__init__.py": "",
+            "workflows/__init__.py": "from personalclaw import dashboard\n",
+            "probe_helper.py": "from personalclaw import config\n",
+        },
+    )
+    with gen._rooted(tmp_path):
+        before = {"per_file": gen.scan_upward_edges().rows}
+        (src / "atomic_write.py").write_text(
+            "from personalclaw import probe_helper, workflows\n", encoding="utf-8"
+        )
+        after = {"per_file": gen.scan_upward_edges().rows}
+        failures = gen.regressions_import_direction(before, after)
+    assert len(failures) == 1 and failures[0].startswith(
+        "src/personalclaw/atomic_write.py"
+    ), failures
+    assert "foundation-imports-only-foundation -> personalclaw.workflows" in failures[0]
+    assert "if ['probe_helper'] belong(s) in the foundation" in failures[0], failures[0]
+
+
+def test_a_unit_below_the_entry_points_that_imports_one_reds(tmp_path):
+    """A unit below the entry points that imports one leans on the whole gateway. An entry point
+    importing another is the layer composing itself, and stays green."""
+    src = _write_tree(
+        tmp_path,
+        {"__init__.py": "", "gateway.py": "", "cli_run.py": "", "workflows/__init__.py": ""},
+    )
+    with gen._rooted(tmp_path):
+        before = {"per_file": gen.scan_upward_edges().rows}
+        (src / "workflows" / "__init__.py").write_text(
+            "from personalclaw import gateway\n", encoding="utf-8"
+        )
+        (src / "cli_run.py").write_text("from personalclaw import gateway\n", encoding="utf-8")
+        after = {"per_file": gen.scan_upward_edges().rows}
+        failures = gen.regressions_import_direction(before, after)
+    assert len(failures) == 1, failures
+    assert failures[0].startswith("src/personalclaw/workflows/__init__.py"), failures
+    assert "nothing-below-the-entry-points-imports-them -> personalclaw.gateway" in failures[0]
+
+
+def _cycle(root: Path) -> dict:
+    """The import-cycle block for the synthetic tree under *root*, read afresh."""
+    with gen._rooted(root):
+        return gen.cycle_block_from(gen.scan_import_cycle())
+
+
+#: Two units that import each other, the cycle, and one unit outside it that imports into it.
+_CYCLE_TREE = {
+    "__init__.py": "",
+    "hub_a.py": "from personalclaw import hub_b\n",
+    "hub_b.py": "from personalclaw import hub_a\n",
+    "leaf.py": "from personalclaw import hub_a\n",
+}
+
+
+def test_a_unit_outside_the_cycle_pulled_into_it_reds_naming_the_imports(tmp_path):
+    """A clean unit staying clean is what a PR can always do, so a unit the baseline records
+    outside the cycle and finds inside it is the red. It names the imports that tie it in, each
+    with its file, so the cut is one read away."""
+    src = _write_tree(tmp_path, _CYCLE_TREE)
+    baseline = _cycle(tmp_path)
+    assert baseline["outside"] == ["leaf"] and baseline["_live"]["members"] == ["hub_a", "hub_b"]
+    (src / "hub_b.py").write_text("from personalclaw import hub_a, leaf\n", encoding="utf-8")
+    current = _cycle(tmp_path)
+    failures = gen.regressions_import_cycle(baseline, current)
+    assert len(failures) == 1 and failures[0].startswith("leaf: was outside the import cycle")
+    assert "src/personalclaw/leaf.py imports hub_a" in failures[0], failures[0]
+    assert "src/personalclaw/hub_b.py imports leaf" in failures[0], failures[0]
+
+
+def test_a_new_unit_made_outside_the_cycle_asks_for_its_generator_run(tmp_path):
+    """A new unit made outside the cycle is growth the baseline records, by a generator run in
+    that commit. Until it runs, the shrink-side check names the unit, and the comparison stays
+    green: nothing joined."""
+    src = _write_tree(tmp_path, _CYCLE_TREE)
+    baseline = _cycle(tmp_path)
+    (src / "fresh.py").write_text("from personalclaw import hub_a\n", encoding="utf-8")
+    current = _cycle(tmp_path)
+    assert gen.regressions_import_cycle(baseline, current) == []
+    stale = gen.stale_high(
+        gen.RATCHET_IMPORT_CYCLE,
+        {gen.RATCHET_IMPORT_CYCLE: baseline},
+        {gen.RATCHET_IMPORT_CYCLE: current},
+    )
+    assert len(stale) == 1 and "['fresh']" in stale[0], stale
+
+
+def test_a_new_unit_made_inside_the_cycle_stays_green(tmp_path):
+    """A new module the cycle both imports and is imported by joins it by construction, and no
+    change to the module alone could keep it out. It reds nothing and asks for no regeneration:
+    the baseline records only the units outside, and those did not change."""
+    src = _write_tree(tmp_path, _CYCLE_TREE)
+    baseline = _cycle(tmp_path)
+    (src / "feature.py").write_text("from personalclaw import hub_a\n", encoding="utf-8")
+    (src / "hub_b.py").write_text("from personalclaw import hub_a, feature\n", encoding="utf-8")
+    current = _cycle(tmp_path)
+    assert "feature" in current["_live"]["members"]
+    assert gen.regressions_import_cycle(baseline, current) == []
+    assert current["outside"] == baseline["outside"]
+    inventories = ({gen.RATCHET_IMPORT_CYCLE: baseline}, {gen.RATCHET_IMPORT_CYCLE: current})
+    assert gen.stale_high(gen.RATCHET_IMPORT_CYCLE, *inventories) == []
+
+
+def test_the_startup_cycle_leaves_out_lazy_and_type_only_imports(tmp_path):
+    """The startup figure counts only the imports that run when a module loads. A lazy import in
+    a function and one under ``if TYPE_CHECKING`` close the full cycle, and not that one."""
+    _write_tree(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "hub_a.py": "from personalclaw import hub_b\n",
+            "hub_b.py": (
+                "from typing import TYPE_CHECKING\n"
+                "if TYPE_CHECKING:\n    from personalclaw import hub_a\n"
+                "def later():\n    from personalclaw import hub_a\n"
+            ),
+        },
+    )
+    block = _cycle(tmp_path)
+    assert block["_live"]["units"] == 2
+    assert block["_live"]["startup_units"] == 0, "one unit on its own is not a cycle"
+
+
+def test_an_import_under_if_not_type_checking_runs_at_startup(tmp_path):
+    """Only a bare ``if TYPE_CHECKING:`` (or ``typing.TYPE_CHECKING``) is type-only. A test that
+    merely names it, ``if not TYPE_CHECKING:``, runs its body when the module loads."""
+    _write_tree(
+        tmp_path,
+        {
+            "__init__.py": "",
+            "hub_a.py": (
+                "import typing\n"
+                "if typing.TYPE_CHECKING:\n    from personalclaw import hub_c\n"
+                "from personalclaw import hub_b\n"
+            ),
+            "hub_b.py": (
+                "from typing import TYPE_CHECKING\n"
+                "if not TYPE_CHECKING:\n    from personalclaw import hub_a\n"
+            ),
+            "hub_c.py": "from personalclaw import hub_a\n",
+        },
+    )
+    block = _cycle(tmp_path)
+    assert block["_live"]["units"] == 3
+    assert block["_live"]["startup_units"] == 2, "hub_c ties in only through a type-only import"
 
 
 def _real_counts() -> dict[str, int]:

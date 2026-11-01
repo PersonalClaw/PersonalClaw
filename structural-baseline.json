@@ -3,7 +3,8 @@
   "ratchets": [
     "structural-size",
     "structural-import-direction",
-    "structural-duplication"
+    "structural-duplication",
+    "structural-import-cycle"
   ],
   "structural-duplication": {
     "families": [
@@ -200,7 +201,143 @@
       "sites": 29
     }
   },
+  "structural-import-cycle": {
+    "outside": [
+      "__main__",
+      "_app_python_child",
+      "_frozen_child",
+      "_namespace_probe",
+      "_sdk_deps",
+      "_spawn_exec_shim",
+      "_ssl_compat",
+      "address_logins",
+      "api_version",
+      "app_cli",
+      "app_code",
+      "check_work",
+      "cli",
+      "cli_app_new",
+      "cli_chat",
+      "cli_commands",
+      "cli_config",
+      "cli_doctor",
+      "cli_project",
+      "cli_server",
+      "cli_setup",
+      "command_effects",
+      "command_operands",
+      "command_shell",
+      "command_unsplit",
+      "context_gauge",
+      "context_segmentation",
+      "credential_locations",
+      "cron_clock",
+      "embedding_arrivals",
+      "env",
+      "errors",
+      "ffmpeg_binary",
+      "gateway",
+      "genui",
+      "given_details",
+      "home_paths",
+      "http_errors",
+      "ids",
+      "instants",
+      "loaded_modules",
+      "log_sinks",
+      "loop_watch",
+      "manifest_meta",
+      "manifest_reference",
+      "mcp_automation",
+      "mcp_prompts",
+      "mcp_status",
+      "mcp_subagents",
+      "media_catalogs",
+      "media_fixtures",
+      "memory_holder",
+      "memory_push",
+      "memory_slots",
+      "memory_topology",
+      "notification_kinds",
+      "notification_providers",
+      "ocr",
+      "periodic_sweep",
+      "preference_facets",
+      "pricing",
+      "process_facts",
+      "protected_folders",
+      "provider_registry",
+      "proxy_signature",
+      "python_support",
+      "record_ids",
+      "reference",
+      "request_validation",
+      "resource_limits",
+      "safety_flags",
+      "schedule_trigger",
+      "session_restrictions",
+      "shell_syntax",
+      "signing",
+      "stats",
+      "subagent_notes",
+      "subagent_orphans",
+      "supply_chain",
+      "surface_layers",
+      "sync_transports",
+      "task",
+      "task_modes",
+      "token_estimate",
+      "turn_streams",
+      "vector_stores",
+      "versions",
+      "work_wait",
+      "workref"
+    ],
+    "rationale": "One import cycle holds most of core: on 2026-10-31, 268 of the 358 units over every import, and 71 counting only the imports that run at startup. A unit in it can't be built, tested or moved without the rest. The size can't be the gated number: a new module the dashboard imports that imports config joins the cycle by construction, and 3 of the 9 units added in the week before this ratchet did, so a count that may only fall would red ordinary features that no change to their own module could fix. What a PR can always do is keep a clean unit clean, so the baseline records the units outside the cycle, and one of them inside it is the red. A unit leaving the cycle, and a new unit made outside it, is recorded by running this generator in that commit. The size and its startup figure are printed in the gate report, ungated, and read at each release cut."
+  },
   "structural-import-direction": {
+    "entry_points": [
+      "__main__",
+      "app_cli",
+      "cli",
+      "cli_app_new",
+      "cli_chat",
+      "cli_commands",
+      "cli_config",
+      "cli_doctor",
+      "cli_project",
+      "cli_run",
+      "cli_server",
+      "cli_setup",
+      "gateway"
+    ],
+    "foundation": {
+      "atomic_write": "role: the one atomic file write (imported by 81 units; imports only config)",
+      "bounded_log": "measured: logs that keep their newest rows; imported by 20 units, imports 2",
+      "cancellation": "measured: a turn's one stop signal; imported by 27 units, imports 1",
+      "config": "role: the settings every layer reads (imported by 159; 28 upward imports are debt)",
+      "constants": "measured: constants shared by the CLI and the gateway; imported by 24, imports 1",
+      "env": "measured: environment helpers for child processes; imported by 19, imports none",
+      "errors": "measured: the what/why/fix error envelope; imported by 10 units, imports none",
+      "filled_secrets": "measured: what a filled secret keeps, masked; imported by 5, imports 1",
+      "home_paths": "measured: a path in the user's home, from ~; imported by 15, imports none",
+      "http_errors": "measured: the one wire error emitter and its codes; imported by 10, none",
+      "identity": "measured: the owner's attribution name; imported by 15 units, imports 1",
+      "instants": "measured: stored timestamps with their offset; imported by 21, imports none",
+      "net": "role: the one outbound network chokepoint (imported by 39; 5 upward imports are debt)",
+      "notification_kinds": "measured: the notification kind registry; imported by 25, imports none",
+      "record_files": "measured: a JSON record file with one lock; imported by 28 units, imports 3",
+      "record_ids": "measured: an untrusted record id to a path in its store; imported by 15, none",
+      "safety_flags": "measured: strict booleans for safety controls; imported by 28, imports none",
+      "security": "role: the built-in security controls (imported by 123; 13 upward imports: debt)",
+      "sel": "role: the security event log (imported by 71 units; 8 upward imports are debt)",
+      "session_keys": "measured: every session key kind; imported by 34 units, imports 1",
+      "shell_syntax": "measured: how a shell splits a command line; imported by 9, imports none",
+      "sqlite_compat": "measured: the one SQLite binding; imported by 18 units, imports 1",
+      "textfmt": "measured: provider-neutral LLM text helpers; imported by 11 units, imports 1",
+      "timezones": "measured: the one wall-clock timezone resolver; imported by 10 units, imports 1",
+      "token_estimate": "measured: the chars-per-token estimates; imported by 10 units, imports none"
+    },
     "per_file": {
       "src/personalclaw/agent.py": {
         "edges": 1,
@@ -240,6 +377,14 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
         ]
       },
+      "src/personalclaw/cancellation.py": {
+        "edges": 3,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.run_processes",
+          "foundation-imports-only-foundation -> personalclaw.run_processes",
+          "foundation-imports-only-foundation -> personalclaw.run_processes"
+        ]
+      },
       "src/personalclaw/channel_transports/manager.py": {
         "edges": 1,
         "violations": [
@@ -252,19 +397,6 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
         ]
       },
-      "src/personalclaw/cli_doctor.py": {
-        "edges": 1,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
-        ]
-      },
-      "src/personalclaw/cli_server.py": {
-        "edges": 2,
-        "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
-        ]
-      },
       "src/personalclaw/companion/discovery.py": {
         "edges": 2,
         "violations": [
@@ -272,31 +404,111 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin"
         ]
       },
-      "src/personalclaw/gateway.py": {
-        "edges": 16,
+      "src/personalclaw/config/credentials.py": {
+        "edges": 2,
         "violations": [
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_persistence",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_runner",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.chat_utils",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.autonudge",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.updates",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.session_lifecycle",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.state",
-          "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
+          "foundation-imports-only-foundation -> personalclaw.channel_trust",
+          "foundation-imports-only-foundation -> personalclaw.secrets_vault"
+        ]
+      },
+      "src/personalclaw/config/edit_spec.py": {
+        "edges": 2,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.auth.lifetimes",
+          "foundation-imports-only-foundation -> personalclaw.tool_providers.projection"
+        ]
+      },
+      "src/personalclaw/config/editable.py": {
+        "edges": 8,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.auth.lifetimes",
+          "foundation-imports-only-foundation -> personalclaw.channel_transports",
+          "foundation-imports-only-foundation -> personalclaw.context_engine",
+          "foundation-imports-only-foundation -> personalclaw.reply_style",
+          "foundation-imports-only-foundation -> personalclaw.self_update",
+          "foundation-imports-only-foundation -> personalclaw.sync_transports.registry",
+          "foundation-imports-only-foundation -> personalclaw.triggers",
+          "foundation-imports-only-foundation -> personalclaw.triggers.pathguard"
+        ]
+      },
+      "src/personalclaw/config/learning.py": {
+        "edges": 2,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.learning_report",
+          "foundation-imports-only-foundation -> personalclaw.providers.use_cases"
+        ]
+      },
+      "src/personalclaw/config/loader.py": {
+        "edges": 4,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.prompt_providers.runtime",
+          "foundation-imports-only-foundation -> personalclaw.providers.provider_bridge",
+          "foundation-imports-only-foundation -> personalclaw.reply_style",
+          "foundation-imports-only-foundation -> personalclaw.voice.duplex"
+        ]
+      },
+      "src/personalclaw/config/migrations.py": {
+        "edges": 4,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.agents.defaults",
+          "foundation-imports-only-foundation -> personalclaw.agents.defaults",
+          "foundation-imports-only-foundation -> personalclaw.agents.defaults",
+          "foundation-imports-only-foundation -> personalclaw.agents.defaults"
+        ]
+      },
+      "src/personalclaw/config/secret_refs.py": {
+        "edges": 26,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.agent",
+          "foundation-imports-only-foundation -> personalclaw.apps.manager",
+          "foundation-imports-only-foundation -> personalclaw.apps.manager",
+          "foundation-imports-only-foundation -> personalclaw.apps.manager",
+          "foundation-imports-only-foundation -> personalclaw.apps.manifest",
+          "foundation-imports-only-foundation -> personalclaw.apps.mcp_bridge",
+          "foundation-imports-only-foundation -> personalclaw.apps.mcp_bridge",
+          "foundation-imports-only-foundation -> personalclaw.apps.mcp_bridge",
+          "foundation-imports-only-foundation -> personalclaw.apps.secret_fields",
+          "foundation-imports-only-foundation -> personalclaw.apps.secret_fields",
+          "foundation-imports-only-foundation -> personalclaw.apps.secret_fields",
+          "foundation-imports-only-foundation -> personalclaw.apps.secret_fields",
+          "foundation-imports-only-foundation -> personalclaw.apps.secret_fields",
+          "foundation-imports-only-foundation -> personalclaw.mcp_argument_secrets",
+          "foundation-imports-only-foundation -> personalclaw.mcp_argument_secrets",
+          "foundation-imports-only-foundation -> personalclaw.mcp_argument_secrets",
+          "foundation-imports-only-foundation -> personalclaw.mcp_argument_secrets",
+          "foundation-imports-only-foundation -> personalclaw.mcp_argument_secrets",
+          "foundation-imports-only-foundation -> personalclaw.mcp_grants",
+          "foundation-imports-only-foundation -> personalclaw.mcp_grants",
+          "foundation-imports-only-foundation -> personalclaw.mcp_read_only_trust",
+          "foundation-imports-only-foundation -> personalclaw.providers.registry",
+          "foundation-imports-only-foundation -> personalclaw.providers.registry",
+          "foundation-imports-only-foundation -> personalclaw.secrets_vault",
+          "foundation-imports-only-foundation -> personalclaw.secrets_vault",
+          "foundation-imports-only-foundation -> personalclaw.workflows.secrets"
+        ]
+      },
+      "src/personalclaw/config/transactions.py": {
+        "edges": 1,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.durability.home_paths"
+        ]
+      },
+      "src/personalclaw/dashboard/headless_run.py": {
+        "edges": 1,
+        "violations": [
+          "nothing-below-the-entry-points-imports-them -> personalclaw.cli_run"
         ]
       },
       "src/personalclaw/gateway_services.py": {
         "edges": 1,
         "violations": [
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.state"
+        ]
+      },
+      "src/personalclaw/inbound/spend.py": {
+        "edges": 1,
+        "violations": [
+          "nothing-below-the-entry-points-imports-them -> personalclaw.cli_run"
         ]
       },
       "src/personalclaw/inbox_providers/native_source.py": {
@@ -330,10 +542,41 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard"
         ]
       },
+      "src/personalclaw/net/client.py": {
+        "edges": 2,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.guardrails.writes",
+          "foundation-imports-only-foundation -> personalclaw.guardrails.writes"
+        ]
+      },
+      "src/personalclaw/net/git.py": {
+        "edges": 1,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.sandbox"
+        ]
+      },
+      "src/personalclaw/net/guard.py": {
+        "edges": 1,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.guardrails.ceiling"
+        ]
+      },
+      "src/personalclaw/net/policy.py": {
+        "edges": 1,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.guardrails.policy"
+        ]
+      },
       "src/personalclaw/providers/routes.py": {
         "edges": 1,
         "violations": [
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers.providers"
+        ]
+      },
+      "src/personalclaw/record_files.py": {
+        "edges": 1,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.durability.home_paths"
         ]
       },
       "src/personalclaw/resilience/doctor.py": {
@@ -355,6 +598,36 @@
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.handlers",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.origin",
           "core-must-not-import-the-http-surface -> personalclaw.dashboard.token_auth"
+        ]
+      },
+      "src/personalclaw/security.py": {
+        "edges": 10,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.address_logins",
+          "foundation-imports-only-foundation -> personalclaw.branch_publish",
+          "foundation-imports-only-foundation -> personalclaw.branch_publish",
+          "foundation-imports-only-foundation -> personalclaw.command_paths",
+          "foundation-imports-only-foundation -> personalclaw.llm.subscription_credentials",
+          "foundation-imports-only-foundation -> personalclaw.memory_service",
+          "foundation-imports-only-foundation -> personalclaw.outside_home",
+          "foundation-imports-only-foundation -> personalclaw.protected_folders",
+          "foundation-imports-only-foundation -> personalclaw.shell_denylist",
+          "foundation-imports-only-foundation -> personalclaw.vector_memory"
+        ]
+      },
+      "src/personalclaw/sel.py": {
+        "edges": 4,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.audit_subject",
+          "foundation-imports-only-foundation -> personalclaw.durability.home_paths",
+          "foundation-imports-only-foundation -> personalclaw.guardrails.audit",
+          "foundation-imports-only-foundation -> personalclaw.memory_writes"
+        ]
+      },
+      "src/personalclaw/session_keys.py": {
+        "edges": 1,
+        "violations": [
+          "foundation-imports-only-foundation -> personalclaw.loop.posture"
         ]
       },
       "src/personalclaw/session_organize.py": {
@@ -386,6 +659,7 @@
     },
     "rules": [
       {
+        "beside": [],
         "lower": [
           "ledger"
         ],
@@ -402,16 +676,32 @@
         ]
       },
       {
+        "beside": [
+          "__main__",
+          "app_cli",
+          "cli",
+          "cli_app_new",
+          "cli_chat",
+          "cli_commands",
+          "cli_config",
+          "cli_doctor",
+          "cli_project",
+          "cli_run",
+          "cli_server",
+          "cli_setup",
+          "gateway"
+        ],
         "lower": [
           "*"
         ],
         "name": "core-must-not-import-the-http-surface",
-        "rationale": "``dashboard/`` is the aiohttp + SPA surface. Domain code that imports a handler module inverts the dependency: the domain can no longer be exercised without standing up the web app, which is how a feature ends up reachable ONLY through one route and invisible to the CLI, the MCP surface and the harness. Measured 56 edges across 26 files, most of them entry-point composition (gateway, cli_*) that is legitimately downward-facing. Shrink-only GRANDFATHERS those instead of an exemption list — an allowlist is a thing that rots, a measured floor is not.",
+        "rationale": "``dashboard/`` is the aiohttp + SPA surface. Domain code that imports a handler module inverts the dependency: the domain can no longer be exercised without standing up the web app, which is how a feature ends up reachable ONLY through one route and invisible to the CLI, the MCP surface and the harness. Measured 56 edges across 26 files, most of them entry-point composition (gateway, cli_*) that is legitimately downward-facing. Shrink-only grandfathered those at first, because an allowlist rots and a measured floor does not. The entry points are now a declared layer above the surface (ENTRY_POINT_UNITS), so their 19 edges left the floor on 2026-10-31: 27 edges remain, all of them below the entry points.",
         "upper": [
           "dashboard"
         ]
       },
       {
+        "beside": [],
         "lower": [
           "*"
         ],
@@ -420,16 +710,76 @@
         "upper": [
           "sdk"
         ]
+      },
+      {
+        "beside": [],
+        "lower": [
+          "config",
+          "security",
+          "sel",
+          "atomic_write",
+          "net",
+          "session_keys",
+          "constants",
+          "cancellation",
+          "record_files",
+          "safety_flags",
+          "notification_kinds",
+          "instants",
+          "env",
+          "home_paths",
+          "record_ids",
+          "errors",
+          "http_errors",
+          "token_estimate",
+          "bounded_log",
+          "sqlite_compat",
+          "identity",
+          "timezones",
+          "textfmt",
+          "shell_syntax",
+          "filled_secrets"
+        ],
+        "name": "foundation-imports-only-foundation",
+        "rationale": "The foundation is what every layer stands on, so it may import only itself. A foundation unit that imports a domain unit puts the whole domain under everything that imports it, which is how one import cycle came to hold 268 of the 358 units: config, imported by 159 units, imports apps, agents, providers and workflows. Measured 73 edges across 17 files on 2026-10-31, grandfathered as a floor; each one cut is a cheap first cut of that cycle.",
+        "upper": [
+          "*"
+        ]
+      },
+      {
+        "beside": [],
+        "lower": [
+          "*"
+        ],
+        "name": "nothing-below-the-entry-points-imports-them",
+        "rationale": "The entry points compose every layer below them, so a unit below that imports one leans on the whole gateway or CLI, and could reach the HTTP surface through it without a single edge the HTTP rule would count. Measured 2 edges across 2 files on 2026-10-31.",
+        "upper": [
+          "__main__",
+          "app_cli",
+          "cli",
+          "cli_app_new",
+          "cli_chat",
+          "cli_commands",
+          "cli_config",
+          "cli_doctor",
+          "cli_project",
+          "cli_run",
+          "cli_server",
+          "cli_setup",
+          "gateway"
+        ]
       }
     ],
     "totals": {
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 5,
-        "core-must-not-import-the-http-surface": 46,
-        "ledger-is-a-leaf": 0
+        "core-must-not-import-the-http-surface": 27,
+        "foundation-imports-only-foundation": 73,
+        "ledger-is-a-leaf": 0,
+        "nothing-below-the-entry-points-imports-them": 2
       },
-      "edges": 51,
-      "files": 26
+      "edges": 107,
+      "files": 42
     }
   },
   "structural-size": {
