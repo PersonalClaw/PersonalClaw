@@ -991,6 +991,16 @@ overrides (`--areas`, beside the catalogue by default):
   `--trusted-areas` file or the catalogue beside it, cannot be read, so a caller plans
   everything.
 
+**Which tier a run plans** is `python -m tools.ci plan-tier --event <event> --queue-var
+<MERGE_QUEUE_LIVE> --repo <owner/name>` (`plan.tier_for`). It prints `entry` for a pull
+request's run once the merge queue gates `main`, and `merge` otherwise. Gated means both hold:
+the repository's `MERGE_QUEUE_LIVE` is `true`, and `main`'s rules hold a `merge_queue` rule. The
+rules are read with `GH_TOKEN` by the merge controller's `queue_live`, and only when the first
+check holds. A rule it cannot read counts as no queue. Either check alone prints `merge`: the
+variable without the rule would plan the entry tier for a pull request that still merges
+straight to `main`. The merge queue's own runs, pushes and every other event print `merge`.
+Nothing calls it yet.
+
 `run --changed` plans the same way, from `git diff --name-only --no-renames -z` against the
 base, so a move names both the path it left and the path it reached.
 
