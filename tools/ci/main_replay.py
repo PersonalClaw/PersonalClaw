@@ -43,7 +43,13 @@ replayed only when all of these hold, and runs otherwise:
 - attempt 1's job of that name completed with ``success``;
 - exactly one verdict file names it, of attempt 1, a ``success``, on the head, reading no
   partner repository (the push cannot hold a partner's head to the pull request's), with an
-  empty quarantined-failure list and no rerun;
+  empty quarantined-failure list and no rerun. A ``pull_request`` run checks out
+  ``refs/pull/<n>/merge``, so its records name that merge commit rather than the head: such a
+  record is on the head when the commit has two parents, the second is the head, its tree is
+  the head's (so the pushed tree), and the commit the push replaced contains the first. Each
+  commit is looked up once per push (:class:`_MergeRefs`); one that cannot be read, or reads
+  otherwise, runs the job and says why. The receipt says, per key, which of the two its record
+  named (``record_names``);
 - that file is the source run's own (its ``run_id``), and names what the job ran on and its
   toolchain (``job-record/3``): the runner label ``main``'s catalogue gives the job, the image
   that label runs now (the caller's ``images``, as the push read them; a container job's image
@@ -115,6 +121,11 @@ Records = Callable[[int], Sequence[bytes]]
 Verified = Callable[[str], "str | None"]
 """Whether the controller's merge verdict on a head counts: None when it does, else why not."""
 
+#: A record that names the pull request's head itself, as ``record_names`` says it.
+HEAD_NAMED = "head"
+#: A record that names the head's ``refs/pull/<n>/merge`` commit, as a pull_request run checks out.
+MERGE_REF_NAMED = "merge-ref"
+
 
 class Refused(ValueError):
     """The caller's own inputs are not what they must be. Raised before anything is read."""
@@ -134,6 +145,9 @@ class Decision:
     record_digest: str | None = None
     #: The image the replayed pass ran on, which is the one its label runs now.
     image: str = ""
+    #: What its record named as the commit it ran on: :data:`HEAD_NAMED` or
+    #: :data:`MERGE_REF_NAMED`, once that was judged; empty before.
+    record_names: str = ""
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -145,6 +159,7 @@ class Decision:
             "run_url": self.run_url or None,
             "ttl_age_seconds": self.ttl_age_seconds,
             "image": self.image or None,
+            "record_names": self.record_names or None,
         }
 
 
@@ -378,6 +393,66 @@ def _files(texts: object, run_id: int) -> dict[str, list[_File]]:
     return out
 
 
+# ── the commit a record names ────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class _MergeRefs:
+    """Whether a commit a record names in place of the head is that head's merge ref, each
+    commit looked up once per push: every shard and job of one run names the same one.
+
+    A ``pull_request`` run checks out ``refs/pull/<n>/merge``, a commit GitHub makes of the head
+    merged into its base, so ``run-job`` records that commit (``git rev-parse HEAD``). It stands
+    for the head only when it has two parents, the second is the head, its tree is the head's
+    (which the push holds to the pushed tree), and the commit the push replaced contains the first
+    (a merge onto a base ``main`` never had is another tree's test)."""
+
+    get: Get
+    repo: str
+    source: _Source
+    before: str
+    answers: dict[str, str | None] = field(default_factory=dict)
+
+    def why_not(self, sha: str) -> str | None:
+        """None when *sha* is the head's merge ref, else why not: an answer that cannot be read
+        (none, a refusal, a rate limit, garbage) is a why, never a pass."""
+        if sha not in self.answers:
+            self.answers[sha] = self._looked_up(sha)
+        return self.answers[sha]
+
+    def _looked_up(self, sha: str) -> str | None:
+        number, head = self.source.pull_request, self.source.head
+        what = f"commit {sha[:12]}"
+        try:
+            commit = _mapping(self.get(f"/repos/{self.repo}/commits/{sha}"), what)
+            tree = _mapping(_mapping(commit.get("commit"), what).get("tree"), f"{what}'s tree")
+            parents = commit.get("parents")
+            if not isinstance(parents, list):
+                raise Unanswered(f"{what} lists no parents")
+            shas = [
+                _string(_mapping(p, f"a parent of {what}"), "sha", f"a parent of {what}")
+                for p in parents
+            ]
+            if len(shas) != 2:
+                return f"{what} has {len(shas)} parent(s), so it is not #{number}'s merge ref"
+            base, merged = shas
+            if merged != head:
+                return f"{what} merges {merged[:12]}, not #{number}'s head"
+            if _string(tree, "sha", f"{what}'s tree") != self.source.tree:
+                return (
+                    f"{what}'s tree is not #{number}'s head tree: it merged the head onto another"
+                    " base"
+                )
+            compare = _mapping(
+                self.get(f"/repos/{self.repo}/compare/{base}...{self.before}"), "the comparison"
+            )
+            if _integer(compare, "behind_by", "the comparison") != 0:
+                return f"{what} merges onto {base[:12]}, which the previous main does not contain"
+        except Exception as exc:  # noqa: BLE001 - an answer it cannot read runs the job
+            return f"{what} could not be read: {exc}"
+        return None
+
+
 # ── one key ──────────────────────────────────────────────────────────────────────────────────
 
 
@@ -417,52 +492,70 @@ def _judge(
     files: Mapping[str, list[_File]],
     now: float,
     images: Mapping[str, str],
-) -> tuple[bool, str, _File | None]:
-    """Whether *key* of *job* may be replayed from *source*, why, and the file it stands on."""
+    merge_refs: _MergeRefs,
+) -> tuple[bool, str, _File | None, str]:
+    """Whether *key* of *job* may be replayed from *source*, why, the file it stands on, and
+    what that file named as the commit it ran on (empty until that is judged)."""
     listed = source.listed.get(key)
     if listed is None:
-        return False, f"attempt 1 of run {source.run} has no job named {key}", None
+        return False, f"attempt 1 of run {source.run} has no job named {key}", None, ""
     if listed.get("status") != "completed":
-        return False, f"its job in attempt 1 is {listed.get('status') or 'of no status'}", None
+        return False, f"its job in attempt 1 is {listed.get('status') or 'of no status'}", None, ""
     if listed.get("conclusion") != "success":
         concluded = listed.get("conclusion") or "nothing"
-        return False, f"it concluded {concluded} in attempt 1; a later attempt never counts", None
+        why = f"it concluded {concluded} in attempt 1; a later attempt never counts"
+        return False, why, None, ""
     mine = files.get(key, [])
     if not mine:
-        return False, "attempt 1 left no verdict file for it", None
+        return False, "attempt 1 left no verdict file for it", None, ""
     if len(mine) > 1:
-        return False, f"{len(mine)} verdict files name it in attempt 1", None
+        return False, f"{len(mine)} verdict files name it in attempt 1", None, ""
     [file] = mine
     result = file.result
     if result.attempt != 1:
-        return False, f"its verdict file is attempt {result.attempt}'s, not attempt 1's", None
+        return False, f"its verdict file is attempt {result.attempt}'s, not attempt 1's", None, ""
     if result.result != verdict.SUCCESS:
-        return False, f"its verdict file says {result.result}", None
+        return False, f"its verdict file says {result.result}", None, ""
     identity = result.identity
-    if identity is None or identity.head_sha != source.head:
-        named = identity.head_sha if identity else "no head"
-        return False, f"its verdict file names {named}, not #{source.pull_request}'s head", None
+    if identity is None:
+        return False, f"its verdict file names no head, not #{source.pull_request}'s", None, ""
+    if identity.head_sha == source.head:
+        named = HEAD_NAMED
+    else:
+        why_not = merge_refs.why_not(identity.head_sha)
+        if why_not is not None:
+            why = (
+                f"its verdict file names {identity.head_sha}, not #{source.pull_request}'s head"
+                f" or its merge ref: {why_not}"
+            )
+            return False, why, None, ""
+        named = MERGE_REF_NAMED
     if identity.external_revisions:
-        return False, "its pass read a partner repository, whose head the push cannot hold", None
+        return (
+            False,
+            "its pass read a partner repository, whose head the push cannot hold",
+            None,
+            named,
+        )
     if result.run_id != source.run:
-        named = f"run {result.run_id}" if result.run_id is not None else "no run"
-        return False, f"its verdict file names {named}, not run {source.run}", None
+        ran = f"run {result.run_id}" if result.run_id is not None else "no run"
+        return False, f"its verdict file names {ran}, not run {source.run}", None, named
     elsewhere = _ran_on(job, result, images)
     if elsewhere is not None:
-        return False, elsewhere, None
+        return False, elsewhere, None, named
     if file.quarantined:
-        return False, f"its pass waived {len(file.quarantined)} quarantined failure(s)", None
+        return False, f"its pass waived {len(file.quarantined)} quarantined failure(s)", None, named
     if file.rerun is not None:
-        return False, "its verdict file names a rerun", None
+        return False, "its verdict file names a rerun", None, named
     if reuse.kind == "ttl":
         age = now - source.started
         if age < 0:
-            return False, "attempt 1 started after now", None
+            return False, "attempt 1 started after now", None, named
         if reuse.hours is None or age >= reuse.hours * 3600:
-            return False, f"attempt 1 started {age / 3600:.1f}h ago, past its {reuse}", None
+            return False, f"attempt 1 started {age / 3600:.1f}h ago, past its {reuse}", None, named
     elif reuse.kind != "tree":
-        return False, f"its class {reuse} is not one a push replays", None
-    return True, f"a green verdict of attempt 1 ({reuse})", file
+        return False, f"its class {reuse} is not one a push replays", None, named
+    return True, f"a green verdict of attempt 1 ({reuse})", file, named
 
 
 def _receipt(
@@ -593,6 +686,7 @@ def decide(
     except Exception as exc:  # noqa: BLE001 - any error is a full run, never a replay
         return _everything(planned, f"could not find out: {exc}", workflow)
 
+    merge_refs = _MergeRefs(get, repo, source, before)
     decisions: list[Decision] = []
     for job in planned:
         reuse = reuse_class(job)
@@ -600,9 +694,11 @@ def decide(
         for key in keys_of(job):
             ttl_age = now - source.started if reuse.kind == "ttl" else None
             if reuse == NEVER:
-                ok, reason, file = False, _never(job), None
+                ok, reason, file, named = False, _never(job), None, ""
             else:
-                ok, reason, file = _judge(job, reuse, key, source, files, now, images)
+                ok, reason, file, named = _judge(
+                    job, reuse, key, source, files, now, images, merge_refs
+                )
             mine.append(
                 Decision(
                     key,
@@ -614,6 +710,7 @@ def decide(
                     ttl_age,
                     _digest(file.raw) if ok and file else None,
                     (file.result.runner or {}).get("image", "") if ok and file else "",
+                    named,
                 )
             )
         failed = [d for d in mine if not d.replayed]
@@ -623,7 +720,16 @@ def decide(
                 (
                     d
                     if not d.replayed
-                    else Decision(d.key, d.job_id, d.reuse, False, why, "", d.ttl_age_seconds)
+                    else Decision(
+                        d.key,
+                        d.job_id,
+                        d.reuse,
+                        False,
+                        why,
+                        "",
+                        d.ttl_age_seconds,
+                        record_names=d.record_names,
+                    )
                 )
                 for d in mine
             ]

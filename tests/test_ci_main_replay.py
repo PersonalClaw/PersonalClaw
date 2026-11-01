@@ -781,6 +781,139 @@ def test_a_record_names_what_run_job_ran_it_on(
     assert data["toolchain"]["python"] == "" and data["run_id"] == RUN
 
 
+# ── A record names the head's merge ref: a pull_request run checks it out (#3919) ──────────────
+
+#: ``refs/pull/7/merge``'s commit: the head merged onto a base the previous main contains.
+MERGE = "9" * 40
+MERGE_BASE = "8" * 40
+OLDER_HEAD = "6" * 40
+MERGE_COMMIT = f"/repos/{REPO}/commits/{MERGE}"
+MERGE_BASE_IN_MAIN = f"/repos/{REPO}/compare/{MERGE_BASE}...{BEFORE}"
+
+
+def _merge_ref_answers(**commit: Any) -> dict[str, Any]:
+    """The shape that replays, with the merge ref's commit and its base's place in main."""
+    answers = _answers()
+    answers[MERGE_COMMIT] = {
+        "commit": {"tree": {"sha": TREE}},
+        "parents": [{"sha": MERGE_BASE}, {"sha": HEAD}],
+        **commit,
+    }
+    answers[MERGE_BASE_IN_MAIN] = {"behind_by": 0, "ahead_by": 3}
+    return answers
+
+
+def _merge_ref_files() -> dict[str, bytes]:
+    return {key: _record(key, head=MERGE) for key in KEYS}
+
+
+def test_a_record_that_names_the_heads_merge_ref_replays() -> None:
+    """The positive control: a pull_request run's records name its merge ref's commit, whose
+    second parent is the head and whose tree is the head's, so they stand for the head."""
+    api = _Api(_merge_ref_answers())
+    replay = _decide(api=api, files=_merge_ref_files())
+    assert _replayed(replay) == set(REPLAYABLE), replay.reason
+    names = {j["key"]: j["record_names"] for j in replay.receipt["jobs"]}
+    assert names == {
+        **{key: main_replay.MERGE_REF_NAMED for key in REPLAYABLE},
+        "python-suite": None,
+    }
+    # One look per push, whatever the number of keys that name the commit.
+    assert api.read.count(MERGE_COMMIT) == 1 and api.read.count(MERGE_BASE_IN_MAIN) == 1
+
+
+def test_a_record_that_names_the_head_says_so_and_reads_no_merge_ref() -> None:
+    api = _Api(_merge_ref_answers())
+    replay = _decide(api=api)
+    names = {j["key"]: j["record_names"] for j in replay.receipt["jobs"]}
+    assert names == {**{key: main_replay.HEAD_NAMED for key in REPLAYABLE}, "python-suite": None}
+    assert MERGE_COMMIT not in api.read
+
+
+#: Each shape of the commit a record names in place of the head that is not its merge ref, the
+#: plant on the answers, and what the reason says. Each one runs every key that names it.
+NOT_THE_MERGE_REF: dict[str, tuple[Any, str]] = {
+    "a merge onto a base that moved since, so another tree": (
+        _edit(MERGE_COMMIT, lambda c: c.update(commit={"tree": {"sha": "7" * 40}})),
+        "tree is not #7's head tree",
+    ),
+    "a merge of an older head of the same pull request": (
+        _edit(MERGE_COMMIT, lambda c: c.update(parents=[{"sha": MERGE_BASE}, {"sha": OLDER_HEAD}])),
+        f"merges {OLDER_HEAD[:12]}, not #7's head",
+    ),
+    "one parent, with the head's tree": (
+        _edit(MERGE_COMMIT, lambda c: c.update(parents=[{"sha": HEAD}])),
+        "has 1 parent(s)",
+    ),
+    "three parents, with the head's tree": (
+        _edit(
+            MERGE_COMMIT,
+            lambda c: c.update(parents=[{"sha": MERGE_BASE}, {"sha": HEAD}, {"sha": "5" * 40}]),
+        ),
+        "has 3 parent(s)",
+    ),
+    "a merge onto a base the previous main does not contain": (
+        _set(MERGE_BASE_IN_MAIN, {"behind_by": 2, "ahead_by": 0}),
+        "which the previous main does not contain",
+    ),
+    "a commit the API does not find": (
+        _set(MERGE_COMMIT, OSError("HTTP Error 404: Not Found")),
+        "could not be read: HTTP Error 404",
+    ),
+    "a rate limit": (
+        _set(MERGE_COMMIT, OSError("HTTP Error 403: API rate limit exceeded")),
+        "could not be read: HTTP Error 403: API rate limit exceeded",
+    ),
+    "a rate limit on the base's comparison": (
+        _set(MERGE_BASE_IN_MAIN, OSError("HTTP Error 429: Too Many Requests")),
+        "could not be read: HTTP Error 429",
+    ),
+    "an answer that is not a commit": (
+        _set(MERGE_COMMIT, ["not", "a", "commit"]),
+        "could not be read",
+    ),
+    "parents that are not commits": (
+        _edit(MERGE_COMMIT, lambda c: c.update(parents=["8" * 40, HEAD])),
+        "could not be read",
+    ),
+    "no parents at all": (
+        _edit(MERGE_COMMIT, lambda c: c.pop("parents")),
+        "could not be read",
+    ),
+}
+
+
+def test_a_commit_that_is_not_the_heads_merge_ref_runs_every_key_that_names_it(
+    subtests: Any,
+) -> None:
+    assert len(NOT_THE_MERGE_REF) == 11
+    for name, (plant, says) in NOT_THE_MERGE_REF.items():
+        with row(subtests, shape=name):
+            answers = _merge_ref_answers()
+            plant(answers)
+            api = _Api(answers)
+            replay = _decide(api=api, files=_merge_ref_files())
+            assert _replayed(replay) == set(), name
+            for d in replay.jobs:
+                if d.key in REPLAYABLE:
+                    assert says in d.reason and f"names {MERGE}" in d.reason, (name, d.reason)
+                    assert d.record_names == "", (name, d)
+            # A failed look is not asked again for each key: the answer stands for the push.
+            assert api.read.count(MERGE_COMMIT) == 1, (name, api.read)
+
+
+def test_a_merge_ref_that_does_not_stand_runs_only_the_keys_that_name_it() -> None:
+    """The records of one run name one commit, but a forged or mixed set runs only its own keys."""
+    answers = _merge_ref_answers()
+    _edit(MERGE_COMMIT, lambda c: c.update(parents=[{"sha": MERGE_BASE}, {"sha": OLDER_HEAD}]))(
+        answers
+    )
+    files = _files()
+    files["rails"] = _record("rails", head=MERGE)
+    replay = _decide(answers, files)
+    assert _replayed(replay) == set(REPLAYABLE) - {"rails"}
+
+
 def test_a_job_green_only_on_a_later_attempt_runs_and_the_later_attempt_is_never_read() -> None:
     answers = _answers()
     _job_of("rails", conclusion="failure")(answers)
