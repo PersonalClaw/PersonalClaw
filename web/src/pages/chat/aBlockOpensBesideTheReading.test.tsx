@@ -201,7 +201,7 @@ describe('a block in a reply opens beside the reading column', () => {
     expect(pane).toHaveTextContent('print("hello")')
     expect(layout()).toHaveAttribute('data-pane-layout', 'beside')
     const turns = document.querySelectorAll<HTMLElement>('[data-transcript-turn]')
-    expect(turns[0].parentElement!.style.maxWidth, 'the turns still read at the reading width').toBe('var(--reading-width)')
+    expect(turns[0].parentElement!.style.maxWidth, 'the turns still span what the pane leaves them').toBe('')
     expect(pane.contains(turns[0]), 'the turns are beside the pane, not in it').toBe(false)
     expect(within(pane).queryByRole('button', { name: /beside$/ }), 'the pane does not offer itself again').toBeNull()
   })

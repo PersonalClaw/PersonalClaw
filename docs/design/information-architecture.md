@@ -127,8 +127,8 @@ Top to bottom:
 - **The header** holds the thread's own actions only: its title, then Share (Copy chat link and
   the "Continue on" hand-offs), the Session map and Activity, and the overflow (Save as starter,
   New chat). Configuration never appears here.
-- **The reading column**, around 720 to 780 px whatever the window's width (`--reading-width`,
-  768 px, in `web/src/design/tokens.css`), holds the turns and the composer under them. Code,
+- **The thread** spans the chat's pane, inside its inner padding, and holds the turns and the
+  composer under them; a page's main section spans the pane the same way (#5718). Code,
   tables, diffs and artifacts open beside it in an adjustable split that remembers its size; a
   compact window stacks them under it.
   A reply's code block, diff or table opens there from its own Open beside, in the chat's pane host

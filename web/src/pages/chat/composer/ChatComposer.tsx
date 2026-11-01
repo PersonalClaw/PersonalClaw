@@ -119,7 +119,7 @@ export function ChatComposer({ composer, stream, sessionId, started, navigate, o
     // On the chat route this wrapper is the composer.
     // `data-turn-stop-scope`: Esc typed here stops a running turn (`ui/TurnStatusRow`), as it does
     // outside any field.
-    <div data-tour="chat" data-turn-stop-scope="" className="w-full" style={{ maxWidth: 'var(--reading-width)' }}>
+    <div data-tour="chat" data-turn-stop-scope="" className="w-full">
       {/* Memory-mode notice: incognito/temporary sessions look identical to a normal one
           otherwise, so say what this mode does before the user types. The words are
           `memoryModeCopy`'s, which holds each clause to what the backend does; a privacy

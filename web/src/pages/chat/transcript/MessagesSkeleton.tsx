@@ -11,7 +11,7 @@ export function MessagesSkeleton() {
     { me: true, w: 'w-2/5' }, { me: false, w: 'w-2/3' },
   ]
   return (
-    <div className="mx-auto flex flex-col gap-2xl px-l py-2xl" style={{ maxWidth: 'var(--reading-width)' }}
+    <div className="flex w-full flex-col gap-2xl px-l py-2xl"
       role="status" aria-busy="true" >
         <LoadingStatus what="conversation" />
       {rows.map((r, i) => (

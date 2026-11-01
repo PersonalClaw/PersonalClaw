@@ -111,12 +111,12 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
           )}
         </AnimatePresence>
         <SelectionQuote scrollRef={scrollRef} onQuote={quoteToComposer} attributionFor={attributionForNode} />
-        {/* The turn column is the reading width (`--reading-width`), as is the composer under it:
-            a thread reads at one width however wide the window is.
+        {/* The turn column spans the chat's pane, as does the composer under it, inside the pane's
+            inner padding: a thread uses the room the window gives it.
             `--composer-fold-room`: reading mode's folded composer floats over the transcript's end,
             so the end makes room for it (`composer/ComposerFold`). */}
-        <div className="mx-auto flex flex-col gap-2xl px-l py-2xl"
-          style={{ maxWidth: 'var(--reading-width)', paddingBottom: 'calc(var(--spacing-2xl) + var(--composer-fold-room, 0px))' }}>
+        <div className="flex w-full flex-col gap-2xl px-l py-2xl"
+          style={{ paddingBottom: 'calc(var(--spacing-2xl) + var(--composer-fold-room, 0px))' }}>
           {/* "Keep my question in view": the latest question, pinned while a reply that scrolled
               it out streams (Settings › Chat). */}
           <QuestionInView streaming={streaming} node={questionNode} scrollRef={scrollRef}

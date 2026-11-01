@@ -34,7 +34,7 @@ export function RewindDivider({ snapshots, canFork, onFork }: {
         {open && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
             transition={spring.spatialFast}
-            className="w-full max-w-[452px] overflow-hidden rounded-xl border border-outline-variant/50 bg-surface-container/60">
+            className="w-full overflow-hidden rounded-xl border border-outline-variant/50 bg-surface-container/60">
             <div className="flex items-center justify-between border-b border-outline-variant/40 px-3 py-2">
               <span className="text-on-surface-low text-[0.6875rem] uppercase tracking-wide">Retained history (read-only)</span>
               {canFork && (
