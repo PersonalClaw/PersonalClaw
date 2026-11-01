@@ -8,6 +8,7 @@ its bytes into text a model would then be handed.
 
 import codecs
 import importlib
+import io
 import os
 import re
 from dataclasses import dataclass, field
@@ -333,7 +334,14 @@ class FileReader:
 
     def _read_xlsx(self, path: str) -> tuple[str, dict]:
         """Extract a spreadsheet as markdown tables (one per sheet). Without openpyxl,
-        return an error rather than letting the binary .xlsx be read as raw text."""
+        return an error rather than letting the binary .xlsx be read as raw text.
+
+        Held to the office parsers' caps (`documents.limits`): a package whose XML is over the
+        archive caps is refused before openpyxl opens it, and the item fails with the limit's
+        sentence; past the cell cap, summed across sheets, reading stops on a whole row and the
+        text says where."""
+        from personalclaw.documents import limits
+
         openpyxl = _library("openpyxl")
         if openpyxl is None:
             return (
@@ -341,24 +349,44 @@ class FileReader:
                 {"format": "error", "error": "XLSX support requires openpyxl"},
             )
         try:
-            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            parts, total_rows = [], 0
+            data = Path(path).read_bytes()
+            limits.assert_archive_within_limits(data)
+        except limits.DocumentTooLarge as e:
+            why = f"The spreadsheet was not read: {e}."
+            return why, {"format": "error", "error": why}
+        except OSError as e:
+            return f"Error reading spreadsheet: {e}", {"format": "error", "error": str(e)}
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+            parts, total_rows, budget, cut = [], 0, limits.MAX_CELLS, ""
             for ws in wb.worksheets:
-                rows = [
-                    ["" if c is None else str(c) for c in row]
-                    for row in ws.iter_rows(values_only=True)
-                ]
-                rows = [r for r in rows if any(cell.strip() for cell in r)]
-                if not rows:
-                    continue
-                total_rows += len(rows)
-                lines = [
-                    f"## {ws.title}",
-                    "| " + " | ".join(rows[0]) + " |",
-                    "| " + " | ".join("---" for _ in rows[0]) + " |",
-                ]
-                lines += ["| " + " | ".join(r) + " |" for r in rows[1:]]
-                parts.append("\n".join(lines))
+                rows = []
+                for number, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                    if len(row) > budget:
+                        cut = limits.truncation_detail(
+                            "cells",
+                            limits.MAX_CELLS,
+                            f"Reading stopped at row {number} of sheet {ws.title!r}; any later "
+                            "row or sheet was not read.",
+                            raw_route=False,
+                        )
+                        break
+                    budget -= len(row)
+                    cells = ["" if c is None else str(c) for c in row]
+                    if any(cell.strip() for cell in cells):
+                        rows.append(cells)
+                if rows:
+                    total_rows += len(rows)
+                    lines = [
+                        f"## {ws.title}",
+                        "| " + " | ".join(rows[0]) + " |",
+                        "| " + " | ".join("---" for _ in rows[0]) + " |",
+                    ]
+                    lines += ["| " + " | ".join(r) + " |" for r in rows[1:]]
+                    parts.append("\n".join(lines))
+                if cut:
+                    parts.append(cut[:1].upper() + cut[1:])
+                    break
             sheet_count = len(wb.worksheets)
             wb.close()
             return (

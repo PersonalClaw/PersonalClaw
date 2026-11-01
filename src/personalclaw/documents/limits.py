@@ -9,7 +9,8 @@ them and nothing bounded the parse. The measured consequence: a **56 KB** `.docx
 This module is the one place the caps live, for the reason the plan's guardrail gave —
 "reuse the existing zip-bomb defenses' posture rather than inventing new caps, and cap
 parsed block count". It holds no `documents.*` import on purpose: every parser imports
-*it*, so a dependency the other way would be a cycle.
+*it*, so a dependency the other way would be a cycle. Knowledge's reader of an uploaded
+workbook (``knowledge.readers.FileReader._read_xlsx``) is held to the same caps.
 
 ## The two kinds of cap, and why they refuse differently
 
@@ -183,12 +184,20 @@ def _mb(value: int) -> str:
     return f"{value // (1024 * 1024)} MB"
 
 
-def truncation_detail(unit: str, kept: int, dropped_hint: str = "") -> str:
+def truncation_detail(
+    unit: str, kept: int, dropped_hint: str = "", *, raw_route: bool = True
+) -> str:
     """The one sentence all three parsers use for a structural cap, so a caller reading
-    a ``size_limit`` loss sees the same shape whichever format produced it."""
+    a ``size_limit`` loss sees the same shape whichever format produced it. *raw_route*
+    False leaves out the artifact's raw route, for a reader that has no such route (the
+    Knowledge reader's workbook, `knowledge.readers`)."""
     tail = f" {dropped_hint}" if dropped_hint else ""
+    way_out = (
+        " Read the original bytes through the artifact's raw route to get the whole file."
+        if raw_route
+        else ""
+    )
     return (
         f"this document has more than {kept} {unit} and this build parses {kept}; "
-        f"the rest were not read.{tail} Read the original bytes through the artifact's "
-        "raw route to get the whole file."
+        f"the rest were not read.{tail}{way_out}"
     )
