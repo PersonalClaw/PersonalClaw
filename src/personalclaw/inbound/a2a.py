@@ -718,7 +718,8 @@ def task_artifacts(
 def task_snapshot(
     run_id: str, *, client_id: str, skill_id: str = "", caps: caps_mod.Caps | None = None
 ) -> tuple[dict[str, Any], bool] | None:
-    """``(task, final)`` for ``run_id``, or None when there is no such run.
+    """``(task, final)`` for ``run_id``, or None when there is no such run, or none the client
+    *client_id* started (:func:`_started_by`).
 
     Artifacts are attached only once the run is FINAL. A mid-run node output is not the
     task's answer, and handing one over as an artifact would let a client act on a partial
@@ -726,6 +727,8 @@ def task_snapshot(
     """
     from personalclaw.workflows import service as wf
 
+    if not _started_by(run_id, client_id):
+        return None
     status = wf.status(run_id)
     if not status.get("ok"):
         return None
@@ -739,6 +742,21 @@ def task_snapshot(
         artifacts=task_artifacts(run_id, client_id=client_id, caps=caps) if final else [],
     )
     return task, final
+
+
+def _started_by(run_id: str, client_id: str) -> bool:
+    """Whether the run *run_id* is a task the caller *client_id* started: a run under its own
+    session key (:func:`session_key_for`), the key every task it starts runs under.
+
+    A run id is no secret, so a task read answers only the caller's own. Any other run, another
+    client's task, one the surface's own token started, or a chat's, a schedule's or a loop's
+    run, is answered as an id that never existed, by both task routes (:func:`handle_task_get`
+    and the stream of :func:`handle_tasks`).
+    """
+    from personalclaw.workflows import store
+
+    started_for = store.session_key_of(run_id)
+    return started_for is not None and started_for == session_key_for(client_id)
 
 
 async def _start_task(

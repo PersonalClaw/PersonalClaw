@@ -712,7 +712,17 @@ class TestArtifactsAreFenced:
 
     def test_a_mid_run_output_is_not_published_as_an_artifact(self, monkeypatch):
         from personalclaw.workflows import service as wf_service
+        from personalclaw.workflows import store
+        from personalclaw.workflows.models import OriginKind, RunOrigin, WorkflowRun
 
+        # A task the client started: a task read answers only its own caller's runs.
+        run = store.create(
+            WorkflowRun(
+                id="",
+                workflow_name="triage",
+                origin=RunOrigin(kind=OriginKind.API, session_key=a2a.session_key_for("c1")),
+            )
+        )
         monkeypatch.setattr(
             wf_service,
             "status",
@@ -726,7 +736,7 @@ class TestArtifactsAreFenced:
         monkeypatch.setattr(
             wf_service, "output", lambda run_id, node_id: {"ok": True, "output": "partial"}
         )
-        snapshot = a2a.task_snapshot("run-1", client_id="c1")
+        snapshot = a2a.task_snapshot(run.id, client_id="c1")
         assert snapshot is not None
         task, final = snapshot
         assert final is False

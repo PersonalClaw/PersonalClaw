@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **An A2A client's retry key names only its own request: a second client that sends the same `messageId` or `idempotencyKey` gets a task of its own, never the first client's task or its outputs.**
+- **An A2A client reads only the tasks it started: `GET /a2a/tasks/{id}` for any other run, another client's task or a chat's, a schedule's or a loop's run, answers as an id that does not exist.**
 
 ## [0.3.3] — 2026-11-01
 

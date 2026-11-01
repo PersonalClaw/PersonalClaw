@@ -331,6 +331,13 @@ def get(run_id: str) -> WorkflowRun | None:
     return _row_to_run(row) if row else None
 
 
+def session_key_of(run_id: str) -> str | None:
+    """The session key the run *run_id* was started for (its origin's), or ``None`` when there is
+    no such run: whose run it is, and nothing else of it."""
+    run = get(run_id)
+    return run.origin.session_key if run is not None else None
+
+
 def save(run: WorkflowRun) -> WorkflowRun:
     """Upsert. The engine's tick loop is the only writer of terminal status,
     but every caller uses this same path — the ownership rule is enforced there, not by
