@@ -2657,6 +2657,16 @@ workflow's triggers are. A guard the row cannot evaluate fails it, never reads a
   head, one or three parents, a base the previous `main` lacks, or an answer it cannot read (a
   404, a rate limit, anything that is not a commit) runs every key whose record names it, with
   why.
+- **Under main's merge queue** (0.4.0 A1), the source is the pushed commit's own queue run. A
+  push whose commit has a `merge.yml` `merge_group` run replays from the first of them, on its
+  attempt 1, when exactly one pull request into `main` was merged as that commit, the commit
+  contains the previous `main` (a batch's tip holds every entry ahead of it), and the run's branch
+  (`gh-readonly-queue/main/pr-<n>-<commit>`) names that pull request. A queue commit is what
+  lands, so the squash-tree rule, the merge-ref pairing, the opened-after check and the base
+  events are not read: its records must name the pushed commit itself, and the controller's
+  merge verdict is asked of it. Once main's rules list a `merge_queue` rule, a push with no queue
+  run on its commit (a bypass) replays nothing, and rules it cannot read replay nothing either.
+  The receipt's `source_run` names the run's `event`.
 - **A later run is not read either way.** Unlike `tree_tested`, which needs every `pull_request`
   run on the head green on attempt 1, a later run's red does not stop the first run's green from
   replaying. What a later run found reaches the push only through the merge verdict, whose newest
