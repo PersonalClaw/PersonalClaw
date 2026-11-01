@@ -70,6 +70,16 @@ theme via `localStorage.mode` + `data-mode` (how the SPA persists it), and write
 - **No real personal data.** Capture against a throwaway `PERSONALCLAW_HOME` (the script
   refuses the default home). Seed illustrative data only.
 - **Refresh per release** so the showcase never drifts from the shipped UI.
+- **Each image within the publication ceiling** (512 KiB for a tracked binary,
+  `scripts/check_publication_hygiene.py`). A screen of large gradients can pass it; re-encode
+  that one to a 256-colour palette, which leaves the screen as it was (the Apps page's banners
+  needed it in the November 2026 set):
+
+  ```bash
+  .venv/bin/python -c 'import sys; from PIL import Image
+  for p in sys.argv[1:]: Image.open(p).convert("RGB").quantize(256, dither=Image.Dither.FLOYDSTEINBERG).save(p, optimize=True)' \
+    docs/screenshots/light/09-apps.png docs/screenshots/dark/09-apps.png
+  ```
 
 ## The redesign baseline
 

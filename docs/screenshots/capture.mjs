@@ -50,12 +50,14 @@ const ROUTES = [
 for (const mode of ['light', 'dark']) await mkdir(new URL(`./${mode}/`, import.meta.url), { recursive: true });
 
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
-await signIn(ctx, gateway);
-const page = await ctx.newPage();
 console.log(`capturing ${gateway.home} at ${gateway.url}`);
 
+// One browser context per theme: init scripts on one page all run, in an order Playwright leaves
+// undefined, so a second theme's script on the first theme's page can lose to the first.
 for (const mode of ['light', 'dark']) {
+  const ctx = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2 });
+  await signIn(ctx, gateway);
+  const page = await ctx.newPage();
   await page.addInitScript(m => {
     localStorage.setItem('mode', m);
     document.documentElement.setAttribute('data-mode', m);
@@ -63,13 +65,14 @@ for (const mode of ['light', 'dark']) {
   for (const [name, route] of ROUTES) {
     try {
       await page.goto(`${gateway.url}/${route}`, { waitUntil: 'networkidle', timeout: 20000 });
-      await page.waitForTimeout(700); // let motion settle
+      await page.waitForTimeout(2000); // let motion settle, and the cards that load after it
       await page.screenshot({ path: `docs/screenshots/${mode}/${name}.png` });
       console.log(`✓ ${mode}/${name}.png`);
     } catch (e) {
       console.warn(`✗ ${mode}/${name}: ${e.message}`);
     }
   }
+  await ctx.close();
 }
 
 await browser.close();
