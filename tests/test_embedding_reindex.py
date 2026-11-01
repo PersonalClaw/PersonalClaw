@@ -74,7 +74,7 @@ def test_knowledge_reembeds_what_the_bound_model_has_not(tmp_path, bound):
             return [0.1, 0.2, 0.3]
 
     res = store.reembed_all(_Emb(), only_missing=True)
-    assert res == {"reembedded": 3, "failed": 0, "total": 3}
+    assert res == {"reembedded": 3, "failed": 0, "total": 3, "refused": 0, "held": 0}
     after = _vectors(store)
     assert after["Kept"][0] == b"\x00" * 12, "and never re-embedded"
     assert {title: v[1:] for title, v in after.items()} == dict.fromkeys(after, bound.params)
@@ -112,7 +112,13 @@ def test_reembed_all_cannot_use_a_bare_callable(tmp_path):
     def embed(text):
         return [0.1, 0.2, 0.3]
 
-    assert store.reembed_all(embed) == {"reembedded": 0, "failed": 2, "total": 2}
+    assert store.reembed_all(embed) == {
+        "reembedded": 0,
+        "failed": 2,
+        "total": 2,
+        "refused": 0,
+        "held": 0,
+    }
     assert store.count_items_missing_embedding() == 2, "nothing was embedded"
 
     # The same function, wrapped in the embedder the working callers pass.
@@ -120,6 +126,8 @@ def test_reembed_all_cannot_use_a_bare_callable(tmp_path):
         "reembedded": 2,
         "failed": 0,
         "total": 2,
+        "refused": 0,
+        "held": 0,
     }
     assert store.count_items_missing_embedding() == 0
 

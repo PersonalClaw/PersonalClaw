@@ -25,6 +25,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A refused request leaves one WARNING line in the gateway log with its method, path (never its query string), reason and the caller's address; one caller's refusals for one reason within a minute are counted into one line, and each refusal's full record stays in `personalclaw security events`.**
 - **An Inbox reply goes out once: Send on a row already answered, from another tab or a phone still showing the draft, is refused with `409 reply_already_sent` instead of sending the reply again or starting a second turn in the posting chat; reopening the row lets a follow-up go.**
 - **A model that thinks (Opus 5.5 always, Sonnet 5.5, Haiku 5.5 and Fable 5.1 by default) is sent room to think and still answer on the Anthropic wire, 32,000 output tokens where 4,096 ran out before it answered, whenever no cap was set; `personalclaw.sdk.model.default_output_cap` gives apps the same default under the `thinking-output-cap` core feature, and `AnthropicProvider`'s `max_tokens` now defaults to `0`, none set, in place of `4096`: `anthropic-models` can drop its fixed 4,096 for it once its core.lock reaches this core.**
+- **A knowledge item the embedding model refused as too long is not sent again on every maintenance pass or Doctor run until its text or the model changes, so the items behind it get their vectors, and the Doctor's backfill says how many need a shorter text or another model.**
 
 ## [0.3.2] — 2026-10-31
 

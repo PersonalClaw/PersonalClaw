@@ -784,7 +784,17 @@ def _job_reindex_embeddings() -> str:
     store = get_knowledge_store()
     report = store.reembed_all(embedder, only_missing=True)
     reembedded = int(report.get("reembedded") or 0)
-    failed = int(report.get("failed") or 0)
+    # A text the model refused for its size is refused again however often it is sent: counted
+    # apart from the failures, so a backlog of only those takes the cooldown rather than sending
+    # them again every tick (`reembed_all` passes over them until their text or the model changes).
+    refused = int(report.get("refused") or 0) + int(report.get("held") or 0)
+    failed = int(report.get("failed") or 0) - int(report.get("refused") or 0)
+    need = (
+        f"; {refused} item(s) the embedding model refused as too long need a shorter text "
+        "or another model"
+        if refused
+        else ""
+    )
     # Raising is the only way to say "this did not work": the runner writes
     # `last_success_ts` on any non-raising return, so a clean zero would take the 6h
     # cooldown while the deficit it claims to fix stayed exactly where it was.
@@ -794,10 +804,10 @@ def _job_reindex_embeddings() -> str:
     # `reembed_all` leaves a failed item vector-less rather than corrupt, so the remainder
     # is simply still in the backlog for next time — which the message says out loud.
     if failed and not reembedded:
-        raise RuntimeError(f"embedded none of {failed} item(s) missing a vector")
+        raise RuntimeError(f"embedded none of {failed} item(s) missing a vector{need}")
     if failed:
-        return f"re-embedded {reembedded} item(s); {failed} still without a vector"
-    return f"re-embedded {reembedded} item(s)"
+        return f"re-embedded {reembedded} item(s); {failed} still without a vector{need}"
+    return f"re-embedded {reembedded} item(s){need}"
 
 
 def _job_rebuild_memory_fts() -> str:
