@@ -26,6 +26,17 @@ workflow (``--workflow merge.yml``), and writes
    or before a retarget to ``main``, may have tested another base and skipped the jobs that run
    only for ``main``.
 
+**Under main's merge queue** (0.4.0 A1) the pushed commit is the queue commit itself, built and
+tested before main reached it, and only the queue's first entry has its pull request's head tree.
+So once main's rules queue its merges (a ``merge_queue`` rule among the rules for main, read from
+the API), a push is answered by its commit's own ``merge_group`` runs of the workflow alone:
+**yes** only when the commit contains the commit the push replaced, and the first attempt of every
+such run on exactly that commit concluded ``success``. A commit with none, with only a green
+re-run, or whose tree some other commit's run tested, is a no. A queue run the verdict passed on
+a flake is a no here too: the push replays it per job (``main_replay``) instead. Before the queue
+is live, a commit with a ``merge_group`` run is answered the same way, and any other by the rules
+above.
+
 **No** is every other case, and any error while finding out: no pull request, a different tree
 (a merge that was not up to date), a head behind ``main``, a run that was not green on its first
 attempt, a run of another pull request, a changed base, an answer this check cannot read. A no
@@ -108,7 +119,14 @@ def _tree_of(get: Get, repo: str, sha: str) -> str:
 
 
 def decide(
-    get: Get, *, event: str, ref: str, repo: str, sha: str, before: str, workflow: str
+    get: Get,
+    *,
+    event: str,
+    ref: str,
+    repo: str,
+    sha: str,
+    before: str,
+    workflow: str,
 ) -> Verdict:
     """The answer for one push. Never raises: an error is a no, with its reason."""
     if event != "push" or ref != MAIN:
@@ -125,8 +143,81 @@ def decide(
         return Verdict(False, f"could not find out: {exc}")
 
 
+def _queued(
+    get: Get, *, repo: str, sha: str, before: str, workflow: str, tree: str
+) -> Verdict | None:
+    """The answer for a push whose commit is a queue commit of main's merge queue, or None when
+    no ``merge_group`` run of the workflow ran on it."""
+    query = urllib.parse.urlencode({"head_sha": sha, "event": "merge_group", "per_page": _PER_PAGE})
+    page = _mapping(get(f"/repos/{repo}/actions/workflows/{workflow}/runs?{query}"), "the runs")
+    runs = page.get("workflow_runs")
+    if not isinstance(runs, list):
+        raise Unanswered("the runs are not a list")
+    total = page.get("total_count")
+    if isinstance(total, int) and total > len(runs):
+        raise Unanswered(f"{total} runs do not fit one page, so the queue's are not all known")
+    ours = [
+        run
+        for run in runs
+        if isinstance(run, Mapping)
+        and run.get("head_sha") == sha
+        and run.get("event") == "merge_group"
+    ]
+    if not ours:
+        return None
+    compare = _mapping(get(f"/repos/{repo}/compare/{before}...{sha}"), "the comparison")
+    if _integer(compare, "behind_by", "the comparison") != 0:
+        return Verdict(False, "the queue commit does not contain the previous main", tree=tree)
+    ours.sort(key=lambda run: (_integer(run, "run_number", "a run"), _integer(run, "id", "a run")))
+    ids: list[str] = []
+    first, url = _integer(ours[0], "id", "the first run"), ""
+    for run in ours:
+        this = _integer(run, "id", "a run")
+        ids.append(str(this))
+        attempt = _mapping(get(f"/repos/{repo}/actions/runs/{this}/attempts/1"), "a first attempt")
+        status, conclusion = attempt.get("status"), attempt.get("conclusion")
+        link = str(attempt.get("html_url") or run.get("html_url") or "")
+        if this == first:
+            url = link
+        if status != "completed" or conclusion != "success":
+            return Verdict(
+                False,
+                f"the first attempt of {workflow} merge_group run {this} on the queue commit "
+                f"concluded {conclusion or status}: a later attempt never turns it green",
+                tree=tree,
+                run=this,
+                run_url=link,
+            )
+    return Verdict(
+        True,
+        f"the pushed commit is a queue commit that contains the previous main, and every "
+        f"{workflow} merge_group run on it ({', '.join(ids)}) passed on its first attempt",
+        tree=tree,
+        run=first,
+        run_url=url,
+    )
+
+
+def _queue_live(get: Get, repo: str) -> bool:
+    """Whether main's rules queue its merges: a ``merge_queue`` rule among the rules for main."""
+    rules = get(f"/repos/{repo}/rules/branches/main?per_page={_PER_PAGE}")
+    if not isinstance(rules, list):
+        raise Unanswered("main's rules are not a list")
+    return any(isinstance(r, Mapping) and r.get("type") == "merge_queue" for r in rules)
+
+
 def _decide(get: Get, *, repo: str, sha: str, before: str, workflow: str) -> Verdict:
     tree = _tree_of(get, repo, sha)
+    queued = _queued(get, repo=repo, sha=sha, before=before, workflow=workflow, tree=tree)
+    if queued is not None:
+        return queued
+    if _queue_live(get, repo):
+        return Verdict(
+            False,
+            f"main's merges are queued, and no {workflow} merge_group run ran on the pushed "
+            "commit itself",
+            tree=tree,
+        )
     pulls = get(f"/repos/{repo}/commits/{sha}/pulls")
     if not isinstance(pulls, list):
         raise Unanswered("the pull requests of the pushed commit are not a list")
