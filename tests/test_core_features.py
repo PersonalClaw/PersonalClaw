@@ -36,6 +36,7 @@ from personalclaw.sdk.features import (
     PER_CALL_OUTPUT_CAP,
     PRE_TOOL_HOOKS,
     RUNNING_LIST,
+    SETTINGS_CHECK,
     THINKING_OUTPUT_CAP,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
@@ -98,6 +99,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         "PER_CALL_OUTPUT_CAP",
         "PRE_TOOL_HOOKS",
         "RUNNING_LIST",
+        "SETTINGS_CHECK",
         "THINKING_OUTPUT_CAP",
         "TOOL_CALL_SCREEN",
         "TURNS_NAME_THEIR_CHANNEL",
@@ -127,6 +129,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
     assert TURNS_NAME_THEIR_CHANNEL == "turns-name-their-channel"
     assert TURNS_NAME_WHO_ASKED == "turns-name-who-asked"
     assert RUNNING_LIST == "running-list"
+    assert SETTINGS_CHECK == "settings-check"
     assert THINKING_OUTPUT_CAP == "thinking-output-cap"
     assert UNGATED_CALLS == "ungated-calls"
     assert WAITING_LIST == "waiting-list"
@@ -146,6 +149,7 @@ def test_the_sdk_publishes_the_names_and_the_question():
         PER_CALL_OUTPUT_CAP,
         PRE_TOOL_HOOKS,
         RUNNING_LIST,
+        SETTINGS_CHECK,
         THINKING_OUTPUT_CAP,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
@@ -461,6 +465,53 @@ def _ungated_calls_hold() -> None:
     assert [(r.outcome, r.caller_identity, r.source) for r in rows] == [
         ("ungated", "t", "fixture-channel")
     ]
+
+
+def _settings_check_holds() -> None:
+    """A provider's declared check is asked before a save, with each secret masked, and a
+    sentence back is the refusal; an app that declares none is refused nothing."""
+    import asyncio
+    import json
+    import sys
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from personalclaw import app_code
+    from personalclaw.apps import manager, settings_check
+    from personalclaw.apps.native_contract import namespaced_module_name
+
+    with tempfile.TemporaryDirectory() as tmp:
+        home = Path(tmp)
+        bundle = home / "apps" / "witness-checked"
+        (bundle / "data").mkdir(parents=True)
+        (bundle / "checks.py").write_text(
+            "def check(settings):\n"
+            "    return 'no' if settings.get('token') == '\u2022' * 8 else ''\n",
+            encoding="utf-8",
+        )
+        provider = {
+            "type": "sync",
+            "implementation": "provider:create",
+            "settingsCheck": "checks:check",
+            "settingsSchema": {"properties": {"token": {"x-meta": {"sensitive": True}}}},
+        }
+        (bundle / "app.json").write_text(
+            '{"name": "witness-checked", "version": "1.0.0", "displayName": "W", '
+            f'"description": "w", "provider": {json.dumps(provider)}}}',
+            encoding="utf-8",
+        )
+        with (
+            patch("personalclaw.config.loader.config_dir", return_value=home),
+            patch.object(manager, "config_dir", return_value=home),
+            patch.object(settings_check, "_running", {}),
+            patch.object(app_code, "_roots", dict(app_code._roots)),
+            patch.object(app_code, "_loaded", app_code._loaded),
+        ):
+            assert asyncio.run(settings_check.refusal("witness-checked", {"token": "t0k"})) == "no"
+            assert asyncio.run(settings_check.refusal("witness-checked", {"token": ""})) == ""
+            assert asyncio.run(settings_check.refusal("not-installed", {"token": "t0k"})) == ""
+        sys.modules.pop(namespaced_module_name("witness-checked", "checks"), None)
 
 
 def _pre_tool_hooks_hold() -> None:
@@ -1288,6 +1339,7 @@ WITNESSES = {
     PER_CALL_OUTPUT_CAP: _per_call_output_cap_holds,
     PRE_TOOL_HOOKS: _pre_tool_hooks_hold,
     RUNNING_LIST: _running_list_holds,
+    SETTINGS_CHECK: _settings_check_holds,
     THINKING_OUTPUT_CAP: _thinking_output_cap_holds,
     TOOL_CALL_SCREEN: _tool_call_screen_holds,
     TURNS_NAME_THEIR_CHANNEL: _turns_name_their_channel_holds,

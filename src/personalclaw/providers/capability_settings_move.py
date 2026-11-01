@@ -47,8 +47,12 @@ def move_app(app: str, manifest: Any) -> list[str]:
         current = load_stored_capability(app, cid)
         carried = {k: values[k] for k in moving if homes[k] == cid and k not in current}
         if carried:
-            ProviderSettings._save_capability(app, cid, {**current, **carried})
-    ProviderSettings._save(app, {k: v for k, v in account.items() if k not in homes})
+            # A move carries what is already on disk: a login one of its addresses holds is the
+            # app's to clear where it uses it, and must not hold the move (`secret_refs.store`).
+            ProviderSettings._save_capability(app, cid, {**current, **carried}, refuse_logins=False)
+    ProviderSettings._save(
+        app, {k: v for k, v in account.items() if k not in homes}, refuse_logins=False
+    )
     return moving
 
 
@@ -130,7 +134,11 @@ def _move_one(app: str, old: str, new: str, account: str | None) -> None:
     def stored_for_new() -> dict[str, Any]:
         values = secret_refs.resolve(load_stored_capability(app, old, account), owner=was)
         return secret_refs.store(
-            values, owner=to, declared=secret_refs.declared_app_fields(app), previous=None
+            values,
+            owner=to,
+            declared=secret_refs.declared_app_fields(app),
+            previous=None,
+            refuse_logins=False,
         )
 
     if account is None:

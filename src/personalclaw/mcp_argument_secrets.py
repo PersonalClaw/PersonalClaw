@@ -30,6 +30,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from urllib.parse import unquote
 
+from personalclaw import address_logins
 from personalclaw.apps.secret_fields import SECRET_MASK, is_credential_field_name
 from personalclaw.workflows.secrets import SECRET_BINDING_RE
 
@@ -38,12 +39,6 @@ from personalclaw.workflows.secrets import SECRET_BINDING_RE
 HEADER_FLAGS = frozenset({"--header", "--headers", "-H"})
 #: A scheme, as ``urlsplit`` reads one: so ``--url=https://…`` is not mistaken for a URL.
 SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
-#: A run of token characters. Long enough, and mixing letters and digits, it is a key in a format
-#: no named rule knows (a hex or base64url secret). ``/`` and ``.`` are not in it: a path, a host
-#: name and a version number are not tokens, and a JWT's parts are tested one by one.
-_TOKEN_RUN_RE = re.compile(r"[A-Za-z0-9_\-+=~]{20,}")
-_LETTER_RE = re.compile(r"[A-Za-z]")
-_DIGIT_RE = re.compile(r"\d")
 _WORD_RE = re.compile(r"\S+")
 
 
@@ -55,10 +50,7 @@ def looks_secret(text: str) -> bool:
 
     if SECRET_BINDING_RE.search(text) or redact_credentials(text)[1]:
         return True
-    return any(
-        _TOKEN_RUN_RE.fullmatch(piece) and _LETTER_RE.search(piece) and _DIGIT_RE.search(piece)
-        for piece in text.split(".")
-    )
+    return address_logins.looks_like_token(text)
 
 
 def flag_carries(arg: str) -> str | None:

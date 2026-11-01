@@ -1001,6 +1001,16 @@ no value is read to tell. A `multiInstance` capability's list is checked against
 schema but not enforced yet: each instance runs under its own account once each account runs its
 own (#3843), and an app should not count on it before then.
 
+A capability may declare its own check of the settings a form saves for it (`settingsCheck`,
+`module.path:function`, resolved as `implementation` is; core feature `settings-check`). Every
+route that saves the app's settings asks it before it writes, with the settings that capability
+will read once the save is made, each secret that is set shown only as the mask, and a sentence
+back is the save's 400 in the app's words, with nothing written (`apps/settings_check.py`). The
+check is app code, so it runs on a thread of its own and is waited for ten seconds; one that does
+not answer, cannot be imported or raises refuses the save with a sentence saying it could not run,
+and a check still running from an earlier save is not started again until it ends. It is asked
+for an installed app whether or not the app is on.
+
 A tool provider is registered under its app's name, and every tool it lists passes the tool
 seam before a model request carries it: a schema outside the portable profile is repaired or
 left out, with one log line naming the app and the tool — see

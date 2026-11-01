@@ -92,6 +92,7 @@ async def api_app_capability_config_get(request: web.Request) -> web.Response:
 
 async def api_app_capability_config_put(request: web.Request) -> web.Response:
     """Save one capability's own settings, and apply them to that capability alone."""
+    from personalclaw.apps import settings_check
     from personalclaw.apps.app_config import AppConfigError, write_capability_config
     from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
     from personalclaw.providers.routes import apply_saved_settings
@@ -104,6 +105,11 @@ async def api_app_capability_config_put(request: web.Request) -> web.Response:
     # A save is the whole form: no body is refused, never read as an empty form that clears
     # every setting.
     values = await json_object_body(request, empty_ok=False)
+    # The app's own check of what the form would save, masked, off the loop and bounded
+    # (`apps.settings_check`); before the stored copy is read, so no `await` follows that read.
+    shown = mask_secrets(values, schema)[0]
+    if refused := await settings_check.refusal(name, shown, capability=capability, whole=True):
+        return web.json_response({"error": refused}, status=400)
     stored = load_stored_capability(name, capability)
     # Written only over the copy the form was built from, as the account's settings are; no
     # `await` between this check and the write below.

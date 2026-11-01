@@ -340,6 +340,10 @@ _CLASSIFIED: dict[str, Callable[[], set[str]] | str] = {
     ),
     "_sdk_deps.py::require_sdk": lambda: _first_strings("require_sdk"),
     "gateway.py::GatewayOrchestrator._check_missing_deps": _required_deps,
+    "apps/settings_check.py::_call": (
+        "an app's settings check, named by its manifest and loaded from the app's own folder: "
+        "the app's to bring, never the package's"
+    ),
     "sdk/availability.py::missing_modules": (
         "the modules an app declares it needs, asked of to say whether the app can run here: "
         "the app's to bring, never the package's"

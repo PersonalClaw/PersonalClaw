@@ -584,7 +584,9 @@ Data leaving the running system:
   `env` variables a server marks plain) and the webhook token live in the credential store;
   `config.json`, an app's `data/config.json`, provider instance records, `mcp.json` and the
   agent config carry a `{{secret:…}}` reference, resolved where the value is used: an MCP
-  server's at spawn, the webhook token when a request is checked. Every path that adds or changes
+  server's at spawn, the webhook token when a request is checked. An app setting kept as plain
+  text refuses an address with a password or token written into it, at the one store every app
+  settings writer goes through (`secret_refs.store`). Every path that adds or changes
   an MCP server writes through `secret_refs.write_mcp_document`. Deleting a provider, removing an MCP
   server (the Tools page and the provider card share one delete, `secret_refs.remove_mcp_servers`,
   which takes it out of both documents), or either removal rung of an app, deletes what it owned.

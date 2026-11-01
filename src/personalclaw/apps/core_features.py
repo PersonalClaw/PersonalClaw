@@ -92,6 +92,13 @@ PRE_TOOL_HOOKS = "pre-tool-hooks"
 #: has no ``report_ungated_call``, so an app that imports it does not load.
 UNGATED_CALLS = "ungated-calls"
 
+#: A provider's ``settingsCheck`` (``module.path:function``) is asked before every route saves
+#: the app's settings, with the settings the provider will read and each secret masked; a sentence
+#: back refuses the save in the app's words and nothing is written. It runs off the event loop and
+#: bounded, and one that cannot run refuses the save. A core without it never asks, so an app that
+#: relies on its check declares it.
+SETTINGS_CHECK = "settings-check"
+
 #: A chat's link to a channel thread names the channel the thread is on, and that is where the
 #: chat answers: ``link_channel(chat, thread, channel_id, provider=…)`` on the dashboard state a
 #: channel is handed links a chat there (moving it off any thread it was on; the owner's own DM it
@@ -245,6 +252,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         PER_CALL_OUTPUT_CAP,
         PRE_TOOL_HOOKS,
         RUNNING_LIST,
+        SETTINGS_CHECK,
         THINKING_OUTPUT_CAP,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,

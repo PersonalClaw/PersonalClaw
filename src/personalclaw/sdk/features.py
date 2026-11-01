@@ -97,6 +97,11 @@ that asks them declares it.
 doing, and a ``running_changed`` frame says it moved. An app that reads the list declares it, with
 ``/api/running`` in its manifest.
 
+``SETTINGS_CHECK``: a provider's ``settingsCheck`` in the manifest (``module.path:function``) is
+asked before every route saves the app's settings, with the settings that provider will read and
+each secret masked, and a sentence back refuses the save in the app's words. An app whose settings
+rely on its check declares it.
+
 ``THINKING_OUTPUT_CAP``: a model app asks the output cap a request to a model sends when neither
 the operator nor the call set one (``personalclaw.sdk.model.default_output_cap``): 32,000 for a
 model that thinks adaptively, whose thinking is spent out of the same cap, and 4,096 for any other,
@@ -148,6 +153,7 @@ from personalclaw.apps.core_features import (
     PER_CALL_OUTPUT_CAP,
     PRE_TOOL_HOOKS,
     RUNNING_LIST,
+    SETTINGS_CHECK,
     THINKING_OUTPUT_CAP,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
@@ -177,6 +183,7 @@ __all__ = [
     "PER_CALL_OUTPUT_CAP",
     "PRE_TOOL_HOOKS",
     "RUNNING_LIST",
+    "SETTINGS_CHECK",
     "THINKING_OUTPUT_CAP",
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",

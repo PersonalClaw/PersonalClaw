@@ -340,7 +340,11 @@ class ProviderSettings:
 
     @staticmethod
     def _save(
-        extension_name: str, config: dict[str, Any], account: str | None = None
+        extension_name: str,
+        config: dict[str, Any],
+        account: str | None = None,
+        *,
+        refuse_logins: bool = True,
     ) -> dict[str, Any]:
         previous = load_stored_account(extension_name, account)
         wrote: set[str] = set()
@@ -350,6 +354,7 @@ class ProviderSettings:
             declared=secret_refs.declared_app_fields(extension_name),
             previous=previous,
             wrote=wrote,
+            refuse_logins=refuse_logins,
         )
         if account is None:
             _write(ProviderSettings.config_path(extension_name), stored)
@@ -378,7 +383,12 @@ class ProviderSettings:
 
     @staticmethod
     def _save_capability(
-        extension_name: str, capability: str, config: dict[str, Any], account: str | None = None
+        extension_name: str,
+        capability: str,
+        config: dict[str, Any],
+        account: str | None = None,
+        *,
+        refuse_logins: bool = True,
     ) -> dict[str, Any]:
         _checked_capability(capability)
         previous = load_stored_capability(extension_name, capability, account)
@@ -389,6 +399,7 @@ class ProviderSettings:
             declared=secret_refs.declared_app_fields(extension_name),
             previous=previous,
             wrote=wrote,
+            refuse_logins=refuse_logins,
         )
         if account is None:
             _write(ProviderSettings.capability_path(extension_name, capability), stored)

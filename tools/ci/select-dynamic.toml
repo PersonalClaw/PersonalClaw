@@ -84,6 +84,12 @@ named = true
 why = "imports a module from the table of names it keeps"
 
 [[site]]
+file = "src/personalclaw/apps/settings_check.py"
+call = "importlib.import_module(module_path)"
+prefix = "personalclaw"
+why = "imports an app's settings check by its dotted path"
+
+[[site]]
 file = "src/personalclaw/cli_app_new.py"
 call = "importlib.import_module(contract.sdk_module)"
 named = true

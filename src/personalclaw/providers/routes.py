@@ -269,8 +269,13 @@ async def handle_patch_config(request: web.Request) -> web.Response:
 
     if not isinstance(body, dict):
         return web.json_response({"error": "Body must be a JSON object"}, status=400)
-
     schema = ext.provider_config.settingsSchema
+    # The app's own check of what the form would save, masked, off the loop and bounded
+    # (`apps.settings_check`); before the stored copy is read, so no `await` follows that read.
+    from personalclaw.apps import settings_check
+
+    if refused := await settings_check.refusal(name, mask_secrets(body, schema)[0]):
+        return web.json_response({"error": refused}, status=400)
     stored = load_stored(name)
     # The other half of masking on GET: the form PATCHes back whatever GET gave it, so a
     # sensitive field arriving as the mask (or empty over a stored value) means "keep it".
