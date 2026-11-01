@@ -7,15 +7,18 @@ one gateway and one dashboard you own.
 > _Every screen below is a **real capture** from a running instance seeded with illustrative
 > scenario data — shown in both **light** and **dark** themes. No mockups. The set is
 > reproducible per release via the capture pipeline ([docs/screenshots/CAPTURE.md](docs/screenshots/CAPTURE.md)).
+> This set was captured with **no model bound**, so the screens that need one (chat replies,
+> suggestions, knowledge extraction) show what a fresh install shows before you add a provider.
 > Architecture diagrams accompany the screens whose *flow* is as important as their look._
 
 ---
 
 ## 🏠 The Dashboard
 
-Your day at a glance: quick stats, a prompt bar that starts a chat or a task, "jump back in"
-sessions, live tasks, contextual suggestions the system draws from your memory and knowledge,
-and a real-time system strip — all live over one WebSocket.
+Your day at a glance: a prompt bar that starts a new thread, then what needs you, what is
+running and what finished lately, with starter suggestions (they need a model, and say so).
+The sidebar holds your threads by project, and Attention and Overview are two views of the
+same home — all live over one WebSocket.
 
 | Light | Dark |
 |---|---|
@@ -25,10 +28,11 @@ and a real-time system strip — all live over one WebSocket.
 
 ## 🗣️ Agentic Chat
 
-Conversational sessions where the agent acts with full tool access. It **grounds answers in
-your knowledge** (note the "worked through 3 steps · knowledge_search" and the cited source
-below), and tool calls surface as decision-ready approval prompts. Sessions fork, undo,
-branch into variants, and organize into folders/tags/kanban.
+Conversational threads where the agent acts with tool access: it grounds answers in your
+knowledge, and tool calls surface as decision-ready approval prompts. The composer chooses
+the agent and how it works. On a fresh install with no provider yet, chat offers a one-time
+138 MiB local model so it is never a dead end, or a link to connect a provider you already
+have.
 
 | Light | Dark |
 |---|---|
@@ -59,8 +63,10 @@ sequenceDiagram
 ## 📚 Knowledge Base
 
 Ingest notes, gists, bookmarks, documents, and media. A node-graph pipeline extracts
-entities and relations, generates summaries, and embeds every item for semantic search —
-here, **7 items → 50 entities → 32 relations**, all reachable by the agent in chat.
+entities and relations, generates summaries, and embeds every item for semantic search, all
+reachable by the agent in chat. Here, **five seeded notes and bookmarks**: extraction and
+semantic search start once a model is bound, so the counters still read 0 entities and 0
+relations. Knowledge, Memory, Files and Artifacts sit together under Library.
 
 | Light | Dark |
 |---|---|
@@ -137,11 +143,12 @@ stateDiagram-v2
 
 ---
 
-## ⏰ Triggers & 🔁 Workflows
+## ⏰ Automations & 🔁 Workflows
 
 Cron / interval / webhook **triggers** fire background work — a native action, a saved
-prompt, a workflow, or an agent — with human-readable schedules and next-fire times.
-**Workflows** are reusable SOPs (ordered playbooks) surfaced by scope + semantic match.
+prompt, a workflow, or an agent — with human-readable schedules and next-fire times; here,
+the built-in heartbeat, self-remediation and digests. **Workflows** are reusable SOPs
+(ordered playbooks); with no runs yet, the page offers its templates to start from.
 
 | Triggers — light | Triggers — dark |
 |---|---|
@@ -156,7 +163,7 @@ prompt, a workflow, or an agent — with human-readable schedules and next-fire 
 ## 🧩 Skills & 🔌 App Platform
 
 Reusable **SKILL.md** procedures from a marketplace, and an **everything-is-an-app**
-platform: 27 built-in apps ship in-package, and every vendor — models, search, speech,
+platform: 37 built-in apps ship in-package, and every vendor — models, search, speech,
 channels, agent runtimes — installs as a removable app through a quarantine → scan →
 consent lifecycle. A "dangerous" scan verdict is terminal and non-overridable.
 
@@ -186,7 +193,8 @@ flowchart LR
 
 Multiple built-in agents cooperate — a default conversational agent plus specialized
 workers for goal loops, the code SDLC engine, planning, and background consolidation —
-all filesystem-defined over the Agent Client Protocol (ACP) and fully editable.
+all filesystem-defined over the Agent Client Protocol (ACP). A built-in's definition is
+fixed and its model swappable; agents you create are fully editable.
 
 | Light | Dark |
 |---|---|
@@ -196,10 +204,11 @@ all filesystem-defined over the Agent Client Protocol (ACP) and fully editable.
 
 ## ⚙️ Settings — provider-agnostic by design
 
-One hub for the whole system. **Models** are assigned per use case (chat, embedding, STT,
-TTS, image, audio, video) from whatever providers you've added — here, `claude-sonnet-5`
-for chat and `text-embedding-3-small` for embeddings, chosen from **108** discovered models.
-Nothing ties you to one vendor.
+One hub for the whole system: security rules, secrets, the audit chain, apps, providers,
+routing and search, each with its live figures. **Models** are assigned per use case (chat
+and its routing sub-categories, embedding, speech-to-text, text-to-speech, and more) from
+whatever providers you've added. This capture has none bound yet; the one model available
+is the bundled offline one. Nothing ties you to one vendor.
 
 | Settings — light | Settings — dark |
 |---|---|
@@ -213,7 +222,8 @@ Nothing ties you to one vendor.
 
 ## 🚀 Onboarding
 
-A short first-run flow: your name, a chat model, and you're in. Warm coral identity on
+A short first-run flow in five steps: your name, bringing your setup over, essential apps,
+a first try, and you're set — or skip it and come back from Settings. Warm coral identity on
 calm surfaces — "companion, not console."
 
 | Light | Dark |
