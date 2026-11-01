@@ -763,6 +763,17 @@ views show, and it has these edges:
   title, follow-ups, memory consolidation) are one-shot calls too, and they are masked as well as
   scanned: each prompt is composed from stored text that no person typed this turn
   (`chores.run_chore`).
+- **Work nobody types is scanned as well as masked.** A loop's planner and workers, a subagent, a
+  heartbeat task, the knowledge pipeline's model steps and a browse step's image reading send
+  their whole request through the same guard (`ModelCallGuard.complete`): each system, user and
+  tool-result text, and what a model wrote (its answers and its tool calls' arguments), is scanned
+  the same way on every call, so a prompt cache's prefix holds. A secret or a suspicious link in
+  it is replaced or refused as `guardrails.scan_mode` says. An email or a phone number is only
+  noted, at every mode: a tool's output is full of digit runs the phone check reads as numbers
+  (file sizes, ids, timestamps), and an address a task names is one the model must use. A
+  one-shot call keeps the whole ladder. A chat turn you send is not scanned (the mask above still
+  covers what its tools read), and neither is a turn an agent CLI runs, since the CLI calls its
+  model itself.
 - **Pixels are not masked.** An image you attach, and a screen frame for computer use, go to a
   vision model as they are, and a key visible in them goes with them.
 - **What you type this turn goes as typed.** A key pasted into a message reaches the model; it is

@@ -168,6 +168,15 @@ describe('the daily dollar cap', () => {
 })
 
 describe('the outbound scan mode', () => {
+  it('says which prompts it scans, and that a chat turn is not one', async () => {
+    gateway()
+    await mount()
+    // 🔴 Before: it said every prompt bound off this machine was scanned, chat turns included.
+    expect(screen.getByText(/your automations, loops, subagents and background work send/)).toBeTruthy()
+    expect(screen.getByText(/A chat turn you send is not scanned/)).toBeTruthy()
+    expect(screen.getByText(/emails and phone numbers are noted, not replaced/)).toBeTruthy()
+  })
+
   it('a declined loosening leaves the stored mode chosen', async () => {
     const { stored } = gateway()
     await mount()

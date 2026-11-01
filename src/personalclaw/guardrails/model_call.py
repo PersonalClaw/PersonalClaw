@@ -36,7 +36,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from personalclaw.guardrails.audit import AttemptRecord, current_caller, now_ms, record_attempt
 from personalclaw.guardrails.breaker import CircuitBreaker, get_breaker
@@ -63,7 +63,13 @@ from personalclaw.guardrails.failure import (
     reads_whole,
 )
 from personalclaw.guardrails.local_queue import Turn, queue_key, take_turn
-from personalclaw.guardrails.scan import scan_outbound
+from personalclaw.guardrails.scan import (
+    SCAN_OFF_LOOP_CHARS,
+    ScanResult,
+    scan_outbound,
+    scan_request,
+    unscanned_chars,
+)
 from personalclaw.guardrails.wire import record_outbound
 from personalclaw.llm.base import (
     EVENT_COMPLETE,
@@ -418,7 +424,7 @@ class ModelCallGuard(ModelProvider):
             self._query_class = ""
 
     async def stream(self, message: str) -> AsyncIterator[LLMEvent]:
-        message = self._prescan(message)
+        message = await self._prescan_long(message)
         self._classify(message)
         guarded = self._guarded(
             self._inner.stream(message), strategy="direct", prompt_chars=len(message)
@@ -436,8 +442,9 @@ class ModelCallGuard(ModelProvider):
         reasoning_effort: str = "",
         max_tokens: int | None = None,
     ) -> AsyncIterator[LLMEvent]:
-        # complete() is the native-loop path (structured messages), out of scope
-        # for the v1 wrap — but budget + breaker still apply if reached.
+        # The native loop's path, and any call that sends structured messages: scanned as
+        # stream()'s prompt is, before the class, the size or the provider reads them.
+        messages = await self._prescan_request(messages)
         self._classify(_joined_content(messages))
         # The cap goes only to an inner provider that takes one (``takes_output_cap``): one that
         # takes none may have no such keyword, and is never sent one, whoever asked.
@@ -530,7 +537,7 @@ class ModelCallGuard(ModelProvider):
         return await self._inner.served_context_window()
 
     async def stream_command(self, command: str) -> AsyncIterator[LLMEvent]:
-        command = self._prescan(command)
+        command = await self._prescan_long(command)
         self._classify(command)
         guarded = self._guarded(
             self._inner.stream_command(command), strategy="direct", prompt_chars=len(command)
@@ -564,39 +571,71 @@ class ModelCallGuard(ModelProvider):
         the mode is re-read on every call (`_refresh_scan_mode`). One scan, one chokepoint, and
         the result carried forward."""
         self._refresh_scan_mode()
-        result = scan_outbound(text, mode=self._scan_mode)
+        return self._publish(scan_outbound(text, mode=self._scan_mode), original=text)
+
+    async def _prescan_long(self, text: str) -> str:
+        """:meth:`_prescan`, with a prompt past ``SCAN_OFF_LOOP_CHARS`` scanned off the event loop,
+        so the gateway's other work does not wait it out."""
+        if len(text) <= SCAN_OFF_LOOP_CHARS:
+            return self._prescan(text)
+        self._refresh_scan_mode()
+        result = await asyncio.to_thread(scan_outbound, text, mode=self._scan_mode)
+        return self._publish(result, original=text)
+
+    async def _prescan_request(self, messages: list[dict]) -> list[dict]:
+        """:meth:`_prescan` for a structured request (:meth:`complete`): each text part, a system,
+        user, tool or assistant message's, is scanned at the same mode and the ladder applied to the
+        whole request (``scan.scan_request``), on a copy that is the same bytes on every call for
+        the same history. A request with more than ``SCAN_OFF_LOOP_CHARS`` not scanned before is
+        scanned off the event loop. Published and refused as :meth:`_prescan` is."""
+        self._refresh_scan_mode()
+        mode = self._scan_mode
+        if unscanned_chars(messages, mode=mode) > SCAN_OFF_LOOP_CHARS:
+            scan = await asyncio.to_thread(scan_request, messages, mode=mode)
+        else:
+            scan = scan_request(messages, mode=mode)
+        self._publish(scan.result, original=scan.original)
+        return scan.messages
+
+    def _publish(self, result: ScanResult, *, original: str) -> str:
+        """Record what the scan made of a prompt (``wire.record_outbound``), refuse it if the scan
+        blocked it, and return the text to send."""
         record_outbound(
             result.text,
-            original=text,
+            original=original,
             findings=result.findings,
             categories=result.categories,
             blocked=result.blocked,
         )
         if result.blocked:
-            mode = FailureMode.INJECTION_BLOCKED if result.injection else FailureMode.SECRET_LEAK
-            self._audit(new_audit_id(), 1, mode, 0.0, 0, 0, False, "direct")
-            from personalclaw.sel import sel
-
-            try:
-                sel().log_api_access(
-                    caller=f"model_call:{self._use_case}",
-                    operation="guardrails.scan_block",
-                    outcome="blocked",
-                    source="guardrails",
-                    resources=(
-                        f"provider={self._provider_name} "
-                        f"categories={','.join(result.categories)}"
-                        + (f" pattern={result.injection_group}" if result.injection else "")
-                    ),
-                )
-            except Exception:
-                logger.debug("SEL scan-block audit failed", exc_info=True)
-            if result.injection:
-                # Names the matched pattern: the rule for the fire-path screen applies here
-                # too — a block nobody can appeal against is a block nobody can debug.
-                raise PromptInjectionBlocked(result.findings, result.injection_group)
-            raise SecretLeakBlocked(result.findings)
+            self._refuse(result)
         return result.text
+
+    def _refuse(self, result: ScanResult) -> NoReturn:
+        """Refuse a call the scan blocked: audited, a security event, and never retried."""
+        mode = FailureMode.INJECTION_BLOCKED if result.injection else FailureMode.SECRET_LEAK
+        self._audit(new_audit_id(), 1, mode, 0.0, 0, 0, False, "direct")
+        from personalclaw.sel import sel
+
+        try:
+            sel().log_api_access(
+                caller=f"model_call:{self._use_case}",
+                operation="guardrails.scan_block",
+                outcome="blocked",
+                source="guardrails",
+                resources=(
+                    f"provider={self._provider_name} "
+                    f"categories={','.join(result.categories)}"
+                    + (f" pattern={result.injection_group}" if result.injection else "")
+                ),
+            )
+        except Exception:
+            logger.debug("SEL scan-block audit failed", exc_info=True)
+        if result.injection:
+            # Names the matched pattern: the rule for the fire-path screen applies here
+            # too — a block nobody can appeal against is a block nobody can debug.
+            raise PromptInjectionBlocked(result.findings, result.injection_group)
+        raise SecretLeakBlocked(result.findings)
 
     def _refresh_budgets(self) -> None:
         """Read the day and run spend ceilings as they are now, from the sources given.
