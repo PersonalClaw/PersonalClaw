@@ -117,6 +117,12 @@ that saves its turns or imports a thread with them declares it.
 around the turn), and what its tools would change of the owner's memory waits for her own word
 unless that sender is the owner. A channel app that runs a conversation's turns itself declares it.
 
+``UNGATED_CALLS``: a channel that runs a conversation on an agent CLI reports each call the CLI ran
+without asking (its result came with no permission request) through
+``personalclaw.sdk.channel.report_ungated_call``, which judges and audits it as every host in core
+does and stops the turn when the channel's answer says so, and says it in core's words
+(``ungated_call_note``). A channel app that reports them declares it.
+
 ``WAITING_LIST``: everything waiting on the owner is one list, ``GET /api/waiting``, every kind with
 its brief and the route it is answered through, and a ``waiting_changed`` frame says it moved. An
 app that reads the list declares it, with ``/api/waiting`` in its manifest.
@@ -146,6 +152,7 @@ from personalclaw.apps.core_features import (
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
+    UNGATED_CALLS,
     WAITING_LIST,
     core_has,
 )
@@ -174,6 +181,7 @@ __all__ = [
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
     "TURNS_NAME_WHO_ASKED",
+    "UNGATED_CALLS",
     "WAITING_LIST",
     "core_has",
 ]

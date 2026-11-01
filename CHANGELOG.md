@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **A channel app that runs a conversation on an agent CLI reports a call the CLI ran without asking the way PersonalClaw's own chat does: `personalclaw.sdk.channel.report_ungated_call` (core feature `ungated-calls`) judges the call, records it in the security log as run without asking, under the app that asked for the session and only for that session, and stops the turn when the app's answer says so.**
+
 ### Fixed
 
 - **A chat turn shows what it recalled where it recalled it: a line above the text it fed, or between the steps it came between, the same after a reload, with how much was recalled and a link to review it one tap away. The turn's footer no longer says it; it keeps what the turn learned, the model that answered and the telemetry.**

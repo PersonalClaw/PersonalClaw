@@ -81,6 +81,17 @@ TOOL_CALL_SCREEN = "tool-call-screen"
 #: no ``ask_pre_tool_hooks``, so an app that imports it does not load.
 PRE_TOOL_HOOKS = "pre-tool-hooks"
 
+#: A channel that runs a conversation on an agent CLI reports each call the CLI ran without asking
+#: (one whose result arrives with no permission request before it) the one way every host in core
+#: does: ``await report_ungated_call(provider, card, session_key=…, on_ungated=…)`` judges the
+#: call by core's record of what the CLI asks about, hands the channel the call (``UngatedCall``)
+#: for its answer (``HostAnswer``: whether the turn stops, and the posture it judged that by),
+#: writes the call's one log line and ``ungated`` audit row as the app that asked for the session's
+#: runtime, and stops the turn when the answer says so; a session that is not the runtime's, or not
+#: the app's, is refused. ``ungated_call_note`` is what the channel says of it. A core without it
+#: has no ``report_ungated_call``, so an app that imports it does not load.
+UNGATED_CALLS = "ungated-calls"
+
 #: A chat's link to a channel thread names the channel the thread is on, and that is where the
 #: chat answers: ``link_channel(chat, thread, channel_id, provider=…)`` on the dashboard state a
 #: channel is handed links a chat there (moving it off any thread it was on; the owner's own DM it
@@ -238,6 +249,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,
+        UNGATED_CALLS,
         WAITING_LIST,
     }
 )

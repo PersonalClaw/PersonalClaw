@@ -246,6 +246,38 @@ A channel that uses these declares the core features in its `app.json`:
 `TOOL_CALL_SCREEN`). A PersonalClaw without them has none of these functions, and refuses to
 install or update the app.
 
+### A call the agent CLI ran without asking
+
+An agent CLI decides for itself which of its calls ask the host first, so a turn on one can run a
+call that never reaches your approval prompt. You learn of it only at its result: a tool result for
+a call that made no permission request. Hiding its card, or saying it was blocked, can't stop it,
+since it already ran. Report it the way PersonalClaw's own chat does:
+
+```python
+from personalclaw.sdk.channel import HostAnswer, report_ungated_call, ungated_call_note
+
+def on_ungated(call):
+    say(ungated_call_note(call.who, excused=call.excused))  # "Ran without asking you — …"
+    return HostAnswer(stop=your_rule_stops(call), posture={"channel": PROVIDER})
+
+await report_ungated_call(provider, card, session_key=session_key, on_ungated=on_ungated)
+```
+
+`provider` is the runtime `sessions.get_or_create(session_key)` gave your turn, and `card` the
+call's tool-call card (a result carries no arguments). `report_ungated_call` judges the call by
+PersonalClaw's record of what that CLI asks about, hands it to `on_ungated` for your answer (whether
+the turn stops, and the posture you judged that by, which the audit row records), writes the call's
+one log line and its `ungated` row in the security log, and stops the turn when your answer says so.
+The row names your app as the one that asked for the session's runtime, and the agent that session
+runs: neither is yours to pass. A `session_key` the runtime is not held under, a runtime your
+app's code did not ask for, or a call made in a task of its own (whose code made it can't be told
+there, so await it) is refused with `PermissionError` and nothing is recorded. An `on_ungated` that
+returns anything but a `HostAnswer`, an `async def` one included, stops the turn. It answers
+`None` for a runtime that is no agent CLI, whose calls always ask. A
+channel that reports them declares `"requiresCoreFeatures": ["ungated-calls"]`
+(`personalclaw.sdk.features.UNGATED_CALLS`): a PersonalClaw without it has no `report_ungated_call`,
+and refuses to install or update the app.
+
 ### The owner's answer to the Morning triage digest
 
 When the owner's notification rule sends the Morning triage digest to their DM on your channel, the

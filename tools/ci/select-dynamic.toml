@@ -186,6 +186,12 @@ named = true
 why = "loads a file it names by its path"
 
 [[site]]
+file = "tests/test_a_channel_reports_a_call_its_agent_cli_ran_unasked.py"
+call = "importlib.util.spec_from_file_location(f'_pcfixture_{name}', root / 'channel.py')"
+outside = true
+why = "loads a channel file the test wrote"
+
+[[site]]
 file = "tests/test_a_declared_read_asks_nobody.py"
 call = "importlib.import_module(module)"
 named = true
