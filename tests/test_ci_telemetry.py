@@ -129,8 +129,9 @@ class FakeGh:
         self.behind = 0
         self.head_runs: list[dict] = []
         self.events: list[dict] = []
-        #: Main's rules, which the tree check reads for a merge queue (0.4.0 A1): none yet.
-        self.rules: list[dict] = [{"type": "pull_request"}]
+        #: Main's rules, which the tree check reads for a merge queue (0.4.0 A1): none yet. An
+        #: exception planted here is the read failing.
+        self.rules: object = [{"type": "pull_request"}]
         #: Other runs, by id: the run object, its first attempt, and its artifacts.
         self.others: dict[int, dict] = {}
 
@@ -196,6 +197,8 @@ class FakeGh:
         if path.startswith("repos/o/r/issues/"):
             return json.dumps(self.events)
         if path.startswith("repos/o/r/rules/branches/main"):
+            if isinstance(self.rules, Exception):
+                raise self.rules
             return json.dumps(self.rules)
         for ident, other in self.others.items():
             base = f"repos/o/r/actions/runs/{ident}"
@@ -1835,6 +1838,44 @@ def test_a_pull_request_run_that_did_not_test_the_pushed_tree_is_never_read(
     assert all(t["run_id"] == RUN for t in lines if t["kind"] == "test")
     assert not any(f"/runs/{OTHER}/artifacts" in a for a in gh.asked)
     assert reason in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("rules", "reason"),
+    [
+        pytest.param(
+            subprocess.CalledProcessError(1, ["gh", "api"], "", "HTTP 502"),
+            "could not find out: GET /repos/o/r/rules/branches/main?per_page=100",
+            id="the-read-fails",
+        ),
+        pytest.param(
+            {"message": "Not Found"},
+            "could not find out: main's rules are not a list",
+            id="an-answer-that-is-not-a-list",
+        ),
+        pytest.param(
+            [{"type": "merge_queue"}],
+            "main's merges are queued, and no merge.yml merge_group run ran on the pushed commit",
+            id="a-live-queue-and-no-queue-run",
+        ),
+    ],
+)
+def test_a_push_the_tree_check_cannot_vouch_for_by_main_s_rules_still_writes_its_history(
+    rules: object, reason: str, tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """The tree check reads main's rules to learn whether its merges are queued (0.4.0 A1). A
+    read that fails, or a queue the push bypassed, is its no: the push's history is still
+    written, with its own reports only and ``tested_by`` null, and the log says why."""
+    gh = _tested(FakeGh())
+    gh.rules = rules
+    code, lines = _collect(tmp_path, monkeypatch, gh)
+    assert code == 0 and lines[0]["kind"] == "run" and lines[0]["tested_by"] is None
+    assert {t["run_id"] for t in lines if t["kind"] == "test"} == {RUN}
+    assert any(a.startswith("repos/o/r/rules/branches/main") for a in gh.asked)
+    assert not any(f"/runs/{OTHER}" in a for a in gh.asked)
+    assert f"no pull request run's reports are read for this push: {reason}" in (
+        capsys.readouterr().out
+    )
 
 
 def test_every_report_name_the_collector_writes_is_ascii(tmp_path: Path, monkeypatch) -> None:
