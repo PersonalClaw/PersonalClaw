@@ -328,14 +328,30 @@ def test_a_record_whose_only_failure_is_a_flake_reads_red_and_lists_it(
 
 
 def test_the_same_failure_under_a_quarantine_entry_reads_green_and_is_listed(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
     records = _all_green()
     records.update(_named(_record("suite (1/2)", quarantined=[FLAKY])))
     assert _run(_setup(tmp_path, records)) == 0
     out = capsys.readouterr().out
     assert out.startswith("### Verdict: green\n")
     assert f"- `suite (1/2)` attempt 1: `{FLAKY}`: quarantined" in out
+
+
+@pytest.mark.parametrize("event", ["pull_request", "merge_group"])
+def test_a_changes_run_with_no_changed_list_waives_no_quarantined_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, event: str
+) -> None:
+    """The runner's event says the run is a change's; with no changed list to show the change
+    cannot reach the quarantined test, its failure is red, and says why."""
+    monkeypatch.setenv("GITHUB_EVENT_NAME", event)
+    records = _all_green()
+    records.update(_named(_record("suite (1/2)", quarantined=[FLAKY])))
+    assert _run(_setup(tmp_path, records)) == 1
+    out = capsys.readouterr().out
+    assert f"- `suite (1/2)`: {verdict.UNWAIVED} (`{FLAKY}` failed under quarantine" in out
+    assert "given no changed list" in out
 
 
 def test_the_step_summary_lists_failed_tests_within_its_bound_and_the_log_lists_every_one(

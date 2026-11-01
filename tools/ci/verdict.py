@@ -27,11 +27,15 @@ A result read from a record carries the record's failed tests (:class:`FailedTes
 diagnostic rerun classified :data:`FLAKE` or :data:`REPEATED_FAILURE`, or left
 :data:`NOT_CLASSIFIED`, and each quarantined failure (:data:`QUARANTINED`). :func:`decide` lists
 every one of them in the verdict. A pass that a quarantine entry waived a failure in reads green,
-and a failure reads red, but for one thing: on a pull request's run, given its changed paths and
-the run's jobs, the flake rule (:func:`_pass_flakes`) passes a run whose only failures are at most
-:data:`MAX_FLAKES` tests that each passed alone in a new process, in a file the pull request does
-not change, and names each one (:func:`flake_notices`). A red is still never rerun into green:
-the rule reads the one attempt's records, and a later attempt fills nothing attempt 1 left.
+but on a pull request's run, given its changed paths, only when the pull request changes no file
+the quarantined test's run reads; one it reads is red (:data:`UNWAIVED`, :func:`_unwaived`), and
+so is every one on such a run given no changed list: a quarantine waives a known failure, never
+one the change reaches through the test's own files. A failure reads red, but for
+one thing: on a pull request's run, given its changed paths and the run's jobs, the flake rule
+(:func:`_pass_flakes`) passes a run whose only failures are at most :data:`MAX_FLAKES` tests that
+each passed alone in a new process, in a file the pull request does not change, and names each
+one (:func:`flake_notices`). A red is still never rerun into green: the rule reads the one
+attempt's records, and a later attempt fills nothing attempt 1 left.
 
 Given the run's id (``run_id``, when the results are one run's own records, :func:`read_records`),
 :func:`decide` reads two more reds: a result of another run (``another run``) or of none (``no
@@ -494,6 +498,45 @@ def changed_reads(test: str, changed: Iterable[str]) -> list[str] | str:
     return sorted(c for c in changed if _read_by(test, files, folders, c))
 
 
+def _unwaived(tests: Sequence[FailedTest], changed: frozenset[str] | None) -> list[Reason]:
+    """A red for each quarantined failure a pull request's change reaches through the test's own
+    files: its test's run reads a file the pull request changes (:func:`_reads`, as the flake
+    rule reads it), its id names no file to tell, or the run of a change was given no changed
+    list (*changed* None) to show it does not. A quarantine entry waives the failure it was made
+    for, so a change to its test, a conftest above it or the runner's configuration is judged as
+    if it had none."""
+    reasons: list[Reason] = []
+    for t in tests:
+        if t.standing != QUARANTINED:
+            continue
+        if changed is None:
+            reasons.append(
+                Reason(
+                    t.key,
+                    UNWAIVED,
+                    f"`{_inline(t.test)}` failed under quarantine, and this run of a change was"
+                    " given no changed list to show the change cannot reach it",
+                )
+            )
+            continue
+        found = _reads(t.test)
+        if isinstance(found, str):
+            reasons.append(Reason(t.key, UNWAIVED, f"{found}, so no quarantine waives it"))
+            continue
+        files, folders = found
+        hit = sorted(c for c in changed if _read_by(t.test, files, folders, c))
+        if hit:
+            reasons.append(
+                Reason(
+                    t.key,
+                    UNWAIVED,
+                    f"`{_inline(t.test)}` failed under quarantine and its run reads"
+                    f" `{_inline(hit[0])}`, which the pull request changes",
+                )
+            )
+    return reasons
+
+
 def _ran_alone(argv: Sequence[str]) -> bool:
     """Whether *argv* is run-job's alone rerun of Playwright tests: ``npx playwright test`` with
     :data:`E2E_ALONE`, and no other option that adds workers or tries."""
@@ -620,6 +663,7 @@ def decide(
     key_partners: Mapping[str, Iterable[str]] | None = None,
     changed: Iterable[str] | None = None,
     jobs: Sequence[JobRun] | None = None,
+    change_run: bool = False,
 ) -> Verdict:
     """The verdict on ``candidate``: green only when every planned job did its work on it.
 
@@ -630,8 +674,11 @@ def decide(
     candidate's partners exactly.
 
     ``changed`` (a pull request's changed paths) and ``jobs`` (its run's jobs on the attempt) are
-    given on a pull request's run only. With both, a run whose only failures are flakes the flake
-    rule passes (:func:`_pass_flakes`) is green, and names them; without them it passes none."""
+    given on a pull request's run only. With ``changed``, a quarantined failure whose test's run
+    reads a changed file is red (:func:`_unwaived`); ``change_run`` says the run is a pull
+    request's or a queue commit's, where with no ``changed`` every quarantined failure is red.
+    With both, a run whose only failures are flakes the flake rule passes (:func:`_pass_flakes`)
+    is green, and names them; without them it passes none."""
     if run_id is not None and (not _whole(run_id) or run_id < 1):
         raise Refused(f"run_id must be a whole number from 1, got {run_id!r}")
     plan: list[str] = []
@@ -665,8 +712,10 @@ def decide(
         if fault:
             reasons.append(Reason(key, *fault))
     listed = tuple(sorted(tests, key=lambda t: (t.key, t.attempt, t.test)))
-    # The tests are listed, and read for nothing else but the flake rule's one question: whether
-    # the flakes it passes are the whole of why the run reads red.
+    if paths is not None or change_run:
+        reasons += _unwaived(listed, paths)
+    # The tests are listed, and read for nothing else but the quarantine's one question above and
+    # the flake rule's: whether the flakes it passes are the whole of why the run reads red.
     if (
         reasons
         and paths is not None
@@ -866,6 +915,12 @@ NOT_CLASSIFIED = "not classified"
 QUARANTINED = "quarantined"
 #: Why a quarantined failure is listed and not red.
 WAIVED = "a quarantine entry waived it"
+#: The red of a quarantined failure a pull request's change reaches through the test's own files
+#: (:func:`_unwaived`).
+UNWAIVED = "quarantined failure the change reads"
+#: The events whose run is a change's (a pull request's, or a queue commit's of main's merge
+#: queue): there a quarantine waives a failure only given the changed list that shows it may.
+CHANGE_EVENTS = frozenset({"pull_request", "merge_group"})
 #: Where a sharded job's file list came from: CI's own plan, or a local run's even split.
 PLANS = frozenset({"ci", "offline"})
 
@@ -1561,6 +1616,8 @@ def main(argv: list[str] | None = None) -> int:
                 key_partners=key_partners,
                 changed=changed,
                 jobs=jobs,
+                # The runner sets it, and no step can overwrite a GITHUB_* default.
+                change_run=os.environ.get("GITHUB_EVENT_NAME", "") in CHANGE_EVENTS,
             )
         else:
             proven = _json_file(args.superseded, "--superseded")

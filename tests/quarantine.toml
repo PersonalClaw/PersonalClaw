@@ -11,9 +11,11 @@
 #   reason   one line: what fails, and why it is waived rather than fixed today
 #
 # A quarantined test still runs: its failure is recorded as a quarantined failure, not a red, and
-# a pass stays a pass. A rail or a security-marked test is never quarantined, and an expected
-# failure this list does not name (an xfail mark, pytest.xfail()) is red. The weekly CI health
-# report (#3948) reads this file for the quarantine's status, so its shape changes there too.
+# a pass stays a pass; on a pull request's run, only when the pull request changes no file the
+# test's run reads. Add one with `python -m tools.ci quarantine add` (14 days out at first).
+# A rail or a security-marked test is never quarantined, and an expected failure this list does
+# not name (an xfail mark, pytest.xfail()) is red. The weekly CI health report (#3948) reads this
+# file for the quarantine's status, so its shape changes there too.
 #
 # [[entry]]
 # nodeid = "tests/test_example.py::test_it"
