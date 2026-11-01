@@ -534,7 +534,10 @@ class TestTasksOntoAWorkflowRun:
             )
         finally:
             await client.close()
-        assert seen["idempotency_key"] == "a2a:m-1"
+        # Held to the caller: the surface's own token here, the principal `session_key_for("")`
+        # names. A registered client's key carries its id
+        # (test_an_a2a_retry_key_is_its_clients_own.py).
+        assert seen["idempotency_key"] == "a2a:a2a:m-1"
 
     @pytest.mark.asyncio
     async def test_a_failed_start_is_reported_not_swallowed(self, monkeypatch):

@@ -33,8 +33,9 @@ minting an A2A id and remembering the pairing — puts the mapping in a process-
 cache that a restart drops, so ``GET /a2a/tasks/<id>`` would 404 on a run that plainly
 exists. The A2A spec has the *server* assign ``Task.id``, so nothing is owed to the
 client here. A client's ``messageId`` (or an explicit ``idempotencyKey``) becomes
-``start_run``'s caller key instead, which is what makes a retried send return the same
-task rather than starting a second run.
+``start_run``'s caller key instead, held to the client that sent it: a retried send returns
+the same task rather than starting a second run, and another client's send with the same
+key starts a task of its own.
 
 **Headless is inherited, not configured.** The run's session key is
 ``inbound:a2a:<client>``, and ``session_keys.INBOUND`` already classifies
@@ -608,17 +609,23 @@ def _inputs_of(body: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def _caller_key_of(body: dict[str, Any]) -> str:
-    """The client's own retry key. ``messageId`` is A2A's; ``idempotencyKey`` is explicit."""
+def _caller_key_of(body: dict[str, Any], *, client_id: str) -> str:
+    """The client's own retry key. ``messageId`` is A2A's; ``idempotencyKey`` is explicit.
+
+    It names one client's request, so it carries the client: the same key from another client,
+    or from the surface's own token (the principal its runs' session key names,
+    :func:`session_key_for`), is a request of that caller's own, and starts a run of its own.
+    """
+    caller = client_id or SURFACE
     for key in ("idempotencyKey", "idempotency_key", "messageId", "message_id"):
         value = body.get(key)
         if isinstance(value, str) and value.strip():
-            return f"a2a:{value.strip()}"
+            return f"a2a:{caller}:{value.strip()}"
     message = body.get("message")
     if isinstance(message, dict):
         value = message.get("messageId") or message.get("message_id")
         if isinstance(value, str) and value.strip():
-            return f"a2a:{value.strip()}"
+            return f"a2a:{caller}:{value.strip()}"
     return ""
 
 
@@ -770,7 +777,7 @@ async def _start_task(
         mode="background",
         origin_kind=OriginKind.API,
         session_key=session_key_for(client_id),
-        idempotency_key=_caller_key_of(body),
+        idempotency_key=_caller_key_of(body, client_id=client_id),
     )
     if not started.get("ok"):
         # `workflows.service._service_failure` returns a FLAT envelope — `{"ok": False,
