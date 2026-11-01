@@ -69,10 +69,10 @@ def home(tmp_path, monkeypatch) -> Path:
     return user
 
 
-def _named_paths_before(text, *, cwd=None, home=None, names=(), named=None):
+def _named_paths_before(text, *, cwd=None, home=None, names=(), named=None, unexpanded=None):
     """`command_paths.named_paths` as it was: every part read, however often it repeats. It takes
-    the name rule (*named*) as the reading does now, so the screens ask it what they ask the
-    reading."""
+    the name rule (*named*) and the list of globs left unexpanded (*unexpanded*) as the reading does
+    now, so the screens ask it what they ask the reading."""
     root = Path(home) if home is not None else cp._home()
     user_home = os.path.expanduser("~")
     spelled = cp._spell_out(text, personalclaw_home=str(root), user_home=user_home)
@@ -97,7 +97,7 @@ def _named_paths_before(text, *, cwd=None, home=None, names=(), named=None):
                 continue
             path = Path(os.path.expanduser(word))
             for candidate in [path] if path.is_absolute() else [base / path for base in bases]:
-                for found in cp._globbed(candidate, budget):
+                for found in cp._globbed(candidate, budget, unexpanded):
                     yield word, found
 
 

@@ -201,12 +201,13 @@ def _working_dirs(segments: list[str], start: Path, user_home: str) -> list[Path
     return bases
 
 
-def _globbed(path: Path, budget: list[int]) -> list[Path]:
+def _globbed(path: Path, budget: list[int], unexpanded: list[Path] | None = None) -> list[Path]:
     """What *path* names once its globs are expanded against this filesystem.
 
     Hidden entries included, and matched regardless of case, so the answer can only be wider than
     the shell's. A glob that would list more folders than *budget* still allows, or match more
-    than :data:`_MAX_MATCHES` paths, is checked as it is written.
+    than :data:`_MAX_MATCHES` paths, is answered as it is written, and added to *unexpanded*: what
+    it names is not known, so a screen judges it by what it could reach (:func:`glob_reaches`).
     """
     parts = path.parts
     if not any(_MAGIC.search(part) for part in parts):
@@ -220,7 +221,7 @@ def _globbed(path: Path, budget: list[int]) -> list[Path]:
         matched: list[str] = []
         for prefix in found:
             if budget[0] <= 0:
-                return [path]
+                return _left_unexpanded(path, unexpanded)
             budget[0] -= 1
             try:
                 with os.scandir(prefix) as entries:
@@ -228,13 +229,93 @@ def _globbed(path: Path, budget: list[int]) -> list[Path]:
                         if fnmatch.fnmatchcase(entry.name.casefold(), wanted):
                             matched.append(os.path.join(prefix, entry.name))
                             if len(matched) > _MAX_MATCHES:
-                                return [path]
+                                return _left_unexpanded(path, unexpanded)
             except OSError:
                 continue
         found = matched
         if not found:
             return [path]
     return [Path(p) for p in found]
+
+
+def _left_unexpanded(path: Path, unexpanded: list[Path] | None) -> list[Path]:
+    if unexpanded is not None:
+        unexpanded.append(path)
+    return [path]
+
+
+def _glob_tokens(text: str) -> list[str]:
+    """*text*, a glob component, as one token a character: ``*`` for any run, ``?`` for any one
+    character (a ``[...]`` class is read as one too, which can only widen it) and each other
+    character as itself."""
+    tokens: list[str] = []
+    at = 0
+    while at < len(text):
+        char = text[at]
+        if char == "*":
+            if not tokens or tokens[-1] != "*":
+                tokens.append("*")
+        elif char == "?":
+            tokens.append("?")
+        elif char == "[" and (end := text.find("]", at + 2)) > 0:
+            tokens.append("?")
+            at = end
+        else:
+            tokens.append(char)
+        at += 1
+    return tokens
+
+
+def glob_meets(one: str, other: str) -> bool:
+    """Whether two glob components, either of them a plain name, can name one entry: there is a
+    name both match. Regardless of case, and a dot first matched like any other character, so the
+    answer can only be wider than the shell's."""
+    a, b = _glob_tokens(one.casefold()), _glob_tokens(other.casefold())
+    seen: dict[tuple[int, int], bool] = {}
+
+    def meet(i: int, j: int) -> bool:
+        if (i, j) not in seen:
+            if i == len(a) and j == len(b):
+                seen[i, j] = True
+            elif i < len(a) and a[i] == "*":
+                seen[i, j] = meet(i + 1, j) or (j < len(b) and meet(i, j + 1))
+            elif j < len(b) and b[j] == "*":
+                seen[i, j] = meet(i, j + 1) or (i < len(a) and meet(i + 1, j))
+            elif (
+                i < len(a)
+                and j < len(b)
+                and "?" in (a[i], b[j])
+                or (i < len(a) and j < len(b) and a[i] == b[j])
+            ):
+                seen[i, j] = meet(i + 1, j + 1)
+            else:
+                seen[i, j] = False
+        return seen[i, j]
+
+    return meet(0, 0)
+
+
+def glob_forms(glob: Path) -> list[tuple[str, ...]]:
+    """The parts of *glob*, an absolute path with a glob in it, as written (``.`` and ``..``
+    folded) and with the folder before its first glob resolved, so a link there is followed."""
+    written = os.path.normpath(os.path.abspath(glob))
+    parts = Path(written).parts
+    first = next((n for n, part in enumerate(parts) if _MAGIC.search(part)), len(parts))
+    forms = {written.casefold()}
+    try:
+        forms.add(os.path.join(os.path.realpath(os.path.join(*parts[:first])), *parts[first:]))
+    except (OSError, ValueError):
+        pass
+    return [Path(form.casefold()).parts for form in forms]
+
+
+def glob_reaches(glob_parts: tuple[str, ...], location: str) -> bool:
+    """Whether a glob, by its parts (:func:`glob_forms`), could name *location*, an absolute path,
+    or a path inside it."""
+    wanted = Path(location.casefold()).parts
+    return len(glob_parts) >= len(wanted) and all(
+        glob_meets(part, name) for part, name in zip(glob_parts, wanted)
+    )
 
 
 def is_glob(word: str) -> bool:
@@ -265,6 +346,7 @@ def named_paths(
     home: str | os.PathLike[str] | None = None,
     names: Iterable[str] = (),
     named: Callable[[str], bool] | None = None,
+    unexpanded: list[Path] | None = None,
 ) -> Iterator[tuple[str, Path]]:
     """Every word of *text* — a shell command or a tool call's title — that names a path, with the
     path it names, absolute and as the shell would find it.
@@ -276,7 +358,8 @@ def named_paths(
     agent's tools run. A brace list and a glob are expanded. A word counts when it looks like a path
     (a slash, or a leading ``.`` or ``~``) or is one of *names*, the bare names a screen protects,
     in any case, or a name *named* says it protects (a name rule, where a list cannot hold every
-    name).
+    name). A glob past the bounds on what a reading may cost is named as it is written, and added
+    to *unexpanded* (:func:`_globbed`).
     """
     root = Path(home) if home is not None else _home()
     user_home = os.path.expanduser("~")
@@ -317,7 +400,7 @@ def named_paths(
                 continue
             path = Path(os.path.expanduser(word))
             for candidate in [path] if path.is_absolute() else [base / path for base in bases]:
-                for found in _globbed(candidate, budget):
+                for found in _globbed(candidate, budget, unexpanded):
                     yield word, found
         if budget[0] == left:
             read.add(segment)

@@ -17,12 +17,15 @@ from urllib.parse import parse_qs
 from personalclaw import address_logins
 from personalclaw.command_paths import (
     HOME_PATTERNS,
+    glob_forms,
+    glob_meets,
+    glob_reaches,
     is_glob,
     named_paths,
     shell_expands_to,
     strip_shell_quotes,
 )
-from personalclaw.project_secrets import is_project_secret_name
+from personalclaw.project_secrets import PROJECT_SECRET_FILE_PATTERNS, is_project_secret_name
 from personalclaw.sel import SecurityEvent, SecurityEventLog
 from personalclaw.shell_syntax import Word, lex, simple_commands
 
@@ -594,6 +597,25 @@ class SensitivePaths:
             return CREDENTIAL
         return ""
 
+    def glob_kind(self, glob: Path, folders: tuple[str, ...] = ()) -> str:
+        """What a glob nobody expanded could name, by every place and name this protects: a
+        protected location (or *folders*, the credential folders a listing would show) it could
+        reach, or a protected name its last part could match. :data:`OWN_SECRET`,
+        :data:`CREDENTIAL` or ``""``, as :meth:`kind` answers for a path."""
+        for parts in glob_forms(glob):
+            if any(glob_reaches(parts, location) for location in self._own):
+                return OWN_SECRET
+            if any(glob_reaches(parts, location) for location in (*self._other, *folders)):
+                return CREDENTIAL
+            last = parts[-1] if parts else ""
+            if any(glob_meets(last, name) for name in self._own_names):
+                return OWN_SECRET
+            if any(glob_meets(last, name) for name in self._sign_in_names) or any(
+                glob_meets(last, pattern) for pattern in PROJECT_SECRET_FILE_PATTERNS
+            ):
+                return CREDENTIAL
+        return ""
+
     def names_one(self, word: str) -> bool:
         """Whether the bare *word* is the name of a file this refuses wherever it sits: a word a
         reader of a command reads as a path once a ``cd`` has moved the shell beside it."""
@@ -870,6 +892,13 @@ _SHELL_REFUSAL = {
     CREDENTIAL: "Blocked: command accesses sensitive credential path",
 }
 
+#: The refusal of a glob the screen did not expand (:meth:`SensitivePaths.glob_kind`).
+_UNEXPANDED_REFUSAL = (
+    "Blocked: command names more globs, or a glob matching more paths, than the screen expands, "
+    "and one it left unexpanded could reach a sensitive credential path. Name the files, or run "
+    "it as smaller commands"
+)
+
 
 def _credential_folders() -> tuple[str, ...]:
     """The credential folders under ``$HOME`` themselves, as written and as resolved
@@ -929,6 +958,9 @@ def is_sensitive_bash_command(
     stored secrets' names and ``awk`` printed a key, and from the workspace inside the home
     ``cat ../.env`` read the same file on any install.
 
+    A glob the reading did not expand, past its bounds on folders listed or paths matched, is
+    refused when it could reach any protected place or name (:meth:`SensitivePaths.glob_kind`).
+
     Defence in depth: a command can build a path out of pieces no reading of its text sees.
     """
     normalised = strip_shell_quotes(_normalise_for_matching(command))
@@ -940,11 +972,14 @@ def is_sensitive_bash_command(
     # it, and asked again they give the same answer: each is resolved once. The set lives only for
     # this call, so a path that becomes a link afterwards is seen by the next check.
     checked: set[tuple[str, str]] = set()
+    unexpanded: list[Path] = []
     # A word can name more than one file (a bare `.env` is read against every folder the command
     # can be in), and it is refused as the most particular of them: PersonalClaw's own key ends the
     # reading at once; any other credential is said once every path is read.
     refused = ""
-    for word, path in named_paths(command, cwd=cwd, names=owned.names, named=owned.names_one):
+    for word, path in named_paths(
+        command, cwd=cwd, names=owned.names, named=owned.names_one, unexpanded=unexpanded
+    ):
         if (word, str(path)) in checked:
             continue
         checked.add((word, str(path)))
@@ -955,6 +990,10 @@ def is_sensitive_bash_command(
             refused = _SHELL_REFUSAL[CREDENTIAL]
     if refused:
         return refused
+    # Past the bounds on what one reading may list or match (`command_paths._globbed`), a glob is
+    # named as written, and as written it names no protected file. Judged by what it could reach.
+    if any(owned.glob_kind(glob, folders) for glob in unexpanded):
+        return _UNEXPANDED_REFUSAL
     return None
 
 

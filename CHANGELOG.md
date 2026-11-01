@@ -16,6 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Every sign-in link PersonalClaw prints or opens names the exact address the gateway listens on, `127.0.0.1` by default, never `localhost` or `personalclaw.localhost`: the startup link, `personalclaw token`, setup's dashboard line, and the tunnel hints the banner and the Doctor give.**
 - **A command started in a folder takes only credentials from that folder's `.env`, never a PersonalClaw setting (`PERSONALCLAW_*`) or any other name, and names on stderr each one it took and each it left out.**
 - **The agent's file tools, the Files view and the shell's screen refuse a project's secret files by their names, wherever they sit: `.env` and its variants such as `.env.local` and `prod.env`, `.envrc`, a `secrets` data file such as `secrets.json` or `secrets.yaml`, `credentials*.json`, `service-account*.json`, `.npmrc`, `.pypirc` and `.netrc`. In every approval mode the agent can't read, write or name one, so a step like copying `.env.example` to `.env` is yours to do. A template such as `.env.example`, and a source module such as `secrets.py`, still read.**
+- **The shell's credential screen refuses a glob it did not expand, past its bounds on folders listed or paths matched, when that glob could reach a protected place or name. A glob that could reach none still runs.**
 
 ## [0.3.3] — 2026-11-01
 
