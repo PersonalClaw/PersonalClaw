@@ -286,19 +286,22 @@ def test_the_web_profile_passes_on_an_uncommitted_tree(tmp_path: Path, monkeypat
 
     commands = [c.command for c in resolve_commands(["web"])]
     assert cli._execute(commands, dry_run=False) == 0
-    # The profile runs the catalogue's web-unit job: its toolchain's installs, then its steps,
-    # word for word, as the catalogue in the planted checkout says. Each install as the stubs hear
-    # it: `npm ci` itself, and the electron install's own `node` (tools/ci/install_electron.sh).
+    # The profile runs the catalogue's web-unit, desktop-unit and mobile-unit jobs, in that
+    # order: each one's toolchain's installs, then its steps, word for word, as the catalogue in
+    # the planted checkout says. Each install as the stubs hear it: `npm ci` itself, and the
+    # electron install's own `node` (tools/ci/install_electron.sh).
     from tools.ci import jobs
 
     heard = {"npm-ci": ["npm ci"], "electron": ["node node_modules/electron/install.js"]}
-    web_unit = catalogue.read(root).job("web-unit")
-    installs = [tool for tool in web_unit.toolchain if tool in jobs.INSTALL_ARGV]
-    assert set(installs) <= set(
-        heard
-    ), f"an install this test does not know how the stubs hear: {installs}"
-    want = [line for tool in installs for line in heard[tool]]
-    want += [" ".join(step.argv) for step in web_unit.command]
+    want: list[str] = []
+    for job_id in ("web-unit", "desktop-unit", "mobile-unit"):
+        job = catalogue.read(root).job(job_id)
+        installs = [tool for tool in job.toolchain if tool in jobs.INSTALL_ARGV]
+        assert set(installs) <= set(
+            heard
+        ), f"an install this test does not know how the stubs hear: {installs}"
+        want += [line for tool in installs for line in heard[tool]]
+        want += [" ".join(step.argv) for step in job.command]
     assert asked.read_text().splitlines() == want
 
 
