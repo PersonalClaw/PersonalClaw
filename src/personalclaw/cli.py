@@ -1662,6 +1662,64 @@ def _claim_the_home() -> None:
         sys.exit(1)
 
 
+def _read_the_env_files() -> None:
+    """Credentials from the ``.env`` of the folder this command starts in, then from the home's, so
+    they resolve through ``os.environ`` without copying a ``.env`` into the home.
+
+    NAMED credentials only. The home's ``.env`` is also where the credential store keeps every
+    OWNED secret (``PCSECRET_…``: provider keys, app tokens, each MCP server's env and header
+    values, the webhook token), and those are read through their settings reference and never
+    exported — ``AppConfig.load_credentials`` holds the same line. python-dotenv's ``load_dotenv``
+    sets every line, so it handed all of them to every child the gateway spawns: each MCP server
+    started with every other server's tokens. Nor a name that decides which programs run
+    (``PATH``, ``NODE_OPTIONS``…): a ``.env`` line is read as a credential, never as the
+    environment programs are found and loaded in (``mirrored_into_the_environment``).
+
+    The folder's ``.env`` may be anyone's, a repository just cloned among them, so it gives
+    credentials only (``taken_from_a_folder``): never a ``PERSONALCLAW_*`` setting, which would
+    choose the sign-in mode, the bind address or the home, and no other name. Each name it takes,
+    and each it leaves out, is named on stderr, never its value. A folder that is the home reads
+    as the home.
+    """
+    from dotenv import dotenv_values
+
+    from personalclaw.config.credentials import mirrored_into_the_environment, taken_from_a_folder
+
+    # Where the home is, not the home made: a command that needs no home (`--version`, `--help`)
+    # answers later, and the code that writes into the home is what creates it. Read before the
+    # folder's `.env`, which can no longer name it.
+    home_env = resolve_config_dir() / ".env"
+    folder_env = Path.cwd() / ".env"
+    if folder_env.is_file() and folder_env.resolve() != home_env.resolve():
+        took: list[str] = []
+        left: list[str] = []
+        for key, value in dotenv_values(folder_env).items():
+            if value is None or key in os.environ:
+                continue
+            if taken_from_a_folder(key) and mirrored_into_the_environment(key):
+                os.environ.setdefault(key, value)
+                took.append(key)
+            else:
+                left.append(key)
+        if took:
+            print(
+                f"personalclaw: took {', '.join(took)} from {folder_env}, the .env of the folder "
+                "this command started in.",
+                file=sys.stderr,
+            )
+        if left:
+            print(
+                f"personalclaw: left out {', '.join(left)} from {folder_env}: a folder's .env "
+                "gives credentials only, and PersonalClaw's settings come from your home and "
+                "your environment.",
+                file=sys.stderr,
+            )
+    if home_env.is_file():
+        for key, value in dotenv_values(home_env).items():
+            if value is not None and mirrored_into_the_environment(key):
+                os.environ.setdefault(key, value)
+
+
 def main() -> None:
     """Entry point — parse args and dispatch to the appropriate subcommand."""
     # stdout a line at a time, so that a line on stderr lands after what was printed before it
@@ -1678,35 +1736,7 @@ def main() -> None:
 
     record_startup_environment()
 
-    # Load .env from the working directory and from
-    # PERSONALCLAW_HOME so credentials resolve via os.environ without requiring
-    # users to manually copy .env into ~/.personalclaw.
-    #
-    # NAMED credentials only. The home's `.env` is also where the credential store keeps every
-    # OWNED secret (`PCSECRET_…`: provider keys, app tokens, each MCP server's env and header
-    # values, the webhook token), and those are read through their settings reference and never
-    # exported — `AppConfig.load_credentials` holds the same line. python-dotenv's `load_dotenv`
-    # sets every line, so it handed all of them to every child the gateway spawns: each MCP
-    # server started with every other server's tokens. Nor a name that decides which programs
-    # run (`PATH`, `NODE_OPTIONS`…): a `.env` line is read as a credential, never as the
-    # environment programs are found and loaded in (`mirrored_into_the_environment`).
-    from dotenv import dotenv_values as _dotenv_values
-
-    from personalclaw.config.credentials import mirrored_into_the_environment
-
-    def _load_named_credentials(path: Path) -> None:
-        for key, value in _dotenv_values(path).items():
-            if value is not None and mirrored_into_the_environment(key):
-                os.environ.setdefault(key, value)
-
-    _cwd_env = Path.cwd() / ".env"
-    if _cwd_env.is_file():
-        _load_named_credentials(_cwd_env)
-    # Where the home is, not the home made: a command that needs no home (`--version`, `--help`)
-    # answers below, and the code that writes into the home is what creates it.
-    _home_env = resolve_config_dir() / ".env"
-    if _home_env.is_file() and _home_env != _cwd_env:
-        _load_named_credentials(_home_env)
+    _read_the_env_files()
 
     # Before an app can import a library, and after a `.env` above may have named the home: the
     # libraries PersonalClaw's features load send only a token a caller handed them, keep their

@@ -155,6 +155,26 @@ def mirrored_into_the_environment(key: str) -> bool:
     return not is_owned_key(key) and not is_project_key(key) and key not in PROGRAM_RESOLUTION_NAMES
 
 
+#: The endings of a name a folder's ``.env`` may give a command (:func:`taken_from_a_folder`): a
+#: credential's.
+_CREDENTIAL_NAME_ENDINGS = ("_API_KEY", "_KEY", "_KEY_ID", "_TOKEN", "_SECRET", "_PASSWORD")
+
+
+def taken_from_a_folder(key: str) -> bool:
+    """Whether a command takes ``key`` from the ``.env`` of the folder it starts in: a credential
+    by its name (``…_API_KEY``, ``…_TOKEN``, ``…_SECRET``…), and never a PersonalClaw setting.
+
+    That folder may be anyone's, a repository just cloned among them. A ``PERSONALCLAW_*`` name
+    there would choose the sign-in mode, the bind address, the home or the code the install runs
+    from, and any other name could route or trust traffic (a proxy, a CA bundle, a provider's
+    base URL). So a folder gives credentials only; PersonalClaw's settings come from the home's
+    ``.env`` and the real environment. What a credential name holds stays a credential: the
+    folder's key is used as that key, and the command names each one it took (``cli``).
+    """
+    name = key.upper()
+    return not name.startswith("PERSONALCLAW_") and name.endswith(_CREDENTIAL_NAME_ENDINGS)
+
+
 #: Whether this process keeps the OS keychain out entirely (:func:`keychain_off`).
 _keychain_off = False
 
