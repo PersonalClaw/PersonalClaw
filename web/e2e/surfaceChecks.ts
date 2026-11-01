@@ -349,9 +349,14 @@ export function normalizeTree(raw: string): string {
         // session expiry). Only one that follows a time is folded; `\s` takes the narrow no-break
         // space Chromium's `toLocaleString` puts before it.
         .replace(/(#:#)\s?(AM|PM)\b/g, '$1 <am/pm>')
+        // A date's month moves on with the calendar: Settings › devices' session expiry is thirty
+        // days out, so it read `session expires Nov #, …` and then `Dec #, …` once the run's day
+        // passed Nov 1. Only a month a day's number follows is folded, never the word in running
+        // text (`May I archive …`).
+        .replace(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?= #)/g, '<month>')
         // A day strip labels its last days by weekday (Learning's capture strip: `Tue — not
         // started`), so the labels move on by one each day. Only a weekday the strip writes before
-        // a day's count, never one that names a column or a date (`Mon #`, `Tue, Nov #`).
+        // a day's count, never one that names a column or a date (`Mon #`, `Tue, <month> #`).
         .replace(/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?= — )/g, '<day>')
         // The machine's CPU reads `—` until the gateway's first CPU sample lands: the Settings hub's
         // System tile (`CPU —`) and Settings › system's health strip (`— cpu`).

@@ -16,7 +16,7 @@ describe("the matrix's accessibility tree folds a clock time's half of the day",
   })
 
   it('still names that a time is there', () => {
-    expect(normalizeTree('  - text: session expires Nov 9, 09:15 PM')).toBe('  - text: session expires Nov #, #:# <am/pm>')
+    expect(normalizeTree('  - text: session expires Nov 9, 09:15 PM')).toBe('  - text: session expires <month> #, #:# <am/pm>')
   })
 
   it('leaves the word in running text alone', () => {
