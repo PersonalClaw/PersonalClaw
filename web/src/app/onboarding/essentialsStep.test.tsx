@@ -87,6 +87,7 @@ vi.mock('../../lib/api', async (orig) => ({
 vi.mock('../../app/appSdk', () => ({ launchChat: vi.fn(), notify: vi.fn() }))
 
 import { EssentialsStep, laneOf, candidatesByLane, typesMissingFromCatalog } from './EssentialsStep'
+import { launchChat } from '../../app/appSdk'
 import { invalidateKeys } from '../../lib/data'
 import { ApiError } from '../../lib/api'
 
@@ -439,6 +440,25 @@ describe('an installed app shows as installed and is never offered again', () =>
     expect(previewApp).toHaveBeenCalledWith('/apps/faster-whisper', undefined, undefined)
     expect(within(speechLane()).queryByText('Installed')).toBeNull()
     expect(onProgress).not.toHaveBeenCalled()
+  })
+
+  it('a failed install with a log offers a copy of its details, opens no chat, and retries', async () => {
+    // Setup holds every other page back, so Fix with AI here bounced straight to setup again and
+    // the chat it promised opened after setup without the log.
+    installApp.mockResolvedValue({
+      ok: false, name: 'faster-whisper', error: 'onInstall hook exited 7', needs_consent: false, scan: null,
+      log_excerpt: 'make: *** [setup] Error 7', fix_prompt: 'debug this: <untrusted_content>…</untrusted_content>',
+    })
+    renderStep()
+    await installCard('whisper')
+    const dialog = screen.getByRole('dialog')
+    const failure = await within(dialog).findByTestId('install-failure')
+    expect(within(failure).getByRole('button', { name: /copy the error details/i })).toBeTruthy()
+    expect(within(failure).queryByRole('button', { name: /fix with ai/i })).toBeNull()
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Install$/ }))
+    await waitFor(() => expect(installApp).toHaveBeenCalledTimes(2))
+    expect(launchChat).not.toHaveBeenCalled()
   })
 
   it('an installed app that is turned off is listed, but does not make its lane ready', async () => {

@@ -153,7 +153,9 @@ function validateChord(chord) {
  *
  * @param {object} deps
  * @param {object} deps.globalShortcut  Electron globalShortcut (register/unregister/isRegistered)
- * @param {function} [deps.send]        (payload) => void — main → renderer push
+ * @param {function} [deps.send]        (payload, window) => void — main → renderer push: to
+ *   `window` (the id a capture was reported under) when given, else to the tab a press is for
+ *   (`pressTarget`)
  * @param {function} [deps.onCapturing] (boolean, sources) => void — drives the tray indicator,
  *   and says which capture sources hold the microphone (`listeningReport`)
  * @param {function} [deps.setTimer]    setTimeout (injected for tests)
@@ -170,19 +172,48 @@ function makePushToTalk(deps = {}) {
 
   let bound = "";
   let capturing = false;
-  let timer = null;
   /** Each live capture, by `<window>:<source>`, with its source: listening lasts while any is. */
   const live = new Map();
+  /** Each capturing window's ceiling, by window: a tab's capture is stopped in that tab, and one
+   * tab stopping never disarms another's. */
+  const ceilings = new Map();
   let said = "false:";
 
   /** The sources capturing now, each once, in a stable order. */
   const sources = () => [...new Set(live.values())].sort();
 
-  const cancelTimer = () => {
-    if (timer !== null) {
+  /** The window a capture key was reported under (`<window>:<source>`). */
+  const windowOf = (key) => {
+    const at = key.lastIndexOf(":");
+    return at < 0 ? key : key.slice(0, at);
+  };
+
+  /** Arm a ceiling for each window that started capturing; disarm each that stopped. */
+  const armCeilings = () => {
+    const capturingWindows = new Set([...live.keys()].map(windowOf));
+    for (const [win, timer] of [...ceilings]) {
+      if (capturingWindows.has(win)) continue;
       clearTimer(timer);
-      timer = null;
+      ceilings.delete(win);
     }
+    for (const win of capturingWindows) {
+      if (ceilings.has(win)) continue;
+      ceilings.set(
+        win,
+        setTimer(() => {
+          ceilings.delete(win);
+          // Ask, do not assume: the renderer owns the stream, so it performs the stop
+          // and reports back through setCapturing(false). The indicator stays lit until
+          // it does, because until it does, the microphone genuinely still is.
+          send({ action: "stop", reason: "capture-timeout" }, win);
+        }, maxCaptureMs)
+      );
+    }
+  };
+
+  const cancelCeilings = () => {
+    for (const timer of ceilings.values()) clearTimer(timer);
+    ceilings.clear();
   };
 
   /**
@@ -252,9 +283,9 @@ function makePushToTalk(deps = {}) {
     bound = "";
   }
 
-  /** The chord fired. Forward it; the renderer decides start-or-stop from the state it
-   * actually holds, so a dropped push cannot leave the two processes disagreeing about
-   * whether the mic is open. */
+  /** The chord fired. Forward it to the tab it is for (`pressTarget`); that renderer decides
+   * start-or-stop from the state it actually holds, so a dropped push cannot leave the two
+   * processes disagreeing about whether the mic is open. */
   function press() {
     send({ action: "toggle" });
   }
@@ -269,31 +300,21 @@ function makePushToTalk(deps = {}) {
     return settle();
   }
 
-  /** Say what is capturing when it changed, and arm or cancel the ceiling with it. */
+  /** Arm or disarm each window's ceiling, and say what is capturing when it changed. */
   function settle() {
+    armCeilings();
     const on = live.size > 0;
     const now = `${on}:${sources().join(",")}`;
     if (now === said) return capturing;
     said = now;
-    const started = on && !capturing;
     capturing = on;
-    if (!on) cancelTimer();
     onCapturing(on, sources());
-    if (started) {
-      timer = setTimer(() => {
-        timer = null;
-        // Ask, do not assume: the renderer owns the stream, so it performs the stop
-        // and reports back through setCapturing(false). The indicator stays lit until
-        // it does, because until it does, the microphone genuinely still is.
-        send({ action: "stop", reason: "capture-timeout" });
-      }, maxCaptureMs);
-    }
     return capturing;
   }
 
   /** The renderer went away (window closed / crashed), so its stream went with it. */
   function clearCapturing() {
-    cancelTimer();
+    cancelCeilings();
     live.clear();
     if (!capturing) return;
     settle();
@@ -317,6 +338,25 @@ function makePushToTalk(deps = {}) {
     boundChord: () => bound,
     isCapturing: () => capturing,
   };
+}
+
+/**
+ * The web contents a press is for: the focused window's, else the window focused last (a press
+ * made from another app reaches the tab you were using), and only a window the shell attached its
+ * bridge to (`isAppWindow`). Every tab is a window of its own, and a press sent to the first one
+ * whatever tab you were in started a recording in a composer you could not see.
+ *
+ * @param {object} at
+ * @param {object|null} at.focused      the focused window, if any
+ * @param {object|null} at.lastFocused  the app window focused last
+ * @param {function} at.isAppWindow     (window) => boolean: the shell's bridge is attached to it
+ * @returns {object|null} the web contents to send the press to, or null for none
+ */
+function pressTarget({ focused, lastFocused, isAppWindow }) {
+  for (const win of [focused, lastFocused]) {
+    if (win && !win.isDestroyed() && win.webContents && isAppWindow(win)) return win.webContents;
+  }
+  return null;
 }
 
 /**
@@ -386,5 +426,6 @@ module.exports = {
   makePushToTalk,
   registerPushToTalkIpc,
   listeningReport,
+  pressTarget,
   CAPTURE_SOURCES,
 };

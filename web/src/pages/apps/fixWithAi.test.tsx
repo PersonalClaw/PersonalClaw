@@ -13,6 +13,8 @@ import type { AppInstallResult } from '../../lib/api'
 // the (backend-fenced) prompt to it unchanged and never auto-send.
 const launchChat = vi.fn()
 vi.mock('../../app/appSdk', () => ({ launchChat: (...a: unknown[]) => launchChat(...a) }))
+const copyText = vi.fn(async (_text: string, _what: string) => true)
+vi.mock('../../app/clipboard', () => ({ copyText: (text: string, what: string) => copyText(text, what) }))
 const previewApp = vi.fn()
 const installApp = vi.fn()
 vi.mock('../../lib/api', () => ({
@@ -43,10 +45,10 @@ const REVIEW: AppInstallResult = {
 }
 
 /** Open the dialog on the review, confirm, and wait for the failure it answers with. */
-async function installAndFail(failure: AppInstallResult) {
+async function installAndFail(failure: AppInstallResult, inSetup = false) {
   previewApp.mockResolvedValue(REVIEW)
   installApp.mockResolvedValue(failure)
-  render(<InstallDialogHarness target={{ source: '/apps/broken', label: 'broken' }} />)
+  render(<InstallDialogHarness target={{ source: '/apps/broken', label: 'broken' }} inSetup={inSetup} />)
   await waitFor(() => expect(screen.getByRole('dialog').textContent).toMatch(/Security scan:/))
   fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Install$/ }))
   return within(screen.getByRole('dialog')).findByTestId('install-failure')
@@ -54,6 +56,7 @@ async function installAndFail(failure: AppInstallResult) {
 
 beforeEach(() => {
   launchChat.mockReset()
+  copyText.mockClear()
   previewApp.mockReset()
   installApp.mockReset()
 })
@@ -78,6 +81,36 @@ describe('a failed install hands its fix prompt to the button beside the error',
     })
     expect(failure.textContent).toMatch(/already installed/)
     expect(within(failure).queryByRole('button', { name: /fix with ai/i })).toBeNull()
+  })
+})
+
+describe('inside setup, a failed install offers a copy of its details, not a chat', () => {
+  // Setup holds every other page until it is finished or skipped, so Fix with AI there bounced
+  // straight back to setup and the chat opened later without the log.
+  const FAILED: AppInstallResult = {
+    ok: false, name: 'broken', error: 'onInstall hook exited 7', needs_consent: false,
+    scan: null, log_excerpt: 'make: *** [setup] Error 7', fix_prompt: `debug this:\n\n${FENCED}`,
+  }
+
+  it('copies the error and the log tail, and opens no chat', async () => {
+    const failure = await installAndFail(FAILED, true)
+    expect(within(failure).queryByRole('button', { name: /fix with ai/i })).toBeNull()
+    fireEvent.click(within(failure).getByRole('button', { name: /copy the error details/i }))
+    await waitFor(() => expect(copyText).toHaveBeenCalledTimes(1))
+    expect(copyText).toHaveBeenCalledWith('onInstall hook exited 7.\n\nmake: *** [setup] Error 7', 'the error details')
+    expect(launchChat).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toBeTruthy()
+  })
+
+  it('offers neither when the failure carried no log', async () => {
+    const failure = await installAndFail({ ...FAILED, log_excerpt: '', fix_prompt: '' }, true)
+    expect(within(failure).queryByRole('button', { name: /fix with ai|copy the error details/i })).toBeNull()
+  })
+
+  it('outside setup the same failure still offers Fix with AI', async () => {
+    const failure = await installAndFail(FAILED)
+    expect(within(failure).queryByRole('button', { name: /copy the error details/i })).toBeNull()
+    expect(within(failure).getByRole('button', { name: /fix with ai/i })).toBeTruthy()
   })
 })
 

@@ -7,7 +7,7 @@ const http = require("http");
 const { findPersonalclawBin } = require("./find-bin");
 const { attachContextMenu } = require("./context-menu");
 const { IPC_CHANNELS, makeCapabilities, registerCapabilityIpc } = require("./capabilities");
-const { listeningReport, makePushToTalk, registerPushToTalkIpc } = require("./pushToTalk");
+const { listeningReport, makePushToTalk, pressTarget, registerPushToTalkIpc } = require("./pushToTalk");
 const {
   DEEP_LINKS,
   bootRead,
@@ -118,6 +118,9 @@ const GATEWAY_GRACE_MS = 8000;
 app.name = "PersonalClaw";
 
 let mainWindow = null;
+/** The app window (the main window or a tab) focused last: a push-to-talk press made from another
+ *  app is for it. */
+let lastFocusedAppWindow = null;
 /** The buddy's window (`buddyWindow.js`), and whether it exists: made once the app is ready. */
 let buddy = null;
 let buddyPresence = null;
@@ -474,9 +477,19 @@ const capabilities = makeCapabilities({
  */
 const pushToTalk = makePushToTalk({
   globalShortcut,
-  send: (payload) => {
+  // A press goes to the tab in use (`pressTarget`), and a capture's stop to the tab it runs in:
+  // every tab is a window of its own, and each press went to the first one whichever was in use.
+  send: (payload, window) => {
     try {
-      mainWindow?.webContents?.send(IPC_CHANNELS.pushToTalk, payload);
+      const id = Number(window);
+      const wc = id > 0
+        ? webContents.fromId(id)
+        : pressTarget({
+            focused: BaseWindow.getFocusedWindow(),
+            lastFocused: lastFocusedAppWindow || mainWindow,
+            isAppWindow: (win) => win._pcBridgeAttached === true,
+          });
+      if (wc && !wc.isDestroyed()) wc.send(IPC_CHANNELS.pushToTalk, payload);
     } catch {
       /* window may be gone mid-press */
     }
@@ -1087,6 +1100,8 @@ function makeWindow() {
     ...windowChrome.options(),
   });
   win.on("closed", () => setImmediate(releaseBuddyIfAlone));
+  win.on("focus", () => { lastFocusedAppWindow = win; });
+  win.on("closed", () => { if (lastFocusedAppWindow === win) lastFocusedAppWindow = null; });
   // Over a full-screen window of the app's own the buddy shows only alerts, as a quiet peek
   // (`docs/design/buddy/state-machine.md`). Another app's full screen is not visible to the shell.
   win.on("enter-full-screen", tellBuddyFullScreen);

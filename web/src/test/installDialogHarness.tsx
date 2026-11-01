@@ -10,11 +10,12 @@ import type { AppInstallResult } from '../lib/api'
  *
  *  Lives in `src/test/` beside the vitest setup file: it is test support, not app code, and
  *  nothing in the app imports it. */
-export function InstallDialogHarness({ target, onInstalled }: {
+export function InstallDialogHarness({ target, onInstalled, inSetup }: {
   target: InstallTarget
   onInstalled?: (result: AppInstallResult) => void
+  inSetup?: boolean
 }) {
-  const install = useAppInstall({ onInstalled: (r) => onInstalled?.(r) })
+  const install = useAppInstall({ onInstalled: (r) => onInstalled?.(r), inSetup })
   // Opened once, on mount — the harness IS the click that opens it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void install.begin(target) }, [])

@@ -488,10 +488,12 @@ function ProposalActions({ pid, onChanged, navigate }: { pid: string; onChanged:
       invalidateKeys('skill-proposals', true)
       onChanged()
     } catch (e) {
-      // Answered somewhere else between load and click (the Skills page, another tab): accept 409s
-      // and reject 404s. That is the same stale row the load path already names, so it reads as
-      // "already answered" rather than leaking the server's sentence into the error slot.
-      if (e instanceof ApiError && (e.status === 409 || e.status === 404)) { setGone(true); return }
+      // Answered somewhere else between load and click (the Skills page, another tab): both
+      // decisions answer 404 `skill_proposal_gone`. That is the same stale row the load path
+      // already names, so it reads as "already answered". A 409 is an install the gateway refused
+      // (`skill_proposal_not_installed`): the proposal is still waiting, so its reason shows and
+      // the buttons stay. Read as "already answered", it hid the reason and claimed a decision.
+      if (e instanceof ApiError && e.status === 404) { setGone(true); return }
       setErr(e instanceof Error ? e.message : `${kind} failed`)
     } finally { setBusy(null) }
   }

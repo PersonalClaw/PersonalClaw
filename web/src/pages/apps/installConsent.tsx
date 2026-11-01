@@ -1025,16 +1025,40 @@ export function FixWithAiButton({ fixPrompt }: { fixPrompt: string | null }) {
   )
 }
 
+/** "Copy the error details": what a failed install with a log offers inside setup, where a chat
+ *  cannot open (setup holds every other page until it is finished or skipped, and the chat it
+ *  would open may have no model to answer). Copies the error sentence and the install log's
+ *  tail, which read on their own wherever they are pasted. */
+function CopyFailureButton({ details }: { details: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    if (await copyText(details, 'the error details')) { setCopied(true); setTimeout(() => setCopied(false), 1500) }
+  }
+  return (
+    <Button variant="secondary" size="sm" onClick={copy}>
+      {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Copy the error details'}
+    </Button>
+  )
+}
+
+interface InstallFailureProps { error: string; fixPrompt: string; logExcerpt: string; inSetup: boolean }
+
 /** A consented install or update that failed past the gate — a pip refusal, a hook error,
  *  an "already installed" race — INSIDE the dialog, beside the button that caused it. The
- *  error and its fix-prompt are one unit and are declared once, here, for every install
+ *  error and what helps with it are one unit and are declared once, here, for every install
  *  surface: rendered in the page behind a modal they were covered by its own backdrop, and
- *  "Install anyway" read as doing nothing (#3540). */
-function InstallFailure({ error, fixPrompt }: { error: string; fixPrompt: string }) {
+ *  "Install anyway" read as doing nothing (#3540). A failure with a log offers Fix with AI,
+ *  and inside setup, where a chat cannot open, a copy of the error details instead. */
+function InstallFailure({ error, fixPrompt, logExcerpt, inSetup }: InstallFailureProps) {
+  const help = !fixPrompt
+    ? null
+    : inSetup
+      ? <CopyFailureButton details={logExcerpt ? `${error}\n\n${logExcerpt}` : fixPrompt} />
+      : <FixWithAiButton fixPrompt={fixPrompt} />
   return (
     <div className="flex items-center justify-between gap-m" data-testid="install-failure">
       <FieldError>{error}</FieldError>
-      <FixWithAiButton fixPrompt={fixPrompt || null} />
+      {help}
     </div>
   )
 }
@@ -1067,14 +1091,18 @@ type Phase =
   | { k: 'unreadable'; error: string }
   | { k: 'review'; review: AppInstallResult; changed: boolean }
   | { k: 'installing'; review: AppInstallResult; changed: boolean }
-  | { k: 'failed'; review: AppInstallResult; changed: boolean; error: string; fixPrompt: string }
+  | { k: 'failed'; review: AppInstallResult; changed: boolean; error: string; fixPrompt: string; logExcerpt: string }
 
 /** The one install path: `begin(target)` opens the consent dialog, which reviews the source
  *  on the server BEFORE anything is installed, shows what the app gets, and installs only
  *  when the user confirms — sending back the review's `consent` digest, so what they saw is
  *  what lands. `dialog` is rendered once by the caller; `onInstalled` runs after a
- *  successful commit (a visible confirmation has already been shown by then). */
-export function useAppInstall({ onInstalled }: { onInstalled: (result: AppInstallResult, target: InstallTarget) => void }) {
+ *  successful commit (a visible confirmation has already been shown by then). `inSetup` says
+ *  the dialog runs inside setup, where a failure offers no control that opens a chat. */
+export function useAppInstall({ onInstalled, inSetup = false }: {
+  onInstalled: (result: AppInstallResult, target: InstallTarget) => void
+  inSetup?: boolean
+}) {
   const [open, setOpen] = useState<{ target: InstallTarget; phase: Phase } | null>(null)
   // Every begin/confirm/close bumps this, so an answer arriving after the user has moved on
   // (closed, or opened another app) never overwrites what they are looking at.
@@ -1135,12 +1163,13 @@ export function useAppInstall({ onInstalled }: { onInstalled: (result: AppInstal
         k: 'failed', review, changed,
         error: sentence(r.error || `That ${target.update ? 'update' : 'install'} did not go through`),
         fixPrompt: r.fix_prompt || '',
+        logExcerpt: r.log_excerpt || '',
       },
     })
   }, [open])
 
   const dialog = open
-    ? <AppInstallDialog target={open.target} phase={open.phase} onConfirm={confirm} onClose={close} />
+    ? <AppInstallDialog target={open.target} phase={open.phase} inSetup={inSetup} onConfirm={confirm} onClose={close} />
     : null
   return { begin, dialog, active: open?.target ?? null }
 }
@@ -1177,8 +1206,8 @@ function announceFailure(r: AppInstallResult, target: InstallTarget, label: stri
   }))
 }
 
-function AppInstallDialog({ target, phase, onConfirm, onClose }: {
-  target: InstallTarget; phase: Phase; onConfirm: () => void; onClose: () => void
+function AppInstallDialog({ target, phase, inSetup, onConfirm, onClose }: {
+  target: InstallTarget; phase: Phase; inSetup: boolean; onConfirm: () => void; onClose: () => void
 }) {
   const updating = Boolean(target.update)
   const verb = updating ? 'Update' : 'Install'
@@ -1267,7 +1296,7 @@ function AppInstallDialog({ target, phase, onConfirm, onClose }: {
         )}
         {r.disclosure && <AppDisclosureView disclosure={r.disclosure} action={updating ? 'update' : 'install'} />}
         {r.scan && <ScanReport scan={r.scan} />}
-        {phase.k === 'failed' && <InstallFailure error={phase.error} fixPrompt={phase.fixPrompt} />}
+        {phase.k === 'failed' && <InstallFailure error={phase.error} fixPrompt={phase.fixPrompt} logExcerpt={phase.logExcerpt} inSetup={inSetup} />}
         <div className="flex justify-end gap-s pt-s">
           {/* A terminal refusal leaves nothing to cancel — the server already said no — so its one
               button only dismisses, and says "Done" like this dialog's other dismiss-only footer. */}

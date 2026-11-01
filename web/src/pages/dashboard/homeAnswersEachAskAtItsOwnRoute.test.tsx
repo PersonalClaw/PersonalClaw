@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { resetDataStore } from '../../lib/data'
-import type { InboxItem, SkillProposal } from '../../lib/api'
+import { ApiError, type InboxItem, type SkillProposal } from '../../lib/api'
 import { proposalSummary, proposalTitle } from '../../lib/attentionLanes'
 import { HomeHarness, gateItem, waitingItem, waitingList } from '../../test/homeHarness'
 
@@ -287,6 +287,24 @@ describe('a skill proposal and a note, after every waiting item', () => {
     await userEvent.click(await within(needsYou()).findByRole('button', { name: new RegExp(`^Accept ${proposalTitle(WRITEUP)}`) }))
     expect(await within(needsYou()).findByText(/Could not accept this proposal: the skill folder is read-only/)).toBeTruthy()
     expect(within(needsYou()).getByRole('button', { name: new RegExp(`^Reject ${proposalTitle(WRITEUP)}`) })).toBeEnabled()
+  })
+
+  it('a refused install says its reason once; a proposal answered elsewhere is no longer waiting', async () => {
+    acceptSkillProposal.mockRejectedValueOnce(new ApiError(
+      "The skill could not be installed (could not write skill 'incident-writeup' (invalid, oversized, or exists)), so the proposal is still waiting.",
+      409, 'skill_proposal_not_installed',
+    ))
+    skillProposals.mockResolvedValue({ proposals: [WRITEUP], lastReview: null })
+    render(<HomeHarness />)
+    const accept = () => within(needsYou()).findByRole('button', { name: new RegExp(`^Accept ${proposalTitle(WRITEUP)}`) })
+    await userEvent.click(await accept())
+    expect(await within(needsYou()).findByText(
+      "Could not accept this proposal: The skill could not be installed (could not write skill 'incident-writeup' (invalid, oversized, or exists)), so the proposal is still waiting. Nothing was recorded — it still needs you, so try again.",
+    )).toBeTruthy()
+
+    acceptSkillProposal.mockRejectedValueOnce(new ApiError('This proposal was already answered somewhere else.', 404, 'skill_proposal_gone'))
+    await userEvent.click(await accept())
+    expect(await within(needsYou()).findByText('It is no longer waiting: it was answered or ended somewhere else.')).toBeTruthy()
   })
 })
 

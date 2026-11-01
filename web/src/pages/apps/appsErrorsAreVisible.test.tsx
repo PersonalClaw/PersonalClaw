@@ -144,7 +144,9 @@ describe('the five identical rows became one, and then one dialog owns it', () =
   it('the error and its fix-prompt stay together, in the shared owner', () => {
     expect(row, 'found InstallFailure').not.toBe('')
     expect(row).toMatch(/<FieldError>\{error\}<\/FieldError>/)
-    expect(row).toMatch(/<FixWithAiButton fixPrompt=\{fixPrompt \|\| null\} \/>/)
+    // Fix with AI outside setup, a copy of the details inside it: both rendered here, once each.
+    expect([...row.matchAll(/<FixWithAiButton fixPrompt=\{fixPrompt\} \/>/g)]).toHaveLength(1)
+    expect([...row.matchAll(/<CopyFailureButton\b/g)]).toHaveLength(1)
   })
 })
 

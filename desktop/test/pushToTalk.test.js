@@ -483,3 +483,97 @@ describe("listening, from every capture source", () => {
     assert.equal(live.sent.length, 1);
   });
 });
+
+describe("every tab is a window: a press and a ceiling act on their own tab", () => {
+  /** A tab as `pressTarget` reads it: a window holding its web contents, bridged or not. */
+  function tab(id, { bridged = true } = {}) {
+    return { webContents: contents(id), isDestroyed: () => false, _pcBridgeAttached: bridged };
+  }
+
+  /** A controller whose sends go where the shell's do: a press to `pressTarget`, a stop to the
+   * window the capture was reported under. */
+  function shell({ focused, lastFocused, windows }) {
+    const handlers = new Map();
+    const timers = [];
+    const shortcuts = shortcutStub();
+    const ptt = makePushToTalk({
+      globalShortcut: shortcuts,
+      send: (payload, window) => {
+        const wc = window
+          ? windows.find((w) => String(w.webContents.id) === String(window))?.webContents
+          : pressTarget({ focused: focused(), lastFocused: lastFocused(), isAppWindow: (w) => w._pcBridgeAttached === true });
+        if (wc) wc.send(IPC_CHANNELS.pushToTalk, payload);
+      },
+      setTimer: (fn, ms) => {
+        timers.push({ fn, ms });
+        return timers.length;
+      },
+      clearTimer: (id) => {
+        if (timers[id - 1]) timers[id - 1].cleared = true;
+      },
+    });
+    registerPushToTalkIpc({ handle: (ch, fn) => handlers.set(ch, fn) }, ptt, IPC_CHANNELS);
+    const report = (sender, on) => handlers.get(IPC_CHANNELS.capturing)({ sender }, on, "dictation");
+    ptt.bind(DEFAULT_CHORD);
+    return { ptt, timers, report, chord: () => shortcuts.fire(DEFAULT_CHORD) };
+  }
+
+  const { pressTarget } = require("../pushToTalk");
+
+  test("a press while the second tab is focused reaches the second, and only it", () => {
+    // 🔴 Red before: every press went to the first window, whichever tab was in use.
+    const first = tab(1);
+    const second = tab(2);
+    const { chord } = shell({ focused: () => second, lastFocused: () => first, windows: [first, second] });
+    chord();
+    assert.deepEqual(second.webContents.sent, [{ channel: IPC_CHANNELS.pushToTalk, payload: { action: "toggle" } }]);
+    assert.deepEqual(first.webContents.sent, []);
+  });
+
+  test("a press made from another app reaches the tab used last; one the shell does not bridge, none", () => {
+    const first = tab(1);
+    const second = tab(2);
+    const site = tab(3, { bridged: false });
+    let focused = null;
+    let last = second;
+    const { chord } = shell({ focused: () => focused, lastFocused: () => last, windows: [first, second, site] });
+    chord();
+    assert.equal(second.webContents.sent.length, 1);
+    focused = site;
+    last = site;
+    chord();
+    assert.equal(site.webContents.sent.length, 0);
+    assert.equal(first.webContents.sent.length, 0);
+  });
+
+  test("each tab's capture has its own ceiling, and its stop goes to that tab", () => {
+    // 🔴 Red before: one ceiling for all tabs, armed by the first capture and sent to the first
+    // window, so a capture started in a second tab after it was never stopped.
+    const first = tab(1);
+    const second = tab(2);
+    const { ptt, timers, report } = shell({ focused: () => null, lastFocused: () => first, windows: [first, second] });
+    report(first.webContents, true);
+    report(second.webContents, true);
+    assert.equal(timers.length, 2, "a ceiling for each capturing tab");
+    report(first.webContents, false);
+    assert.equal(timers[0].cleared, true, "the first tab stopped: its ceiling with it");
+    assert.notEqual(timers[1].cleared, true, "the second's still armed");
+    assert.equal(ptt.isCapturing(), true);
+
+    timers[1].fn();
+    assert.deepEqual(second.webContents.sent, [
+      { channel: IPC_CHANNELS.pushToTalk, payload: { action: "stop", reason: "capture-timeout" } },
+    ]);
+    assert.deepEqual(first.webContents.sent, []);
+  });
+
+  test("one tab's report never clears another's capture", () => {
+    const first = tab(1);
+    const second = tab(2);
+    const { ptt, timers, report } = shell({ focused: () => second, lastFocused: () => second, windows: [first, second] });
+    report(first.webContents, true);
+    report(second.webContents, false);
+    assert.equal(ptt.isCapturing(), true);
+    assert.notEqual(timers[0].cleared, true);
+  });
+});
