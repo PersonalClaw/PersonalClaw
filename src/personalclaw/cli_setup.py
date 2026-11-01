@@ -438,9 +438,6 @@ def _setup_workspace_dir() -> str | None:
     return None
 
 
-_CUSTOM_DOMAIN = "personalclaw.localhost"
-
-
 def _detect_system_timezone() -> str:
     """This machine's IANA zone name, or "" — through the one owner (#2520).
 
@@ -625,7 +622,9 @@ def _maybe_setup_dashboard_url() -> str | None:
 
 
 def _maybe_setup_custom_domain() -> None:
-    """Inform user about personalclaw.localhost dashboard URL."""
-    print("\n── Custom Domain ──\n")
-    print(f"  Dashboard available at http://{_CUSTOM_DOMAIN}:{DASHBOARD_PORT}")
-    print("  (*.localhost resolves to 127.0.0.1 per RFC 6761 — no /etc/hosts edit needed)\n")
+    """Tell the user the dashboard's address: the one the gateway listens on
+    (``origin.gateway_link_host``), never a name that could resolve to another."""
+    from personalclaw.dashboard.origin import gateway_link_host
+
+    print("\n── Dashboard ──\n")
+    print(f"  Dashboard available at http://{gateway_link_host()}:{DASHBOARD_PORT}\n")

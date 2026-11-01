@@ -15,7 +15,7 @@ from personalclaw.dashboard import chat, handlers, housekeeping
 from personalclaw.dashboard.fallbacks import api_fallback, spa_fallback
 from personalclaw.dashboard.handlers.knowledge import setup_knowledge_routes
 from personalclaw.dashboard.handlers.research_reports import setup_research_report_routes
-from personalclaw.dashboard.origin import build_allowed_origins, check_origin, resolve_bind_host
+from personalclaw.dashboard.origin import build_allowed_origins, check_origin, gateway_bind_host
 from personalclaw.dashboard.state import _DEFAULT_PORT, DashboardState
 from personalclaw.dashboard.token_auth import served_port, token_auth_middleware
 from personalclaw.hooks import ScriptHookStore, set_global_hook_store
@@ -945,12 +945,9 @@ async def start_dashboard(
     # (corp-host / DevSpaces escape hatch); otherwise derive from the
     # caller's local_only flag (the loopback invariant in effective_bind()
     # makes AuthMode.NONE override this).
-    _bind_host = resolve_bind_host()
-    if _bind_host == "127.0.0.1" and not local_only:
-        _bind_host = "0.0.0.0"
-    # AuthMode.NONE invariant: an unauthenticated gateway must never leave loopback.
-    if _no_auth:
-        _bind_host = "127.0.0.1"
+    # AuthMode.NONE invariant: an unauthenticated gateway must never leave loopback. One decision
+    # (`gateway_bind_host`), which every sign-in link names as well (`origin.link_host`).
+    _bind_host = gateway_bind_host(local_only, no_auth=_no_auth)
     # The security log made before anything is served, its key with it (an fsync, on a home's
     # first run), in a worker thread: never by the first event a handler writes, which would make
     # it on the event loop (sel.sel_log_async).

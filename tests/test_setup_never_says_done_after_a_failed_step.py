@@ -162,7 +162,7 @@ def test_a_failed_step_is_named_with_its_retry_and_the_wizard_exits_1(
     assert failure.startswith(f"  ❌ {step}: ") and why in failure, summary
     assert f"Run it again: {retry}" in summary
     # One failed step does not cost the steps after it: the wizard ran to its last section.
-    assert "── Custom Domain ──" in out
+    assert "── Dashboard ──" in out
 
 
 def test_a_typed_workspace_that_fails_says_where_the_workspace_stays(monkeypatch, capsys, tmp_path):

@@ -47,7 +47,7 @@ def test_the_token_command_says_the_port_is_the_containers(
     monkeypatch.setenv("PERSONALCLAW_INSTALL_KIND", "container")
     out, err, port = _run_token(monkeypatch, tmp_path, capsys)
     # stdout is still a list of URLs, so `open "$(docker exec … personalclaw token)"` keeps working.
-    assert out == f"http://localhost:{port}?token={_SYNTHETIC_TOKEN}\n"
+    assert out == f"http://127.0.0.1:{port}?token={_SYNTHETIC_TOKEN}\n"
     assert f"Port {port} is this container's own port" in err
     assert f"docker run -p HOST:{port}" in err
     # It must not invent a host port: the only number it may state is the container's own.
@@ -62,7 +62,7 @@ def test_outside_a_container_the_token_command_is_unchanged(
     """The control arm: a pip or git install prints the URL and nothing else."""
     monkeypatch.delenv("PERSONALCLAW_INSTALL_KIND", raising=False)
     out, err, port = _run_token(monkeypatch, tmp_path, capsys)
-    assert out == f"http://localhost:{port}?token={_SYNTHETIC_TOKEN}\n"
+    assert out == f"http://127.0.0.1:{port}?token={_SYNTHETIC_TOKEN}\n"
     assert err == ""
 
 

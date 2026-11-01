@@ -30,6 +30,7 @@ from personalclaw.dashboard.origin import (
     parse_dashboard_url,
     resolve_bind_host,
     tailnet_ip,
+    tunnel_hint,
 )
 from personalclaw.python_support import python_support, rebuild_command
 
@@ -1361,7 +1362,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     if _tunnel and is_remote:
         mh = machine_hostname() or "this-host"
         print("\n  💡 Remote access: Run on your LOCAL machine:")
-        print(f"     ssh -L {_tunnel}:localhost:{_tunnel} {mh}")
+        print(f"     {tunnel_hint(_tunnel, mh)}")
         print("     Then run: personalclaw token")
 
     # Verify a request with no token is refused beyond loopback (security check). It is asked of
