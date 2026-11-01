@@ -707,6 +707,10 @@ SECURITY_ROUTE_FAMILIES: dict[str, str] = {
         "your first-run setup — the model your chats start on, the model servers it looks for on "
         "your network, and how far you got"
     ),
+    "/api/search": (
+        "your search backend — which provider each search your chats and runs make goes to, with "
+        "what was asked"
+    ),
     "/api/doctor": "the Doctor — its fixes and its maintenance change your setup",
     "/api/update": "updating PersonalClaw — the code this gateway runs",
     "/api/tools": "your tools — which of them your agents may call, and running one",
@@ -1036,6 +1040,17 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "POST /api/model-providers/{name}/models/delete": OwnerOnly(
         "deleting a model from a model provider"
+    ),
+    # ── your search backend (which provider each search use goes to) ──
+    # Every search your chats and runs make for a use goes to the provider it is bound to, with
+    # what was asked, so a binding is yours, as a model binding is. The reads (the providers and the
+    # current binding) stay the allowlist's: they hold no key and send nothing.
+    "PUT /api/search/active/{use_case}": OwnerOnly(
+        "which search provider a search use goes to — each search your chats and runs make for it "
+        "is sent there, with what was asked"
+    ),
+    "POST /api/search/providers/{name}/test": OwnerOnly(
+        "testing a search provider — a real search, on that provider's key"
     ),
     # ── your models (which one each use runs on, and the models this machine holds) ──
     "GET /api/models/active": OwnerOnly("which model each of your uses runs on"),
