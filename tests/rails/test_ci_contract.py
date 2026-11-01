@@ -8490,6 +8490,10 @@ _CATALOGUE_JOBS: dict[str, _Mapped] = {
     "shard-union-canary": _Mapped(("shard-union-canary",), ("breadth",)),
     "client": _Mapped((), ("change", "merge")),
     "web-unit": _Mapped((), ("change", "merge"), reuse="tree"),
+    # The desktop and mobile tests' own jobs once web-unit splits (#5810): a line for each, read
+    # only while the catalogue holds them, so this row lands before the split.
+    "desktop-unit": _Mapped((), ("change", "merge"), reuse="tree"),
+    "mobile-unit": _Mapped((), ("change", "merge"), reuse="tree"),
     "web-build": _Mapped((), ("merge",), reuse="tree"),
     "package": _Mapped((), ("merge",)),
     "e2e": _Mapped((), ("merge",)),
