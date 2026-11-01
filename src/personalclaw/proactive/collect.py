@@ -17,6 +17,9 @@ Three lanes, three functions, one rule each about what "accumulated" means:
   run still going — the digest's own run among them — is not an outcome and is not collected,
   and a run is in the window it ENDED in, whenever it started: one that was still going when the
   last digest ran is in the next. A Morning triage run is the digest itself, never an item in one.
+  Only runs of yours, read as the Inbox lane reads its rows: a chat's own run (a batch, or a run a
+  Temporary or Incognito chat started: ``workflows.chat_runs``) reaches neither the digest's model
+  nor its run.
   The digest adds zero run instrumentation, so a materiality this module computed itself would be
   a second dialect for a question the ledger answers.
 
@@ -233,16 +236,21 @@ def _effects_that_landed(rows: list[dict[str, Any]]) -> int:
     return sum(1 for records in by_path.values() if committed_effect(records) is not None)
 
 
-def _run_item(run: Any, store: Any) -> CollectedItem | None:
-    """One run as the lane collects it: None for a run that has not ended, and for a digest."""
+def _run_item(run: Any, store: Any, reader: Reader) -> CollectedItem | None:
+    """One run as the lane collects it: None for a run that has not ended, for a digest, and for
+    a run *reader* does not read (:func:`_digest_reads`): a chat's own, and one whose chat cannot
+    be told, which only you read."""
     from personalclaw.ledger import read_events
     from personalclaw.ledger.kinds import EFFECT
     from personalclaw.proactive.surface import TRIAGE_WORKFLOW
     from personalclaw.triggers.delivery import status_url
+    from personalclaw.workflows import chat_runs
 
     if str(getattr(run, "workflow_name", "") or "") == TRIAGE_WORKFLOW:
         # The digest reports what happened. Listing the one before it under "What your machine
         # did" would report the report.
+        return None
+    if not chat_runs.reads(reader, run):
         return None
     status = str(getattr(getattr(run, "status", ""), "value", getattr(run, "status", "")))
     effects = 0
@@ -270,9 +278,12 @@ def _run_item(run: Any, store: Any) -> CollectedItem | None:
     )
 
 
-def collect_runs(*, since: str = "", limit: int = RUN_SCAN_LIMIT) -> list[CollectedItem]:
-    """Recent background runs that ENDED in the window, weighted by the effects their ledger says
-    landed.
+def collect_runs(
+    *, since: str = "", limit: int = RUN_SCAN_LIMIT, state: Any = None
+) -> list[CollectedItem]:
+    """Recent background runs of yours that ENDED in the window, weighted by the effects their
+    ledger says landed. A chat's own run is not collected (:func:`_run_item`); *state* is the
+    gateway's dashboard state, which the reader's walk of a chat reads.
 
     `since` is an ISO stamp compared lexicographically with when each run ended (its
     `completed_at`, else its `created_at`): exact for the ISO-8601 stamps the run store writes,
@@ -295,13 +306,14 @@ def collect_runs(*, since: str = "", limit: int = RUN_SCAN_LIMIT) -> list[Collec
     # The MODULE is the `LedgerStore` — the protocol is one `read_jsonl` method and
     # `workflows.store` implements it (the same handle `resume_account` reads a run through).
     # `LedgerStore()` is a Protocol and cannot be instantiated.
+    reader = _digest_reads(state)
     out: list[CollectedItem] = []
     for run in runs:
         try:
             ended = str(getattr(run, "completed_at", "") or getattr(run, "created_at", "") or "")
             if since and ended and ended < since:
                 continue
-            collected = _run_item(run, run_store)
+            collected = _run_item(run, run_store, reader)
             if collected is not None:
                 out.append(collected)
         except Exception:  # noqa: BLE001
@@ -333,7 +345,7 @@ def current_item(
             from personalclaw.workflows import store as run_store
 
             run = run_store.get(source_id)
-            return _run_item(run, run_store) if run is not None else None
+            return _run_item(run, run_store, _digest_reads(state)) if run is not None else None
     except Exception as exc:  # noqa: BLE001 - a lane that cannot be read is unknown, not empty
         raise LaneUnreadable(f"{source} lane unreadable: {type(exc).__name__}") from exc
     raise LaneUnreadable(f"{source} lane is not readable here")
@@ -354,7 +366,7 @@ def collect_all(
     if state is not None:
         items.extend(collect_channels(state, since_ts=since_ts))
     if include_runs:
-        items.extend(collect_runs(since=since_iso))
+        items.extend(collect_runs(since=since_iso, state=state))
     return items
 
 

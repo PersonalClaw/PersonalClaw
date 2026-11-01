@@ -1015,6 +1015,7 @@ class TestTheCollectors:
         import personalclaw.ledger as ledger
         from personalclaw.proactive import collect
         from personalclaw.workflows import store as run_store
+        from personalclaw.workflows.models import OriginKind, RunOrigin
 
         runs = [
             SimpleNamespace(
@@ -1023,6 +1024,8 @@ class TestTheCollectors:
                 status="running",
                 workflow_name="morning-triage",
                 error_message="",
+                origin=RunOrigin(kind=OriginKind.API),
+                root_run_id="",
             ),
             SimpleNamespace(
                 id="r-onb",
@@ -1030,6 +1033,8 @@ class TestTheCollectors:
                 status="escalated",
                 workflow_name="general-project",
                 error_message="",
+                origin=RunOrigin(kind=OriginKind.API),  # a run of yours, which the digest reads
+                root_run_id="",
             ),
         ]
         monkeypatch.setattr(run_store, "list_runs", lambda limit: (runs, len(runs)))

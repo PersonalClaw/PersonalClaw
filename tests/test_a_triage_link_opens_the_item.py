@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from personalclaw.knowledge.retrieval import _attach_locator
 from personalclaw.proactive import collect
 from personalclaw.triggers.delivery import status_url
+from personalclaw.workflows.models import OriginKind, RunOrigin
 
 
 def test_a_finished_run_in_the_digest_links_to_its_page(monkeypatch) -> None:
@@ -25,6 +26,8 @@ def test_a_finished_run_in_the_digest_links_to_its_page(monkeypatch) -> None:
         status="complete",
         workflow_name="general-project",
         error_message="",
+        origin=RunOrigin(kind=OriginKind.API),  # a run of yours, which the digest reads
+        root_run_id="",
     )
     monkeypatch.setattr(run_store, "list_runs", lambda limit: ([run], 1))
     monkeypatch.setattr(ledger, "read_events", lambda store, run_id, kinds: [])

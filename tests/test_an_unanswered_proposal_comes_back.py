@@ -688,6 +688,7 @@ def test_a_run_that_ended_after_the_last_digest_is_in_the_next_one(monkeypatch: 
     import personalclaw.ledger as ledger
     from personalclaw.proactive import collect
     from personalclaw.workflows import store as run_store
+    from personalclaw.workflows.models import OriginKind, RunOrigin
 
     def run(ident: str, workflow: str, status: str, created: str, ended: str) -> Any:
         return SimpleNamespace(
@@ -697,6 +698,8 @@ def test_a_run_that_ended_after_the_last_digest_is_in_the_next_one(monkeypatch: 
             created_at=created,
             completed_at=ended,
             error_message="",
+            origin=RunOrigin(kind=OriginKind.API),  # a run of yours, which the digest reads
+            root_run_id="",
         )
 
     runs = [
