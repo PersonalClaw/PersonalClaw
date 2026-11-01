@@ -33,7 +33,7 @@
     - radio "List"
     - radio "Week" [checked]
   - status
-  - text: Nov # – # # fires this week · # suppressed
+  - text: <month> # – # # fires this week · # suppressed
   - button "Previous week"
   - button "Next week"
   - table "Scheduled trigger fires by day and hour. Shaded cells are suppressed by a quiet window or a skip date.":
@@ -49,33 +49,33 @@
         - columnheader "Sat #"
         - columnheader "Sun #"
     - rowgroup:
-      - 'row "# Mon, Nov # #:# — <fires> Tue, Nov # #:# — <fires> Wed, Nov # #:# — <fires> Thu, Nov # #:# — # fire, all suppressed (skip date #-#-#): Morning briefing Fri, Nov # #:# — <fires> Sat, Nov # #:# — no fires Sun, Nov # #:# — no fires"':
+      - 'row "# Mon, <month> # #:# — <fires> Tue, <month> # #:# — <fires> Wed, <month> # #:# — <fires> Thu, <month> # #:# — # fire, all suppressed (skip date #-#-#): Morning briefing Fri, <month> # #:# — <fires> Sat, <month> # #:# — no fires Sun, <month> # #:# — no fires"':
         - rowheader "#"
-        - 'button "Mon, Nov # #:# — <fires>"': "#"
-        - 'button "Tue, Nov # #:# — <fires>"': "#"
-        - 'button "Wed, Nov # #:# — <fires>"': "#"
-        - 'button "Thu, Nov # #:# — # fire, all suppressed (skip date #-#-#): Morning briefing"': "#"
-        - 'button "Fri, Nov # #:# — <fires>"': "#"
-        - cell "Sat, Nov # #:# — no fires"
-        - cell "Sun, Nov # #:# — no fires"
-      - 'row "# Mon, Nov # #:# — no fires Tue, Nov # #:# — no fires Wed, Nov # #:# — no fires Thu, Nov # #:# — no fires Fri, Nov # #:# — <fires> Sat, Nov # #:# — no fires Sun, Nov # #:# — no fires"':
+        - 'button "Mon, <month> # #:# — <fires>"': "#"
+        - 'button "Tue, <month> # #:# — <fires>"': "#"
+        - 'button "Wed, <month> # #:# — <fires>"': "#"
+        - 'button "Thu, <month> # #:# — # fire, all suppressed (skip date #-#-#): Morning briefing"': "#"
+        - 'button "Fri, <month> # #:# — <fires>"': "#"
+        - cell "Sat, <month> # #:# — no fires"
+        - cell "Sun, <month> # #:# — no fires"
+      - 'row "# Mon, <month> # #:# — no fires Tue, <month> # #:# — no fires Wed, <month> # #:# — no fires Thu, <month> # #:# — no fires Fri, <month> # #:# — <fires> Sat, <month> # #:# — no fires Sun, <month> # #:# — no fires"':
         - rowheader "#"
-        - cell "Mon, Nov # #:# — no fires"
-        - cell "Tue, Nov # #:# — no fires"
-        - cell "Wed, Nov # #:# — no fires"
-        - cell "Thu, Nov # #:# — no fires"
-        - 'button "Fri, Nov # #:# — <fires>"': "#"
-        - cell "Sat, Nov # #:# — no fires"
-        - cell "Sun, Nov # #:# — no fires"
-      - 'row "# Mon, Nov # #:# — no fires Tue, Nov # #:# — # fire, all suppressed (quiet hours #:#–#:#): Evening digest Wed, Nov # #:# — no fires Thu, Nov # #:# — no fires Fri, Nov # #:# — no fires Sat, Nov # #:# — # fires, # suppressed (quiet hours #:#–#:#): Evening digest, Weekly backup Sun, Nov # #:# — no fires"':
+        - cell "Mon, <month> # #:# — no fires"
+        - cell "Tue, <month> # #:# — no fires"
+        - cell "Wed, <month> # #:# — no fires"
+        - cell "Thu, <month> # #:# — no fires"
+        - 'button "Fri, <month> # #:# — <fires>"': "#"
+        - cell "Sat, <month> # #:# — no fires"
+        - cell "Sun, <month> # #:# — no fires"
+      - 'row "# Mon, <month> # #:# — no fires Tue, <month> # #:# — # fire, all suppressed (quiet hours #:#–#:#): Evening digest Wed, <month> # #:# — no fires Thu, <month> # #:# — no fires Fri, <month> # #:# — no fires Sat, <month> # #:# — # fires, # suppressed (quiet hours #:#–#:#): Evening digest, Weekly backup Sun, <month> # #:# — no fires"':
         - rowheader "#"
-        - cell "Mon, Nov # #:# — no fires"
-        - 'button "Tue, Nov # #:# — # fire, all suppressed (quiet hours #:#–#:#): Evening digest"': "#"
-        - cell "Wed, Nov # #:# — no fires"
-        - cell "Thu, Nov # #:# — no fires"
-        - cell "Fri, Nov # #:# — no fires"
-        - 'button "Sat, Nov # #:# — # fires, # suppressed (quiet hours #:#–#:#): Evening digest, Weekly backup"': "#"
-        - cell "Sun, Nov # #:# — no fires"
+        - cell "Mon, <month> # #:# — no fires"
+        - 'button "Tue, <month> # #:# — # fire, all suppressed (quiet hours #:#–#:#): Evening digest"': "#"
+        - cell "Wed, <month> # #:# — no fires"
+        - cell "Thu, <month> # #:# — no fires"
+        - cell "Fri, <month> # #:# — no fires"
+        - 'button "Sat, <month> # #:# — # fires, # suppressed (quiet hours #:#–#:#): Evening digest, Weekly backup"': "#"
+        - cell "Sun, <month> # #:# — no fires"
   - text: Will run Partly suppressed Quiet hours Skip date
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

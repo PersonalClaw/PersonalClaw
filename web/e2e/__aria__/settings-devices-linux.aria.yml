@@ -36,7 +36,7 @@
   - status
   - heading "Signed in (#)" [level=#]
   - paragraph: Browsers, paired devices and the desktop app. Each kind has a limit of #; past it, the one used least recently is signed out and told why, so a script minting tokens never signs one of these out.
-  - text: Headless Chrome on <platform> This device Browser · Last seen <when> · from #.#.#.# · Signed in with the harness token (--json-ready) Signed in <when> · session expires Nov #, #:# <am/pm>
+  - text: Headless Chrome on <platform> This device Browser · Last seen <when> · from #.#.#.# · Signed in with the harness token (--json-ready) Signed in <when> · session expires <month> #, #:# <am/pm>
   - button "Sign out of this device": Sign out
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

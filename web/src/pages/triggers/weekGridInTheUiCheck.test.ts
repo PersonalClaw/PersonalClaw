@@ -14,9 +14,9 @@ import { join } from 'node:path'
 
 /** The committed tree: the pinned image's, the only set there is (`-linux`, #3943). */
 const TREE = readFileSync(join(process.cwd(), 'e2e/__aria__/triggers-week-linux.aria.yml'), 'utf8')
-/** The grid's cells that open a trigger, each named by `cellLabel`: `Mon, Nov # #:# — <its fires>`.
+/** The grid's cells that open a trigger, each named by `cellLabel`: `Mon, <month> # #:# — <its fires>`.
  *  The tree quotes a line whose name holds a `:` (`- 'button "…"': "#"`). */
-const CELLS = TREE.split('\n').filter((l) => /^\s*- '?button "(Sun|Mon|Tue|Wed|Thu|Fri|Sat), \w+ # #:# — /.test(l))
+const CELLS = TREE.split('\n').filter((l) => /^\s*- '?button "(Sun|Mon|Tue|Wed|Thu|Fri|Sat), <month> # #:# — /.test(l))
 
 describe("the UI quality check's week view", () => {
   it('reads the committed tree of the week view (not vacuously green)', () => {

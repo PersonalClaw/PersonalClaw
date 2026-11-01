@@ -23,7 +23,7 @@ describe("the matrix's accessibility tree folds a day strip's weekdays", () => {
   it('leaves a weekday that names a column or a date alone', () => {
     // Control: the week view runs under a fixed clock, and its days name its own columns.
     expect(normalizeTree('        - columnheader "Mon 2"')).toBe('        - columnheader "Mon #"')
-    expect(normalizeTree("        - 'button \"Tue, Nov 3 09:00 — 2 fires\"': \"2\"")).toContain('Tue, Nov #')
+    expect(normalizeTree("        - 'button \"Tue, Nov 3 09:00 — 2 fires\"': \"2\"")).toContain('Tue, <month> #')
   })
 })
 
