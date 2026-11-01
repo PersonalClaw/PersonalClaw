@@ -71,16 +71,19 @@ def _reference_screen(command: str, *, cwd=None) -> str | None:
     owned = security.SensitivePaths(home_credential_dirs=False)
     folders = security._credential_folders()
     checked: set[tuple[str, str]] = set()
-    for word, path in named_paths(command, cwd=cwd, names=owned.names):
+    # PersonalClaw's own key is said over any other credential a word names (a bare `.env` is read
+    # against every folder the command can be in, a project's among them).
+    refused = None
+    for word, path in named_paths(command, cwd=cwd, names=owned.names, named=owned.names_one):
         if (word, str(path)) in checked:
             continue
         checked.add((word, str(path)))
         kind = owned.kind(str(path))
-        if kind:
+        if kind == security.OWN_SECRET:
             return security._SHELL_REFUSAL[kind]
-        if security._shows_credential_folder(word, path, folders):
-            return security._SHELL_REFUSAL[security.CREDENTIAL]
-    return None
+        if refused is None and (kind or security._shows_credential_folder(word, path, folders)):
+            refused = security._SHELL_REFUSAL[security.CREDENTIAL]
+    return refused
 
 
 def _both(text: str) -> tuple[bool, bool]:

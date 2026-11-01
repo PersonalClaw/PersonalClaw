@@ -23,9 +23,8 @@ from personalclaw.security import (
     BUILTIN_DENY_PATTERNS,
     redact_credentials,
     redact_exfiltration_urls,
-    scan_history,
-    scan_memory,
 )
+from personalclaw.security_audit import scan_history, scan_memory
 from personalclaw.sel import redact_event, sel
 from personalclaw.vector_memory import NO_INDEX_NOTE
 

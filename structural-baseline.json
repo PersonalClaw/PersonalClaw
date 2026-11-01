@@ -265,6 +265,7 @@
       "preference_facets",
       "pricing",
       "process_facts",
+      "project_secrets",
       "protected_folders",
       "provider_registry",
       "proxy_signature",
@@ -275,6 +276,7 @@
       "resource_limits",
       "safety_flags",
       "schedule_trigger",
+      "security_audit",
       "session_restrictions",
       "shell_syntax",
       "signing",
@@ -601,18 +603,17 @@
         ]
       },
       "src/personalclaw/security.py": {
-        "edges": 10,
+        "edges": 9,
         "violations": [
           "foundation-imports-only-foundation -> personalclaw.address_logins",
           "foundation-imports-only-foundation -> personalclaw.branch_publish",
           "foundation-imports-only-foundation -> personalclaw.branch_publish",
           "foundation-imports-only-foundation -> personalclaw.command_paths",
           "foundation-imports-only-foundation -> personalclaw.llm.subscription_credentials",
-          "foundation-imports-only-foundation -> personalclaw.memory_service",
           "foundation-imports-only-foundation -> personalclaw.outside_home",
+          "foundation-imports-only-foundation -> personalclaw.project_secrets",
           "foundation-imports-only-foundation -> personalclaw.protected_folders",
-          "foundation-imports-only-foundation -> personalclaw.shell_denylist",
-          "foundation-imports-only-foundation -> personalclaw.vector_memory"
+          "foundation-imports-only-foundation -> personalclaw.shell_denylist"
         ]
       },
       "src/personalclaw/sel.py": {
@@ -774,11 +775,11 @@
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 5,
         "core-must-not-import-the-http-surface": 27,
-        "foundation-imports-only-foundation": 73,
+        "foundation-imports-only-foundation": 72,
         "ledger-is-a-leaf": 0,
         "nothing-below-the-entry-points-imports-them": 2
       },
-      "edges": 107,
+      "edges": 106,
       "files": 42
     }
   },

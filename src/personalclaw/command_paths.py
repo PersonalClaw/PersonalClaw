@@ -264,6 +264,7 @@ def named_paths(
     cwd: str | os.PathLike[str] | None = None,
     home: str | os.PathLike[str] | None = None,
     names: Iterable[str] = (),
+    named: Callable[[str], bool] | None = None,
 ) -> Iterator[tuple[str, Path]]:
     """Every word of *text* — a shell command or a tool call's title — that names a path, with the
     path it names, absolute and as the shell would find it.
@@ -274,7 +275,8 @@ def named_paths(
     in (:func:`_working_dirs`), starting from *cwd*: the workspace in the home when None, where the
     agent's tools run. A brace list and a glob are expanded. A word counts when it looks like a path
     (a slash, or a leading ``.`` or ``~``) or is one of *names*, the bare names a screen protects,
-    in any case.
+    in any case, or a name *named* says it protects (a name rule, where a list cannot hold every
+    name).
     """
     root = Path(home) if home is not None else _home()
     user_home = os.path.expanduser("~")
@@ -306,11 +308,16 @@ def named_paths(
             continue
         left = budget[0]
         for word in _words(segment):
-            if not ("/" in word or word.startswith((".", "~")) or word.casefold() in bare):
+            if not (
+                "/" in word
+                or word.startswith((".", "~"))
+                or word.casefold() in bare
+                or (named is not None and named(word))
+            ):
                 continue
             path = Path(os.path.expanduser(word))
             for candidate in [path] if path.is_absolute() else [base / path for base in bases]:
-                for named in _globbed(candidate, budget):
-                    yield word, named
+                for found in _globbed(candidate, budget):
+                    yield word, found
         if budget[0] == left:
             read.add(segment)

@@ -69,8 +69,10 @@ def home(tmp_path, monkeypatch) -> Path:
     return user
 
 
-def _named_paths_before(text, *, cwd=None, home=None, names=()):
-    """`command_paths.named_paths` as it was: every part read, however often it repeats."""
+def _named_paths_before(text, *, cwd=None, home=None, names=(), named=None):
+    """`command_paths.named_paths` as it was: every part read, however often it repeats. It takes
+    the name rule (*named*) as the reading does now, so the screens ask it what they ask the
+    reading."""
     root = Path(home) if home is not None else cp._home()
     user_home = os.path.expanduser("~")
     spelled = cp._spell_out(text, personalclaw_home=str(root), user_home=user_home)
@@ -86,12 +88,17 @@ def _named_paths_before(text, *, cwd=None, home=None, names=()):
     budget = [cp._MAX_LISTINGS]
     for segment in segments:
         for word in cp._words(segment):
-            if not ("/" in word or word.startswith((".", "~")) or word.casefold() in bare):
+            if not (
+                "/" in word
+                or word.startswith((".", "~"))
+                or word.casefold() in bare
+                or (named is not None and named(word))
+            ):
                 continue
             path = Path(os.path.expanduser(word))
             for candidate in [path] if path.is_absolute() else [base / path for base in bases]:
-                for named in cp._globbed(candidate, budget):
-                    yield word, named
+                for found in cp._globbed(candidate, budget):
+                    yield word, found
 
 
 @contextmanager

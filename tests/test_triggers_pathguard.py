@@ -37,7 +37,7 @@ def tree(tmp_path):
     notes = tmp_path / "notes"
     notes.mkdir()
     (notes / "today.md").write_text("hi")
-    (tmp_path / "secrets.txt").write_text("s")
+    (tmp_path / "private.txt").write_text("s")
     sibling = tmp_path / "notesEVIL"
     sibling.mkdir()
     (sibling / "p.txt").write_text("p")
@@ -48,8 +48,8 @@ def tree(tmp_path):
 
 
 def test_it_resolves_dotdot(tree):
-    assert canonicalize(str(tree / "notes" / ".." / "secrets.txt")) == str(
-        (tree / "secrets.txt").resolve()
+    assert canonicalize(str(tree / "notes" / ".." / "private.txt")) == str(
+        (tree / "private.txt").resolve()
     )
 
 
@@ -82,14 +82,14 @@ def test_a_PREFIX_SIBLING_is_NOT_within(tree):
 
 
 def test_a_TRAVERSAL_out_of_the_root_is_not_within(tree):
-    assert is_within(str(tree / "notes" / ".." / "secrets.txt"), str(tree / "notes")) is False
+    assert is_within(str(tree / "notes" / ".." / "private.txt"), str(tree / "notes")) is False
 
 
 def test_a_SYMLINK_pointing_out_of_the_root_is_not_within(tree):
     """The half canonicalizing the candidate alone would miss if it did not follow links: a file
     that LIVES inside the scope but IS the outside secret."""
     link = tree / "notes" / "escape"
-    link.symlink_to(tree / "secrets.txt")
+    link.symlink_to(tree / "private.txt")
     assert is_within(str(link), str(tree / "notes")) is False
 
 
@@ -114,25 +114,25 @@ def test_a_file_in_scope_is_ALLOWED(tree):
 
 def test_a_file_out_of_scope_is_DENIED(tree):
     caps = {"paths": [f"{tree / 'notes'}/*"]}
-    assert not capability_allows(caps, key="paths", value=str(tree / "secrets.txt")).allowed
+    assert not capability_allows(caps, key="paths", value=str(tree / "private.txt")).allowed
 
 
 def test_THE_TRAVERSAL_IS_NOW_REFUSED(tree):
     """🔴 THE DEFECT, pinned. This exact assertion failed before the fix: it ALLOWED."""
     caps = {"paths": [f"{tree / 'notes'}/*"]}
-    escape = str(tree / "notes" / ".." / "secrets.txt")
+    escape = str(tree / "notes" / ".." / "private.txt")
     decision = capability_allows(caps, key="paths", value=escape)
     assert decision.allowed is False
     assert "outside" in decision.reason
 
 
 def test_the_refusal_names_BOTH_the_resolved_and_the_written_path(tree):
-    """An author who wrote `notes/../secrets.txt` needs to see what it RESOLVED to; otherwise the
+    """An author who wrote `notes/../private.txt` needs to see what it RESOLVED to; otherwise the
     refusal reads as a false positive against the text they typed."""
     caps = {"paths": [f"{tree / 'notes'}/*"]}
-    escape = str(tree / "notes" / ".." / "secrets.txt")
+    escape = str(tree / "notes" / ".." / "private.txt")
     reason = capability_allows(caps, key="paths", value=escape).reason
-    assert "secrets.txt" in reason
+    assert "private.txt" in reason
     assert ".." in reason, "the reason must echo what the author actually wrote"
 
 

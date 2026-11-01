@@ -40,7 +40,7 @@ def roots(tmp_path, monkeypatch):
     root.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
-    (outside / ".env").write_text("SECRET=1")
+    (outside / "notes.txt").write_text("SECRET=1")
     monkeypatch.setattr(F, "_dashboard_roots", lambda: [("Workspace", str(root))])
     return root, outside
 
@@ -202,7 +202,7 @@ class TestRevealRootAllowlist:
         import json as _json
 
         _root, outside = roots
-        resp = await F.api_reveal_path(self._request({"path": str(outside / ".env")}))
+        resp = await F.api_reveal_path(self._request({"path": str(outside / "notes.txt")}))
         assert resp.status == 400
         # The STRUCTURED envelope, unlike this module's six flat siblings emitting the
         # same sentence: `test_wire_error_envelope_census` ratchets the flat population

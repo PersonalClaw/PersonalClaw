@@ -822,7 +822,12 @@ place that contains the home (a worker in `~`) says nothing about a path in it, 
 library's rule is all a session working there reads of the library; no
 protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own `.env`, `auth/`,
 `governance/`); no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
-or `*.secret` file, nor any alias of one; and no change to what git or the owner's shell runs as
+or `*.secret` file, nor any alias of one; no project secret file by its name, wherever it sits
+(`project_secrets.is_project_secret_name`: `.env` and its variants such as `.env.local` and `prod.env`,
+`.envrc`, a `secrets` data file such as `secrets.json` or `secrets.yaml` (a source module such as
+`secrets.py` still reads), `credentials*.json`, `service-account*.json`, `.npmrc`, `.pypirc`,
+`.netrc`; a template such as `.env.example` still reads), which the shell's screen refuses by the
+same rule; and no change to what git or the owner's shell runs as
 her (`owner_only`: a repository's `.git/config` and `.git/hooks/`, its `.gitmodules`, her
 `~/.gitconfig`, her `~/.zshrc` and the rest above). A path that starts with `~/` names the
 owner's home, as the owner writes it, and meets every one of these checks as any absolute path

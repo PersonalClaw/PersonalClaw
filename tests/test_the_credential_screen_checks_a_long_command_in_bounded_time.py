@@ -71,13 +71,16 @@ def _reference_screen(command: str, old: re.Pattern[str], *, cwd=None) -> str | 
         return security._SHELL_REFUSAL[security.CREDENTIAL]
     owned = security.SensitivePaths(home_credential_dirs=False)
     folders = security._credential_folders()
-    for word, path in named_paths(command, cwd=cwd, names=owned.names):
+    # PersonalClaw's own key is said over any other credential a word names (a bare `.env` is read
+    # against every folder the command can be in, a project's among them).
+    refused = None
+    for word, path in named_paths(command, cwd=cwd, names=owned.names, named=owned.names_one):
         kind = owned.kind(str(path))
-        if kind:
+        if kind == security.OWN_SECRET:
             return security._SHELL_REFUSAL[kind]
-        if security._shows_credential_folder(word, path, folders):
-            return security._SHELL_REFUSAL[security.CREDENTIAL]
-    return None
+        if refused is None and (kind or security._shows_credential_folder(word, path, folders)):
+            refused = security._SHELL_REFUSAL[security.CREDENTIAL]
+    return refused
 
 
 # ── the regex: the same alternative behind one `.*` ─────────────────────────────────────────────
