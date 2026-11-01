@@ -179,7 +179,7 @@ def build_protocol_provider(
             model=model,
             credential=credential,
             base_url=base_url or None,
-            max_tokens=cap if cap is not None else 4096,
+            max_tokens=cap or 0,  # 0, none set: each request sends its model's default
             extra_options=options,
         )
     return OpenAIProvider(

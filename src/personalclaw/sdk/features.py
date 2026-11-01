@@ -97,6 +97,11 @@ that asks them declares it.
 doing, and a ``running_changed`` frame says it moved. An app that reads the list declares it, with
 ``/api/running`` in its manifest.
 
+``THINKING_OUTPUT_CAP``: a model app asks the output cap a request to a model sends when neither
+the operator nor the call set one (``personalclaw.sdk.model.default_output_cap``): 32,000 for a
+model that thinks adaptively, whose thinking is spent out of the same cap, and 4,096 for any other,
+never above a ceiling the app knows. A model app whose provider sends it declares it.
+
 ``TOOL_CALL_SCREEN``: a channel that runs a conversation itself asks the deny-list about each call
 before it approves or asks about it (``personalclaw.sdk.channel.screen_tool_call``), and refuses a
 call it refuses. A channel app that asks it declares it.
@@ -137,6 +142,7 @@ from personalclaw.apps.core_features import (
     PER_CALL_OUTPUT_CAP,
     PRE_TOOL_HOOKS,
     RUNNING_LIST,
+    THINKING_OUTPUT_CAP,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
@@ -164,6 +170,7 @@ __all__ = [
     "PER_CALL_OUTPUT_CAP",
     "PRE_TOOL_HOOKS",
     "RUNNING_LIST",
+    "THINKING_OUTPUT_CAP",
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
     "TURNS_NAME_WHO_ASKED",

@@ -166,6 +166,13 @@ MODEL_EFFORTS = "model-efforts"
 #: ``thinks_adaptively``, so an app that imports it does not load.
 ADAPTIVE_THINKING = "adaptive-thinking"
 
+#: A model app asks what output cap a request to a model sends when neither the operator nor the
+#: call set one: ``personalclaw.sdk.model.default_output_cap(model_id, ceiling=None)`` answers
+#: 32,000 for a model that thinks adaptively (its thinking is spent out of the same cap) and 4,096
+#: for any other, never above the *ceiling* the app knows, as core's Anthropic wire sends. A core
+#: without it has no ``default_output_cap``, so an app that imports it does not load.
+THINKING_OUTPUT_CAP = "thinking-output-cap"
+
 #: An app reads everything waiting on the owner as one list: ``GET /api/waiting`` serves
 #: ``{"waiting": [item, …], "unreadable": [kind, …]}``, each item ``{id, kind, work, session, brief,
 #: consequence, risk, asked_at, age_secs, expires_at, current, interrupt, answer, route}``, by
@@ -227,6 +234,7 @@ CORE_FEATURES: frozenset[str] = frozenset(
         PER_CALL_OUTPUT_CAP,
         PRE_TOOL_HOOKS,
         RUNNING_LIST,
+        THINKING_OUTPUT_CAP,
         TOOL_CALL_SCREEN,
         TURNS_NAME_THEIR_CHANNEL,
         TURNS_NAME_WHO_ASKED,
