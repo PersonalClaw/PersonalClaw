@@ -1678,6 +1678,72 @@ UNCHECKED_REFUSAL = (
 )
 
 
+#: Where Linux keeps the settings :data:`_NAMESPACES_WITHHELD_BY` names.
+_PROC_SYS = Path("/proc/sys")
+
+#: The settings that withhold unprivileged user namespaces on Linux, each with the value that
+#: withholds them and the words that turn it back on.
+_NAMESPACES_WITHHELD_BY = (
+    (
+        "kernel/apparmor_restrict_unprivileged_userns",
+        "1",
+        "this computer's AppArmor withholds the unprivileged user namespaces it needs "
+        "(kernel.apparmor_restrict_unprivileged_userns=1): give PersonalClaw an AppArmor profile "
+        "that allows them, or allow them for every program with "
+        "`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, and keep that after a "
+        "restart in a file under /etc/sysctl.d",
+    ),
+    (
+        "kernel/unprivileged_userns_clone",
+        "0",
+        "this computer has unprivileged user namespaces turned off "
+        "(kernel.unprivileged_userns_clone=0): turn them on with "
+        "`sudo sysctl -w kernel.unprivileged_userns_clone=1`, and keep that after a restart in a "
+        "file under /etc/sysctl.d",
+    ),
+    (
+        "user/max_user_namespaces",
+        "0",
+        "this computer allows no user namespaces (user.max_user_namespaces=0): allow them with "
+        "`sudo sysctl -w user.max_user_namespaces=15000`, and keep that after a restart in a file "
+        "under /etc/sysctl.d",
+    ),
+)
+
+
+def no_sandbox_remedy() -> str:
+    """What gives this computer the sandbox PersonalClaw runs commands in, as a sentence, where
+    it has none (:func:`detect_backend` answers ``"none"``): on Linux, the setting that withholds
+    the namespaces it needs, how to change it, and how to keep the change after a restart (a file
+    under ``/etc/sysctl.d``)."""
+    if sys.platform.startswith("linux"):
+        for name, withholds, words in _NAMESPACES_WITHHELD_BY:
+            try:
+                if (_PROC_SYS / name).read_text(encoding="utf-8").strip() == withholds:
+                    return f"PersonalClaw's sandbox needs Linux namespaces, and {words}."
+            except OSError:
+                continue
+        return (
+            "PersonalClaw's sandbox needs Linux's unprivileged user namespaces, and this computer "
+            "withholds them: allow them, then restart PersonalClaw."
+        )
+    if sys.platform == "darwin":
+        return (
+            "PersonalClaw's sandbox on macOS is sandbox-exec (/usr/bin/sandbox-exec), which this "
+            "Mac cannot start."
+        )
+    return "PersonalClaw's sandbox runs on Linux and macOS, and this system is neither."
+
+
+def strict_refusal() -> str:
+    """The sentence a command set to the strict sandbox is refused with where this computer has
+    no sandbox: it is never run unconfined, as a command at the standard level is."""
+    return (
+        "This command was not run: it is set to run in the strict sandbox, and this computer has "
+        f"no sandbox PersonalClaw can use. {no_sandbox_remedy()}"
+    )
+
+
 def detect_backend(config_mode: str = "auto") -> str:
     """Detect the best available sandbox backend.
 
@@ -1736,8 +1802,9 @@ def wrap_refusal(mode: str = "auto") -> str:
     The sentence :func:`wrap_argv` raises with, asked before anything is built, so a tool can
     refuse the call in its pre-flight: the command's run gives it no network and the sandbox
     cannot take the network away here, the desktop app cannot start the Linux namespace
-    launcher (:func:`namespace_argv`) on a host whose namespaces work, or the check of whether the
-    namespaces work has not answered (:data:`UNCHECKED_REFUSAL`)."""
+    launcher (:func:`namespace_argv`) on a host whose namespaces work, the check of whether the
+    namespaces work has not answered (:data:`UNCHECKED_REFUSAL`), or the command is set to the
+    strict sandbox on a computer that has none (:func:`strict_refusal`)."""
     from personalclaw.net.policy import no_network_for_commands
 
     if (held := no_network_for_commands()) and (cannot := _cannot_take_the_network(mode)):
@@ -1749,6 +1816,8 @@ def wrap_refusal(mode: str = "auto") -> str:
     backend = detect_backend(config_mode=mode)
     if backend == UNCHECKED:
         return UNCHECKED_REFUSAL
+    if backend == "none" and wrap_level(mode) == "strict":
+        return strict_refusal()
     if python_children.available() or backend != "namespace":
         return ""
     return python_children.refusal(NAMESPACE_REFUSAL)
@@ -1883,8 +1952,14 @@ def _wrapped(argv: list[str], mode: str, *, network: bool) -> tuple[list[str], s
         return sandbox_exec_argv(argv, level, network=network)
 
     if backend == "none":
+        # The strict level is never run unconfined; the standard level runs with PersonalClaw's
+        # own checks only, which the chat's Execution Boundary and the Doctor say, with the remedy.
+        if level == "strict":
+            raise SandboxEnforcementUnavailable(strict_refusal())
         if not getattr(_wrapped, "_warned", False):
-            logger.warning("No OS-level sandbox available — app-level checks only")
+            logger.warning(
+                "No OS-level sandbox available — app-level checks only. %s", no_sandbox_remedy()
+            )
             _wrapped._warned = True  # type: ignore[attr-defined]
     return argv, None
 

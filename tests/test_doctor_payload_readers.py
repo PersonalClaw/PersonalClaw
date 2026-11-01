@@ -309,6 +309,8 @@ def test_personalclaw_doctor_prints_the_deficit_and_its_blocker(tmp_path, monkey
     from unittest.mock import MagicMock, patch
 
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
+    # The one issue this run raises is the deficit, on a computer with a sandbox or without.
+    monkeypatch.setattr("personalclaw.cli_doctor._doctor_sandbox", lambda: [])
     from personalclaw.cli_doctor import _doctor
     from personalclaw.knowledge import get_knowledge_store
 

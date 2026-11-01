@@ -1218,7 +1218,12 @@ An Incognito chat reads its memory, as its notice says, and so does a turn someo
 What this does not hold:
 
 - **Where no OS sandbox runs.** With the sandbox off, or on a system that offers none, only the
-  reading of the command's text holds, and a path a command builds while it runs is not seen.
+  reading of the command's text holds, and a path a command builds while it runs is not seen. On a
+  system that offers none, a command set to the strict sandbox is not run at all, and the chat's
+  Execution Boundary and the Doctor say which setting withholds the sandbox and how to change it
+  (`sandbox.no_sandbox_remedy`). A connector pack's parse script runs at the strict level, so on
+  such a system no pack's source can be parsed until the sandbox is allowed: the pack's own
+  import fence is not taken as enough for code that came from someone else.
 - **An agent CLI that was already running.** A CLI that serves several chats on one process is
   fenced or not by the chat it was started for, and one the session warm pool starts ahead of any
   chat is not fenced. In a private chat on such a process, a change its own tools ask about is

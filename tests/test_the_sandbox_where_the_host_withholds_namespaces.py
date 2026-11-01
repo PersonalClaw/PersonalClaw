@@ -8,9 +8,11 @@ one:
 
 - a command whose run takes its network away is refused, since the sandbox cannot take it away here;
 - a check of the host that does not answer is refused;
-- any other command runs unwrapped, and "app-level checks only" is logged once. That is today's
-  fail-open posture, pinned so that changing it is a decision made on purpose. Whether such a host
-  should refuse instead is the owner's call.
+- a command set to the strict sandbox is refused, with the remedy (the owner's call: strict
+  refuses, and standard says so plainly);
+- a command at the standard level runs unwrapped, held by PersonalClaw's own checks, and "app-level
+  checks only" is logged once with the remedy. The chat's Execution Boundary and the Doctor say so
+  too (``tests/test_a_computer_with_no_sandbox_runs_no_strict_command.py``).
 
 They run where the namespaces are withheld (every suite shard on a Linux runner) and skip where the
 host has an OS sandbox. The last test reads :func:`namespace_sandbox.needs_it` on every host.
@@ -81,15 +83,23 @@ def test_a_check_of_the_host_that_does_not_answer_is_refused(fresh_backend, monk
 
 
 @withheld_only
-def test_today_any_other_command_runs_unwrapped_and_says_so_only_in_the_log(
+def test_a_command_set_to_the_strict_sandbox_is_refused(fresh_backend, monkeypatch):
+    monkeypatch.setattr(policy, "no_network_for_commands", lambda session_key=None: "")
+    with pytest.raises(sandbox.SandboxEnforcementUnavailable, match="strict sandbox"):
+        sandbox.wrap_argv(["/bin/true"], "strict")
+
+
+@withheld_only
+def test_a_standard_command_runs_unwrapped_and_the_log_names_the_remedy(
     fresh_backend, monkeypatch, caplog
 ):
-    """Today's fail-open posture: no OS sandbox, the command runs, and only the log says so."""
+    """No OS sandbox: a standard command runs, held by PersonalClaw's own checks."""
     monkeypatch.setattr(policy, "no_network_for_commands", lambda session_key=None: "")
     monkeypatch.delattr(sandbox._wrapped, "_warned", raising=False)
     with caplog.at_level(logging.WARNING, logger=sandbox.logger.name):
         assert sandbox.wrap_argv(["/bin/true"], "standard") == (["/bin/true"], None)
     assert "No OS-level sandbox available" in caplog.text
+    assert sandbox.no_sandbox_remedy() in caplog.text
 
 
 def test_a_run_that_requires_the_namespaces_fails_each_test_where_they_are_withheld(monkeypatch):

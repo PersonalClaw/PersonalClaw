@@ -87,6 +87,25 @@ def store(tmp_path):
     return KnowledgeStore(str(tmp_path / "knowledge.db"))
 
 
+@pytest.fixture(autouse=True)
+def _the_fence_runs_where_the_host_has_no_sandbox(monkeypatch):
+    """These prove the pack's own import fence, which runs inside the script and needs no OS
+    sandbox. A parse runs at the strict level, which a computer with no sandbox refuses
+    (``test_a_computer_with_no_sandbox_runs_no_strict_command``), so on such a host (GitHub's
+    Linux runner) the script runs at the standard level instead; where a sandbox exists its wrap
+    is unchanged."""
+    from personalclaw import sandbox
+
+    if sandbox.detect_backend(config_mode="strict") != "none":
+        return
+    real = sandbox.wrap_argv
+
+    def standard(argv: list[str], mode: str = "auto"):
+        return real(argv, mode="standard" if mode == "strict" else mode)
+
+    monkeypatch.setattr(sandbox, "wrap_argv", standard)
+
+
 # ── the fixture connector pack ──────────────────────────────────────────────────────
 
 #: The pack's whole provider module. Three lines, and it imports core ONLY through
