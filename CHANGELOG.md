@@ -15,6 +15,7 @@ An A2A client reads only the tasks it started, and its retry key names only its 
 ### Changed
 
 - **A chat spans its pane's full width, inside the pane's padding: its turns, with their tables, code and tool cards, the composer and its toolbar, and a new chat's greeting, cards and prompt suggestions. They were held to a 768 px column centred in the pane; a sent message's bubble is still 80% of the column, and the editor that resends it matches.**
+- **A chat opens at its latest message: opening one from the sidebar, from a link or by a reload lands the view at the end of its conversation, and it stays there while code blocks and images finish laying out, until you scroll. A scroll up while it loads stays where you put it.**
 
 ### Fixed
 

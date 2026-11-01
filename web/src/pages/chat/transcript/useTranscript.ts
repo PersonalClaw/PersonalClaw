@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { api, type ApprovalMode } from '../../../lib/api'
 import { failureSentence, reportActionFailure } from '../../../app/reportingWrite'
 import { notify } from '../../../app/appSdk'
@@ -225,6 +225,47 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     if (!streaming) followTurnRef.current = false
   }, [turns, streaming, followEnd])
 
+  // A chat opens at its latest message (#5866): its first turns after this mount (a pick in the
+  // sidebar, a link, a reload) land the view at the end of the conversation, and the end stays in
+  // view while late layout settles (a code block's highlighting, an image that arrives after the
+  // text) until the owner moves the view. Any wheel, touch, press or scrolling key of theirs puts
+  // the view in their hands for good, so a scroll up while the chat loads is never snapped back, and
+  // so does a scroll that leaves the view far above the end (the scroll listener below).
+  // A find deep link (`?find=`) goes to its match instead, so it does not land.
+  const landRef = useRef(!query.find)
+  const land = useCallback(() => {
+    const el = scrollRef.current
+    if (landRef.current && el) el.scrollTop = el.scrollHeight - el.clientHeight
+  }, [])
+  useEffect(() => {
+    if (!landRef.current) return
+    const keys = new Set(['PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End', ' '])
+    const release = () => { landRef.current = false }
+    const onKey = (e: KeyboardEvent) => { if (keys.has(e.key)) release() }
+    const opts = { capture: true, passive: true } as const
+    window.addEventListener('wheel', release, opts)
+    window.addEventListener('touchstart', release, opts)
+    window.addEventListener('pointerdown', release, opts)
+    window.addEventListener('keydown', onKey, opts)
+    return () => {
+      window.removeEventListener('wheel', release, opts)
+      window.removeEventListener('touchstart', release, opts)
+      window.removeEventListener('pointerdown', release, opts)
+      window.removeEventListener('keydown', onKey, opts)
+    }
+  }, [])
+  useLayoutEffect(() => { if (turns.length) land() }, [turns, land])
+  // Late layout grows the conversation without a render of ours: the scroller and what it holds
+  // are watched for size, and each change lands the view again while it is still the chat's.
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => land())
+    observer.observe(el)
+    for (const child of Array.from(el.children)) observer.observe(child)
+    return () => observer.disconnect()
+  }, [started, land])
+
   // Track distance from the bottom so a "jump to latest" pill can show when the
   // user has scrolled up (e.g. reading history while a reply streams in below).
   // Content growth fires no scroll event, so a large gap HERE is the user's own movement —
@@ -235,7 +276,9 @@ export function useTranscript({ sessionId, query, setQuery, navigate, stream, st
     const onScroll = () => {
       const up = el.scrollHeight - el.scrollTop - el.clientHeight > 240
       setScrolledUp(up)
-      if (up) followTurnRef.current = false
+      // The view's own landing keeps it at the end, so a scroll that leaves it far above the end is
+      // the owner's: it ends the landing as it ends following a turn.
+      if (up) { followTurnRef.current = false; landRef.current = false }
     }
     setScrolledUp(el.scrollHeight - el.scrollTop - el.clientHeight > 240)
     el.addEventListener('scroll', onScroll, { passive: true })
