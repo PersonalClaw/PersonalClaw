@@ -217,23 +217,22 @@ def test_every_command_sets_them_over_what_it_inherited(monkeypatch):
     assert _inside(manifest.removeprefix("file://"), config_dir()), manifest
 
 
-def test_the_caches_go_to_the_home_a_dotenv_names(tmp_path, monkeypatch):
-    """A ``.env`` in the working directory can name the home (``PERSONALCLAW_HOME``), and it is
-    read after the command starts: the caches follow the home the command runs on, not the one it
-    would have used without that file."""
-    named = tmp_path / "named-home"
-    (tmp_path / ".env").write_text(f"PERSONALCLAW_HOME={named}\n", encoding="utf-8")
+def test_the_caches_go_to_the_home_the_command_runs_on(tmp_path, monkeypatch):
+    """The caches follow the home the command runs on, the one its environment names. A ``.env`` in
+    the working directory that names another home (``PERSONALCLAW_HOME``) moves nothing: that is a
+    PersonalClaw setting, which a folder's ``.env`` never gives (``cli._read_the_env_files``)."""
+    home = tmp_path / "the-home"
+    elsewhere = tmp_path / "a-folders-home"
+    (tmp_path / ".env").write_text(f"PERSONALCLAW_HOME={elsewhere}\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
-    # Unset, the way it is recorded: the `.env` sets it, and teardown takes it away again.
-    monkeypatch.setenv("PERSONALCLAW_HOME", "")
-    monkeypatch.delenv("PERSONALCLAW_HOME")
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
 
     _run_a_command(monkeypatch)
 
-    assert os.environ["PERSONALCLAW_HOME"] == str(named), "control: the .env named the home"
-    assert _inside(os.environ[GRAMMAR_CACHE], named.resolve()), os.environ[GRAMMAR_CACHE]
+    assert os.environ["PERSONALCLAW_HOME"] == str(home), "the folder's .env moved the home"
+    assert _inside(os.environ[GRAMMAR_CACHE], home.resolve()), os.environ[GRAMMAR_CACHE]
     manifest = os.environ[GRAMMAR_MANIFEST].removeprefix("file://")
-    assert _inside(manifest, named.resolve()), manifest
+    assert _inside(manifest, home.resolve()), manifest
 
 
 def test_the_hub_finds_no_token_and_sends_no_file_past_its_own_client(tmp_path, monkeypatch):

@@ -17,11 +17,15 @@ from urllib.parse import parse_qs
 from personalclaw import address_logins
 from personalclaw.command_paths import (
     HOME_PATTERNS,
+    glob_forms,
+    glob_meets,
+    glob_reaches,
     is_glob,
     named_paths,
     shell_expands_to,
     strip_shell_quotes,
 )
+from personalclaw.project_secrets import PROJECT_SECRET_FILE_PATTERNS, is_project_secret_name
 from personalclaw.sel import SecurityEvent, SecurityEventLog
 from personalclaw.shell_syntax import Word, lex, simple_commands
 
@@ -239,6 +243,7 @@ def credential_store_paths() -> list[str]:
 #: ``auth.json`` or ``hosts.yml`` does not: those are refused only where their tool keeps them
 #: (:func:`_sign_in_files`).
 SIGN_IN_FILE_BASENAMES: frozenset[str] = frozenset({".credentials.json", "oauth_creds.json"})
+
 _DECLARED_AGENT_SIGN_IN_FILES: dict[str, tuple[str, ...]] = {}
 
 
@@ -534,6 +539,7 @@ class SensitivePaths:
             | OWN_SECRET_BASENAMES
             | SIGN_IN_FILE_BASENAMES
         )
+        self._bare = frozenset(name.casefold() for name in self.names)
 
     def __call__(self, path_str: str) -> bool:
         return bool(self.kind(path_str))
@@ -586,7 +592,34 @@ class SensitivePaths:
             return OWN_SECRET
         if names & self._sign_in_names or _under(requested, self._other):
             return CREDENTIAL
+        # A project's secret files, by name wherever they sit (:func:`is_project_secret_name`).
+        if any(is_project_secret_name(name) for name in names):
+            return CREDENTIAL
         return ""
+
+    def glob_kind(self, glob: Path, folders: tuple[str, ...] = ()) -> str:
+        """What a glob nobody expanded could name, by every place and name this protects: a
+        protected location (or *folders*, the credential folders a listing would show) it could
+        reach, or a protected name its last part could match. :data:`OWN_SECRET`,
+        :data:`CREDENTIAL` or ``""``, as :meth:`kind` answers for a path."""
+        for parts in glob_forms(glob):
+            if any(glob_reaches(parts, location) for location in self._own):
+                return OWN_SECRET
+            if any(glob_reaches(parts, location) for location in (*self._other, *folders)):
+                return CREDENTIAL
+            last = parts[-1] if parts else ""
+            if any(glob_meets(last, name) for name in self._own_names):
+                return OWN_SECRET
+            if any(glob_meets(last, name) for name in self._sign_in_names) or any(
+                glob_meets(last, pattern) for pattern in PROJECT_SECRET_FILE_PATTERNS
+            ):
+                return CREDENTIAL
+        return ""
+
+    def names_one(self, word: str) -> bool:
+        """Whether the bare *word* is the name of a file this refuses wherever it sits: a word a
+        reader of a command reads as a path once a ``cd`` has moved the shell beside it."""
+        return word.casefold() in self._bare or is_project_secret_name(word)
 
 
 #: :meth:`SensitivePaths.kind`'s answer for PersonalClaw's own credential store and its auth and
@@ -859,6 +892,13 @@ _SHELL_REFUSAL = {
     CREDENTIAL: "Blocked: command accesses sensitive credential path",
 }
 
+#: The refusal of a glob the screen did not expand (:meth:`SensitivePaths.glob_kind`).
+_UNEXPANDED_REFUSAL = (
+    "Blocked: command names more globs, or a glob matching more paths, than the screen expands, "
+    "and one it left unexpanded could reach a sensitive credential path. Name the files, or run "
+    "it as smaller commands"
+)
+
 
 def _credential_folders() -> tuple[str, ...]:
     """The credential folders under ``$HOME`` themselves, as written and as resolved
@@ -903,8 +943,9 @@ def is_sensitive_bash_command(
       files inside it: a listing hands over the names of the keys and profiles it holds. Refused
       with the sentence a read of a file inside gets.
     * Does it NAME a file only its owner reads — PersonalClaw's own credential store and auth and
-      audit material, in the active home and the default one, or another tool's sign-in
-      (:class:`SensitivePaths` without the ``$HOME`` folders)? Refused whatever it does with the
+      audit material, in the active home and the default one, another tool's sign-in, or one of a
+      project's secret files (:func:`is_project_secret_name`) — (:class:`SensitivePaths` without
+      the ``$HOME`` folders)? Refused whatever it does with the
       file, since nothing an agent runs needs to name one. Every path is read the way the
       command's shell would find it (:func:`~personalclaw.command_paths.named_paths`): the homes
       as a shell or a one-liner spells them, a relative path against *cwd* (the folder it runs
@@ -917,6 +958,9 @@ def is_sensitive_bash_command(
     stored secrets' names and ``awk`` printed a key, and from the workspace inside the home
     ``cat ../.env`` read the same file on any install.
 
+    A glob the reading did not expand, past its bounds on folders listed or paths matched, is
+    refused when it could reach any protected place or name (:meth:`SensitivePaths.glob_kind`).
+
     Defence in depth: a command can build a path out of pieces no reading of its text sees.
     """
     normalised = strip_shell_quotes(_normalise_for_matching(command))
@@ -928,15 +972,28 @@ def is_sensitive_bash_command(
     # it, and asked again they give the same answer: each is resolved once. The set lives only for
     # this call, so a path that becomes a link afterwards is seen by the next check.
     checked: set[tuple[str, str]] = set()
-    for word, path in named_paths(command, cwd=cwd, names=owned.names):
+    unexpanded: list[Path] = []
+    # A word can name more than one file (a bare `.env` is read against every folder the command
+    # can be in), and it is refused as the most particular of them: PersonalClaw's own key ends the
+    # reading at once; any other credential is said once every path is read.
+    refused = ""
+    for word, path in named_paths(
+        command, cwd=cwd, names=owned.names, named=owned.names_one, unexpanded=unexpanded
+    ):
         if (word, str(path)) in checked:
             continue
         checked.add((word, str(path)))
         kind = owned.kind(str(path))
-        if kind:
-            return _SHELL_REFUSAL[kind]
-        if _shows_credential_folder(word, path, folders):
-            return _SHELL_REFUSAL[CREDENTIAL]
+        if kind == OWN_SECRET:
+            return _SHELL_REFUSAL[OWN_SECRET]
+        if not refused and (kind or _shows_credential_folder(word, path, folders)):
+            refused = _SHELL_REFUSAL[CREDENTIAL]
+    if refused:
+        return refused
+    # Past the bounds on what one reading may list or match (`command_paths._globbed`), a glob is
+    # named as written, and as written it names no protected file. Judged by what it could reach.
+    if any(owned.glob_kind(glob, folders) for glob in unexpanded):
+        return _UNEXPANDED_REFUSAL
     return None
 
 
@@ -2594,89 +2651,6 @@ def audit_bash_command(command: str, *, cwd: str = "") -> str | None:
     if found.hits or (found.unread and lex(command) is not None):
         return f"Suspicious command detected: {protected_folders.clause(found)}"
     return None
-
-
-def scan_history(history_dir: Path, last_n: int = 100) -> list[dict]:
-    """Scan recent conversation history for suspicious tool usage.
-
-    Returns list of findings: [{file, line, tool, command, warning}]
-    """
-    findings: list[dict] = []
-    if not history_dir.is_dir():
-        return findings
-
-    files = sorted(history_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-    checked = 0
-    for f in files:
-        try:
-            for line in f.read_text().splitlines():
-                if checked >= last_n:
-                    return findings
-                checked += 1
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                content = entry.get("content", "")
-                role = entry.get("role", "")
-                if role != "assistant" or not isinstance(content, str):
-                    continue
-                # Check for bash commands in tool calls
-                warning = audit_bash_command(content)
-                if warning:
-                    findings.append(
-                        {
-                            "file": f.name,
-                            "warning": warning,
-                            "snippet": content[:200],
-                        }
-                    )
-        except OSError:
-            continue
-    return findings
-
-
-def scan_memory() -> list[dict]:
-    """Scan memory for suspicious content via the memory service. Returns findings."""
-    from personalclaw.memory_service import MemoryService
-    from personalclaw.vector_memory import VectorMemoryStore, _contains_injection
-
-    findings: list[dict] = []
-    try:
-        store = VectorMemoryStore()
-        store.init()
-    except Exception:
-        return findings
-    svc = MemoryService.over_vector_store(store)
-
-    # Scan semantic values
-    for entry in svc.get_all_semantic():
-        val = entry.get("value_json", "")
-        if _contains_injection(val):
-            findings.append(
-                {
-                    "type": "semantic",
-                    "key": entry["key"],
-                    "value": val[:200],
-                    "warning": "Injection pattern detected",
-                }
-            )
-
-    # Scan episodic texts
-    for entry in svc.episodic_list(limit=1000):
-        text = entry.get("text", "")
-        if _contains_injection(text):
-            findings.append(
-                {
-                    "type": "episodic",
-                    "key": entry["id"],
-                    "value": text[:200],
-                    "warning": "Injection pattern detected",
-                }
-            )
-
-    store.close()
-    return findings
 
 
 def should_record_observe_history(

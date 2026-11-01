@@ -24,7 +24,7 @@ from personalclaw.action_providers.base import (
     ActionResult,
 )
 from personalclaw.cancellation import kill_timed_out, terminate_and_reap
-from personalclaw.env import PROGRAM_RESOLUTION_NAMES
+from personalclaw.env import PROGRAM_RESOLUTION_NAMES, decides_what_runs
 
 if TYPE_CHECKING:
     from personalclaw.shell_denylist import DeniedCommand
@@ -77,6 +77,41 @@ PROTECTED_ENV_NAMES: frozenset[str] = PROGRAM_RESOLUTION_NAMES | {
 }
 
 
+#: The variables programs read whatever the case of their name, matched in any case: a proxy (the
+#: ``http_proxy`` family, by its ending) and npm's settings (``npm_config_…``, by its prefix).
+_READ_IN_ANY_CASE_ENDINGS: tuple[str, ...] = ("_PROXY",)
+_READ_IN_ANY_CASE_PREFIXES: tuple[str, ...] = ("NPM_CONFIG_",)
+
+#: PersonalClaw's own names, which a workflow's step gives its command in capitals (``PC_CWD``,
+#: ``PC_OPT_BUDGET_USD``): no program reads a ``PC_`` variable as its own. They come from the step
+#: as its definition writes it (``workflows.engine.dispatch_action``: the node's ``payload``, bound
+#: from the run's inputs and earlier steps), never from a fired event's payload, which starts a
+#: run with the trigger's saved inputs only (``run_workflow_provider``).
+_OWN_PREFIX = "PC_"
+
+
+def _why_left_out(key: str) -> str:
+    """Why the payload key *key* is not handed to the command as a variable, or ``""`` when it is.
+
+    One rule over the whole name space. The variables programs read at start are named in
+    capitals, and a trigger's payload keys are lowercase or camelCase, so a key reaches the command
+    only when it holds a lowercase letter, or is one of PersonalClaw's own (:data:`_OWN_PREFIX`).
+    Whatever its case, it never sets a variable that decides which code a program runs
+    (:data:`PROTECTED_ENV_NAMES`, ``env.decides_what_runs``), nor one a program reads in lowercase
+    too (a proxy, npm's settings), a ``PC_`` one included."""
+    upper = key.upper()
+    if key in PROTECTED_ENV_NAMES or decides_what_runs(key):
+        return "it would set an environment variable that decides which code a program runs"
+    if upper.endswith(_READ_IN_ANY_CASE_ENDINGS) or upper.startswith(_READ_IN_ANY_CASE_PREFIXES):
+        return "it would set an environment variable a program reads whatever its case"
+    if not upper.startswith(_OWN_PREFIX) and not any(char.islower() for char in key):
+        return (
+            "it is written in capitals, as the variables programs read at start are; a payload "
+            "key that reaches the command holds a lowercase letter"
+        )
+    return ""
+
+
 def _payload_env(ctx: ActionContext) -> dict[str, str]:
     """The trigger ``$variables`` (``$now``, ``$job_id``, ``$EVENT``…) as env
     vars, so a shell command resolves them natively. Env (not string-templating
@@ -84,18 +119,15 @@ def _payload_env(ctx: ActionContext) -> dict[str, str]:
     arbitrary text — substituting it into the command line would be a shell
     injection vector. Keys that aren't valid shell identifiers are skipped.
 
-    A key in ``PROTECTED_ENV_NAMES`` is skipped too, and that is the other half of the
-    same defence: passing the payload as env stops a payload VALUE becoming code, and this
-    stops a payload KEY changing which code runs. See that constant for the measurement.
+    A key :func:`_why_left_out` names a reason for is skipped too, and that is the other half of
+    the same defence: passing the payload as env stops a payload VALUE becoming code, and this
+    stops a payload KEY changing which code runs. See ``PROTECTED_ENV_NAMES`` for the measurement.
     """
     out = {"EVENT": ctx.event, "CONTEXT": ctx.context}
     for k, v in (ctx.payload or {}).items():
-        if k in PROTECTED_ENV_NAMES:
-            logger.warning(
-                "trigger payload key %r would override a protected environment "
-                "variable; ignoring it",
-                k,
-            )
+        why = _why_left_out(k)
+        if why:
+            logger.warning("trigger payload key %r is left out: %s", k, why)
             continue
         if _ENV_NAME.match(k):
             out[k] = str(v)

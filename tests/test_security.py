@@ -13,9 +13,9 @@ from personalclaw.security import (
     is_system_path,
     redact_and_truncate,
     redact_credentials,
-    scan_history,
     should_record_observe_history,
 )
+from personalclaw.security_audit import scan_history
 
 pytestmark = pytest.mark.security
 

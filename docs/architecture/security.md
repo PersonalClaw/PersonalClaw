@@ -705,8 +705,10 @@ own git and her own shell run what they hold, outside any sandbox.
   `config.worktree`, `commondir` (where a linked worktree's settings and hooks are), the `hooks/`
   folder, and the steps of a rebase in progress (`rebase-merge/git-rebase-todo`). In a working tree:
   `.gitmodules`, and the `.git` file a linked worktree or a submodule keeps in place of the folder.
-  And the owner's own git settings, `~/.gitconfig` and `git/config` in `$XDG_CONFIG_HOME`, and the
-  machine's (an `etc/gitconfig`). Names are compared regardless of case, as a case-insensitive disk
+  And the owner's own git settings, `~/.gitconfig` and `git/config` in `$XDG_CONFIG_HOME`, the
+  machine's (an `etc/gitconfig`), and the file `GIT_CONFIG_GLOBAL` or `GIT_CONFIG_SYSTEM` names for
+  git to read in place of either, read from the environment as the other settings are (a relative
+  value and the null device name none). Names are compared regardless of case, as a case-insensitive disk
   opens them. The rest of a repository stays the agent's: `.gitignore`, `.gitattributes`,
   `.git/info/exclude` and every file of the project.
 - **The shell's.** The startup files of sh, bash, zsh, ksh and the csh family in her home folder
@@ -714,6 +716,13 @@ own git and her own shell run what they hold, outside any sandbox.
   `.zshenv`, `.zprofile`, `.zshrc`, `.zlogin`, `.zlogout`, `.kshrc`, `.mkshrc`, `.cshrc`, `.tcshrc`,
   `.login`, `.logout`), zsh's in `$ZDOTDIR` as well, and fish's `config.fish`, `conf.d/` and
   `functions/` in `$XDG_CONFIG_HOME/fish`.
+- **What runs at login.** The places whose entries the owner's system runs as her at every login,
+  each folder whole: macOS launch agents (`~/Library/LaunchAgents/`); in `$XDG_CONFIG_HOME`
+  (`~/.config` when unset) XDG autostart entries (`autostart/`), systemd's user units
+  (`systemd/user/`), its user manager's settings (`systemd/user.conf`, `systemd/user.conf.d/`) and
+  the session's environment (`environment.d/`); systemd's user units in `$XDG_DATA_HOME`
+  (`~/.local/share` when unset) too; and the X session scripts `~/.xprofile`, `~/.xsessionrc`,
+  `~/.xsession` and `~/.xinitrc`.
 
 Every path an agent writes by refuses a change to one, before anyone is asked and whatever the
 chat's Trust, YOLO or a standing grant would answer, in the words the home's refusal uses: the
@@ -729,7 +738,9 @@ startup file in the agent's own shell (`source ~/.zshrc`).
 
 The fence holds less of them. The macOS profile denies writes to the owner's own git settings and
 shell startup files that sit in her home folder, at every level, in both spellings of a link into a
-dotfiles folder, and pins that folder so it cannot be moved aside; the ones deeper in `~/.config`
+dotfiles folder, and pins that folder so it cannot be moved aside, and the git settings file the
+environment names, wherever it is, and every write under the places that run at login, with each
+existing folder above them that could move one aside; the ones deeper in `~/.config`
 are held by the screen alone, since holding them would mean refusing to make `~/.config` where a
 program's first run needs it. The Linux launcher holds none of the owner's own files: it could
 only by making her whole home folder read-only. And neither platform fences a repository's: git
@@ -822,7 +833,12 @@ place that contains the home (a worker in `~`) says nothing about a path in it, 
 library's rule is all a session working there reads of the library; no
 protected credential location (`~/.ssh`, `~/.aws`, the keychain, the home's own `.env`, `auth/`,
 `governance/`); no PersonalClaw key, `.env`, `sessions.json`, `session_key`, `*.key`, `*.pem`
-or `*.secret` file, nor any alias of one; and no change to what git or the owner's shell runs as
+or `*.secret` file, nor any alias of one; no project secret file by its name, wherever it sits
+(`project_secrets.is_project_secret_name`: `.env` and its variants such as `.env.local` and `prod.env`,
+`.envrc`, a `secrets` data file such as `secrets.json` or `secrets.yaml` (a source module such as
+`secrets.py` still reads), `credentials*.json`, `service-account*.json`, `.npmrc`, `.pypirc`,
+`.netrc`; a template such as `.env.example` still reads), which the shell's screen refuses by the
+same rule; and no change to what git or the owner's shell runs as
 her (`owner_only`: a repository's `.git/config` and `.git/hooks/`, its `.gitmodules`, her
 `~/.gitconfig`, her `~/.zshrc` and the rest above). A path that starts with `~/` names the
 owner's home, as the owner writes it, and meets every one of these checks as any absolute path

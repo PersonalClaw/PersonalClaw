@@ -1415,6 +1415,15 @@ def _build_seatbelt_profile(sandbox_level: str = "strict", *, network: bool = Tr
     for target in [*own_files, *own_folders]:
         escaped = target.replace('"', '\\"')
         rules.append(f'(deny file-write* (literal "{escaped}"))')
+    # The places whose entries run at the owner's login (`owner_only.login_places`), whole, and
+    # each folder above one that exists and could move it aside (`_login_fence`).
+    login_dirs, login_folders = _login_fence()
+    for target in login_dirs:
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-write* (subpath "{escaped}"))')
+    for target in login_folders:
+        escaped = target.replace('"', '\\"')
+        rules.append(f'(deny file-write* (literal "{escaped}"))')
     # Long-term memory, never written from in here by a command started for work that may change
     # none of it (`_memory_fence`), nor read by one started for work that may read none of it
     # (`_memory_hidden`), at any level. The folder that holds the memory folders keeps its own
@@ -1509,18 +1518,42 @@ def _owners_own_fence() -> tuple[list[str], list[str]]:
 
     The ones deeper down (``git/config`` and fish's, in ``~/.config``) are left to the screen:
     holding them would mean refusing to make ``~/.config`` where it is missing, which many programs
-    do on their first run."""
-    from personalclaw.owner_only import owners_own
+    do on their first run. A git settings file the environment names in place of the usual one
+    (``owner_only.named_git_settings``) is held wherever it is: the owner keeps it there."""
+    from personalclaw.owner_only import named_git_settings, owners_own
 
     home = os.path.abspath(str(Path.home()))
+    elsewhere = {os.path.abspath(path) for path in named_git_settings()}
     files: list[str] = []
     for path, is_dir, _kind in owners_own():
         named = os.path.abspath(path)
-        if not is_dir and os.path.dirname(named) == home:
+        if not is_dir and (os.path.dirname(named) == home or named in elsewhere):
             files.extend((named, os.path.realpath(named)))
     files = list(dict.fromkeys(files))
     folders = [folder for target in files for folder in _renameable_from(os.path.dirname(target))]
     return files, list(dict.fromkeys(folders))
+
+
+def _login_fence() -> tuple[list[str], list[str]]:
+    """What the macOS profile holds of the places whose entries run at the owner's login
+    (``owner_only.login_places``): each one whole (a folder and all in it, or a file), in both
+    spellings, and every folder above one that exists and that she could rename, so none can be
+    moved aside, filled and moved back. A folder above that does not exist yet is left out: holding
+    it would refuse making it (a first ``~/.config``), and nothing in it can be moved aside."""
+    from personalclaw.owner_only import login_places
+
+    places: list[str] = []
+    for path, _is_dir, _kind in login_places():
+        named = os.path.abspath(path)
+        places.extend((named, os.path.realpath(named)))
+    places = list(dict.fromkeys(places))
+    folders = [
+        folder
+        for place in places
+        for folder in _renameable_from(os.path.dirname(place))
+        if os.path.isdir(folder)
+    ]
+    return places, list(dict.fromkeys(folders))
 
 
 def _memory_fence(*, realpath_only: bool) -> list[str]:

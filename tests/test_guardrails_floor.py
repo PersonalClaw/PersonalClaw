@@ -17,12 +17,12 @@ def test_denylist_blocks_sensitive_path():
     assert d.blocked and d.matched == "builtin:sensitive_path"
 
 
-def test_denylist_blocks_env_file_via_config(monkeypatch, tmp_path):
+def test_denylist_blocks_a_file_via_config(monkeypatch, tmp_path):
     monkeypatch.setattr("personalclaw.config.loader.config_dir", lambda: tmp_path)
     (tmp_path / "config.json").write_text(
-        '{"security": {"autonomy_denylist": ' '[{"paths": ["**/.env*"], "verdict": "block"}]}}'
+        '{"security": {"autonomy_denylist": ' '[{"paths": ["**/drafts/*"], "verdict": "block"}]}}'
     )
-    d = check_action("bash", {"file": "/app/.env.production"})
+    d = check_action("bash", {"file": "/app/drafts/plan.md"})
     assert d.blocked and d.verdict == "block" and "config:" in d.matched
 
 

@@ -337,16 +337,16 @@ def test_the_recall_route_masks_its_semantic_half():
 
 @pytest.fixture
 def ws(tmp_path: Path) -> Path:
-    (tmp_path / "config.env").write_text(f"ANTHROPIC_KEY={KEY}\nPORT=8080\nGH={TOKEN}\n")
+    (tmp_path / "config.conf").write_text(f"ANTHROPIC_KEY={KEY}\nPORT=8080\nGH={TOKEN}\n")
     return tmp_path
 
 
 def test_a_file_read_grep_and_shell_output_are_masked(ws):
     tools = NativeBuiltinToolProvider(ws, session_key="s-read")
     for name, args in (
-        ("read_file", {"path": "config.env"}),
+        ("read_file", {"path": "config.conf"}),
         ("grep", {"query": "KEY", "path": "."}),
-        ("bash", {"command": "cat config.env"}),
+        ("bash", {"command": "cat config.conf"}),
     ):
         seen = _handed(asyncio.run(tools.invoke(name, args)))
         assert not _leaks(seen), (name, seen)
@@ -649,10 +649,10 @@ def test_the_context_an_external_agent_is_routed_is_masked():
 
 @pytest.fixture
 def config_file(tmp_path: Path) -> tuple[Path, NativeBuiltinToolProvider]:
-    path = tmp_path / "app.env"
+    path = tmp_path / "app.conf"
     path.write_text(f"# app\nexport ANTHROPIC={KEY}\nexport GH={TOKEN}\nname = demo\n")
     tools = NativeBuiltinToolProvider(tmp_path, session_key="s-write")
-    seen = _handed(asyncio.run(tools.invoke("read_file", {"path": "app.env"})))
+    seen = _handed(asyncio.run(tools.invoke("read_file", {"path": "app.conf"})))
     assert KEY not in seen and "export GH=[REDACTED: credential]" in seen
     return path, tools
 
@@ -664,7 +664,7 @@ def _call(tools: NativeBuiltinToolProvider, name: str, args: dict[str, Any]) -> 
 def test_an_edit_written_against_the_masked_file_keeps_every_hidden_value(config_file):
     path, tools = config_file
     done = _call(
-        tools, "edit_file", {"path": "app.env", "old_str": "name = demo", "new_str": "name = prod"}
+        tools, "edit_file", {"path": "app.conf", "old_str": "name = demo", "new_str": "name = prod"}
     )
     assert done.success, done.error
     assert path.read_text() == f"# app\nexport ANTHROPIC={KEY}\nexport GH={TOKEN}\nname = prod\n"
@@ -672,7 +672,7 @@ def test_an_edit_written_against_the_masked_file_keeps_every_hidden_value(config
         tools,
         "edit_file",
         {
-            "path": "app.env",
+            "path": "app.conf",
             "old_str": "export GH=[REDACTED: credential]",
             "new_str": "export GITHUB_TOKEN=[REDACTED: credential]",
         },
@@ -686,12 +686,12 @@ def test_an_edit_that_cuts_or_copies_a_marker_is_refused(config_file):
     path, tools = config_file
     before = path.read_text()
     cut = _call(
-        tools, "edit_file", {"path": "app.env", "old_str": "GH=[REDACTED: cred", "new_str": "x"}
+        tools, "edit_file", {"path": "app.conf", "old_str": "GH=[REDACTED: cred", "new_str": "x"}
     )
     copied = _call(
         tools,
         "edit_file",
-        {"path": "app.env", "old_str": "name = demo", "new_str": "name = [REDACTED: credential]"},
+        {"path": "app.conf", "old_str": "name = demo", "new_str": "name = [REDACTED: credential]"},
     )
     assert (cut.success, cut.error) == (False, MARKER_CUT)
     assert (copied.success, copied.error) == (False, HIDDEN_VALUE_KEPT)
@@ -703,7 +703,7 @@ def test_an_edit_can_remove_a_hidden_value(config_file):
     gone = _call(
         tools,
         "edit_file",
-        {"path": "app.env", "old_str": "export ANTHROPIC=[REDACTED: credential]\n", "new_str": ""},
+        {"path": "app.conf", "old_str": "export ANTHROPIC=[REDACTED: credential]\n", "new_str": ""},
     )
     assert gone.success, gone.error
     assert KEY not in path.read_text() and f"export GH={TOKEN}" in path.read_text()
@@ -715,7 +715,10 @@ def test_a_whole_file_write_keeps_hidden_values_on_the_lines_it_kept(config_file
     written = _call(
         tools,
         "write_file",
-        {"path": "app.env", "content": shown.replace("name = demo", "name = prod") + "debug = 1\n"},
+        {
+            "path": "app.conf",
+            "content": shown.replace("name = demo", "name = prod") + "debug = 1\n",
+        },
     )
     assert written.success, written.error
     assert path.read_text() == (
@@ -728,16 +731,16 @@ def test_a_whole_file_write_that_moves_a_hidden_value_is_refused(config_file):
     before = path.read_text()
     lines = redact_for_display(before).splitlines(keepends=True)
     lines[1], lines[2] = lines[2], lines[1]
-    moved = _call(tools, "write_file", {"path": "app.env", "content": "".join(lines)})
+    moved = _call(tools, "write_file", {"path": "app.conf", "content": "".join(lines)})
     assert (moved.success, moved.error) == (False, HIDDEN_VALUE_KEPT)
     assert path.read_text() == before
 
 
 def test_a_marker_written_into_a_new_file_is_text_and_says_so(tmp_path):
     tools = NativeBuiltinToolProvider(tmp_path)
-    made = _call(tools, "write_file", {"path": "copy.env", "content": f"KEY={MASK}\n"})
+    made = _call(tools, "write_file", {"path": "copy.conf", "content": f"KEY={MASK}\n"})
     assert made.success and "written as plain text" in made.output
-    assert (tmp_path / "copy.env").read_text() == f"KEY={MASK}\n"
+    assert (tmp_path / "copy.conf").read_text() == f"KEY={MASK}\n"
 
 
 def test_a_task_update_keeps_a_value_task_get_showed_masked(monkeypatch):

@@ -20,8 +20,8 @@ _AS_A_COMMAND_STARTS: dict[str, str] = {
     "_ssl_compat.py::_ensure_ssl_certs": (
         "the system CA bundle for OpenSSL, as the CLI module is first imported"
     ),
-    "cli.py::main._load_named_credentials": (
-        "a `.env`'s named credentials, before the command runs anything"
+    "cli.py::_read_the_env_files": (
+        "a `.env`'s named credentials (a folder's: credentials only), before the command runs"
     ),
     "cli.py::main": "the folder this install's own resources live in, before anything runs",
     "library_env.py::keep_the_libraries_in_the_home": (

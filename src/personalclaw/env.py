@@ -114,6 +114,38 @@ PROGRAM_RESOLUTION_NAMES: frozenset[str] = frozenset(
     }
 )
 
+#: The families :data:`PROGRAM_RESOLUTION_NAMES` lists members of, matched as families
+#: (:func:`decides_what_runs`): every name the dynamic loader, an interpreter or git reads, by its
+#: prefix, and every options variable a runtime reads at start, by its ending. A list of single
+#: names misses the members nobody listed.
+PROGRAM_RESOLUTION_PREFIXES: tuple[str, ...] = (
+    "LD_",
+    "DYLD_",
+    "GIT_",
+    "PYTHON",
+    "PERL",
+    "RUBY",
+    "NODE_",
+    "JAVA_",
+    "_JAVA_",
+    "JDK_JAVA_",
+)
+PROGRAM_RESOLUTION_ENDINGS: tuple[str, ...] = ("_OPT", "_OPTS", "_OPTIONS")
+
+
+def decides_what_runs(name: str) -> bool:
+    """Whether an environment variable named *name* can decide which code a program runs: one of
+    :data:`PROGRAM_RESOLUTION_NAMES`, or a member of one of their families
+    (:data:`PROGRAM_RESOLUTION_PREFIXES`, :data:`PROGRAM_RESOLUTION_ENDINGS`). Regardless of case,
+    since on some systems a variable's name is."""
+    upper = name.upper()
+    return (
+        upper in PROGRAM_RESOLUTION_NAMES
+        or upper.startswith(PROGRAM_RESOLUTION_PREFIXES)
+        or upper.endswith(PROGRAM_RESOLUTION_ENDINGS)
+    )
+
+
 # ── the environment this process was launched with ──────────────────────────────────────────
 #
 # The process environment is every child's. Its PATH decides which program each command a child

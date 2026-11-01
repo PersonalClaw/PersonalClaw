@@ -34,6 +34,8 @@ pytestmark = pytest.mark.security
 
 FAKE_KEY = "BSAfakeexamplekey0000"
 OWN = "Blocked: command accesses PersonalClaw's own credential or audit key"
+#: How a project's own secret file is refused (``project_secrets.is_project_secret_name``).
+CREDENTIAL = "Blocked: command accesses sensitive credential path"
 
 #: The home's secret entries the screen let through: every one but the three refused by name.
 OPEN_ENTRIES = (
@@ -172,11 +174,8 @@ def test_the_default_home_stays_refused_while_another_home_is_in_use(container, 
         "cat {home}/config.json",
         "cat ../config.json",
         "cat notes.md",
-        "cat .env",
         "grep -r TODO .",
         "ls ~/.personalclaw",
-        "cd /tmp && cat .env",
-        "cat /tmp/some-project/.env",
         "cat /tmp/some-project/sessions.json",
         "echo session_key",
         "git log --grep auth",
@@ -184,9 +183,18 @@ def test_the_default_home_stays_refused_while_another_home_is_in_use(container, 
 )
 def test_ordinary_work_in_and_around_the_home_passes(command, container):
     """The vacuity half. The home is browsable and so is everything in it but its secrets; a
-    project's own `.env` and a word that happens to be a secret's name are nobody's secret."""
+    project's `sessions.json` and a word that happens to be a secret's name are nobody's secret."""
     cmd = command.format(home=container)
     assert is_sensitive_bash_command(cmd, cwd=container / "workspace") is None, cmd
+
+
+@pytest.mark.parametrize(
+    "command", ["cat .env", "cd /tmp && cat .env", "cat /tmp/some-project/.env"]
+)
+def test_a_projects_own_env_is_refused_as_a_project_secret(command, container):
+    """A project's own `.env` is one of a project's secret files (`is_project_secret_name`): the
+    screen refuses it as a credential, and keeps the own-key sentence for the home's store."""
+    assert is_sensitive_bash_command(command, cwd=container / "workspace") == CREDENTIAL, command
 
 
 def test_the_screen_resolves_the_home_without_making_it(tmp_path, monkeypatch):
@@ -251,14 +259,14 @@ def test_a_bash_action_refuses_the_store_from_the_folder_it_runs_in(container, m
 
 def test_an_agent_cli_call_reads_a_relative_path_from_its_own_folder(container, tmp_path):
     """The permission hook an agent CLI's calls pass is told the session's folder when it is
-    known: from a project, `../.env` is the project's parent's file, and from the home's workspace
-    it is the store."""
+    known: from a project, `../.env` is the project's parent's file, a project secret, and from the
+    home's workspace it is the store."""
     from personalclaw.hooks import HookManager
 
     project = tmp_path / "src" / "app"
     project.mkdir(parents=True)
     hooks = HookManager()
-    assert hooks.on_tool_call("Running: cat ../.env", cwd=project).action != "deny"
+    assert hooks.on_tool_call("Running: cat ../.env", cwd=project).reason == CREDENTIAL
     assert hooks.on_tool_call("Running: cat ../.env").reason == OWN
     assert hooks.on_tool_call(f"Running: cat {container}/.env", cwd=project).reason == OWN
 
