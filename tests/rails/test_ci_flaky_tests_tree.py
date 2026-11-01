@@ -3,16 +3,9 @@
 It runs daily and on dispatch, on main only, one run at a time. Its one job holds
 ``actions: read`` and ``issues: write`` beside the checkout's ``contents: read``, and its token
 reaches only the fetch and the step that writes the issues. It fetches a day more than the 14 days
-an issue closes after, and keeps no cache. It has one of two shapes:
-
-- **afresh:** it fetches every day's histories again (``--no-carry``) and uploads nothing;
-- **carried:** it carries its own window from its previous run (``--carry flaky-tests``), and its
-  one upload is that window, ``flaky-tests-window``, stored, once the fetch that built it
-  succeeded.
-
-A change that alters a contract row lands in two merges (``docs/maintainers/ci.md``): this row
-takes the carried shape first, beside today's, and the workflow moves to it after. Each rule
-fails on a planted edit of the real workflow, laid out in each shape.
+an issue closes after, and keeps no cache. It carries its own window from its previous run
+(``--carry flaky-tests``), and its one upload is that window, ``flaky-tests-window``, stored, once
+the fetch that built it succeeded. Each rule fails on a planted edit of the real workflow.
 """
 
 from __future__ import annotations
@@ -20,7 +13,6 @@ from __future__ import annotations
 import json
 import re
 import shlex
-from collections.abc import Callable
 
 import pytest
 import yaml
@@ -46,10 +38,8 @@ _CARRY_DAYS = 3
 #: refuses any other spelling, and any option given twice, rather than look for a substring.
 _FETCH_OPTIONS = frozenset({"--repo", "--out", "--days", "--reserve", "--no-carry", "--carry"})
 
-# The two shapes, as text: the plants are laid on the real workflow in each.
-_AFRESH_DAYS = '/window" --days 15 --no-carry'
+# The plants' anchors in the real workflow.
 _CARRIED_DAYS = '/window" --days 15 --carry flaky-tests'
-_FETCH_STEP = f"      - name: {_FETCH}\n"
 _FETCH_ID = "        id: fetch\n"
 _CARRY_STEP = (
     "      # The window, for tomorrow's run: only once the fetch that built it succeeded,"
@@ -68,25 +58,8 @@ _CARRY_STEP = (
 )
 
 
-def _afresh(text: str) -> str:
-    """The workflow fetching every day afresh, whichever shape it holds."""
-    text = text.replace(_CARRY_STEP, "").replace(_FETCH_STEP + _FETCH_ID, _FETCH_STEP)
-    return text.replace(_CARRIED_DAYS, _AFRESH_DAYS)
-
-
-def _carried(text: str) -> str:
-    """The workflow carrying its window, whichever shape it holds."""
-    text = _afresh(text).replace(_AFRESH_DAYS, _CARRIED_DAYS)
-    return text.replace(_FETCH_STEP, _FETCH_STEP + _FETCH_ID) + _CARRY_STEP
-
-
-_Shape = Callable[[str], str]
-
-
-def _texts(old: str = "", new: str = "", shape: _Shape | None = None) -> dict[str, str]:
+def _texts(old: str = "", new: str = "") -> dict[str, str]:
     texts = {p.name: p.read_text(encoding="utf-8") for p in sorted(_WORKFLOWS.glob("*.yml"))}
-    if shape:
-        texts[_FLAKY] = shape(texts[_FLAKY])
     if old:
         assert texts[_FLAKY].count(old) == 1, f"the plant's anchor is not once: {old!r}"
         texts[_FLAKY] = texts[_FLAKY].replace(old, new)
@@ -120,10 +93,11 @@ def _fetch_options(fetching: str) -> tuple[dict[str, str | None], list[str]]:
 def _carry_faults(
     steps: list[dict], options: dict[str, str | None], uploads: list[dict]
 ) -> list[str]:
-    """The carried shape's rules: its own window in, and that window alone out."""
+    """The carry's rules: its own window in, and that window alone out."""
     bad: list[str] = []
     ids = [step.get("id") for step in steps if step.get("name") == _FETCH]
-    if options.get("--carry") != "flaky-tests" or ids != ["fetch"]:
+    carried = options.get("--carry") == "flaky-tests" and "--no-carry" not in options
+    if not carried or ids != ["fetch"]:
         bad.append(f"{_FLAKY} does not carry its own window from its previous run")
     given = (uploads[0].get("with") or {}) if len(uploads) == 1 else {}
     if len(uploads) != 1 or given.get("name") != _CARRY:
@@ -177,12 +151,7 @@ def violations(texts: dict[str, str]) -> list[str]:
     if not days.isdigit() or int(days) <= flaky_issues.CLOSE_DAYS:
         bad.append(f"{_FLAKY} does not fetch more than {flaky_issues.CLOSE_DAYS} days")
     uploads = [s for s in steps if re.match(r"actions/upload-artifact@", str(s.get("uses", "")))]
-    if "--no-carry" in options:
-        # Afresh: nothing is taken from a previous run, and nothing is kept for the next.
-        if uploads or "--carry" in options:
-            bad.append(f"{_FLAKY} fetches afresh but keeps or takes a window")
-    else:
-        bad += _carry_faults(steps, options, uploads)
+    bad += _carry_faults(steps, options, uploads)
     if options.get("--out") != "$RUNNER_TEMP/window" or _WINDOW not in by_name.get(_ISSUES, ""):
         bad.append(f"{_FLAKY}'s issues are not written from the window it fetched")
     return bad
@@ -192,22 +161,7 @@ def test_the_flaky_tests_workflow_holds_its_trust_shape() -> None:
     assert violations(_texts()) == []
 
 
-@pytest.mark.parametrize("shape", [_afresh, _carried], ids=["afresh", "carried"])
-def test_the_workflow_holds_its_trust_shape_in_each_shape(shape: _Shape) -> None:
-    texts = _texts(shape=shape)
-    assert violations(texts) == []
-    assert shape(texts[_FLAKY]) == texts[_FLAKY], "the shape does not lay out the same twice"
-
-
-def test_the_two_shapes_differ_only_in_the_carry() -> None:
-    afresh, carried = _texts(shape=_afresh)[_FLAKY], _texts(shape=_carried)[_FLAKY]
-    assert _AFRESH_DAYS in afresh and _CARRY_STEP not in afresh and _FETCH_ID not in afresh
-    assert _CARRIED_DAYS in carried and carried.count(_CARRY_STEP) == 1
-    assert _afresh(carried) == afresh
-
-
-#: Plants that hold in either shape: each is laid on both.
-_EITHER = [
+_PLANTS = [
     pytest.param(
         "  workflow_dispatch:\n",
         "  workflow_dispatch:\n  pull_request:\n",
@@ -305,40 +259,6 @@ _EITHER = [
         "'--days=15', not one of its options spelled in full",
         id="the-days-joined-by-equals",
     ),
-]
-
-#: Plants on the afresh shape.
-_AFRESH = [
-    pytest.param(
-        _AFRESH_DAYS,
-        '/window" --days 14 --no-carry',
-        "does not fetch more than 14 days",
-        id="a-window-short-of-the-close",
-    ),
-    pytest.param(
-        _AFRESH_DAYS,
-        '/window" --days 15',
-        "does not carry its own window",
-        id="a-window-neither-afresh-nor-carried",
-    ),
-    pytest.param(
-        _AFRESH_DAYS,
-        f"{_AFRESH_DAYS} --carry flaky-tests",
-        "fetches afresh but keeps or takes a window",
-        id="a-fresh-fetch-that-takes-a-window",
-    ),
-    pytest.param(
-        "      - name: open, edit, reopen",
-        "      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9\n"
-        "        with:\n          name: window\n          path: x\n"
-        "      - name: open, edit, reopen",
-        "fetches afresh but keeps or takes a window",
-        id="an-upload",
-    ),
-]
-
-#: Plants on the carried shape.
-_CARRIED = [
     pytest.param(
         _CARRIED_DAYS,
         '/window" --days 14 --carry flaky-tests',
@@ -347,9 +267,15 @@ _CARRIED = [
     ),
     pytest.param(
         _CARRIED_DAYS,
-        _AFRESH_DAYS,
-        "fetches afresh but keeps or takes a window",
-        id="a-window-fetched-afresh-and-still-carried",
+        '/window" --days 15 --no-carry',
+        "does not carry its own window",
+        id="a-window-fetched-afresh-every-day",
+    ),
+    pytest.param(
+        _CARRIED_DAYS,
+        f"{_CARRIED_DAYS} --no-carry",
+        "does not carry its own window",
+        id="a-carry-and-a-fresh-fetch",
     ),
     pytest.param(
         _CARRIED_DAYS,
@@ -440,20 +366,7 @@ _CARRIED = [
 ]
 
 
-@pytest.mark.parametrize("shape", [_afresh, _carried], ids=["afresh", "carried"])
-@pytest.mark.parametrize(("old", "new", "said"), _EITHER)
-def test_each_rule_fails_on_its_plant(shape: _Shape, old: str, new: str, said: str) -> None:
-    found = violations(_texts(old, new, shape))
-    assert any(said in line for line in found), found
-
-
-@pytest.mark.parametrize(("old", "new", "said"), _AFRESH)
-def test_each_afresh_rule_fails_on_its_plant(old: str, new: str, said: str) -> None:
-    found = violations(_texts(old, new, _afresh))
-    assert any(said in line for line in found), found
-
-
-@pytest.mark.parametrize(("old", "new", "said"), _CARRIED)
-def test_each_carried_rule_fails_on_its_plant(old: str, new: str, said: str) -> None:
-    found = violations(_texts(old, new, _carried))
+@pytest.mark.parametrize(("old", "new", "said"), _PLANTS)
+def test_each_rule_fails_on_its_plant(old: str, new: str, said: str) -> None:
+    found = violations(_texts(old, new))
     assert any(said in line for line in found), found
