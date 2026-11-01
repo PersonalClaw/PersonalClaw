@@ -540,7 +540,9 @@ class _ChatSession(ChatQueue):
         # repeating a failing tool for twenty turns could never reach thirty and the
         # circuit rung was unreachable by construction. Per-key streaks persist for the
         # same reason, and `record()` still clears a key on success, so a tool that
-        # recovers is not held against the model.
+        # recovers is not held against the model. Each turn starts the repeat count afresh,
+        # a turn with no failed call ends the failure run, and a stop clears what tripped it
+        # (`LoopBreaker.begin_turn`, `clear_tripped`): a stop ends its turn, not the chat.
         self._acp_breaker = LoopBreaker()
         # Episodic memory citations [{n, id, preview}] surfaced into THIS turn's prompt.
         # Reset per turn, populated from the assembled

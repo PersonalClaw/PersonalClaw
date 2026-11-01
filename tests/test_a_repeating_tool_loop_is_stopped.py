@@ -492,6 +492,80 @@ async def test_an_acp_turn_repeating_one_answer_is_aborted(tmp_path):
 
     texts = [str(m.get("content", "")) for m in session.messages]
     aborted = [t for t in texts if t.startswith("Run aborted by the loop breaker: ")]
-    assert len(aborted) == 1 and "repeated an earlier call" in aborted[0], texts[-4:]
+    # The count is the turn's: the tenth `ls -F` was its ninth repeat of the first.
+    assert aborted == [lb.repeat_circuit_message(lb.REPEAT_CIRCUIT_THRESHOLD + 1)], texts[-4:]
     client.cancel.assert_awaited()
     assert session._last_turn_errored is True
+
+
+def _ls(turn: int, count: int, command: str = "ls -F") -> list[AgentEvent]:
+    """One agent CLI turn running the same read ``count`` times, each answered the same, then
+    replying."""
+    frames = []
+    for i in range(count):
+        frames += [
+            AgentEvent(
+                kind=EVENT_TOOL_CALL,
+                tool_call_id=f"t{turn}.{i}",
+                title="bash",
+                tool_input=f'{{"command": "{command}"}}',
+            ),
+            AgentEvent(
+                kind=EVENT_TOOL_RESULT,
+                tool_call_id=f"t{turn}.{i}",
+                tool_output="knowledge/\nmemory/\n",
+                tool_meta={"ok": True},
+            ),
+        ]
+    return [
+        *frames,
+        AgentEvent(kind=EVENT_TEXT_CHUNK, text="The beds are in knowledge/."),
+        AgentEvent(kind=EVENT_COMPLETE, stop_reason="end_turn"),
+    ]
+
+
+def _stops(session) -> list[str]:
+    return [
+        str(m.get("content", ""))
+        for m in session.messages
+        if str(m.get("content", "")).startswith("Run aborted by the loop breaker: ")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_turn_after_a_stopped_one_runs_normally(tmp_path):
+    """A stop ends the turn that was looping, not the chat. The breaker lives on the chat, and
+    its totals stayed over the ceiling after a stop, so every later turn was stopped right after
+    its first tool call, even one that succeeded and asked something new."""
+    state, client = _chat_state(tmp_path, "acp:test-cli")
+    # What the CLI streams in the turn now running (a turn may stream more than once).
+    now = [_ls(1, lb.REPEAT_CIRCUIT_THRESHOLD + 4)]
+    client.stream = MagicMock(side_effect=lambda *a, **kw: _events(now[0]))
+    session = _ChatSession("chat-8-loop")
+    session.acp_provider = "acp:test-cli"
+
+    await _chat_turn(state, session)
+    assert len(_stops(session)) == 1
+    assert client.cancel.await_count == 1
+
+    now[0] = _ls(2, 1, "git status --short")
+    await _chat_turn(state, session)
+    assert len(_stops(session)) == 1, _stops(session)
+    assert client.cancel.await_count == 1
+    assert session._last_turn_errored is False
+
+
+@pytest.mark.asyncio
+async def test_one_unchanged_read_a_turn_is_never_stopped(tmp_path):
+    """An agent CLI re-reads an unchanged file once a turn as ordinary work. The repeat count
+    spanned the chat, so about the tenth such turn was stopped for "9 tool calls in this turn"."""
+    state, client = _chat_state(tmp_path, "acp:test-cli")
+    client.stream = MagicMock(side_effect=lambda *a, **kw: _events(_ls(0, 1)))
+    session = _ChatSession("chat-9-loop")
+    session.acp_provider = "acp:test-cli"
+
+    for _turn in range(10):
+        await _chat_turn(state, session)
+
+    assert _stops(session) == []
+    client.cancel.assert_not_awaited()

@@ -2178,6 +2178,41 @@ def _submit_plan_draft(state: DashboardState, session: _ChatSession, ran_in: str
     maybe_submit_plan_draft(state, session, ran_in=ran_in)
 
 
+async def _record_breaker_stop(
+    session: _ChatSession,
+    session_key: str,
+    event: Any,
+    tool_name: str,
+    called_as: tuple[str, Any] | None,
+    breaker: Any,
+    cli: str,
+) -> None:
+    """The security log's row for an agent CLI turn its loop breaker stopped. Never raises."""
+    try:
+        await sel_log_async(
+            sel().log_tool_invocation,
+            session_key=session_key,
+            agent=_agent_label(session),
+            source="dashboard",
+            tool_name=tool_name,
+            tool_kind=event.tool_kind,
+            outcome="failed",
+            request_id=event.tool_call_id,
+            tool_input=called_as[1] if called_as else None,
+            metadata={
+                "reason": (
+                    "loop_breaker_circuit" if breaker.circuit_tripped() else "loop_breaker_repeats"
+                ),
+                "provider": cli,
+                "total_failures": breaker.total_failures,
+                "total_repeats": breaker.total_repeats,
+                "aborted_turn": True,
+            },
+        )
+    except Exception:
+        logger.warning("SEL audit failed for ACP breaker trip", exc_info=True)
+
+
 @memory_writes.runs_as_its_session
 @_says_its_phases
 async def run_chat(
@@ -2458,8 +2493,10 @@ async def run_chat(
     # ceiling "this RUN's total failures" (default 30, `guardrails.loop_breaker`); a fresh instance
     # per turn reset the count every turn, so an unattended loop repeating a failing
     # tool for twenty turns never reached thirty and the circuit rung was unreachable
-    # by construction. The session is the host-side run.
+    # by construction. The session is the host-side run. Each turn still starts its repeat
+    # count afresh, and a turn with no failed call ends the failure run (`begin_turn`).
     _acp_breaker = session._acp_breaker
+    _acp_breaker.begin_turn()
     # tool_call_id -> the breaker's (tool, params) key. Recorded at tool_call and
     # REFINED at tool_call_update, because ACP adapters routinely send the first frame
     # with empty rawInput and stream the real arguments in the update — keying off the
@@ -4157,9 +4194,9 @@ async def run_chat(
                         )
                     _abort_msg = _acp_breaker.stop_sentence()
                     if _abort_msg and not _acp_breaker_aborted:
-                        # Once only. The counter stays tripped for the rest of the
-                        # stream, so without this guard every subsequent result
-                        # would re-announce the abort and re-cancel.
+                        # Once only. The stop clears the breaker (`clear_tripped` below), so
+                        # this flag is what keeps a later result in the same stream from
+                        # announcing the stop again and cancelling again.
                         _acp_breaker_aborted = True
                         logger.warning("acp loop breaker (%s): %s", _acp_cli, _abort_msg)
                         session.append("error", _abort_msg, "msg msg-err")
@@ -4172,31 +4209,12 @@ async def run_chat(
                             },
                         )
                         session._last_turn_errored = True
-                        try:
-                            await sel_log_async(
-                                sel().log_tool_invocation,
-                                session_key=session_key,
-                                agent=_agent_label(session),
-                                source="dashboard",
-                                tool_name=_bname,
-                                tool_kind=event.tool_kind,
-                                outcome="failed",
-                                request_id=event.tool_call_id,
-                                tool_input=_called_as[1] if _called_as else None,
-                                metadata={
-                                    "reason": (
-                                        "loop_breaker_circuit"
-                                        if _acp_breaker.circuit_tripped()
-                                        else "loop_breaker_repeats"
-                                    ),
-                                    "provider": _acp_cli,
-                                    "total_failures": _acp_breaker.total_failures,
-                                    "total_repeats": _acp_breaker.total_repeats,
-                                    "aborted_turn": True,
-                                },
-                            )
-                        except Exception:
-                            logger.warning("SEL audit failed for ACP breaker trip", exc_info=True)
+                        await _record_breaker_stop(
+                            session, session_key, event, _bname, _called_as, _acp_breaker, _acp_cli
+                        )
+                        # The stop ends the run it measured: without this the totals stay over
+                        # their ceilings and every later turn is stopped at its first result.
+                        _acp_breaker.clear_tripped()
                         # Cancel the CLI's turn rather than breaking out of the
                         # stream: the stream then ends with a cancelled stop
                         # reason and every post-loop finalizer (telemetry, turn

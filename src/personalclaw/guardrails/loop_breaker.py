@@ -384,15 +384,18 @@ def structural_note(reason: str) -> str:
     )
 
 
-def circuit_message(total_failures: int) -> str:
+def circuit_message(total_failures: int, turns: int = 1) -> str:
     """The CIRCUIT rung: the run is aborted, and this says why.
 
     One string for both runtimes so "the standard breaker message" means the same
-    sentence whether the tools ran in-process or inside an ACP CLI.
+    sentence whether the tools ran in-process or inside an ACP CLI. ``turns`` is how many
+    turns in a row the failures were counted over: an agent CLI chat counts them across its
+    turns (:meth:`LoopBreaker.begin_turn`), and the sentence says so rather than "this turn".
     """
+    where = "in this turn" if turns <= 1 else f"over this chat's last {turns} turns"
     return (
-        f"Run aborted by the loop breaker: {total_failures} tool failures in this "
-        "turn. The run was repeating failures instead of making progress, so it was "
+        f"Run aborted by the loop breaker: {total_failures} tool failures {where}. "
+        "The run was repeating failures instead of making progress, so it was "
         "stopped rather than allowed to burn the rest of its budget."
     )
 
@@ -491,6 +494,10 @@ class LoopBreaker:
         #: Repeats this run — reads answered as they were last time, and reads refused for being
         #: one. Survives a compaction, as ``total_failures`` does.
         self.total_repeats = 0
+        # A run that spans turns (an agent CLI chat, see `begin_turn`): whether a call failed
+        # in the turn now running, and how many turns in a row the failure total counts.
+        self._turn_failed = False
+        self.failing_turns = 0
         # An explicit ceiling PINS this breaker's circuit rung and survives `reset()`;
         # None means "ask the config". Kept apart from the resolved value below because
         # reset() re-resolves the config one but must not discard the caller's.
@@ -506,9 +513,43 @@ class LoopBreaker:
         self._struct_reported.clear()
         self._same.clear()
         self.total_repeats = 0
+        self._turn_failed = False
+        self.failing_turns = 0
         # Re-arm the config read so a ceiling edited mid-session binds on the next run
         # instead of on the next restart. A pinned ceiling is left alone.
         self._circuit_resolved = self._circuit_pin
+
+    def begin_turn(self) -> None:
+        """A new turn of a run that spans turns: an agent CLI chat, whose breaker lives on the
+        chat so that a loop failing a little in each of many turns still reaches the circuit.
+
+        The repeat path starts afresh, as its sentence says ("in this turn"): an unchanged read
+        in a later turn may be the agent checking again after something changed outside the
+        chat. The failure total carries on only while every turn adds to it: a turn with no
+        failed call ends the run of failures, so a long chat whose tests fail now and then is
+        not stopped for their sum.
+        """
+        self._recent.clear()
+        self._struct_reported.clear()
+        self._same.clear()
+        self.total_repeats = 0
+        if not self._turn_failed:
+            self._counts.clear()
+            self.total_failures = 0
+            self.failing_turns = 0
+        self._turn_failed = False
+
+    def clear_tripped(self) -> None:
+        """After :meth:`stop_sentence` stopped a turn: clear the total that tripped it, so the
+        stop ends the run it measured and the chat's next turn starts counting afresh, instead
+        of being stopped again at its first tool result."""
+        if self.circuit_tripped():
+            self._counts.clear()
+            self.total_failures = 0
+            self.failing_turns = 0
+            self._turn_failed = False
+        if self.total_repeats > REPEAT_CIRCUIT_THRESHOLD:
+            self.total_repeats = 0
 
     def reset_structural(self) -> None:
         """Re-arm structural detection (after a compaction) without touching the
@@ -524,6 +565,9 @@ class LoopBreaker:
         if failed:
             self.total_failures += 1
             self._counts[key] = self._counts.get(key, 0) + 1
+            if not self._turn_failed:
+                self._turn_failed = True
+                self.failing_turns += 1
         else:
             self._counts.pop(key, None)  # a success clears this key's streak
         return self._counts.get(key, 0)
@@ -563,7 +607,7 @@ class LoopBreaker:
     def stop_sentence(self) -> str:
         """Why this run must stop now, or ``""`` to go on: too many failures or repeats."""
         if self.circuit_tripped():
-            return circuit_message(self.total_failures)
+            return circuit_message(self.total_failures, self.failing_turns)
         if self.total_repeats > REPEAT_CIRCUIT_THRESHOLD:
             return repeat_circuit_message(self.total_repeats)
         return ""
