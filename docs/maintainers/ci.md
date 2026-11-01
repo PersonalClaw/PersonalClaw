@@ -1218,8 +1218,21 @@ and a green plan to a control.
 
 `pr.yml` (the change tier's fast feedback) and `merge.yml` (the merge tier's verdict) are the
 candidate workflows of #3915, in one shape: plan, build, test, results. Both run on every pull
-request and on `workflow_dispatch`, and `merge.yml` on every push to `main` too. Neither posts a
+request and on `workflow_dispatch`, and `merge.yml` on every push to `main` and on each queue
+commit of main's merge queue (`merge_group`, `checks_requested`; 0.4.0 A1) too. Neither posts a
 check of its own: `merge-verdict` is the trusted controller's alone (#3910).
+
+- **A queue commit's run** is a pull request's run in all but its base: `changes` plans the
+  `merge` tier over what it changed against the commit the queue built it on (`COMPARED`, the
+  event's `merge_group.base_sha`: main's tip or the queue commit of the entry ahead), which is its
+  own entry's change; the flake rule's changed list is that commit's one parent diffed against it,
+  and refused (no flake passed) when the checkout is not that entry's queue commit; and `results`
+  hands the verdict both of the flake rule's lists, as on a pull request (the verdict takes them
+  on a `pull_request` or a `merge_group` run, by `GITHUB_EVENT_NAME`). Its concurrency group is
+  its own commit's, never cancelled, and the poster judges it by its "queue commit" rules.
+- **A pull request of 300 files or more can't pass the queue.** The poster reads a queue commit's
+  change, and its pull request's, from the compare API, which lists no more than that, so such a
+  queue commit's verdict is red, named as unread. Split the pull request.
 
 - **`tree-check`** (`merge.yml`) is the push stage's first question: did a green pull-request run
   of `merge.yml` test this tree. It runs the previous `main` commit's `tools/ci/tree_tested.py`,

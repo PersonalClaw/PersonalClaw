@@ -18,8 +18,9 @@ that writes. ``contract.yml``, which that dispatch runs, holds no secret and no 
 no credential, runs only on the head's own contract branch and names the head only through a
 step's environment (#4584 step 4); its ``wake`` job, in the shape ``beside``, holds
 ``actions: write`` alone, runs no action and reads nothing of the contract job, and dispatches the
-poster on main for the head only after checking the head against its own branch. Each rule
-fails on a planted edit, in each shape the tree may hold.
+poster on main for the head only after checking the head against its own branch. Its condition
+is the queue shape's (0.4.0 A1): a queue commit's Merge run is taken as a pull request's is, on its
+completion and its start. Each rule fails on a planted edit.
 """
 
 from __future__ import annotations
@@ -44,35 +45,16 @@ _APP_KEYS = {
 }
 _TOKEN_ASKS = {**_APP_KEYS, "permission-checks": "write"}
 _CONTRACT_ASKS = {**_APP_KEYS, "permission-contents": "write"}
-#: The runs that can judge a pull request's head, and so take a runner: the sweep; a completed
-#: dispatch off main (a contract run, a dispatch proof), whatever MERGE_VERDICT_LIVE says; and, once
-#: the flip sets it 'true', code scanning's CodeQL check and a completed run of a pull request
-#: (its own, its dependency review, or CodeQL's on refs/pull/*). decide checks each again.
-_WAKES = (
-    "github.event_name == 'schedule'"
-    " || (github.event_name == 'workflow_run'"
-    " && github.event.workflow_run.event == 'workflow_dispatch'"
-    " && github.event.workflow_run.head_branch != 'main')"
-    " || (vars.MERGE_VERDICT_LIVE == 'true'"
-    " && ((github.event_name == 'check_run'"
-    " && github.event.check_run.app.id == 57789 && github.event.check_run.name == 'CodeQL')"
-    " || (github.event_name == 'workflow_run'"
-    " && (github.event.workflow_run.event == 'pull_request'"
-    " || github.event.workflow_run.event == 'pull_request_target'"
-    " || (github.event.workflow_run.event == 'dynamic'"
-    " && startsWith(github.event.workflow_run.head_branch, 'refs/pull/'))))))"
-)
-_CONTRACT_IF = (
-    f"({_WAKES}) && (needs.post.outputs.dispatch != '' || needs.post.outputs.cleanup != '')"
-)
-#: The poster's two shapes. ``after``: a head's contract starts when its Merge run completes.
-#: ``beside``: it starts once the run has started a job on a runner (``decide --start``, on the
-#: run's ``in_progress``), beside the run, and the contract run's own ``wake`` job dispatches the
-#: poster on main for the head (``decide --head``) when it reports.
-_AFTER, _BESIDE = "after", "beside"
+#: The poster's triggers, ``beside``: a head's contract starts once the run has started a job on a
+#: runner (``decide --start``, on the run's ``in_progress``), beside the run, and the contract
+#: run's own ``wake`` job dispatches the poster on main for the head (``decide --head``) when it
+#: reports. (The ``after`` shape, which started it at the run's completion, is gone: it took no
+#: queue commit's start.)
+_BESIDE = "beside"
 _MERGE_PATH = f".github/workflows/{workflows.MERGE}"
-#: The beside shape's runs that take a runner: the after shape's, with a dispatch on main alone
-#: (a contract run's wake) always, the completions read only as completions, and, once the flip
+#: The beside shape's runs that take a runner: the sweep, a completed dispatch off main, and a
+#: dispatch on main alone (a contract run's wake) always, the completions read only as completions,
+#: and, once the flip
 #: sets MERGE_VERDICT_LIVE, a pull request's own Merge run's start (merge.yml's, by its path).
 #: As the file spells it: one folded line each, which YAML joins with a space.
 _BESIDE_LINES = (
@@ -106,8 +88,8 @@ _WAKES_BESIDE = " ".join(_BESIDE_LINES)
 _CONTRACT_IF_BESIDE = " ".join(_CONTRACT_BESIDE_LINES)
 #: The queue shape (0.4.0 A1): the beside shape's triggers, and its condition with a queue
 #: commit's Merge run (``merge_group``) taken as a pull request's is, on its completion and on its
-#: start. It lands in two merges: these rows first, then the poster, which takes the beside shape
-#: out of here.
+#: start. A poster with the beside shape's triggers is held to it: the beside condition alone is
+#: refused.
 _QUEUE = "queue"
 _QUEUE_RUN = "|| github.event.workflow_run.event == 'merge_group'"
 _STARTS = "&& github.event.workflow_run.event == 'pull_request'"
@@ -132,7 +114,7 @@ _CONTRACT_QUEUE_LINES = (
 )
 _WAKES_QUEUE = " ".join(_QUEUE_LINES)
 _CONTRACT_IF_QUEUE = " ".join(_CONTRACT_QUEUE_LINES)
-_WAKES_BY_SHAPE = {_AFTER: _WAKES, _BESIDE: _WAKES_BESIDE, _QUEUE: _WAKES_QUEUE}
+_WAKES_BY_SHAPE = {_BESIDE: _WAKES_BESIDE, _QUEUE: _WAKES_QUEUE}
 #: What the beside shape's concurrency group keys a dispatch on: the head it names, empty for any
 #: other event (a context the concurrency row models, unlike ``inputs``).
 _HEAD_KEY = "${{ github.event.inputs.head }}"
@@ -141,7 +123,6 @@ _HEAD_KEY = "${{ github.event.inputs.head }}"
 #: behind them.
 _ACTION_KEY = "${{ github.event.action }}"
 _CONTRACT_IF_BY_SHAPE = {
-    _AFTER: _CONTRACT_IF,
     _BESIDE: _CONTRACT_IF_BESIDE,
     _QUEUE: _CONTRACT_IF_QUEUE,
 }
@@ -177,7 +158,7 @@ def _checkout_problems(where: str, steps: list[dict]) -> list[str]:
     return found
 
 
-def _contract_problems(job: dict, shape: str = _AFTER) -> list[str]:
+def _contract_problems(job: dict, shape: str = _QUEUE) -> list[str]:
     found: list[str] = []
     if job.get("needs") != "post" or job.get("if") != _CONTRACT_IF_BY_SHAPE[shape]:
         found.append("the contract job runs other than after post, on a head or a branch it names")
@@ -209,18 +190,17 @@ def _problems(text: str) -> list[str]:
         found.append("it names the candidate's head, branch or repository")
     data = yaml.safe_load(text)
     on = data.get("on", data.get(True))
-    shape = _shape(on)
-    if shape is None:
+    if _shape(on) != _BESIDE:
         found.append(
-            f"runs on {on!r}, not only a completed Merge run, nor that and a started one with its"
-            " contract's wake"
+            f"runs on {on!r}, not a completed and a started Merge run with its contract's wake"
         )
-        shape = _AFTER
     jobs = data.get("jobs") or {}
     if set(jobs) != {"post", "contract"}:
         return [*found, f"has jobs {sorted(jobs)}"]
-    if shape == _BESIDE and (jobs["post"] or {}).get("if") == _WAKES_QUEUE:
-        shape = _QUEUE
+    # The beside shape's triggers carry the queue shape's condition (0.4.0 A1): main's merge queue
+    # is judged through this poster, so a condition that takes no queue commit's run is not this
+    # file's, and neither is the after shape's.
+    shape = _QUEUE
     found += _contract_problems(jobs["contract"], shape)
     job = jobs["post"]
     if job.get("if") != _WAKES_BY_SHAPE[shape]:
@@ -274,11 +254,9 @@ def _problems(text: str) -> list[str]:
 
 
 def _shape(on: object) -> str | None:
-    """Which of the poster's two shapes its triggers are, or None for neither."""
+    """``beside`` when the poster's triggers are the beside shape's, else None."""
     names = [workflows.NAMES[workflows.MERGE], "Dependency review", "CodeQL", "Contract", "DCO"]
     both = {"check_run": {"types": ["completed"]}, "schedule": [{"cron": "*/10 * * * *"}]}
-    if on == {"workflow_run": {"workflows": names, "types": ["completed"]}, **both}:
-        return _AFTER
     if not isinstance(on, dict) or set(on) != {"workflow_run", "workflow_dispatch", *both}:
         return None
     dispatch = on["workflow_dispatch"]
@@ -501,8 +479,7 @@ def test_a_planted_edit_of_the_poster_fails(old: str, new: str, says: str) -> No
 #: Each event the poster can be started by, and when its jobs take a runner: ``head``, a pull
 #: request's wake, only with MERGE_VERDICT_LIVE 'true'; ``always``; ``never``. Each is a
 #: completion (``completed``), a check run's (``check``), the schedule, a run's start
-#: (``in_progress``) or a dispatch of the poster (``dispatch``): the after shape is started by the
-#: first three alone.
+#: (``in_progress``) or a dispatch of the poster (``dispatch``).
 _FORK = {"head_repository": {"full_name": "someone/project", "fork": True}, "pull_requests": []}
 _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
     ("a pull request's Merge run", "workflow_run", {"event": "pull_request"}, "head", "completed"),
@@ -684,7 +661,6 @@ _EVENTS: tuple[tuple[str, str, dict[str, Any], str, str], ...] = (
 )
 #: What starts each shape's runs.
 _DELIVERS = {
-    _AFTER: frozenset({"completed", "check", "schedule"}),
     _BESIDE: frozenset({"completed", "check", "schedule", "in_progress", "dispatch"}),
     _QUEUE: frozenset({"completed", "check", "schedule", "in_progress", "dispatch"}),
 }
@@ -692,7 +668,7 @@ _DELIVERS = {
 _LIVE = ("false", "true", None)
 
 
-def _wanted(kind: str, live: str | None, shape: str = _AFTER) -> bool:
+def _wanted(kind: str, live: str | None, shape: str = _QUEUE) -> bool:
     """Whether the shape's condition takes a runner for an event of this kind: a queue commit's
     run (``queue``) is taken as a pull request's head's is, and only in the queue shape."""
     queued = kind == "queue" and shape == _QUEUE
@@ -793,7 +769,7 @@ def _answers(expr: str, event: tuple[str, str, dict[str, Any], str, str], live: 
     return _evaluate(expr, event_name, payload, live, action.get(starts, ""))
 
 
-def _wake_problems(where: str, expr: str, shape: str = _AFTER) -> list[str]:
+def _wake_problems(where: str, expr: str, shape: str = _QUEUE) -> list[str]:
     """Each event that starts the shape's runs, as the condition answers it, with
     MERGE_VERDICT_LIVE each way, against whether it can judge a head then."""
     return [
@@ -807,7 +783,7 @@ def _wake_problems(where: str, expr: str, shape: str = _AFTER) -> list[str]:
 
 
 _SHAPED_EVENTS = [
-    (shape, e) for shape in (_AFTER, _BESIDE, _QUEUE) for e in _EVENTS if e[4] in _DELIVERS[shape]
+    (shape, e) for shape in (_BESIDE, _QUEUE) for e in _EVENTS if e[4] in _DELIVERS[shape]
 ]
 
 
@@ -825,7 +801,7 @@ def test_the_conditions_read_only_the_fields_they_name() -> None:
     """What either condition reads of an event: its name, its action, its ref, the run's event,
     branch and path, the check's App and name, and the variable. Nothing a fork's author names but
     the branch, which only a dispatch's and CodeQL's clauses read."""
-    for expr in (_WAKES, _WAKES_BESIDE, _WAKES_QUEUE):
+    for expr in (_WAKES_BESIDE, _WAKES_QUEUE):
         read = {t for t in _tokens(expr) if t.startswith(("github.", "vars."))}
         assert read <= {
             "github.event_name",
@@ -921,6 +897,23 @@ def test_a_step_that_names_the_triggering_runs_branch_fails() -> None:
 def test_a_schedule_more_often_than_ten_minutes_fails() -> None:
     text = _WORKFLOW.read_text(encoding="utf-8").replace('"*/10 * * * *"', '"* * * * *"', 1)
     assert any("runs on" in p for p in _problems(text))
+
+
+def test_the_after_shape_s_triggers_fail() -> None:
+    """The shape that started a head's contract at its run's completion, with no start and no wake:
+    it takes no queue commit's start, so it is not this file's."""
+    text = _WORKFLOW.read_text(encoding="utf-8")
+    dispatch = (
+        "  workflow_dispatch:\n    inputs:\n      head:\n"
+        "        description: the head whose contract run reported (a full commit id)\n"
+        "        required: true\n"
+    )
+    assert text.count(dispatch) == 1 and text.count("    types: [in_progress, completed]\n") == 1
+    after = text.replace(dispatch, "", 1).replace(
+        "    types: [in_progress, completed]\n", "    types: [completed]\n", 1
+    )
+    found = _problems(after)
+    assert any("runs on" in p for p in found), found
 
 
 # ── contract.yml: main's contract over a head's definitions (#4584 step 4) ─────────────────────
@@ -1053,42 +1046,6 @@ def _folded(lines: tuple[str, ...]) -> str:
     return "    if: >-\n" + "".join(f"      {line}\n" for line in lines)
 
 
-#: Today's poster (the after shape) made beside, beyond its two conditions.
-_TO_BESIDE = (
-    (
-        '    workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]\n'
-        "    types: [completed]\n",
-        '    workflows: ["Merge", "Dependency review", "CodeQL", "Contract"]\n'
-        "    types: [in_progress, completed]\n",
-    ),
-    (
-        '    - cron: "*/10 * * * *"\n',
-        '    - cron: "*/10 * * * *"\n  workflow_dispatch:\n    inputs:\n      head:\n'
-        "        description: the head whose contract run reported (a full commit id)\n"
-        "        required: true\n",
-    ),
-    (
-        "-check-${{ github.event.check_run.id }}\n",
-        "-check-${{ github.event.check_run.id }}-on-${{ github.event.action }}"
-        "-head-${{ github.event.inputs.head }}\n",
-    ),
-    (
-        "          CHECK_RUN_ID: ${{ github.event.check_run.id }}\n",
-        "          CHECK_RUN_ID: ${{ github.event.check_run.id }}\n"
-        "          ACTION: ${{ github.event.action }}\n          WAKE_HEAD: ${{ inputs.head }}\n",
-    ),
-    (
-        '          if [ -n "$RUN_ID" ]; then\n            which=(--run-id "$RUN_ID")\n',
-        '          if [ -n "$RUN_ID" ] && [ "$ACTION" = in_progress ]; then\n'
-        '            which=(--start "$RUN_ID")\n'
-        '          elif [ -n "$RUN_ID" ]; then\n            which=(--run-id "$RUN_ID")\n'
-        '          elif [ -n "$WAKE_HEAD" ]; then\n'
-        f"            if {_HEAD_CHECK}; then\n"
-        '              echo "::notice title=no head::the dispatch names no full commit id"\n'
-        f"              {_HEAD_REFUSED[0]}\n              {_HEAD_REFUSED[1]}\n            fi\n"
-        '            which=(--head "$WAKE_HEAD")\n',
-    ),
-)
 _WAKE_JOB = (
     "\n  wake:\n    needs: contract\n"
     f"    if: {_WAKE_IF}\n"
@@ -1107,20 +1064,11 @@ _WAKE_JOB = (
 
 
 def _beside_poster() -> str:
-    """The tree's poster in the beside shape: itself once it is, else today's with the edits
-    that make it so, so these controls read both trees."""
+    """The tree's poster, which has the beside shape's triggers (and the queue shape's
+    condition)."""
     text = _WORKFLOW.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
-    # The queue shape has the beside shape's triggers: either is itself.
-    if _shape(data.get("on", data.get(True))) == _BESIDE:
-        return text
-    # The post job's condition, then the contract job's: unpacking refuses any other number.
-    posts, contracts = _IF_BLOCK.findall(text)
-    text = text.replace(posts, _folded(_BESIDE_LINES), 1)
-    text = text.replace(contracts, _folded(_CONTRACT_BESIDE_LINES), 1)
-    for old, new in _TO_BESIDE:
-        assert text.count(old) == 1, f"the edit's anchor is not once: {old!r}"
-        text = text.replace(old, new)
+    assert _shape(data.get("on", data.get(True))) == _BESIDE, "the poster's triggers are not beside"
     return text
 
 
@@ -1202,6 +1150,14 @@ def test_the_queue_shape_takes_a_queue_commit_s_run_as_a_heads() -> None:
     # A queue shape whose contract job's condition is the beside shape's, in either tree.
     half = queued.replace(_folded(_CONTRACT_QUEUE_LINES), _folded(_CONTRACT_BESIDE_LINES), 1)
     assert any("contract" in p for p in _problems(half)), _problems(half)
+    # The beside shape whole, which takes no queue commit's run: refused.
+    beside_only = queued.replace(_folded(_QUEUE_LINES), _folded(_BESIDE_LINES), 1)
+    beside_only = beside_only.replace(
+        _folded(_CONTRACT_QUEUE_LINES), _folded(_CONTRACT_BESIDE_LINES), 1
+    )
+    found = _problems(beside_only)
+    assert any("condition is not exactly" in p for p in found), found
+    assert any("contract" in p for p in found), found
 
 
 @pytest.mark.parametrize(

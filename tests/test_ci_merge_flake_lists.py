@@ -1,7 +1,8 @@
-"""merge.yml gives the verdict's flake rule its two lists on a pull request's run, and only there:
-the pull request's changed paths (``changes`` writes them, ``ci-changes``) and the run's jobs on
-the attempt (``results`` lists them). Each step's own shell runs here against a planted test merge
-and stand-ins for ``gh`` and main's verdict.
+"""merge.yml gives the verdict's flake rule its two lists on a pull request's run and a queue
+commit's (0.4.0 A1: the queue takes the pull request's flake rule), and only there: the change's
+paths (``changes`` writes them, ``ci-changes``) and the run's jobs on the attempt (``results``
+lists them). Each step's own shell runs here against a planted test merge or queue commit and
+stand-ins for ``gh`` and main's verdict.
 """
 
 from __future__ import annotations
@@ -83,8 +84,38 @@ def test_merge(tmp_path: Path) -> tuple[Path, str]:
     return work, head
 
 
+@pytest.fixture
+def queue_commit(tmp_path: Path) -> tuple[Path, str]:
+    """A one-deep checkout of a queue commit: the pull request's change squashed as one commit on
+    the commit the queue built it on, which main has moved past since the pull request branched."""
+    src = tmp_path / "queue-src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    (src / "docs").mkdir()
+    (src / "docs" / "a.md").write_text("a\n")
+    _git(src, "add", "-A")
+    _git(src, "commit", "-q", "-m", "base")
+    (src / "README").write_text("main moved on\n")
+    _git(src, "add", "-A")
+    _git(src, "commit", "-q", "-m", "the entry ahead")
+    built_on = _git(src, "rev-parse", "HEAD")
+    _git(src, "switch", "-q", "-c", "queue")
+    (src / "docs" / "a.md").write_text("a, edited\n")
+    _git(src, "commit", "-q", "-am", "the entry, squashed (#12)")
+    _git(src, "switch", "-q", "main")
+    _git(src, "config", "uploadpack.allowAnySHA1InWant", "true")
+    work = tmp_path / "queue-work"
+    subprocess.run(
+        ["git", "clone", "-q", "--depth", "1", "--branch", "queue", f"file://{src}", str(work)],
+        check=True,
+        capture_output=True,
+        env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+    )
+    return work, built_on
+
+
 def _run_changed(
-    work: Path, tmp: Path, pr_head: str
+    work: Path, tmp: Path, pr_head: str, *, event: str = "pull_request", queue_base: str = ""
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     out = tmp / "github-output"
     out.write_text("")
@@ -93,6 +124,8 @@ def _run_changed(
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env.update(
         PR_HEAD=pr_head,
+        QUEUE_BASE=queue_base,
+        GITHUB_EVENT_NAME=event,
         RUNNER_TEMP=str(runner),
         GITHUB_OUTPUT=str(out),
         GIT_CONFIG_GLOBAL=os.devnull,
@@ -139,15 +172,52 @@ def test_a_checkout_that_is_not_the_pull_requests_test_merge_writes_no_list(
     )
 
 
-def test_the_lists_are_written_and_read_on_a_pull_request_only() -> None:
+def test_a_queue_commits_changed_paths_are_its_entrys_own(
+    queue_commit: tuple[Path, str], tmp_path: Path
+) -> None:
+    """A queue commit's one parent is the commit the queue built it on: its change against that
+    is the entry's, and what the entry ahead brought is not."""
+    work, built_on = queue_commit
+    done, out = _run_changed(work, tmp_path, "", event="merge_group", queue_base=built_on)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert out.read_text() == "ok=true\n"
+    listed = (tmp_path / "runner" / "changed-paths" / "changed.z").read_text()
+    assert verdict.read_changed(listed) == {"docs/a.md"}
+
+
+def test_a_queue_commit_not_on_its_queue_base_writes_no_list(
+    queue_commit: tuple[Path, str], tmp_path: Path
+) -> None:
+    work, _built_on = queue_commit
+    done, out = _run_changed(work, tmp_path, "", event="merge_group", queue_base="b" * 40)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert out.read_text() == ""
+    assert "not this entry's queue commit" in done.stdout
+
+
+def test_a_test_merge_read_as_a_queue_commit_writes_no_list(
+    test_merge: tuple[Path, str], tmp_path: Path
+) -> None:
+    """A checkout with two parents is no queue commit, whatever its event says."""
+    work, head = test_merge
+    done, out = _run_changed(work, tmp_path, head, event="merge_group", queue_base=head)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert out.read_text() == ""
+
+
+def test_the_lists_are_written_and_read_on_a_pull_request_or_a_queue_commit_only() -> None:
     changes = WORKFLOW["jobs"]["changes"]["steps"]
     results = WORKFLOW["jobs"]["results"]["steps"]
     [write] = [s for s in changes if s.get("name") == CHANGED_STEP]
     [upload] = [s for s in changes if s.get("name") == "the changed paths, as ci-changes"]
     [download] = [s for s in results if s.get("name") == "the pull request's changed paths"]
-    assert write["if"] == "${{ github.event_name == 'pull_request' }}"
+    assert write["if"] == (
+        "${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}"
+    )
+    assert write["env"]["QUEUE_BASE"] == "${{ github.event.merge_group.base_sha }}"
     assert upload["if"] == "${{ steps.changed.outputs.ok == 'true' }}"
     assert "github.event_name == 'pull_request'" in download["if"]
+    assert "github.event_name == 'merge_group'" in download["if"]
     # Downloaded by pattern, so a run whose changes job wrote no list downloads nothing and fails
     # nothing; and neither step masks an exit status.
     assert upload["with"]["name"] == download["with"]["pattern"] == "ci-changes"
@@ -182,6 +252,8 @@ def _bin(folder: Path, name: str, body: str) -> None:
         pytest.param("pull_request", False, True, False, id="no changed list"),
         pytest.param("pull_request", True, False, False, id="the jobs could not be listed"),
         pytest.param("push", True, True, False, id="a push"),
+        pytest.param("merge_group", True, True, True, id="a queue commit with both lists"),
+        pytest.param("merge_group", False, True, False, id="a queue commit with no list"),
     ],
 )
 def test_the_verdict_is_given_the_two_lists_only_on_a_pull_request_with_both(
