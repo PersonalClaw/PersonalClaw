@@ -526,9 +526,12 @@ instance's gateway — with its own home, config and state — so a guess is a c
 read or write, not a degraded local call.
 
 The call carries the home's local secret, and it is sent the way a command sends its own
-(`home_gateway.open_loopback`): never through a proxy named in the environment, which a child is
-handed for its own downloads, and following no redirect. A scheduled script's launcher, which runs
-where PersonalClaw cannot be imported, builds the same transport.
+(`home_gateway.open_loopback`): to `127.0.0.1`, never through a proxy named in the environment,
+which a child is handed for its own downloads, and following no redirect. A scheduled script's
+launcher, which runs where PersonalClaw cannot be imported, builds the same transport. Before every
+call, the child asks `GET /api/healthz` at that port which home it serves and has it prove it holds
+the home's secret, as a command does (below), and sends nothing to a gateway that is not this
+home's, since a child can outlive the gateway that started it.
 
 ### How a command finds its gateway
 
@@ -541,10 +544,14 @@ in the [CLI reference](cli.md)) talks to the gateway of the home it runs for, th
 
 `dashboard.url` and the default port are not sources: they say where a gateway binds, not that one
 of this home is listening there. Before it sends the home's local secret, or a token minted with it,
-the command asks `GET /api/healthz` at that port, which needs no sign-in, and compares its
-`home_id` with the same fingerprint of its own home; another home's gateway, or a program that is
-not one, is refused, and is sent nothing more. The requests go to `127.0.0.1`, never through a
-proxy named in the environment, and follow no redirect.
+the command asks `GET /api/healthz?nonce=<32 hex>` at that port, which needs no sign-in, and
+compares its `home_id` with the same fingerprint of its own home. A fingerprint can be guessed, so
+the gateway also answers with `proof`, an HMAC-SHA256 under the home's local secret over the nonce
+and the port it was asked on, which the command checks. Another home's gateway, a program that is
+not one, or one that cannot prove it holds the secret (a gateway from an older PersonalClaw, or one
+whose home's secret was replaced since it started: restart it) is refused, and is sent nothing
+more. The requests go to `127.0.0.1`, never through a proxy named in the environment, and follow
+no redirect.
 
 - `GET /api/config/personalclaw` — the full config as JSON, for the owner. A request carrying an **app** identity gets only the fields its manifest declares in `permissions.config`, nested where the full read has them, and `403 config_field_not_declared` when it declares none.
 - `PATCH /api/config/personalclaw {path, value}` — single-field writes, allowlisted; non-editable paths return 400. An app may write only a field its manifest names in `permissions.config`; any other answers `403 config_field_not_declared`, and a manifest that names a security setting fails to install. A field that is a **security setting** (its `_EDITABLE_CONFIG` entry declares a `SecurityControl` — approval mode and YOLO, sign-in and 2FA, egress, the keychain, the sandbox ceilings, guardrail budgets, external access, sync, and a few more) follows two more rules. A write that LOOSENS it needs `"confirm": true` in the body (the JSON literal), or it answers `400 confirmation_required` with `{field, consent, title, change}` in `error.detail` — the sentence Settings shows before it resends, and what the write changes from and to (`"$33.50 → $10,033.50"`), with `caution` added for a raise of ten times the value in effect or more; tightening never needs it. And a request carrying an **app** identity is refused `403 security_setting_owner_only`, in either direction and whatever it sends. `config/edit_spec.py` holds the rules; the settings are exactly the entries that declare one.

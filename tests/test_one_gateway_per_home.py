@@ -55,12 +55,19 @@ _STARTER = textwrap.dedent("""
 
 
     def _healthz() -> int:
-        body = json.dumps(
-            {"status": "ok", "pid": os.getpid(), "home_id": home_gateway.home_id(), "root_ok": True}
-        ).encode()
-
         class Answer(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
+                said = {
+                    "status": "ok", "pid": os.getpid(), "home_id": home_gateway.home_id(),
+                    "root_ok": True,
+                }
+                # The proof a read with a nonce asks for, made with the secret it wrote.
+                nonce = self.path.partition("nonce=")[2]
+                secret = (config_dir() / ".local_secret").read_text(encoding="utf-8").strip()
+                if home_gateway.is_nonce(nonce) and secret:
+                    port = self.server.server_address[1]
+                    said["proof"] = home_gateway.gateway_proof(secret, nonce, port)
+                body = json.dumps(said).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))

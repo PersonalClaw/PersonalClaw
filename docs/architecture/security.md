@@ -242,7 +242,14 @@ Every caller reads it from the same home, resolved at the call (the gateway decl
   loopback request to, headers included, and which a child is handed on purpose for its own
   downloads; and never on to where a redirect points. A command run for a home first asks the
   gateway at the port it found which home it serves (`home_gateway.reach`), and sends nothing more
-  to another home's gateway. `tests/test_a_command_reaches_only_its_own_homes_gateway.py` finds
+  to another home's gateway. A `home_id` is a fingerprint of a path, which can be guessed, so the
+  read carries a fresh nonce and the gateway answers with a proof that it holds the home's secret:
+  an HMAC under it over the nonce and the port the read arrived on (`home_gateway.gateway_proof`,
+  answered only to this machine), which the caller checks before the secret goes anywhere. The
+  gateway's children ask the same of the port they were handed, at `127.0.0.1`, before every call
+  (`home_gateway.child_base`; the launcher compares the `home_id` its gateway wrote into its config
+  and checks the proof with the secret it was handed), since a child can outlive its gateway.
+  `tests/test_a_command_reaches_only_its_own_homes_gateway.py` finds
   every module that puts the credential in a header and fails one that opens a request another
   way.
 - **A credential this gateway did not issue** is refused with `403 internal_secret_invalid`, whose

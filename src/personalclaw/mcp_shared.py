@@ -118,7 +118,8 @@ def _resolve_excluded_tools() -> set[str]:
         # a DIFFERENT instance for this session's tool policy, and got that instance's answer.
         # A refusal propagates to the ``except`` below: the documented fail-open of this
         # defence-in-depth layer then applies with a named cause, rather than a policy read
-        # answered by a stranger.
+        # answered by a stranger. The gateway at the base has proved it serves this home before
+        # the credential below goes to it (``home_gateway.child_base``).
         api_base = gateway_base.resolve_api_base()
 
         # The one reader of the gateway's internal credential. A home with none raises, and

@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 from fakes import home_fingerprint
 
+from personalclaw import home_gateway
 from personalclaw.config import loader as config_loader
 from personalclaw.llm.registry import ProviderEntry, get_default_registry
 
@@ -99,7 +100,11 @@ class _Gateway(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         type(self).asked.append(self.path)
         if url.path == "/api/healthz":
-            return self._send(200, {"status": "ok", "pid": os.getpid(), "home_id": self.home_id})
+            said = {"status": "ok", "pid": os.getpid(), "home_id": self.home_id}
+            nonce = parse_qs(url.query).get("nonce", [""])[0]
+            if home_gateway.is_nonce(nonce):  # the proof it holds the secret its home holds
+                said["proof"] = home_gateway.gateway_proof(SECRET, nonce, self.server.server_port)
+            return self._send(200, said)
         if url.path == "/api/token/local":
             if self.headers.get("X-Local-Secret") != SECRET:
                 return self._send(403, {"error": "invalid secret"})
@@ -205,12 +210,15 @@ def test_with_no_gateway_running_it_measures_here_and_says_so(providers, capsys)
 def test_a_gateway_it_cannot_sign_in_to_is_named_and_the_numbers_are_said_to_be_its_own(
     running_gateway, providers, capsys
 ):
+    """A gateway that does not hold this home's secret (another start replaced it) cannot prove it
+    holds it, so the Doctor sends it nothing and says why the numbers are its own."""
     (config_loader.config_dir() / ".local_secret").write_text("another-secret", encoding="utf-8")
 
     out = _sections(capsys)
 
-    assert f"measured:    here, not by the gateway running on port {running_gateway}" in out, out
-    assert "connection not tested (the running gateway could not be asked)" in out, out
+    assert "measured:    here, not by a gateway of this home" in out, out
+    assert f"Port {running_gateway}" in out and "did not make" in out, out
+    assert "connection not tested (no gateway of this home answered to test it)" in out, out
 
 
 def test_the_whole_command_reads_the_running_gateway(running_gateway, providers, capsys):

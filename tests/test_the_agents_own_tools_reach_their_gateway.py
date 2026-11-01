@@ -260,7 +260,9 @@ async def test_a_route_that_does_not_take_the_credential_says_so(tmp_path, monke
 @pytest.mark.asyncio
 async def test_a_credential_this_gateway_did_not_issue_is_named_as_such(tmp_path, monkeypatch):
     """🔴 Red on integration, where recall answered the sign-in sentence whatever the credential
-    was, and a listed route answered a wrong one with the bare word "Forbidden"."""
+    was, and a listed route answered a wrong one with the bare word "Forbidden". The gateway
+    cannot prove it holds a secret the home no longer has, so the tool now sends it nothing and
+    says so, with what to do."""
     async with _gateway(tmp_path, monkeypatch) as gw:
         issued = gw.secret_path.read_text()
         gw.secret_path.write_text("0" * 32)
@@ -270,7 +272,8 @@ async def test_a_credential_this_gateway_did_not_issue_is_named_as_such(tmp_path
             gw.secret_path.write_text(issued)
 
         assert not ok
-        assert "is not the one this gateway issued" in text, text
+        assert "with a proof this home's local secret did not make" in text, text
+        assert "the home's secret was replaced since it started" in text, text
 
 
 @pytest.mark.asyncio

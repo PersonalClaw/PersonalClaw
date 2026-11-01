@@ -259,7 +259,7 @@ def test_a_port_named_explicitly_that_is_another_homes_is_refused_and_sent_no_se
     assert (code, out) == (1, "")
     assert f"Port {other_homes_gateway.port}, which {named_by} names, is answered by another" in err
     assert f"This home's gateway listens on port {this_homes_gateway.port}." in err, err
-    assert [s.path for s in other_homes_gateway.requests] == ["/api/healthz"]
+    assert [s.path.partition("?")[0] for s in other_homes_gateway.requests] == ["/api/healthz"]
     assert other_homes_gateway.credentials_sent() == []
     assert this_homes_gateway.asked("/api/token/local") == []
 
@@ -513,7 +513,8 @@ def test_no_command_trusts_a_record_whose_port_another_homes_gateway_now_holds(
     run()
 
     assert other_homes_gateway.credentials_sent() == []
-    assert {(s.method, s.path) for s in other_homes_gateway.requests} <= {("GET", "/api/healthz")}
+    asked = {(s.method, s.path.partition("?")[0]) for s in other_homes_gateway.requests}
+    assert asked <= {("GET", "/api/healthz")}
 
 
 @pytest.mark.parametrize("command", sorted(COMMANDS))
@@ -822,11 +823,18 @@ def test_a_busy_gateway_that_answers_a_later_read_is_reached(home, monkeypatch):
     from personalclaw import home_gateway
 
     monkeypatch.setattr(home_gateway, "ANSWER_TIMEOUT_SECS", 0.3)
-    body = json.dumps({"status": "ok", "pid": os.getpid(), "home_id": home_fingerprint(home)})
-    answer = (
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
-        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n{body}"
-    ).encode()
+
+    def answer(request: bytes, port: int) -> bytes:
+        """This home's gateway's answer, with the proof the read's nonce asks for."""
+        nonce = request.split(b" ", 2)[1].decode().partition("nonce=")[2]
+        said = {"status": "ok", "pid": os.getpid(), "home_id": home_fingerprint(home)}
+        said["proof"] = home_gateway.gateway_proof(THIS_HOMES_SECRET, nonce, port)
+        body = json.dumps(said)
+        return (
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+            f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n{body}"
+        ).encode()
+
     held: list[socket.socket] = []
     server = socket.socket()
     server.bind(("127.0.0.1", 0))
@@ -839,8 +847,7 @@ def test_a_busy_gateway_that_answers_a_later_read_is_reached(home, monkeypatch):
             if attempt < 2:
                 held.append(conn)  # took the connection, and says nothing yet
                 continue
-            conn.recv(4096)
-            conn.sendall(answer)
+            conn.sendall(answer(conn.recv(4096), port))
             conn.close()
 
     thread = threading.Thread(target=serve, daemon=True)
@@ -866,6 +873,7 @@ async def test_the_gateways_own_healthz_route_shows_it_is_this_homes(home):
     from personalclaw.dashboard.handlers_system import api_healthz
 
     app = web.Application()
+    app["local_secret"] = THIS_HOMES_SECRET  # the secret it wrote to the home, which it proves
     app.router.add_get("/api/healthz", api_healthz)
     async with TestServer(app, host="127.0.0.1") as server:
         port = server.port

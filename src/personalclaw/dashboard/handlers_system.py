@@ -115,8 +115,14 @@ async def api_healthz(request: web.Request) -> web.Response:
 
     Both are read from the disk, so in a worker thread, and the answer is given from the last
     reading (:class:`_Identity`): it waits on the disk only the first time.
+
+    * ``proof`` — only for a read from this machine that carries a ``nonce``: this gateway's proof
+      that it holds its home's local secret (``home_gateway.gateway_proof``), over the nonce and
+      the port the read arrived on. A ``home_id`` can be guessed from a path, so a caller that
+      will send the secret checks this first; the secret itself never leaves.
     """
     home_id, root_ok = await _IDENTITY.answer()
+    proof = _proof_for(request)
     return web.json_response(
         {
             "status": "ok",
@@ -124,8 +130,24 @@ async def api_healthz(request: web.Request) -> web.Response:
             "pid": os.getpid(),
             "home_id": home_id,
             "root_ok": root_ok,
+            **({"proof": proof} if proof else {}),
         }
     )
+
+
+def _proof_for(request: web.Request) -> str:
+    """The proof :func:`api_healthz` answers *request* with, or ``""``: for a read from this
+    machine carrying a well-formed nonce, asked of a gateway that holds a local secret, made over
+    the port the read arrived on (the socket's own, never what the request says)."""
+    from personalclaw.dashboard.origin import is_loopback
+
+    nonce = request.query.get("nonce", "")
+    secret = str(request.app.get("local_secret", "") or "")
+    if not secret or not home_gateway.is_nonce(nonce) or not is_loopback(request.remote or ""):
+        return ""
+    sockname = request.transport.get_extra_info("sockname") if request.transport else None
+    port = sockname[1] if isinstance(sockname, tuple) and len(sockname) >= 2 else 0
+    return home_gateway.gateway_proof(secret, nonce, port) if port else ""
 
 
 def _identity() -> tuple[str | None, bool]:

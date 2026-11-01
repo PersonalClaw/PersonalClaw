@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import personalclaw.schedule_script as ss
-from personalclaw import gateway_base
+from personalclaw import gateway_base, home_gateway
 from personalclaw.config import loader as config_loader
 from personalclaw.schedule import (
     ScheduleJob,
@@ -236,6 +236,25 @@ def _docstring_example() -> str:
     return textwrap.dedent("\n".join(lines[first : last + 1]))
 
 
+def _answer_as_this_homes_gateway(handler) -> None:
+    """Answer the launcher's identity read (``GET /api/healthz?nonce=…``) as this home's gateway
+    does: the launcher sends a call back only to a gateway that says it serves the home it was
+    started for and proves it holds that home's secret (``home_gateway.gateway_proof``)."""
+    import json as _json
+
+    path, _, query = handler.path.partition("?")
+    nonce = query.removeprefix("nonce=")
+    port = handler.server.server_address[1]
+    said = {"status": "ok", "home_id": home_gateway.home_id()}
+    said["proof"] = home_gateway.gateway_proof(_CREDENTIAL, nonce, port)
+    raw = _json.dumps(said).encode()
+    handler.send_response(200 if path == "/api/healthz" else 404)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(raw)))
+    handler.end_headers()
+    handler.wfile.write(raw)
+
+
 @pytest.fixture
 def stub_tool_route(monkeypatch: pytest.MonkeyPatch):
     """A loopback stand-in for ``/api/tools/invoke`` answering the way the real route does.
@@ -274,6 +293,9 @@ def stub_tool_route(monkeypatch: pytest.MonkeyPatch):
             self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
             self.wfile.write(raw)
+
+        def do_GET(self) -> None:  # noqa: N802
+            _answer_as_this_homes_gateway(self)
 
         def log_message(self, *_a) -> None:  # keep the pytest output readable
             return
@@ -348,6 +370,9 @@ def test_a_non_json_4xx_body_is_still_a_dict(
             self.send_header("Content-Length", "9")
             self.end_headers()
             self.wfile.write(b"Not Found")
+
+        def do_GET(self) -> None:  # noqa: N802
+            _answer_as_this_homes_gateway(self)
 
         def log_message(self, *_a) -> None:
             return

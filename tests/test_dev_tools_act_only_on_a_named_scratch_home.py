@@ -42,6 +42,7 @@ from fakes import home_fingerprint
 from port_guard import GUARD
 
 from harness import named_home
+from personalclaw import home_gateway
 
 pytestmark = pytest.mark.security
 
@@ -216,9 +217,17 @@ class _FakeGateway(http.server.BaseHTTPRequestHandler):
     seen: list[dict[str, str]] = []
 
     def do_GET(self) -> None:  # noqa: N802 - the http.server method name
-        self.seen.append({"path": self.path, **dict(self.headers.items())})
-        if self.path == "/api/healthz":
-            self._answer(200, {"status": "ok", "pid": os.getpid(), "home_id": self.home_id})
+        path, _, query = self.path.partition("?")
+        # The identity read is named without the nonce it carries, which is new every read.
+        shown = path if path == "/api/healthz" else self.path
+        self.seen.append({"path": shown, **dict(self.headers.items())})
+        if path == "/api/healthz":
+            said = {"status": "ok", "pid": os.getpid(), "home_id": self.home_id}
+            nonce = query.removeprefix("nonce=")
+            if self.secret and home_gateway.is_nonce(nonce):
+                port = self.server.server_address[1]
+                said["proof"] = home_gateway.gateway_proof(self.secret, nonce, port)
+            self._answer(200, said)
         elif self.path.startswith("/api/token/local"):
             ok = self.headers.get("X-Local-Secret") == self.secret
             self._answer(200 if ok else 403, {"token": self.minted} if ok else {"error": "nope"})
@@ -297,12 +306,14 @@ def test_a_gateway_of_another_home_is_refused_before_the_secret_is_sent(
 def test_the_homes_gateway_that_does_not_know_its_secret_is_refused(
     no_named_home, fake_gateway
 ) -> None:
-    """A gateway of the home that will not sign the tool in (the home's secret is not the one it
-    holds: a second gateway was started on the home since) is said so."""
+    """A gateway of the home that does not hold the home's secret (a second gateway was started on
+    the home since) cannot prove it holds it, so it is refused before the secret is sent, and is
+    said so, with what to do."""
     home, _server = fake_gateway
     (home / ".local_secret").write_text("a-secret-the-gateway-does-not-hold", encoding="utf-8")
-    with pytest.raises(named_home.Refused, match="did not sign this tool in"):
+    with pytest.raises(named_home.Refused, match="a proof this home's local secret did not make"):
         named_home.scratch_gateway(home)
+    assert not [seen for seen in _FakeGateway.seen if "X-Local-Secret" in seen]
 
 
 def test_a_home_whose_gateway_is_not_running_is_refused(no_named_home, tmp_path: Path) -> None:

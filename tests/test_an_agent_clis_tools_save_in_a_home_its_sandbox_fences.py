@@ -520,8 +520,11 @@ async def test_a_temporary_chats_lasting_work_on_an_agent_cli_is_refused_where_i
 async def test_a_call_refused_before_the_route_is_recorded_once_by_the_tool_server(
     gateway, tmp_path  # noqa: F811 - the imported fixture
 ):
-    """A refusal the gateway makes before its route runs (here, of a credential it does not hold)
-    records no tool call, so the tool server records the call, once, and says the refusal."""
+    """A call refused before the gateway's route runs records no tool call there, so the tool
+    server records the call, once, and says the refusal. Here the home's secret was replaced after
+    its gateway started: the tool server asks the gateway on its port to prove it holds the
+    home's secret before sending it, the proof is not the home's, and so the secret is never sent
+    and the gateway never sees the call."""
     from personalclaw import webhook_callbacks
 
     (gateway.home / ".local_secret").write_text("0" * 32, encoding="utf-8")
@@ -530,7 +533,8 @@ async def test_a_call_refused_before_the_route_is_recorded_once_by_the_tool_serv
             "hook_register", {"hook_id": "build-done", "context_summary": "Waiting for the build."}
         )
 
-    assert not ok and hooked.startswith("Error [internal_secret_invalid]: "), hooked
+    assert not ok and hooked.startswith("Error: Could not make this call: "), hooked
+    assert "so the secret was not sent to it" in hooked, hooked
     assert webhook_callbacks.get("build-done") is None
     assert _audited(gateway.home, "hook_register") == [("mcp", "failed")]
     assert server.refused == [], server.refused

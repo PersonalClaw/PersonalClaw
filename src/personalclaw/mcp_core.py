@@ -147,6 +147,10 @@ def _api_base() -> str:
     was pinned to whatever ``dashboard.url`` said when this module was first imported, so a
     port change was invisible to every MCP tool call until the process restarted, and an
     MCP child that imported before the gateway wrote its config bound the wrong port.
+
+    The base is ``127.0.0.1``, once the gateway there has proved it serves this home, asked
+    before every call (``home_gateway.child_base``): this server can outlive the gateway that
+    started it, and its port then be another's.
     """
     return gateway_base.resolve_api_base()
 
@@ -984,11 +988,11 @@ def _unanswered(method: str, path: str, budget: float) -> dict:
 # and never on to wherever a redirect points.
 #
 # NB: ``_api_base()`` and the credential are resolved INSIDE each try below. Each refuses
-# (``GatewayBaseUnresolved``, ``InternalSecretUnavailable``) rather than guessing a port or
-# sending an empty credential, and a refusal must reach the agent as this tool's result
-# text — the named, fail-fast answer. Built outside the try it would instead escape
-# ``run_mcp_stdio_loop`` and take the whole MCP server down mid-turn, which is the "hang"
-# shape the refusal exists to replace.
+# (``GatewayBaseUnresolved``, ``home_gateway.GatewayError``, ``InternalSecretUnavailable``) rather
+# than guessing a port, calling another home's gateway or sending an empty credential, and a
+# refusal must reach the agent as this tool's result text — the named, fail-fast answer. Built
+# outside the try it would instead escape ``run_mcp_stdio_loop`` and take the whole MCP server
+# down mid-turn, which is the "hang" shape the refusal exists to replace.
 def _post(path: str, body: dict | None = None, *, timeout: float | None = None) -> dict:
     data = json.dumps(body or {}).encode()
     budget = timeout or GATEWAY_WRITE_TIMEOUT_SECS
@@ -1653,7 +1657,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
 
         try:
             _resolved_base = _api_base()
-        except gateway_base.GatewayBaseUnresolved as exc:
+        except (gateway_base.GatewayBaseUnresolved, home_gateway.GatewayError) as exc:
             return tool_failure(f"cannot build the webhook URL — {exc}")
         url = webhook.hook_url(port=urlparse(_resolved_base).port)
         from personalclaw.security import redact_credentials, redact_exfiltration_urls

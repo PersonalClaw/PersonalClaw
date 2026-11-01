@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from personalclaw import gateway_base
+from personalclaw import gateway_base, home_gateway
 from personalclaw.gateway_base import GatewayBaseUnresolved
 
 #: A pid that cannot be alive. 0 is special-cased by ``os.kill``; this is out of range for
@@ -98,7 +98,6 @@ class TestTheOwnerRefusesRatherThanDefaulting:
         _set_url(home, "http://localhost:10772")
         gateway_base.publish(10771)
         assert gateway_base.resolve_port() == 10771
-        assert gateway_base.resolve_api_base() == "http://localhost:10771"
 
     def test_the_record_answers_a_child_whose_environment_was_stripped(self, home, monkeypatch):
         """A sandboxed child rebuilds env from an allowlist; the in-home record still answers."""
@@ -150,11 +149,18 @@ class TestTheOwnerRefusesRatherThanDefaulting:
 
 
 class TestEveryChildBaseGoesThroughTheOwner:
-    def test_mcp_core_asks_the_owner(self, home):
+    def test_mcp_core_asks_the_owner(self, home, monkeypatch):
         from personalclaw import mcp_core
 
         gateway_base.publish(10771)
-        assert mcp_core._api_base() == "http://localhost:10771"
+        asked: list[int] = []
+        monkeypatch.setattr(
+            home_gateway,
+            "_healthz",
+            lambda port, **_kw: asked.append(port) or {"home_id": home_gateway.home_id()},
+        )
+        assert mcp_core._api_base() == "http://127.0.0.1:10771"
+        assert asked == [10771], "the gateway there was asked whose it is"
 
     def test_an_mcp_tool_returns_the_refusal_as_its_result(self, home):
         """Measured on the real child: ``get_context`` answered with this text in 3s.

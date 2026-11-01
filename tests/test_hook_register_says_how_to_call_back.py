@@ -65,9 +65,13 @@ def _set_webhook_token(token: str) -> None:
     cfg.save()
 
 
-def _register(hook_id: str = "review:pr-1") -> str:
-    return mcp_core._call_tool_inner(
-        "hook_register", {"hook_id": hook_id, "context_summary": "merge it once CI is green"}
+async def _register(hook_id: str = "review:pr-1") -> str:
+    """``hook_register`` as the gateway calls a tool, in a worker thread: it asks the gateway whose
+    home it serves before it names its port, and that gateway answers on this test's loop."""
+    return await asyncio.to_thread(
+        mcp_core._call_tool_inner,
+        "hook_register",
+        {"hook_id": hook_id, "context_summary": "merge it once CI is green"},
     )
 
 
@@ -127,7 +131,7 @@ async def test_the_printed_instruction_calls_the_callback_back(tmp_path, monkeyp
     said to send, waiting callback or allowed one alike."""
     async with signed_in_gateway(tmp_path, monkeypatch) as gw:
         _set_webhook_token(TOKEN)
-        url, headers, body = _instruction(_register())
+        url, headers, body = _instruction(await _register())
         headers, body = _filled(headers, body)
 
         status, waiting = await _send(url, headers, body)
@@ -153,7 +157,7 @@ async def test_the_answer_says_where_the_address_answers_and_how_the_token_is_se
     """🔴 Red before: "External systems should POST to this URL" with a `localhost` address and
     no word that it answers this machine only, or where the token it names comes from."""
     async with signed_in_gateway(tmp_path, monkeypatch) as gw:
-        said = _register()
+        said = await _register()
 
         url, headers, _body = _instruction(said)
         assert url == gw.url("/api/hooks/agent")
@@ -171,7 +175,7 @@ async def test_a_call_back_without_the_webhook_token_is_refused_with_a_sentence_
     `{"error": "unauthorized"}` that said nothing about what was missing."""
     async with signed_in_gateway(tmp_path, monkeypatch) as gw:
         _set_webhook_token(TOKEN)
-        url, headers, body = _instruction(_register())
+        url, headers, body = _instruction(await _register())
         _filled_headers, body = _filled(headers, body)
         await _allow(gw)
 
@@ -201,7 +205,7 @@ async def test_the_internal_credential_does_not_open_it(tmp_path, monkeypatch, t
     route, a credential that opens every other internal operation too."""
     async with signed_in_gateway(tmp_path, monkeypatch) as gw:
         _set_webhook_token(TOKEN)
-        url, headers, body = _instruction(_register())
+        url, headers, body = _instruction(await _register())
         headers, body = _filled(headers, body)
         await _allow(gw)
 
@@ -223,7 +227,7 @@ async def test_a_webhook_token_shorter_than_32_characters_opens_nothing(
     agent turn, so a short one is refused like a missing one, and the audit row says why."""
     async with signed_in_gateway(tmp_path, monkeypatch) as gw:
         _set_webhook_token("short-token")
-        url, _headers, body = _instruction(_register())
+        url, _headers, body = _instruction(await _register())
         _unused, body = _filled({}, body)
         await _allow(gw)
 

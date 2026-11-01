@@ -18,9 +18,10 @@ import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fakes import answers_as_this_home
 
 import personalclaw.mcp_shared as mcp_shared
-from personalclaw import gateway_base
+from personalclaw import gateway_base, home_gateway
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +85,8 @@ def patch_session_setup(monkeypatch, tmp_path):
     # credential's one reader (`mcp_core._internal_secret`) both resolve it.
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path))
     (tmp_path / ".local_secret").write_text("test-secret")
+    # The gateway on that port proves it serves this home, so the credential may go to it.
+    monkeypatch.setattr(home_gateway, "_healthz", answers_as_this_home("test-secret"))
     return tmp_path
 
 
