@@ -194,9 +194,10 @@ def _make_id(slug: str, session_key: str, created_at: str) -> str:
     ``refine_target``); the id only has to be unique, and to name a file.
 
     The digest covers the whole slug, so two names that read the same once flattened (``a/b`` and
-    ``a-b``) still get two ids.
+    ``a-b``) still get two ids. It is SHA-256, since it covers the chat's key: an id is minted once
+    and kept on its record, so a proposal filed before keeps the SHA-1 id it was given.
     """
-    h = hashlib.sha1(f"{slug}|{session_key}|{created_at}".encode("utf-8")).hexdigest()[:12]
+    h = hashlib.sha256(f"{slug}|{session_key}|{created_at}".encode("utf-8")).hexdigest()[:12]
     return f"{_id_label(slug)}-{h}"
 
 
