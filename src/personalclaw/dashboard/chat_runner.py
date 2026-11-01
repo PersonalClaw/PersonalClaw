@@ -1175,60 +1175,6 @@ def _log_turn_failure(session_key: str, exc: BaseException) -> None:
     logger.error("Dashboard chat error in session %s", session_key, exc_info=exc)
 
 
-def _parse_inline_kwargs(text: str) -> tuple[str, list[str], dict[str, str]]:
-    """Pull ``key=value`` pairs from the trailing user_text of an @prompt mention.
-
-    Returns ``(remaining_text, remaining_words, kwargs)``. Quoting is supported via simple
-    paired double-quotes so values may contain spaces. Anything that doesn't match
-    ``key=...`` is left in remaining_text (and, word by word, in remaining_words) so the
-    user can still pass freeform text after the variable bindings.
-    """
-    import shlex
-
-    if not text:
-        return "", [], {}
-    try:
-        tokens = shlex.split(text, posix=True)
-    except ValueError:
-        return text, text.split(), {}
-    kwargs: dict[str, str] = {}
-    leftovers: list[str] = []
-    for tok in tokens:
-        if "=" in tok and tok.split("=", 1)[0].isidentifier():
-            k, v = tok.split("=", 1)
-            kwargs[k] = v
-        else:
-            leftovers.append(tok)
-    return " ".join(leftovers).strip(), leftovers, kwargs
-
-
-def _bind_trailing_text(
-    declared: set[str], text: str, words: list[str], values: dict[str, str]
-) -> str:
-    """Give the text typed after a prompt's name to the prompt's own slots for it.
-
-    A prompt that declares :data:`ARGUMENTS_VARIABLE` takes the whole text there, and one that
-    declares ``arg1``…``arg9`` takes its words in order — what a command run by name gets as
-    ``$ARGUMENTS`` and ``$1``…``$9``, and the names the importers give those. A value named
-    inline (``arguments=…``) wins. Returns what no slot took, which still reaches the model as
-    context: nothing typed is dropped, and nothing a slot took is said twice.
-    """
-    from personalclaw.prompt_providers.base import ARGUMENTS_VARIABLE, POSITIONAL_VARIABLES
-
-    left = text
-    if text and ARGUMENTS_VARIABLE in declared and ARGUMENTS_VARIABLE not in values:
-        values[ARGUMENTS_VARIABLE] = text
-        left = ""
-    taken = 0
-    for position, name in enumerate(POSITIONAL_VARIABLES[: len(words)]):
-        if name in declared and name not in values:
-            values[name] = words[position]
-            taken = position + 1
-    if left and taken:
-        left = " ".join(words[taken:])
-    return left
-
-
 def _expand_prompt_mention(
     message: str,
     state: DashboardState,
@@ -1243,9 +1189,9 @@ def _expand_prompt_mention(
     ``{{var}}`` placeholders against declared typed variables, with values
     supplied inline as ``key=value`` tokens (or shell-quoted
     ``key="value with spaces"``). The rest of the text fills the prompt's own slots for it
-    when it declares them (:func:`_bind_trailing_text`) and is otherwise passed along as
-    context. Required variables that are missing produce a block with a helpful system
-    message — the user can re-issue with the missing bindings.
+    when it declares them (:func:`~personalclaw.prompt_providers.base.bind_trailing_text`)
+    and is otherwise passed along as context. Required variables that are missing produce a
+    block with a helpful system message — the user can re-issue with the missing bindings.
 
     *turn_row*, the message that started the turn, is told the prompt ran in place of its first
     *invocation_words* words and what the agent was sent (``own_words.record_prompt_run``).
@@ -1262,7 +1208,9 @@ def _expand_prompt_mention(
     parts = body.split(None, 1)
     mention = parts[0] if parts else body
     raw_tail = parts[1].strip() if len(parts) > 1 else ""
-    user_text, user_words, inline_vars = _parse_inline_kwargs(raw_tail)
+    from personalclaw.prompt_providers.base import bind_trailing_text, parse_inline_kwargs
+
+    user_text, user_words, inline_vars = parse_inline_kwargs(raw_tail)
 
     bare = mention.split("/", 1)[-1] if "/" in mention else mention
 
@@ -1280,7 +1228,7 @@ def _expand_prompt_mention(
     tpl = provider.get_prompt(bare) if provider is not None else None
     if tpl is None:
         return message, "not_found"
-    user_text = _bind_trailing_text(
+    user_text = bind_trailing_text(
         {v.name for v in tpl.variables}, user_text, user_words, inline_vars
     )
     # Compose-aware: resolve {{> snippet}} includes through the same provider so a

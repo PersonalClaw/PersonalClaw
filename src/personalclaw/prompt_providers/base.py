@@ -56,6 +56,59 @@ ARGUMENTS_VARIABLE = "arguments"
 #: ``arg1``…``arg9``: the same text's words, in order — a command's ``$1``…``$9``.
 POSITIONAL_VARIABLES: tuple[str, ...] = tuple(f"arg{n}" for n in range(1, 10))
 
+
+def parse_inline_kwargs(text: str) -> tuple[str, list[str], dict[str, str]]:
+    """Pull ``key=value`` pairs from the trailing user_text of an @prompt mention.
+
+    Returns ``(remaining_text, remaining_words, kwargs)``. Quoting is supported via simple
+    paired double-quotes so values may contain spaces. Anything that doesn't match
+    ``key=...`` is left in remaining_text (and, word by word, in remaining_words) so the
+    user can still pass freeform text after the variable bindings.
+    """
+    import shlex
+
+    if not text:
+        return "", [], {}
+    try:
+        tokens = shlex.split(text, posix=True)
+    except ValueError:
+        return text, text.split(), {}
+    kwargs: dict[str, str] = {}
+    leftovers: list[str] = []
+    for tok in tokens:
+        if "=" in tok and tok.split("=", 1)[0].isidentifier():
+            k, v = tok.split("=", 1)
+            kwargs[k] = v
+        else:
+            leftovers.append(tok)
+    return " ".join(leftovers).strip(), leftovers, kwargs
+
+
+def bind_trailing_text(
+    declared: set[str], text: str, words: list[str], values: dict[str, str]
+) -> str:
+    """Give the text typed after a prompt's name to the prompt's own slots for it.
+
+    A prompt that declares :data:`ARGUMENTS_VARIABLE` takes the whole text there, and one that
+    declares ``arg1``…``arg9`` takes its words in order — what a command run by name gets as
+    ``$ARGUMENTS`` and ``$1``…``$9``, and the names the importers give those. A value named
+    inline (``arguments=…``) wins. Returns what no slot took, which still reaches the model as
+    context: nothing typed is dropped, and nothing a slot took is said twice.
+    """
+    left = text
+    if text and ARGUMENTS_VARIABLE in declared and ARGUMENTS_VARIABLE not in values:
+        values[ARGUMENTS_VARIABLE] = text
+        left = ""
+    taken = 0
+    for position, name in enumerate(POSITIONAL_VARIABLES[: len(words)]):
+        if name in declared and name not in values:
+            values[name] = words[position]
+            taken = position + 1
+    if left and taken:
+        left = " ".join(words[taken:])
+    return left
+
+
 # A prompt's storage origin. ``bundled`` records are shipped + read-only in the UI
 # (editing duplicates to ``user``); ``marketplace`` are installed, also read-only.
 PromptSource = Literal["user", "bundled", "marketplace"]
