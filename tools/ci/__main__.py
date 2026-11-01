@@ -47,6 +47,14 @@ def _contract(argv: list[str]) -> int:
     return contract.main(argv)
 
 
+def _queue_readback(argv: list[str]) -> int:
+    # Imported when called: it reads the queue's names from the poster's module, which loads
+    # tools/ci/trust.py.
+    from . import queue_readback
+
+    return queue_readback.main(argv)
+
+
 def _merge_controller(argv: list[str]) -> int:
     # Imported when called, as the verifier is: the poster reads tools/ci/trust.py.
     from . import merge_controller
@@ -90,6 +98,7 @@ COMMANDS: dict[str, Callable[[list[str]], int]] = {
     "parity": parity.main,
     "plan": plan.main,
     "quarantine-rerun": quarantine_rerun.main,
+    "queue-readback": _queue_readback,
     "rails": rails_census.main,
     "release-approval": release_approval.main,
     "release-manifest": release_manifest.main,

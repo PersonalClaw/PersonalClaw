@@ -3516,3 +3516,30 @@ its reviewer, an added environment, classic protection put back, a removed requi
 required check bound to another App, an added bypass actor, a ruleset with no file, a deleted
 ruleset, a bypass used in the week, and an answer the API refused, each fails; the unchanged
 answers pass.
+
+### The merge queue's read-back
+
+`python -m tools.ci queue-readback` reads what main's merge queue settings are once P5's ruleset
+change is made (0.4.0 A1), and prints one line a condition. It sends GETs only, through `gh api`
+with the maintainer's own login (a ruleset's bypass list and the repository variables answer no
+one else), and changes nothing.
+
+| Line | Passes when |
+|---|---|
+| a merge queue on main | exactly one `merge_queue` rule is among main's rules |
+| ALLGREEN | the queue's grouping is `ALLGREEN`, so each entry's own queue commit must be green |
+| SQUASH | the queue's merge method is `SQUASH`: a merge-method queue commit has two parents, so its verdict is always red |
+| the queue's sizes | 3 built at once, 1 to 5 merged, a 5-minute wait, a 60-minute check timeout |
+| no bypass actor | every ruleset whose rules apply to main, read whole, lists none; a ruleset answered without its list is `not read`, and a `FAIL` names only how many actors there are and their types, since the output goes into a public pull request |
+| merge-verdict required on queue commits | `merge-verdict` is a required check and main queues its merges |
+| merge-verdict pinned to the controller App | each required `merge-verdict` names `personalclaw-ci-controller`'s integration id, and the `ci-controller` environment's `CONTROLLER_APP_ID` is that App |
+| strict off | no required-checks rule asks for a head up to date with main |
+| MERGE_QUEUE_LIVE | the repository variable reads `true` |
+| the poster answers a queue commit | a queue commit whose `merge_group` run of merge.yml completed at least 15 minutes ago carries a completed `merge-verdict` from the controller App (proof 2) |
+
+The last line waits (`WAIT`) until such a run exists. One more line is a fact and gates nothing:
+whether CodeQL's default setup ran on a queue commit (proof 6), `INFO` with the answer. A read
+that fails is that line's `FAIL`, never a pass. It exits 0 when every gate passes, 1 when any
+fails, and 3 when none fails but the poster's line still waits: read it again after the first
+queue run. `tests/test_ci_queue_readback.py` holds each line on planted answers, one condition
+broken at a time.
