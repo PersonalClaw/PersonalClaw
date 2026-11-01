@@ -1,5 +1,5 @@
-"""``client``, ``package``, ``audit``, ``web-unit`` and ``web-build``, and ``desktop-unit`` and
-``mobile-unit`` once the web tests split, declare the paths they read as their inputs (#3945).
+"""``client``, ``package``, ``audit``, ``web-unit``, ``desktop-unit``, ``mobile-unit`` and
+``web-build`` declare the paths they read as their inputs (#3945).
 
 Each took the whole tree, so every change planned it. Each now lists what it reads, and this rail
 holds the list to a census of those reads, so a docs-only change plans none of them while a
@@ -14,13 +14,10 @@ change to what one reads still plans it:
 - **audit**: the graphs ``tools/ci/audit.py`` audits, read from the module itself: ``uv.lock``,
   each npm lock ``npm_graphs`` finds with the ``package.json`` beside it, the root's workspaces'
   manifests, and its waivers.
-- **web-unit** and **web-build** (and **desktop-unit** and **mobile-unit**): the npm workspaces
-  their ``npm run`` steps run in (read from the root's scripts), every path the workspaces' code
-  names outside them, followed into each script it names, and what their step scripts read.
-
-The web, desktop and mobile tests are one job, ``web-unit``, or three, each planned by what its
-own workspace reads (#5810). The split lands in two merges (#4584 step 4), this rail first, so it
-reads the shape the catalogue holds: its jobs, and the entries the planted drops take out.
+- **web-unit**, **desktop-unit**, **mobile-unit** and **web-build**: the npm workspaces their
+  ``npm run`` steps run in (read from the root's scripts), every path the workspaces' code names
+  outside them, followed into each script it names, and what their step scripts read. The web,
+  desktop and mobile tests are three jobs, so each plans only for what its own workspace reads.
 
 Each job also reads what its toolchain reads at the root: uv its settings (``pyproject.toml``,
 ``.python-version``) and Node its version (``.nvmrc``, the setup action's ``node-version-file``).
@@ -75,17 +72,7 @@ from tools.ci import audit, catalogue
 from tools.ci import plan as planner
 
 _CAT = catalogue.read(REPO)
-#: Whether the catalogue holds the web tests split in three (test_ci_plan_tree holds it to both of
-#: the split's jobs or neither).
-_SPLIT = {"desktop-unit", "mobile-unit"} <= {j.id for j in _CAT.jobs}
-_JOBS = (
-    "client",
-    "package",
-    "audit",
-    "web-unit",
-    *(("desktop-unit", "mobile-unit") if _SPLIT else ()),
-    "web-build",
-)
+_JOBS = ("client", "package", "audit", "web-unit", "desktop-unit", "mobile-unit", "web-build")
 
 #: What each toolchain word reads at the root: uv its settings, for every command it runs there,
 #: and the setup action Node's version (``node-version-file``).
@@ -568,26 +555,6 @@ def test_a_docs_only_change_plans_none_of_them() -> None:
 # ── the planted controls ─────────────────────────────────────────────────────────────────────
 
 
-#: The drops for the web tests as one job: web-unit reads the mobile tests and the desktop's home.
-_ONE_JOB_DROPS = [
-    ("web-unit", "mobile/", "mobile"),
-    ("web-unit", "scripts/lib/named_home.mjs", "scripts/lib/named_home.mjs"),
-]
-#: The drops for the web tests split in three: each job reads its own workspace and what it names.
-_SPLIT_DROPS = [
-    ("web-unit", "mobile/package.json", "mobile/package.json"),
-    ("desktop-unit", "desktop/", "desktop"),
-    ("desktop-unit", "tools/ci/", "tools/ci"),
-    ("desktop-unit", "web/src/", "web/src"),
-    ("desktop-unit", "scripts/lib/named_home.mjs", "scripts/lib/named_home.mjs"),
-    ("desktop-unit", "docs/brand/marks.json", "docs/brand/marks.json"),
-    ("desktop-unit", "web/package.json", "web/package.json"),
-    ("mobile-unit", "mobile/", "mobile"),
-    ("mobile-unit", "desktop/package.json", "desktop/package.json"),
-    ("mobile-unit", ".nvmrc", ".nvmrc"),
-]
-
-
 def _without(job_id: str, dropped: str) -> tuple[str, ...]:
     inputs = _CAT.job(job_id).inputs
     assert dropped in inputs, (job_id, dropped)
@@ -611,12 +578,21 @@ def _without(job_id: str, dropped: str) -> tuple[str, ...]:
         ("audit", "tools/ci/audit-baseline.toml", "tools/ci/audit-baseline.toml"),
         ("audit", ".nvmrc", ".nvmrc"),
         ("web-unit", "web/", "web"),
+        ("web-unit", "mobile/package.json", "mobile/package.json"),
         ("web-unit", "src/", "src"),
         ("web-unit", "docs/feature-map.md", "docs/feature-map.md"),
         ("web-unit", "docs/design/buddy/poses/", "docs/design/buddy/poses"),
         ("web-unit", "scripts/spa_dist_freshness.py", "scripts/spa_dist_freshness.py"),
         ("web-unit", ".nvmrc", ".nvmrc"),
-        *(_SPLIT_DROPS if _SPLIT else _ONE_JOB_DROPS),
+        ("desktop-unit", "desktop/", "desktop"),
+        ("desktop-unit", "tools/ci/", "tools/ci"),
+        ("desktop-unit", "web/src/", "web/src"),
+        ("desktop-unit", "scripts/lib/named_home.mjs", "scripts/lib/named_home.mjs"),
+        ("desktop-unit", "docs/brand/marks.json", "docs/brand/marks.json"),
+        ("desktop-unit", "web/package.json", "web/package.json"),
+        ("mobile-unit", "mobile/", "mobile"),
+        ("mobile-unit", "desktop/package.json", "desktop/package.json"),
+        ("mobile-unit", ".nvmrc", ".nvmrc"),
         ("web-build", "desktop/", "desktop"),
         ("web-build", "scripts/check_asset_licenses.py", "scripts/check_asset_licenses.py"),
         ("web-build", "tests/fixtures/", "tests/fixtures"),
