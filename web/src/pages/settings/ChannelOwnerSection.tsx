@@ -158,7 +158,7 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
           </div>
           <div data-type="caption" className="text-on-surface-low">
             {untilSentence('It works once', status.pairing.expires_at)} Whoever sends it becomes {who}'s owner
-            {status.owner_id ? `, in place of ${ownerWho(who, ownerOf(status))}` : ''}.
+            {status.owner_id ? `, in place of ${ownerWho(who, ownerOf(status))}, whose access to your agent on ${who} then ends` : ''}.
           </div>
           <div className="flex items-center gap-s">
             <span data-type="caption" className="inline-flex items-center gap-1.5 text-on-surface-low">
@@ -175,6 +175,13 @@ export function ChannelOwnerSection({ channel, onChanged }: { channel: string; o
             <div data-type="caption" className="text-on-surface-low">
               {untilSentence('A pairing code is still waiting to be sent', status.pairing.expires_at)}
               {' '}Pairing again replaces it.
+            </div>
+          )}
+          {/* Said before a code is minted: the pairing takes the current owner's trust away, and
+              the account an owner pairs away from is the one most likely lost or shared. */}
+          {status.owner_id && (
+            <div data-type="caption" className="text-on-surface-low">
+              Pairing a new owner ends {ownerWho(who, ownerOf(status))}'s access to your agent on {who}.
             </div>
           )}
           <div className="flex items-center gap-s">

@@ -525,6 +525,9 @@ def provider_trust(provider: str) -> dict[str, Any]:
     pairing_live = bool(pairing.get("code_hash")) and not _code_expired(pairing)
     senders = rec.get("allowed_senders")
     allowed = senders if isinstance(senders, dict) else {}
+    from personalclaw.config.credentials import owner_id_for
+
+    owner = owner_id_for(provider)
     channels = rec.get("tracked_channels") or {}
     raw_seen = rec.get("seen_channels")
     seen: dict[str, Any] = raw_seen if isinstance(raw_seen, dict) else {}
@@ -533,7 +536,12 @@ def provider_trust(provider: str) -> dict[str, Any]:
     return {
         "provider": provider,
         "policies": dict(rec["policies"]),
-        "allowed_senders": [_sender_entry(sid, meta) for sid, meta in sorted(allowed.items())],
+        # Each sender, and whether it is the owner core keeps for the channel: Revoke on that row
+        # unpairs them (:func:`forget_owner`), which the page says.
+        "allowed_senders": [
+            {**_sender_entry(sid, meta), "owner": bool(owner) and sid == owner}
+            for sid, meta in sorted(allowed.items())
+        ],
         # People who messaged the agent and aren't paired, newest first: what the window keeps
         # from being told is counted here.
         "seen_senders": [
@@ -828,17 +836,27 @@ def owner_ref(provider: str) -> dict[str, str]:
 
 def _pair_owner(provider: str, sender_id: str, sender_name: str) -> None:
     """Make ``sender_id`` the owner of ``provider``: its own owner key, trusted, code spent, and
-    the record of who the pairing named (:func:`paired_owner`)."""
-    from personalclaw.config.credentials import owner_id_credential, save_credential
+    the record of who the pairing named (:func:`paired_owner`).
 
+    The owner it replaces leaves the trust list in the same write (``owner_replaced``): the
+    account an owner pairs away from is the one most likely lost, shared or taken over, and it
+    would otherwise stay trusted as a correspondent."""
+    from personalclaw.config.credentials import owner_id_credential, owner_id_for, save_credential
+
+    previous = owner_id_for(provider)
+    replaced = previous if previous and previous != sender_id else ""
     save_credential(owner_id_credential(provider), sender_id)
     store = _read_store()
     rec = _provider_record(store, provider)
+    if replaced:
+        _revoke(rec, replaced)
     rec["owner_pairing"] = _ended("paired")
     rec["owner"] = {"id": sender_id, "how": "paired", "at": _iso(_now())}
     store[provider] = rec
     _write_store(store)
     allow_sender(provider, sender_id, sender_name, via="owner_pairing")
+    if replaced:
+        _emit_sel("owner_replaced", "paired", provider, replaced)
     _emit_sel("owner_paired", "paired", provider, sender_id)
 
 
