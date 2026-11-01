@@ -1541,6 +1541,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "turn_not_steerable": (
         "The running turn takes no steer; the message says why. Nothing was taken."
     ),
+    # 409: a cron sent to Morning triage's install once the schedule is installed. The schedule is
+    # changed where it is kept, the automation's own edit route (`PUT /api/triggers/{id}`).
+    "triage_schedule_installed": (
+        "Morning triage is installed, so its schedule is changed on the Triggers page."
+    ),
 }
 
 
