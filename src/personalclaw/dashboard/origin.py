@@ -194,6 +194,58 @@ def is_local_bind(bind_host: str) -> bool:
     return bind_host == _BIND_LOCAL
 
 
+def gateway_bind_host(local_only: bool, *, no_auth: bool | None = None) -> str:
+    """The address a gateway started with *local_only* listens on: :func:`resolve_bind_host`, the
+    wildcard in its place when that is loopback and the gateway is not local-only, and loopback,
+    whatever was asked, when sign-in is off (*no_auth*; the mode in force when None), since an
+    unauthenticated gateway never leaves it. The server binds it (``dashboard.server``), and every
+    link to the gateway names it (:func:`link_host`)."""
+    host = resolve_bind_host()
+    if host == _BIND_LOCAL and not local_only:
+        host = _BIND_ALL
+    if no_auth is None:
+        from personalclaw.auth.modes import classify_auth_mode_request
+
+        no_auth = classify_auth_mode_request().effective == AuthMode.NONE
+    if no_auth:
+        host = _BIND_LOCAL
+    return host
+
+
+def link_host(bind_host: str, configured_host: str = "") -> str:
+    """The host every sign-in link to this gateway names: *configured_host* (``dashboard.url``'s)
+    when one is set, else the exact address the gateway listens on (*bind_host*), never a name,
+    which could resolve to an address the gateway does not hold. A wildcard bind holds its family's
+    loopback address, so its links name that; an IPv6 address is bracketed."""
+    if configured_host:
+        return configured_host
+    host = bind_host.strip().strip("[]")
+    if host in ("", _BIND_ALL):
+        return _BIND_LOCAL
+    if host == "::":
+        return "[::1]"
+    try:
+        return f"[{host}]" if ipaddress.ip_address(host).version == 6 else host
+    except ValueError:
+        return host
+
+
+def gateway_link_host(local_only: bool | None = None, configured_host: str = "") -> str:
+    """:func:`link_host` for this machine's gateway: the address it listens on
+    (:func:`gateway_bind_host`), with *local_only* as the gateway derives it when None."""
+    if local_only is None:
+        local_only = is_local_bind(resolve_bind_host())
+    return link_host(gateway_bind_host(local_only), configured_host)
+
+
+def tunnel_hint(port: int, machine: str, host: str = "") -> str:
+    """The command that forwards this machine's gateway to another one: from the address the
+    forward listens on there to the address the gateway listens on here (*host*, its link host
+    when empty), each named exactly."""
+    target = host or gateway_link_host()
+    return f"ssh -L {_BIND_LOCAL}:{port}:{target}:{port} {machine}"
+
+
 # ---------------------------------------------------------------------------
 # Tailnet reachability
 # ---------------------------------------------------------------------------
@@ -389,25 +441,15 @@ def loopback_requires_token(auth_cfg: AuthConfig | None = None) -> bool:
 
 
 def resolve_dashboard_host(local_only: bool, configured_host: str = "") -> str:
-    """Return the hostname users should use to reach the dashboard.
+    """Return the host users should use to reach the dashboard: *configured_host* when set, else
+    the exact address the gateway listens on (:func:`gateway_link_host`).
 
-    For the auto-open URL (browser on the same machine), ``localhost`` is always
-    correct — it works whether binding to 127.0.0.1 or 0.0.0.0. Using
-    ``machine_hostname()`` was wrong: raw system hostnames (e.g. Docker-style
-    ``b0f1d879fa5a``) aren't DNS-resolvable from the browser → the auto-open tab
-    can't connect. The machine hostname is only useful for the "Remote: ssh -L…"
-    log hint (``format_dashboard_urls`` handles that separately).
+    Never a name such as ``localhost`` or ``personalclaw.localhost``: either can resolve to an
+    address of another family first, where the gateway does not listen. The machine hostname is
+    only useful for the "Remote: ssh -L…" log hint (``format_dashboard_urls`` handles that
+    separately).
     """
-    if configured_host:
-        return configured_host
-    # Prefer personalclaw.localhost (nice subdomain) → localhost fallback.
-    # This is correct for BOTH local_only=True (loopback bind) and
-    # local_only=False (0.0.0.0 bind) — the browser is local either way.
-    try:
-        socket.getaddrinfo("personalclaw.localhost", None)
-        return "personalclaw.localhost"
-    except socket.gaierror:
-        return "localhost"
+    return gateway_link_host(local_only, configured_host)
 
 
 def build_dashboard_url(base_url: str, token: str = "", *, local_only: bool = True) -> str:
@@ -460,10 +502,10 @@ def format_dashboard_urls(
     _is_remote = bool(os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_CLIENT"))
 
     if _is_remote:
-        mh = machine_hostname() or "localhost"
+        mh = machine_hostname() or "this-host"
         lines: list[str] = [
-            f"Dashboard: ssh -L {port}:localhost:{port} {mh}",
-            f"             then open http://localhost:{port}{_qs}",
+            f"Dashboard: {tunnel_hint(port, mh, gateway_link_host(local_only))}",
+            f"             then open http://{_BIND_LOCAL}:{port}{_qs}",
         ]
     else:
         lines = ["Dashboard:", f"   {authed_url}"]
@@ -479,7 +521,9 @@ def format_dashboard_urls(
             try:
                 ip = socket.gethostbyname(mh_local)
                 if ip and ip != "127.0.0.1":
-                    lines.append(f"Remote:    ssh -L {port}:localhost:{port} {mh_local}")
+                    lines.append(
+                        f"Remote:    {tunnel_hint(port, mh_local, gateway_link_host(local_only))}"
+                    )
             except Exception:
                 pass
 

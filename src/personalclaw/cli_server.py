@@ -34,6 +34,7 @@ from personalclaw.constants import DATA_WARNING
 from personalclaw.dashboard.origin import (
     container_port_note,
     dashboard_origin,
+    gateway_link_host,
     parse_dashboard_url,
 )
 from personalclaw.dashboard.token_auth import (
@@ -115,7 +116,8 @@ def _token(args: argparse.Namespace) -> None:
     if not token:
         print("❌ Gateway returned empty token", file=sys.stderr)
         sys.exit(1)
-    print(f"http://localhost:{port}?token={token}")
+    # The address the gateway listens on, never a name that could resolve elsewhere.
+    print(f"http://{gateway_link_host()}:{port}?token={token}")
     # On stderr, so stdout stays a list of URLs a script can open; a person running
     # `docker exec … personalclaw token` sees both.
     lifetime = _token_lifetime_note(data)

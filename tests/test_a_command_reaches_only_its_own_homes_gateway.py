@@ -171,7 +171,7 @@ def test_token_for_a_home_on_another_port_gets_that_homes_gateway(
 
     out, err = capsys.readouterr()
     assert code == 0, err
-    assert out.startswith(f"http://localhost:{this_homes_gateway.port}?token="), out
+    assert out.startswith(f"http://127.0.0.1:{this_homes_gateway.port}?token="), out
     assert _signed_in_by(out.splitlines()[0]), "the link must sign in to this home's gateway"
     (mint,) = this_homes_gateway.asked("/api/token/local")
     assert mint.headers["x-local-secret"] == THIS_HOMES_SECRET
@@ -188,7 +188,7 @@ def test_with_another_homes_gateway_on_the_default_port_the_secret_is_not_sent_t
 
     out, err = capsys.readouterr()
     assert code == 0, err
-    assert out.startswith(f"http://localhost:{this_homes_gateway.port}?token="), out
+    assert out.startswith(f"http://127.0.0.1:{this_homes_gateway.port}?token="), out
     assert other_homes_gateway.requests == [], "nothing at all goes to another home's gateway"
 
 
@@ -219,7 +219,7 @@ def test_the_default_home_with_its_gateway_on_the_default_port_still_works(
 
     out, err = capsys.readouterr()
     assert code == 0, err
-    assert out.startswith(f"http://localhost:{this_homes_gateway.port}?token="), out
+    assert out.startswith(f"http://127.0.0.1:{this_homes_gateway.port}?token="), out
     assert _signed_in_by(out.splitlines()[0])
 
 
@@ -274,7 +274,7 @@ def test_the_port_typed_wins_over_the_one_the_environment_names(
 
     out, err = capsys.readouterr()
     assert code == 0, err
-    assert out.startswith(f"http://localhost:{this_homes_gateway.port}?token="), out
+    assert out.startswith(f"http://127.0.0.1:{this_homes_gateway.port}?token="), out
     assert other_homes_gateway.requests == []
 
 

@@ -177,9 +177,10 @@ class TestFormatDashboardUrls:
     @patch(f"{_MOD}.machine_hostname", return_value="myhost")
     @patch(f"{_MOD}.socket.gethostbyname", side_effect=socket.gaierror)
     def test_remote_ssh_tunnel_instructions(self, _dns: object, _mh: object, _dp: object) -> None:
-        lines = format_dashboard_urls("http://localhost:7777?token=t", port=7777)
-        assert any("ssh -L 7777:localhost:7777 myhost" in ln for ln in lines)
-        assert any("http://localhost:7777?token=t" in ln for ln in lines)
+        lines = format_dashboard_urls("http://127.0.0.1:7777?token=t", port=7777)
+        # Each end named by the address it listens on (`origin.link_host`), never a name.
+        assert any("ssh -L 127.0.0.1:7777:127.0.0.1:7777 myhost" in ln for ln in lines)
+        assert any("http://127.0.0.1:7777?token=t" in ln for ln in lines)
         assert any("systemd" in ln for ln in lines)
 
     @patch.dict("os.environ", {}, clear=True)

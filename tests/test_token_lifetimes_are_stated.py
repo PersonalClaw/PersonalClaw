@@ -40,7 +40,7 @@ def _run_token(monkeypatch, tmp_path, capsys, reply: dict) -> tuple[str, str]:
         gateway.record()
         cli_server._token(argparse.Namespace(ttl="20h", port=None))
     captured = capsys.readouterr()
-    return captured.out.replace(f"localhost:{gateway.port}?", "localhost:PORT?"), captured.err
+    return captured.out.replace(f"127.0.0.1:{gateway.port}?", "127.0.0.1:PORT?"), captured.err
 
 
 def test_personalclaw_token_says_what_it_is_and_how_long_it_lasts(monkeypatch, tmp_path, capsys):
@@ -57,7 +57,7 @@ def test_personalclaw_token_says_what_it_is_and_how_long_it_lasts(monkeypatch, t
         },
     )
     # stdout stays exactly the URL, so `open "$(personalclaw token)"` and `| head -1` keep working.
-    assert out == f"http://localhost:PORT?token={_SYNTHETIC_TOKEN}\n"
+    assert out == f"http://127.0.0.1:PORT?token={_SYNTHETIC_TOKEN}\n"
     assert "sign-in link" in err
     assert "Authorization: Bearer" in err, "a script needs to know it can send it as a header"
     assert "20 hours" in err

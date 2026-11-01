@@ -8,6 +8,13 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **An A2A client's retry key names only its own request: a second client that sends the same `messageId` or `idempotencyKey` gets a task of its own, never the first client's task or its outputs.**
+- **An A2A client reads only the tasks it started: `GET /a2a/tasks/{id}` for any other run, another client's task or a chat's, a schedule's or a loop's run, answers as an id that does not exist.**
+- **Which search provider each search use goes to, and a provider's Test, are yours: an installed app is refused `PUT /api/search/active/{use_case}` and `POST /api/search/providers/{name}/test`, and keeps the provider list and the current binding.**
+- **Every sign-in link PersonalClaw prints or opens names the exact address the gateway listens on, `127.0.0.1` by default, never `localhost` or `personalclaw.localhost`: the startup link, `personalclaw token`, setup's dashboard line, and the tunnel hints the banner and the Doctor give.**
+
 ## [0.3.3] — 2026-11-01
 
 A model call that a loop, a subagent or background work makes is now scanned before it leaves the machine, as one-shot calls were. Behind a trusted proxy, the sign-in lockout counts each visitor on its own. An Inbox reply goes out once, a skill proposal whose install is refused says why and stays waiting, an app install that fails during setup offers a copy of its error, and deleting a chat removes the lessons learned from its turns. A model that thinks has room to think and still answer on the Anthropic wire, a loop breaker stop in an agent CLI chat ends only the turn that looped, and push-to-talk records in the desktop tab you are using. A refused request leaves a line in the gateway log, a knowledge item the embedding model refused as too long is not sent again on every pass, and morning triage leaves a chat's own workflow runs out of the digest. A chat's pending self-model observation starts fresh after the upgrade, as its name moves to SHA-256.

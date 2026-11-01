@@ -229,6 +229,12 @@ says what that means.
   family of its own, owner-only the same way, reads included: its status read and model
   check name your chat binding, its local-model probe and LAN sweep have the gateway look
   for model servers on your machine and network, and its state is your setup's progress.
+- **Where your searches go is yours.** Each search use (general, news, research…) is bound to
+  one installed search provider, and every search your chats and runs make for that use is
+  sent to it with what was asked; a provider's Test is a real search on its key. Binding a
+  use and a Test are owner-only for an app (`ROUTE_AUTHZ` `OwnerOnly` rows; `/api/search` is a
+  `SECURITY_ROUTE_FAMILIES` root, so a write added there is refused until it is declared). The
+  provider list and the current binding stay the allowlist's: they hold no key and send nothing.
 - **A repair to your setup is yours, and so is updating the code that runs it.** A Doctor
   fix changes your setup once you confirm it (which models your uses run on, PersonalClaw's
   server in your agent's config, the files the dashboard is served from), so an app that
