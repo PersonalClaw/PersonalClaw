@@ -36,6 +36,14 @@ case-insensitive disk opens ``.GIT/CONFIG`` as ``.git/config``. Everything else 
 stays the agent's to change: ``.gitignore``, ``.gitattributes``, ``.git/info/exclude`` and every
 file of the project.
 
+**The places whose entries run at the owner's login** (:data:`LOGIN`): macOS launch agents
+(``~/Library/LaunchAgents/``); XDG autostart entries (``autostart/`` in ``$XDG_CONFIG_HOME``);
+systemd's user units and drop-ins (``systemd/user/`` there and in ``$XDG_DATA_HOME``), its user
+manager's settings (``systemd/user.conf`` and ``user.conf.d/``) and the session's environment
+(``environment.d/``); and the X session scripts in her home folder (``.xprofile``,
+``.xsessionrc``, ``.xsession``, ``.xinitrc``). Each folder whole. What is written there runs as her
+at every login, outside any sandbox. Reading them is left alone.
+
 **The owner's shell startup files** (:data:`SHELL`), which her shell runs as her each time it
 starts, in every terminal she opens: ``.profile``, ``.bashrc``, ``.zshrc`` and the rest of
 :data:`SHELL_STARTUP_FILES` in her home folder, zsh's in ``$ZDOTDIR``, and fish's
@@ -102,10 +110,27 @@ OWNER_ONLY_FILES: tuple[str, ...] = ("config.json", "mcp.json")
 #: The directories, by name under the home: everything inside them is owner-only.
 OWNER_ONLY_DIRS: tuple[str, ...] = ("hooks", "agents", "grants")
 
-#: The kinds of owner-only place: PersonalClaw's own, in its home; git's; and the shell's.
+#: The kinds of owner-only place: PersonalClaw's own, in its home; git's; the shell's; and the
+#: places whose entries run at login.
 HOME = "home"
 GIT = "git"
 SHELL = "shell"
+LOGIN = "login"
+
+#: The places whose entries run at the owner's login: macOS launch agents, under her home folder;
+#: XDG autostart entries, systemd's user units, its user manager's settings and the session's
+#: environment, under ``$XDG_CONFIG_HOME``; systemd's user units under ``$XDG_DATA_HOME`` too; and
+#: the X session scripts in her home folder. Folders, then files.
+LAUNCH_AGENTS: tuple[str, str] = ("Library", "LaunchAgents")
+LOGIN_CONFIG_DIRS: tuple[tuple[str, ...], ...] = (
+    ("autostart",),
+    ("systemd", "user"),
+    ("systemd", "user.conf.d"),
+    ("environment.d",),
+)
+LOGIN_CONFIG_FILES: tuple[tuple[str, ...], ...] = (("systemd", "user.conf"),)
+LOGIN_DATA_DIRS: tuple[tuple[str, ...], ...] = (("systemd", "user"),)
+X_SESSION_FILES: tuple[str, ...] = (".xprofile", ".xsessionrc", ".xsession", ".xinitrc")
 
 #: A repository's git folder, by name; a linked worktree and a submodule keep a file of this name
 #: in its place, which names the folder.
@@ -166,6 +191,7 @@ _WHAT: dict[str, str] = {
     HOME: "where PersonalClaw keeps what runs as the owner and what they allowed",
     GIT: "where git keeps what it reads and runs as the owner",
     SHELL: "where the owner's shell keeps what it runs as the owner each time it starts",
+    LOGIN: "where the owner's system keeps what it runs as the owner at every login",
 }
 
 #: What the agent is told to do instead, for each kind.
@@ -182,6 +208,10 @@ _HINTS: dict[str, str] = {
     SHELL: (
         "Leave the owner's shell startup files to the owner. Tell them the line you would add "
         "and why; a setting one command needs can be given to that command alone."
+    ),
+    LOGIN: (
+        "Leave what runs at the owner's login to the owner. Tell them what you would have run, "
+        "when and why; work to repeat can be an automation, which they see and can stop."
     ),
 }
 
@@ -242,7 +272,31 @@ def owners_own() -> list[tuple[str, bool, str]]:
     fish = os.path.join(xdg, "fish")
     own += [(os.path.join(fish, name), False, SHELL) for name in FISH_STARTUP_FILES]
     own += [(os.path.join(fish, name), True, SHELL) for name in FISH_STARTUP_DIRS]
+    own += login_places()
     return list(dict.fromkeys(own))
+
+
+def login_places() -> list[tuple[str, bool, str]]:
+    """The places whose entries run at the owner's login (:data:`LOGIN`), each as ``(path, is_dir,
+    LOGIN)`` like :func:`owners_own`'s: ``~/Library/LaunchAgents``; ``autostart``,
+    ``systemd/user``, ``systemd/user.conf``, ``systemd/user.conf.d`` and ``environment.d`` in
+    ``$XDG_CONFIG_HOME`` (``~/.config`` when unset); ``systemd/user`` in ``$XDG_DATA_HOME``
+    (``~/.local/share`` when unset); and the X session scripts in her home folder. Each variable is
+    read as :func:`owners_own` reads ``$XDG_CONFIG_HOME``: a relative one is ignored."""
+    user = str(Path.home())
+
+    def xdg(variable: str, default: str) -> str:
+        named = os.environ.get(variable, "").strip()
+        return named if os.path.isabs(named) else os.path.join(user, default)
+
+    config = xdg("XDG_CONFIG_HOME", ".config")
+    data = xdg("XDG_DATA_HOME", os.path.join(".local", "share"))
+    places = [(os.path.join(user, *LAUNCH_AGENTS), True)]
+    places += [(os.path.join(config, *parts), True) for parts in LOGIN_CONFIG_DIRS]
+    places += [(os.path.join(data, *parts), True) for parts in LOGIN_DATA_DIRS]
+    places += [(os.path.join(config, *parts), False) for parts in LOGIN_CONFIG_FILES]
+    places += [(os.path.join(user, name), False) for name in X_SESSION_FILES]
+    return [(place, is_dir, LOGIN) for place, is_dir in places]
 
 
 def _is_git_folder(folder: str) -> bool:
@@ -360,7 +414,7 @@ def _only_sourced(text: str) -> frozenset[str]:
 @dataclass(frozen=True)
 class Named:
     """A word that names an owner-only path, as a command or a call wrote it, and which kind of
-    place that is (:data:`HOME`, :data:`GIT` or :data:`SHELL`)."""
+    place that is (:data:`HOME`, :data:`GIT`, :data:`SHELL` or :data:`LOGIN`)."""
 
     word: str
     kind: str

@@ -44,6 +44,7 @@ MAX_ENTRIES = 10
 _RUNS_AS_YOU = {
     owner_only.GIT: "where git keeps what it reads and runs as you",
     owner_only.SHELL: "where your shell keeps what it runs as you each time it starts",
+    owner_only.LOGIN: "where your system keeps what it runs as you at every login",
 }
 
 #: The native file tools that change a file, the only calls a write scope admits. An agent CLI's
