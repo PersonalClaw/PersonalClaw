@@ -11,6 +11,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Fixed
 
 - **Morning triage's install no longer moves a schedule you've installed: a different time sent to it is refused, and its schedule changes on the Triggers page. The install is yours alone: an installed app is refused it.**
+- **Pairing a new owner on a chat channel ends the previous owner's access there, and the Configure page says so before the code is made. Revoke on your owner's row in Settings › Sender trust unpairs them, so approvals and messages for you stop going to that account; the row is marked as your owner.**
 
 ## [0.3.4] — 2026-11-01
 
