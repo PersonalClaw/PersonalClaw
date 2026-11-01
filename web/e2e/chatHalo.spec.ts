@@ -117,7 +117,7 @@ for (const theme of THEMES) {
       await composer.click()
       await composer.pressSequentially('And once more, please.', { delay: 3 })
       await page.getByRole('button', { name: 'Send message', exact: true }).click()
-      await expect(page.getByRole('button', { name: 'Stop', exact: true }), 'the page never entered its streaming state').toBeVisible({ timeout: 10_000 })
+      await expect(page.getByRole('button', { name: 'Stop this turn', exact: true }), 'the page never entered its streaming state').toBeVisible({ timeout: 10_000 })
       await page.waitForTimeout(1200)   // long enough for any light to glide to a target and settle
 
       const stray = await page.evaluate(() => {

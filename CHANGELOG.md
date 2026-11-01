@@ -16,6 +16,7 @@ An A2A client reads only the tasks it started, and its retry key names only its 
 
 - **A chat spans its pane's full width, inside the pane's padding: its turns, with their tables, code and tool cards, the composer and its toolbar, and a new chat's greeting, cards and prompt suggestions. They were held to a 768 px column centred in the pane; a sent message's bubble is still 80% of the column, and the editor that resends it matches.**
 - **A chat opens at its latest message: opening one from the sidebar, from a link or by a reload lands the view at the end of its conversation, and it stays there while code blocks and images finish laying out, until you scroll. A scroll up while it loads stays where you put it.**
+- **What a running turn is doing now is one bare line at the end of the conversation, under the latest message, with no box around it, and it scrolls with the thread; it goes when the turn ends. Stop stays in reach without a scroll: the composer's send button is Stop this turn while a turn runs, a Stop this turn sits beside Steer or Queue once you type a draft, and Esc stops it too.**
 
 ### Fixed
 

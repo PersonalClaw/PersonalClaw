@@ -67,7 +67,7 @@ test.describe('a chat whose terminal stream frame is lost', () => {
     // Without it the clause below would pass on a turn that simply completed, which is the one way
     // this test could be vacuous.
     await expect(
-      page.getByRole('button', { name: 'Stop', exact: true }),
+      page.getByRole('button', { name: 'Stop this turn', exact: true }),
       'the composer never entered its streaming state, so there was no terminal frame to lose and\n' +
         'the recovery asserted below would be vacuous.',
     ).toBeVisible({ timeout: 20_000 })

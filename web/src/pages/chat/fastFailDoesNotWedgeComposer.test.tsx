@@ -157,7 +157,8 @@ const liveRegionText = () =>
  *  and it is the whole difference between Stop and Send. Returns the one that is mounted,
  *  so a failure reads `expected 'Stop' to be 'Send message'` rather than "not found". */
 const primaryAction = () =>
-  ['Stop', 'Steer — send into the running turn', 'Queue — sent when this turn ends', 'Send message']
+  // Steer and Queue first: with a draft typed during a turn, a secondary Stop sits beside them.
+  ['Steer — send into the running turn', 'Queue — sent when this turn ends', 'Stop this turn', 'Send message']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no primary action)'
 
 // ── 1. the race: a late running snapshot must not re-arm a turn that already ended ───────────────
@@ -219,7 +220,7 @@ describe('a detail snapshot for a turn that is genuinely still running', () => {
     page()
     await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
     await answerDetail(0, { run_state: runningState() })  // no terminal event seen → the read is current
-    await waitFor(() => expect(primaryAction()).toBe('Stop'))
+    await waitFor(() => expect(primaryAction()).toBe('Stop this turn'))
   })
 })
 

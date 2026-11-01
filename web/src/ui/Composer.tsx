@@ -13,6 +13,7 @@ import { DROP_GROW_PX, INSTANT, RISE_GROW_PX, riseScale } from './composer/rise'
 import { useMicRecorder } from './composer/useMicRecorder'
 import type { ComposerProps } from './composer/types'
 import { useIsMobile } from '../app/useIsMobile'
+import { bindingLabel } from '../app/keymap'
 import { usePersonality } from '../app/personality'
 import { api } from '../lib/api'
 import { cx } from './cx'
@@ -237,6 +238,7 @@ export function Composer({
   // holds still while it waits on the owner (an approval or a question), so the card that needs her
   // holds her attention. A turn the gateway has not described yet is waiting to start, which moves.
   const stopSweep = sendKind === 'stop' && sweep() !== null
+  const stopTitle = `Stop this turn (${bindingLabel('stop-turn')})`
   const turning = !phase || ORB_LOOKS[phase].moves
   const actions = (
     <div className="flex items-center gap-xs">
@@ -301,6 +303,11 @@ export function Composer({
           button with keyboard focus is the Stop control once the turn starts, still focused.
           `data-stop-sweep` says which branch the Stop control took: `animated` while its arc turns,
           `still` while the turn waits on the owner, `instant` under reduced motion (no arc). */}
+      {/* A draft typed during a turn makes the send button Steer or Queue, so the turn's Stop sits
+          beside it, secondary: the same action, name and tooltip, since a phone has no Esc. */}
+      {(sendKind === 'steer' || sendKind === 'queue') && (
+        <IconButton icon={Square} label="Stop this turn" title={stopTitle} size={40} onClick={onStop} className="max-md:min-h-11 max-md:min-w-11" />
+      )}
       <span className="relative inline-flex" data-stop-sweep={sendKind === 'stop' ? (!stopSweep ? 'instant' : turning ? 'animated' : 'still') : undefined}>
         {(() => {
           switch (sendKind) {
@@ -315,8 +322,11 @@ export function Composer({
             // mid-stream with a typed draft, on a turn that cannot take it in → it runs next.
             case 'queue':
               return <IconButton icon={ListPlus} label="Queue — sent when this turn ends" filled size={40} onClick={() => onSend()} />
+            // While a turn runs, with nothing typed: the turn's Stop, in reach whatever the
+            // transcript's scroll, named as Esc's action is named, and its tooltip shows that key
+            // (`ui/TurnStatusRow` listens for it).
             case 'stop':
-              return <IconButton icon={Square} label="Stop" filled size={40} onClick={onStop} />
+              return <IconButton icon={Square} label="Stop this turn" title={stopTitle} filled size={40} onClick={onStop} className="max-md:min-h-11 max-md:min-w-11" />
             // Idle send. On send it briefly morphs arrow→check with a bounce bloom
             // (the streaming spinner then takes over for the turn).
             case 'sent':

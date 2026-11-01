@@ -148,7 +148,8 @@ async function answerDetail(n: number, patch: Record<string, unknown>) {
 
 /** The composer's primary action, by accessible name — Stop while a turn runs, Send otherwise. */
 const primaryAction = () =>
-  ['Stop', 'Steer — send into the running turn', 'Queue — sent when this turn ends', 'Send message']
+  // Steer and Queue first: with a draft typed during a turn, a secondary Stop sits beside them.
+  ['Steer — send into the running turn', 'Queue — sent when this turn ends', 'Stop this turn', 'Send message']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no primary action)'
 
 /** Open the chat on a turn that is running. `beforeTheTurn` runs once the page has issued its
@@ -158,7 +159,7 @@ async function aRunningTurn(beforeTheTurn?: () => void) {
   await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
   beforeTheTurn?.()
   await answerDetail(0, { run_state: runningState() })
-  await waitFor(() => expect(primaryAction()).toBe('Stop'))
+  await waitFor(() => expect(primaryAction()).toBe('Stop this turn'))
   await waitFor(() => expect(lastTurnSaid()).toBe('Assistant is responding…'))
 }
 
@@ -167,7 +168,7 @@ describe('a turn that fails', () => {
     await aRunningTurn()
     pushFrame('chat_message', { role: 'error', content: "This turn's context does not fit." })
     // The error row is not the end of the turn: `chat_done` is. Until it lands, Stop stays.
-    expect(primaryAction()).toBe('Stop')
+    expect(primaryAction()).toBe('Stop this turn')
     expect(turnSaid()).not.toContain('Response complete.')
 
     pushFrame('chat_done', { outcome: 'error' })
@@ -181,11 +182,11 @@ describe('a turn that hits a transient failure and is retried', () => {
   it('keeps running through the retry notice, and only the retried answer ends it', async () => {
     await aRunningTurn()
     pushFrame('chat_message', { role: 'error', content: '⟳ Connection lost — retrying...' })
-    expect(primaryAction()).toBe('Stop')
+    expect(primaryAction()).toBe('Stop this turn')
     // The gateway re-runs the message as the session's next turn.
     pushFrame('chat_user_message', { content: 'hello', ts: '2026-09-26T10:00:01Z' })
     pushFrame('chat_chunk', { content: 'Recovered.', seq: 1 })
-    expect(primaryAction()).toBe('Stop')
+    expect(primaryAction()).toBe('Stop this turn')
     expect(turnSaid()).toEqual(['Assistant is responding…'])
 
     pushFrame('chat_done', { outcome: 'complete' })
@@ -198,7 +199,7 @@ describe('Stop', () => {
   it('is said as a stop once the gateway confirms it, never as a completion, and only once', async () => {
     const user = userEvent.setup()
     await aRunningTurn()
-    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    await user.click(screen.getByRole('button', { name: 'Stop this turn' }))
     expect(h.stopChat).toHaveBeenCalledWith('chat-7-x')
     await waitFor(() => expect(lastTurnSaid()).toBe('Response stopped.'))
     expect(primaryAction()).toBe('Send message')
@@ -213,7 +214,7 @@ describe('Stop', () => {
     const user = userEvent.setup()
     await aRunningTurn()
     h.stopChat.mockRejectedValueOnce(new Error('the gateway did not answer'))
-    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    await user.click(screen.getByRole('button', { name: 'Stop this turn' }))
     await waitFor(() => expect(h.stopChat).toHaveBeenCalled())
     await act(async () => { await Promise.resolve() })
     expect(turnSaid()).toEqual(['Assistant is responding…'])
@@ -227,7 +228,7 @@ describe('Stop', () => {
     const user = userEvent.setup()
     await aRunningTurn()
     h.stopChat.mockResolvedValueOnce({ ok: true, stopped: false })
-    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    await user.click(screen.getByRole('button', { name: 'Stop this turn' }))
     await waitFor(() => expect(h.stopChat).toHaveBeenCalled())
     await act(async () => { await Promise.resolve() })
     expect(turnSaid()).not.toContain('Response stopped.')
@@ -258,7 +259,7 @@ describe('a queued turn the gateway starts', () => {
     await waitFor(() => expect(primaryAction()).toBe('Send message'))
 
     pushFrame('chat_user_message', { content: 'the queued one', ts: '2026-09-26T10:00:02Z' })
-    await waitFor(() => expect(primaryAction()).toBe('Stop'))
+    await waitFor(() => expect(primaryAction()).toBe('Stop this turn'))
     expect(lastTurnSaid()).toBe('Assistant is responding…')
   })
 })

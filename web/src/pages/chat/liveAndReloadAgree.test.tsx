@@ -187,7 +187,7 @@ describe('a turn whose agent CLI ran calls without asking, and asked about two s
   it('reads the same after a reload as it did live: the same rows under the same step count', async () => {
     h.detail = detail([ASKED], true)
     openChat()
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
     for (const call of CALLS) runLive(call)
     pushFrame('chat_chunk', { content: ANSWER, seq: 1 })
     h.detail = detail(persisted(), false)

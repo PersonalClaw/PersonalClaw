@@ -144,7 +144,7 @@ describe('a finished turn says how long it worked on its folded line', () => {
   it('keeps the steps open while the turn runs, then folds them under the time the gateway measured', async () => {
     h.detail = detail([ASKED], true)
     openChat()
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
     runTheTurn()
     // Running, the turn's steps are open, one card each, and nothing is folded yet.
     expect(toolCards()).toHaveLength(6)
@@ -178,7 +178,7 @@ describe('a finished turn says how long it worked on its folded line', () => {
   it('reads the stored time when the page never heard the turn end', async () => {
     h.detail = detail([ASKED], true)
     openChat()
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
     runTheTurn()
     // No closing `work_phase` frame reached this page: the read after `chat_done` times the turn.
     h.detail = detail(persisted({ stored: STORED_MS }), false)
@@ -190,7 +190,7 @@ describe('a finished turn says how long it worked on its folded line', () => {
   it('times a turn from its rows when the page never heard it end and nothing was stored', async () => {
     h.detail = detail([ASKED], true)
     openChat()
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
     runTheTurn()
     h.detail = detail(persisted(), false)
     pushFrame('chat_done', { outcome: 'complete' })

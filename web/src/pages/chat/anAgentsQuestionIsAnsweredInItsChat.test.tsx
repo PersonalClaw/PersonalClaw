@@ -111,7 +111,7 @@ describe('an agent’s question in its chat', () => {
   it('renders from its frame as a card she answers, and her answer goes to the question', async () => {
     h.detail = detail([ASKED], true)
     openChat()
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
     pushFrame('tool_call', PILL)
     pushFrame('question_card', CARD)
 
@@ -133,7 +133,7 @@ describe('an agent’s question in its chat', () => {
   it('is withdrawn when her Stop ends the turn, saying why', async () => {
     h.detail = detail([ASKED], true)
     openChat()
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
     pushFrame('question_card', CARD)
     await screen.findByRole('group', { name: 'Question for you' })
     pushFrame('question_resolved', { id: 'q-7f3a', outcome: 'cancelled', ended: 'its turn was stopped' })

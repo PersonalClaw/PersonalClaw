@@ -98,7 +98,7 @@ async function openRunning() {
   )
   await waitFor(() => expect(h.detailCalls.length).toBeGreaterThanOrEqual(1))
   await act(async () => { h.detailCalls[0].resolve({ ...h.detail, run_state: runningState() }) })
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
 }
 
 const COMPACTED = 'Conversation compacted: freed 10% of the conversation (74,611 → 67,481 characters)'
