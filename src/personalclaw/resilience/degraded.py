@@ -491,7 +491,7 @@ async def _memory_staging_drain(state: Optional[object] = None) -> int:
     captures. The backlog therefore stays visible, which is the honest report.
     """
     from personalclaw.learning import proposals
-    from personalclaw.learning.staging import get_store
+    from personalclaw.learning.staging import compiled_by, get_store
 
     store = get_store()
     if not store.path.exists():
@@ -516,7 +516,7 @@ async def _memory_staging_drain(state: Optional[object] = None) -> int:
     )
     if prop is None:
         return 0
-    store.mark_consumed(ids, f"degraded-drain:{prop.id}")
+    store.mark_consumed(ids, compiled_by(prop.id))
     return len(ids)
 
 

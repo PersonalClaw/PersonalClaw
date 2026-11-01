@@ -20,6 +20,7 @@ The behaviour now, driven through the real turn engine over a fake model:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -312,6 +313,130 @@ async def test_deleting_a_chat_removes_what_the_learning_log_kept_of_its_turns(t
     assert deleted.deleted == (KEPT.removeprefix("dashboard:"),)
     assert [e.session for e in _events()] == ["dashboard:chat-45-1790800500"]
     assert _MARKER.encode() not in _shards(tmp_path)
+
+
+#: A lesson a chat's turn taught, as the after-turn review captures it, and another chat's.
+_LESSON = "Give every distance on the allotment walk in kilometres"
+_LESSON_MARK = b"allotment walk in kilometres"
+_OTHERS_LESSON = "Write dates in the garden diary day first"
+
+
+def _capture(session: str, lesson: str) -> None:
+    from personalclaw.learning.staging import StagingStore
+
+    store = StagingStore()
+    try:
+        assert store.stage(cadence="per_turn", kind="lesson", content=lesson, session_key=session)
+    finally:
+        store.close()
+
+
+def _captures() -> dict[str, str | None]:
+    """Each capture the learning log keeps, by its words: the batch it was compiled into, if any."""
+    with sqlite3.connect(config_loader.config_dir() / "learning.db") as db:
+        return dict(db.execute("SELECT content, consumed_by FROM staging").fetchall())
+
+
+async def _drain() -> list[str]:
+    """What the drain files when a model comes back: the bodies of the pending lesson batches."""
+    from personalclaw.learning import proposals, staging
+    from personalclaw.resilience.degraded import _memory_staging_drain
+
+    staging.reset_store()  # the shared store over this test's home, not one an earlier test left
+    try:
+        await _memory_staging_drain()
+    finally:
+        staging.reset_store()
+    return [p.body for p in proposals.list_pending()]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_chat_removes_the_lessons_it_captured(tmp_path):
+    """The after-turn review captures the lesson a turn taught under its chat, for the next batch
+    pass. 🔴 Red before the fix: deleting the chat left the capture, which no prune removes while it
+    waits, and which every backup and export carried, and the next drain offered to keep it again.
+    Another chat's capture stays."""
+    from personalclaw.dashboard.chat_forget import delete_chats
+
+    _chat(KEPT, None)
+    _capture(KEPT, _LESSON)
+    _capture("dashboard:chat-45-1790800500", _OTHERS_LESSON)
+
+    deleted = await delete_chats(_deleting_state(), [KEPT.removeprefix("dashboard:")], by="you")
+
+    assert deleted.deleted == (KEPT.removeprefix("dashboard:"),)
+    assert _captures() == {_OTHERS_LESSON: None}
+    assert _LESSON_MARK not in _learning_log_bytes()
+    assert _LESSON_MARK not in _shards(tmp_path)
+    (body,) = await _drain()
+    assert _LESSON not in body and _OTHERS_LESSON in body
+
+
+@pytest.mark.asyncio
+async def test_a_lesson_batch_compiled_from_a_deleted_chat_is_withdrawn_and_the_rest_filed_again():
+    """A capture already compiled into a pending lesson batch is quoted in its body and its Inbox
+    row. Deleting its chat withdraws the batch, with no decision recorded, and gives its other
+    captures back to the queue: the next drain files them again, and nothing quotes the deleted
+    chat's lesson. 🔴 Red before the fix: the batch stayed, and Accept would keep the lesson."""
+    from personalclaw.dashboard.chat_forget import delete_chats
+    from personalclaw.inbox import InboxStore
+    from personalclaw.learning import proposals
+
+    _chat(KEPT, None)
+    _capture(KEPT, _LESSON)
+    _capture("dashboard:chat-45-1790800500", _OTHERS_LESSON)
+    (compiled,) = await _drain()
+    assert _LESSON in compiled and _OTHERS_LESSON in compiled, "premise: one batch holds both"
+    assert all(_captures().values()), "premise: both captures are compiled"
+
+    await delete_chats(_deleting_state(), [KEPT.removeprefix("dashboard:")], by="you")
+
+    assert proposals.list_pending() == []
+    assert proposals.load_decisions() == {}, "withdrawn, not rejected"
+    assert _captures() == {_OTHERS_LESSON: None}
+    inbox = InboxStore()
+    inbox.load()
+    assert _LESSON not in json.dumps([item.to_dict() for item in inbox.items.values()])
+    (refiled,) = await _drain()
+    assert _LESSON not in refiled and _OTHERS_LESSON in refiled
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_batch_naming_a_deleted_chat_goes_and_gives_nothing_back():
+    """A superseded batch is kept for lineage and names captures its replacement may hold. Deleting
+    the chat removes it, and its other captures stay with the batch that holds them now: given back,
+    the next drain would file their lessons a second time."""
+    import dataclasses
+
+    from personalclaw.dashboard.chat_forget import delete_chats
+    from personalclaw.learning import proposals, staging
+
+    _chat(KEPT, None)
+    _capture(KEPT, _LESSON)
+    _capture("dashboard:chat-45-1790800500", _OTHERS_LESSON)
+    (_compiled,) = await _drain()
+    (first,) = proposals.list_pending()
+    with sqlite3.connect(config_loader.config_dir() / "learning.db") as db:
+        ((kept_uid,),) = db.execute("SELECT uid FROM staging WHERE content = ?", (_OTHERS_LESSON,))
+    # Its replacement holds the other chat's capture now, and the first is kept as superseded.
+    second = dataclasses.replace(
+        first, id=f"{first.id}-next", staging_refs=[kept_uid], supersedes=first.id
+    )
+    assert proposals._save(second)
+    assert proposals._save(dataclasses.replace(first, status=proposals.Status.SUPERSEDED.value))
+    with sqlite3.connect(config_loader.config_dir() / "learning.db") as db:
+        db.execute(
+            "UPDATE staging SET consumed_by = ? WHERE content = ?",
+            (staging.compiled_by(second.id), _OTHERS_LESSON),
+        )
+
+    await delete_chats(_deleting_state(), [KEPT.removeprefix("dashboard:")], by="you")
+
+    assert proposals.get(first.id) is None, "the superseded record that named it is gone"
+    assert _captures() == {_OTHERS_LESSON: staging.compiled_by(second.id)}
+    assert [p.id for p in proposals.list_pending()] == [second.id]
+    await _drain()
+    assert [p.id for p in proposals.list_pending()] == [second.id], "filed once, not twice"
 
 
 def _deleting_state() -> Any:

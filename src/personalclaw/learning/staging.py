@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from personalclaw import bounded_log
 from personalclaw.config import loader as config_loader
@@ -757,6 +757,75 @@ class StagingStore:
                 (cutoff,),
             )
             return int(cur.rowcount or 0)
+
+    # ── A deleted chat's captures ──
+
+    def forget_sessions(self, gone: Callable[[str], bool]) -> list[str]:
+        """Remove every capture filed under a session *gone* names (``gone(session)``, asked once
+        for each), compiled or not. Returns the removed captures' identities (``uid``), which a
+        lesson batch compiled from them names (:func:`proposals.withdraw_compiled`). A capture
+        that names no session is no one chat's, and stays. Idempotent.
+
+        As ``SurfacingEventStore.forget_sessions`` does in the same file: removed outright and
+        overwritten as it goes (``secure_delete``), and the write-ahead log folded in and emptied,
+        so a deleted lesson's words stay neither in the file's free space nor in its log, which a
+        backup, an export or a sync's copy would carry. A log that does not exist is not made.
+        """
+        if not self.path.exists():
+            return []
+        with self._cursor() as cur:
+            named = [
+                row[0]
+                for row in cur.execute(
+                    "SELECT DISTINCT session_key FROM staging WHERE session_key != '';"
+                ).fetchall()
+            ]
+            doomed = [session for session in named if gone(session)]
+            if not doomed:
+                return []
+            cur.execute("PRAGMA secure_delete = ON;")
+            removed: list[str] = []
+            for start in range(0, len(doomed), 400):
+                batch = doomed[start : start + 400]
+                marks = ",".join("?" * len(batch))
+                removed += [
+                    str(row[0])
+                    for row in cur.execute(
+                        f"SELECT uid FROM staging WHERE session_key IN ({marks});", batch
+                    ).fetchall()
+                ]
+                cur.execute(f"DELETE FROM staging WHERE session_key IN ({marks});", batch)
+        with self._cursor() as cur:
+            # A chat is deleted on the gateway's loop: wait for a reader a quarter of a second at
+            # most, and let a checkpoint it holds off fold the rest of the log in later.
+            waited = cur.execute("PRAGMA busy_timeout;").fetchone()[0]
+            cur.execute("PRAGMA busy_timeout = 250;")
+            cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            cur.execute(f"PRAGMA busy_timeout = {int(waited)};")
+        return removed
+
+    def release(self, uids: list[str], *, held_by: str) -> int:
+        """Give compiled captures back to the queue (``consumed_by`` cleared), so the next batch
+        pass files them again: the captures a withdrawn lesson batch was compiled from beside a
+        deleted chat's. Only those the batch itself still holds (*held_by*, its
+        :func:`compiled_by` marker): a capture a later batch holds stays with it, or the next
+        pass would file its lesson twice. Returns how many it gave back."""
+        if not uids:
+            return 0
+        marks = ",".join("?" for _ in uids)
+        with self._cursor() as cur:
+            cur.execute(
+                "UPDATE staging SET consumed_by = NULL "
+                f"WHERE consumed_by = ? AND uid IN ({marks});",
+                [held_by, *(str(u) for u in uids)],
+            )
+            return int(cur.rowcount or 0)
+
+
+def compiled_by(proposal_id: str) -> str:
+    """The ``consumed_by`` marker of a capture the drain compiled into the lesson batch
+    *proposal_id* (``resilience.degraded._memory_staging_drain``)."""
+    return f"degraded-drain:{proposal_id}"
 
 
 # ── Module-level accessor ──
