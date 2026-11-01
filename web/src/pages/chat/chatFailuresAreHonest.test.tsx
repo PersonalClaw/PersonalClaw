@@ -206,7 +206,7 @@ describe('Edit & resend', () => {
     await waitFor(() => expect(screen.queryByText('Second answer')).toBeNull())
     expect(screen.queryByRole('textbox', { name: 'Edit your message' })).toBeNull()
     expect(screen.getByText('First question, edited')).toBeTruthy()
-    expect(await screen.findByRole('button', { name: 'Stop' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Stop this turn' })).toBeTruthy()
   })
 
   it('leaves the turns in place when Rewind to here is refused, and says why', async () => {
@@ -260,7 +260,7 @@ describe('A second tab on the same chat', () => {
     act(() => { deliver('chat_chunk', { content: 'The answer so far', seq: 1 }) })
     await waitFor(() => expect(h.detailReads).toBe(readsAtRest + 1))
     expect(await screen.findByText('Asked in the other tab')).toBeTruthy()
-    expect(await screen.findByRole('button', { name: 'Stop' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Stop this turn' })).toBeTruthy()
     act(() => { deliver('chat_chunk', { content: ', and the rest.', seq: 2 }) })
     paintFrames()
     await waitFor(() => expect(screen.getByText(/The answer so far, and the rest\./)).toBeTruthy())
@@ -276,7 +276,7 @@ describe('A second tab on the same chat', () => {
     h.sendChat.mockResolvedValue({ ok: true, session: SESSION })
     await user.click(await screen.findByRole('button', { name: 'Send message' }))
     await waitFor(() => expect(h.sendChat).toHaveBeenCalled())
-    await user.click(await screen.findByRole('button', { name: 'Stop' }))
+    await user.click(await screen.findByRole('button', { name: 'Stop this turn' }))
     const readsAfterStop = h.detailReads
     act(() => { deliver('chat_chunk', { content: 'a late chunk', seq: 1 }) })
     await new Promise((r) => setTimeout(r, 50))

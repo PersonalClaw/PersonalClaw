@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { TurnStatusRow, STATUS_WORDS, WORD_MS, SHOW_DELAY_MS, elapsedWords } from './TurnStatusRow'
 
-// ── The running turn's live status row, pinned above the composer ────────────────────────────
+// ── The running turn's live status, one bare line at the end of the conversation ─────────────
 //
-// One row while a turn runs, whatever the transcript's scroll: the agent orb in the turn's own
-// phase, what it is doing in the gateway's words (the tool by name), a word that turns over while
-// it works, the time since the turn began, the tokens its runtime reported (none until one is
-// reported, never an estimate) and Stop, which Esc presses too. A state is said once, politely;
-// the turning word is decoration and is never said. Under reduced motion no word turns over and
-// the orb is still.
+// One bare line while a turn runs, with no border, background or pill (#5867): the agent orb in
+// the turn's own phase, what it is doing in the gateway's words (the tool by name), a word that
+// turns over while it works, the time since the turn began, and the tokens its runtime reported
+// (none until one is reported, never an estimate). Esc stops the turn while it shows; its Stop is
+// the composer's, so the line has no button of its own. A state is said once, politely; the turning
+// word is decoration and is never said. Under reduced motion no word turns over and the orb is
+// still.
 
 const T0 = Date.UTC(2026, 9, 23, 9, 0, 0)
 
@@ -136,18 +137,37 @@ describe('what is said, and what is not', () => {
 })
 
 describe('under reduced motion', () => {
-  it('no word turns over and the orb is still; the state, the clock and Stop stay', async () => {
+  it('no word turns over and the orb is still; the state and the clock stay', async () => {
     reduced = true
     draw({ phase: 'thinking' })
     await shown()
     expect(word()).toBeNull()
     expect(row()?.querySelector('[data-agent-orb]')?.getAttribute('data-agent-orb'), 'one static frame').not.toBe('animated')
     expect(row()?.querySelector('[data-turn-state]')?.textContent).toBe('Thinking')
-    expect(screen.getByRole('button', { name: 'Stop this turn' })).toBeTruthy()
+    expect(row()?.querySelector('[data-turn-elapsed]')).not.toBeNull()
   })
 })
 
-describe('when it shows, and Stop', () => {
+describe('a bare line', () => {
+  // The pill the line was: a border, a fill, a rounded pill and its own padding.
+  const PILL = /(^|\s)(border|border-\S+|bg-\S+|rounded-\S+|px-\S+|py-\S+|shadow\S*)(\s|$)/
+
+  it('has no border, background or pill of its own', async () => {
+    draw()
+    await shown()
+    const classes = row()!.className
+    expect(classes, `the line's classes: ${classes}`).not.toMatch(PILL)
+  })
+
+  it('has no Stop button of its own: the composer holds the one', async () => {
+    draw()
+    await shown()
+    expect(row()!.querySelector('button'), 'no control in the line').toBeNull()
+    expect(screen.queryByRole('button', { name: 'Stop this turn' })).toBeNull()
+  })
+})
+
+describe('when it shows, and Esc', () => {
   it('shows a moment after the turn starts, so a fast reply never flashes it, and goes when it ends', async () => {
     const { view, props } = draw()
     expect(row()).toBeNull()
@@ -164,13 +184,11 @@ describe('when it shows, and Stop', () => {
     expect(row()).toBeNull()
   })
 
-  it('Stop stops the turn, and so does Esc', async () => {
+  it('Esc stops the turn while the line shows', async () => {
     const { onStop } = draw()
     await shown()
-    fireEvent.click(screen.getByRole('button', { name: 'Stop this turn' }))
-    expect(onStop).toHaveBeenCalledTimes(1)
     fireEvent.keyDown(document.body, { key: 'Escape' })
-    expect(onStop).toHaveBeenCalledTimes(2)
+    expect(onStop).toHaveBeenCalledTimes(1)
   })
 
   it('Esc a dialog, a menu, a field or a held key already took stops nothing', async () => {
@@ -220,13 +238,6 @@ describe('when it shows, and Stop', () => {
     expect(onStop).not.toHaveBeenCalled()
   })
 
-  it('Stop is a 44 px target at the compact widths', async () => {
-    draw()
-    await shown()
-    const stop = screen.getByRole('button', { name: 'Stop this turn' })
-    expect(stop.className).toMatch(/max-md:min-h-11/)
-    expect(stop.className).toMatch(/max-md:min-w-11/)
-  })
 })
 
 describe('the elapsed time in words', () => {

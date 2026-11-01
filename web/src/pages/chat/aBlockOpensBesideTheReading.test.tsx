@@ -279,7 +279,7 @@ describe('a reply the page streamed names its blocks as the reloaded reply does'
     const asked = MESSAGES[0]
     hd.detail = { ...(hd.detail as Record<string, unknown>), messages: [asked], run_state: runningState({ session: SESSION }) }
     await openChat({}, { waitFor: null })
-    await screen.findByRole('button', { name: 'Stop' })
+    await screen.findByRole('button', { name: 'Stop this turn' })
     // What the gateway sends for the turn: what fed it, a call, then the answer, then its end.
     pushFrame('activity_event', { kind: 'context', text: 'Injected 1,204 chars of context' })
     pushFrame('tool_call', { tool_call_id: 'tc1', tool: 'read_file', kind: 'read', purpose: '', input_preview: '{}', detail: 'notes.md' })

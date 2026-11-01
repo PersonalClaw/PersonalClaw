@@ -119,7 +119,7 @@ async function openOnTheParkedTurn(query: Record<string, string> = {}, patch: Re
 
 /** The composer's action while a turn runs, by accessible name. */
 const midTurnAction = () =>
-  ['Stop', 'Steer — send into the running turn', 'Queue — sent when this turn ends']
+  ['Stop this turn', 'Steer — send into the running turn', 'Queue — sent when this turn ends']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no mid-turn action)'
 
 const allowButtons = () => screen.queryAllByRole('button', { name: /^Allow / })
@@ -144,7 +144,7 @@ describe('a chat moved to another agent while its turn waits on a permission car
     expect(screen.getAllByText('Moved to oncall-triage — it is answering your message.')).toHaveLength(1)
     await waitFor(() => expect(screen.getByRole('button', { name: /^Agent and model: oncall-triage · / })).toBeTruthy())
     // Her message is being answered by the agent she moved it to: the turn still runs.
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop this turn' })).toBeTruthy()
   })
 
   it('names the default agent in the composer when the chat is moved back to it', async () => {

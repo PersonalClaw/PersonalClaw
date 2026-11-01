@@ -96,7 +96,7 @@ async function openIdle() {
   await waitFor(() => expect(h.detailCalls.length).toBe(1))
   await act(async () => { h.detailCalls[0].resolve(h.idle) })
   await waitFor(() => expect(screen.queryByText('earlier answer')).not.toBeNull())
-  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Stop this turn' })).toBeNull()
 }
 
 describe('a turn another tab started in this chat', () => {
@@ -113,7 +113,7 @@ describe('a turn another tab started in this chat', () => {
       })
     })
     await waitFor(() => expect(screen.queryByText('which stage is the run on?')).not.toBeNull())
-    expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull()
   })
 
   it('reads nothing for a turn in another chat', async () => {
@@ -121,7 +121,7 @@ describe('a turn another tab started in this chat', () => {
     pushFrame('work_phase', { ...runningState({ session: 'chat-3-other' }) })
     await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
     expect(h.detailCalls.length).toBe(1)
-    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Stop this turn' })).toBeNull()
   })
 
   it('reads nothing for a phase that names no running turn: the last frame of one that ended', async () => {
@@ -129,6 +129,6 @@ describe('a turn another tab started in this chat', () => {
     pushFrame('work_phase', { ...runState({ session: 'chat-9-x', phase: 'done', line: 'Done in 3 seconds', seq: 7 }) })
     await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
     expect(h.detailCalls.length).toBe(1)
-    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Stop this turn' })).toBeNull()
   })
 })

@@ -29,10 +29,10 @@ import { QuestionInView } from './QuestionInView'
 //
 // The Session Map's gutter rail and the scrolling transcript beside it: the find bar, the
 // select-to-quote toolbar, every turn with its actions, the follow-up chips and check-work offer
-// under the last one, and the live regions that narrate the turn. What the running turn is doing
-// now is not here: it is the live status row pinned above the composer (`ui/TurnStatusRow`), so it
-// stays in view however far the turn runs. Its state and its actions are `useTranscript`'s; the turns are the
-// stream's.
+// under the last one, the live line that says what the running turn is doing (`liveLine`, the page's
+// `ui/TurnStatusRow`), last in the turn column under the latest message and scrolling with the thread,
+// and the live regions that narrate the turn. Its state and its actions are `useTranscript`'s; the
+// turns are the stream's.
 
 /** The transcript's bottom fade: opaque down to its bottom padding (`py-2xl` on the turn
  *  column), transparent at the edge. Keyed to that padding so the resting view — scrolled
@@ -40,7 +40,7 @@ import { QuestionInView } from './QuestionInView'
  *  (A mask reads only alpha, so `black` here is "keep", not a colour.) */
 const TRANSCRIPT_END_FADE = 'linear-gradient(to bottom, black calc(100% - var(--spacing-2xl)), transparent)'
 
-export function Transcript({ transcript, stream, sessionId, memoryMode, navigate, onOpenFile: setOpenFile, onQuote: quoteToComposer, onPickFollowup, send, speak, speakingTurn, mapAudio = false }: {
+export function Transcript({ transcript, stream, sessionId, memoryMode, navigate, onOpenFile: setOpenFile, onQuote: quoteToComposer, onPickFollowup, send, speak, speakingTurn, mapAudio = false, liveLine }: {
   transcript: ReturnType<typeof useTranscript>
   stream: Pick<ChatStream, 'sessionRef' | 'turns' | 'streaming' | 'srAnnounce' | 'followups' | 'setFollowups' | 'followupsNeed' | 'checkWorkOffer' | 'setCheckWorkOffer' | 'subagents'>
   sessionId: string | null
@@ -56,6 +56,9 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
   speakingTurn: number | null
   /** The owner turned on Settings › Speech › "Session Map reacts to audio". */
   mapAudio?: boolean
+  /** What the running turn is doing now: the last thing in the turn column, under the latest
+   *  message, while a turn runs. */
+  liveLine?: React.ReactNode
 }) {
   const { scrollRef, endRef, followTurnRef, turnNodes, findOpen, setFindOpen, findSeed, isMobile, mapOpen, sessionEntries, jumpToTurn, toggleBookmark, liveCards, answerQuestion, approve, editingTurn, setEditingTurn, editFailure, setEditFailure, editResend, rewindTo, forkAt, forkRewound, regenerate, switchVariant, switchToAgentAndRun, attributionForNode } = transcript
   const { sessionRef, turns, streaming, srAnnounce, followups, setFollowups, followupsNeed, checkWorkOffer, setCheckWorkOffer } = stream
@@ -186,6 +189,9 @@ export function Transcript({ transcript, stream, sessionId, memoryMode, navigate
           })}
           {/* A step of this turn waiting for a busy local model: why, and what next. */}
           {streaming && sessionId && <ModelWaits session={sessionId} className="py-s" />}
+          {/* What the running turn is doing now, bare, under the latest message: the column's last
+              line, before the end the view follows, so following the end keeps it in view. */}
+          {liveLine}
           <div ref={endRef} />
           {/* visually-hidden polite live region — narrates the turn lifecycle to screen
               readers (the glow/Thinking cue is visual-only): that a turn started, its

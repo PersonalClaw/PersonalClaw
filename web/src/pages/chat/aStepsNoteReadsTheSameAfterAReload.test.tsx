@@ -153,7 +153,7 @@ describe('a turn whose agent CLI was refused one call and kept failing another',
   it('reads the same after a reload: the notes on their cards, the footer saying what fed it', async () => {
     h.detail = detail([ASKED], true)
     openChat()
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
     pushFrame('activity_event', { kind: 'context', text: FED })
     for (const c of CALLS) runLive(c)
     pushFrame('chat_chunk', { content: ANSWER, seq: 1 })

@@ -80,7 +80,7 @@ async function openPlusMenu(running: boolean) {
     </AppearanceProvider>,
   )
   await waitFor(() => expect(h.chatSessionDetail).toHaveBeenCalled())
-  if (running) await screen.findByRole('button', { name: 'Stop' })
+  if (running) await screen.findByRole('button', { name: 'Stop this turn' })
   await user.click(await screen.findByRole('button', { name: 'Add to message' }))
   return user
 }

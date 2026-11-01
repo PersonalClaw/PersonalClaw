@@ -113,7 +113,7 @@ test.describe('scripted chat turn', () => {
     // stream finishes the button morphs back through 'sent' to send. `exact` matters:
     // 'Stop recording' and 'Stop sharing screen' are different controls on this surface.
     await expect(
-      page.getByRole('button', { name: 'Stop', exact: true }),
+      page.getByRole('button', { name: 'Stop this turn', exact: true }),
       'the composer is still showing Stop — the turn started but never finished streaming',
     ).toHaveCount(0, { timeout: 60_000 })
     await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeVisible({ timeout: 30_000 })
@@ -338,7 +338,7 @@ test.describe('scripted chat turn', () => {
     })                             // ...and a rAF flush has PAINTED it — the precondition
     releaseDone()                  // only now does the closing boundary release the run
 
-    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0, {
+    await expect(page.getByRole('button', { name: 'Stop this turn', exact: true })).toHaveCount(0, {
       timeout: 30_000,
     })
     await expect(page.getByText(SCRIPTED.reply, { exact: true }), {

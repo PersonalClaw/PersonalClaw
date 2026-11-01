@@ -158,7 +158,8 @@ async function open() {
 }
 
 const primaryAction = () =>
-  ['Stop', 'Steer — send into the running turn', 'Queue — sent when this turn ends', 'Send message']
+  // Steer and Queue first: with a draft typed during a turn, a secondary Stop sits beside them.
+  ['Steer — send into the running turn', 'Queue — sent when this turn ends', 'Stop this turn', 'Send message']
     .find((name) => screen.queryByRole('button', { name })) ?? '(no primary action)'
 
 const QUESTION = { role: 'user', content: 'Count, please.', ts: 't-user' }
@@ -319,7 +320,7 @@ describe("a new chat's first turn across the session-create remount", () => {
     await sendFromNewChat()
     await answerRead(0, { run_state: runState(), messages: [], stream_seq: 0 })  // read before the POST landed
     expect(screen.getByText('Count, please.'), 'the older snapshot erased the user’s own message').toBeTruthy()
-    expect(primaryAction(), 'an older snapshot must not end a turn it has not seen start').toBe('Stop')
+    expect(primaryAction(), 'an older snapshot must not end a turn it has not seen start').toBe('Stop this turn')
     for (const f of [...chunks(WHOLE, 1), DONE]) act(() => { deliver(f) })
     paintFrames()
     expect(screen.getAllByText(WHOLE)).toHaveLength(1)
@@ -414,7 +415,7 @@ describe('a session read slower than the hold', () => {
     // It answers with a snapshot older than the frames that arrived meanwhile: not a stall.
     await answerRead(1, { run_state: runState(), stream_seq: 0, messages: [{ role: 'user', content: 'Count, please.', meta }] })
     expect(screen.getByText(PARTIAL.trim())).toBeTruthy()
-    expect(primaryAction()).toBe('Stop')
+    expect(primaryAction()).toBe('Stop this turn')
     expect(warn.mock.calls.flat().join(' ')).not.toContain('terminal frame never reached')
     warn.mockRestore()
   })

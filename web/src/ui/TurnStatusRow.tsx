@@ -1,17 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { bindingLabel, matchBinding } from '../app/keymap'
+import { matchBinding } from '../app/keymap'
 import { prefersReducedMotion } from '../design/motion'
 import { WORK_PHASE_LOOKS, phaseLabel, type WorkPhase } from '../lib/workPhase'
 import { AgentOrb } from './AgentOrb'
-import { Button } from './Button'
 import { cx } from './cx'
 
-// ── The running turn's live status, in one row at the conversation's bottom ─────────────────────
+// ── The running turn's live status, one bare line at the end of the conversation ───────────────
 //
-// A turn can run to hundreds of rows while the transcript follows its end, so what the turn is
-// doing now lives where the reader is: one row pinned just above the composer, outside the
-// transcript's scroll, shown whenever a turn runs and gone when it ends (`web/REDESIGN.md`, "Live
-// state sits at the bottom"). It holds, in order:
+// What a running turn is doing now is the last thing in the conversation: one bare line, with no
+// border, background or pill, under the latest message in the turn column, scrolling with the
+// thread like the turn it belongs to, shown whenever a turn runs and gone when it ends (#5867;
+// `web/REDESIGN.md`, "Live state sits at the bottom"). It holds, in order:
 //
 // - the agent orb in the turn's own phase (`docs/design/agent-orb.md`);
 // - what the turn is doing, in the gateway's own words for the phase (the tool by name), else the
@@ -21,8 +20,11 @@ import { cx } from './cx'
 // - once its runtime has done nothing for a minute, for how long ("No new activity for 1m"), from
 //   the gateway's `last_step_at`, while it works and waits on nothing that says why;
 // - the tokens the runtime reported for the turn, in and out, and nothing while it has reported
-//   none: never an estimate;
-// - Stop, which Esc presses too while nothing else has taken the key.
+//   none: never an estimate.
+//
+// Stopping the turn stays in reach without a scroll: the composer's send button is "Stop this turn"
+// while a turn runs, a secondary one sits beside Steer or Queue once a draft is typed, and Esc
+// stops it too while nothing else has taken the key, which this row listens for.
 //
 // It shows `SHOW_DELAY_MS` after the turn starts, so a fast reply never flashes it. Under reduced
 // motion no word turns over and the orb draws one static frame.
@@ -93,7 +95,7 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
   lastStepAt?: number | null
   /** The tokens the runtime reported for the turn so far, or `null` while it has reported none. */
   usage: TurnUsage | null
-  /** Stop the turn. */
+  /** Stop the turn: what Esc does while the row shows (the composer's Stop does the same). */
   onStop: () => void
   /** Whether Esc presses Stop while nothing else has taken the key: off where another control
    *  owns Esc. */
@@ -167,7 +169,7 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
   const reported = usage && (usage.input > 0 || usage.output > 0) ? usage : null
   return (
     <div data-turn-status="" data-phase={shows}
-      className={cx('flex min-w-0 items-center gap-s rounded-pill border border-outline-variant bg-surface px-m py-xs', className)}>
+      className={cx('flex min-w-0 items-center gap-s', className)}>
       <AgentOrb phase={shows} size={20} />
       <span data-turn-state="" data-type="body-s" className="min-w-0 truncate text-on-surface">{said}</span>
       {turns ? (
@@ -186,12 +188,6 @@ export function TurnStatusRow({ running, phase, line, startedAt, lastStepAt = nu
           {reported.input.toLocaleString('en-US')} in · {reported.output.toLocaleString('en-US')} out
         </span>
       ) : null}
-      <span className="ml-auto shrink-0">
-        <Button variant="secondary" size="sm" ariaLabel="Stop this turn" title={stopShortcut ? `Stop this turn (${bindingLabel('stop-turn')})` : 'Stop this turn'}
-          onClick={onStop} className="max-md:min-h-11 max-md:min-w-11">
-          Stop{stopShortcut ? <kbd aria-hidden="true" data-type="label-s" className="ml-xs text-on-surface-var">{bindingLabel('stop-turn')}</kbd> : null}
-        </Button>
-      </span>
       {/* The row's one live region: what the turn is doing, said once each time it changes. */}
       <span role="status" aria-live="polite" className="sr-only">{said}</span>
     </div>

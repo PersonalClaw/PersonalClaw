@@ -5,7 +5,7 @@ here first. [`web/DESIGN.md`](../../web/DESIGN.md) wins every conflict.
 
 ## Purpose
 
-One small orb in the turn's status row, pinned above the composer, shows what the agent is doing in
+One small orb in the turn's live line, at the end of the conversation, shows what the agent is doing in
 a chat turn, and says it in one static line. It goes still the moment the owner is needed. It replaces the pulsing "Thinking…"
 indicator and the composer halo as the working signal, so the default look needs no light around
 the composer to show that the agent is at work. With no turn running, nothing on the page animates.
@@ -82,19 +82,21 @@ differ by glyph as well as tone, so no two waiting or failed states are told apa
 
 ## Placement
 
-- **The turn's status row, 20 px:** one row pinned at the bottom of the conversation, just above
-  the composer and outside the transcript's scroll (`web/src/ui/TurnStatusRow.tsx`, `web/REDESIGN.md`
-  §5 "Live state sits at the bottom"). It shows whenever a turn runs, wherever the owner has
-  scrolled, and goes when the turn ends, so a finished reply carries no mark and the head of a
+- **The turn's live line, 20 px:** one bare line at the end of the conversation, under the latest
+  message in the turn column, with no border, background or pill (`web/src/ui/TurnStatusRow.tsx`,
+  `web/REDESIGN.md` §5 "Live state sits at the bottom"). It scrolls with the thread, shows whenever
+  a turn runs, and goes when the turn ends, so a finished reply carries no mark and the head of a
   reply never animates. Beside the orb are the status line, a word that turns over while the turn
-  works (never said, and still under reduced motion), the time since the turn began, the tokens the
-  model reported for it (none until one is reported) and Stop, which Esc presses too.
+  works (never said, and still under reduced motion), the time since the turn began and the tokens
+  the model reported for it (none until one is reported). Stop is on the composer: its send
+  button, or a secondary Stop beside Steer or Queue once a draft is typed. Esc presses it too.
 - **The history peek, 20 px:** the chat history's peek panel heads the peeked chat's running reply
   with a turn head (`web/src/pages/chat/transcript/TurnHead.tsx`), from that chat's run state and its `work_phase` frames, so it says
   what a turn started anywhere is doing, and a message sent from the peek is waiting to start until
   the gateway says more.
 - **The send button:** while a turn runs, it is the Stop control, morphed from the send arrow with
-  a thin sweep. It stays the Stop control. The sweep is a quarter arc in the button's own ink, just
+  a thin sweep. It stays the Stop control until a draft is typed, when it steers or queues the
+  draft and a secondary Stop, with no sweep, sits beside it. The sweep is a quarter arc in the button's own ink, just
   inside its rim, that turns once per Loading sweep (`sweep()` in `web/src/design/motion.ts`), and
   it goes when the turn ends. It reads the turn's phase as the orb does: while the turn waits on
   the owner (`approval` or `input`) the arc holds still where it is, and it turns on from there

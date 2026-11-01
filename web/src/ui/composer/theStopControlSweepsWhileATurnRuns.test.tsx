@@ -60,7 +60,7 @@ function composer(props: Partial<ComposerProps> = {}) {
   return <Composer value="" onChange={() => {}} onSend={() => {}} onStop={() => {}} controls={CONTROLS} {...props} />
 }
 
-const stopControl = () => screen.getByRole('button', { name: 'Stop' })
+const stopControl = () => screen.getByRole('button', { name: 'Stop this turn' })
 /** The arc, wherever the composer draws it: decoration, so it is found by its mark, not its role. */
 const arcs = () => document.querySelectorAll<HTMLElement>('[data-stop-sweep-arc]')
 /** The angle framer has written on the arc, in degrees (0 before its first frame). */

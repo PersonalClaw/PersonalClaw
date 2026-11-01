@@ -220,7 +220,7 @@ describe('Speak replies aloud', () => {
     await sendSeeded()
     act(() => { deliver(['chat_chunk', { content: 'Half a ', seq: 1 }]) })
     paintFrames()
-    await user.click(await screen.findByRole('button', { name: 'Stop' }))
+    await user.click(await screen.findByRole('button', { name: 'Stop this turn' }))
     act(() => { deliver(['chat_done', {}]) })
     paintFrames()
     await new Promise((r) => setTimeout(r, 50))
