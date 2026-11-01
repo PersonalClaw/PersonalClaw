@@ -129,6 +129,8 @@ class FakeGh:
         self.behind = 0
         self.head_runs: list[dict] = []
         self.events: list[dict] = []
+        #: Main's rules, which the tree check reads for a merge queue (0.4.0 A1): none yet.
+        self.rules: list[dict] = [{"type": "pull_request"}]
         #: Other runs, by id: the run object, its first attempt, and its artifacts.
         self.others: dict[int, dict] = {}
 
@@ -193,6 +195,8 @@ class FakeGh:
             return json.dumps({"total_count": len(self.head_runs), "workflow_runs": self.head_runs})
         if path.startswith("repos/o/r/issues/"):
             return json.dumps(self.events)
+        if path.startswith("repos/o/r/rules/branches/main"):
+            return json.dumps(self.rules)
         for ident, other in self.others.items():
             base = f"repos/o/r/actions/runs/{ident}"
             if path == base:
