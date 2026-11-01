@@ -314,8 +314,8 @@ async def test_a_command_a_bash_action_runs_from_its_payload_is_judged_as_what_r
     assert refused.success is False and RULE in refused.error
     assert spawns == []
     # A value the command only prints is data: it runs, whatever words it holds.
-    note = ActionContext(event="run", payload={"NOTE": f"remember {DENIED}"})
-    shown = await BashActionProvider().execute({"command": 'printf "%s" "$NOTE"'}, note)
+    note = ActionContext(event="run", payload={"note": f"remember {DENIED}"})
+    shown = await BashActionProvider().execute({"command": 'printf "%s" "$note"'}, note)
     assert shown.success and shown.stdout == f"remember {DENIED}"
 
 
