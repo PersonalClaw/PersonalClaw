@@ -2517,7 +2517,10 @@ class FakeQueue:
         self.entries = list(entries)
 
     def __call__(self, text: str, variables: Mapping[str, object]) -> Any:
-        assert "mergeQueue" in text and variables == {"owner": "owner", "name": "project"}
+        if "mergeQueue" not in text:
+            # Any other read (a red's retry note) is unanswered here, as a GraphQL error would be.
+            raise OSError("no planted answer for this query")
+        assert variables == {"owner": "owner", "name": "project"}
         nodes = list(self.entries)
         return {"data": {"repository": {"mergeQueue": {"entries": {
             "totalCount": len(nodes), "nodes": nodes}}}}}  # fmt: skip
@@ -3129,3 +3132,59 @@ def test_the_flaky_title_is_flaky_tests_own() -> None:
     for test in (FLAKY_TEST, "tests/test_long.py::test_" + "x" * 300):
         assert mc.flaky_title(test) == flaky_issues.title(test)
     assert (mc.FLAKY_LABEL, mc.FLAKY_PREFIX) == (flaky_issues.LABEL, flaky_issues.PREFIX)
+
+
+# ── A queue commit's red carries the retry note too (R2's re-enqueue reads it) ────────────────
+
+
+def _queue_red_run(
+    notes: tuple[str, ...] = _counted(_failed()), retry: FakeRetry | None = None
+) -> tuple[FakeApi, mc.Queue]:
+    """#12's queue commit, its run red in one suite shard naming one flaky test; the queue's read
+    and the retry note's, each answered by its own fake."""
+    api, entries = _queued()
+    api.jobs(1, (SHARD, "completed", "failure"), ("results", "completed", "failure"))
+    api.flakes(1, *notes, title="failed test")
+    answers = retry or FakeRetry()
+
+    def query(text: str, variables: Mapping[str, object]) -> Any:
+        return (
+            answers(text, variables)
+            if "HeadRefForcePushedEvent" in text
+            else entries(text, variables)
+        )
+
+    return api, mc.Queue(query, APP, True)
+
+
+def test_a_queue_commit_s_red_counts_its_removals_and_says_it_is_flake_class() -> None:
+    api, queue = _queue_red_run(retry=FakeRetry(timeline=(_removed(),)))
+    outcome = mc.decide(api, REPO, RUN, CONTROLLER, queue)
+    found = outcome.posting
+    assert found is not None and found.conclusion == "failure" and found.head_sha == QUEUE
+    assert found.output["title"].startswith("Red (retry 1 of 2, flake-class): ")
+    assert "- flake-class: 1 failed test(s)" in found.output["summary"]
+
+
+def test_a_queue_commit_s_failed_test_that_reads_its_change_is_not_flake_class() -> None:
+    """The queue commit's change against its parent is what its tests ran on: a failed test whose
+    own file it changes is not flake-class."""
+    api, queue = _queue_red_run()
+    files = [
+        {"filename": "README.md", "status": "modified", "patch": README_PATCH, "sha": "1" * 40},
+        {"filename": "tests/test_timing.py", "status": "modified", "patch": "@@ -1 +1 @@\n+x"},
+    ]
+    api.answers[f"/repos/{REPO}/compare/{MAIN}...{QUEUE}"] = {"files": files}
+    api.answers[f"/repos/{REPO}/compare/main...{HEAD}"] = {"files": files}
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.output["title"].startswith("Red (retry 0 of 2): ")
+    assert "reads `tests/test_timing.py`, which the pull request changes" in found.output["summary"]
+
+
+def test_a_queue_commit_s_note_it_cannot_read_leaves_its_red_as_it_is() -> None:
+    api, queue = _queue_red_run()
+    del api.answers[f"/repos/{REPO}/git/commits/{HEAD}"]
+    found = mc.decide(api, REPO, RUN, CONTROLLER, queue).posting
+    assert found is not None and found.conclusion == "failure"
+    assert found.output["title"].startswith("Red: ")
+    assert "- retries not counted: unread: " in found.output["summary"]

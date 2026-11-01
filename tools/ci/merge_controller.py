@@ -131,7 +131,8 @@ every job that did not pass is a suite, end-to-end or web-unit job's, failed in 
 ``results`` job names (``verdict.FAILED_NOTICE``, all of them, by its count) or cancelled or timed
 out with none, and each failed test was classified by its rerun, reads no file the pull request
 changes, and has an open flaky-test issue the workflow or a maintainer filed
-(:func:`flake_class`). The note changes no conclusion, and one it cannot read says so.
+(:func:`flake_class`). A queue commit's red carries the same note (:func:`_queue_retry_note`).
+The note changes no conclusion, and one it cannot read says so.
 
 The verdict is ``success`` or ``failure``, never neutral, and an answer the API would not give is
 ``failure``, named as unread. ``post`` sends the check run with the controller App's token, and
@@ -1867,30 +1868,90 @@ def _retry_note(
 
 
 def retry(
-    get: Get, repo: str, run: Run, tree_oid: str, others: list[str], queue: Queue | None
+    get: Get,
+    repo: str,
+    run: Run,
+    tree_oid: str,
+    others: list[str],
+    queue: Queue | None,
+    *,
+    pull: int | None = None,
+    head: str = "",
+    changed: Mapping[tuple[str, str], object] | None = None,
 ) -> Retry | str:
     """What the red verdict on a pull request's run says of its retries, or why it says nothing
     but that. The count is the run's attempts after the first, and each earlier head of the pull
     request whose newest verdict is a red that waits on nothing and that has the head's tree or
     makes its change, the same ``+/-`` lines in the same files; and each time main's merge queue
-    removed the head as it is now for failed checks, since a re-enqueue is a retry."""
+    removed the head as it is now for failed checks, since a re-enqueue is a retry.
+
+    A queue commit's red (:func:`_queue_retry_note`) names its pull request (*pull*) and that
+    pull request's *head*, whose tree and change the earlier heads are held to, and the queue
+    commit's own change against its parent (*changed*), which its failed tests are read against.
+    """
     if queue is None:
         return "no GraphQL read was given"
-    if run.pull is None:
+    number = run.pull if pull is None else pull
+    if number is None:
         return "the run names no pull request of this repository"
-    timeline = _retry_read(queue.query, repo, run.pull)
-    own = _change(get, repo, "main", run.head_sha)
+    head = head or run.head_sha
+    timeline = _retry_read(queue.query, repo, number)
+    own = _change(get, repo, "main", head)
     count = run.attempt - 1 + timeline.removed
     for sha, tree in timeline.heads:
-        if sha == run.head_sha:
+        if sha == head:
             continue
         check = _newest_verdict(get, repo, sha, queue.app)
         if check is None or check.get("conclusion") != "failure" or _waiting(check):
             continue
         if tree == tree_oid or _change(get, repo, "main", sha) == own:
             count += 1
-    ok, why = flake_class(get, repo, run, others, own, timeline.flaky)
+    ok, why = flake_class(
+        get, repo, run, others, own if changed is None else changed, timeline.flaky
+    )
     return Retry(count, ok, why)
+
+
+def _commit_tree(get: Get, repo: str, sha: str) -> str:
+    commit = _read(get, f"/repos/{repo}/git/commits/{sha}")
+    tree = commit.get("tree") if isinstance(commit, Mapping) else None
+    oid = tree.get("sha") if isinstance(tree, Mapping) else None
+    if not isinstance(oid, str) or not _SHA.fullmatch(oid):
+        raise Unread(f"commit {sha} names no tree")
+    return oid
+
+
+def _queue_retry_note(
+    get: Get,
+    repo: str,
+    run: Run,
+    entry: Entry,
+    built_on: str,
+    failing: list[str],
+    reasons: list[str],
+    queue: Queue,
+) -> Retry | str | None:
+    """The retry note on a queue commit's red (0.4.0 A5, R2's re-enqueue reads it): its pull
+    request's removals from the queue and the run's attempts counted, with the pull request's
+    earlier heads as on a pull request's red, and flake-class read from the queue commit's own
+    run, its failed tests held to the queue commit's change against its parent. None on a red
+    whose every reason waits."""
+    if all(r.startswith(WAITING) for r in reasons):
+        return None
+    try:
+        return retry(
+            get,
+            repo,
+            run,
+            _commit_tree(get, repo, entry.pr_head),
+            [r for r in reasons if r not in failing],
+            queue,
+            pull=entry.number,
+            head=entry.pr_head,
+            changed=_change(get, repo, built_on, run.head_sha),
+        )
+    except (Unread, trust.Refused) as exc:
+        return f"unread: {exc}"
 
 
 # ── A queue commit of main's merge queue (0.4.0 A1) ─────────────────────────────────────────
@@ -2117,7 +2178,13 @@ def decide_queue(
         )
         reasons.append(f"{WAITING_CONTRACT}{running}")
     if reasons:
-        return Outcome(posting=_red(run, reasons, sha), dispatch=start, base=base, cleanup=cleanup)
+        retried = _queue_retry_note(get, repo, run, entry, built_on, failing, reasons, queue)
+        return Outcome(
+            posting=_red(run, reasons, sha, None, retried),
+            dispatch=start,
+            base=base,
+            cleanup=cleanup,
+        )
     toolchain = {
         "runner": ",".join(labels) or "unnamed",
         "definitions": base,
