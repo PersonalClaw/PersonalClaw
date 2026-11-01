@@ -1937,44 +1937,11 @@ def token_auth_middleware(
     mixed_routes = tuple(InternalRoute.parse(entry) for entry in sorted(mixed_internal_routes))
 
     def _resolved_client_ip(request: web.Request) -> str:
-        """Return the browser's IP, preferring a forwarded header from a TRUSTED peer.
+        """Return the browser's IP, preferring a forwarded header from a TRUSTED peer: the one
+        rule (``exposure.client_address``), which the sign-in lockout counts by too."""
+        from personalclaw.dashboard.exposure import client_address
 
-        nginx (or any reverse proxy in the same compose network) sees the gateway's container
-        IP as the TCP remote, not the actual client, so a forwarded header is the only way to
-        recover the real one — and the real one is what IP binding binds to.
-
-        **An exposed instance tightens who may set it.** Once the operator declares this
-        instance internet-exposed (`dashboard.public_url`), only a peer listed in
-        `dashboard.trusted_proxies` is believed. Before that change the rule was the shape of
-        the TCP remote — "starts with 10./172.1x/192.168." — which is the classic mistake: on
-        an exposed box every container neighbour, LAN device and SSRF-able local service sits
-        on a private address, so any of them could set `X-Real-IP` and move a bound session to
-        an address of their choosing.
-
-        **Not exposed ⇒ behavior is unchanged**, deliberately. Home/compose installs depend on
-        the private-subnet heuristic today, and silently breaking their nginx would be a
-        regression paid by everyone to harden the few. Exposure is the operator's own
-        statement, and it is what switches the strict rule on.
-        """
-        raw = request.remote or "unknown"
-        forwarded = request.headers.get("X-Real-IP", "").strip()
-        if not forwarded:
-            return raw
-        try:
-            from personalclaw.dashboard.exposure import is_exposed, is_trusted_proxy
-
-            if is_exposed():
-                # Strict: an explicitly trusted peer, or the header is ignored entirely.
-                if is_trusted_proxy(raw):
-                    return forwarded
-                logger.debug("ignoring X-Real-IP from untrusted peer on an exposed instance")
-                return raw
-        except Exception:  # noqa: BLE001 — never let this decision break a request
-            logger.debug("exposure check failed; using the legacy proxy heuristic", exc_info=True)
-        is_proxy = raw.startswith(
-            ("127.", "10.", "172.1", "172.2", "172.3", "192.168.", "::1", "fc", "fd")
-        )
-        return forwarded if is_proxy else raw
+        return client_address(request)
 
     def _adopt(request: web.Request, credentials: _Credentials) -> None:
         """Expose the verified identity to handlers — never the credential itself.

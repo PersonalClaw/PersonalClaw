@@ -457,6 +457,64 @@ async def test_a_wrong_code_counts_toward_lockout(_isolated) -> None:
 
 
 @pytest.mark.asyncio
+async def test_behind_a_trusted_proxy_a_wrong_code_counts_against_its_visitor_only(_isolated):
+    """The pairing code shares the sign-in lockout, and its count. 🔴 Red before the fix: one
+    visitor's wrong codes through the proxy locked out the next visitor's right one."""
+    (_isolated / "config.json").write_text(
+        json.dumps(
+            {
+                "auth": {"login_enabled": True, "lockout_threshold": 2},
+                "dashboard": {
+                    "public_url": "https://claw.example.com",
+                    "trusted_proxies": ["127.0.0.1"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    async with TestClient(TestServer(_enroll_app())) as client:
+        for _ in range(2):
+            wrong = await client.post(
+                "/api/auth/enroll/complete",
+                json={"code": "AAAABBBB"},
+                headers={"X-Real-IP": "203.0.113.7"},
+            )
+            assert wrong.status == 401
+        locked = await client.post(
+            "/api/auth/enroll/complete",
+            json={"code": "AAAABBBB"},
+            headers={"X-Real-IP": "203.0.113.7"},
+        )
+        assert locked.status == 429
+        other = await client.post(
+            "/api/auth/enroll/complete",
+            json={"code": "AAAABBBB"},
+            headers={"X-Real-IP": "198.51.100.9"},
+        )
+        assert other.status == 401, "another visitor is not locked out by the first one's codes"
+
+
+@pytest.mark.asyncio
+async def test_without_a_trusted_proxy_a_codes_x_real_ip_changes_nothing(_isolated) -> None:
+    (_isolated / "config.json").write_text(
+        json.dumps({"auth": {"login_enabled": True, "lockout_threshold": 2}}), encoding="utf-8"
+    )
+    async with TestClient(TestServer(_enroll_app())) as client:
+        for visitor in ("203.0.113.7", "203.0.113.8"):
+            await client.post(
+                "/api/auth/enroll/complete",
+                json={"code": "AAAABBBB"},
+                headers={"X-Real-IP": visitor},
+            )
+        locked = await client.post(
+            "/api/auth/enroll/complete",
+            json={"code": "AAAABBBB"},
+            headers={"X-Real-IP": "198.51.100.9"},
+        )
+        assert locked.status == 429
+
+
+@pytest.mark.asyncio
 async def test_enroll_complete_rejects_a_cross_origin_request(_isolated) -> None:
     _write_config(_isolated)
     async with TestClient(TestServer(_enroll_app())) as client:

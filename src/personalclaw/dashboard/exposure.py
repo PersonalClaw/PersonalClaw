@@ -141,3 +141,69 @@ def is_trusted_proxy(peer: str, cfg: Any | None = None) -> bool:
         except ValueError:
             logger.warning("ignoring unparseable trusted_proxies entry %r", entry)
     return False
+
+
+#: The private address shapes the session rule takes for a proxy on an instance not declared
+#: exposed (:func:`client_address`).
+_PRIVATE_PEERS = ("127.", "10.", "172.1", "172.2", "172.3", "192.168.", "::1", "fc", "fd")
+
+
+def client_address(request: Any, *, private_peers: bool = True) -> str:
+    """The address of the client behind *request*: a proxy's `X-Real-IP` where the proxy is
+    believed, the connection's own address otherwise. The one rule sessions bind to and the
+    sign-in lockout counts by.
+
+    nginx (or any reverse proxy in the same compose network) sees the gateway's container IP as
+    the TCP remote, not the actual client, so a forwarded header is the only way to recover the
+    real one.
+
+    **An exposed instance tightens who may set it.** Once the operator declares this instance
+    internet-exposed (`dashboard.public_url`), only a peer listed in `dashboard.trusted_proxies`
+    is believed. Trusting a peer by shape ("starts with 10./172.1x/192.168.") is the classic
+    mistake: on an exposed box every container neighbour, LAN device and SSRF-able local service
+    sits on a private address, so any of them could set `X-Real-IP`.
+
+    **Not exposed: the session rule is unchanged**, deliberately. Home/compose installs depend on
+    the private-address heuristic for a session's binding. *private_peers* ``False`` drops that
+    heuristic, and the sign-in lockout passes it: a caller on the LAN of an unexposed instance
+    must not choose the address its failures are counted under, so there too only a configured
+    trusted proxy is believed. With no trusted proxy configured, the lockout counts the
+    connection's address, as it always did.
+    """
+    raw = getattr(request, "remote", None) or "unknown"
+    forwarded = request.headers.get("X-Real-IP", "").strip()
+    if not forwarded:
+        return raw
+    try:
+        if is_exposed() or not private_peers:
+            # Strict: an explicitly trusted peer, or the header is ignored entirely.
+            if is_trusted_proxy(raw):
+                return forwarded
+            logger.debug("ignoring X-Real-IP from a peer that is not a trusted proxy")
+            return raw
+    except Exception:  # noqa: BLE001 — never let this decision break a request
+        if not private_peers:
+            return raw
+        logger.debug("exposure check failed; using the legacy proxy heuristic", exc_info=True)
+    return forwarded if raw.startswith(_PRIVATE_PEERS) else raw
+
+
+def counts_every_visitor_together(request: Any) -> bool:
+    """Whether the sign-in lockout counts *request* under a trusted proxy's own address, which
+    it does when the proxy sends no `X-Real-IP` (a tunnel that sets another header): every
+    visitor through that proxy then shares one count, and a lockout says so."""
+    raw = getattr(request, "remote", None) or ""
+    return not request.headers.get("X-Real-IP", "").strip() and is_trusted_proxy(raw)
+
+
+def proxy_not_listed(request: Any) -> bool:
+    """Whether *request* came through a proxy the sign-in lockout does not believe: a loopback or
+    private peer that sent `X-Real-IP` but is not in `dashboard.trusted_proxies`. The lockout
+    counts it under the proxy's own address, so every visitor through it shares one count until
+    it is listed."""
+    raw = getattr(request, "remote", None) or ""
+    return (
+        bool(request.headers.get("X-Real-IP", "").strip())
+        and raw.startswith(_PRIVATE_PEERS)
+        and not is_trusted_proxy(raw)
+    )

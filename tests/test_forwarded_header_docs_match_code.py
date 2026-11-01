@@ -37,11 +37,11 @@ from forwarded_header_docs_match_code_shared import SRC
 
 def test_the_header_reader_is_gated_on_trusted_proxies_when_exposed():
     """The promise is not just WHICH header, it is *honored only from a trusted proxy*. Asserted
-    against the source of `_resolved_client_ip` because the closure is built inside
-    `token_auth_middleware` and is not importable on its own."""
-    text = (SRC / "dashboard" / "token_auth.py").read_text(encoding="utf-8")
-    start = text.index("def _resolved_client_ip(")
-    body = text[start : text.index("\n    def ", start + 10)]
+    against the source of `exposure.client_address`, the one rule sessions (`token_auth`'s
+    `_resolved_client_ip`) and the sign-in lockout read the client address by."""
+    text = (SRC / "dashboard" / "exposure.py").read_text(encoding="utf-8")
+    start = text.index("def client_address(")
+    body = text[start : text.index("\ndef ", start + 10)]
     assert 'headers.get("X-Real-IP"' in body
     assert "is_exposed()" in body and "is_trusted_proxy(" in body, (
         "the forwarded header must be gated on exposure + trusted_proxies, which is the half of "
