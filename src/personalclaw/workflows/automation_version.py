@@ -29,6 +29,8 @@ may start, by the same rule (:func:`bound_for`): a workflow the run's automation
 starts at the version allowed, or a newer one the owner saved herself, and carries the versions on
 to its own steps; any other workflow, and a draft run, is refused in words. A subagent of that
 agent, and the work of a run it started, is held the same way, up the chain its work is done for.
+And it changes only a run of its own that carries those versions: an edit, a rewind, a run from a
+step or a fork of any other run is refused in words (:func:`change_refusal`).
 
 A version the automation was allowed that can no longer be found is refused, never swapped for
 another: the run does not start, and it says why and what to do (:attr:`Runs.problem`).
@@ -344,6 +346,22 @@ def bound_for(session_key: str, *, state: Any = None) -> tuple[dict[str, Allowed
     *state* is the gateway's dashboard state, whose running agents are read (``state.subagents``),
     else the state the gateway hands its own work (`action_providers.services`).
     """
+    bound, why, _runs = _chain(session_key, state=state, untold=_UNTOLD_START)
+    return bound, why
+
+
+#: How a chain that cannot be read ends its sentence, for a start (:func:`bound_for`) and for a
+#: change of a run (:func:`change_refusal`).
+_UNTOLD_START = "which workflows it may start cannot be told, and none was started"
+_UNTOLD_CHANGE = "which runs it may change cannot be told, and the run was not changed"
+
+
+def _chain(
+    session_key: str, *, state: Any = None, untold: str = _UNTOLD_START
+) -> tuple[dict[str, Allowed] | None, str, list[str]]:
+    """:func:`bound_for`'s answer, and the runs the work of *session_key* is done for that the walk
+    passed through on its way, nearest first, the run that binds it included. A chain that cannot
+    be read says so, ending with *untold*."""
     from collections import deque
 
     from personalclaw import session_keys
@@ -352,16 +370,17 @@ def bound_for(session_key: str, *, state: Any = None) -> tuple[dict[str, Allowed
     agents = getattr(state if state is not None else _gateway_state(), "subagents", None)
     pending = deque([(session_key or "").strip()])
     seen: set[str] = set()
+    passed: list[str] = []
     while pending:
         key = pending.popleft()
         if not key or key in seen:
             continue
         if len(seen) >= _MOST_LINKS:
-            return None, (
+            why = (
                 "the work this agent does is done for a chain of runs and agents longer than "
-                "PersonalClaw follows, so which workflows it may start cannot be told, and none "
-                "was started"
+                f"PersonalClaw follows, so {untold}"
             )
+            return None, why, passed
         seen.add(key)
         if session_keys.SUBAGENT.names(key):
             info = _agent(agents, key[len(session_keys.SUBAGENT.prefix) :])
@@ -378,15 +397,19 @@ def bound_for(session_key: str, *, state: Any = None) -> tuple[dict[str, Allowed
             continue
         run = _run_named(run_id)
         if run is None:
-            return None, (
-                f"the run this agent works for ({run_id}) cannot be read, so which workflows it "
-                "may start cannot be told, and none was started"
-            )
+            why = f"the run this agent works for ({run_id}) cannot be read, so {untold}"
+            return None, why, passed
+        passed.append(run_id)
         bound = bound_in(run)
         if bound is not None:
-            return bound, ""
-        pending.append(str(getattr(getattr(run, "origin", None), "session_key", "") or ""))
-    return None, ""
+            return bound, "", passed
+        pending.append(_started_for(run))
+    return None, "", passed
+
+
+def _started_for(run: Any) -> str:
+    """The session the run *run* was started for (``origin.session_key``), or ``""``."""
+    return str(getattr(getattr(run, "origin", None), "session_key", "") or "")
 
 
 def _gateway_state() -> Any:
@@ -555,6 +578,30 @@ def draft_refusal(run_id: str, session_key: str, state: Any = None) -> str:
         "an agent working for an automation's run starts only a workflow the automation was "
         f"allowed with, at the version allowed, and the draft run {run_id!r} is none of them, "
         "so it was not started. Start it yourself if you want it run."
+    )
+
+
+def change_refusal(run_id: str, session_key: str, state: Any = None) -> str:
+    """Why a change of the run *run_id* made for the work of *session_key* is refused, or ``""``:
+    an edit, a rewind, a run from a step, or a fork (`service`).
+
+    Work done for a run an owner-allowed automation started (:func:`bound_for`) changes only a run
+    of its own: one its work is done for, up to the run that binds it, or one started for that
+    work, and only one that carries the versions it may run (:func:`bound_in`). Any other run's
+    steps start each workflow as it is now, so a change there would run under the owner's yes to
+    the automation what she never allowed. A chain that cannot be read changes none, and says why.
+    """
+    held_to, untold, passed = _chain(session_key, state=state, untold=_UNTOLD_CHANGE)
+    if untold or held_to is None:
+        return untold
+    run = _run_named(run_id)
+    if run is not None and bound_in(run) is not None:
+        if run_id in passed or _started_for(run) == (session_key or "").strip():
+            return ""
+    return (
+        "an agent working for an automation's run changes only that run and the runs it started "
+        f"with the versions the automation was allowed, and the run {run_id!r} is not one of "
+        "them, so it was not changed. Change it yourself if you want it changed."
     )
 
 

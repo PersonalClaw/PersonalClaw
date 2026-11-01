@@ -1512,6 +1512,7 @@ async def api_run_edit(request: web.Request) -> web.Response:
         actor="user" if hers else "chat",
         # Her yes to a step the edit would let do more, the consent dialog's answer.
         owner_allowed=hers and confirm_granted(body),
+        session_key=approval_answer.work_of_request(request),
     )
     if result.get("code") == "WF_MUT_NEEDS_OWNER_YES":
         field = str(result.get("field") or "")
@@ -1781,6 +1782,8 @@ async def _reentry(request: web.Request, operation: str, fn: Any) -> web.Respons
     kwargs: dict[str, Any] = {
         "supervisor": _supervisor(request),
         "confirm_cascade": confirm_granted(body, "confirm_cascade"),
+        # The work of a run an allowed automation started changes only a run of its own.
+        "session_key": approval_answer.work_of_request(request),
     }
     if fn is service.rewind_run:
         kwargs["redo_effects"] = bool_field(body, "redo_effects", default=False)
@@ -1802,6 +1805,7 @@ async def api_run_fork(request: web.Request) -> web.Response:
         checkpoint_id=str(body.get("checkpoint_id", "") or ""),
         note=str(body.get("note", "") or ""),
         supervisor=_supervisor(request),
+        session_key=approval_answer.work_of_request(request),
     )
     _audit(request, "workflow_run_fork", "success" if result.get("ok") else "failure", run_id)
     return _reply(result, status=201 if result.get("ok") else 200)

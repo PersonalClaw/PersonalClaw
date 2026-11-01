@@ -1485,6 +1485,15 @@ def _live(run_id: str, supervisor: Any) -> Any | None:
     return getter(run_id) if callable(getter) else None
 
 
+def _not_its_own(run_id: str, session_key: str, supervisor: Any) -> dict[str, Any] | None:
+    """The refusal of a change of *run_id* (an edit, a rewind, a run from a step, a fork) made for
+    the work of a run an owner-allowed automation started, when the run is not one of its own
+    (`automation_version.change_refusal`); None for every other change."""
+    state = getattr(supervisor, "state", None)
+    why = automation_version.change_refusal(run_id, session_key, state)
+    return _service_failure("WF_RUN_NOT_ALLOWED", why) if why else None
+
+
 def _run_not_found(run_id: str) -> dict[str, Any]:
     """The one 404 for a run-control verb.
 
@@ -1521,18 +1530,22 @@ def edit_run(
     confirm_cascade: bool = False,
     actor: str = "chat",
     owner_allowed: bool = False,
+    session_key: str = "",
 ) -> dict[str, Any]:
     """Queue a mutation batch on a live run.
 
     Requires a LIVE controller: mutation is only safe at the controller's drain point, and
     editing a run nobody is driving would write state with no one to apply it.
     `owner_allowed` is the owner's own yes to a step the edit would let do more (her ``confirm``
-    on her own edit); without it such an edit is refused (`mid_flight.posture_refusal`).
+    on her own edit); without it such an edit is refused (`mid_flight.posture_refusal`). An edit
+    made for the work of *session_key* is held to the runs that work may change (`_not_its_own`).
     """
     # Existence before liveness — see `_reentry`. This answered 409 "only a running workflow can
     # be edited" for an id that named no workflow at all (issue 765).
     if store.get(run_id) is None:
         return _run_not_found(run_id)
+    if (refused := _not_its_own(run_id, session_key, supervisor)) is not None:
+        return refused
     controller = _live(run_id, supervisor)
     if controller is None:
         return _service_failure(
@@ -2161,6 +2174,7 @@ def _reentry(
     redo_effects: bool = False,
     force: bool = False,
     confirm_cascade: bool = False,
+    session_key: str = "",
 ) -> dict[str, Any]:
     # Existence before liveness. A nonexistent run has no controller either, so asking `_live`
     # first answered 409 "resume the run before rewind" — remediation for a run that cannot be
@@ -2169,6 +2183,8 @@ def _reentry(
     run = store.get(run_id)
     if run is None:
         return _run_not_found(run_id)
+    if (refused := _not_its_own(run_id, session_key, supervisor)) is not None:
+        return refused
     controller = _live(run_id, supervisor)
     if controller is None:
         # The remediation names the verb that APPLIES to this run's phase. A draft has nothing to
@@ -2204,15 +2220,23 @@ def skip_nodes(run_id: str, node_ids: list[str], *, supervisor: Any = None) -> d
 
 
 def fork_run(
-    run_id: str, *, checkpoint_id: str = "", note: str = "", supervisor: Any = None
+    run_id: str,
+    *,
+    checkpoint_id: str = "",
+    note: str = "",
+    supervisor: Any = None,
+    session_key: str = "",
 ) -> dict[str, Any]:
     """Branch a new run. Works on a terminal run too — forking a finished result to explore
-    an alternative is the main reason to fork at all."""
+    an alternative is the main reason to fork at all. A fork made for the work of *session_key*
+    is held to the runs that work may change (`_not_its_own`)."""
     from personalclaw.workflows.checkpoints import fork_run as do_fork
 
     run = store.get(run_id)
     if run is None:
         return _service_failure("WF_RUN_NOT_FOUND", f"no run {run_id!r}")
+    if (refused := _not_its_own(run_id, session_key, supervisor)) is not None:
+        return refused
     spec = store.read_spec(run_id)
     if spec is None:
         return _service_failure("WF_RUN_NO_SPEC", f"run {run_id!r} has no readable spec")
