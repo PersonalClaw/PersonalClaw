@@ -152,15 +152,33 @@ describe('inbox proposal decision confirms itself (issue 283)', () => {
     expect(screen.queryByRole('button', { name: /install skill/i })).toBeNull()
   })
 
-  it('reads a 409 as ALREADY ANSWERED, never as the server sentence', async () => {
+  it('reads a 404 as ALREADY ANSWERED, never as the server sentence', async () => {
     // The cross-surface race that survives removing the buttons: answered on the Skills page (or
     // another tab) between this panel's load and the click.
-    acceptSkillProposal.mockRejectedValue(new ApiError(`no proposal '${PID}'`, 409))
+    acceptSkillProposal.mockRejectedValue(
+      new ApiError('This proposal was already answered somewhere else.', 404, 'skill_proposal_gone'),
+    )
 
     await userEvent.click(await openPanel())
 
     await waitFor(() => expect(screen.getByText(/already answered/i)).toBeTruthy())
-    expect(screen.queryByText(new RegExp(PID))).toBeNull()
+    expect(screen.queryByText(/somewhere else/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /install skill/i })).toBeNull()
+  })
+
+  it('shows a refused install its reason, and keeps Install and Reject', async () => {
+    // 🔴 Red before: every 409 read as "already answered", so the reason was never shown and the
+    // proposal, still waiting on the Skills page, looked decided here.
+    const reason =
+      "The skill could not be installed (could not write skill 'release-flow' (invalid, oversized, or exists)), so the proposal is still waiting."
+    acceptSkillProposal.mockRejectedValue(new ApiError(reason, 409, 'skill_proposal_not_installed'))
+
+    await userEvent.click(await openPanel())
+
+    await waitFor(() => expect(screen.getByText(reason)).toBeTruthy())
+    expect(screen.queryByText(/already answered/i)).toBeNull()
+    expect(screen.getByRole('button', { name: /install skill/i })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^reject$/i })).toBeTruthy()
   })
 
   it('still surfaces a GENUINE failure rather than swallowing it as answered', async () => {

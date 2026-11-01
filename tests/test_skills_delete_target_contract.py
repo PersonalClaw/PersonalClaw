@@ -83,7 +83,9 @@ def test_rejecting_a_real_proposal_returns_ok_true(home):
 def test_rejecting_a_missing_proposal_is_404_not_a_silent_ok_false(home):
     resp = _run(api_skill_proposal_reject(_req({"id": "nonexistent-id"})))
     assert resp.status == 404
-    assert "nonexistent-id" in _body(resp)["error"]
+    error = _body(resp)["error"]
+    assert error["code"] == "skill_proposal_gone"
+    assert error["id"] == "nonexistent-id"
 
 
 # ── ephemeral discard ─────────────────────────────────────────────────────────

@@ -1367,6 +1367,16 @@ HTTP_ERROR_CODES: dict[str, str] = {
         "The version of this skill that comes with PersonalClaw could not be installed; your "
         "copy is as it was."
     ),
+    # ── a skill proposal's decision (dashboard/handlers/skills.py — POST
+    #    /api/skills/proposals/{id}/accept and DELETE /api/skills/proposals/{id}) ──
+    # 404: the proposal is not waiting any more, answered or ended somewhere else (the Skills
+    # page, another tab, Home); a reader that prints only the sentence still says so. 409: the
+    # install was refused (the skill could not be written, or the refinement laid over its
+    # skill); the message is the reason, and the proposal is still waiting.
+    "skill_proposal_gone": "This proposal was already answered somewhere else.",
+    "skill_proposal_not_installed": (
+        "The skill could not be installed, so the proposal is still waiting."
+    ),
     # ── the prices model calls are counted at (dashboard/handlers/model_rates.py —
     #    PUT/DELETE /api/models/rates) ──
     # 409: `config.json`, where your prices are kept, could not be read, so saving would replace

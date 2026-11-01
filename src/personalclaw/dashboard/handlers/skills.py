@@ -1053,9 +1053,18 @@ async def api_skill_proposal_accept(request: web.Request) -> web.Response:
             description=(str(body["description"]) if body.get("description") else None),
             procedure_md=(str(body["procedure_md"]) if body.get("procedure_md") else None),
         )
-    except proposals.AcceptError as exc:
+    except proposals.ProposalGone as exc:
         await sel_log_async(_sel_log, "skills.proposal_accept", "rejected", f"{pid}:{exc}", request)
-        return web.json_response({"error": str(exc)}, status=409)
+        return json_error("skill_proposal_gone", status=404, error_extra={"id": pid})
+    except proposals.AcceptError as exc:
+        # Refused, and still waiting: the reason goes back, so the panel can say it and keep the
+        # proposal's buttons.
+        await sel_log_async(_sel_log, "skills.proposal_accept", "rejected", f"{pid}:{exc}", request)
+        return json_error(
+            "skill_proposal_not_installed",
+            message=f"The skill could not be installed ({exc}), so the proposal is still waiting.",
+            status=409,
+        )
     # The version is on the audit line, not only in the response: two refinements of one skill
     # are two different approvals, and an audit that records both as the bare skill name cannot
     # say which one a reader is looking at.
@@ -1083,5 +1092,5 @@ async def api_skill_proposal_reject(request: web.Request) -> web.Response:
     # while a double-submit or stale surface (Skills page / Inbox / ActionCenter
     # all offer the same id) had changed nothing (#636).
     if not ok:
-        return web.json_response({"error": f"proposal '{pid}' not found"}, status=404)
+        return json_error("skill_proposal_gone", status=404, error_extra={"id": pid})
     return web.json_response({"ok": True})

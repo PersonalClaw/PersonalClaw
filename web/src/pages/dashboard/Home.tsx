@@ -146,7 +146,8 @@ type Outcome =
  *  and verbatim: it is the only part that says WHICH knob to turn. */
 function failureText(verb: string, err: unknown): string {
   const detail = err instanceof Error && err.message ? err.message : String(err ?? 'unknown error')
-  return `Could not ${verb}: ${detail}. Nothing was recorded — it still needs you, so try again.`
+  // A server sentence ends in its own full stop; this one adds the next sentence's.
+  return `Could not ${verb}: ${detail.replace(/[.\s]+$/, '')}. Nothing was recorded — it still needs you, so try again.`
 }
 
 /** When an answer is refused because there is nothing left to decide, the sentence for it, or

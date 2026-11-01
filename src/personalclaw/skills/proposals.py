@@ -759,6 +759,11 @@ class AcceptError(Exception):
     """Raised when a proposal can't be accepted (invalid / write failed)."""
 
 
+class ProposalGone(AcceptError):
+    """The proposal is not in the queue: it was answered or ended somewhere else. Apart from a
+    refused install, which leaves the proposal waiting, so a client can tell the two apart."""
+
+
 @dataclass(frozen=True)
 class AcceptResult:
     """What an accept DID — the skill it touched and, for a refine, which version it wrote.
@@ -787,10 +792,11 @@ def accept(
 
     Optional ``description``/``procedure_md`` apply reviewer edits. Returns an
     :class:`AcceptResult` naming the written/updated skill AND, for a refine, the refinement
-    version it wrote. Raises ``AcceptError`` on failure."""
+    version it wrote. Raises ``AcceptError`` on failure, :class:`ProposalGone` for a proposal that
+    is no longer waiting."""
     prop = _load(pid)
     if prop is None:
-        raise AcceptError(f"no proposal {pid!r}")
+        raise ProposalGone(f"no proposal {pid!r}")
     from personalclaw.skills import overlays
     from personalclaw.skills.loader import AutoSkillProvenance, SkillsLoader
 
