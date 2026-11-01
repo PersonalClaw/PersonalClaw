@@ -586,6 +586,10 @@ defaults flipped, and some routes refuse input they used to accept. Run
 - **Short, off-topic answers and no tool calls** — you are talking to the small
   default model, and the notice above the composer says so. Bind a real model under
   **Settings → Models**.
+- **A request answered 403 Forbidden** — the gateway log says each refusal in one line:
+  the method, the path (never its query string), the reason and the caller's address
+  (`personalclaw logs`). One caller's refusals for one reason within a minute are counted
+  into a single line. Each refusal's full record is in `personalclaw security events`.
 - **Dashboard shows nothing / 404 assets** (source checkouts only) — the SPA
   isn't built: run `make web-build`, then restart the gateway. Wheel, uv, pipx,
   and Docker installs ship the prebuilt dashboard, so this never applies to them.

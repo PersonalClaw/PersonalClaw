@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **With more than one desktop tab open, the push-to-talk shortcut records in the tab you are using, or from another app in the tab you used last, instead of always the first tab, and each tab's capture is stopped after two minutes in that tab.**
 - **A skill proposal whose install is refused shows the reason in the Inbox and on Home and stays waiting, where the Inbox said it was already answered; accepting or rejecting a proposal answered somewhere else now answers `404 skill_proposal_gone` (it was `409` on accept), and a refused install `409 skill_proposal_not_installed`.**
 - **In a chat run by an agent CLI, a loop breaker stop ends the turn that was looping and the next turn runs normally, instead of every later turn being stopped at its first tool call; repeats are counted per turn, a turn with no failed call starts the failure count again, and the stop says how many turns it counted over.**
+- **A refused request leaves one WARNING line in the gateway log with its method, path (never its query string), reason and the caller's address; one caller's refusals for one reason within a minute are counted into one line, and each refusal's full record stays in `personalclaw security events`.**
 
 ## [0.3.2] — 2026-10-31
 
