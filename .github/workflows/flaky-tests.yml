@@ -2,14 +2,21 @@
 #
 # The merge verdict passes a pull request run whose only failures are flakes, so a test can flake
 # on every run and still merge. Once a day `flaky-tests` fetches the last 14 days of the
-# collector's histories (`python -m tools.ci fetch --days 15 --no-carry`), each checked to be the
-# collector's own upload as the weekly report checks it, and `python -m tools.ci flaky-issues`
-# keeps one issue for each test that passed as a flake twice in 7 days, titled
+# collector's histories (`python -m tools.ci fetch --days 15 --carry flaky-tests`), each checked
+# to be the collector's own upload as the weekly report checks it, and
+# `python -m tools.ci flaky-issues` keeps one issue for each test that passed as a flake twice in
+# 7 days, titled
 # "Flaky test: <id>" and labelled `flaky-test`. It edits that test's open issue, reopens its
 # closed one when two flakes came after it closed, or opens one; and it closes an open one after
 # 14 days with no flake, only when the window holds all 14 days. It writes only the issues this
 # workflow's account opened, and a body holds the test's id, its counts and its runs' links,
 # never a log line.
+#
+# It carries the window it fetched to its next day's run (`flaky-tests-window`, kept 3 days). The
+# next run takes it only when this workflow's own scheduled or dispatched run on main uploaded it
+# (tools/ci/fetch.py, CARRIES), checks every history in it again, and fetches only the collector
+# runs it does not hold: about 25 a day, where 15 days fetched afresh were about 740 histories
+# and twice the token's hourly calls.
 #
 # A workflow of its own, so the collector (ci-telemetry.yml) holds no write. Its own schedule
 # slot, daily at 11:23 UTC, after the collector's daily run and clear of every other workflow's.
@@ -32,7 +39,8 @@ jobs:
   flaky-tests:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
-    # About 140 histories, two calls and one download each.
+    # The carried window down and up (about 0.4 GB), and the day's new histories, two calls and one
+    # download each. A run with no carried window lists every collector run of the 15 days.
     timeout-minutes: 20
     permissions:
       contents: read
@@ -47,10 +55,22 @@ jobs:
         with:
           persist-credentials: false
       - name: fetch the last 14 days' histories
+        id: fetch
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -m tools.ci fetch --repo "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/window" --days 15 --no-carry
+        run: python3 -m tools.ci fetch --repo "$GITHUB_REPOSITORY" --out "$RUNNER_TEMP/window" --days 15 --carry flaky-tests
       - name: open, edit, reopen and close the flaky tests' issues
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -m tools.ci flaky-issues --repo "$GITHUB_REPOSITORY" --window "$RUNNER_TEMP/window"
+      # The window, for tomorrow's run: only once the fetch that built it succeeded, the window
+      # archive alone (the next run refuses an artifact holding anything else), stored as built.
+      - name: carry the window to the next run
+        if: ${{ !cancelled() && steps.fetch.outcome == 'success' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: flaky-tests-window
+          path: ${{ runner.temp }}/window/window.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3

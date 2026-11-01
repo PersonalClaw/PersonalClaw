@@ -30,15 +30,22 @@ holds.
 
 **The carried window.** 90 days are about 860 histories, and fetching each costs two calls of the
 job token's, which GitHub allows 1,000 an hour for the whole repository. So the weekly workflow
-carries the window it built to its next run as one artifact (:data:`CARRY`). The next run reads
-the uploading run through the API, by the id the artifact names, and takes the window only when
-that run is this workflow's own scheduled or dispatched run on main; anything else is ignored, and
-the window refills from the record within the budget, the status saying why. Every carried
-history is then checked again as a fetched one is: its collector run, which :data:`MANIFEST`
-names, must still be listed as the collector's own, and its own run must be shown. One that fails,
-or whose manifest entry is not in its shape, is dropped and, when its collector run is listed,
-fetched again. Only the collector runs the carried window does not hold are fetched: about 70 a
-week.
+carries the window it built to its next run as one artifact, and the daily flaky-tests workflow
+carries its 15 days to its next day's run the same way, each under its own name
+(:data:`CARRIES`, ``--carry``). The next run reads the uploading run through the API, by the id
+the artifact names, and takes the window only when that run is the carry's own workflow's
+scheduled or dispatched run on main; anything else is ignored, and the window refills from the
+record within the budget, the status saying why. Every carried history is then checked again as a
+fetched one is: its collector run, which :data:`MANIFEST` names, must still be listed as the
+collector's own, and its own run must be shown. One that fails, or whose manifest entry is not in
+its shape, is dropped and, when its collector run is listed, fetched again. One whose day is before
+the window's and whose collector run the listing no longer holds has aged out: it is counted as
+aged, neither dropped nor refused. Only the collector runs the carried window does not hold are
+fetched: about 70 a week, or 25 a day.
+
+**Refused before the download.** A history archive's name gives its run and attempt; when no
+counted workflow's listing shows them, the archive is refused by its name and never downloaded,
+the check :func:`history_refusal` makes again after any download.
 
 **A budget.** Before each history the fetch reads how many calls the token has left
 (``rate_limit``, which costs none) and stops at :data:`RESERVE`, so the other workflows keep
@@ -69,9 +76,16 @@ from typing import IO, Any
 
 from . import report, telemetry
 
-#: The artifact the weekly workflow carries its window in, and the workflow itself.
-CARRY = "flake-report-window"
-FLAKE_REPORT_PATH = f"{telemetry.WORKFLOWS}/flake-report.yml"
+#: The windows a workflow carries to its own next run, by the name ``--carry`` gives: the
+#: artifact it is carried in, the one workflow whose own scheduled or dispatched run on main is
+#: trusted to have uploaded it, and what the status calls that run. Fixed here and never read from
+#: the command line, so no run can point the fetch at another workflow's artifact.
+CARRIES: dict[str, tuple[str, str, str]] = {
+    "flake-report": ("flake-report-window", f"{telemetry.WORKFLOWS}/flake-report.yml", "weekly"),
+    "flaky-tests": ("flaky-tests-window", f"{telemetry.WORKFLOWS}/flaky-tests.yml", "daily"),
+}
+#: The weekly report's carry, the default.
+CARRY, FLAKE_REPORT_PATH, _ = CARRIES["flake-report"]
 CARRY_EVENTS = frozenset({"schedule", "workflow_dispatch"})
 #: The window: one stored archive of collector archives, and the file naming where each came from.
 WINDOW = "window.zip"
@@ -110,6 +124,8 @@ class FetchError(Exception):
 @dataclass
 class Fetched:
     carried: int = 0
+    #: Carried histories that left the window by age: neither dropped nor refused.
+    aged: int = 0
     dropped: int = 0
     fetched: int = 0
     refused: int = 0
@@ -332,9 +348,26 @@ def history_refusal(archive: IO[bytes], name: str, shown: Mapping[int, int]) -> 
     workflow, event, branch = head.get("workflow"), head.get("event"), head.get("branch")
     if event not in telemetry.COUNTED.get(str(workflow), ()) or branch != "main":
         return f"{name}: run {run} ({workflow}, {event}, {branch}) is not a counted run"
+    return _shown_refusal(name, run, attempt, shown)
+
+
+def _shown_refusal(name: str, run: int, attempt: int, shown: Mapping[int, int]) -> str | None:
+    """Why a history of ``run``'s ``attempt`` is not one a counted workflow's listing shows."""
     if run not in shown or attempt > shown[run]:
         return f"{name}: run {run} attempt {attempt} is not a run its workflow's listing shows"
     return None
+
+
+def _unshown(artifact: Mapping[str, Any], shown: Mapping[int, int]) -> str | None:
+    """Why a history archive is refused before its download: the run and attempt its name gives
+    are not ones a counted workflow's listing shows. :func:`history_refusal` makes the same check
+    after the download; made here first, an archive it would refuse costs no download (the
+    deleted ci.yml's histories, until they leave the window)."""
+    name = f"{artifact['name']}.zip"
+    match = HISTORY_ARCHIVE.fullmatch(str(artifact["name"]))
+    if not match:
+        return f"{name} is not named as a history"
+    return _shown_refusal(name, int(match.group(1)), int(match.group(2)), shown)
 
 
 def _slots_refusal(archive: IO[bytes], name: str) -> str | None:
@@ -384,26 +417,27 @@ class Window:
 
 
 def _carried_artifact(
-    text: Text, repo: str, download: Download, scratch: Path, got: Fetched
+    text: Text, repo: str, download: Download, scratch: Path, got: Fetched, carrier: str
 ) -> Path | None:
-    """The artifact this workflow's own last run carried, downloaded, or None (and why, in
-    ``got.carry``). The uploading run is read through the API by the id the artifact names, and
-    only this workflow's own scheduled or dispatched run on main is trusted, never a name."""
+    """The artifact ``carrier``'s workflow's own last run carried, downloaded, or None (and why,
+    in ``got.carry``). The uploading run is read through the API by the id the artifact names, and
+    only that workflow's own scheduled or dispatched run on main is trusted, never a name."""
+    carry, workflow, called = CARRIES[carrier]
     listed = _json(
-        text("api", f"repos/{repo}/actions/artifacts?name={CARRY}&per_page=100"),
+        text("api", f"repos/{repo}/actions/artifacts?name={carry}&per_page=100"),
         "the carried window",
     )
     candidates = [
         a
         for a in (listed.get("artifacts") or [] if isinstance(listed, dict) else [])
-        if isinstance(a, Mapping) and a.get("name") == CARRY and telemetry.upload_refusal(a) is None
+        if isinstance(a, Mapping) and a.get("name") == carry and telemetry.upload_refusal(a) is None
     ]
     if not candidates:
         return None
     newest = max(candidates, key=lambda a: (str(a.get("created_at") or ""), int(a["id"])))
     uploader = newest["workflow_run"]["id"]
     run = _json(text("api", f"repos/{repo}/actions/runs/{uploader}"), "its run")
-    if not telemetry.own_run(run, repo, FLAKE_REPORT_PATH, CARRY_EVENTS):
+    if not telemetry.own_run(run, repo, workflow, CARRY_EVENTS):
         got.carry = (
             f"refused: artifact {newest['id']} was uploaded by run {uploader}, which is not this "
             "workflow's own scheduled or dispatched run on main"
@@ -416,7 +450,7 @@ def _carried_artifact(
     except FetchError as err:
         got.carry = f"refused: {err}"
         return None
-    got.carry = f"kept: the window weekly run {uploader} carried"
+    got.carry = f"kept: the window {called} run {uploader} carried"
     return path
 
 
@@ -484,7 +518,14 @@ def _keep_carried(
             why = f"{archive} passes {limit} bytes"
         elif made is None:
             why = f"{archive}: its manifest entry has no time: {entry.get('created_at')!r}"
-        elif made < since:
+        elif made.date() < since.date() and run_id not in listed:
+            # It aged out, as the oldest of a carried window do on every run: its day is before
+            # the window's, which the collector's listing starts at, and the listing no longer
+            # holds its run. Not a history the window lost, so neither dropped nor refused.
+            got.aged += 1
+            continue
+        elif made.date() < since.date():
+            # Its collector run is listed in the window, so its manifest's time is not its run's.
             why = f"{archive} left the window"
         elif run_id not in listed:
             why = f"{archive}: collector run {run_id} is no longer the collector's own, listed"
@@ -547,11 +588,14 @@ def fetch(
     days: int = DAYS,
     reserve: int = RESERVE,
     carry: bool = True,
+    carrier: str = "flake-report",
     now: datetime.datetime | None = None,
     text: Text = _gh_text,
     download: Download = _gh_download,
     archive_limit: int | None = None,
 ) -> Fetched:
+    if carrier not in CARRIES:
+        raise ValueError(f"no carried window is named {carrier!r}: {sorted(CARRIES)}")
     out.mkdir(parents=True, exist_ok=True)
     limit = archive_limit or telemetry.MAX_HISTORY_ARCHIVE_BYTES
     now = now or datetime.datetime.now(datetime.UTC)
@@ -564,14 +608,16 @@ def fetch(
     part = out / f"{WINDOW}.part"
     window = Window(part)
     with tempfile.TemporaryDirectory() as scratch:
-        carried = _carried_artifact(text, repo, download, Path(scratch), got) if carry else None
+        carried = (
+            _carried_artifact(text, repo, download, Path(scratch), got, carrier) if carry else None
+        )
         if carried is not None:
             try:
                 with _carried_window(carried) as old:
                     _keep_carried(old, listed, shown, since, window, manifest, got)
             except (ValueError, zipfile.BadZipFile, OSError, EOFError) as err:
                 got.carry = f"refused: the carried window cannot be read: {err}"
-                got.carried = got.dropped = 0
+                got.carried = got.aged = got.dropped = 0
                 window.close()
                 window, manifest = Window(part), {}
 
@@ -600,11 +646,11 @@ def fetch(
                 got.left += 1
                 continue
             artifact = _uploaded(text, repo, run, HISTORY_ARCHIVE, limit, got.refusals)
-            name = (
-                None
-                if artifact is None
-                else _kept(repo, artifact, download, Path(scratch), window, got, limit, history)
-            )
+            name = None
+            if artifact is not None and (early := _unshown(artifact, shown)):
+                got.refusals.append(early)
+            elif artifact is not None:
+                name = _kept(repo, artifact, download, Path(scratch), window, got, limit, history)
             if name is None:
                 got.refused += 1
             else:
@@ -622,6 +668,7 @@ def fetch(
     status = {
         "carry": got.carry,
         "carried": got.carried,
+        "aged": got.aged,
         "dropped": got.dropped,
         "fetched": got.fetched,
         "refused": got.refused,
@@ -649,18 +696,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--days", type=int, default=DAYS)
     parser.add_argument("--reserve", type=int, default=RESERVE)
     parser.add_argument("--no-carry", action="store_true", help="fetch the whole window afresh")
+    parser.add_argument(
+        "--carry",
+        choices=sorted(CARRIES),
+        default="flake-report",
+        help="whose carried window to take: the weekly report's, or the daily flaky tests'",
+    )
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     try:
         got = fetch(
-            args.repo, args.out, days=args.days, reserve=args.reserve, carry=not args.no_carry
+            args.repo,
+            args.out,
+            days=args.days,
+            reserve=args.reserve,
+            carry=not args.no_carry,
+            carrier=args.carry,
         )
     except (FetchError, subprocess.SubprocessError, OSError) as err:
         print(f"::error title=the window was not fetched::{err}")
         return 2
     _summary(
-        f"The window: {got.carried} histories carried ({got.carry}), {got.dropped} dropped on "
-        f"recheck, {got.fetched} fetched, {got.refused} refused, {got.left} left for the next "
-        f"run, and the newest slots ({got.slots or 'none'})."
+        f"The window: {got.carried} histories carried ({got.carry}), {got.aged} aged out, "
+        f"{got.dropped} dropped on recheck, {got.fetched} fetched, {got.refused} refused, "
+        f"{got.left} left for the next run, and the newest slots ({got.slots or 'none'})."
     )
     for why in got.refusals:
         print(f"::warning title=refused::{why}")
