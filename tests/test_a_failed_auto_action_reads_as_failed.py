@@ -220,6 +220,7 @@ def test_a_run_in_the_digest_counts_the_effects_that_landed_not_each_attempt(
     import personalclaw.ledger as ledger
     from personalclaw.proactive import collect
     from personalclaw.workflows import store as run_store
+    from personalclaw.workflows.models import OriginKind, RunOrigin
 
     def run(run_id: str, name: str) -> SimpleNamespace:
         return SimpleNamespace(
@@ -228,6 +229,8 @@ def test_a_run_in_the_digest_counts_the_effects_that_landed_not_each_attempt(
             status="complete",
             workflow_name=name,
             error_message="",
+            origin=RunOrigin(kind=OriginKind.API),  # a run of yours, which the digest reads
+            root_run_id="",
         )
 
     def effect(key: str, status: str) -> dict:

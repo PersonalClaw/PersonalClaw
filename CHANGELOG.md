@@ -12,6 +12,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **A chat's pending self-model observation and a new skill proposal's id are named by a SHA-256 digest of the chat, no longer MD5 or SHA-1, so an observation pending in a chat left open across the upgrade starts fresh from its next turn, while proposals already filed keep their ids and the learned evidence keeps its rows.**
 
+### Fixed
+
+- **Morning triage reads workflow runs as it reads the Inbox, as no chat's work: a chat's own run, a batch of its helpers or a run a Temporary or Incognito chat started, stays out of the digest and out of the re-check of a proposal it carried, and digests already written keep what they said.**
+- **Deleting a chat removes the lessons the learning log captured from its turns, and withdraws a pending lesson batch that quoted one, giving its other lessons back to be filed again; a lesson captured from a chat deleted before this version is still kept until a batch compiled from it is decided.**
+- **Behind a trusted proxy that sends `X-Real-IP`, the sign-in lockout counts each visitor on its own, as sessions read the address, so one visitor's failed sign-ins or pairing codes no longer lock out every visitor, you included; a proxy that sends no `X-Real-IP` is still counted as one address, and its lockout now says so.**
+
 ## [0.3.2] — 2026-10-31
 
 A tool call cut off at the model's output limit now says so on its card, and a model app that allows it is asked again with twice the room. A tool card shows the same input after a reload as while its turn ran. Rewinding a chat puts back the files its agent wrote. Switching a chat to plan mode while its turn runs no longer stops the turn without a word, and leaving plan mode before its plan is drafted cancels the plan. Every line of `gateway.log` starts with its full date and time.

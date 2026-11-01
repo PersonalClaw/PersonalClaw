@@ -318,6 +318,110 @@ async def test_lockout_after_the_threshold_with_retry_after(_isolated) -> None:
         assert int(resp.headers["Retry-After"]) > 0
 
 
+#: A proxy on the same machine, as the remote-access guide sets one up, and two visitors behind it.
+_BEHIND_A_PROXY = {"public_url": "https://claw.example.com", "trusted_proxies": ["127.0.0.1"]}
+_GUESSER, _OWNER = "203.0.113.7", "198.51.100.9"
+
+
+def _login_behind(home, dashboard: dict, threshold: int = 3) -> None:
+    (home / "config.json").write_text(
+        json.dumps(
+            {
+                "auth": {"login_enabled": True, "lockout_threshold": threshold},
+                "dashboard": dashboard,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+async def _guess(client, visitor: str | None, password: str = "nope-nope-nope"):
+    headers = {"X-Real-IP": visitor} if visitor else {}
+    return await client.post(
+        "/api/auth/login", json={"username": "jordan", "password": password}, headers=headers
+    )
+
+
+@pytest.mark.asyncio
+async def test_behind_a_trusted_proxy_each_visitor_is_counted_on_its_own(_isolated) -> None:
+    """The proxy connects from 127.0.0.1 for every visitor. 🔴 Red before the fix: the lockout
+    counted the connection, so one visitor's failures locked out every visitor, the owner with
+    the right password included."""
+    creds.set_password("jordan", GOOD_PASSWORD)
+    _login_behind(_isolated, _BEHIND_A_PROXY)
+    async with TestClient(TestServer(_app())) as client:
+        for _ in range(3):
+            assert (await _guess(client, _GUESSER)).status == 401
+        assert (await _guess(client, _GUESSER)).status == 429
+        assert (await _guess(client, _OWNER, GOOD_PASSWORD)).status == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "dashboard",
+    [{}, {"public_url": "https://claw.example.com"}],
+    ids=["not exposed", "exposed, no trusted proxy"],
+)
+async def test_with_no_trusted_proxy_a_callers_x_real_ip_changes_nothing(
+    _isolated, dashboard
+) -> None:
+    """A caller cannot choose the address it is counted under: from a peer that is not a
+    configured trusted proxy the header is ignored, on an unexposed instance too, where sessions
+    still believe a private peer."""
+    creds.set_password("jordan", GOOD_PASSWORD)
+    _login_behind(_isolated, dashboard)
+    async with TestClient(TestServer(_app())) as client:
+        for _ in range(3):
+            assert (await _guess(client, _GUESSER)).status == 401
+        assert (await _guess(client, _OWNER, GOOD_PASSWORD)).status == 429
+
+
+@pytest.mark.asyncio
+async def test_a_lockout_counted_under_the_proxys_own_address_says_so(_isolated) -> None:
+    """A tunnel that sends no X-Real-IP is counted under its own address, so every visitor
+    through it shares one count, and the refusal says that rather than reading as yours."""
+    creds.set_password("jordan", GOOD_PASSWORD)
+    _login_behind(_isolated, _BEHIND_A_PROXY, threshold=2)
+    async with TestClient(TestServer(_app())) as client:
+        for _ in range(2):
+            assert (await _guess(client, None)).status == 401
+        refused = await _guess(client, None, GOOD_PASSWORD)
+        assert refused.status == 429
+        error = (await refused.json())["error"]
+        assert error["code"] == "auth_locked_out"
+        assert "counts every visitor together" in error["message"], error
+        direct = await _guess(client, _GUESSER, GOOD_PASSWORD)
+        assert direct.status == 200, "a visitor the proxy names is not in the proxy's count"
+
+
+@pytest.mark.asyncio
+async def test_a_lockout_through_a_proxy_not_listed_says_to_list_it(_isolated) -> None:
+    """A proxy on this machine that sends X-Real-IP but is not in `trusted_proxies` is counted
+    under its own address, so every visitor through it shares one count: the refusal says so, and
+    what to set."""
+    creds.set_password("jordan", GOOD_PASSWORD)
+    _login_behind(_isolated, {}, threshold=2)
+    async with TestClient(TestServer(_app())) as client:
+        for _ in range(2):
+            assert (await _guess(client, _GUESSER)).status == 401
+        refused = await _guess(client, _OWNER, GOOD_PASSWORD)
+        assert refused.status == 429
+        error = (await refused.json())["error"]
+        assert error["code"] == "auth_locked_out"
+        assert "until it is listed in dashboard.trusted_proxies" in error["message"], error
+
+
+def test_the_lockout_and_sessions_read_one_client_address(_isolated) -> None:
+    """One rule computes the client address: the lockout's and the session binding's."""
+    from personalclaw.dashboard import exposure
+
+    _login_behind(_isolated, _BEHIND_A_PROXY)
+    request = MagicMock(spec=web.Request)
+    request.remote = "127.0.0.1"
+    request.headers = {"X-Real-IP": _GUESSER}
+    assert auth_h._client_ip(request) == exposure.client_address(request) == _GUESSER
+
+
 @pytest.mark.asyncio
 async def test_lockout_refuses_even_the_correct_password(_isolated) -> None:
     """Otherwise the lockout is decorative — guessing could continue until it hits."""

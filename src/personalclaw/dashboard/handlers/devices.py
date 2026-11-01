@@ -238,6 +238,7 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
         _lockout_remaining,
         _record_failure,
         _set_session_cookie,
+        lockout_message,
     )
 
     ip = _client_ip(request)
@@ -250,7 +251,12 @@ async def api_devices_pair_complete(request: web.Request) -> web.Response:
     remaining = _lockout_remaining(ip, cfg)
     if remaining:
         _audit("device_paired", "denied", caller=ip, error=f"locked out retry_after={remaining}s")
-        return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
+        return json_error(
+            ERR_LOCKED_OUT,
+            message=lockout_message(request),
+            status=429,
+            headers={"Retry-After": str(remaining)},
+        )
 
     from personalclaw.auth import pairing
 

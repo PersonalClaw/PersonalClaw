@@ -358,6 +358,16 @@ form count too. Every attempt — success, failure, lockout — lands in the sec
 (`personalclaw security events`). Set both in **Settings → Security → Sign-in lockout**; a change
 that allows more guesses (more attempts, or a shorter lockout) asks first.
 
+The address counted is the one sessions bind to: behind a proxy listed in `trusted_proxies` that
+sends `X-Real-IP` (the nginx and Caddy recipes above), each visitor is counted on its own, so one
+visitor's failures lock out that visitor, not you. From any other peer the header is ignored, and
+with no trusted proxy the connection's own address is counted, so a caller cannot choose the
+address it is counted under. A tunnel that sends no `X-Real-IP` (cloudflared sends its own
+header, which PersonalClaw does not read) is counted under its own address: every visitor through
+it shares one count, and a lockout there says so. To count visitors apart behind such a tunnel,
+put a proxy that sets `X-Real-IP` between it and PersonalClaw, or use the tunnel's own access
+rules (or a tailnet) so that only you reach the sign-in page.
+
 ## Getting a push when a run needs your approval
 
 Remote access gets you *to* the dashboard. This gets the dashboard to *interrupt you* — which is
@@ -571,6 +581,11 @@ password first, by design.
 **I am locked out and away from home.** Wait out the window (default 15m). If you are truly
 stuck, you need local access — that is the intended floor: nothing remote can override the
 lockout.
+
+**A lockout says the proxy counts every visitor together.** Your proxy or tunnel is listed in
+`trusted_proxies` but sends no `X-Real-IP`, so every visitor through it is one address to the
+lockout, and failures from anyone lock everyone out. Set `X-Real-IP` in the proxy (see Step 2b), or
+keep strangers off the sign-in page with the tunnel's access rules.
 
 ## Related
 

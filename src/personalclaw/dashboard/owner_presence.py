@@ -230,7 +230,7 @@ def _check_identity(request: web.Request, action: str, identity: Identity) -> we
     remaining = auth_h._lockout_remaining(ip, auth_h._auth_cfg())
     if remaining:
         _audit(request, action, "denied", error=f"locked out, retry_after={remaining}s")
-        return json_error("auth_locked_out", status=429, headers={"Retry-After": str(remaining)})
+        return auth_h.locked_out(request, remaining)
     if not identity.password:
         _audit(request, action, "denied", error="no password")
         return json_error(

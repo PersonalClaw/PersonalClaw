@@ -100,14 +100,51 @@ def _auth_cfg() -> Any:
 
 
 def _client_ip(request: web.Request) -> str:
-    """The client address for lockout accounting.
+    """The client address for lockout accounting: the one sessions bind to
+    (``exposure.client_address``), with a proxy's ``X-Real-IP`` believed only from a peer listed
+    in ``dashboard.trusted_proxies``, whether or not the instance is declared exposed.
 
-    Uses the TCP remote ONLY. `X-Forwarded-For` is deliberately ignored here: an untrusted
-    peer can set it to anything, so trusting it would let an attacker reset their own failure
-    counter every request while also letting them lock out an arbitrary victim address.
-    Trusted-proxy handling is a separate concern; here the honest value is the connection's.
+    Behind a proxy or tunnel on the same machine every visitor's connection comes from the
+    proxy's address, so counting the connection put every visitor in one count: five failures from
+    anyone locked the owner out. A caller still cannot choose the address it is counted under: a
+    header from any other peer is ignored, and with no trusted proxy configured the count is the
+    connection's, as it always was. `X-Forwarded-For` is not read at all.
     """
-    return request.remote or "unknown"
+    from personalclaw.dashboard.exposure import client_address
+
+    return client_address(request, private_peers=False)
+
+
+def lockout_message(request: web.Request) -> str | None:
+    """The words of a locked-out caller's 429, or ``None`` for its code's own. Counted under a
+    proxy's own address, every visitor through it shares the count, and the answer says so
+    rather than reading as this caller's own failures: a trusted proxy that sends no
+    ``X-Real-IP`` (a tunnel), or a proxy that sends it and is not listed as trusted."""
+    from personalclaw.dashboard.exposure import counts_every_visitor_together, proxy_not_listed
+
+    try:
+        if counts_every_visitor_together(request):
+            return (
+                "Too many failed attempts through the proxy in front of PersonalClaw, which "
+                "counts every visitor together; try again later."
+            )
+        if proxy_not_listed(request):
+            return (
+                "Too many failed attempts through the proxy in front of PersonalClaw, which "
+                "counts every visitor together until it is listed in dashboard.trusted_proxies; "
+                "try again later."
+            )
+    except Exception:  # noqa: BLE001 - the refusal stands whatever its wording
+        logger.debug("could not tell whether the lockout counts a proxy", exc_info=True)
+    return None
+
+
+def locked_out(request: web.Request, remaining: int) -> web.Response:
+    """The 429 for a caller the sign-in lockout holds back, in :func:`lockout_message`'s words."""
+    message = lockout_message(request)
+    return json_error(
+        ERR_LOCKED_OUT, message=message, status=429, headers={"Retry-After": str(remaining)}
+    )
 
 
 def _lockout_remaining(ip: str, cfg: Any) -> int:
@@ -151,7 +188,9 @@ def reset_lockouts() -> None:
     _FAILURES.clear()
 
 
-async def _refuse_a_locked_out(ip: str, cfg: Any, said: str = "") -> web.Response | None:
+async def _refuse_a_locked_out(
+    request: web.Request, ip: str, cfg: Any, said: str = ""
+) -> web.Response | None:
     """The 429 for *ip* while it is locked out, its row written; ``None`` when it is not.
 
     It awaits nothing when *ip* is not locked out, so a handler that checks here, then checks the
@@ -169,7 +208,7 @@ async def _refuse_a_locked_out(ip: str, cfg: Any, said: str = "") -> web.Respons
         source="auth",
         error=f"{said}retry_after={remaining}s",
     )
-    return json_error(ERR_LOCKED_OUT, status=429, headers={"Retry-After": str(remaining)})
+    return locked_out(request, remaining)
 
 
 async def api_auth_login(request: web.Request) -> web.Response:
@@ -198,7 +237,7 @@ async def api_auth_login(request: web.Request) -> web.Response:
         # misconfiguration indistinguishable from a typo.
         return json_error(ERR_NOT_ENABLED, status=403)
 
-    refused = await _refuse_a_locked_out(ip, cfg)
+    refused = await _refuse_a_locked_out(request, ip, cfg)
     if refused is not None:
         return refused
 
@@ -211,7 +250,7 @@ async def api_auth_login(request: web.Request) -> web.Response:
 
     # Reading the body awaited, so guesses sent together all passed the check above before any
     # was counted. Checked again here, with nothing awaited from here to the count.
-    refused = await _refuse_a_locked_out(ip, cfg)
+    refused = await _refuse_a_locked_out(request, ip, cfg)
     if refused is not None:
         return refused
     if not creds.verify_password(username, password):
@@ -546,7 +585,7 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
     if not check_origin(request):
         return json_error(ERR_ORIGIN, status=403)
 
-    refused = await _refuse_a_locked_out(ip, cfg, "enroll ")
+    refused = await _refuse_a_locked_out(request, ip, cfg, "enroll ")
     if refused is not None:
         return refused
 
@@ -556,7 +595,7 @@ async def api_auth_enroll_complete(request: web.Request) -> web.Response:
     code = str((body or {}).get("code") or "") if isinstance(body, dict) else ""
 
     # As at sign-in: checked again once the body is read, with nothing awaited to the count.
-    refused = await _refuse_a_locked_out(ip, cfg, "enroll ")
+    refused = await _refuse_a_locked_out(request, ip, cfg, "enroll ")
     if refused is not None:
         return refused
     if not enrollment.redeem_code(code):

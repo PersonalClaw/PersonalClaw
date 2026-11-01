@@ -54,7 +54,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
@@ -894,30 +894,36 @@ def _surface_in_inbox(prop: Proposal) -> None:
         logger.debug("proposal inbox surface failed", exc_info=True)
 
 
+def _inbox_rows(pid: str) -> tuple[Any, Any, list[Any]]:
+    """The dashboard state, the Inbox store and the proposal's rows in it. The LIVE store when the
+    service is running: the running InboxService holds items in memory and never re-reads the
+    file, so writing only to disk would leave the row visible in the UI until a restart."""
+    from personalclaw.inbox import InboxStore, live_store
+
+    state = None
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        state = get_dashboard_state()
+    except Exception:
+        state = None
+
+    store = live_store(state) if state is not None else None
+    if store is None:
+        store = InboxStore()
+        store.load()
+    return state, store, [i for i in store.items.values() if i.refs.get("learning_proposal") == pid]
+
+
 def _resolve_inbox_item(pid: str, status: str) -> None:
     """Move the proposal's inbox item to a terminal status once decided.
 
-    Without this the row claims attention forever for work already done. Uses the
-    LIVE store when the service is running: the running InboxService holds items in
-    memory and never re-reads the file, so writing only to disk would leave the row
-    visible in the UI until a restart.
+    Without this the row claims attention forever for work already done.
     """
     try:
-        from personalclaw.inbox import InboxStore, live_store, set_item_status
+        from personalclaw.inbox import set_item_status
 
-        state = None
-        try:
-            from personalclaw.inbox_providers.native_source import get_dashboard_state
-
-            state = get_dashboard_state()
-        except Exception:
-            state = None
-
-        store = live_store(state) if state is not None else None
-        if store is None:
-            store = InboxStore()
-            store.load()
-        rows = [i for i in store.items.values() if i.refs.get("learning_proposal") == pid]
+        state, store, rows = _inbox_rows(pid)
         set_item_status(state, store, rows, status)
     except Exception:
         logger.debug("proposal inbox resolve failed", exc_info=True)
@@ -1047,6 +1053,61 @@ def defer(pid: str) -> bool:
     prop.status = Status.DRAFT.value
     prop.updated_at = _now()
     return _save(prop)
+
+
+def withdraw_compiled(uids: Iterable[str]) -> list[tuple[str, list[str]]]:
+    """Withdraw every proposal compiled from a capture *uids* names (its ``staging_refs``), as a
+    deleted chat's captures leave the learning log. Returns, for each one still waiting (pending,
+    or deferred to the next pass), its marker on the captures it holds
+    (:func:`personalclaw.learning.staging.compiled_by`) and the other captures it was compiled
+    from, which the caller gives back to the queue where that batch still holds them
+    (``StagingStore.release``), so the next batch pass files them again without the deleted
+    chat's. A record that is not waiting gives nothing back: a superseded one, kept for lineage,
+    names captures its replacement may hold, and a decided one's were decided.
+
+    Withdrawn, not rejected: nobody decided against the rest of the batch, so no decision is
+    recorded and its content may be filed again. The proposal's file goes, whatever its status, and
+    its Inbox row is dismissed with the row's copy of the body (its preview) cleared first, so the
+    gone capture's words leave the Inbox at once rather than when dismissed rows age out. Called
+    on the gateway's loop by a chat's delete, which its caller audits, so it writes no security
+    log row of its own.
+    """
+    from personalclaw.learning.staging import compiled_by
+
+    gone = {str(u) for u in uids if u}
+    if not gone:
+        return []
+    waiting = {Status.PENDING.value, Status.DRAFT.value}
+    given: list[tuple[str, list[str]]] = []
+    for prop in _all():
+        refs = [str(ref) for ref in prop.staging_refs]
+        if gone.isdisjoint(refs):
+            continue
+        if prop.status in waiting:
+            given.append((compiled_by(prop.id), [ref for ref in refs if ref and ref not in gone]))
+        try:
+            _path(prop.id).unlink()
+        except OSError:
+            logger.warning("could not remove learning proposal %s", prop.id, exc_info=True)
+        _withdraw_inbox_item(prop.id)
+    return given
+
+
+def _withdraw_inbox_item(pid: str) -> None:
+    """Dismiss the withdrawn proposal's Inbox row, its copy of the proposal's body cleared."""
+    try:
+        from personalclaw.inbox import set_item_status
+        from personalclaw.proposals_contract import REFS_KEY
+
+        state, store, rows = _inbox_rows(pid)
+        for row in rows:
+            payload = row.refs.get(REFS_KEY)
+            if isinstance(payload, dict):
+                payload["preview"] = ""
+        if rows and not set_item_status(state, store, rows, "dismissed"):
+            store.save()  # already dismissed: the cleared preview is still written
+    except Exception:
+        logger.warning("could not withdraw learning proposal %s from the Inbox", pid, exc_info=True)
 
 
 class AcceptError(Exception):

@@ -108,8 +108,9 @@ def purge_chat(
     attachments: Iterable[str] = (),
 ) -> Purge:
     """Delete what the chat persisted under *history_key* keeps on disk, what the learning log
-    kept of its turns, the skills it was taught and not yet kept, and the links it was given (held
-    in memory for web_fetch). Says how many attached files were deleted, and whether the
+    kept of its turns and the lessons it captured from them (a lesson batch compiled from one is
+    withdrawn), the skills it was taught and not yet kept, and the links it was given (held in
+    memory for web_fetch). Says how many attached files were deleted, and whether the
     transcript stayed.
 
     ``keys`` are every form of the chat's key the per-session stores may have been written under
@@ -153,6 +154,21 @@ def purge_chat(
             events.close()
     except Exception:
         logger.warning("forget: learning log purge failed for %s", history_key, exc_info=True)
+    # What it captured to learn from (the lessons its turns taught), and a lesson batch compiled
+    # from one: the batch is withdrawn and the other captures it held go back to the queue.
+    try:
+        from personalclaw.learning import proposals
+        from personalclaw.learning.staging import StagingStore
+
+        captures = StagingStore()
+        try:
+            gone = captures.forget_sessions(_spellings(names | {history_key}).__contains__)
+            for held_by, others in proposals.withdraw_compiled(gone):
+                captures.release(others, held_by=held_by)
+        finally:
+            captures.close()
+    except Exception:
+        logger.warning("forget: learning capture purge failed for %s", history_key, exc_info=True)
     from personalclaw.constants import dashboard_history_key
 
     # The skills it was taught and not yet kept, under the key its tools saw: a chat named again
