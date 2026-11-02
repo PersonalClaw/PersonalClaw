@@ -2,7 +2,7 @@ import { ResultAnnouncement } from '../../../ui/ListControls'
 import { BUSY_REASON } from '../../../ui/unavailable'
 import { fvs } from '../../../design/fontWeight'
 import { AnimatePresence } from 'framer-motion'
-import { Edit3, Search, MessageSquare, Trash2, Pin, Sparkles, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, Filter, Loader2, Target, Code2 as CodeIcon, GripVertical, Eye, Archive, ArchiveRestore, Download, Share2 } from 'lucide-react'
+import { Edit3, Search, MessageCircle, MessageSquare, Trash2, Pin, Sparkles, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, Filter, Loader2, Target, Code2 as CodeIcon, GripVertical, Eye, Archive, ArchiveRestore, Download, Share2 } from 'lucide-react'
 import { IconButton } from '../../../ui/IconButton'
 import { SquareIconButton } from '../../../ui/SquareIconButton'
 import { SearchField } from '../../../ui/SearchField'
@@ -16,7 +16,7 @@ import { ContextMenu, type ContextMenuItem } from '../../../ui/motion'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../../ui/HeaderActions'
 import { sessionRowMeta } from '../sessionRowMeta'
 import { StartedByApp } from '../StartedByApp'
-import { FromChannel } from '../FromChannel'
+import { FromChannel, channelOf } from '../FromChannel'
 import { chatFindPath, searchSourceLabel } from '../searchDeepLink'
 import { EmptyState, ListSkeleton, LoadError } from '../../../ui/ListScaffold'
 import { WindowedList } from '../../../ui/WindowedList'
@@ -57,6 +57,21 @@ function snippetParts(snippet: string): { text: string; hit: boolean }[] {
   return parts
 }
 
+/** A small mark before a board card's title for a chat that began elsewhere: a loop's, a code
+ *  project's or a chat channel's (#5879). It says what the list row's origin chip says, in the room
+ *  a 260 px column leaves; a chat you started has none. */
+function KindMark({ s }: { s: ChatSessionSummary }) {
+  const kind = s.origin === 'code' ? 'code' : s.origin === 'channel' ? 'channel' : s.origin && s.origin !== 'manual' ? 'loop' : null
+  if (!kind) return null
+  const Icon = kind === 'code' ? CodeIcon : kind === 'channel' ? MessageCircle : Target
+  const said = kind === 'code' ? 'A code project’s chat' : kind === 'channel' ? `From ${channelOf(s)}` : 'A loop’s chat'
+  return (
+    <span data-kind-mark={kind} role="img" aria-label={said} title={said} className="mt-[0.2rem] shrink-0 text-secondary">
+      <Icon size={12} aria-hidden />
+    </span>
+  )
+}
+
 /** Dedicated sessions LIST page (#/chat/history) — search, manage, open. */
 export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: string) => void; query: Record<string, string>; setQuery: RouteProps['setQuery'] }) {
   const {
@@ -70,37 +85,119 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
     toggleTag, setColumnTag, setLifecycle, setNeverArchive, createFolder, byFolder,
   } = useChatHistory({ navigate, query, setQuery })
 
-  const card = (s: ChatSessionSummary) => {
-    // Scoped right-click actions — reuse the row's existing handlers. Folder
-    // assignment appears as flat "Move to …" items (the primitive is single-level).
-    const menuItems: ContextMenuItem[] = [
-      { icon: <Eye size={15} />, label: 'Peek', onSelect: () => setPeekKey(s.key) },
-      { icon: <MessageSquare size={15} />, label: 'Open', onSelect: () => navigate(chatFindPath(s.key, q)) },
-      { icon: <Pin size={15} />, label: s.pinned ? 'Unpin' : 'Pin to top', onSelect: () => togglePin(s.key, !s.pinned) },
-      ...(s.folder_id ? [{ icon: <Folder size={15} />, label: 'Remove from folder', onSelect: () => setFolder(s.key, null) }] : []),
-      ...folders.filter((f) => f.id !== s.folder_id).map((f) => ({ icon: <Folder size={15} />, label: `Move to ${f.name}`, onSelect: () => setFolder(s.key, f.id) })),
-      ...(s.lifecycle === 'archived'
-        ? [{ icon: <ArchiveRestore size={15} />, label: 'Restore from archive', onSelect: () => setLifecycle(s.key, 'active') }]
-        : [{ icon: <Archive size={15} />, label: 'Archive', onSelect: () => setLifecycle(s.key, 'archived') }]),
-      {
-        icon: <Pin size={15} />,
-        label: s.never_archive ? 'Allow auto-archive' : 'Never auto-archive',
-        onSelect: () => setNeverArchive(s.key, !s.never_archive),
-      },
-      // Export is a download link to the endpoint rather than a fetch: the browser saves what
-      // the route names in its Content-Disposition, the app stays on screen, and a long
-      // transcript is streamed instead of buffered through JS.
-      { icon: <Download size={15} />, label: 'Export as Markdown', onSelect: () => downloadExport(s.key, 'md') },
-      { icon: <Download size={15} />, label: 'Export as JSON', onSelect: () => downloadExport(s.key, 'json') },
-      // Share sits beside export because it is the same intent one step further: export
-      // hands you the redacted transcript, share keeps that same redacted transcript in
-      // the library as a frozen record. The label says "read-only artifact" rather than
-      // just "Share" so nobody reads a publish-to-the-internet promise into it.
-      { icon: <Share2 size={15} />, label: 'Share as read-only artifact', onSelect: () => shareSession(s) },
-      { icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => del(s) },
-    ]
+  // Scoped right-click actions — reuse the row's existing handlers. Folder
+  // assignment appears as flat "Move to …" items (the primitive is single-level).
+  // The list's row and the board's card share them.
+  const menuItemsFor = (s: ChatSessionSummary): ContextMenuItem[] => [
+    { icon: <Eye size={15} />, label: 'Peek', onSelect: () => setPeekKey(s.key) },
+    { icon: <MessageSquare size={15} />, label: 'Open', onSelect: () => navigate(chatFindPath(s.key, q)) },
+    { icon: <Pin size={15} />, label: s.pinned ? 'Unpin' : 'Pin to top', onSelect: () => togglePin(s.key, !s.pinned) },
+    ...(s.folder_id ? [{ icon: <Folder size={15} />, label: 'Remove from folder', onSelect: () => setFolder(s.key, null) }] : []),
+    ...folders.filter((f) => f.id !== s.folder_id).map((f) => ({ icon: <Folder size={15} />, label: `Move to ${f.name}`, onSelect: () => setFolder(s.key, f.id) })),
+    ...(s.lifecycle === 'archived'
+      ? [{ icon: <ArchiveRestore size={15} />, label: 'Restore from archive', onSelect: () => setLifecycle(s.key, 'active') }]
+      : [{ icon: <Archive size={15} />, label: 'Archive', onSelect: () => setLifecycle(s.key, 'archived') }]),
+    {
+      icon: <Pin size={15} />,
+      label: s.never_archive ? 'Allow auto-archive' : 'Never auto-archive',
+      onSelect: () => setNeverArchive(s.key, !s.never_archive),
+    },
+    // Export is a download link to the endpoint rather than a fetch: the browser saves what
+    // the route names in its Content-Disposition, the app stays on screen, and a long
+    // transcript is streamed instead of buffered through JS.
+    { icon: <Download size={15} />, label: 'Export as Markdown', onSelect: () => downloadExport(s.key, 'md') },
+    { icon: <Download size={15} />, label: 'Export as JSON', onSelect: () => downloadExport(s.key, 'json') },
+    // Share sits beside export because it is the same intent one step further: export
+    // hands you the redacted transcript, share keeps that same redacted transcript in
+    // the library as a frozen record. The label says "read-only artifact" rather than
+    // just "Share" so nobody reads a publish-to-the-internet promise into it.
+    { icon: <Share2 size={15} />, label: 'Share as read-only artifact', onSelect: () => shareSession(s) },
+    { icon: <Trash2 size={15} />, label: 'Delete', danger: true, onSelect: () => del(s) },
+  ]
+
+  // Why this chat matched: the passage from the transcript, with the matched terms marked. Only
+  // for content hits — a title match is already visible above, so repeating it would be noise.
+  const snippetLine = (s: ChatSessionSummary) => contentSnippets.get(s.key) && (
+    <div className="mt-0.5 truncate text-on-surface-var text-[0.8125rem]">
+      {snippetParts(contentSnippets.get(s.key) as string).map((part, i) => (
+        part.hit
+          ? <mark key={i} className="rounded bg-primary/25 px-0.5 text-on-surface">{part.text}</mark>
+          : <span key={i}>{part.text}</span>
+      ))}
+    </div>
+  )
+
+  // Origin chip on worker chats — names the loop / code project and opens its cockpit (not the
+  // raw chat) so the user dives into context. The 'loop' origin covers every non-code kind
+  // (general/goal/design), so the label is neutral. A chat that came in on a chat channel says
+  // which one instead (`FromChannel`).
+  const originChip = (s: ChatSessionSummary) => {
+    if (!s.origin || s.origin === 'manual' || s.origin === 'channel') return null
+    const kind = s.origin === 'code' ? 'code project' : 'loop'
+    const label = s.source_label || s.source_id || kind
+    const canOpen = !!s.source_id
+    // A worker that names no loop (its engine tagged it, its key names none) has no
+    // cockpit to open, so its chip is provenance, not a control. It used to render as a
+    // permanently disabled button element: announced as a button that can never be
+    // pressed in ANY state, which no reason could ever unblock. A span is what it actually
+    // is; the tag now follows whether there is somewhere to go.
+    // (Comment deliberately spells no literal button tag — the primitive-adoption ratchet
+    // counts raw source, comments included, so prose markup reds CI.)
+    const chip = 'inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] transition-colors'
+    const tint = { background: 'color-mix(in srgb, var(--color-secondary) 18%, transparent)', color: 'var(--color-secondary)' }
+    const glyph = s.origin === 'code' ? <CodeIcon size={10} /> : <Target size={10} />
+    if (!canOpen) {
+      return (
+        <span title={`From a ${kind}`} className={`${chip} cursor-default`} style={tint}>
+          {glyph}
+          {label}
+        </span>
+      )
+    }
+    // Raw: an 18px provenance chip in the row's meta line; ui/MetaChip is an h-6 filter pill.
     return (
-    <ContextMenu key={s.key} items={menuItems}>
+      <button type="button"
+        onClick={(e) => { e.stopPropagation(); navigate(`${s.origin === 'code' ? 'code' : 'loops'}/${s.source_id}`) }}
+        title={`From ${kind} “${label}” — open its cockpit`}
+        className={`${chip} hover:brightness-125 cursor-pointer`}
+        style={tint}>
+        {glyph}
+        {label}
+      </button>
+    )
+  }
+
+  const tagChips = (s: ChatSessionSummary) => (s.tags ?? []).map((tid) => tagById[tid] && (
+    <span key={tid} className="inline-flex items-center rounded-pill px-1.5 h-[18px] text-[0.75rem]"
+      style={{ background: `color-mix(in srgb, ${tagById[tid].color || 'var(--color-primary)'} 18%, transparent)`, color: tagById[tid].color || 'var(--color-primary)' }}>{tagById[tid].name}</span>
+  ))
+
+  // Assign folder + tags, pin and delete: the row's own actions, revealed on hover or focus.
+  const rowActions = (s: ChatSessionSummary) => (
+    <>
+      <SessionOrgMenu orgLoadFailed={!!foldersError || !!tagsError} s={s} folders={folders} tags={tags} onSetFolder={setFolder} onToggleTag={toggleTag} />
+      <SquareIconButton label={s.pinned ? 'Unpin chat' : 'Pin chat'} title={s.pinned ? 'Unpin' : 'Pin to top'} on={s.pinned}
+        onClick={(e) => { e.stopPropagation(); togglePin(s.key, !s.pinned) }}
+        className={`shrink-0 transition-opacity ${s.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
+        <Pin size={14} className={s.pinned ? 'fill-current' : ''} />
+      </SquareIconButton>
+      <IconButton icon={Trash2} label="Delete chat" onClick={(e) => { e.stopPropagation(); del(s) }} size={26} iconSize={14}
+        tone="danger"
+        className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
+    </>
+  )
+
+  // The drag that moves a chat into a folder (list) or carries it to another column (board).
+  // setData stays synchronous (must happen inside dragstart); the STATE set defers a frame —
+  // flushing a re-render while Chrome commits the native drag cancels it (instant dragend).
+  const dragProps = (s: ChatSessionSummary) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => { e.dataTransfer.setData('text/plain', s.key); e.dataTransfer.effectAllowed = 'move'; requestAnimationFrame(() => setFolderDragKey(s.key)) },
+    onDragEnd: () => { setFolderDragKey(null); setOverFolder(null) },
+  })
+
+  const card = (s: ChatSessionSummary) => (
+    <ContextMenu key={s.key} items={menuItemsFor(s)}>
     {/* Drag transport: setData stays synchronous (must happen inside dragstart);
         the STATE set defers a frame — flushing a re-render while Chrome commits
         the native drag cancels it (instant dragend). select-none so the WHOLE
@@ -108,9 +205,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
         native drag source and steals the gesture from the wrapper. The grip is
         a pure hover affordance (pointer-events-none). */}
     <div role="button" tabIndex={0} onClick={() => setPeekKey(peekKey === s.key ? '' : s.key)}
-      draggable
-      onDragStart={(e) => { e.dataTransfer.setData('text/plain', s.key); e.dataTransfer.effectAllowed = 'move'; requestAnimationFrame(() => setFolderDragKey(s.key)) }}
-      onDragEnd={() => { setFolderDragKey(null); setOverFolder(null) }}
+      {...dragProps(s)}
       className="group relative flex cursor-grab active:cursor-grabbing select-none items-center gap-3 rounded-xl bg-surface-container px-4 py-3 transition-colors hover:bg-surface-high">
       <GripVertical size={13} className="pointer-events-none absolute left-0.5 top-1/2 -translate-y-1/2 text-on-surface-low opacity-0 group-hover:opacity-100 transition-opacity" />
       {/* Selection tick. The primitive owns stopPropagation, so ticking a row never
@@ -123,80 +218,56 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-on-surface text-[0.9375rem]" style={fvs(500)}>{sessionTitle(s)}</div>
-        {/* Why this chat matched: the passage from the transcript, with the matched
-            terms marked. Only for content hits — a title match is already visible
-            above, so repeating it would be noise. */}
-        {contentSnippets.get(s.key) && (
-          <div className="mt-0.5 truncate text-on-surface-var text-[0.8125rem]">
-            {snippetParts(contentSnippets.get(s.key) as string).map((part, i) => (
-              part.hit
-                ? <mark key={i} className="rounded bg-primary/25 px-0.5 text-on-surface">{part.text}</mark>
-                : <span key={i}>{part.text}</span>
-            ))}
-          </div>
-        )}
+        {snippetLine(s)}
         <div className="flex items-center gap-1.5 flex-wrap text-on-surface-low text-[0.8125rem]">
           <span>{sessionRowMeta(s)}</span>
-          {/* Origin chip on worker chats — names the loop / code project and opens its
-              cockpit (not the raw chat) so the user dives into context. The 'loop' origin
-              covers every non-code kind (general/goal/design), so the label is neutral. A chat
-              that came in on a chat channel says which one instead (`FromChannel`). */}
           <FromChannel s={s} />
-          {s.origin && s.origin !== 'manual' && s.origin !== 'channel' && (() => {
-            const kind = s.origin === 'code' ? 'code project' : 'loop'
-            const label = s.source_label || s.source_id || kind
-            const canOpen = !!s.source_id
-            // A worker that names no loop (its engine tagged it, its key names none) has no
-            // cockpit to open, so its chip is provenance, not a control. It used to render as a
-            // permanently disabled button element: announced as a button that can never be
-            // pressed in ANY state, which no reason could ever unblock. A span is what it actually
-            // is; the tag now follows whether there is somewhere to go.
-            // (Comment deliberately spells no literal button tag — the primitive-adoption ratchet
-            // counts raw source, comments included, so prose markup reds CI.)
-            const chip = 'inline-flex items-center gap-1 rounded-pill px-1.5 h-[18px] text-[0.75rem] transition-colors'
-            const tint = { background: 'color-mix(in srgb, var(--color-secondary) 18%, transparent)', color: 'var(--color-secondary)' }
-            const glyph = s.origin === 'code' ? <CodeIcon size={10} /> : <Target size={10} />
-            if (!canOpen) {
-              return (
-                <span title={`From a ${kind}`} className={`${chip} cursor-default`} style={tint}>
-                  {glyph}
-                  {label}
-                </span>
-              )
-            }
-            // Raw: an 18px provenance chip in the row's meta line; ui/MetaChip is an h-6 filter pill.
-            return (
-              <button type="button"
-                onClick={(e) => { e.stopPropagation(); navigate(`${s.origin === 'code' ? 'code' : 'loops'}/${s.source_id}`) }}
-                title={`From ${kind} “${label}” — open its cockpit`}
-                className={`${chip} hover:brightness-125 cursor-pointer`}
-                style={tint}>
-                {glyph}
-                {label}
-              </button>
-            )
-          })()}
+          {originChip(s)}
           <StartedByApp s={s} />
-          {(s.tags ?? []).map((tid) => tagById[tid] && (
-            <span key={tid} className="inline-flex items-center rounded-pill px-1.5 h-[18px] text-[0.75rem]"
-              style={{ background: `color-mix(in srgb, ${tagById[tid].color || 'var(--color-primary)'} 18%, transparent)`, color: tagById[tid].color || 'var(--color-primary)' }}>{tagById[tid].name}</span>
-          ))}
+          {tagChips(s)}
         </div>
       </div>
-      {/* assign folder + tags */}
-      <SessionOrgMenu orgLoadFailed={!!foldersError || !!tagsError} s={s} folders={folders} tags={tags} onSetFolder={setFolder} onToggleTag={toggleTag} />
-      <SquareIconButton label={s.pinned ? 'Unpin chat' : 'Pin chat'} title={s.pinned ? 'Unpin' : 'Pin to top'} on={s.pinned}
-        onClick={(e) => { e.stopPropagation(); togglePin(s.key, !s.pinned) }}
-        className={`shrink-0 transition-opacity ${s.pinned ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}`}>
-        <Pin size={14} className={s.pinned ? 'fill-current' : ''} />
-      </SquareIconButton>
-      <IconButton icon={Trash2} label="Delete chat" onClick={(e) => { e.stopPropagation(); del(s) }} size={26} iconSize={14}
-        tone="danger"
-        className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100" />
+      {rowActions(s)}
     </div>
     </ContextMenu>
-    )
-  }
+  )
+
+  // The board's card (#5879): the board is a 260 px column, so its card gives its room to the
+  // chat's title. The title wraps to three lines across the card, a loop's, a code project's or a
+  // channel's chat has a small kind mark before it, and the tags, the chat's origin and whether a
+  // turn runs sit on one line under it, with the row's actions at its end. No icon tile and no
+  // message count, which says nothing about which chat it is. The selection tick hangs on the
+  // card's top-right corner, outside its content (the column leaves room for it), and shows on
+  // hover, on focus and while selecting; the Checkbox primitive keeps a tick from opening the peek.
+  const boardCard = (s: ChatSessionSummary) => (
+    <ContextMenu key={s.key} items={menuItemsFor(s)}>
+    <div role="button" tabIndex={0} data-board-card={s.key} onClick={() => setPeekKey(peekKey === s.key ? '' : s.key)}
+      {...dragProps(s)}
+      className="group relative cursor-grab active:cursor-grabbing select-none rounded-xl bg-surface-container px-3 py-2.5 transition-colors hover:bg-surface-high">
+      <span data-board-card-tick
+        className={`absolute right-0 top-0 z-10 flex translate-x-1/2 -translate-y-1/2 rounded-sm bg-surface transition-opacity ${selecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100 focus-within:opacity-100'}`}>
+        <Checkbox checked={selected.has(s.key)} onChange={() => toggleSelected(s.key)} ariaLabel={`Select ${sessionTitle(s)}`} />
+      </span>
+      <div data-board-card-body className="min-w-0">
+        <div className="flex items-start gap-1.5">
+          <KindMark s={s} />
+          <div data-board-card-title className="min-w-0 flex-1 line-clamp-3 break-words text-on-surface text-[0.9375rem] leading-snug" style={fvs(500)}>{sessionTitle(s)}</div>
+        </div>
+        {snippetLine(s)}
+        <div className="mt-1.5 flex items-center gap-1">
+          <div data-board-card-tags className="flex min-w-0 flex-1 flex-wrap items-center gap-1 text-on-surface-low text-[0.75rem]">
+            {s.run_state?.turn && <span>running</span>}
+            <FromChannel s={s} />
+            {originChip(s)}
+            <StartedByApp s={s} />
+            {tagChips(s)}
+          </div>
+          {rowActions(s)}
+        </div>
+      </div>
+    </div>
+    </ContextMenu>
+  )
 
   return (
     <div className="flex h-full flex-col">
@@ -414,7 +485,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
             // pane like every other page.
             <div className="flex-1 min-h-0 px-l pb-l">
               <div className="mx-auto h-full w-full">
-                <TagBoard sessions={filtered} tags={tags} card={card} onMove={setColumnTag} />
+                <TagBoard sessions={filtered} tags={tags} card={boardCard} onMove={setColumnTag} />
               </div>
             </div>
           )
