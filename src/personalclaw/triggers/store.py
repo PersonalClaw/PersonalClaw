@@ -298,9 +298,11 @@ class TriggerStore(TriggerStoreProvider):
         writer's row, which is exactly what `upsert` exists to prevent. Refused, like every write,
         while the store cannot be read.
         """
+        from personalclaw.triggers import held_secrets
+
         with self._file_lock():
-            self._read_rows()
-            rows = [t.to_dict() for t in triggers]
+            before = {str(r.get("id") or ""): r for r in self._read_rows()}
+            rows = [held_secrets.hold(t.to_dict(), before.get(t.id)) for t in triggers]
             self._write(rows)
             return len(rows)
 
@@ -329,12 +331,20 @@ class TriggerStore(TriggerStoreProvider):
         elsewhere = routing.route_upsert(trigger, native=self)
         if elsewhere is not None:
             return elsewhere
+        from personalclaw.triggers import held_secrets
+
         with self._file_lock():
             rows = self._read_rows()
+            before = next((r for r in rows if str(r.get("id") or "") == trigger.id), None)
+            # What an automation's action keeps as a credential is kept in the credential store,
+            # and the file holds a reference (`triggers.held_secrets`); handed back as stored, so
+            # no caller echoes the value it was given.
+            plain = trigger.to_dict()
+            row = held_secrets.hold(plain, before)
             updated = [r for r in rows if str(r.get("id") or "") != trigger.id]
-            updated.append(trigger.to_dict())
+            updated.append(row)
             self._write(updated)
-        return trigger
+        return trigger if row is plain else parse_trigger(row)[0]
 
     def delete(self, trigger_id: str) -> bool:
         """Remove one trigger. Returns whether it was there.
@@ -358,6 +368,10 @@ class TriggerStore(TriggerStoreProvider):
             if len(kept) == len(rows):
                 return False
             self._write(kept)
+        # What it kept in the credential store goes with it (`triggers.held_secrets`).
+        from personalclaw.triggers import held_secrets
+
+        held_secrets.purge(trigger_id)
         # A webhook automation's sender tokens end with it: one made again under the same id (one
         # that never ran, a restore, an import) gets the same address, and a token made for this one
         # must not fire that one.

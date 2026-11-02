@@ -141,6 +141,12 @@ def test_the_site_list_is_not_STALE():
         # nothing; the properties that earn the exemption are asserted in
         # `test_the_grant_copy_only_reads_the_display_name` below.
         "personalclaw.triggers.grants",
+        # The held settings -- `triggers.held_secrets` resolves an automation's provider to read
+        # whether its config is a model turn's or a run's (`hands_config_to_a_model`,
+        # `hands_config_to_a_run`), which keeps its credential settings out of the store. It runs
+        # nothing and undoes nothing; the properties that earn the exemption are asserted in
+        # `test_the_held_settings_only_read_whose_config_it_is` below.
+        "personalclaw.triggers.held_secrets",
         # The rung router -- `guardrails.rungs.can_be_undone` resolves each provider of an
         # action type to read ONE declaration, `reversal_kinds`, so a rung that promises undo
         # is only ever given to an action every provider of which can be taken back. It runs

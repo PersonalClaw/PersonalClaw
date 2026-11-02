@@ -42,7 +42,7 @@ from personalclaw.security import (
     redact_values_for_display,
 )
 from personalclaw.sel import sel_log_async
-from personalclaw.triggers import listing
+from personalclaw.triggers import held_secrets, listing
 
 
 def config_dir():
@@ -469,7 +469,7 @@ def _serialize_store(row: Any, *, owner: str = "", served_by: str | None = None)
         # included) read "What it runs: Action" on the page. A workflow ref or resume target, which
         # has no action shape, is still sent as stored.
         "action": redact_values_for_display(
-            _inline_action(trigger) or dict(trigger.workflow or {})
+            held_secrets.shown_action(_inline_action(trigger) or dict(trigger.workflow or {}))
         ),
         "health": trigger.health_status,
         # 🔴 THE LIFECYCLE STATE, which this projection omitted. `Trigger.state` carries
@@ -621,7 +621,7 @@ def _serialize_lifecycle(hook, used_by: list[str]) -> dict[str, Any]:
         "enabled": hook.enabled,
         "action": {
             "provider": hook.provider,
-            "config": redact_values_for_display(hook.provider_config),
+            "config": redact_values_for_display(held_secrets.shown(hook.provider_config)),
         },
         # lifecycle mechanism
         "event": hook.event,
@@ -1687,7 +1687,9 @@ def _keep_masked_trigger(state: DashboardState, kind: str, raw: str, body: dict)
     if kind == _LIFECYCLE and isinstance(out.get("matcher"), str):
         out["matcher"] = keep_masked_spans(out["matcher"], matcher or "")
     if isinstance(out.get("action"), dict):
-        out["action"] = keep_masked_values(out["action"], _stored_action(state, kind, raw))
+        stored = _stored_action(state, kind, raw)
+        kept = keep_masked_values(out["action"], stored)
+        out["action"] = held_secrets.kept_action_masks(kept, stored)  # a held setting as shown
     return out
 
 

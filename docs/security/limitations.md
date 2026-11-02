@@ -504,6 +504,17 @@ which is kept as a secret. A user name alone (`ssh://git@host/…`) is no creden
 it is. A value saved before this rule stays until the setting is changed, and core's own model
 provider settings are not held to it.
 
+An automation's action settings that its app declares as credentials (a webhook URL, a password, a
+header that carries a token) are kept in the credential store too, under a key that automation
+alone holds: `triggers.json` and `hooks.json` keep a `{{secret:…}}` reference, a read shows the
+mask, the value is filled in only when the automation runs, and deleting the automation deletes
+it. A web address kept this way reads as where it goes, its scheme, host (in ASCII) and port, with
+the rest masked, and when an edit moves it, the question to allow the edit names both hosts. A value an earlier release saved in either file is moved at the next start. A snapshot or an
+export made before then still holds what was typed, and PersonalClaw does not rewrite a backup:
+change each of those credentials at its service. A credential an agent is handed in a chat, to
+make an automation for you, stays in that chat's transcript: write `{{secret:NAME}}` there
+instead, for a secret saved in **Settings → Secrets**.
+
 A secret still appears in plaintext in these places:
 
 - **Copies made before you upgraded.** The first start after the upgrade moves every plaintext

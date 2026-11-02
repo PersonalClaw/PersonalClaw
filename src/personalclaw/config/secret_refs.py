@@ -56,7 +56,7 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -155,7 +155,9 @@ def _core_holds(key: str) -> bool:
     settings record is no run of any project, so its name reads the global secret instead."""
     from personalclaw.secrets_vault import is_project_key
 
-    return not key.startswith((*_APP_KEY_PREFIXES, _MCP_OWNED_PREFIX)) and not is_project_key(key)
+    return not key.startswith(
+        (*_APP_KEY_PREFIXES, _MCP_OWNED_PREFIX, _TRIGGER_OWNED_PREFIX)
+    ) and not is_project_key(key)
 
 
 def _app_part(app: str) -> str:
@@ -213,6 +215,31 @@ def instance_owner(app: str, instance_id: str) -> SecretOwner:
     return SecretOwner(
         f"{_instances_prefix(app)}{_segment(instance_id, 16)}_{_digest(instance_id)}__", app=app
     )
+
+
+#: The prefix every automation's own keys share (:func:`trigger_owner`).
+_TRIGGER_OWNED_PREFIX = f"{OWNED_KEY_PREFIX}TRIGGER_"
+
+
+def trigger_owner(trigger_id: str) -> SecretOwner:
+    """One automation's action config in ``triggers.json``, by its id (``triggers.held_secrets``).
+    Core's, and held by that automation alone, as an MCP server's keys are: no other record, and
+    no other automation, resolves one (:func:`_core_holds`)."""
+    return SecretOwner(
+        f"{_TRIGGER_OWNED_PREFIX}{_segment(trigger_id, 16)}_{_digest(trigger_id)}__", app=None
+    )
+
+
+def is_trigger_key(key: str | None) -> bool:
+    """Whether *key* is one an automation holds (:func:`trigger_owner`)."""
+    return bool(key) and str(key).startswith(_TRIGGER_OWNED_PREFIX)
+
+
+def refuse_foreign(values: Mapping[str, Any], *, owner: SecretOwner) -> None:
+    """Refuse *values* when it references a key *owner* does not hold, before anything is stored
+    (:class:`ForeignSecretReference`, with what to do instead): for a writer that stores only part
+    of a record, which must still judge the whole of it."""
+    _refuse_foreign(values, owner, operation="secrets.store", advise=True)
 
 
 def app_owned_prefixes(app: str) -> tuple[str, ...]:
@@ -1669,7 +1696,20 @@ def migrate_plaintext_secrets() -> list[str]:
         for record in sorted(extensions.glob("*/instances/*.json")):
             app = record.parent.parent.name
             steps.append((record, lambda p, a=app: _move_instance_record(p, a)))
+    return move_files(steps)
 
+
+def move_files(steps: Iterable[tuple[Path, Callable[[Path], bool]]]) -> list[str]:
+    """Run each ``(path, step)`` of a boot move on its file, once a file, and return the
+    home-relative paths it rewrote: the loop :func:`migrate_plaintext_secrets` runs, for a move
+    that lives above the store (an automation's held settings, ``triggers.held_secrets``).
+
+    Fail-safe per file: a step that raises leaves its file as it was and is logged, and the others
+    still run, so one unreadable record never blocks the rest or the boot. A file that is not
+    there is skipped."""
+    from personalclaw.config.loader import config_dir
+
+    home = config_dir()
     rewritten: list[str] = []
     seen: set[Path] = set()
     for path, step in steps:

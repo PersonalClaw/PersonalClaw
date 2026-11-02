@@ -39,6 +39,7 @@ from typing import Any
 from personalclaw import lasting_work
 from personalclaw.safety_flags import yes_or_no
 from personalclaw.security import redact_for_display, redact_values_for_display
+from personalclaw.triggers.held_secrets import kept_workflow_masks, shown_row
 from personalclaw.triggers.standing import last_check, standing
 
 logger = logging.getLogger(__name__)
@@ -1207,7 +1208,7 @@ def create(
             f"({_active_agent_count(store)}/{max_agent_triggers()} agent-created)."
         )
     return AutomationToolResult(
-        True, "\n".join(lines), {"trigger": saved.to_dict(), "needs_grant": needs}
+        True, "\n".join(lines), {"trigger": shown_row(saved.to_dict()), "needs_grant": needs}
     )
 
 
@@ -1327,6 +1328,16 @@ def list_automations(store: Any, *, kind: str = "", state: str = "") -> Automati
     )
 
 
+def _edited_workflow(stored: Any, patch: Any) -> Any:
+    """The automation's action as an edit's *patch* leaves it (`action_edit.edited_workflow`), each
+    held setting it sends back as it was shown kept as stored (`held_secrets.kept_workflow_masks`).
+    Raises :class:`ValueError` for a patch no action can be made of, or a held value edited inside
+    its mask."""
+    from personalclaw.triggers.action_edit import edited_workflow
+
+    return kept_workflow_masks(edited_workflow(stored, patch), stored)
+
+
 def update(
     store: Any,
     *,
@@ -1410,10 +1421,8 @@ def update(
     # An edit of the action changes only the settings it sends (`action_edit`): the rest of the
     # action stays as saved, and every check below judges the action as it will be saved.
     if "workflow" in applied:
-        from personalclaw.triggers.action_edit import edited_workflow
-
         try:
-            applied["workflow"] = edited_workflow(row.trigger.workflow, applied["workflow"])
+            applied["workflow"] = _edited_workflow(row.trigger.workflow, applied["workflow"])
         except ValueError as exc:
             return AutomationToolResult(False, f"Error: nothing was changed: {exc}.")
     # A switch is stored as the yes or no it spells. Stored as sent, the text `"false"` was truthy
@@ -1573,7 +1582,7 @@ def update(
         True,
         "\n".join(lines),
         {
-            "trigger": current.to_dict(),
+            "trigger": shown_row(current.to_dict()),
             "rejected": rejected,
             "granted": granted,
             "needs_grant": grants.labels(current),
@@ -1678,7 +1687,7 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
     return AutomationToolResult(
         True,
         f"{'Paused' if paused else 'Resumed'} {saved.id} ({saved.name}).",
-        {"trigger": saved.to_dict()},
+        {"trigger": shown_row(saved.to_dict())},
     )
 
 
@@ -1933,7 +1942,7 @@ def run(
         return AutomationToolResult(
             True,
             "\n".join(lines),
-            {"plan": plan, "trigger": redact_values_for_display(trigger.to_dict())},
+            {"plan": plan, "trigger": redact_values_for_display(shown_row(trigger.to_dict()))},
         )
     # 🔴 The gates the plan claims to enforce, actually enforced. Below the dry-run return so a dry
     # run still REPORTS the plan during an incident (that is a read, and telling an operator what

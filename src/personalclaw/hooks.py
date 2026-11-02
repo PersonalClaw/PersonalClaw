@@ -18,6 +18,7 @@ from pathlib import Path
 from personalclaw import lasting_work, record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.audit_subject import log_title
+from personalclaw.filled_secrets import masked, masked_answer
 from personalclaw.safety_flags import strict_bool
 from personalclaw.security import is_denied, is_sensitive_bash_command, is_sensitive_path
 from personalclaw.shell_denylist import denied_command
@@ -1090,6 +1091,46 @@ def take_in(hook: ScriptHook, stdout: str, stderr: str, *, blocked: bool) -> Tak
     return TakenIn(stdout=stdout, stderr=stderr, refused=tuple(sorted(refused)))
 
 
+def _hook_config(hook: "ScriptHook", provider: object) -> tuple[dict, tuple[str, ...], str]:
+    """``(config, filled, refusal)``: the config *hook*'s action is handed, the values filled into
+    it (``triggers.secrets.resolve_for``, its own held settings first), and the sentence that
+    refuses the run when a secret it uses does not resolve (``""`` otherwise)."""
+    from personalclaw.triggers import cannot_run
+    from personalclaw.triggers import secrets as trigger_secrets
+
+    try:
+        config, filled = trigger_secrets.resolve_for(
+            provider, hook.provider_config, trigger_id=held_owner_id(hook.id)
+        )
+    except trigger_secrets.UnresolvedSecret as exc:
+        return hook.provider_config, (), cannot_run.missing_secret(exc)
+    return config, filled, ""
+
+
+def _dispatch_key(hook: "ScriptHook", hook_event: dict) -> str:
+    """The session *hook*'s action is judged under.
+
+    `parent_session_key` rides the event payload when a subagent fired the hook; it lets the
+    run's SafetyProfile layer its extra deny globs.
+
+    🔴 A top-level fire omitted it → "" → classified ATTENDED → INTERACTIVE, so the whole profile
+    layer was skipped. By the same reasoning the incident kill switch already applies — a hook's
+    ACTION is an automated side-effect even when its triggering event happened in an interactive
+    turn — a hook fire with no parent session is an unattended dispatch, and resolves as one.
+    """
+    from personalclaw.guardrails.policy import unattended_dispatch_key
+
+    return str(hook_event.get("parent_session_key", "")) or unattended_dispatch_key(
+        f"hook:{hook.id}"
+    )
+
+
+def held_owner_id(hook_id: str) -> str:
+    """The id a lifecycle trigger's held settings are kept under (``triggers.held_secrets``):
+    apart from every stored trigger's, so the two kinds never share a key."""
+    return f"{LIFECYCLE_TRIGGER_PREFIX}{hook_id}"
+
+
 async def run_script_hook(
     hook: ScriptHook,
     context: str = "",
@@ -1241,26 +1282,22 @@ async def run_script_hook(
             event=hook.event,
             error="skipped: incident mode active",
         )
+    # `{{secret:NAME}}` filled here, as an automation's fire fills it: a hook handed the provider
+    # the placeholder itself. What the hook keeps in the credential store is filled under its own
+    # key (`triggers.held_secrets`); a secret that does not resolve refuses the run, naming it, and
+    # what the action answers is masked of every value filled in.
+    config, filled, missing = _hook_config(hook, provider)
+    if missing:
+        return _refused(missing, "error")
     # Denylist gate: a hook's action config is checked
     # BEFORE dispatch, so an app-contributed provider inherits the denylist. A
     # blocked action returns a blocked result rather than executing.
     from personalclaw.guardrails.denylist import enforce_action
-    from personalclaw.guardrails.policy import unattended_dispatch_key
 
-    # `parent_session_key` rides the event payload when a subagent fired the hook;
-    # it lets the run's SafetyProfile layer its extra deny globs.
-    #
-    # 🔴 A top-level fire omitted it → "" → classified ATTENDED → INTERACTIVE, so the whole
-    # profile layer was skipped. By the same reasoning the incident kill switch
-    # above already applies — a hook's ACTION is an automated side-effect even when its
-    # triggering event happened in an interactive turn — a hook fire with no parent session
-    # is an unattended dispatch, and now resolves as one.
-    _session_key = str(hook_event.get("parent_session_key", "")) or unattended_dispatch_key(
-        f"hook:{hook.id}"
-    )
+    _session_key = _dispatch_key(hook, hook_event)
     _deny = enforce_action(
         hook.provider,
-        hook.provider_config,
+        config,
         ctx,
         session_key=_session_key,
     )
@@ -1306,7 +1343,9 @@ async def run_script_hook(
         # What the action reaches is held to the egress tier of the identity the denylist and the
         # rung judged it under, whichever turn's event fired it.
         with egress_held_to(_session_key):
-            result = await provider.execute(hook.provider_config, ctx, timeout=hook.timeout)
+            result = masked_answer(
+                await provider.execute(config, ctx, timeout=hook.timeout), filled
+            )
     except Exception as exc:  # noqa: BLE001 - a misbehaving provider must not crash the seam
         # A provider that RAISES (rather than returning a
         # failed result) is wrapped in the shared WHAT/WHY/FIX envelope here, so
@@ -1320,7 +1359,7 @@ async def run_script_hook(
             hook_id=hook.id,
             hook_name=hook.name,
             event=hook.event,
-            error=agent_error.render(),
+            error=masked(agent_error.render(), filled),
         )
 
     # What the action printed comes back here, on its way into the agent's next turn, so it is
@@ -1434,6 +1473,20 @@ def unreadable_file(config_dir: Path | None = None) -> record_files.Unreadable |
     return None
 
 
+def _hold(hook: "ScriptHook", before: "ScriptHook | None") -> None:
+    """Keep what *hook*'s action holds as a credential in the credential store, as a stored
+    trigger's is (``triggers.held_secrets``): the record keeps a reference. *before* is the hook as
+    stored before this write, so a setting it leaves keeps its key."""
+    from personalclaw.triggers import held_secrets
+
+    hook.provider_config = held_secrets.hold_config(
+        held_owner_id(hook.id),
+        hook.provider,
+        hook.provider_config,
+        before.provider_config if before is not None else None,
+    )
+
+
 class ScriptHookStore:
     """Persist script hooks to ~/.personalclaw/hooks.json.
 
@@ -1515,6 +1568,7 @@ class ScriptHookStore:
         hook = ScriptHook.from_dict(data)
         if not hook.id:
             hook.id = str(uuid.uuid4())[:8]
+        _hold(hook, None)
         self._commit({**self._hooks, hook.id: hook})
         return hook
 
@@ -1549,6 +1603,7 @@ class ScriptHookStore:
         ):
             if k in data:
                 setattr(hook, k, data[k])
+        _hold(hook, held)
         self._commit({**self._hooks, hook_id: hook})
         return hook
 
@@ -1556,6 +1611,9 @@ class ScriptHookStore:
         self._take_in()
         if hook_id in self._hooks:
             self._commit({k: h for k, h in self._hooks.items() if k != hook_id})
+            from personalclaw.triggers import held_secrets
+
+            held_secrets.purge(held_owner_id(hook_id))
             return True
         return False
 
@@ -1753,6 +1811,29 @@ class ScriptHookStore:
 
     def _write(self, records: list[dict]) -> None:
         atomic_write(self._path, json.dumps({"hooks": records}, indent=2))
+
+
+def move_held_settings(path: Path) -> bool:
+    """Move what an earlier release left in *path* (``hooks.json``) into the credential store:
+    each lifecycle trigger's held settings, as a save would keep them (:func:`_hold`). ``True``
+    when the file changed. Called at boot after the apps load; one trigger that cannot be moved is
+    left as it was, and the next boot tries again."""
+    store = ScriptHookStore(path.parent)
+    hooks = dict(store._hooks)
+    changed = False
+    for hook_id, hook in list(hooks.items()):
+        moved = ScriptHook.from_dict(hook.to_dict())
+        try:
+            _hold(moved, hook)
+        except Exception:  # noqa: BLE001 - one lifecycle trigger must not hold the others
+            logger.warning("could not move a lifecycle trigger's held settings", exc_info=True)
+            continue
+        if moved.provider_config != hook.provider_config:
+            hooks[hook_id] = moved
+            changed = True
+    if changed:
+        store._commit(hooks)
+    return changed
 
 
 # -- Global script hook store accessor --
