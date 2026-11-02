@@ -80,21 +80,19 @@ function reveal(el: HTMLElement) {
 /** A row's label and mark, raised over its selected fill. */
 const ROW_LABEL_Z = 10
 
-/** The pinned bar: stuck to the top of the rail's scroll area (the sidebar, `NavRail`) while the
- *  threads scroll under it, on the rail's own solid surface and above the rows' labels, so no row
- *  shows through it.
+/** The pinned bar: stuck to the top of the rail's scroll area (the chat history, between the
+ *  sidebar's two blocks: `NavRail`) while the threads scroll under it, on the rail's own solid
+ *  surface and above the rows' labels, so no row shows through it.
  *
- *  A sticky box sticks inside its scroller's padding, and the sidebar's scroll area pads its top by
- *  `--spacing-l` (`pt-l`), so at `top: 0` the rows passing under the bar showed in that band above it. The bar
- *  sticks that far higher, flush with the sidebar's top edge, and pads its own top by a focus ring's
- *  reach (`RING_REACH`) so New thread's ring is not cut by that edge.
+ *  The scroll area pads nothing at its top, so the bar sticks flush with its top edge, and pads its
+ *  own top by a focus ring's reach (`RING_REACH`) so New thread's ring is not cut by that edge.
  *
  *  While the rail shows the bar, the scroller's `scroll-padding-top` is the bar's height and a focus
  *  ring's reach (`RING_REACH`): the top the browser keeps clear when focus moves to a row (Tab,
  *  Shift+Tab, the arrow keys), and that `reveal` and `WindowedList` keep clear when they scroll one
  *  into view, so a row never takes the focus behind the bar, nor its ring under it (WCAG 2.4.11). */
 const PINNED_BAR = {
-  position: 'sticky', top: 'calc(-1 * var(--spacing-l))', zIndex: ROW_LABEL_Z + 1,
+  position: 'sticky', top: 0, zIndex: ROW_LABEL_Z + 1,
   background: 'var(--color-rail)', paddingTop: RING_REACH,
 } as const
 

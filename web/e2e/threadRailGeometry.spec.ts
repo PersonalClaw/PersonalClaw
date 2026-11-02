@@ -2,30 +2,28 @@ import { test, expect, type Page } from '@playwright/test'
 import { gotoRoute } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
 
-// ── NEW THREAD AND THE SEARCH STAY PINNED AT THE TOP OF THE SIDEBAR WHILE THE THREADS SCROLL ─────
+// ── THE CHAT HISTORY'S BAR STAYS PINNED AT ITS TOP WHILE THE ROWS SCROLL UNDER IT ────────────────
 //
-// The sidebar is a scroll area (the wordmark, the leading destinations, the threads under their
-// projects, then the Platform rows) over a foot that never scrolls (Settings). New thread and the
-// search are one bar at the top of the threads
-// (#3814), and while the threads scroll under it the bar stays at the top of the sidebar, on the
-// rail's solid surface, so no row shows through it. Once the threads have scrolled past, the bar
-// goes with them: it is the threads' bar, and the rows below are never under it.
+// The sidebar is a shell (#5878): a top block (the icon and name, the leading destinations) and a
+// bottom block (Inbox, Automations, Capabilities, then Settings) that keep their height, and between
+// them the chat history, the one part that scrolls. New chat and the search are one bar at the top
+// of the chat history (#3814), and while the rows scroll under it the bar stays at the top of the
+// scroll area, on the rail's solid surface, so no row shows through it. Scrolled to its end, the
+// last row shows whole above the bottom block, and neither block moves.
 //
 // jsdom lays nothing out, so `threadRailKeepsItsTopPinned.test.tsx` reads the bar's styles and checks
-// the scrolling against sizes set by hand. This asks a real browser the property: with forty threads
-// and a short window, scrolled into the threads, the bar's top is the sidebar's top, the bar is the
-// topmost thing everywhere on it while a row passes under it, and it paints opaque; scrolled past the
-// threads in a window too short to hold the rows below them, the bar leaves with the threads and a
-// Platform row shows whole where it was. Focus moved up a row by the keyboard, and a thread the
-// address opens above the bar, each land below the bar, whole and topmost, the ring clear of it too
-// (WCAG 2.4.11); focus moved down to a row at the scroll area's fold lands with its ring clear of the
-// fold. In a 720 px window Settings, in the foot, keeps its whole ring. The threads and projects are
-// route stubs, so the layout is the only variable.
+// the scrolling against sizes set by hand. This asks a real browser the property: with forty chats
+// and a short window, scrolled into the chat history, the bar's top is the scroll area's top, the bar
+// is the topmost thing everywhere on it while a row passes under it, and it paints opaque. Focus
+// moved up a row by the keyboard, and a chat the address opens above the bar, each land below the
+// bar, whole and topmost, the ring clear of it too (WCAG 2.4.11); focus moved down to a row at the
+// fold lands with its ring clear of the fold. In a 720 px window Settings, in the bottom block,
+// keeps its whole ring. The chats and projects are route stubs, so the layout is the only variable.
 
 /** How far a focus ring reaches past its control (`RING_REACH`, `ui/NavRail.tsx`). */
 const RING = 4
 
-/** The sidebar's scroll area: everything but the rows pinned to its foot. */
+/** The sidebar's scroll area: the chat history, between the top and the bottom block. */
 const SCROLLER = 'nav[data-tour="rail"] [data-rail-scroll]'
 
 const COUNT = 40
@@ -66,7 +64,6 @@ interface RailGeometry {
   areaTop: number
   barTop: number
   barBottom: number
-  groupBottom: number
   /** Thread rows whose box crosses the bar's band: what is scrolled under it. */
   rowsUnderBar: number
   /** Points on the bar where something else is topmost, by what is there. */
@@ -100,7 +97,6 @@ async function readRail(page: Page): Promise<RailGeometry> {
       areaTop: n.top,
       barTop: b.top,
       barBottom: b.bottom,
-      groupBottom: group.getBoundingClientRect().bottom,
       rowsUnderBar: rows.filter((r) => r.bottom > b.top + 1 && r.top < b.bottom - 1).length,
       shownThrough,
       barBackground: getComputedStyle(bar).backgroundColor,
@@ -128,8 +124,8 @@ test.describe('the top of the thread rail', () => {
     await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
 
     const before = await readRail(page)
-    expect(before.barTop, 'the bar starts below the destinations above it').toBeGreaterThan(before.areaTop)
-    // Scroll the threads well past where the bar sat: it stays at the sidebar's top.
+    expect(before.barTop, 'the bar is in the chat history').toBeGreaterThanOrEqual(before.areaTop - 1)
+    // Scroll the rows well past where the bar sat: it stays at the scroll area's top.
     await scrollRail(page, before.barTop - before.areaTop + 300)
     const scrolled = await readRail(page)
     expect(Math.abs(scrolled.barTop - scrolled.areaTop), 'the bar is pinned to the top of the sidebar').toBeLessThanOrEqual(1)
@@ -138,34 +134,41 @@ test.describe('the top of the thread rail', () => {
     expect(opaque(scrolled.barBackground), `the bar paints opaque, not ${scrolled.barBackground}`).toBe(true)
   })
 
-  test('scrolled past the threads, the bar leaves with them and never covers the rows below', async ({ page }) => {
-    // Short enough that, scrolled to the end, the threads end less than a bar's height below the
-    // sidebar's top: the bar is then pushed off with them, the case the check is for. The rows below
-    // the threads are Platform's three, so the window is what makes it short enough.
-    await page.setViewportSize({ width: 1280, height: 280 })
+  test('scrolled to its end, the last row shows whole above the bottom block, and neither block moves', async ({ page }) => {
     await stubThreads(page)
     await gotoRoute(page, 'dashboard')
     await expect(page.getByRole('button', { name: /Rail thread 39/ })).toBeAttached()
+    /** The top and bottom blocks' edges, which the chat history's scrolling never moves. */
+    const blocks = () => page.evaluate(() => {
+      const edges = (sel: string) => {
+        const r = document.querySelector(`nav[data-tour="rail"] ${sel}`)!.getBoundingClientRect()
+        return [r.top, r.bottom]
+      }
+      return { top: edges('[data-rail-top]'), bottom: edges('[data-rail-pinned]') }
+    })
+    const before = await blocks()
     await scrollRail(page, 100_000)
+    expect(await blocks(), 'the top and bottom blocks stay where they were').toEqual(before)
     const past = await readRail(page)
-    expect(past.groupBottom, 'the threads end within a bar\'s height of the sidebar\'s top').toBeLessThan(past.areaTop + (past.barBottom - past.barTop))
-    expect(Math.abs(past.barBottom - past.groupBottom), 'the bar sits at the threads\' end, inside them').toBeLessThanOrEqual(1)
-    const below = await page.evaluate(() => {
-      const group = document.querySelector('nav[data-tour="rail"] [role="group"]')!
-      const row = [...document.querySelectorAll<HTMLElement>('nav[data-tour="rail"] button')]
-        .find((b) => !group.contains(b) && b.getBoundingClientRect().top >= group.getBoundingClientRect().bottom)!
+    expect(Math.abs(past.barTop - past.areaTop), 'the bar is still pinned to the scroll area\'s top').toBeLessThanOrEqual(1)
+    const last = await page.evaluate((sel) => {
+      const area = document.querySelector(sel)!
+      const rows = [...area.querySelectorAll<HTMLElement>('[data-thread-key]')]
+      const row = rows[rows.length - 1]
       const r = row.getBoundingClientRect()
       const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
-      return { name: row.getAttribute('aria-label') ?? row.textContent, mine: !!hit && row.contains(hit) }
-    })
-    expect(below.mine, `the first row below the threads (${below.name}) is the topmost thing at its centre`).toBe(true)
+      return { key: row.dataset.threadKey, bottom: r.bottom, fold: area.getBoundingClientRect().bottom, mine: !!hit && row.contains(hit) }
+    }, SCROLLER)
+    expect(last.key, 'the last row is drawn').toBe(`chat:${key(COUNT - 1)}`)
+    expect(last.bottom, 'it ends inside the chat history, above the bottom block').toBeLessThanOrEqual(last.fold + 0.5)
+    expect(last.mine, 'and is the topmost thing at its centre').toBe(true)
   })
 
   test('in a 720 px window the rows pinned to the foot stay whole, ring and all', async ({ page }) => {
-    // The sidebar a fresh home draws: two empty projects and no thread. With Settings at the foot of
-    // the one scroller, that overflowed a 720 px window, and Settings sat in the rail's own bottom
+    // The sidebar a fresh home draws: two empty projects and no chat. With Settings at the foot of
+    // one scroller, that overflowed a 720 px window, and Settings sat in the rail's own bottom
     // padding with the bottom of its ring cut off by the scroller (the surface matrix measured 14 px
-    // and 2 px). Forty threads would hide that: focus would scroll Settings into view, clear of the
+    // and 2 px). Forty chats would hide that: focus would scroll Settings into view, clear of the
     // edge.
     await page.setViewportSize({ width: 1280, height: 720 })
     const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })

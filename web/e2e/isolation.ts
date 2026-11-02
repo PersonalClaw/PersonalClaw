@@ -62,6 +62,7 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
   'chatInspectorGeometry.spec.ts': { mode: 'shared', why: 'answers its chat reads with route stubs, and writes nothing' },
   'threadRailGeometry.spec.ts': { mode: 'shared', why: 'answers its thread reads with route stubs' },
   'sidebarHoldsItsPlace.spec.ts': { mode: 'shared', why: 'answers its thread reads with route stubs' },
+  'sidebarShell.spec.ts': { mode: 'shared', why: 'answers its chat reads with route stubs, and writes nothing' },
   'focusAndReadingModes.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
   'idleCost.spec.ts': {
     mode: 'alone',

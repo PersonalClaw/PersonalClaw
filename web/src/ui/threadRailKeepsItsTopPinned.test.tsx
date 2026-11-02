@@ -50,9 +50,9 @@ describe('the top of the thread rail', () => {
     expect(top.contains(screen.getByRole('searchbox', { name: 'Search threads' })), 'the search is in the bar').toBe(true)
     const style = getComputedStyle(top)
     expect(style.position).toBe('sticky')
-    // Flush with the sidebar's top edge: the sidebar pads its top by --spacing-l, and a sticky box
-    // sticks inside that padding.
-    expect(style.top).toBe('calc(-1 * var(--spacing-l))')
+    // Flush with the top edge of the chat history, the scroll area between the sidebar's two blocks,
+    // which pads nothing at its top (#5878).
+    expect(style.top).toBe('0px')
   })
 
   it('paints the rail\'s solid surface, above the rows, so no row shows through it', () => {
