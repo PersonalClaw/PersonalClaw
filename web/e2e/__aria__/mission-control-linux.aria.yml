@@ -1,17 +1,17 @@
 - navigation:
-  - img "PersonalClaw"
-  - text: PersonalClaw
-  - button "Home"
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
   - button "Chat"
   - button "Projects"
   - button "Library"
-  - group "Threads":
-    - text: Threads
-    - button "New thread"
-    - searchbox "Search threads"
+  - group "Chat history":
+    - text: Chat history
+    - 'button "Group by: Folders"': Folders
+    - button "New chat"
+    - searchbox "Search chats"
     - status
-    - button "Personal, no threads": Personal #
-    - button "Repeatable, no threads": Repeatable #
+    - text: No chats yet
   - text: Platform
   - button "Inbox"
   - button "Automations"
@@ -21,18 +21,18 @@
 - main:
   - button "Collapse sidebar"
   - button "Open terminal"
-  - button "# waiting on you — open Home"
+  - button "# waiting on you — open Attention"
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Good <time of day>, Alex" [level=#]
-  - button "New thread"
+  - button "New chat"
   - radiogroup "View":
     - radio "Attention" [checked]
     - radio "Overview"
   - region "Home":
     - textbox "Start something":
-      - /placeholder: "Start something: type it and press Enter for a new thread"
+      - /placeholder: "Start something: type it and press Enter for a new chat"
     - radiogroup "Show":
       - radio "All" [checked]
       - radio "Needs You"
@@ -75,6 +75,6 @@
       - paragraph: Nothing is running right now.
     - region "Recent and completed":
       - heading "Recent and completed" [level=#]
-      - paragraph: Nothing has finished lately, and you have no threads yet.
+      - paragraph: Nothing has finished lately, and you have no chats yet.
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

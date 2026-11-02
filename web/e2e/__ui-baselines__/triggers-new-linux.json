@@ -91,7 +91,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
       ],
       "axe (WCAG 2 AA)": [
         "[serious] color-contrast: Elements must meet minimum color contrast ratio thresholds — # node(s): button[title=\"Schedule\"] > .gap-#\\.#.z-#.inline-flex, button[title=\"Interval\"] > .gap-#\\.#.z-#.inline-flex"
@@ -190,7 +190,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
       ]
     }
   }

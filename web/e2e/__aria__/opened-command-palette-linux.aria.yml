@@ -1,17 +1,17 @@
 - navigation:
-  - img "PersonalClaw"
-  - text: PersonalClaw
-  - button "Home"
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
   - button "Chat"
   - button "Projects"
   - button "Library"
-  - group "Threads":
-    - text: Threads
-    - button "New thread"
-    - searchbox "Search threads"
+  - group "Chat history":
+    - text: Chat history
+    - 'button "Group by: Folders"': Folders
+    - button "New chat"
+    - searchbox "Search chats"
     - status
-    - button "Personal, no threads": Personal #
-    - button "Repeatable, no threads": Repeatable #
+    - text: No chats yet
   - text: Platform
   - button "Inbox"
   - button "Automations"
@@ -88,16 +88,16 @@
   - option "Mark every chat as read Action · Shift+Esc"
   - option "Go to your previous message in this chat Open a chat with four or more of your messages Action · Alt+↑" [disabled]
   - option "Go to your next message in this chat Open a chat with four or more of your messages Action · Alt+↓" [disabled]
-  - option "New thread Action · Ctrl+N"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
-  - option "Open thread # in the sidebar Action · Ctrl+#"
+  - option "New chat Action · Ctrl+N"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
+  - option "Open chat # in the sidebar Action · Ctrl+#"
   - option "Approve the focused request Move focus to an approval, then press the key there Action · Ctrl+Enter" [disabled]
   - option "Restore the last prompt Press it in an empty composer Action · ↑" [disabled]
   - option "Stop the running turn Press it in a chat while a turn runs Action · Esc" [disabled]
