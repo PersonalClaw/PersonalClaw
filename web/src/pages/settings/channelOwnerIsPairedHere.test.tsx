@@ -133,6 +133,14 @@ describe('the owner section', () => {
     expect(screen.queryByRole('button', { name: /Copy your Telegram id/ })).toBeNull()
   })
 
+  it('says, before a code is minted, that pairing a new owner ends the current one\'s access', async () => {
+    vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ owner_id: '7000000001', owner_name: 'Ada Example', source: 'channel' }))
+    const start = vi.spyOn(api, 'startChannelOwnerPairing')
+    render(<ChannelOwnerSection channel="telegram" />)
+    expect(await screen.findByText("Pairing a new owner ends Ada Example's access to your agent on Telegram.")).toBeTruthy()
+    expect(start).not.toHaveBeenCalled()
+  })
+
   it('a code offered over a paired owner names who it would replace by name', async () => {
     vi.spyOn(api, 'channelOwner').mockResolvedValue(status({ owner_id: '7000000001', owner_name: 'Ada Example', source: 'channel' }))
     const expires = new Date(Date.now() + 600_000).toISOString()
@@ -143,7 +151,7 @@ describe('the owner section', () => {
     render(<ChannelOwnerSection channel="telegram" />)
     fireEvent.click(await screen.findByRole('button', { name: /Pair a new owner/ }))
     const caption = await screen.findByText(/Whoever sends it becomes Telegram's owner/)
-    expect(caption.textContent).toMatch(/in place of Ada Example\.$/)
+    expect(caption.textContent).toMatch(/in place of Ada Example, whose access to your agent on Telegram then ends\.$/)
   })
 
   it('a channel whose code is not sent in a DM says how it is sent', async () => {

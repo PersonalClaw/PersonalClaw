@@ -133,6 +133,27 @@ describe('SenderTrustPanel', () => {
     expect(revoke).not.toHaveBeenCalled()
   })
 
+  it("marks your owner's row, and says that revoking it unpairs them", async () => {
+    // Revoke on the owner's own row has core forget them as the channel's owner (the route calls
+    // `forget_owner`): approvals and messages for you stop going there. Off the allowlist alone
+    // they stayed the owner, so the dialog must not read as an allowlist change.
+    vi.spyOn(api, 'channelTrust').mockResolvedValue(
+      trust({ providers: [provider({ allowed_senders: [sender({ via: 'owner_pairing', owner: true })] })] }),
+    )
+    const revoke = vi.spyOn(api, 'revokeChannelSender').mockResolvedValue(undefined as never)
+    mount()
+
+    expect(await screen.findByText(/^Your owner · /)).toBeTruthy()
+    await userEvent.click(await screen.findByRole('button', { name: /Revoke Alice on Telegram/i }))
+
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.textContent).toMatch(/stops being your telegram owner/i)
+    expect(dialog.textContent).toMatch(/approvals and messages for you stop going there/)
+    expect(dialog.textContent).not.toMatch(/allowlist/i)
+    expect(screen.getByRole('button', { name: /Unpair owner/ })).toBeTruthy()
+    expect(revoke).not.toHaveBeenCalled()
+  })
+
   it('writes nothing when the confirmation is dismissed', async () => {
     vi.spyOn(api, 'channelTrust').mockResolvedValue(trust())
     const revoke = vi.spyOn(api, 'revokeChannelSender').mockResolvedValue(undefined as never)

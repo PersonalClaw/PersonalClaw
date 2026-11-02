@@ -832,7 +832,7 @@ The 948 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `POST` | `/api/packs/{name}/update` | The ``pack_owned`` update flow. DRY-RUN unless ``confirm`` is true. |
 | `GET` | `/api/proactive/digest` | the digest card, assembled from the last digest run. |
 | `POST` | `/api/proactive/digest/reply` | one tap or one typed reply. Body ``{run_id, text}``. |
-| `POST` | `/api/proactive/install` | the pack card. Idempotent; also the reconcile. |
+| `POST` | `/api/proactive/install` | the pack card's first install, and the reconcile; yours alone. |
 | `GET` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects` | _(no summary)_ |
 | `POST` | `/api/projects/import` | import a project archive (multipart `file`). |

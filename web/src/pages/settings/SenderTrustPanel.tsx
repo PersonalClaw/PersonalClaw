@@ -126,11 +126,17 @@ export function SenderTrustPanel({ navigate }: { navigate?: (path: string) => vo
   const revoke = async (p: ChannelTrustProvider, sender: ChannelTrustSender) => {
     const where = labelOf(p)
     const who = channelPerson(where, sender.sender_id, sender.name).name
-    const ok = await confirm({
+    // The claim each body makes is about what the backend actually does: `deny_sender` drops the
+    // sender from `allowed_senders` and writes a `sender_denied` audit row; for the channel's owner
+    // the route has core forget them (`forget_owner`), so approvals and messages for you stop
+    // going there. Neither ends a conversation already in flight, so neither promises that.
+    const ok = await confirm(sender.owner ? {
+      title: `Unpair ${who} as your owner?`,
+      body: `${who} stops being your ${where} owner: approvals and messages for you stop going there, and their next message will be treated as a stranger's. Any turn already running is not interrupted. Pair again to choose an owner.`,
+      danger: true,
+      confirmLabel: 'Unpair owner',
+    } : {
       title: `Revoke ${who}?`,
-      // The claim this body makes is about what the backend actually does: `deny_sender` drops
-      // the sender from `allowed_senders` and writes a `sender_denied` audit row. It does NOT
-      // end a conversation already in flight, so this does not promise that.
       body: `${who} will be dropped from your ${where} allowlist and their next message will be treated as a stranger's. Any turn already running is not interrupted. They can be let back in with a new pairing code.`,
       danger: true,
       confirmLabel: 'Revoke access',
@@ -140,7 +146,7 @@ export function SenderTrustPanel({ navigate }: { navigate?: (path: string) => vo
     setRevoking(tag)
     try {
       await api.revokeChannelSender(p.provider, sender.sender_id)
-      notify(`${who} can no longer talk to your agent on ${where}.`, 'success')
+      notify(sender.owner ? `${who} is no longer your owner on ${where}.` : `${who} can no longer talk to your agent on ${where}.`, 'success')
       setSaid(`${who} revoked on ${where}.`)
       refresh()
     } catch (e) {
@@ -382,7 +388,7 @@ function ProviderSection({ p, revoking, onRevoke, onChanged, onSaid }: {
                           <div data-type="body-s" className="mt-0.5 truncate text-on-surface-low">{detail}</div>
                         ) : null}
                         <div data-type="caption" className="mt-0.5 text-on-surface-low">
-                          {viaLabel(s.via)} · added {addedLabel(s.added_at)}
+                          {s.owner ? 'Your owner · ' : ''}{viaLabel(s.via)} · added {addedLabel(s.added_at)}
                         </div>
                       </div>
                     </div>

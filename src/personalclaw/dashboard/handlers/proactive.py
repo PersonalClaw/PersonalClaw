@@ -170,8 +170,12 @@ def _digest_notice(*, title: str, body: str) -> dict[str, Any]:
 # ── POST /api/proactive/install ───────────────────────────────────────────────
 
 
+class _ScheduleIsInstalled(Exception):
+    """A cron sent to the install once Morning triage is installed (``409``)."""
+
+
 async def api_proactive_install(request: web.Request) -> web.Response:
-    """POST /api/proactive/install — the pack card. Idempotent; also the reconcile.
+    """POST /api/proactive/install — the pack card's first install, and the reconcile; yours alone.
 
     Creates the schedule when it is absent, and on every call brings its ``enabled`` flag into
     line with ``proactive.triage_enabled`` — which is both retirement (disable ⇒ the
@@ -179,15 +183,18 @@ async def api_proactive_install(request: web.Request) -> web.Response:
     again) in one path. The row is never DELETED on disable: deleting it would lose the cron the
     user edited, and "dormant but kept" is exactly what retirement means here.
 
-    An explicit ``cron`` in the body edits the schedule (that is what "installs an editable
-    trigger" means).
+    A ``cron`` in the body is the schedule of a FIRST install: the pack card's editable field,
+    before Install. Once the schedule is installed it changes only where it is kept, the
+    automation's own edit route (``PUT /api/triggers/{id}``, held to you, with its stale-write
+    check), so a different cron here is refused ``409`` (``triage_schedule_installed``) with a
+    sentence pointing there, and the same cron, or none (the reconcile), keeps the row's own.
 
     🔴 CAUGHT BY DRIVING IT: the first version fell back to the config's ``digest_schedule``
     whenever the body carried no cron, so the reconcile the enable/disable toggle fires **silently
     rewrote a cron the user had edited** — install at ``30 7 * * 1-5``, flip triage on, and the row
     came back ``0 8 * * *``. An "editable trigger" that a switch elsewhere in the app resets is not
-    editable. So the precedence is now: the body's cron (an explicit edit) → the INSTALLED row's
-    own cron (the edit is the state) → the config default (only ever for a first install).
+    editable. So the precedence is: the INSTALLED row's own cron (the edit is the state), and
+    for a first install only, the body's cron → the config default.
     """
     from personalclaw.config.loader import AppConfig
     from personalclaw.dashboard.handlers import _is_restricted_session
@@ -234,11 +241,14 @@ async def api_proactive_install(request: web.Request) -> web.Response:
                 delivery="none",
             )
         spec = dict(getattr(trigger, "spec", None) or {})
-        # The user's edit wins over the config default, and the row's own cron IS the user's edit
-        # once it is installed — see this handler's docstring for the reconcile that used to
-        # clobber it. `validate_cron_expr` guards the fallback too: a row whose expr went bad must
-        # not silently become "never fires again" with an unarmable spec.
-        resolved = asked or str(spec.get("expr", "") or "") or default_cron
+        installed = str(spec.get("expr", "") or "")
+        # Once installed, the row's own cron IS the user's edit, made on the Triggers page: a cron
+        # sent here does not move it (see this handler's docstring). `validate_cron_expr` guards
+        # the fallback too: a row whose expr went bad must not silently become "never fires
+        # again" with an unarmable spec.
+        if not created and asked and asked.split() != installed.split():
+            raise _ScheduleIsInstalled
+        resolved = (asked if created else "") or installed or default_cron
         if not validate_cron_expr(resolved):
             resolved = default_cron
         if not validate_cron_expr(resolved):
@@ -267,6 +277,12 @@ async def api_proactive_install(request: web.Request) -> web.Response:
 
     try:
         payload, created = await asyncio.to_thread(ensure)
+    except _ScheduleIsInstalled:
+        return json_error(
+            "triage_schedule_installed",
+            message="Morning triage is installed; change its schedule on the Triggers page.",
+            status=409,
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("proactive: triage schedule install failed", exc_info=True)
         return json_error(
