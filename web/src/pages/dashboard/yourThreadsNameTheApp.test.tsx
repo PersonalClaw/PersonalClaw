@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, within } from '@testing-library/react'
 import { runState } from '../../test/runState'
 
-// ── Your threads name the app that started a chat ────────────────────────────────────────────────
+// ── Your chats name the app that started a chat ────────────────────────────────────────────────
 //
-// Home's Your threads (under Recent and completed) reopen your most recent chats, and an app's conversation is one of
+// Home's Your chats (under Recent and completed) reopen your most recent chats, and an app's conversation is one of
 // them (#3632 puts them in your history). Opening one means speaking under the APP's permissions,
 // not yours — and a bare title cannot tell you that. The history rows already say "Started by
 // <App>"; these links are the other place you pick a chat up again, so they say it too, in the
@@ -48,10 +48,10 @@ afterEach(cleanup)
 
 const jumpLinks = async () => {
   render(<AppearanceProvider><HomeHarness /></AppearanceProvider>)
-  return screen.findByRole('list', { name: 'Your threads' })
+  return screen.findByRole('list', { name: 'Your chats' })
 }
 
-describe('Your threads, on Home', () => {
+describe('Your chats, on Home', () => {
   it('says "Started by <App>" on the app\'s chat', async () => {
     const links = await jumpLinks()
     const app = within(links).getByRole('button', { name: /Inbox triage/ })

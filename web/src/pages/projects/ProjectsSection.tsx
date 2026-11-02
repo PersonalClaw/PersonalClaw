@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { MoreRow } from '../../ui/MoreRow'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -9,7 +9,7 @@ import { FolderKanban, LayoutDashboard, Search, Plus, Loader2, Trash2, FolderOpe
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { ListControls } from '../../ui/ListControls'
@@ -17,6 +17,7 @@ import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
 import { cx } from '../../ui/cx'
 import { useThreads } from '../../lib/useThreads'
 import { ProjectThreads, projectThreads } from './ProjectThreads'
+import { ChatsByProject, shownChatGroups } from './ChatsByProject'
 import { RowHitTarget } from '../../ui/RowHitTarget'
 import { confirm } from '../../ui/dialog'
 import { Modal } from '../../ui/Modal'
@@ -56,11 +57,23 @@ export const ALL_TASKS_TARGET = 'max-lg:min-h-11 max-lg:min-w-11'
 export function ProjectsSection({ sub, navigate, query, setQuery, navEpoch }: RouteProps) {
   const seg = (sub || '').split('/')[0]
   if (seg) return <ProjectDetailPage id={seg} onBack={() => navigate('projects')} navigate={navigate} query={query} setQuery={setQuery} navEpoch={navEpoch} />
-  return <ProjectListPage onOpen={(id) => navigate(`projects/${id}`)} onOpenLoops={() => navigate('loops/history')} onOpenTasks={() => navigate('tasks')} query={query} setQuery={setQuery} />
+  return <ProjectListPage onOpen={(id) => navigate(`projects/${id}`)} onOpenRoute={navigate} onOpenLoops={() => navigate('loops/history')} onOpenTasks={() => navigate('tasks')} query={query} setQuery={setQuery} />
 }
 
-function ProjectListPage({ onOpen, onOpenLoops, onOpenTasks, query, setQuery }: { onOpen: (id: string) => void; onOpenLoops: () => void; onOpenTasks: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
+/** The Projects page's two views (#5877): the projects, and every project's chats, which the
+ *  sidebar's chat history groups by folder or tag instead. */
+const LIST_VIEWS = [
+  { key: 'projects', label: 'Projects', icon: FolderKanban },
+  { key: 'chats', label: 'Chats by project', icon: MessageSquare },
+]
+
+function ProjectListPage({ onOpen, onOpenRoute, onOpenLoops, onOpenTasks, query, setQuery }: { onOpen: (id: string) => void; onOpenRoute: (route: string) => void; onOpenLoops: () => void; onOpenTasks: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   const { data: projects, loading, error: loadErr, refresh } = useQuery('projects:list', () => api.projects(), { persist: true })
+  // The view is URL-backed (`?view=chats`), as the search is, so a reload and a copied link keep it;
+  // switching it replaces the entry, so Back leaves the page rather than undoing the switch.
+  const [view, setView] = useQueryParam(query, setQuery, 'view', '', { replace: true })
+  const byProject = view === 'chats'
+  const threadsRead = useThreads()
   // List search is URL-backed (?q, replace) — shareable + refresh-stable, no
   // per-keystroke history. (Was local useState.)
   const [q, setQ] = useQueryParam(query, setQuery, 'q', '', { replace: true })
@@ -192,6 +205,7 @@ function ProjectListPage({ onOpen, onOpenLoops, onOpenTasks, query, setQuery }: 
 
   const needle = q.trim().toLowerCase()
   const shown = (projects ?? []).filter((p) => !needle || p.name.toLowerCase().includes(needle))
+  const chatsShown = useMemo(() => (byProject ? shownChatGroups(threadsRead.groups, projects, q) : []), [byProject, threadsRead.groups, projects, q])
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
@@ -203,12 +217,15 @@ function ProjectListPage({ onOpen, onOpenLoops, onOpenTasks, query, setQuery }: 
         // (measured 2026-09-25).
         // All tasks, every project's, from the page the sidebar's Projects row opens: the way to it
         // where no ⌘K is, a phone's (#3818). So on a phone it is a 44 px target (ALL_TASKS_TARGET).
-        right={<HeaderActions><HeaderControl icon={ListChecks} label="All tasks" onClick={onOpenTasks} className={ALL_TASKS_TARGET} /><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
+        right={<HeaderActions><HeaderSegmented ariaLabel="View" options={LIST_VIEWS} value={byProject ? 'chats' : 'projects'} onChange={(k) => setView(k === 'chats' ? 'chats' : '')} /><HeaderControl icon={ListChecks} label="All tasks" onClick={onOpenTasks} className={ALL_TASKS_TARGET} /><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
       {/* Raw: no primitive draws a file picker. Forwarded to by the header's Import control, which is the keyboard-reachable control. */}
       <input ref={importInput} type="file" accept=".zip,application/zip" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void previewImport(file) }} />
 
-      {!!projects?.length && (
+      {byProject ? (
+        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search chats', label: 'Search chats' }}
+          results={{ count: chatsShown.reduce((n, g) => n + g.threads.length, 0), noun: 'chats', active: !!needle }} />
+      ) : !!projects?.length && (
         <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}
           results={{ count: shown.length, noun: 'projects', active: !!needle }} />
       )}
@@ -234,7 +251,8 @@ function ProjectListPage({ onOpen, onOpenLoops, onOpenTasks, query, setQuery }: 
             "No projects yet" — measured: the API returned 500 and the page said the user had
             none, with no retry and nothing announced. The error branch must come FIRST,
             because `projects === undefined` also satisfies the skeleton and empty conditions. */}
-        {projects === undefined && loadErr ? <LoadError what="projects" error={loadErr} onRetry={() => { invalidateKeys('projects:list'); refresh() }} />
+        {byProject ? <ChatsByProject read={threadsRead} groups={chatsShown} searching={!!needle} onOpen={onOpenRoute} />
+          : projects === undefined && loadErr ? <LoadError what="projects" error={loadErr} onRetry={() => { invalidateKeys('projects:list'); refresh() }} />
           : loading && !projects ? <ListSkeleton rows={5} what="projects" />
           : !shown.length ? (
             needle
@@ -1036,10 +1054,10 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
             <WorkBoardColumn work={work} loading={workLoading} onResume={resumeWork} onOpen={openWork} onStop={stopWork} />
           </HubColumn>
 
-          {/* THREADS over TASKS, sharing the secondary column: the project's chats, goal loops and
-              code sessions as the sidebar lists them, then its task lists. */}
+          {/* CHATS over TASKS, sharing the secondary column: the project's chats, goal loops and
+              code sessions, then its task lists. */}
           <div className="min-h-0 flex flex-col gap-px bg-outline-variant/20">
-            <HubColumn title={`Threads · ${threadCount}`} className="max-h-[50%] shrink-0">
+            <HubColumn title={`Chats · ${threadCount}`} className="max-h-[50%] shrink-0">
               <ProjectThreads projectId={id} read={threadsRead} onOpen={navigate} />
             </HubColumn>
 

@@ -78,7 +78,7 @@ async function mountHome() {
   const { AppearanceProvider } = await import('../../app/appearance')
   render(<AppearanceProvider><HomeHarness /></AppearanceProvider>)
   // Home has mounted and its threads have arrived.
-  await screen.findByRole('list', { name: 'Your threads' })
+  await screen.findByRole('list', { name: 'Your chats' })
 }
 
 describe('Home draws no count pills', () => {

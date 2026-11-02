@@ -24,6 +24,7 @@ const doc: UiDoc = {
     { name: 'noun', description: 'Plural noun for the count sentence — "chats", "items", "runs", "lines".' },
     { name: 'findHint', description: 'REQUIRED, and it must name a real in-app affordance ("use the Search chats field above"). Ctrl+F cannot see un-rendered rows and that cannot be fixed, so the alternative is STATED, announced with the true total, instead of a search box quietly going half-blind.' },
     { name: 'anchorKey', description: 'rowKey of a row to scroll to and focus once — the deep-link path. Changing it re-anchors; clearing it leaves the user\'s scroll alone.' },
+    { name: 'revealKey', description: 'rowKey of a row to bring into the window and into view WITHOUT moving focus: the row the page shows, as a sidebar lights the one the address opens. Changing it reveals it; the same key again, or clearing it, leaves the user\'s scroll alone. A key not listed yet is revealed once its row arrives.' },
     { name: 'overscan', description: 'Rows kept mounted above and below the viewport (default 8). This is what stops a fast scroll flashing empty; every extra row is back on the cost curve.' },
     { name: 'className', description: 'Applied to the list container — pass the same layout classes the un-windowed <div> had (flex flex-col gap-s), so a short list is unchanged.' },
     { name: 'enableRowKeyboard', description: 'Set false only for a list whose rows are not individually focusable (a log tail). Otherwise the primitive owns Arrow/Home/End/PageUp/PageDown and reaches un-rendered rows.' },

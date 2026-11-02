@@ -17,6 +17,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **The sidebar keeps its shortcuts in place: the PersonalClaw icon and name and the destinations under them stay at the top, and Inbox, Automations, Capabilities, your pinned app pages and Settings stay at the bottom, while only your chat history scrolls between them. In a window too short for both, the sidebar scrolls as one column, so every shortcut can still be reached.**
 - **The PersonalClaw icon and name at the top of the sidebar open Home, and Home opens on Overview. Home has no row of its own in the sidebar any more. Attention is in Home's View control and behind the needs-you shortcut at the top right, and the `#/mission-control` and `?view=attention` addresses still open it.**
+- **The middle of the sidebar is your Chat history, grouped by your folders, or by your tags from the Group by control on its heading, with No folder or No tag last and an empty folder or tag left out. A goal loop or code session says its kind on its row. The chats by project moved to the Projects page, as its Chats by project view. What the app called a thread is now a chat everywhere you read it: New chat, Your chats on Home, the Go menu and the keyboard shortcuts.**
 
 ### Fixed
 

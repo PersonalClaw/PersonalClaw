@@ -125,7 +125,7 @@ describe('the Automations list shows the order the route states', () => {
     // The row's button is a zero-content overlay (`ListRow`); what the row says is its card's.
     const row = (name: string) => screen.getByRole('button', { name }).parentElement as HTMLElement
     expect(row('Morning brief').textContent).toContain('Reports to “Planning”')
-    expect(row('cb1').textContent).toContain('Reports to its thread')
+    expect(row('cb1').textContent).toContain('Reports to its chat')
     expect(row('Backup').textContent).toContain('Reports to Slack')
     expect(row('Weekly review').textContent).toContain('Reports to the Inbox')
     expect(row('Archive').textContent).toContain('Silent')

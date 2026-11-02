@@ -7,9 +7,9 @@ import type { Thread, ThreadKind, ThreadsRead } from '../../lib/useThreads'
 /** What each kind of thread is called on its row. */
 const KIND: Record<ThreadKind, string> = { chat: 'Chat', loop: 'Goal loop', code: 'Code session' }
 
-/** A project's own threads, in the order the sidebar lists them under it: its chats, goal loops and
- *  code sessions, each with the sidebar's mark (running, waiting on you, failed) and opening at its
- *  own address (#3814). The read is the sidebar's (`useThreads`), so the two never disagree. */
+/** A project's own chats, in the sidebar's order: its chats, goal loops and code sessions, each with
+ *  the sidebar's mark (running, waiting on you, failed) and opening at its own address (#3814). The
+ *  read is the sidebar's (`useThreads`), so the two never disagree. */
 export function ProjectThreads({ projectId, read, onOpen }: {
   projectId: string
   read: ThreadsRead
@@ -17,10 +17,10 @@ export function ProjectThreads({ projectId, read, onOpen }: {
 }) {
   const { groups, loading, error, refresh } = read
   const threads = projectThreads(read, projectId)
-  if (!groups.length && error) return <LoadError what="threads" error={error} onRetry={refresh} />
-  if (!groups.length && loading) return <ListSkeleton rows={3} what="threads" />
+  if (!groups.length && error) return <LoadError what="chats" error={error} onRetry={refresh} />
+  if (!groups.length && loading) return <ListSkeleton rows={3} what="chats" />
   if (!threads.length) {
-    return <p className="text-on-surface-low text-[0.8125rem]">No threads yet. A chat, goal loop or code session started in this project is listed here.</p>
+    return <p className="text-on-surface-low text-[0.8125rem]">No chats yet. A chat, goal loop or code session started in this project is listed here.</p>
   }
   return (
     <ul className="flex flex-col gap-1">
@@ -29,12 +29,14 @@ export function ProjectThreads({ projectId, read, onOpen }: {
   )
 }
 
-/** The threads *read* holds for *projectId*, none while it holds no group for it. */
+/** The rows *read* holds for *projectId*, none while it holds no group for it. */
 export function projectThreads(read: Pick<ThreadsRead, 'groups'>, projectId: string): Thread[] {
   return read.groups.find((g) => g.projectId === projectId)?.threads ?? []
 }
 
-function ProjectThreadRow({ thread, onOpen }: { thread: Thread; onOpen: (route: string) => void }) {
+/** One chat, goal loop or code session of a project, as its hub and the Chats by project view list
+ *  it: its kind, its name and its mark. */
+export function ProjectThreadRow({ thread, onOpen }: { thread: Thread; onOpen: (route: string) => void }) {
   const pip = thread.pip ? PIP[thread.pip] : null
   return (
     <li>

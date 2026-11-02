@@ -3,22 +3,22 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import type { Thread } from '../lib/useThreads'
 import { ThreadRail, type ThreadRailGroup } from './ThreadRail'
 
-// ── The thread rail: projects with their threads beneath (#3814) ─────────────────────────────────
+// ── The chat history rail: groups with their chats beneath (#3814, #5877) ─────────────────────────
 //
-// Each project is a disclosure group, and under it each thread is a dense row that opens it. A row
-// can carry one static marker, and its state is said in words beside it and in its name: running,
-// waiting on you, failed. Nothing in it moves. The open thread is lit (`aria-current="page"`), and
-// its group opens so the lit row can be seen. A group's disclosure lasts across a reload. Loading,
-// a failed read and an empty project each have a row of their own, so none of them reads as a
-// project with nothing in it.
+// Each folder (or tag) is a disclosure group, and under it each chat, goal loop or code session is a
+// dense row that opens it. A row can carry one static marker, and its state is said in words beside
+// it and in its name: running, waiting on you, failed. Nothing in it moves. The open row is lit
+// (`aria-current="page"`), and its group opens so the lit row can be seen. A group's disclosure
+// lasts across a reload. Loading, a failed read and an empty group each have a row of their own, so
+// none of them reads as a group with nothing in it.
 
 function thread(over: Partial<Thread> & Pick<Thread, 'key' | 'title'>): Thread {
   const id = over.key.split(':')[1]
-  return { kind: 'chat', id, projectId: 'p-garden', route: `chat/${id}`, pip: null, pinned: false, activeAt: 0, ...over }
+  return { kind: 'chat', id, projectId: 'p-garden', route: `chat/${id}`, pip: null, pinned: false, activeAt: 0, folderId: '', tagIds: [], ...over }
 }
 
 const GARDEN: ThreadRailGroup = {
-  projectId: 'p-garden',
+  id: 'folder:f-garden',
   name: 'Garden',
   threads: [
     thread({ key: 'chat:chat-1', title: 'Plan the garden' }),
@@ -27,10 +27,10 @@ const GARDEN: ThreadRailGroup = {
     thread({ key: 'chat:chat-2', title: 'Order the soil', pip: 'waiting' }),
   ],
 }
-const EMPTY: ThreadRailGroup = { projectId: 'p-house', name: 'House move', threads: [] }
+const EMPTY: ThreadRailGroup = { id: 'folder:f-house', name: 'House move', threads: [] }
 const LOOSE: ThreadRailGroup = {
-  projectId: '',
-  name: 'No project',
+  id: 'folder:',
+  name: 'No folder',
   threads: [thread({ key: 'chat:chat-3', title: 'A question about tax', projectId: '' })],
 }
 
@@ -48,22 +48,22 @@ const groupToggle = (name: RegExp) => screen.getByRole('button', { name })
 beforeEach(() => { localStorage.clear() })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
-describe('the thread rail', () => {
-  it('lists each project as a group with its threads beneath, in the order it is given', () => {
+describe('the chat history rail', () => {
+  it('lists each group with its rows beneath, in the order it is given', () => {
     rail()
-    const toggles = screen.getAllByRole('button', { name: /, (\d+ threads?|no threads)$/ })
-    expect(toggles.map((b) => b.getAttribute('aria-label'))).toEqual(['Garden, 4 threads', 'House move, no threads', 'No project, 1 thread'])
+    const toggles = screen.getAllByRole('button', { name: /, (\d+ chats?|no chats)$/ })
+    expect(toggles.map((b) => b.getAttribute('aria-label'))).toEqual(['Garden, 4 chats', 'House move, no chats', 'No folder, 1 chat'])
     const garden = within(document.getElementById(groupToggle(/^Garden/).getAttribute('aria-controls')!)!)
     expect(garden.getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
-      'Plan the garden', 'Find a seed supplier, running', 'Fence gate, failed', 'Order the soil, waiting on you',
+      'Plan the garden', 'Goal loop: Find a seed supplier, running', 'Code session: Fence gate, failed', 'Order the soil, waiting on you',
     ])
   })
 
   it('says each state in words beside its marker, never by the marker alone', () => {
     rail()
     for (const [name, word, family] of [
-      [/^Find a seed supplier/, 'running', 'active'],
-      [/^Fence gate/, 'failed', 'blocked'],
+      [/^Goal loop: Find a seed supplier/, 'running', 'active'],
+      [/^Code session: Fence gate/, 'failed', 'blocked'],
       [/^Order the soil/, 'waiting on you', 'waiting'],
     ] as const) {
       const row = screen.getByRole('button', { name })
@@ -77,21 +77,21 @@ describe('the thread rail', () => {
   it('a running row schedules no animation and carries no moving class', () => {
     const raf = vi.spyOn(window, 'requestAnimationFrame')
     rail()
-    const row = screen.getByRole('button', { name: /^Find a seed supplier/ })
+    const row = screen.getByRole('button', { name: /^Goal loop: Find a seed supplier/ })
     expect(raf).not.toHaveBeenCalled()
     expect(row.outerHTML).not.toMatch(/animate-|pulse|spin/)
   })
 
-  it('lights the open thread, and only it', () => {
+  it('lights the open row, and only it', () => {
     rail({ selectedKey: 'loop:e5f6a7b8' })
     const lit = [...document.querySelectorAll('[aria-current="page"]')]
     expect(lit).toHaveLength(1)
-    expect(lit[0].getAttribute('aria-label')).toBe('Fence gate, failed')
+    expect(lit[0].getAttribute('aria-label')).toBe('Code session: Fence gate, failed')
   })
 
-  it('opens a thread at its own address', () => {
+  it('opens a row at its own address', () => {
     const { onOpen } = rail()
-    fireEvent.click(screen.getByRole('button', { name: /^Fence gate/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Code session: Fence gate/ }))
     expect(onOpen).toHaveBeenCalledWith('code/e5f6a7b8')
   })
 
@@ -107,7 +107,7 @@ describe('the thread rail', () => {
     expect(screen.getByRole('button', { name: 'Plan the garden' })).toBeInTheDocument()
   })
 
-  it('opens the group that holds the open thread, so its row can be seen', () => {
+  it('opens the group that holds the open row, so its row can be seen', () => {
     const first = rail()
     fireEvent.click(groupToggle(/^Garden/))
     first.unmount()
@@ -116,15 +116,15 @@ describe('the thread rail', () => {
     expect(screen.getByRole('button', { name: 'Plan the garden' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('an empty project starts closed, and says it has no threads when opened', () => {
+  it('an empty group starts closed, and says it has no chats when opened', () => {
     rail()
     expect(groupToggle(/^House move/)).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(groupToggle(/^House move/))
     const list = document.getElementById(groupToggle(/^House move/).getAttribute('aria-controls')!)!
-    expect(list.textContent).toBe('No threads yet')
+    expect(list.textContent).toBe('No chats yet')
   })
 
-  it('a thread whose mark changes keeps its place and the focus on its row', () => {
+  it('a row whose mark changes keeps its place and the focus on its row', () => {
     const view = rail()
     const order = () => [...document.querySelectorAll('[data-thread-key]')].map((r) => r.getAttribute('data-thread-key'))
     const before = order()
@@ -144,38 +144,38 @@ describe('the thread rail', () => {
     expect(row.querySelector('.truncate')?.textContent).toBe(title)
   })
 
-  it('says it is loading, rather than showing no threads', () => {
+  it('says it is loading, rather than showing no chats', () => {
     rail({ groups: [], status: 'loading' })
-    expect(screen.getByText('Loading threads…')).toHaveAttribute('role', 'status')
-    expect(screen.queryByText('No threads yet')).toBeNull()
+    expect(screen.getByText('Loading chats…')).toHaveAttribute('role', 'status')
+    expect(screen.queryByText('No chats yet')).toBeNull()
   })
 
-  it('says a failed read failed and offers to read again, keeping the threads it last read', () => {
-    const { onRetry } = rail({ status: 'failed', failure: "Couldn't load your threads." })
-    expect(screen.getByText("Couldn't load your threads.")).toBeInTheDocument()
+  it('says a failed read failed and offers to read again, keeping the rows it last read', () => {
+    const { onRetry } = rail({ status: 'failed', failure: "Couldn't load your chats." })
+    expect(screen.getByText("Couldn't load your chats.")).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: 'Plan the garden' })).toBeInTheDocument()
   })
 
-  it('offline, says so and keeps the threads the gateway last listed, without calling the read failed', () => {
+  it('offline, says so and keeps the rows the gateway last listed, without calling the read failed', () => {
     const { onRetry } = rail({ status: 'offline' })
-    expect(screen.getByText('Offline. These are the threads from before the gateway stopped answering.')).toBeInTheDocument()
+    expect(screen.getByText('Offline. These are the chats from before the gateway stopped answering.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Plan the garden' })).toBeInTheDocument()
     expect(screen.queryByText(/Couldn't load/)).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledTimes(1)
   })
 
-  it('offline before any read answered, says the threads come back with the gateway, not that there are none', () => {
+  it('offline before any read answered, says the chats come back with the gateway, not that there are none', () => {
     rail({ groups: [], status: 'offline' })
-    expect(screen.getByText('Offline. Your threads show when the gateway answers again.')).toBeInTheDocument()
-    expect(screen.queryByText('No threads yet')).toBeNull()
-    expect(screen.queryByText('Loading threads…')).toBeNull()
+    expect(screen.getByText('Offline. Your chats show when the gateway answers again.')).toBeInTheDocument()
+    expect(screen.queryByText('No chats yet')).toBeNull()
+    expect(screen.queryByText('Loading chats…')).toBeNull()
   })
 
-  it('with no project and no thread at all, says there are none', () => {
+  it('with no group and no row at all, says there are none', () => {
     rail({ groups: [] })
-    expect(screen.getByText('No threads yet')).toBeInTheDocument()
+    expect(screen.getByText('No chats yet')).toBeInTheDocument()
   })
 })

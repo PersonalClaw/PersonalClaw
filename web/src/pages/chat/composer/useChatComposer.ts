@@ -73,7 +73,7 @@ const SLASH_HELP = [
 ].join('\n')
 
 /** What `/goal` says in a chat that has started: a goal loop is a thread of its own. */
-const GOAL_FROM_A_NEW_THREAD = 'A goal loop starts from a new thread: open **New thread** (⌘N) and type `/goal` and the goal there, or choose **Start a goal loop** from its **+** menu.'
+const GOAL_FROM_A_NEW_THREAD = 'A goal loop starts from a new chat: open **New chat** (⌘N) and type `/goal` and the goal there, or choose **Start a goal loop** from its **+** menu.'
 
 /** One of her earlier messages for ↑/↓ recall: its text as she wrote it, and the blocks she
  *  pasted into it, which come back to the composer with it. */

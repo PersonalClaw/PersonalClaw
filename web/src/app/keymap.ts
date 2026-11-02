@@ -80,13 +80,13 @@ export const KEYMAP: readonly KeyBinding[] = [
     id: 'next-message', label: 'Go to your next message in this chat', scope: 'global', chords: ['alt+arrowdown'],
     keywords: 'session map prompt question jump forward later', disabledReason: 'Open a chat with four or more of your messages',
   },
-  // A new thread, and the sidebar's threads by number: ⌘n opens the nth thread row the sidebar shows,
+  // A new chat, and the sidebar's chat history by number: ⌘n opens the nth row the sidebar shows,
   // top to bottom (`threadRail.tsx`, `threadNumberRoute`). The ids keep the names they had when the
   // keys counted the chat list, since the desktop app's Go menu sends them (`desktop/goMenu.js`), and
   // an app built before the rename would send the old ones.
-  { id: 'new-chat', label: 'New thread', keywords: 'chat start conversation', scope: 'global', chords: ['mod+n'] },
+  { id: 'new-chat', label: 'New chat', keywords: 'chat start conversation', scope: 'global', chords: ['mod+n'] },
   ...THREAD_NUMBERS.map((n): KeyBinding => ({
-    id: `chat-${n}`, label: `Open thread ${n} in the sidebar`, keywords: 'chat switch recent jump', scope: 'global', chords: [`mod+${n}`],
+    id: `chat-${n}`, label: `Open chat ${n} in the sidebar`, keywords: 'chat switch recent jump history', scope: 'global', chords: [`mod+${n}`],
   })),
   {
     id: 'approve-focused', label: 'Approve the focused request', keywords: 'allow permission approval', scope: 'focused',

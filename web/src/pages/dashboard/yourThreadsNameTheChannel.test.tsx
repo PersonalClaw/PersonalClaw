@@ -2,9 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, within } from '@testing-library/react'
 import { runState } from '../../test/runState'
 
-// ── Your threads say which channel a chat came in on ─────────────────────────────────────────────
+// ── Your chats say which channel a chat came in on ─────────────────────────────────────────────
 //
-// Home's Your threads (under Recent and completed) reopen your most recent chats, and a chat that came in on Telegram is
+// Home's Your chats (under Recent and completed) reopen your most recent chats, and a chat that came in on Telegram is
 // one of them. It read as one of yours, opened here; the link now says "From Telegram", in the same
 // words as the chat history's row (`FromChannel`).
 
@@ -46,10 +46,10 @@ afterEach(cleanup)
 
 const jumpLinks = async () => {
   render(<AppearanceProvider><HomeHarness /></AppearanceProvider>)
-  return screen.findByRole('list', { name: 'Your threads' })
+  return screen.findByRole('list', { name: 'Your chats' })
 }
 
-describe('Your threads, on Home', () => {
+describe('Your chats, on Home', () => {
   it('says "From <channel>" on a chat that came in on one', async () => {
     const links = await jumpLinks()
     const phone = within(links).getByRole('button', { name: /Daily agenda/ })

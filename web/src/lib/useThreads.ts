@@ -61,6 +61,10 @@ export interface Thread {
   pipNote?: string
   /** The owner pinned it. Only a chat can be pinned; a loop never is. */
   pinned: boolean
+  /** The Chat history folder it is filed in, '' for none: a goal loop or code session is in none. */
+  folderId: string
+  /** The Chat history tags it carries, by id, none for a goal loop or code session. */
+  tagIds: string[]
   /** When it last did something, in epoch ms, 0 when nothing says. A chat's is its list row's
    *  activity (`sessionRecencyMs`). A loop's is its newest cycle's, which its row says
    *  (`last_cycle_at`); a row with none says it by its workers' latest activity (each cycle is a
@@ -75,7 +79,7 @@ export interface ProjectThreads {
 }
 
 /** The chat list's fields the join reads. */
-export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned' | 'attention'>
+export type ThreadChat = ActivityInput & Pick<ChatSessionSummary, 'project_id' | 'pinned' | 'attention' | 'folder_id' | 'tags'>
 /** The loop list's fields the join reads. */
 export type ThreadLoop = LoopInput & Pick<Loop, 'project_id'> & Partial<Pick<Loop, 'created_at' | 'completed_at' | 'last_cycle_at' | 'broken'>>
 
@@ -154,6 +158,8 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       route: loopRoute(l),
       pip: l.status === 'failed' ? 'failed' : null,
       pinned: false,
+      folderId: '',
+      tagIds: [],
       activeAt: lastCycle || Math.max(ms(l.completed_at), ms(l.started_at), ms(l.created_at)),
     })
     if (lastCycle > 0) cycleTimed.add(`loop:${id}`)
@@ -192,6 +198,8 @@ export function toThreads(src: ThreadSources): ProjectThreads[] {
       route: `chat/${encodeURIComponent(key)}`,
       pip: chatPip(s),
       pinned: s.pinned === true,
+      folderId: str(s.folder_id),
+      tagIds: (Array.isArray(s.tags) ? s.tags : []).filter((t): t is string => typeof t === 'string' && t !== ''),
       activeAt: sessionRecencyMs(s),
     })
   }

@@ -33,7 +33,7 @@ test.describe.configure({ timeout: 120_000 })
 const STEP_MS = 15_000
 const PHONE = { width: 390, height: 844 }
 const RAIL = 'nav[data-tour="rail"]'
-/** The sidebar's destination rows, by their names; a thread row is none of these. */
+/** The sidebar's destination rows, by their names; a chat row is none of these. */
 const DESTINATIONS = ['Home', 'Chat', 'Projects', 'Library', 'Tasks', 'Knowledge', 'Files', 'Artifacts', 'Memory',
   'Terminal', 'Inbox', 'Automations', 'Triggers', 'Capabilities', 'Workflows', 'Companion', 'Settings']
 
@@ -233,7 +233,8 @@ const CODE_LOOP = {
   created_at: '2026-10-20T09:00:00+00:00', updated_at: '2026-10-20T09:00:00+00:00',
 }
 /** The loop's row in the sidebar's threads. */
-const LOOP_ROW = 'Raised bed planner, running'
+// A code session's row says its kind (#5877).
+const LOOP_ROW = 'Code session: Raised bed planner, running'
 async function answerTheCockpit(context: BrowserContext): Promise<void> {
   await answer(context, `/api/loops/${CODE}`, CODE_LOOP)
   await answer(context, '/api/loops', { loops: [CODE_LOOP] })

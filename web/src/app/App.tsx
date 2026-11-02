@@ -611,9 +611,9 @@ function AppInner() {
     threadNumberRoute(n)
       .then((to) => {
         if (to) onNavSelect(to)
-        else notify(`There is no thread ${n} in the sidebar.`, 'info')
+        else notify(`There is no chat ${n} in the sidebar.`, 'info')
       })
-      .catch(() => notify("Couldn't read your threads.", 'error'))
+      .catch(() => notify("Couldn't read your chats.", 'error'))
   }
   // Persist the embed flag at mount-time so in-page navigation (which strips the
   // query param from the hash) doesn't lose it. MUST be before any early return so
@@ -892,9 +892,9 @@ function AppInner() {
               <NavRail items={railItems} home={HOME} activeId={threadLit ? '' : active} onSelect={onNavSelect} collapsed={railCollapsed}
                 overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)} material={material}
                 threads={(
-                  // Its own boundary: threads that throw leave a notice in their place, and the
-                  // destinations around them keep working.
-                  <WidgetBoundary what="your threads" className="mx-s">
+                  // Its own boundary: a chat history that throws leaves a notice in its place, and
+                  // the destinations around it keep working.
+                  <WidgetBoundary what="your chat history" className="mx-s">
                     <ShellThreadRail route={route} sub={sub} onOpen={onNavSelect} onLit={setThreadLit} search={railSearch} onSearch={setRailSearch} />
                   </WidgetBoundary>
                 )} />

@@ -22,7 +22,7 @@ const SCROLLER = `${RAIL} [data-rail-scroll]`
 
 const COUNT = 200
 const key = (i: number) => `e2e-shell-${String(i).padStart(3, '0')}`
-/** Two hundred chats with no project, newest first in the sidebar: `e2e-shell-000` is the newest. */
+/** Two hundred chats in no folder, newest first in the sidebar: `e2e-shell-000` is the newest. */
 const SESSIONS = Array.from({ length: COUNT }, (_, i) => ({
   key: key(i), title: `Shell chat ${String(i).padStart(3, '0')}`, messages: 2, run_state: 'idle',
   last_activity_ts: new Date(Date.UTC(2026, 9, 1) - i * 60_000).toISOString(),
@@ -36,6 +36,10 @@ async function stubChats(page: Page): Promise<void> {
     route.request().method() === 'GET' ? route.fulfill(json(SESSIONS)) : route.fallback())
   await page.route('**/api/projects', (route) =>
     route.request().method() === 'GET' ? route.fulfill(json({ projects: [] })) : route.fallback())
+  await page.route('**/api/chat/folders', (route) =>
+    route.request().method() === 'GET' ? route.fulfill(json([])) : route.fallback())
+  await page.route('**/api/chat/tags', (route) =>
+    route.request().method() === 'GET' ? route.fulfill(json([])) : route.fallback())
 }
 
 interface Edges { top: number; bottom: number }
