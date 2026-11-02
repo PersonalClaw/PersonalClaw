@@ -84,6 +84,12 @@ named = true
 why = "imports a module from the table of names it keeps"
 
 [[site]]
+file = "src/personalclaw/apps/settings_check.py"
+call = "importlib.import_module(module_path)"
+prefix = "personalclaw"
+why = "imports an app's settings check by its dotted path"
+
+[[site]]
 file = "src/personalclaw/cli_app_new.py"
 call = "importlib.import_module(contract.sdk_module)"
 named = true
@@ -184,6 +190,12 @@ file = "tests/security/test_app_signature.py"
 call = "importlib.util.spec_from_file_location('sh3_sign_app', REPO_ROOT / 'scripts' / 'sign_app.py')"
 named = true
 why = "loads a file it names by its path"
+
+[[site]]
+file = "tests/test_a_channel_reports_a_call_its_agent_cli_ran_unasked.py"
+call = "importlib.util.spec_from_file_location(f'_pcfixture_{name}', root / 'channel.py')"
+outside = true
+why = "loads a channel file the test wrote"
 
 [[site]]
 file = "tests/test_a_declared_read_asks_nobody.py"

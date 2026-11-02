@@ -224,6 +224,11 @@ class ProviderConfig:
     #: account's other capabilities run. Each names a field of the app's account ``settings``, or
     #: of its own instance schema for a ``multiInstance`` capability.
     requiresAccountFields: list[str] = field(default_factory=list)  # noqa: N815
+    #: The app's own check of the settings a form is about to save for this provider,
+    #: ``module.path:function`` resolved as ``implementation`` is: it takes the settings the
+    #: provider will read, every secret masked, and answers why they cannot be saved, or ``""``
+    #: (``apps.settings_check``). Empty for a provider whose settings only its schema checks.
+    settingsCheck: str = ""  # noqa: N815
     not_booleans: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
     not_lists: dict[str, Any] = field(default_factory=dict, init=False, compare=False)
 
@@ -246,6 +251,11 @@ class ProviderConfig:
             errors.append(
                 f"provider.implementation must be 'module.path:factory_fn', "
                 f"got: {self.implementation!r}"
+            )
+        if self.settingsCheck and not _HOOK_OR_ENTRYPOINT_RE.match(self.settingsCheck):
+            errors.append(
+                f"provider.settingsCheck must be 'module.path:function', "
+                f"got: {self.settingsCheck!r}"
             )
         errors.extend(self.autonomy.validate())
         return errors
@@ -270,6 +280,8 @@ class ProviderConfig:
             d["multiInstance"] = True
         if self.settingsSchema:
             d["settingsSchema"] = self.settingsSchema
+        if self.settingsCheck:
+            d["settingsCheck"] = self.settingsCheck
         if self.capabilities:
             d["capabilities"] = self.capabilities
         if self.entity:
@@ -302,6 +314,7 @@ class ProviderConfig:
             ),
             multiInstance=strict_bool(data.get("multiInstance"), field="multiInstance"),
             settingsSchema=dict(data.get("settingsSchema", {})),  # noqa: N815
+            settingsCheck=str(data.get("settingsCheck", "") or ""),  # noqa: N815
             capabilities=[str(c) for c in data.get("capabilities", [])],
             entity=str(data.get("entity", "")),
             providerType=str(data.get("providerType", "")),  # noqa: N815

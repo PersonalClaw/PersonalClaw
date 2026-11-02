@@ -58,13 +58,14 @@ import logging
 import os
 import signal
 import time
+import weakref
 from collections import deque
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from personalclaw import session_keys, shutdown_event
+from personalclaw import app_code, session_keys, shutdown_event
 from personalclaw.cancellation import cancel_and_wait
 from personalclaw.config import AppConfig
 from personalclaw.config.loader import default_workspace_dir
@@ -461,6 +462,28 @@ class _Session:
     # acquired for or a turn since; ``None`` while none has named one. A turn asking another tells
     # the CLI before its prompt goes out (:func:`_hold_to_its_mode`).
     asked_mode: str | None = None
+    #: The app whose code asked for this runtime, ``""`` for core's own: read from the code that
+    #: made the session (``app_code.owner``), as the session is made in the ``get_or_create`` that
+    #: code awaits. What an app reports about the runtime is recorded as this app's, never as one
+    #: an argument names, and an app reports only on a runtime it asked for
+    #: (``acp.ungated.report_for_app``).
+    app: str = field(default_factory=lambda: app_code.owner() or "")
+
+
+#: Every live session manager, so a runtime can be traced to the session it is held under
+#: (:func:`held_under`) by code that has only the runtime.
+_MANAGERS: "weakref.WeakSet[SessionManager]" = weakref.WeakSet()
+
+
+def held_under(provider: object) -> tuple[str, str, str] | None:
+    """``(session key, app, agent)`` of the session *provider* is the runtime of, in any live
+    session manager, ``None`` when it is no session's. ``app`` is the app whose code asked for the
+    session (``""`` for core's)."""
+    for manager in list(_MANAGERS):
+        for key, sess in list(manager._sessions.items()):
+            if sess.provider is provider:
+                return key, sess.app, sess.agent
+    return None
 
 
 class SessionManager:
@@ -518,6 +541,7 @@ class SessionManager:
         self._cfg = cfg
         self._provider_factory = provider_factory
         self._sessions: dict[str, _Session] = {}
+        _MANAGERS.add(self)
         self._lock = asyncio.Lock()
         self._start_sem = asyncio.Semaphore(4)  # max 4 concurrent cold-starts
         self._cleanup_task: asyncio.Task | None = None

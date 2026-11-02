@@ -20,11 +20,17 @@ from personalclaw.acp.errors import (
     AcpTimeoutError,
 )
 
-# ── The deny-list, before any approval ──
+# ── The deny-list, before any approval, and a call its agent CLI ran without asking ──
 # A channel that runs a conversation itself asks the screen every approval path asks first
 # (`screen_tool_call`): a call the hook chain refuses, read on the command that would run as well
 # as on its title, is refused there, never approved and never asked about.
-from personalclaw.acp.permission_authority import screen_tool_call
+# An agent CLI decides which of its calls ask the host first, so a channel that runs a conversation
+# on one learns of a call the CLI's own settings let run only at its result, when it made no
+# permission request: it reports it the one way every host in core does (`report_ungated_call`),
+# which judges it, audits it `ungated` and stops the turn when the channel's answer says so, and
+# says it in core's words (`ungated_call_note`). The row names the app that asked for the session's
+# runtime, and a session that is not the runtime's, or not the app's, is refused.
+from personalclaw.acp.permission_authority import screen_tool_call, ungated_call_note
 from personalclaw.acp.types import (  # noqa: F401
     CANCELLED_STOP_REASONS,
     STOP_REASON_CANCELLED,
@@ -32,6 +38,8 @@ from personalclaw.acp.types import (  # noqa: F401
     STOP_REASON_STOPPED_BY_USER,
     is_cancelled_stop,
 )
+from personalclaw.acp.ungated import HostAnswer, UngatedCall
+from personalclaw.acp.ungated import report_for_app as report_ungated_call
 
 # ── The approval prompt's content (what will run, masked) ──
 # A channel's `request_approval` renders from this alone: the tool, its arguments, the purpose,
@@ -372,6 +380,7 @@ __all__ = [
     "HOOK_REPLY",
     "HistoryConsolidator",
     "HooksSaid",
+    "HostAnswer",
     "LINK_WINDOW_SECS",
     "LLMEvent",
     "MAX_SESSION_TTL_SECS",
@@ -406,6 +415,7 @@ __all__ = [
     "Trigger",
     "TriggerStore",
     "TrustVerdict",
+    "UngatedCall",
     "__version__",
     "active_voice_params",
     "allow_sender",
@@ -461,6 +471,7 @@ __all__ = [
     "redeem_owner_pairing_code",
     "redeem_pairing_code",
     "render_use_case_prompt",
+    "report_ungated_call",
     "resolve_bind_host",
     "resolve_dashboard_host",
     "run_chore",
@@ -482,6 +493,7 @@ __all__ = [
     "trust_mode",
     "trust_policies",
     "turn_asked_by",
+    "ungated_call_note",
     "untrack",
     "validate_file_path",
     "voice_reply",

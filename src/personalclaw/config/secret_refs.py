@@ -455,6 +455,49 @@ def _unstorable_message(name: str, value: Any = "") -> str:
     return f"{name}: the value contains a NUL character, which no credential can hold"
 
 
+def _login_in_address(value: Any) -> bool:
+    """Whether *value* holds an address with a credential written into it: a URL whose login has a
+    password (``https://ada:pw@host``) or is shaped like a token (``https://<token>@github.com``),
+    or an scp-style address with a password (``ada:pw@host:path``). Read the way the redactor reads
+    an address's login (``address_logins``), with a token told by a format the redactor knows or by
+    its shape (``address_logins.looks_like_token``): the foundation's own pieces, so the store
+    imports nothing above it. A user name alone (``ssh://git@host``, ``https://ada@bitbucket.org``)
+    is not one: it is how many hosts write an address, and no secret."""
+    if not isinstance(value, str) or "@" not in value:
+        return False
+    from urllib.parse import unquote
+
+    from personalclaw.address_logins import looks_like_token, redact_scp_logins, url_userinfo_spans
+    from personalclaw.security import redact_credentials
+
+    for start, end, scheme in url_userinfo_spans(value):
+        login = value[start + len(scheme) + 3 : end - 1]
+        if ":" in login:
+            return True
+        plain = unquote(login)
+        if looks_like_token(plain) or redact_credentials(plain)[1]:
+            return True
+    return bool(redact_scp_logins(value)[1])
+
+
+def _refuse_logins_in_clear(
+    settings: Mapping[str, Any], declared: Iterable[str], previous: Mapping[str, Any] | None
+) -> None:
+    """Refuse a setting kept as plain text that this write gives an address with a credential in
+    it (:func:`_login_in_address`): it would be saved, shown back and exported as typed. A value
+    the write leaves as *previous* had it is not judged here: one saved before is the app's to
+    clear where it uses it, and a save of another setting must not fail on it."""
+    secret = secret_fields(settings, declared)
+    before = previous or {}
+    for name, value in settings.items():
+        if name not in secret and value != before.get(name) and _login_in_address(value):
+            raise ValueError(
+                f"{name}: the address has a password or token written into it, and {name} is "
+                "saved as plain text. Take the credential out of the address and enter it in a "
+                "setting kept as a secret."
+            )
+
+
 def resolve(settings: Mapping[str, Any] | None, *, owner: SecretOwner) -> dict[str, Any]:
     """The LOGICAL form: every top-level field holding a reference gets the stored value.
 
@@ -483,6 +526,7 @@ def store(
     declared: Iterable[str] = (),
     previous: Mapping[str, Any] | None = None,
     wrote: set[str] | None = None,
+    refuse_logins: bool = True,
 ) -> dict[str, Any]:
     """The STORED form of LOGICAL ``settings``, with each secret value moved into the store.
 
@@ -508,8 +552,16 @@ def store(
     ``wrote``, when given, gets each key this write stored a value under: with the stored form
     compared to ``previous``, it tells a caller whether the write changed anything, a value given
     again under the same key included, and no value is read back to tell.
+
+    A setting kept as plain text that this write gives an address with a password or token in it
+    is refused too (:class:`ValueError`, naming the setting), before anything is stored: it would
+    be saved and shown back as typed. ``refuse_logins=False`` is for a writer that carries what is
+    already on disk (a move to a renamed capability) and for core's own provider records, whose
+    base address a proxy may sign in to with no setting of its own to hold the password.
     """
     _refuse_foreign(settings or {}, owner, operation="secrets.store", advise=True)
+    if refuse_logins:
+        _refuse_logins_in_clear(settings or {}, declared, previous)
     return _move_into_store(
         settings, owner=owner, declared=declared, previous=previous, wrote=wrote
     )
@@ -621,6 +673,7 @@ def store_provider_options(
         owner=provider_owner(name),
         declared=declared_provider_type_fields(ptype),
         previous=previous,
+        refuse_logins=False,
     )
 
 

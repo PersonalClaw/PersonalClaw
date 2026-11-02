@@ -1083,6 +1083,7 @@ async def api_app_config_put(request: web.Request) -> web.Response:
 
     An app writes only its own: the gateway refuses one naming another app before this runs
     (``apps/permissions.ROUTE_AUTHZ``)."""
+    from personalclaw.apps import settings_check
     from personalclaw.apps.app_config import AppConfigError, read_stored, write_config
     from personalclaw.apps.app_manager import _manifest_of
     from personalclaw.apps.secret_fields import mask_secrets, preserve_unchanged_secrets
@@ -1099,6 +1100,12 @@ async def api_app_config_put(request: web.Request) -> web.Response:
     except Exception:
         return web.json_response({"error": "invalid JSON"}, status=400)
     schema = _effective_config_schema(manifest)
+    # The app's own check of what the form would save, masked, off the loop and bounded
+    # (`apps.settings_check`); before the stored copy is read, so no `await` follows that read.
+    if isinstance(values, dict):
+        shown = mask_secrets(values, schema)[0]
+        if refused := await settings_check.refusal(name, shown, whole=True):
+            return web.json_response({"error": refused}, status=400)
     stored = read_stored(name)
     # 🔴 THE FILE IS WRITTEN ONLY OVER THE COPY THE FORM WAS BUILT FROM. This replaces the
     # whole file — and deletes the credentials the new one stops referencing — with a form built

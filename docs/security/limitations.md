@@ -497,6 +497,13 @@ and travels with an export. One named like a token, secret, password or API key 
 whatever you mark. Snapshots and exports carry the references and never the store, so
 restoring onto another machine means entering those secrets again.
 
+An app setting kept as plain text refuses an address with a password or token written into it
+(`https://name:password@host/…`, `https://<token>@host/…`, `name:password@host:path`), on every
+settings form and when an app saves its own: put the credential in the app's setting for it,
+which is kept as a secret. A user name alone (`ssh://git@host/…`) is no credential and saves as
+it is. A value saved before this rule stays until the setting is changed, and core's own model
+provider settings are not held to it.
+
 A secret still appears in plaintext in these places:
 
 - **Copies made before you upgraded.** The first start after the upgrade moves every plaintext

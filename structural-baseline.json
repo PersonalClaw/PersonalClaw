@@ -314,6 +314,7 @@
       "gateway"
     ],
     "foundation": {
+      "address_logins": "measured: the login an address carries, found; imported by 5, imports none",
       "atomic_write": "role: the one atomic file write (imported by 81 units; imports only config)",
       "bounded_log": "measured: logs that keep their newest rows; imported by 20 units, imports 2",
       "cancellation": "measured: a turn's one stop signal; imported by 27 units, imports 1",
@@ -603,9 +604,8 @@
         ]
       },
       "src/personalclaw/security.py": {
-        "edges": 9,
+        "edges": 8,
         "violations": [
-          "foundation-imports-only-foundation -> personalclaw.address_logins",
           "foundation-imports-only-foundation -> personalclaw.branch_publish",
           "foundation-imports-only-foundation -> personalclaw.branch_publish",
           "foundation-imports-only-foundation -> personalclaw.command_paths",
@@ -739,7 +739,8 @@
           "timezones",
           "textfmt",
           "shell_syntax",
-          "filled_secrets"
+          "filled_secrets",
+          "address_logins"
         ],
         "name": "foundation-imports-only-foundation",
         "rationale": "The foundation is what every layer stands on, so it may import only itself. A foundation unit that imports a domain unit puts the whole domain under everything that imports it, which is how one import cycle came to hold 268 of the 358 units: config, imported by 159 units, imports apps, agents, providers and workflows. Measured 73 edges across 17 files on 2026-10-31, grandfathered as a floor; each one cut is a cheap first cut of that cycle.",
@@ -775,11 +776,11 @@
       "by_rule": {
         "core-must-not-import-its-own-published-facade": 5,
         "core-must-not-import-the-http-surface": 27,
-        "foundation-imports-only-foundation": 72,
+        "foundation-imports-only-foundation": 71,
         "ledger-is-a-leaf": 0,
         "nothing-below-the-entry-points-imports-them": 2
       },
-      "edges": 106,
+      "edges": 105,
       "files": 42
     }
   },

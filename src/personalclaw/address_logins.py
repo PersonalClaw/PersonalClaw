@@ -12,6 +12,24 @@ The scan is held byte for byte to a plain reference implementation of the rule i
 import re
 from collections.abc import Iterator
 
+#: A run of token characters. Long enough, and mixing letters and digits, it is a key in a format
+#: no named rule knows (a hex or base64url secret). ``/`` and ``.`` are not in it: a path, a host
+#: name and a version number are not tokens, and a JWT's parts are tested one by one.
+_TOKEN_RUN_RE = re.compile(r"[A-Za-z0-9_\-+=~]{20,}")
+_LETTER_RE = re.compile(r"[A-Za-z]")
+_DIGIT_RE = re.compile(r"\d")
+
+
+def looks_like_token(text: str) -> bool:
+    """Shaped like a key in a format no named rule knows: a dot-separated piece of *text* that is a
+    run of 20 or more token characters mixing letters and digits. Here, beside the login scan, so
+    the foundation's credential store can judge a login the way the argument scan does."""
+    return any(
+        _TOKEN_RUN_RE.fullmatch(piece) and _LETTER_RE.search(piece) and _DIGIT_RE.search(piece)
+        for piece in text.split(".")
+    )
+
+
 # 🔴 URL USERINFO — the one credential shape every shape-based pattern is blind to.
 #
 # `security._CREDENTIAL_PATTERNS` is entirely SHAPE- or NAME-based: it recognises provider key

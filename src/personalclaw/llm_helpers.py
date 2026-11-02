@@ -193,7 +193,6 @@ async def stream_and_collect(
                         if acp_cli:
                             await _report_ungated(
                                 provider,
-                                acp_cli,
                                 card or event,
                                 session_key=session_key,
                                 agent=agent,
@@ -258,46 +257,26 @@ async def stream_and_collect(
 
 async def _report_ungated(
     provider: ModelProvider,
-    acp_cli: str,
     card: LLMEvent,
     *,
     session_key: str,
     agent: str,
     on_ungated: "Callable[[UngatedCall], HostAnswer] | None",
 ) -> None:
-    """A call *acp_cli* ran without asking the host, from the card it was made with: judged, told
-    to the caller (*on_ungated*), logged and audited (``acp.ungated``), and the turn stopped when
-    the caller says so. A caller whose answer fails stops the turn: what it would have held the
-    call to cannot be told, and the call already ran."""
+    """A call *provider*'s agent CLI ran without asking the host, from the card it was made with,
+    reported the one way every host reports it, a channel app's included (``acp.ungated.report``):
+    judged, told to the caller (*on_ungated*), logged and audited, and the turn stopped when the
+    caller says so. A turn in no session is this helper's own on the audit row."""
     from personalclaw.acp import ungated
-    from personalclaw.task_modes import tool_input_to_str
 
-    call = ungated.judge(
-        acp_cli,
-        title=str(card.title or ""),
-        tool_kind=str(card.tool_kind or ""),
-        tool_input=tool_input_to_str(card.tool_input)[:2000],
-        declared=str(getattr(card, "risk_level", "") or ""),
-    )
-    answer = ungated.HostAnswer()
-    if on_ungated is not None:
-        try:
-            answer = on_ungated(call)
-        except Exception:  # noqa: BLE001 - fail closed: the turn stops
-            logger.warning("the host could not judge an ungated call; stopping", exc_info=True)
-            answer = ungated.HostAnswer(stop=True)
-    ungated.record(
-        call,
+    await ungated.report(
+        provider,
+        card,
         session_key=session_key,
         agent=agent,
-        # Named by the session it ran in, as the turn's asked calls are; a turn in none is ours.
+        on_ungated=on_ungated,
         source="" if session_key else "llm_helpers",
-        request_id=str(card.tool_call_id or ""),
-        answer=answer,
-        where=session_key or "background",
     )
-    if answer.stop:
-        await ungated.stop_turn(provider, "ungated tool call")
 
 
 def json_object_problem(text: str) -> str:

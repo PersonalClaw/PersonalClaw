@@ -8,6 +8,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **A channel app that runs a conversation on an agent CLI reports a call the CLI ran without asking the way PersonalClaw's own chat does: `personalclaw.sdk.channel.report_ungated_call` (core feature `ungated-calls`) judges the call, records it in the security log as run without asking, under the app that asked for the session and only for that session, and stops the turn when the app's answer says so.**
+- **An app can check the settings a form saves before they are written: a provider's `settingsCheck` (core feature `settings-check`) is asked by every settings route, off the event loop and bounded, and a sentence back refuses the save in the app's words.**
+
 ### Fixed
 
 - **A chat turn shows what it recalled where it recalled it: a line above the text it fed, or between the steps it came between, the same after a reload, with how much was recalled and a link to review it one tap away. The turn's footer no longer says it; it keeps what the turn learned, the model that answered and the telemetry.**
@@ -21,6 +26,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An agent working for an allowed automation's run changes only a run of its own: an edit, a rewind, a run from a step or a fork of a run started by hand or by another fire is refused in words and leaves that run as it was, through its tools and the gateway's routes alike.**
 - **A file attached in a chat that is cut to its size limit now tells the model so: a line after the file's text says how many of its characters the model was given, so an answer about a long log or document can say it covers only the beginning. Before, the model answered as if it had read the whole file.**
 - **Importing a home export in Settings › Import / Export, or with `personalclaw restore <export.zip>`, holds the archive to what an export can be before anything is read or written. An archive with more members than an export holds, a manifest past its size, more to unpack than the disk has free, or a member larger than its manifest says is refused with a sentence naming the limit, and the upload stops once it passes the disk's free space. Members are checked and unpacked a piece at a time, never read whole, so a small archive that unpacks to many gigabytes can no longer exhaust the gateway's memory or fill its disk.**
+- **An app setting saved as plain text refuses an address with a password or token written into it, such as `https://name:password@host/…`, on every settings form and when an app saves its own, so the credential is never saved, shown back or exported as typed. A user name alone, as in `ssh://git@host/…`, saves as before.**
 
 ## [0.3.4] — 2026-11-01
 

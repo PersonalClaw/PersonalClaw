@@ -97,6 +97,11 @@ that asks them declares it.
 doing, and a ``running_changed`` frame says it moved. An app that reads the list declares it, with
 ``/api/running`` in its manifest.
 
+``SETTINGS_CHECK``: a provider's ``settingsCheck`` in the manifest (``module.path:function``) is
+asked before every route saves the app's settings, with the settings that provider will read and
+each secret masked, and a sentence back refuses the save in the app's words. An app whose settings
+rely on its check declares it.
+
 ``THINKING_OUTPUT_CAP``: a model app asks the output cap a request to a model sends when neither
 the operator nor the call set one (``personalclaw.sdk.model.default_output_cap``): 32,000 for a
 model that thinks adaptively, whose thinking is spent out of the same cap, and 4,096 for any other,
@@ -116,6 +121,12 @@ that saves its turns or imports a thread with them declares it.
 (``with personalclaw.sdk.channel.turn_asked_by(session_key, arrived_on(thread, sender, channel)):``
 around the turn), and what its tools would change of the owner's memory waits for her own word
 unless that sender is the owner. A channel app that runs a conversation's turns itself declares it.
+
+``UNGATED_CALLS``: a channel that runs a conversation on an agent CLI reports each call the CLI ran
+without asking (its result came with no permission request) through
+``personalclaw.sdk.channel.report_ungated_call``, which judges and audits it as every host in core
+does and stops the turn when the channel's answer says so, and says it in core's words
+(``ungated_call_note``). A channel app that reports them declares it.
 
 ``WAITING_LIST``: everything waiting on the owner is one list, ``GET /api/waiting``, every kind with
 its brief and the route it is answered through, and a ``waiting_changed`` frame says it moved. An
@@ -142,10 +153,12 @@ from personalclaw.apps.core_features import (
     PER_CALL_OUTPUT_CAP,
     PRE_TOOL_HOOKS,
     RUNNING_LIST,
+    SETTINGS_CHECK,
     THINKING_OUTPUT_CAP,
     TOOL_CALL_SCREEN,
     TURNS_NAME_THEIR_CHANNEL,
     TURNS_NAME_WHO_ASKED,
+    UNGATED_CALLS,
     WAITING_LIST,
     core_has,
 )
@@ -170,10 +183,12 @@ __all__ = [
     "PER_CALL_OUTPUT_CAP",
     "PRE_TOOL_HOOKS",
     "RUNNING_LIST",
+    "SETTINGS_CHECK",
     "THINKING_OUTPUT_CAP",
     "TOOL_CALL_SCREEN",
     "TURNS_NAME_THEIR_CHANNEL",
     "TURNS_NAME_WHO_ASKED",
+    "UNGATED_CALLS",
     "WAITING_LIST",
     "core_has",
 ]

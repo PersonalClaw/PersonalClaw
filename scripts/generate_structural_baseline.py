@@ -569,6 +569,7 @@ FOUNDATION_UNITS: dict[str, str] = {
     "textfmt": "measured: provider-neutral LLM text helpers; imported by 11 units, imports 1",
     "shell_syntax": "measured: how a shell splits a command line; imported by 9, imports none",
     "filled_secrets": "measured: what a filled secret keeps, masked; imported by 5, imports 1",
+    "address_logins": "measured: the login an address carries, found; imported by 5, imports none",
 }
 
 
