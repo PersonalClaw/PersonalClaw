@@ -153,6 +153,96 @@ MANIFEST_VERSION = 3
 #: disk must keep importing, so a version is never dropped from this tuple.
 SUPPORTED_MANIFEST_VERSIONS = (1, 2, 3)
 
+#: The most members an import takes. An export holds a file per note, chat, skill, task and
+#: library item, and this is well above what a long-lived home's export holds. A ZIP is
+#: compressed, so an archive of any number of members fits a small file: one of more is refused
+#: from its directory, before any member is read (:func:`_beyond_an_export`).
+MAX_IMPORT_MEMBERS = 100_000
+
+#: The most an import's MANIFEST.json may be. A v3 manifest names every member with its size and
+#: checksum (about 200 bytes each), so this holds :data:`MAX_IMPORT_MEMBERS` of them with room over.
+MAX_IMPORT_MANIFEST_BYTES = 64 * 1024 * 1024
+
+#: What an import leaves free on the disk it unpacks to, and its upload on the disk it is saved to.
+IMPORT_DISK_MARGIN_BYTES = 512 * 1024 * 1024
+
+#: Each read an import makes of a member, hashing or unpacking it: never the member whole.
+_IMPORT_CHUNK = 1024 * 1024
+
+
+class _PastItsSize(ValueError):
+    """A member of an import that held more than its size said (:func:`_stream`)."""
+
+
+def _free_bytes(path: str) -> int:
+    """The free space of the disk *path* is on."""
+    return shutil.disk_usage(path).free
+
+
+def room_for_import() -> int:
+    """How much an import may unpack, and its upload take, on the temporary folder's disk: its
+    free space, less :data:`IMPORT_DISK_MARGIN_BYTES`."""
+    return max(0, _free_bytes(tempfile.gettempdir()) - IMPORT_DISK_MARGIN_BYTES)
+
+
+def size_words(n: int) -> str:
+    """*n* bytes as a person reads a size: bytes below a MB, then MB, then GB, to one decimal."""
+    if n < 1 << 20:
+        return f"{n:,} bytes"
+    return f"{n / (1 << 20):.1f} MB" if n < 1 << 30 else f"{n / (1 << 30):.1f} GB"
+
+
+def _beyond_an_export(zf: zipfile.ZipFile) -> str:
+    """Why *zf* cannot be a home export, read from its directory before any member is, else "":
+    more members than an export holds, or more to unpack than its disk has room for."""
+    infos = zf.infolist()
+    if len(infos) > MAX_IMPORT_MEMBERS:
+        return (
+            f"The archive holds {len(infos):,} members; a home export holds at most "
+            f"{MAX_IMPORT_MEMBERS:,}."
+        )
+    total, room = sum(info.file_size for info in infos), room_for_import()
+    if total > room:
+        return (
+            f"The archive unpacks to {size_words(total)}, more than the space free on the disk it "
+            f"is unpacked to ({size_words(room)}, keeping {size_words(IMPORT_DISK_MARGIN_BYTES)} "
+            "free)."
+        )
+    return ""
+
+
+def _stream(zf: zipfile.ZipFile, info: zipfile.ZipInfo, ceiling: int):
+    """*info*'s bytes, in chunks, refused once they pass *ceiling*: a member is never read whole,
+    and never past the size it is held to."""
+    seen = 0
+    with zf.open(info) as member:
+        while chunk := member.read(_IMPORT_CHUNK):
+            seen += len(chunk)
+            if seen > ceiling:
+                raise _PastItsSize(f"Archive member is larger than it says: {info.filename}")
+            yield chunk
+
+
+def _unpack(zip_path: Path, work: Path) -> None:
+    """Unpack an import into *work*, where ``ZipFile.extract`` would put each member, as streams
+    held to each member's own size, after :func:`_beyond_an_export`. A member whose name climbs
+    out (``..``) or starts at the root is skipped, as validation refuses it."""
+    with zipfile.ZipFile(str(zip_path), "r") as zf:
+        if refused := _beyond_an_export(zf):
+            raise ValueError(refused)
+        for info in zf.infolist():
+            parts = PurePosixPath(info.filename).parts
+            if ".." in parts or info.filename.startswith("/"):
+                continue
+            target = work.joinpath(*[p for p in parts if p not in ("", ".")])
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "wb") as out:
+                for chunk in _stream(zf, info, info.file_size):
+                    out.write(chunk)
+
 
 def _pc_dir() -> Path:
     return config_dir()
@@ -802,11 +892,25 @@ def _verify_members(zf: zipfile.ZipFile, prefix: str, members: list) -> str:
             continue
         name = f"{prefix}/{rel}" if prefix else rel
         try:
-            data = zf.read(name)
+            info = zf.getinfo(name)
         except KeyError:
             return f"Archive is missing a declared member: {rel}"
+        # Held to the size the manifest declares: one that says more is refused unread, and the
+        # hash is taken as a stream, so no member is ever held in memory whole.
+        try:
+            size = int(member.get("bytes", info.file_size))
+        except (TypeError, ValueError):
+            return f"Invalid manifest: {rel} declares no size"
+        digest = hashlib.sha256()
+        try:
+            if info.file_size > size:
+                raise _PastItsSize(rel)
+            for chunk in _stream(zf, info, size):
+                digest.update(chunk)
+        except _PastItsSize:
+            return f"Archive member is larger than its manifest says: {rel}"
         want = str(member.get("sha256", ""))
-        if want and hashlib.sha256(data).hexdigest() != want:
+        if want and digest.hexdigest() != want:
             return f"Archive member failed its checksum: {rel}"
     extra = sorted(present - declared)
     if extra:
@@ -821,6 +925,8 @@ def validate_import_zip(zip_path: Path) -> tuple[bool, str, dict]:
     """
     try:
         with zipfile.ZipFile(str(zip_path), "r") as zf:
+            if refused := _beyond_an_export(zf):
+                return False, refused, {}
             names = zf.namelist()
 
             # Check for path traversal
@@ -834,7 +940,15 @@ def validate_import_zip(zip_path: Path) -> tuple[bool, str, dict]:
             if not manifest_entries:
                 return False, "No MANIFEST.json found in archive", {}
 
-            manifest_data = json.loads(zf.read(manifest_entries[0]))
+            info = zf.getinfo(manifest_entries[0])
+            if info.file_size > MAX_IMPORT_MANIFEST_BYTES:
+                return (
+                    False,
+                    f"The archive's MANIFEST.json is {size_words(info.file_size)}, larger than "
+                    f"any export's ({size_words(MAX_IMPORT_MANIFEST_BYTES)}).",
+                    {},
+                )
+            manifest_data = json.loads(b"".join(_stream(zf, info, MAX_IMPORT_MANIFEST_BYTES)))
             version = manifest_data.get("version")
             if version not in SUPPORTED_MANIFEST_VERSIONS:
                 return False, f"Unsupported manifest version: {version}", {}
@@ -856,6 +970,8 @@ def validate_import_zip(zip_path: Path) -> tuple[bool, str, dict]:
             return True, "", manifest_data
     except zipfile.BadZipFile:
         return False, "Invalid zip file", {}
+    except _PastItsSize as e:
+        return False, str(e), {}
     except (json.JSONDecodeError, KeyError) as e:
         return False, f"Invalid manifest: {e}", {}
 
@@ -957,13 +1073,7 @@ def apply_import_zip(zip_path: Path, mode: str = "merge") -> dict:
 
     with tempfile.TemporaryDirectory() as work_str:
         work = Path(work_str)
-
-        with zipfile.ZipFile(str(zip_path), "r") as zf:
-            for info in zf.infolist():
-                parts = PurePosixPath(info.filename).parts
-                if ".." in parts or info.filename.startswith("/"):
-                    continue
-                zf.extract(info, work)
+        _unpack(zip_path, work)
 
         snap_dirs = [d for d in work.iterdir() if d.is_dir()]
         if len(snap_dirs) != 1:

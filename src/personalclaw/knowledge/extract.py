@@ -54,11 +54,15 @@ class Extracted:
     ``unread`` says why nothing was read, when that is known: :data:`UNREAD_NO_IMAGE_MODEL`,
     :data:`UNREAD_REFUSED` or :data:`UNREAD_UNCHECKED`, or ``""`` — the reading ran and found
     nothing, or the file needed no model.
+
+    ``full_chars`` is the length of the text read from the file when ``text`` is a cut of it, else
+    0: what a surface that hands on less than was read says the file held.
     """
 
     text: str
     read: bool
     unread: str = ""
+    full_chars: int = 0
 
 
 async def extract_file(
