@@ -13,22 +13,23 @@ one gateway and one dashboard you own.
 
 ---
 
-## 🏠 The Dashboard
+## 🏠 Home
 
-Your day at a glance: a prompt bar that starts a new thread, then what needs you, what is
-running and what finished lately, with starter suggestions (they need a model, and say so).
-The sidebar holds your threads by project, and Attention and Overview are two views of the
-same home — all live over one WebSocket.
+Your day at a glance. Home opens on Overview: your open tasks, what your agents are doing,
+ideas to start from and what you've pinned. Attention, beside it, is what needs you, what is
+running and what finished lately. The sidebar keeps its shortcuts fixed at the top and the
+bottom, with your chat history between them, grouped by your folders or your tags, and the
+PersonalClaw icon and name open Home. All of it is live over one WebSocket.
 
 | Light | Dark |
 |---|---|
-| ![Dashboard — light](docs/screenshots/light/01-dashboard.png) | ![Dashboard — dark](docs/screenshots/dark/01-dashboard.png) |
+| ![Home — light](docs/screenshots/light/01-dashboard.png) | ![Home — dark](docs/screenshots/dark/01-dashboard.png) |
 
 ---
 
 ## 🗣️ Agentic Chat
 
-Conversational threads where the agent acts with tool access: it grounds answers in your
+Conversations where the agent acts with tool access: it grounds answers in your
 knowledge, and tool calls surface as decision-ready approval prompts. The composer chooses
 the agent and how it works. On a fresh install with no provider yet, chat offers a one-time
 138 MiB local model so it is never a dead end, or a link to connect a provider you already
