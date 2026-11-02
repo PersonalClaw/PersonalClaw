@@ -131,7 +131,7 @@ def test_every_seeded_row_is_off_and_stays_off_through_the_boot(home):
 def test_the_seeded_settings_are_what_keeps_the_two_config_switched_rows_off(home):
     # The control: without the seed's settings, the boot switches the identity report and
     # self-remediation back on, which is why config.json carries them.
-    (home / "config.json").write_text('{"dashboard":{"user_name":"Keyur"}}', encoding="utf-8")
+    (home / "config.json").write_text('{"dashboard":{"user_name":"Alex"}}', encoding="utf-8")
     shutil.copy(SEED / "triggers.json", home / "triggers.json")
     on = sorted(r["id"] for r in _boot(home) if r["enabled"])
     assert on == ["system:learning-identity-report", "system:self-remediation"], on
@@ -151,7 +151,7 @@ def test_the_seed_turns_automatic_update_checks_off(home):
 
 def test_without_the_seeds_setting_the_gateway_would_check_on_its_own(home):
     # The control: checks are on by default, which is why config.json carries the setting.
-    (home / "config.json").write_text('{"dashboard":{"user_name":"Keyur"}}', encoding="utf-8")
+    (home / "config.json").write_text('{"dashboard":{"user_name":"Alex"}}', encoding="utf-8")
     from personalclaw import self_update
 
     assert self_update.may_check_for_updates(asked=False) is True

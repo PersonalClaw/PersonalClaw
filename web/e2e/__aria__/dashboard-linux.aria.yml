@@ -24,7 +24,7 @@
   - button "Notifications"
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
-  - heading "Good <time of day>, Keyur" [level=#]
+  - heading "Good <time of day>, Alex" [level=#]
   - button "New thread"
   - radiogroup "View":
     - radio "Attention" [checked]

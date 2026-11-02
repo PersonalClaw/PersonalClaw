@@ -393,7 +393,7 @@ const STEP_2_ACTIVE = /Already use another local agent tool\?/
 /** Advance from the name step to step 2 — "Bring your setup over", the longest step and the one the
  *  original measurement was taken on. */
 async function advanceToImportStep(page: Page): Promise<void> {
-  await page.getByRole('textbox', { name: 'Your name' }).fill('Keyur')
+  await page.getByRole('textbox', { name: 'Your name' }).fill('Alex')
   await page.getByRole('button', { name: 'Continue' }).click()
   await expect(page.getByText(STEP_2_ACTIVE)).toBeVisible({ timeout: 10_000 })
   await settle(page)
@@ -689,7 +689,7 @@ test.describe('first run is operable by keyboard alone', () => {
 
   test('advancing a step moves focus to the new step, not to <body>', async ({ page }) => {
     await renderFirstRun(page)
-    await page.getByRole('textbox', { name: 'Your name' }).fill('Keyur')
+    await page.getByRole('textbox', { name: 'Your name' }).fill('Alex')
     // Enter in the field, i.e. the keyboard path — not a synthetic click on the arrow.
     await page.getByRole('textbox', { name: 'Your name' }).press('Enter')
     await expect(page.getByText(STEP_2_ACTIVE)).toBeVisible({ timeout: 10_000 })

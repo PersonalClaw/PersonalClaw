@@ -268,7 +268,7 @@ test.describe('service worker', () => {
     // A server-side name, because `onboarded` is derived from one and the corrector is
     // downstream of the onboarding redirect — without it this would assert nothing but
     // that `#/onboarding` wins, which it already does in the first test.
-    const { server, ready } = serveDist({ userName: 'Keyur' })
+    const { server, ready } = serveDist({ userName: 'Alex' })
     await ready
     try {
       const manifest = await (await page.request.get(`${ORIGIN}/manifest.webmanifest`)).json() as {
