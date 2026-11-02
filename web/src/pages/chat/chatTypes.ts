@@ -155,11 +155,20 @@ export interface ActivitySegment {
   ref?: string
 }
 
-/** The activity kinds a turn's footer ledger says (`ContextLedger`): what fed the turn (or that
- *  none of it was your memory, `context_without_memory`: `memory_reads.fed`), what it learned, and
- *  its telemetry. Never a line of the turn's own: they are pulled out of its inline flow, and kept
+/** The activity kinds a turn's footer ledger says (`ContextLedger`): what it learned, and its
+ *  telemetry. Never a line of the turn's own: they are pulled out of its inline flow, and kept
  *  whatever else the turn shows, live as after a reload (`insertActivity`). */
-export const LEDGER_ACTIVITY_KINDS: readonly string[] = ['context', 'context_without_memory', 'learned', 'stats']
+export const LEDGER_ACTIVITY_KINDS: readonly string[] = ['learned', 'stats']
+
+/** The activity kinds that say what a turn recalled (`memory_reads.fed`): `context`, or
+ *  `context_without_memory` for a turn that read none of your memory. A line of the turn where the
+ *  recall came (`transcript/RecallLine`, #5876), no step of its work, and kept whatever else the
+ *  turn shows, live as after a reload (`insertActivity`, `hydrateTurns`). */
+export const RECALL_ACTIVITY_KINDS: readonly string[] = ['context', 'context_without_memory']
+
+/** Whether `s` is a turn's recall line (`RECALL_ACTIVITY_KINDS`). */
+export const isRecall = (s: Segment): s is ActivitySegment =>
+  s.kind === 'activity' && RECALL_ACTIVITY_KINDS.includes((s as ActivitySegment).activityKind || '')
 
 /** A line the gateway wrote to say what happened to the conversation (`role: 'notice'`) — a turn
  *  moved to another agent, which is now answering — shown where it happened, live and on reload,
@@ -831,14 +840,16 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
       else delete at.servedModel
       // How long the gateway measured the turn, from the same record: its run's time.
       took = storedMs(m.meta?.turn_telemetry)
-      // What fed the turn ("Injected 1,204 chars of context …"), on the same last message: live it
-      // is the `context` activity line the turn's footer shows, which a reload never replays — or
-      // the `context_without_memory` one of a turn that read none of your memory, kept as that kind
-      // so its footer never makes the memory claim after a reload.
+      // What the turn recalled ("Injected 1,204 chars of context …"), on the same last message: live
+      // it is the `context` activity line, which a reload never replays — or the
+      // `context_without_memory` one of a turn that read none of your memory, kept as that kind so
+      // its line never makes the memory claim after a reload. The gateway says it as it puts the
+      // prompt together, before the turn's first text or step, so it goes at the head of the turn,
+      // where the live line came (#5876), and once.
       const fed = m.meta?.context_fed
       if (fed && typeof fed.text === 'string' && fed.text) {
         const kind = fed.kind === 'context_without_memory' ? 'context_without_memory' : 'context'
-        at.segments.push({ kind: 'activity', text: fed.text, activityKind: kind })
+        at.segments = [{ kind: 'activity', text: fed.text, activityKind: kind }, ...at.segments.filter((sg) => !isRecall(sg))]
       }
       // What the turn learned, from the same last message: live it arrives as the learned chip's
       // `activity_event`, which a reload — or a restart mid-turn — never replays, so a preference

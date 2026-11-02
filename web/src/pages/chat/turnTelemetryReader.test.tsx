@@ -53,7 +53,7 @@ const MEASURED_ZERO_SAVED = `${HEAD} · cache 84% hit (12,400 read / 1,200 writt
 const NEGATIVE = `${HEAD} · cache 0% hit (0 read / 1,200 written) · saved -$0.0004`
 
 const open = (stats?: string) => {
-  render(<ContextLedger fed="Recalled relevant context · 1,204 chars" stats={stats} />)
+  render(<ContextLedger learned="Learned: you prefer metric units" stats={stats} />)
   fireEvent.click(screen.getByRole('button'))
 }
 
@@ -73,7 +73,7 @@ describe('A — the telemetry row renders the turn line the backend composed', (
     // always on, and "the reader works" would be indistinguishable from "the reader is a
     // constant". It is also the honest degrade: `_turn_complete_line` is live-only, so a
     // reloaded transcript has no stats line and must not grow an empty telemetry chip.
-    render(<ContextLedger fed="Recalled relevant context · 1,204 chars" />)
+    render(<ContextLedger learned="Learned: you prefer metric units" />)
     const chip = screen.getByRole('button')
     // The collapsed summary does not advertise telemetry it does not have…
     expect(chip.textContent).not.toContain('telemetry')
@@ -81,7 +81,7 @@ describe('A — the telemetry row renders the turn line the backend composed', (
     // …and opening produces no row either.
     expect(screen.queryByText('Telemetry:')).toBeNull()
     // The other row IS there, so this is a scoped absence rather than an empty render.
-    expect(screen.getByText('Fed this turn:')).toBeTruthy()
+    expect(screen.getByText('Learned & saved:')).toBeTruthy()
   })
 
   it('the collapsed chip advertises telemetry once there IS a stats line', () => {
@@ -199,9 +199,9 @@ describe('C — the fold is wired (the reader is not an unreachable component)',
 
     it('a stats-only turn still OPENS the ledger (the gate counts telemetry)', () => {
       // Dropping `ledger.stats` from `hasLedger` leaves the fold intact and the row
-      // unreachable on any turn that fed no context and learned nothing. The model that
-      // answered opens it too: the chip names it even on a turn whose line never arrived.
-      expect(chatPage).toContain('Boolean(ledger.fed || ledger.learned || ledger.stats || servedModel)')
+      // unreachable on any turn that learned nothing. The model that answered opens it too: the
+      // chip names it even on a turn whose line never arrived.
+      expect(chatPage).toContain('Boolean(ledger.learned || ledger.stats || servedModel)')
     })
 
     it('hands the folded text to the component that renders it', () => {
@@ -214,8 +214,8 @@ describe('C — the fold is wired (the reader is not an unreachable component)',
       // segment a turn ends on). Dropping `'stats'` there would count the telemetry line as a work
       // step and render it inline as well as in the ledger — the duplicate the ledger was built to
       // remove.
-      expect(chatTypes).toContain("export const LEDGER_ACTIVITY_KINDS: readonly string[] = ['context', 'context_without_memory', 'learned', 'stats']")
-      expect(chatPage).toContain("(s.kind === 'activity' && !inLedger(s))")
+      expect(chatTypes).toContain("export const LEDGER_ACTIVITY_KINDS: readonly string[] = ['learned', 'stats']")
+      expect(chatPage).toContain("(s.kind === 'activity' && !inLedger(s) && !isRecall(s))")
     })
 
     it('the component gates the Telemetry row on the prop it was handed', () => {

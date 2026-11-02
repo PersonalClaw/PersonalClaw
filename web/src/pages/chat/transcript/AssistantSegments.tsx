@@ -18,6 +18,7 @@ import { ApprovalCard } from '../ApprovalCard'
 import { QuestionCard, type QuestionReply } from '../QuestionCard'
 import { ThinkingBlock } from '../ThinkingBlock'
 import { ContextLedger } from '../ContextLedger'
+import { RecallLine } from './RecallLine'
 import { TurnHelpers, helpersFromTool } from './TurnHelpers'
 import { SourcesRow } from './SourcesRow'
 import { TurnArtifacts } from './TurnArtifacts'
@@ -26,7 +27,7 @@ import { sourceKey, turnSources } from '../turnSources'
 import { parseOptions, parseSwitchToAgent } from '../parseAssistant'
 import { workedFor } from '../turnRuns'
 import { waitsPastItsTurn } from '../approvalSegment'
-import { type SubagentCard, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
+import { type SubagentCard, type Segment, type ToolSegment, type ApprovalSegment, type QuestionSegment, type ActivitySegment, type ThinkingSegment, type ErrorSegment, type MemoryCitation, type SkillUsed, type ReplyCut, type ServedModel, failedStepCount, unaskedStepCount, LEDGER_ACTIVITY_KINDS, isRecall, skillsUsedLabel, skillsUsedTitle } from '../chatTypes'
 
 // ── An assistant turn, as the transcript draws it ────────────────────────────────────────────────
 //
@@ -102,29 +103,25 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
   // A restricted-mode turn may OFFER a one-click escalation to Agent.
   const { switchTo } = parseSwitchToAgent(fullText)
 
-  // Transparency signals (what FED the turn / what was LEARNED / telemetry) are
-  // pulled OUT of the inline flow and consolidated into one collapsible ledger at
-  // the turn footer — holistic, non-intrusive, on demand (not three scattered lines).
-  const ledger: { fed?: string; fedNoMemory?: boolean; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string } = {}
+  // Transparency signals (what was LEARNED / telemetry) are pulled OUT of the inline flow and
+  // consolidated into one collapsible ledger at the turn footer — non-intrusive, on demand. What
+  // the turn RECALLED is not: it is a line of the turn where the recall came (`RecallLine`, #5876).
+  const ledger: { learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string } = {}
   for (const s of segments) {
     if (s.kind !== 'activity') continue
     const ak = (s as ActivitySegment).activityKind
-    if (ak === 'context' || ak === 'context_without_memory') {
-      ledger.fed = (s as ActivitySegment).text
-      ledger.fedNoMemory = ak === 'context_without_memory'
-    }
     // The learned row carries its emitter's `origin` (and a preference's key) too — the
     // ledger is where the chip lives, so the discriminator has to travel with the text or the
     // tap has nothing to route on. Read off the SAME segment, so the two can never describe
     // different events.
-    else if (ak === 'learned') {
+    if (ak === 'learned') {
       ledger.learned = (s as ActivitySegment).text
       ledger.learnedOrigin = (s as ActivitySegment).origin
       ledger.learnedRef = (s as ActivitySegment).ref
     }
     else if (ak === 'stats') ledger.stats = (s as ActivitySegment).text
   }
-  const hasLedger = Boolean(ledger.fed || ledger.learned || ledger.stats || servedModel)
+  const hasLedger = Boolean(ledger.learned || ledger.stats || servedModel)
   // The last segment the turn shows in its body: the ledger's rows are pulled out into its footer.
   const inLedger = (s: Segment) => s.kind === 'activity' && LEDGER_ACTIVITY_KINDS.includes((s as ActivitySegment).activityKind || '')
   const lastShown = [...segments].reverse().find((s) => !inLedger(s))
@@ -168,7 +165,7 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
       }
       return <ToolCard key={seg.id || i} seg={t} />
     }
-    if (seg.kind === 'activity') return <ActivityLine key={i} seg={seg as ActivitySegment} />
+    if (seg.kind === 'activity') return isRecall(seg) ? <RecallLine key={`recall-${i}`} seg={seg} /> : <ActivityLine key={i} seg={seg as ActivitySegment} />
     if (seg.kind === 'thinking') return <ThinkingBlock key={i} text={(seg as ThinkingSegment).text} defaultOpen={streaming} />
     if (seg.kind === 'error') {
       const { text, settings } = seg as ErrorSegment
@@ -209,9 +206,10 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
     }
     return null
   }
+  // What the turn recalled is no step of its work: a line where the recall came, never counted.
   const isProcess = (s: Segment) =>
     s.kind === 'tool' || s.kind === 'error' || s.kind === 'approval' || s.kind === 'question' ||
-    (s.kind === 'activity' && !inLedger(s))
+    (s.kind === 'activity' && !inLedger(s) && !isRecall(s))
 
   // Split the turn into the agent's WORK (tool calls, narration, approvals — up to
   // and including the last process step) and its FINAL ANSWER (trailing text after
@@ -224,7 +222,13 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
   const workSegs = lastProcessIdx >= 0 ? segments.slice(0, lastProcessIdx + 1) : []
   const failedCount = failedStepCount(workSegs)
   const unaskedCount = unaskedStepCount(workSegs)
-  const finalSegs = (lastProcessIdx >= 0 ? segments.slice(lastProcessIdx + 1) : segments).filter((s) => s.kind === 'text')
+  // A recall said after the last step sits above the answer it fed, in order with its text.
+  const finalSegs = (lastProcessIdx >= 0 ? segments.slice(lastProcessIdx + 1) : segments).filter((s) => s.kind === 'text' || isRecall(s))
+  // A recall said as the turn starts, before anything else in it (where the gateway says it, and
+  // where a reload puts it), heads the turn: above its work and its answer, never folded away
+  // with the steps. One that came between two steps stays between them, in the work.
+  const leadIdx = segments.findIndex((s) => !isRecall(s))
+  const headSegs = segments.slice(0, leadIdx < 0 ? segments.length : leadIdx)
 
   // A loop's or a workflow run's card is a LIVE, auto-refreshing widget that must stay visible:
   // never buried inside the collapsed "Worked for 12s · N steps" disclosure, which would hide the
@@ -236,17 +240,20 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
   const waitsForHer = (s: Segment) => s.kind === 'question' && (s as QuestionSegment).answerable && !(s as QuestionSegment).outcome
   const isLiveCard = (s: Segment) => isCard(s) || waitsPastItsTurn(s) || waitsForHer(s)
   const sdlcNodes = segments.filter(isLiveCard).map((s, i) => renderItem(s, i)).filter(Boolean)
-  // The ledger's rows are said in the footer only. What fed the turn arrives as the turn starts,
-  // inside the work's span, and was drawn there too, live: a line a reload never showed.
-  const workNodes = workSegs.filter((s) => !isLiveCard(s) && !inLedger(s)).map((s, i) => renderItem(s, i)).filter(Boolean)
-  const finalNodes = finalSegs.map((s, i) => renderItem(s, i, true)).filter(Boolean)
-  const hasFinal = finalNodes.length > 0
+  // The ledger's rows are said in the footer only.
+  const headNodes = headSegs.map((s, i) => renderItem(s, i))
+  const workNodes = workSegs.filter((s) => !isLiveCard(s) && !inLedger(s) && !headSegs.includes(s)).map((s, i) => renderItem(s, i)).filter(Boolean)
+  const finalItems = finalSegs.filter((s) => !headSegs.includes(s)).map((s, i) => ({ s, node: renderItem(s, i, true) })).filter((x) => x.node)
+  const finalNodes = finalItems.map((x) => x.node)
+  // The answer is its text: a recall line above it is not one.
+  const hasFinal = finalItems.some((x) => x.s.kind === 'text')
   // Collapse the work only when the turn is done AND produced a final answer to
   // focus on; otherwise show it inline (still streaming, or it ended on a step).
   const collapseWork = !streaming && hasFinal && stepCount > 0
 
   return (
     <>
+      {headNodes}
       {workNodes.length > 0 && (
         collapseWork
           ? <AgentWork stepCount={stepCount} took={workedFor(workedMs)} failedCount={failedCount} unaskedCount={unaskedCount}>{workNodes}</AgentWork>
@@ -267,7 +274,7 @@ export function AssistantSegments({ segments, liveCards, helpers, isLast, messag
           actually paying for" a thing you have to go looking for. */}
       {skillsUsed && skillsUsed.length > 0 && <SkillsUsedChip skills={skillsUsed} />}
 
-      {hasLedger && <ContextLedger fed={ledger.fed} fedNoMemory={ledger.fedNoMemory} learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} served={servedModel} />}
+      {hasLedger && <ContextLedger learned={ledger.learned} learnedOrigin={ledger.learnedOrigin} learnedRef={ledger.learnedRef} stats={ledger.stats} served={servedModel} />}
 
       {/* Agent-driven one-click escalation: the model proposed a switch out
           of a restricted mode; the user approves with a single click, which flips
@@ -338,8 +345,8 @@ function AgentWork({ stepCount, took, failedCount, unaskedCount, children }: { s
 }
 
 /** A quiet inline activity line for LIVE progress (status / session / tool steps).
- *  Context-provenance, learning, and telemetry are NOT rendered here — they're
- *  consolidated into the per-turn {@link ContextLedger} footer instead. */
+ *  What the turn recalled is its own line (`RecallLine`); learning and telemetry are NOT rendered
+ *  here — they're consolidated into the per-turn {@link ContextLedger} footer instead. */
 function ActivityLine({ seg }: { seg: ActivitySegment }) {
   return (
     <div className="my-1 flex items-center gap-1.5 text-on-surface-low text-[0.75rem]">

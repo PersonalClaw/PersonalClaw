@@ -1160,12 +1160,15 @@ sub-event inside a turn (`tool`, `approval`, `error`), in turn order, each with
   channel. Absent = the turn reported nothing; `priced: false` means the
   model has no price row (never "free"); `context_pct: null` means the provider measured
   nothing (never 0%). What fed the turn rides the same message as `meta.context_fed`: the
-  sentence its footer says ("Injected 1,204 chars of context …"), which a runtime's first
-  turn says live, so a reload's footer says it too. Absent = the turn said nothing about
-  its context. The footer ledger (`ContextLedger`) says what fed the turn, what it learned
-  and its telemetry, live from their activity lines and after a reload from these keys; its
-  lines are never drawn in the turn itself, and a turn's tool cards never keep them out
-  (`LEDGER_ACTIVITY_KINDS`, `insertActivity`).
+  sentence its recall line says ("Injected 1,204 chars of context …"), which a runtime's first
+  turn says live as its prompt is put together, before the turn's first text or step. So a
+  reload puts the line at the head of the turn, where it came live (`hydrateTurns`), and a
+  line that came between two steps live stays between them. Absent = the turn said nothing
+  about its context. The recall is a line of the turn (`transcript/RecallLine`), never a step
+  of its work; the footer ledger (`ContextLedger`) says what the turn learned and its
+  telemetry, live from their activity lines and after a reload from these keys, and its lines
+  are never drawn in the turn itself. A turn's tool cards keep neither out
+  (`LEDGER_ACTIVITY_KINDS`, `RECALL_ACTIVITY_KINDS`, `insertActivity`).
 
 ### Bookmarks on the map
 

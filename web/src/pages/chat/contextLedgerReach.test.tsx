@@ -41,13 +41,14 @@ afterEach(() => {
   else delete (Element.prototype as unknown as Record<string, unknown>).scrollIntoView
 })
 
-/** A turn that fed context, captured a skill proposal, and reported telemetry — the shape
- *  that puts all three ledger rows on screen, so the learned row is NOT the first child and
- *  reaching it is a real navigation rather than a coincidence of ordering. */
+/** A turn that captured a skill proposal, named the model that answered it, and reported
+ *  telemetry — the shape that puts every ledger row on screen, so reaching the learned row's
+ *  link is a real navigation among them rather than a coincidence of a lone row. (What the turn
+ *  recalled is no row here: it is a line of the turn where it came, #5876.) */
 const ledger = (over: Partial<Parameters<typeof ContextLedger>[0]> = {}) =>
   render(
     <ContextLedger
-      fed="Recalled relevant context · 1,204 chars"
+      served={{ model: 'local-model', chosen: 'from your Chat chain' }}
       learned="Learned: prefers tabs over spaces"
       learnedOrigin="proposal"
       stats="12.4s · 3,102 tokens"
