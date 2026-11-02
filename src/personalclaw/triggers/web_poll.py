@@ -21,8 +21,9 @@ failure mode that turns one watch into a notification every minute.
 
 **Fetching goes through the egress chokepoint** — never `urllib`/`httpx` directly. The plain tier is
 `net.fetch`; the opt-in headless tier is `web.render.render_url`. BOTH apply host classification,
-private-IP denial and the redirect-hop re-check (`render_url` runs `net.guard.evaluate` before it
-navigates, precisely because a browser does its own DNS and would otherwise bypass the pin). A watch
+private-IP denial and the redirect-hop re-check (`render_url` routes every request its browser makes
+through `net.guard.evaluate` and `net.fetch`, which dials the address the guard checked, precisely
+because a browser does its own DNS and would otherwise bypass the pin). A watch
 pointed at `http://169.254.169.254/` is an SSRF against the machine's own metadata service, and both
 tiers refuse it; re-implementing a fetch here would bypass every one of those controls.
 
@@ -742,9 +743,9 @@ def poll_one(
 
     # 🔴 ESCALATION. A real 200 whose plain fetch extracts NOTHING is the JS-shell signal: the page
     # built its content client-side, so `net.fetch` saw only the empty shell. When the watch opted
-    # in, escalate to the headless tier — `render_url`, which runs the SAME egress guard before it
-    # navigates, so the SSRF invariant holds — and re-extract from the post-JS HTML. Default OFF, so
-    # a watch that never set the key is byte-for-byte unchanged.
+    # in, escalate to the headless tier — `render_url`, which holds every request of the render to
+    # the SAME egress guard, so the SSRF invariant holds — and re-extract from the post-JS HTML.
+    # Default OFF, so a watch that never set the key is byte-for-byte unchanged.
     escalation = ""
     if not raw_items and _escalate_enabled(trigger):
         limit = headless_budget_for(trigger)

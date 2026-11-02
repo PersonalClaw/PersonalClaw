@@ -1179,6 +1179,12 @@ What the tier does not reach:
   run's session lasts; one already running before the session started watching the tab is left
   running, unjudged. Whatever is still held when the session ends, such a page or a frame still
   being judged, loads once it has ended.
+- **A frame of a rendered page whose own address redirects.** A page rendered with the
+  `js-render` extra makes every request through the guard, and the egress layer follows each
+  redirect itself, asking the guard of each hop (`web.render`). The page is then opened at the
+  address it moved to; a frame inside it is not moved, so it is shown at the address it asked for,
+  its relative links resolving against that address and its scripts reading that `location`.
+  Nothing it loads skips the guard.
 
 **What this means for you:** a tier set in the ceiling holds for everything the agent, your
 automations and your apps reach through PersonalClaw's own requests, for every call to a remote

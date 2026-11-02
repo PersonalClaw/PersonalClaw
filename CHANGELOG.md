@@ -16,6 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A workbook you add to Knowledge is held to the same size limits as every other office document: one whose contents unpack past them isn't read, and the item fails saying which limit, and a very large sheet is read up to the cell limit, stopping on a whole row and saying where.**
 - **On a computer that gives PersonalClaw no sandbox, a command set to the strict sandbox isn't run, and the refusal says which setting withholds the sandbox and how to change it. A connector pack's parse script runs at the strict level, so it isn't run there either, and its source's health shows the refusal. A command at the standard level still runs, and the chat's Execution Boundary and the Doctor now say it's held only by PersonalClaw's own checks, with the same fix.**
 - **A Chat history board card gives its room to the chat's title: the title wraps to three lines, the tags sit on their own line under it, and the "N messages" count is gone, with tighter padding and no icon tile. Its selection tick hangs on the card's top-right corner, outside its content, and the column of chats with no tag is "No tag". The list view is unchanged.**
+- **A page rendered with the `js-render` extra makes no request the egress guard doesn't see: everything it loads, its scripts' requests and each redirect are checked under the run's egress policy and fetched at the address the guard checked, a refused one is in the security log, and the sockets a page can open are refused.**
 
 ## [0.3.4] — 2026-11-01
 

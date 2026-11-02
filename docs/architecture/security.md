@@ -1387,7 +1387,9 @@ chokepoint:
 - `egress_policy_for_profile(base, tier)` is the composition — tightest wins, and
   caps only tighten. `off` returns `None`, and the guard refuses every host as
   `egress_off` before it is looked up, audited as an `egress_fetch` refusal (the
-  render's pre-flight as `web.render`). `listed`/`registry` make an additive base
+  render's requests as `web.render`: every request the headless render's browser makes is
+  routed back to the guard, and an allowed one is fetched at the address it checked, each
+  redirect followed there with its hop asked of the guard). `listed`/`registry` make an additive base
   exclusive, with the tier's preset unioned onto the base's own hosts; an exclusive
   base keeps exactly its own hosts, since a union would widen it. A `loopback_only`
   base (the gateway's calls to itself and to an app's backend) is never narrowed.

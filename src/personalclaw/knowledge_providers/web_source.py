@@ -41,8 +41,9 @@ selectors. So zero items is never a bare empty result — it carries
 **Escalation is decided by OUTCOME, not by status.** A 200 whose detectors extract
 nothing, on a page measurably built client-side (:func:`looks_like_js_shell`), is the JS-shell
 signal — the plain fetch saw the empty shell. Then, and only then, the render tier
-(``web/render.py``, which pre-flights the same egress guard because a browser bypasses IP
-pinning) gets one attempt. ``budget.allow_render`` defaults **false**, and a source that needs
+(``web/render.py``, which holds every request its browser makes to the same egress guard, at
+the address it checked, because a browser bypasses IP pinning) gets one attempt.
+``budget.allow_render`` defaults **false**, and a source that needs
 the tier without permission degrades to the ``needs render tier`` health status
 rather than reporting a healthy empty poll forever. Every attempt in one poll — tier 1, the
 WordPress sub-request, the render — draws on ONE ``budget.max_requests``.
@@ -1085,8 +1086,8 @@ class WebSourceProvider(KnowledgeSourceProvider):
     Spec keys are :data:`SPEC_SCHEMA`; ``budget`` (on the source row, not the spec) carries
     ``{max_requests, allow_render, allow_browse, cdp_url}``. ``fetch_fn`` / ``render_fn`` /
     ``browse_fn`` are the injectable seams and the ONLY ways bytes enter — which keeps tier 1 under
-    the engine's ``SOURCE`` egress policy, tier 2 on the guard-pre-flighting core render path, and
-    tier 3 on the gateway browser's egress-fenced session.
+    the engine's ``SOURCE`` egress policy, tier 2 on the core render path whose every request the
+    guard holds, and tier 3 on the gateway browser's egress-fenced session.
     """
 
     #: A page is more expensive to poll than a conditional-GET feed, and a changelog does not
