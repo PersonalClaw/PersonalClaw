@@ -205,7 +205,11 @@ has cost someone a debugging session.
   its own settings, feedback and any other single-file store it already has).
   `summary.left_unchanged` names each part the merge could not bring in (a store, or
   `store (table)`), as a restore's `left_unchanged` does, and Settings → Import / Export says
-  so in the error tone.
+  so in the error tone. An archive that cannot be an export is refused `400 invalid_archive`
+  before anything is read or written, with a sentence naming the limit: more than 100,000
+  members, a manifest over 64 MB, more to unpack than the disk it is unpacked to has free
+  (keeping 512 MB free), or a member larger than its v3 manifest declares. The upload itself
+  stops while it streams, `413 request_too_large`, once it passes that free space.
   `POST /api/durability/archive/{id}/restore` is the same shape: no `mode` returns the plan,
   and `mode=merge` (with `confirm: true`) merges. Both refuse a replace the same way,
   `409 gateway_running`: a replace rewrites state the running gateway holds open, so the

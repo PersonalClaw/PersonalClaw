@@ -161,6 +161,7 @@ ELSEWHERE: dict[tuple[str, str], str] = {
     ("portability.py", "_wal_checkpoint"): "a database of the home an export reads",
     ("portability.py", "_backup_sqlite"): "a database copied into an export, through scratch",
     ("portability.py", "_strip_excluded_from_staged"): "the archive's staged copy",
+    ("portability.py", "_unpack"): "the archive's staged copy, unpacked into scratch",
     ("durability/sqlite_files.py", "copy_file"): "a file of the home copied into a snapshot",
     ("durability/pull_engine.py", "_materialize"): "the pull's scratch folder",
     ("workflows/project_archive.py", "_open_archive"): "the archive's decrypted copy, in scratch",

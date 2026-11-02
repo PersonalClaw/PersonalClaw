@@ -89,16 +89,31 @@ async def _read_upload_file(request: web.Request) -> tuple[Path | None, web.Resp
             {"error": {"code": "file_required", "message": "file field required"}}, status=400
         )
 
+    from personalclaw import portability
     from personalclaw.uploads.content_scan import ContentRefused, scan_upload
     from personalclaw.uploads.spool import Spool
 
+    # A streamed multipart body is not held to the server's request size, so the upload is held
+    # here, while it streams, to the room the import has on the disk it is saved to.
+    room = portability.room_for_import()
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     try:
-        spool = Spool(tmp)
+        spool, received = Spool(tmp), 0
         while True:
             chunk = await part.read_chunk(65536)
             if not chunk:
                 break
+            received += len(chunk)
+            if received > room:
+                tmp.close()
+                Path(tmp.name).unlink(missing_ok=True)
+                return None, json_error(
+                    "request_too_large",
+                    message="The archive is larger than the space free on the disk it is saved to "
+                    f"({portability.size_words(room)}, keeping "
+                    f"{portability.size_words(portability.IMPORT_DISK_MARGIN_BYTES)} free).",
+                    status=413,
+                )
             await spool.write(chunk)
         await spool.flush()
         tmp.close()
