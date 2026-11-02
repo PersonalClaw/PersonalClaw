@@ -68,7 +68,11 @@ theme via `localStorage.mode` + `data-mode` (how the SPA persists it), and write
 - **Both themes, always.** The design system styles light and dark with equal care; the
   showcase reflects that.
 - **No real personal data.** Capture against a throwaway `PERSONALCLAW_HOME` (the script
-  refuses the default home). Seed illustrative data only.
+  refuses the default home). Seed illustrative data only. Start the gateway with a clean
+  environment (`env -i` with only `PATH`, a scratch `HOME`, `PERSONALCLAW_HOME` and
+  `PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`): Settings' Secrets card counts every
+  credential-named variable the gateway inherits as "From host env", and the null keyring keeps
+  the scratch home's secrets out of this machine's keychain.
 - **Refresh per release** so the showcase never drifts from the shipped UI.
 - **Each image within the publication ceiling** (512 KiB for a tracked binary,
   `scripts/check_publication_hygiene.py`). A screen of large gradients can pass it; re-encode
