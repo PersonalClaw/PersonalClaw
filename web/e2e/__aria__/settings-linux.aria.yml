@@ -124,7 +124,7 @@
   - text: Speech & Transcription Speech-to-text No model bound Text-to-speech No model bound
   - heading "General" [level=#]
   - button "Open Account settings"
-  - text: Account Keyur Display name & onboarding
+  - text: Account Alex Display name & onboarding
   - button "Open Design settings"
   - text: Design Coral Mode
   - 'button "Mode: <theme>" [pressed]': <theme>

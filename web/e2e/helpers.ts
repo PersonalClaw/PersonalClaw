@@ -737,7 +737,7 @@ export async function expectRouteScreenshot(
 }
 
 /** The greeting on Home and a new chat names the time of day the run happens at ("Good morning,
- *  Keyur"), so a golden taken in the evening failed every morning run, and the goldens disagreed
+ *  Alex"), so a golden taken in the evening failed every morning run, and the goldens disagreed
  *  among themselves. Its words are written as one time of day before the capture; its type, place
  *  and colour are still photographed. The accessibility trees fold the same words
  *  (`surfaceChecks.ts`, `Good <time of day>`). */

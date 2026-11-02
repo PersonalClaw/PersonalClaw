@@ -26,7 +26,7 @@
   - button "Choose a model"
   - button "Chat history"
   - button "More actions"
-  - heading "Good <time of day>, Keyur" [level=#]
+  - heading "Good <time of day>, Alex" [level=#]
   - img "Listening"
   - textbox "Message input"
   - button "Add to message"

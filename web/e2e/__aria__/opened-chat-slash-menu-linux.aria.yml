@@ -27,7 +27,7 @@
   - button "Chat history"
   - button "More actions"
   - img "Nothing running"
-  - heading "Good <time of day>, Keyur" [level=#]
+  - heading "Good <time of day>, Alex" [level=#]
   - textbox "Message input"
   - button "Add to message"
   - 'button "Agent and model: Agent · Auto"': Agent · Auto

@@ -130,8 +130,9 @@ export const SCRIPTED = {
 //  - `dashboard.user_name` pre-seeded into config.json, because `onboarded` is
 //    DERIVED from a non-empty SERVER-side name (web/src/app/identity.tsx). Seeding
 //    the file skips the onboarding hijack without a PUT — so no CSRF/origin dance,
-//    and nothing here weakens a security control. "Keyur" matches the committed
-//    visual baselines' greeting.
+//    and nothing here weakens a security control. The name is the demo home's persona
+//    (src/personalclaw/tests_fixtures/demo-home), which the committed visual baselines greet
+//    (`src/design/e2eHomeGreetsTheDemoPersona.test.ts`).
 //  - NOT PERSONALCLAW_AUTH_MODE=none: that swaps csrf_middleware for
 //    _dev_user_middleware, so any a11y/CSRF-adjacent conclusion drawn under it
 //    would not describe a real user. The token flow below is the real one.

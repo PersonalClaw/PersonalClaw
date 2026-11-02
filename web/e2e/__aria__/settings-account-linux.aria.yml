@@ -31,11 +31,11 @@
   - paragraph: "PersonalClaw is self-hosted and single-user. Below: how the <theme> addresses you, and — if you reach this box from outside your home network — an optional password sign-in."
   - heading "Identity" [level=#]
   - text: Your name Used in greetings and where the <theme> refers to you. Saved on the server, so it follows you across browsers and machines.
-  - textbox "Your name": Keyur
+  - textbox "Your name": Alex
   - 'button "Save: Your name" [disabled]': Save
   - text: Username A short handle stamped onto things you create (tasks, comments) so contributions stay attributable later. Lowercase letters, digits, - and _ — anything else is normalized. It's a label, not a login. Leave it empty to keep records unattributed.
   - textbox "Username":
-    - /placeholder: keyur
+    - /placeholder: alex
   - 'button "Save: Username" [disabled]': Save
   - text: "Assistant name What the assistant calls itself in prompts and greetings ({{bot_name}}). Empty uses the default, PersonalClaw."
   - textbox "Assistant name":
