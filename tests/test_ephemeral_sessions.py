@@ -503,10 +503,16 @@ class TestMcpCoreSessionKeyPassthrough:
     """
 
     @pytest.fixture(autouse=True)
-    def _the_credential_the_gateway_wrote(self):
+    def _the_credential_the_gateway_wrote(self, monkeypatch):
         home = config_loader.resolve_config_dir()
         home.mkdir(parents=True, exist_ok=True)
         (home / ".local_secret").write_text("a-gateway-credential", encoding="utf-8")
+        # The gateway on that port proves it serves this home, so the credential may go to it.
+        from fakes import answers_as_this_home
+
+        from personalclaw import home_gateway
+
+        monkeypatch.setattr(home_gateway, "_healthz", answers_as_this_home("a-gateway-credential"))
 
     def test_learn_add_sends_session_key_header(self):
         with (

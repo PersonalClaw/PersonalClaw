@@ -409,6 +409,34 @@ def home_fingerprint(home: Path | str) -> str:
     return hashlib.sha256(str(Path(home).expanduser().resolve()).encode("utf-8")).hexdigest()[:16]
 
 
+def _home_secret(home: Path) -> str:
+    """The local secret *home* holds, or ``""``."""
+    try:
+        return (Path(home) / ".local_secret").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def answers_as_this_home(secret: str) -> Callable[..., dict[str, Any]]:
+    """A stand-in for ``home_gateway._healthz``: this home's gateway, holding the local secret
+    *secret*, answering each identity read with its fingerprint and the proof the read's nonce asks
+    for (``home_gateway.gateway_proof``), as the real ``/api/healthz`` does. No socket is opened."""
+
+    def _healthz(port: int, *, attempts: int = 1, nonce: str = "") -> dict[str, Any]:
+        from personalclaw import home_gateway
+
+        said: dict[str, Any] = {
+            "status": "ok",
+            "pid": os.getpid(),
+            "home_id": home_gateway.home_id(),
+        }
+        if nonce and secret:
+            said["proof"] = home_gateway.gateway_proof(secret, nonce, port)
+        return said
+
+    return _healthz
+
+
 @dataclass(frozen=True)
 class SeenRequest:
     """One request a stand-in gateway was sent."""
@@ -468,10 +496,12 @@ def gateway_stand_in(
     local_secret: str = "",
 ) -> Iterator[GatewayStandIn]:
     """A gateway of *home*: ``GET /api/healthz`` answers as that home's gateway does (``status``,
-    ``pid``, and ``home_id``, its fingerprint), and every other request is answered from *routes*,
-    by ``(method, path)``, else 404. *local_secret* is the secret the gateway's own handlers check
-    (``app["local_secret"]``), for a route that is one of them. Every request is recorded, its
-    headers by lower-case name, before it is answered.
+    ``pid``, and ``home_id``, its fingerprint; and the proof a read with a nonce asks for,
+    ``home_gateway.gateway_proof``, made with *local_secret*, else with the secret the home holds,
+    when there is one), and every other request is answered from
+    *routes*, by ``(method, path)``, else 404. *local_secret* is the secret the gateway's own
+    handlers check (``app["local_secret"]``), for a route that is one of them. Every request is
+    recorded, its headers by lower-case name, before it is answered.
     """
     from aiohttp import web
 
@@ -479,19 +509,27 @@ def gateway_stand_in(
 
     home = Path(home)
     seen: list[SeenRequest] = []
-    table: dict[tuple[str, str], Route] = {
-        ("GET", "/api/healthz"): (
-            200,
-            {
-                "status": "ok",
-                "version": personalclaw.__version__,
-                "pid": os.getpid(),
-                "home_id": home_fingerprint(home),
-                "root_ok": True,
-            },
-        ),
-        **(routes or {}),
-    }
+
+    async def healthz(request: web.Request) -> web.StreamResponse:
+        from personalclaw import home_gateway
+
+        said: dict[str, Any] = {
+            "status": "ok",
+            "version": personalclaw.__version__,
+            "pid": os.getpid(),
+            "home_id": home_fingerprint(home),
+            "root_ok": True,
+        }
+        nonce = request.query.get("nonce", "")
+        # The secret it proves it holds: the one it was given, else the one its home holds, as a
+        # gateway holds the secret it wrote there when it started.
+        held = local_secret or _home_secret(home)
+        if held and home_gateway.is_nonce(nonce):
+            port = request.transport.get_extra_info("sockname")[1]
+            said["proof"] = home_gateway.gateway_proof(held, nonce, port)
+        return web.json_response(said)
+
+    table: dict[tuple[str, str], Route] = {("GET", "/api/healthz"): healthz, **(routes or {})}
 
     async def answer(request: web.Request) -> web.StreamResponse:
         body = await request.read()

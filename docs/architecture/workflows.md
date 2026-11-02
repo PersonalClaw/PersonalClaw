@@ -1330,7 +1330,13 @@ allowed, or a newer one the owner saved herself, and the run carries the version
 on to its own steps; any other workflow, and a draft run (`workflow_start_draft`),
 is refused in words (`WF_RUN_NOT_ALLOWED`, `403`), as a step that starts one is,
 since nobody is there to ask in the middle of an unattended run. A run the chain
-names that cannot be read starts nothing. A batch an agent fans out
+names that cannot be read starts nothing. What it changes is held the same way
+(`automation_version.change_refusal`): an edit, a rewind, a run from a step or a
+fork (`workflow_edit`, `workflow_rewind`, `workflow_run_from`, `workflow_fork`, and
+their routes) reaches only a run of its own that carries the versions allowed, the
+run its work is done for or one started for it; any other run, whose steps would
+start each workflow as it is now, is refused in words (`WF_RUN_NOT_ALLOWED`, `403`)
+and left unchanged. A batch an agent fans out
 (`subagent_run`) is its own tasks, compiled into a workflow its own Allow covers,
 and is not held to an automation's versions.
 

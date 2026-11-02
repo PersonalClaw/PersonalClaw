@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { FIXED_CLOCK } from '../../e2e/fixedClock'
 import { AUDIT_VERIFIED, LEARNING_WEEK, SYSTEM_READING, weekEndingOn } from '../../e2e/stubbedReads'
 import { verifiedScope } from '../pages/settings/AuditPanel'
+import { waitedFor } from '../pages/chat/approvalRow'
 
 // ── The visual spec's pins, without a browser (#3943) ────────────────────────────────────────────
 //
@@ -78,5 +79,26 @@ describe('the clock table', () => {
       expect(text, spec).toContain("import { FIXED_CLOCK } from './fixedClock'")
       expect(text, spec).not.toMatch(/const FIXED_CLOCK\b/)
     }
+  })
+})
+
+describe("the buddy's approval card", () => {
+  afterEach(() => vi.useRealTimers())
+
+  // The UI matrix's Buddy surface reads the fixed waiting list, and its card says how long the
+  // approval has waited. Under the browser's real clock that read seconds only until the moment
+  // the approval was asked, and minutes after it (run 41439170764).
+  it('reads its wait in seconds under its fixed clock, as its committed tree has it', () => {
+    const e2e = join(resolve(__dirname, '../..'), 'e2e')
+    const spec = readFileSync(join(e2e, 'surfaces.spec.ts'), 'utf8')
+    const asked = /id: 'approval:e2e-ap-1'[^\n]*\n\s*asked_at: '([^']+)'/.exec(spec)?.[1]
+    expect(asked, "FIXED_WAITING's approval and when it was asked").toBeDefined()
+    expect(FIXED_CLOCK.buddy, 'the buddy route runs under a fixed clock').toBeDefined()
+
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(FIXED_CLOCK.buddy))
+    expect(waitedFor(Math.round(Date.parse(asked!) / 1000))).toMatch(/^\d+s$/)
+    const tree = readFileSync(join(e2e, '__aria__', 'buddy-linux.aria.yml'), 'utf8')
+    expect(tree).toMatch(/- term: Waiting\n\s*- definition: #s\n/)
   })
 })

@@ -31,7 +31,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from personalclaw import gateway_base, run_processes
+from personalclaw import gateway_base, home_gateway, run_processes
 from personalclaw.config import loader as config_loader
 from personalclaw.hooks import validate_file_path
 from personalclaw.mcp_core import InternalSecretUnavailable, _internal_secret
@@ -126,9 +126,12 @@ def resolve_script_path(spec: str) -> tuple[Path, str]:
 _RESULT_SENTINEL = "__PC_SCRIPT_RESULT__"
 
 _LAUNCHER_SRC = r'''
+import hashlib
+import hmac
 import importlib.util
 import json
 import os
+import secrets
 import sys
 import urllib.error
 import urllib.request
@@ -150,6 +153,7 @@ _SECRET = _CFG.get("secret", "")
 _SECRET_UNAVAILABLE = _CFG.get("secret_unavailable", "")
 _PORT = _CFG.get("port", 0)
 _SESSION_KEY = _CFG.get("session_key", "")
+_HOME_ID = _CFG.get("home_id", "")
 
 
 class Skip(Exception):
@@ -173,6 +177,26 @@ class _NoRedirects(urllib.request.HTTPRedirectHandler):
 # the environment and never on to wherever a redirect points.
 _LOOPBACK = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirects())
 
+def _proved():
+    # A script can outlive the gateway that started it (a restart while it runs), and the port may
+    # then be another home's gateway or a program that is not one. So before each call back the
+    # port is asked whose it is, with a read that carries a fresh nonce and no credential, and the
+    # gateway proves it holds this home's secret: HMAC-SHA256 under it, over the context, the nonce
+    # and the port (``home_gateway.gateway_proof``, which this cannot import).
+    nonce = secrets.token_hex(16)
+    req = urllib.request.Request("http://127.0.0.1:%d/api/healthz?nonce=%s" % (_PORT, nonce))
+    try:
+        with _LOOPBACK.open(req, timeout=10) as resp:
+            said = json.loads(resp.read(65536).decode("utf-8", "replace"))
+    except Exception:
+        return False
+    if not (_HOME_ID and _SECRET and isinstance(said, dict) and said.get("home_id") == _HOME_ID):
+        return False
+    message = ("personalclaw-gateway-proof\n%s\n%d" % (nonce, _PORT)).encode("utf-8")
+    expected = hmac.new(_SECRET.encode("utf-8"), message, hashlib.sha256).hexdigest()
+    proof = said.get("proof")
+    return isinstance(proof, str) and hmac.compare_digest(proof.encode(), expected.encode())
+
 
 def _post(path, payload):
     if _SECRET_UNAVAILABLE:
@@ -180,6 +204,13 @@ def _post(path, payload):
         # sent, and the refusal says why, in the shape the gateway's own refusals take.
         return {"ok": False, "status": 0,
                 "error": {"code": "internal_secret_unavailable", "message": _SECRET_UNAVAILABLE}}
+    if not _proved():
+        return {"ok": False, "status": 0,
+                "error": {"code": "not_this_homes_gateway",
+                          "message": "Port %d is not answered by this home's gateway, or by one "
+                                     "that proves it holds this home's secret (a gateway from an "
+                                     "older PersonalClaw: restart it), so the call was not "
+                                     "sent." % _PORT}}
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         "http://127.0.0.1:%d%s" % (_PORT, path),
@@ -370,6 +401,8 @@ def run_script_sandboxed(
         "secret_unavailable": _no_secret,
         "port": _port,
         "session_key": f"cron:{job_id}",
+        # What the gateway at that port must say it serves before a call back goes to it.
+        "home_id": home_gateway.home_id(),
     }
     cfg_fd, cfg_path = tempfile.mkstemp(prefix="pc-cron-cfg-", suffix=".json")
     launcher_fd, launcher_path = tempfile.mkstemp(prefix="pc-cron-run-", suffix=".py")

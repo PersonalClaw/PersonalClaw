@@ -149,6 +149,30 @@ async def fetch(
     """Perform a guarded outbound HTTP request. Raises :class:`EgressBlocked` if the
     URL (or any redirect hop) is denied. ``resolver`` is injectable for testing the
     guard without real DNS."""
+    return await fetch_as(
+        "net.fetch",
+        url,
+        policy=policy,
+        method=method,
+        headers=headers,
+        data=data,
+        resolver=resolver,
+    )
+
+
+async def fetch_as(
+    door: str,
+    url: str,
+    *,
+    policy: EgressPolicy = STRICT,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
+    resolver=None,
+) -> FetchResponse:
+    """:func:`fetch` for core's own doors, its audit rows naming *door* (:func:`audit`), as the
+    headless render's do (``web.render``). The SDK re-exports :func:`fetch` alone, so an app's
+    requests are always audited as ``net.fetch`` and no app can file them under another door."""
     import aiohttp
 
     # DISABLE_LIVE_WRITES: refuse a non-GET/HEAD (write) method to a
@@ -170,9 +194,9 @@ async def fetch(
     guard_kw = {"resolver": resolver} if resolver is not None else {}
     decision = evaluate(url, policy, **guard_kw)
     if not decision.allow:
-        audit(url, policy, outcome="denied", reason=decision.reason)
+        audit(url, policy, outcome="denied", reason=decision.reason, door=door)
         raise EgressBlocked(decision)
-    audit(url, policy, outcome="allowed")
+    audit(url, policy, outcome="allowed", door=door)
 
     timeout = aiohttp.ClientTimeout(total=policy.timeout_s)
     cur_url = url
@@ -208,7 +232,11 @@ async def fetch(
                     hop_decision = evaluate(nxt, policy, **guard_kw)
                     if not hop_decision.allow:
                         audit(
-                            nxt, policy, outcome="denied", reason=f"redirect: {hop_decision.reason}"
+                            nxt,
+                            policy,
+                            outcome="denied",
+                            reason=f"redirect: {hop_decision.reason}",
+                            door=door,
                         )
                         raise EgressBlocked(hop_decision)
                     # 303 (and commonly 301/302 from POST) → GET; 307/308 preserve method.
@@ -234,7 +262,7 @@ async def fetch(
         risk_level="caution",
         recovery_hints=["The URL redirects too many times; fetch the final URL directly."],
     )
-    audit(cur_url, policy, outcome="denied", reason=blocked.reason)
+    audit(cur_url, policy, outcome="denied", reason=blocked.reason, door=door)
     raise EgressBlocked(blocked)
 
 

@@ -19,13 +19,22 @@ So a command asks here, once, and gets a :class:`HomeGateway` or a sentence that
 * **Whose.** Before anything that carries a credential is sent, the gateway at that port is asked
   which home it serves. ``GET /api/healthz`` answers without a sign-in and carries ``home_id``,
   a fingerprint of the gateway's resolved home (:func:`home_id`); this side computes the same
-  for its own home and compares. Another home's gateway, a program that is not a gateway, or a
-  port that does not answer is :class:`NotThisHomesGateway`, and nothing more is sent to it.
+  for its own home and compares. A fingerprint of a path can be guessed, so the read also
+  carries a fresh nonce, and a gateway proves it holds this home's local secret by answering
+  with :func:`gateway_proof` of it, the nonce and the port it was asked on; this side checks
+  it before the secret goes anywhere. Another home's gateway, a program that is not a gateway,
+  one that cannot prove it holds the secret, or a port that does not answer is
+  :class:`NotThisHomesGateway`, and nothing more is sent to it.
 * **How.** Every request goes to ``127.0.0.1``, the address the identity was read at, never to a
   name that may resolve to another socket. None goes through a proxy from the environment: urllib
   hands even a loopback request to ``HTTP_PROXY``, its headers included. And none follows a
   redirect, which would carry the same headers on to wherever the redirect points
   (:func:`open_loopback`).
+
+A child of the gateway (the ``mcp-core`` server an agent CLI runs, the MCP servers' tool-policy
+read) is handed the port its gateway listens on and sends the same secret there, and may outlive
+that gateway. It asks the same question, proof included, before every call, at
+:func:`child_base`.
 
 Only :func:`reach` makes a :class:`HomeGateway`, and only a :class:`HomeGateway` reads the
 home's secret to send it: ``tests/test_a_command_reaches_only_its_own_homes_gateway.py`` holds
@@ -35,9 +44,11 @@ the tree to both, and drives every command against another home's gateway.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import http.client
 import json
 import os
+import secrets
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -148,13 +159,59 @@ def _decoded(raw: bytes) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _healthz(port: int, *, attempts: int = ANSWER_ATTEMPTS) -> dict[str, Any] | str:
+#: What a gateway's proof that it holds its home's local secret is made over, besides the nonce the
+#: caller sent and the port it was asked on (:func:`gateway_proof`).
+PROOF_CONTEXT = "personalclaw-gateway-proof"
+
+
+def new_nonce() -> str:
+    """A fresh nonce for one identity read: 32 hex characters, never sent twice."""
+    return secrets.token_hex(16)
+
+
+def is_nonce(value: str) -> bool:
+    """Whether *value* is a nonce as :func:`new_nonce` makes one."""
+    return len(value) == 32 and all(c in "0123456789abcdef" for c in value)
+
+
+def gateway_proof(secret: str, nonce: str, port: int) -> str:
+    """What a gateway holding the local secret *secret* answers an identity read carrying *nonce*
+    with, asked on *port*: HMAC-SHA256 under the secret, over :data:`PROOF_CONTEXT`, the nonce and
+    the port. The nonce makes each proof good for one read only, and the port binds it to the
+    socket the caller reached, so a program on one port cannot ask the real gateway on another
+    for a proof and pass it on."""
+    message = f"{PROOF_CONTEXT}\n{nonce}\n{port}".encode()
+    return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+
+
+def _proved(said: dict[str, Any], secret: str, nonce: str, port: int) -> bool:
+    """Whether *said*, the answer to an identity read carrying *nonce* on *port*, proves its
+    gateway holds *secret*."""
+    proof = said.get("proof")
+    if not isinstance(proof, str):
+        return False
+    return hmac.compare_digest(proof.encode(), gateway_proof(secret, nonce, port).encode())
+
+
+def _home_secret(home: Path) -> str:
+    """This home's local secret, which its gateway writes as it starts, or ``""`` for none."""
+    try:
+        return (home / ".local_secret").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _healthz(
+    port: int, *, attempts: int = ANSWER_ATTEMPTS, nonce: str = ""
+) -> dict[str, Any] | str:
     """What answers ``GET /api/healthz`` on loopback *port*: the JSON object it answered with
     (``{}`` for an answer that is not one), else :data:`_NOTHING` or :data:`_SILENT`.
 
-    The read carries nothing: no secret, no token, no cookie.
+    The read carries nothing: no secret, no token, no cookie; with *nonce*, the nonce a gateway
+    answers its proof for (:func:`gateway_proof`).
     """
-    request = urllib.request.Request(f"http://{LOOPBACK_HOST}:{port}/api/healthz")
+    query = f"?nonce={nonce}" if nonce else ""
+    request = urllib.request.Request(f"http://{LOOPBACK_HOST}:{port}/api/healthz{query}")
     for attempt in range(max(1, attempts)):
         try:
             with open_loopback(request, timeout=ANSWER_TIMEOUT_SECS) as resp:
@@ -309,12 +366,13 @@ def error_text(answer: dict[str, Any], status: int) -> str:
     return str(error) if error else f"HTTP {status}"
 
 
-def _named_port(port: int | None) -> tuple[int, str] | None:
-    """The port named explicitly, and the words that say who named it: ``--port`` first, then
-    ``PERSONALCLAW_PORT``. ``None`` when neither names one. Raises :class:`GatewayError` for a
-    name that is not a port: a command asks nothing of a port it cannot read."""
+def _named_port(port: int | None, *, handed: bool = False) -> tuple[int, str] | None:
+    """The port named explicitly, and the words that say who named it: ``--port`` (or, for a
+    child of the gateway, the port it was *handed*) first, then ``PERSONALCLAW_PORT``. ``None``
+    when neither names one. Raises :class:`GatewayError` for a name that is not a port: a command
+    asks nothing of a port it cannot read."""
     if port is not None:
-        named, words = port, "which --port names"
+        named, words = port, "which this process was handed" if handed else "which --port names"
     else:
         raw = os.environ.get(gateway_base.PORT_ENV, "").strip()
         if not raw:
@@ -332,16 +390,18 @@ def _named_port(port: int | None) -> tuple[int, str] | None:
     return named, words
 
 
-def reach(port: int | None = None) -> HomeGateway:
-    """This home's running gateway: at the port it recorded, or at *port* (``--port``) or
-    ``PERSONALCLAW_PORT`` when one names a port, once that gateway has shown it serves this home.
+def reach(port: int | None = None, *, handed: bool = False) -> HomeGateway:
+    """This home's running gateway: at the port it recorded, or at *port* (``--port``, or the port
+    a child of the gateway was *handed*) or ``PERSONALCLAW_PORT`` when one names a port, once that
+    gateway has shown it serves this home.
 
     Raises :class:`NoGatewayRunning` when no gateway of this home is running, and
-    :class:`NotThisHomesGateway` when the port named is not where this home's gateway answers.
-    Before either, the only request sent is the identity read, which carries no credential.
+    :class:`NotThisHomesGateway` when the port named is not where this home's gateway answers,
+    or what answers there cannot prove it holds this home's local secret. Before either, the only
+    request sent is the identity read, which carries a fresh nonce and no credential.
     """
     home = config_loader.resolve_config_dir()
-    named = _named_port(port)
+    named = _named_port(port, handed=handed)
     recorded = gateway_base.live_gateway()
     if named is None:
         if recorded is None:
@@ -351,7 +411,8 @@ def reach(port: int | None = None) -> HomeGateway:
         target, words = recorded.port, "where this home's gateway said it listens"
     else:
         target, words = named
-    said = _healthz(target)
+    nonce = new_nonce()
+    said = _healthz(target, nonce=nonce)
     if said == _NOTHING:
         if recorded is not None and named is not None and recorded.port != target:
             raise NotThisHomesGateway(
@@ -370,6 +431,9 @@ def reach(port: int | None = None) -> HomeGateway:
             "moment."
         )
     if said.get("home_id") == home_id(home):
+        secret = _home_secret(home)
+        if secret and not _proved(said, secret, nonce, target):
+            raise NotThisHomesGateway(_unproved(target, words, home, said))
         pid = said.get("pid")
         return HomeGateway(home=home, port=target, pid=pid if isinstance(pid, int) else 0)
     whose = (
@@ -387,3 +451,35 @@ def reach(port: int | None = None) -> HomeGateway:
         f"Port {target}, {words}, is answered by {whose}, not by this home's ({home}), so this "
         f"home's local secret was not sent to it. {then}"
     )
+
+
+def _unproved(target: int, words: str, home: Path, said: dict[str, Any]) -> str:
+    """The sentence for a port answered by something that says it is this home's gateway and
+    did not prove it holds this home's local secret: an older gateway gives no proof at all."""
+    if "proof" not in said:
+        return (
+            f"Port {target}, {words}, is answered by a gateway that says it serves this home "
+            f"({home}) but did not prove it holds this home's local secret, so the secret was not "
+            "sent to it. If it is this home's gateway from an older PersonalClaw, restart it: "
+            f"{_start_command()}"
+        )
+    return (
+        f"Port {target}, {words}, is answered by a program that says it serves this home ({home}) "
+        "with a proof this home's local secret did not make, so the secret was not sent to it. If "
+        "it is this home's gateway and the home's secret was replaced since it started (another "
+        f"gateway was started on this home), restart it: {_start_command()}"
+    )
+
+
+def child_base(port: int) -> str:
+    """The base a child of this home's gateway calls it at, ``http://127.0.0.1:<port>``, once the
+    gateway at *port*, the port the child was handed, has proved it serves this home.
+
+    A child can outlive the gateway that started it (an agent CLI session kept running), and its
+    port may then be held by another home's gateway or by a program that is not one. So before
+    every call that carries the secret the port is asked whose it is, as :func:`reach` asks for a
+    command, proof included: a gateway that restarted could have lost its port to another between
+    two calls that both got through. Raises :class:`GatewayError`, with the sentence that says
+    why, and nothing is sent.
+    """
+    return reach(port, handed=True).url

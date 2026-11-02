@@ -103,6 +103,8 @@ def gateway(home, monkeypatch, unset_env):
             _background_tasks=set(),
         )
     )
+    # The secret it wrote, which its identity route proves it holds.
+    app["local_secret"] = "a-gateway-credential"
     app.router.add_get("/api/healthz", api_healthz)
     app.router.add_post("/api/triggers/{id}/run", trigger_runs.api_trigger_run)
     app.router.add_get("/api/triggers/{id}/history", T.api_trigger_history)

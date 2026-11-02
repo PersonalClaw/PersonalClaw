@@ -407,9 +407,14 @@ def resolve_port() -> int:
 
 
 def resolve_api_base() -> str:
-    """The gateway API base a child of this instance must call.
+    """The gateway API base a child of this instance must call: ``127.0.0.1`` at the port
+    :func:`resolve_port` names, once the gateway there has shown it serves this home
+    (``home_gateway.child_base``).
 
-    Raises :class:`GatewayBaseUnresolved` rather than returning a base that may point
-    at a stranger.
+    Raises :class:`GatewayBaseUnresolved` when no port names this instance's gateway, and
+    ``home_gateway.GatewayError`` when the gateway at that port is not this home's, rather than
+    returning a base that may point at a stranger.
     """
-    return f"http://localhost:{resolve_port()}"
+    from personalclaw import home_gateway  # here, not above: home_gateway imports this module
+
+    return home_gateway.child_base(resolve_port())

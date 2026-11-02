@@ -660,6 +660,69 @@ def _run(coro: Any) -> Any:
         return pool.submit(asyncio.run, coro).result()
 
 
+#: The tools that change a run: an edit, a rewind, a run from a step, a fork (:func:`_change`).
+_RUN_CHANGES = ("workflow_edit", "workflow_rewind", "workflow_run_from", "workflow_fork")
+
+
+def _change(name: str, run_id: str, args: dict[str, Any]) -> str:
+    """A change of the run *run_id* by the tool *name* (:data:`_RUN_CHANGES`), made for the chat
+    whose turn this is, named as `workflow_start` names it: the work of a run an allowed automation
+    started changes only a run of its own (`automation_version.change_refusal`)."""
+    from personalclaw.mcp_core import _resolve_session_key
+
+    caller = _resolve_session_key()
+    if name == "workflow_fork":
+        return _fmt(
+            _on_engine(
+                lambda supervisor: service.fork_run(
+                    run_id,
+                    checkpoint_id=str(args.get("checkpoint_id", "") or ""),
+                    note=str(args.get("note", "") or ""),
+                    supervisor=supervisor,
+                    session_key=caller,
+                )
+            ),
+            summary=SUMMARIES["workflow_fork"],
+        )
+    confirm = confirm_granted(args, "confirm_cascade")
+    if name == "workflow_edit":
+        expect = args.get("expect_version")
+        return _fmt(
+            _on_engine(
+                lambda supervisor: service.edit_run(
+                    run_id,
+                    args["ops"],
+                    supervisor=supervisor,
+                    expect_version=int(expect) if isinstance(expect, (int, float)) else None,
+                    confirm_cascade=confirm,
+                    session_key=caller,
+                )
+            )
+        )
+    node_id = str(args.get("node_id", "") or "")
+    if name == "workflow_rewind":
+        return _fmt(
+            _on_engine(
+                lambda supervisor: service.rewind_run(
+                    run_id,
+                    node_id,
+                    supervisor=supervisor,
+                    redo_effects=yes_or_no(args.get("redo_effects")) is True,
+                    force=yes_or_no(args.get("force")) is True,
+                    confirm_cascade=confirm,
+                    session_key=caller,
+                )
+            )
+        )
+    return _fmt(
+        _on_engine(
+            lambda supervisor: service.run_from(
+                run_id, node_id, supervisor=supervisor, confirm_cascade=confirm, session_key=caller
+            )
+        )
+    )
+
+
 def _on_engine(work: Callable[[Any], Any]) -> Any:
     """Make one call into the workflow engine from the sync tool boundary, on the engine's loop.
 
@@ -919,22 +982,11 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
     if name == "workflow_output":
         return _fmt(service.output(run_id, str(args.get("node_id", "") or "")))
 
-    if name in ("workflow_edit", "workflow_edit_preview"):
-        ops = args["ops"]
-        if name == "workflow_edit_preview":
-            return _fmt(service.preview_edit(run_id, ops))
-        expect = args.get("expect_version")
-        return _fmt(
-            _on_engine(
-                lambda supervisor: service.edit_run(
-                    run_id,
-                    ops,
-                    supervisor=supervisor,
-                    expect_version=int(expect) if isinstance(expect, (int, float)) else None,
-                    confirm_cascade=confirm_granted(args, "confirm_cascade"),
-                )
-            )
-        )
+    if name == "workflow_edit_preview":
+        return _fmt(service.preview_edit(run_id, args["ops"]))
+
+    if name in _RUN_CHANGES:
+        return _change(name, run_id, args)
 
     if name == "workflow_skip":
         node_ids = [str(n) for n in args["node_ids"]]
@@ -942,45 +994,6 @@ def _dispatch(name: str, args: dict[str, Any]) -> str:
             _on_engine(
                 lambda supervisor: service.skip_nodes(run_id, node_ids, supervisor=supervisor)
             )
-        )
-
-    if name == "workflow_rewind":
-        return _fmt(
-            _on_engine(
-                lambda supervisor: service.rewind_run(
-                    run_id,
-                    str(args.get("node_id", "") or ""),
-                    supervisor=supervisor,
-                    redo_effects=yes_or_no(args.get("redo_effects")) is True,
-                    force=yes_or_no(args.get("force")) is True,
-                    confirm_cascade=confirm_granted(args, "confirm_cascade"),
-                )
-            )
-        )
-
-    if name == "workflow_run_from":
-        return _fmt(
-            _on_engine(
-                lambda supervisor: service.run_from(
-                    run_id,
-                    str(args.get("node_id", "") or ""),
-                    supervisor=supervisor,
-                    confirm_cascade=confirm_granted(args, "confirm_cascade"),
-                )
-            )
-        )
-
-    if name == "workflow_fork":
-        return _fmt(
-            _on_engine(
-                lambda supervisor: service.fork_run(
-                    run_id,
-                    checkpoint_id=str(args.get("checkpoint_id", "") or ""),
-                    note=str(args.get("note", "") or ""),
-                    supervisor=supervisor,
-                )
-            ),
-            summary=SUMMARIES["workflow_fork"],
         )
 
     if name == "workflow_pause":

@@ -15,9 +15,14 @@ did not cover is refused in words, as a step that starts one is: nobody is asked
 unattended run, and the agent says why. A draft run it would start is no version the owner allowed,
 and is refused the same way.
 
+What it changes is held the same way. An edit, a rewind, a run from a step or a fork of a run
+started by hand, or by another fire, ran that run's steps as each workflow is now, under the
+owner's yes to the automation: so the agent changes only a run of its own that carries the versions
+allowed, the run it works for or one it started, and any other is refused in words, unchanged.
+
 Driven through the doors: the ``run-workflow`` fire that starts the allowed run, an "Invoke agent"
-and a "Run prompt" step's spawn, the service every start takes, the agent's ``workflow_start`` tool
-and the route an agent CLI's tool server calls, and the draft start.
+and a "Run prompt" step's spawn, the service every start and change takes, the agent's tools and
+the routes an agent CLI's tool server calls, and the draft start.
 """
 
 from __future__ import annotations
@@ -81,21 +86,39 @@ class _Agents:
         )
 
 
+class _Controller:
+    """A run's live controller, recording each change it is handed instead of applying it."""
+
+    def __init__(self) -> None:
+        self.changes: list[list[dict[str, Any]]] = []
+
+    def submit_mutation(self, ops: list[dict[str, Any]], **_kw: Any) -> dict[str, Any]:
+        self.changes.append(ops)
+        return {"ok": True, "queued": True}
+
+
 class _Engine:
     """The workflow supervisor, recording what each launch was handed instead of running it, in
-    the gateway whose state holds its agents."""
+    the gateway whose state holds its agents. A run made :meth:`live` has a controller."""
 
     event_loop = None
 
     def __init__(self) -> None:
         self.launched: list[tuple[Any, dict[str, Any]]] = []
         self.agents = _Agents()
+        self.controllers: dict[str, _Controller] = {}
         self.state = SimpleNamespace(
             subagents=self.agents, workflows=self, push_refresh=lambda *_a: None
         )
 
     async def launch(self, run: Any, spec: dict[str, Any], **_kw: Any) -> None:
         self.launched.append((run, copy.deepcopy(spec)))
+
+    def controller(self, run_id: str) -> _Controller | None:
+        return self.controllers.get(run_id)
+
+    def live(self, run_id: str) -> _Controller:
+        return self.controllers.setdefault(run_id, _Controller())
 
 
 @pytest.fixture
@@ -390,6 +413,196 @@ async def test_a_draft_that_agent_would_start_is_refused(engine):
     assert _reply(refused)["error"]["service_code"] == "WF_RUN_NOT_ALLOWED"
     assert len(engine.launched) == launched
     assert store.get(draft).status == RunStatus.DRAFT
+
+
+# ── what that agent changes: only a run of its own ───────────────────────────────────────────
+
+AGENT_CLI = {"X-Internal-Secret": "the-gateway-s-own", "X-Session-Key": AGENT}
+
+#: Each change of a run, made at the service for the work of *key*.
+CHANGES = {
+    "edit": lambda run_id, key, engine: service.edit_run(
+        run_id, [{"op": "skip", "node_id": "tail"}], supervisor=engine, session_key=key
+    ),
+    "rewind": lambda run_id, key, engine: service.rewind_run(
+        run_id, "tail", supervisor=engine, session_key=key
+    ),
+    "run_from": lambda run_id, key, engine: service.run_from(
+        run_id, "tail", supervisor=engine, session_key=key
+    ),
+    "fork": lambda run_id, key, engine: service.fork_run(
+        run_id, supervisor=engine, session_key=key
+    ),
+}
+
+
+def _changed(engine: _Engine, run_id: str, runs_before: int) -> bool:
+    """Whether a change reached the run *run_id*: its controller was handed one, or a fork of it
+    was made."""
+    return bool(engine.live(run_id).changes) or len(store.all_runs()) > runs_before
+
+
+async def _not_its_own(engine: _Engine, which: str) -> str:
+    """A run the agent of the allowed run does not own: one started by hand, as it is now, or the
+    run of another fire of the same automation."""
+    if which == "by hand":
+        run_id = store.create(WorkflowRun(id="", workflow_name=NAME, status=RunStatus.RUNNING)).id
+        store.write_spec(run_id, engine.launched[0][1])  # what it runs, so a fork of it is made
+    else:
+        fired = await RunWorkflowActionProvider().execute(
+            {"workflow": NAME}, ActionContext(event="manual", trigger_id=TRIGGER_ID)
+        )
+        assert fired.success, fired.error
+        run_id = engine.launched[-1][0].id
+    engine.live(run_id)
+    return str(run_id)
+
+
+@pytest.mark.parametrize("which", ["by hand", "another fire"])
+@pytest.mark.parametrize("change", sorted(CHANGES))
+async def test_that_agent_changes_no_run_but_its_own(engine, change, which):
+    """🔴 Before: it edited, rewound, ran from a step or forked any run it named, and that run's
+    steps ran each workflow as it is now under the owner's yes to the automation."""
+    run_id = await _allowed_run(engine)
+    engine.agents.add(AGENT, workflow_run=run_id)
+    other = await _not_its_own(engine, which)
+    runs_before = len(store.all_runs())
+
+    refused = CHANGES[change](other, AGENT, engine)
+
+    assert refused.get("ok") is False and refused["code"] == "WF_RUN_NOT_ALLOWED", refused
+    assert f"the run {other!r} is not one of them" in refused["message"], refused
+    assert "Change it yourself" in refused["message"], refused
+    assert not _changed(engine, other, runs_before)
+
+
+@pytest.mark.parametrize("change", sorted(CHANGES))
+async def test_that_agent_changes_the_run_it_works_for_and_one_it_started(engine, change):
+    run_id = await _allowed_run(engine)
+    engine.agents.add(AGENT, workflow_run=run_id)
+    started = await service.start_run(name=PART, session_key=AGENT, supervisor=engine)
+    assert started.get("ok"), started
+
+    for own in (run_id, started["run_id"]):
+        engine.live(own)
+        runs_before = len(store.all_runs())
+        answer = CHANGES[change](own, AGENT, engine)
+        assert answer.get("code") != "WF_RUN_NOT_ALLOWED", answer
+        assert _changed(engine, own, runs_before), (own, answer)
+
+
+async def test_a_subagent_of_that_agent_is_held_to_the_same_runs(engine):
+    run_id = await _allowed_run(engine)
+    engine.agents.add(AGENT, workflow_run=run_id)
+    engine.agents.add("subagent:a2", parent=AGENT)
+    other = await _not_its_own(engine, "by hand")
+    engine.live(run_id)
+
+    refused = service.rewind_run(other, "tail", supervisor=engine, session_key="subagent:a2")
+    allowed = service.rewind_run(run_id, "tail", supervisor=engine, session_key="subagent:a2")
+
+    assert refused["code"] == "WF_RUN_NOT_ALLOWED", refused
+    assert allowed.get("ok"), allowed
+
+
+async def test_an_agent_whose_run_cannot_be_read_changes_nothing(engine):
+    by_hand = store.create(WorkflowRun(id="", workflow_name=NAME, status=RunStatus.RUNNING))
+    engine.agents.add(AGENT, workflow_run="run-that-is-gone")
+    engine.live(by_hand.id)
+
+    refused = service.rewind_run(by_hand.id, "tail", supervisor=engine, session_key=AGENT)
+
+    assert refused["code"] == "WF_RUN_NOT_ALLOWED", refused
+    assert refused["message"].endswith(
+        "cannot be read, so which runs it may change cannot be told, and the run was not changed"
+    ), refused
+    assert engine.live(by_hand.id).changes == []
+
+
+@pytest.mark.parametrize("key", ["dashboard:chat-1", ""])
+async def test_a_chats_agent_and_the_owner_change_any_run(engine, key):
+    await _allowed_run(engine)
+    other = await _not_its_own(engine, "by hand")
+
+    answer = service.rewind_run(other, "tail", supervisor=engine, session_key=key)
+
+    assert answer.get("ok"), answer
+    assert engine.live(other).changes
+
+
+@pytest.mark.parametrize("tool", ["workflow_edit", "workflow_rewind", "workflow_run_from"])
+async def test_the_agents_tools_are_held_the_same_way(engine, tool):
+    """🔴 Before: the tool in the gateway named no caller, so the change was anyone's."""
+    run_id = await _allowed_run(engine)
+    engine.agents.add(AGENT, workflow_run=run_id)
+    other = await _not_its_own(engine, "by hand")
+    args: dict[str, Any] = {"run_id": other, "node_id": "tail"}
+    if tool == "workflow_edit":
+        args = {"run_id": other, "ops": [{"op": "skip", "node_id": "tail"}]}
+
+    def _call() -> str:
+        token = mcp_core.set_current_session_key(AGENT)
+        try:
+            return str(mcp_workflows._call_tool(tool, args))
+        finally:
+            mcp_core.reset_current_session_key(token)
+
+    answer = await asyncio.to_thread(_call)
+
+    assert "WF_RUN_NOT_ALLOWED" in answer and "Change it yourself" in answer, answer
+
+
+async def test_the_agents_fork_tool_makes_no_fork_of_another_run(engine):
+    run_id = await _allowed_run(engine)
+    engine.agents.add(AGENT, workflow_run=run_id)
+    other = await _not_its_own(engine, "by hand")
+    runs_before = len(store.all_runs())
+
+    def _call() -> str:
+        token = mcp_core.set_current_session_key(AGENT)
+        try:
+            return str(mcp_workflows._call_tool("workflow_fork", {"run_id": other}))
+        finally:
+            mcp_core.reset_current_session_key(token)
+
+    answer = await asyncio.to_thread(_call)
+
+    assert "WF_RUN_NOT_ALLOWED" in answer, answer
+    assert len(store.all_runs()) == runs_before
+
+
+@pytest.mark.parametrize(
+    "route, path, body",
+    [
+        (H.api_run_edit, "edit", {"ops": [{"op": "skip", "node_id": "tail"}]}),
+        (H.api_run_rewind, "rewind", {"node_id": "tail"}),
+        (H.api_run_from, "run-from", {"node_id": "tail"}),
+        (H.api_run_fork, "fork", {}),
+    ],
+)
+async def test_an_agent_clis_change_on_the_gateway_route_is_held_the_same_way(
+    engine, route, path, body
+):
+    """🔴 Before: each route queued the change, or made the fork, for any run the agent named."""
+    run_id = await _allowed_run(engine)
+    engine.agents.add(AGENT, workflow_run=run_id)
+    other = await _not_its_own(engine, "by hand")
+    runs_before = len(store.all_runs())
+
+    refused = await route(
+        _request(
+            "POST",
+            f"/api/workflows/runs/{other}/{path}",
+            body,
+            state=engine.state,
+            match={"run_id": other},
+            headers=AGENT_CLI,
+        )
+    )
+
+    assert refused.status == 403, _reply(refused)
+    assert _reply(refused)["error"]["service_code"] == "WF_RUN_NOT_ALLOWED"
+    assert not _changed(engine, other, runs_before)
 
 
 # ── an agent a step of a run starts records the run it works for ─────────────────────────────
