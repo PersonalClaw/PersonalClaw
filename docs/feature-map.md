@@ -16,7 +16,7 @@ file and the app differ.
 | `#/projects` | Projects | Projects | Projects | `pages/chat/header/ChatHeader.tsx`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/tasks/TasksSection.tsx` |
 | `#/library` | Library | Library | Library | none |
 | `#/knowledge` | Knowledge | Library, its Knowledge tab | Knowledge | `lib/rowSubject.ts`, `pages/discover/DiscoverPage.tsx`, `pages/loop/LoopComposer.tsx`, `pages/schedule/ScheduleDetail.tsx` and 5 more |
-| `#/memory` | Memory | Library, its Memory tab | Memory | `pages/chat/chatTypes.ts`, `pages/chat/composer/ChatComposer.tsx`, `pages/chat/inspector/sections.tsx`, `pages/learning/IdentityReportPanel.tsx` and 4 more |
+| `#/memory` | Memory | Library, its Memory tab | Memory | `pages/chat/chatTypes.ts`, `pages/chat/composer/ChatComposer.tsx`, `pages/chat/inspector/sections.tsx`, `pages/chat/transcript/RecallLine.tsx` and 5 more |
 | `#/tasks` | All tasks | not in the sidebar | All tasks | `design/tokenRegistry.ts`, `pages/agents/AgentCreatePage.tsx`, `pages/companion/CompanionSections.tsx`, `pages/dashboard/widgets/TasksWidget.tsx` and 8 more |
 | `#/inbox` | Inbox | Platform › Inbox | Inbox; Notifications | `lib/useMenuCursor.ts`, `pages/chat/WorkflowProgressCard.tsx`, `pages/dashboard/Home.tsx`, `pages/discover/DiscoverPage.tsx` and 5 more |
 | `#/automations` | Automations | Platform › Automations | Automations | `pages/schedule/ScheduleDetail.tsx`, `pages/triggers/TriggersSection.tsx` |

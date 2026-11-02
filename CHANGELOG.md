@@ -10,6 +10,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
+- **A chat turn shows what it recalled where it recalled it: a line above the text it fed, or between the steps it came between, the same after a reload, with how much was recalled and a link to review it one tap away. The turn's footer no longer says it; it keeps what the turn learned, the model that answered and the telemetry.**
 - **Morning triage's install no longer moves a schedule you've installed: a different time sent to it is refused, and its schedule changes on the Triggers page. The install is yours alone: an installed app is refused it.**
 - **Pairing a new owner on a chat channel ends the previous owner's access there, and the Configure page says so before the code is made. Revoke on your owner's row in Settings › Sender trust unpairs them, so approvals and messages for you stop going to that account; the row is marked as your owner.**
 

@@ -443,7 +443,7 @@ describe('the chip is wired at both surfaces (not an inert helper)', () => {
     // still be rendered in production, with the origin the WS handler stamped handed through.
     // Without this, `contextLedgerReach.test.tsx` could stay green over a component no surface
     // renders — the exact inert-control shape this block exists to catch.
-    expect(turnView).toContain('<ContextLedger fed={ledger.fed}')
+    expect(turnView).toContain('<ContextLedger learned={ledger.learned}')
     expect(turnView).toContain('learnedOrigin={ledger.learnedOrigin}')
     expect(turnView).toContain('learnedRef={ledger.learnedRef}')
     expect(turnView).toContain("import { ContextLedger } from '../ContextLedger'")

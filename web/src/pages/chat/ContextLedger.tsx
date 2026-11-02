@@ -7,11 +7,10 @@ import { TextLink } from '../../ui/TextLink'
 import { confirmForgetPreference } from '../settings/forgetPreference'
 import { learnedSurface } from './chatTypes'
 
-/** Holistic per-turn context-transparency footer. Consolidates the
- *  provenance signals — what context FED the turn (memory/lessons/knowledge/
- *  skills/workflows), what the turn LEARNED & saved (after-turn review), the model
- *  that ANSWERED it, and the turn TELEMETRY — into one quiet, collapsed-by-default
- *  affordance. The high-signal "learned" flag stays visible even collapsed (so the
+/** Holistic per-turn transparency footer. Consolidates what the turn LEARNED & saved
+ *  (after-turn review), the model that ANSWERED it, and the turn TELEMETRY into one quiet,
+ *  collapsed-by-default affordance. What the turn recalled is not here: it is a line of the turn
+ *  where the recall came (`transcript/RecallLine`, #5876). The high-signal "learned" flag stays visible even collapsed (so the
  *  user always sees, and can open to undo, what was persisted), and so does the model
  *  that answered (`served`): a turn on Code & tools and a turn on Chat otherwise read
  *  the same. On demand, never intrusive.
@@ -20,19 +19,14 @@ import { learnedSurface } from './chatTypes'
  *  reach (below) is a behavioural contract, and a component defined inside a ~4k-line
  *  page that owns a socket and a composer cannot be mounted to prove one. See
  *  `contextLedgerReach.test.tsx`, which renders exactly this component with the real
- *  handler wired and taps it the way a user does.
- *
- *  `fedNoMemory` marks a turn that read none of your memory (a Temporary chat's, an app's not
- *  given it: `memory_reads.fed`). Its row is the gateway's own sentence, which says why, and
- *  never the memory claim below. */
-export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learnedRef, stats, served }: {
-  fed?: string; fedNoMemory?: boolean; learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string
+ *  handler wired and taps it the way a user does. */
+export function ContextLedger({ learned, learnedOrigin, learnedRef, stats, served }: {
+  learned?: string; learnedOrigin?: string; learnedRef?: string; stats?: string
   /** The model that answered the turn and how it was chosen ("from your Code & tools chain"). */
   served?: { model: string; chosen: string }
 }) {
   const [open, setOpen] = useState(false)
   const learnedRowRef = useRef<HTMLDivElement>(null)
-  const fedChars = fed?.match(/([\d,]+)\s*chars/)?.[1] ?? ''
   // "Learned: <text>" → just the text for the expanded row.
   const learnedText = learned?.replace(/^Learned:\s*/i, '').trim() ?? ''
   // Where a tap on this chip lands, decided by the EMITTER rather than by the one
@@ -88,21 +82,21 @@ export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learne
   }, [open, learnedHref])
 
   const summary = open
-    ? 'Context & learning'
-    : [fed && (fedNoMemory ? 'context, no memory' : 'recalled context'), learned && 'learned 1', served && `on ${served.model}`, stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
+    ? 'Turn details'
+    : [learned && 'learned 1', served && `on ${served.model}`, stats && 'telemetry'].filter(Boolean).join(' · ') || 'Turn details'
   // Hover says what the tap DOES when there is somewhere to land, so the focus jump reads as
   // the affordance it is rather than as the page moving on its own. `title` is a hover
   // affordance only — the button's accessible name is its visible text, which already carries
   // "learned 1" — so nothing here is name-bearing and no `sr-only` is added.
   const collapsedTitle = surface
-    ? 'What fed this turn · what was learned — opens and jumps to where you can review it'
-    : 'What fed this turn · what was learned'
+    ? 'What this turn learned, and how it ran — opens and jumps to where you can review it'
+    : 'What this turn learned, and how it ran'
   return (
     <div className="mt-2 mb-1">
       <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
         data-type="caption"
         className="flex items-center gap-1.5 rounded-pill text-on-surface-low/80 transition-colors hover:text-on-surface-low"
-        title={open ? 'Hide what fed this turn and what was learned' : collapsedTitle}>
+        title={open ? 'Hide what this turn learned, and how it ran' : collapsedTitle}>
         <motion.span animate={{ rotate: open ? 90 : 0 }} transition={spring.spatialFast} className="shrink-0 opacity-60">
           <ChevronRight size={11} />
         </motion.span>
@@ -115,13 +109,6 @@ export function ContextLedger({ fed, fedNoMemory, learned, learnedOrigin, learne
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
             transition={spring.spatialFast} className="overflow-hidden">
             <div data-type="caption" className="mt-1.5 ml-1.5 flex flex-col gap-1.5 border-l border-outline-variant/40 pl-3 text-on-surface-low">
-              {fed && (
-                <LedgerRow icon={Brain} label="Fed this turn">
-                  {fedNoMemory
-                    ? `${fed}.`
-                    : <>Recalled relevant context{fedChars ? ` · ${fedChars} chars` : ''} — saved memories, learned lessons, earlier conversation, and episodic history, assembled and prepended to the prompt.</>}
-                </LedgerRow>
-              )}
               {learned && (
                 <LedgerRow icon={Sparkles} label="Learned & saved" contentRef={learnedRowRef}>
                   <span className="text-on-surface-var">{learnedText || 'A preference was captured.'}</span>

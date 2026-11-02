@@ -1,4 +1,4 @@
-import { LEDGER_ACTIVITY_KINDS, stampActivityOrigin, type Segment } from './chatTypes'
+import { LEDGER_ACTIVITY_KINDS, RECALL_ACTIVITY_KINDS, stampActivityOrigin, type Segment } from './chatTypes'
 
 /** A transcript update for the trailing assistant turn's segments. */
 export type SegmentsUpdate = (segs: Segment[]) => Segment[]
@@ -80,8 +80,9 @@ export function applyCoalescedFlush(segs: Segment[], revealed: string, replace: 
  *  array (by identity) when nothing changes.
  *
  *  A turn with tool cards drops its activity noise, but never a line its footer ledger says
- *  (`LEDGER_ACTIVITY_KINDS`): the ledger draws no line of its own in the turn, and a reload
- *  shows what the turn learned and its telemetry from the reply's own record. */
+ *  (`LEDGER_ACTIVITY_KINDS`), nor its recall (`RECALL_ACTIVITY_KINDS`), which stays where it came,
+ *  between the steps it came between: a reload shows what the turn recalled, learned and its
+ *  telemetry from the reply's own record. */
 export function insertActivity(
   segs: Segment[],
   text: string,
@@ -89,7 +90,8 @@ export function insertActivity(
   live: boolean,
 ): Segment[] {
   // ACP tool cards win over activity noise.
-  if (!LEDGER_ACTIVITY_KINDS.includes(activityKind) && segs.some((sg) => sg.kind === 'tool')) return segs
+  const kept = LEDGER_ACTIVITY_KINDS.includes(activityKind) || RECALL_ACTIVITY_KINDS.includes(activityKind)
+  if (!kept && segs.some((sg) => sg.kind === 'tool')) return segs
   const insertAt = (live && segs[segs.length - 1]?.kind === 'text') ? segs.length - 1 : segs.length
   const neighbor = segs[insertAt - 1] ?? segs[insertAt]
   if (neighbor && neighbor.kind === 'activity' && neighbor.text === text) return segs

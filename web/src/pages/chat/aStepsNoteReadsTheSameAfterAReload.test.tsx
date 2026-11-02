@@ -10,7 +10,8 @@ import { runState, runningState } from '../../test/runState'
 // ever reached her. The line saying what fed the turn showed only while the turn ran, twice: in
 // its footer, and as the first line of its work. And the turn's telemetry, which a reload's footer
 // shows, never reached the live footer of a turn that called tools. Now each note is on its call's
-// card, and the footer says what fed the turn and its telemetry, the same live as after a reload.
+// card, what fed the turn heads it as its recall line, above its work (#5876), and the footer says
+// its telemetry, the same live as after a reload.
 // The frames and rows below are what the gateway sends and persists for that turn
 // (`chat_runner.run_chat`, `dashboard/step_notes.py`).
 
@@ -135,8 +136,8 @@ function openChat() {
 }
 
 /** The turn as she reads it: its folded work opened, each step by its accessible name (a card) or
- *  its text, and the footer that says what fed the turn. */
-async function readTheTurn(): Promise<{ fold: string; rows: string[]; footer: string }> {
+ *  its text, whether its recall line heads it, above the work, and its footer. */
+async function readTheTurn(): Promise<{ fold: string; rows: string[]; footer: string; recallHeads: boolean }> {
   const fold = await waitFor(() => screen.getByRole('button', { name: /Worked through \d+ steps/ }))
   const folded = fold.textContent ?? ''
   fireEvent.click(fold)
@@ -145,12 +146,14 @@ async function readTheTurn(): Promise<{ fold: string; rows: string[]; footer: st
   const steps = [...(fold.nextElementSibling?.firstElementChild?.children ?? [])]
   const rows = steps.map((step) =>
     step.querySelector('button[aria-label^="Tool "]')?.getAttribute('aria-label') ?? step.textContent ?? '')
-  const footer = screen.getByRole('button', { name: /recalled context|Turn details|telemetry/ }).textContent ?? ''
-  return { fold: folded, rows, footer }
+  const footer = screen.getByRole('button', { name: /Turn details|telemetry/ }).textContent ?? ''
+  const recall = screen.getByRole('button', { name: /^Recalled context · 1,204 chars/ })
+  const recallHeads = (recall.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+  return { fold: folded, rows, footer, recallHeads }
 }
 
 describe('a turn whose agent CLI was refused one call and kept failing another', () => {
-  it('reads the same after a reload: the notes on their cards, the footer saying what fed it', async () => {
+  it('reads the same after a reload: the notes on their cards, the recall heading the turn', async () => {
     h.detail = detail([ASKED], true)
     openChat()
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop this turn' })).not.toBeNull())
@@ -182,7 +185,9 @@ describe('a turn whose agent CLI was refused one call and kept failing another',
       'Tool Terminal make test — failed. Expand details',
       'Tool Terminal make test — failed, failed 3 times in a row with the same arguments. Expand details',
     ])
-    expect(live.footer).toBe('recalled context · telemetry')
+    expect(live.recallHeads, 'live, the recall heads the turn, above its work').toBe(true)
+    expect(reloaded.recallHeads, 'after a reload, the recall heads the turn, above its work').toBe(true)
+    expect(live.footer).toBe('telemetry')
     expect(reloaded.footer).toBe(live.footer)
   })
 })
