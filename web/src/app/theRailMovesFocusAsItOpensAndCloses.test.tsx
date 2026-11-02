@@ -60,6 +60,13 @@ function detail(key: string) {
 /** Every api method the shell called, in order. */
 const calls: string[] = []
 
+/** The words an api method that asks the gateway to stop something has in its name. */
+const STOP_WORDS = new Set(['stop', 'cancel', 'interrupt', 'abort', 'pause', 'kill'])
+/** Whether api method `name` asks the gateway to stop something: one of its camelCase words is a
+ *  stop word. Read by whole words, so `ephemeralSkills` ("kill" inside "Skills") is not one. */
+const asksToStop = (name: string) =>
+  name.split(/(?=[A-Z])/).some((word) => STOP_WORDS.has(word.toLowerCase()))
+
 const READS: Record<string, unknown> = {
   dashboardConfig: { user_name: 'Ada' },
   agents: { agents: [] },
@@ -204,6 +211,18 @@ describe('hiding the rail is chrome only', () => {
     expect(location.hash).toBe('#/chat/chat-1')
     await waitFor(() => expect(lit()).toEqual(['Plan the garden, running']))
     expect(await row(/^Fence gate, running$/)).toBeInTheDocument()
-    expect(calls.filter((c) => /stop|cancel|interrupt|abort|pause|kill/i.test(c)), 'nothing asked the gateway to stop').toEqual([])
+    expect(calls.filter(asksToStop), 'nothing asked the gateway to stop').toEqual([])
+  })
+
+  it("reads an api call as a stop by its whole words, so a skills read is not one", async () => {
+    // 🔴 Red before: the guard matched `/stop|cancel|interrupt|abort|pause|kill/i` anywhere in the
+    // name, so `ephemeralSkills` read as a stop through "kill" inside "Skills", and the test above
+    // went red whenever the skills review's read landed after the calls were cleared.
+    const { api } = await vi.importActual<typeof import('../lib/api')>('../lib/api')
+    const reads = ['ephemeralSkills', 'searchSkills', 'acceptSkillProposal', 'skillProposals']
+    const stops = ['stopChat', 'interruptChat', 'browseKill', 'chatPlanCancel', 'cancelQueued', 'cancelWorkflowRun', 'pauseWorkflowRun']
+    for (const name of [...reads, ...stops]) expect(api, name).toHaveProperty(name)
+    expect(reads.filter(asksToStop)).toEqual([])
+    expect(stops.filter(asksToStop)).toEqual(stops)
   })
 })
