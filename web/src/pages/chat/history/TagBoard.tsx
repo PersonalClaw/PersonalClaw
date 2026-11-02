@@ -9,7 +9,9 @@ import { type ChatSessionSummary, type ChatTag } from '../../../lib/api'
  *  the available height; columns flow in a responsive grid (auto-fit, min 260px)
  *  and share the height equally when they wrap, so no column hides off-screen.
  *  Only each column's session list scrolls independently — the page never
- *  overflows horizontally or vertically. Read+navigate (reuses the list card). */
+ *  overflows horizontally or vertically. Read+navigate: each chat is the page's board card
+ *  (`card`), whose selection tick hangs on its top-right corner, so a column's list leaves room
+ *  above and to the right of its cards for it (#5879). */
 export function TagBoard({ sessions, tags, card, onMove }: {
   sessions: ChatSessionSummary[]; tags: ChatTag[]; card: (s: ChatSessionSummary) => React.ReactNode
   /** Drop a chat onto a column — MOVE semantics: toTagId is the target column's
@@ -25,7 +27,8 @@ export function TagBoard({ sessions, tags, card, onMove }: {
   const collapse = useBoardCollapse('board-collapsed:chat')
   const columns: { id: string; tagId: string | null; label: string; color?: string; items: ChatSessionSummary[] }[] = [
     ...tags.map((t) => ({ id: t.id, tagId: t.id, label: t.name, color: t.color, items: sessions.filter((s) => (s.tags ?? []).includes(t.id)) })),
-    { id: '_untagged', tagId: null, label: 'Untagged', items: sessions.filter((s) => !(s.tags ?? []).length) },
+    // "No tag", as the sidebar names the chats with none.
+    { id: '_untagged', tagId: null, label: 'No tag', items: sessions.filter((s) => !(s.tags ?? []).length) },
   ]
   // Empty columns AUTO-collapse to a slim rail so the populated column(s) get
   // real width; any column can be manually collapsed/expanded (header chevron
@@ -71,7 +74,9 @@ export function TagBoard({ sessions, tags, card, onMove }: {
               <TagIcon size={13} /> <span className="truncate flex-1">{c.label}</span> <span className="text-on-surface-low tabular-nums">{c.items.length}</span>
               <CollapseColumnButton onCollapse={() => collapse.toggle(c.id, c.items.length)} />
             </div>
-            <div className="flex flex-1 min-h-0 flex-col gap-s overflow-y-auto pr-0.5">
+            {/* pt-2 pr-2: room for the tick that hangs half outside each card's corner, which the
+                list's own scroll would otherwise clip. */}
+            <div className="flex flex-1 min-h-0 flex-col gap-s overflow-y-auto pt-2 pr-2">
               {c.items.length === 0
                 ? <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-outline-variant/30 py-6 text-on-surface-low text-[0.75rem]">{onMove ? 'Drop a chat here' : 'No chats'}</div>
                 : c.items.map((s) => onMove
