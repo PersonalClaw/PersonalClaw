@@ -1,11 +1,13 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, Edit3 } from 'lucide-react'
-import type { Thread, ThreadPip } from '../lib/useThreads'
+import { Check, ChevronDown, ChevronRight, Code2, Edit3, Repeat, type LucideIcon } from 'lucide-react'
+import type { Thread, ThreadKind, ThreadPip } from '../lib/useThreads'
+import type { GroupBy, HistoryGroup } from '../app/chatHistoryGroups'
 import type { PhaseFamily } from '../lib/workPhase'
 import { bindingLabel } from '../app/keymap'
 import { withWeight } from '../design/fontWeight'
 import { Button } from './Button'
 import { Eyebrow } from './Eyebrow'
+import { MenuRow, Popover } from './Popover'
 import { ResultAnnouncement } from './ListControls'
 import { SearchField } from './SearchField'
 import { StateMark } from './StateMark'
@@ -13,24 +15,31 @@ import { WindowedList } from './WindowedList'
 import { cx } from './cx'
 import { RING_REACH } from './NavRail'
 
-/** One project's group: the project, the name it is shown under, and its threads in order. */
-export interface ThreadRailGroup {
-  projectId: string
-  name: string
-  threads: Thread[]
-}
+/** One group of the chat history: its key (a folder's or a tag's, `chatHistoryGroups.ts`), the name
+ *  it is shown under, and its rows in order. */
+export type ThreadRailGroup = HistoryGroup
 
 /** `loading`: nothing read yet. `failed`: the last read failed, and the groups are what the last
  *  good read said (none when no read has succeeded). `offline`: the gateway is not answering at
  *  all, so the groups are what it said before it stopped, and no read is worth blaming. */
 export type ThreadRailStatus = 'loading' | 'ready' | 'failed' | 'offline'
 
-/** Which groups the owner opened or closed, by project id. A group with no entry is open while it
- *  holds a thread and closed while it holds none. */
-const OPEN_KEY = 'thread-groups-open'
+/** Which groups the owner opened or closed, by group key. A group with no entry is open while it
+ *  holds a row and closed while it holds none. */
+const OPEN_KEY = 'chat-history-groups-open'
+
+/** What a goal loop's or code session's row says it is, in words and by its mark. A chat's row says
+ *  nothing: a chat is what the chat history is. */
+const KIND_MARK: Partial<Record<ThreadKind, { word: string; icon: LucideIcon }>> = {
+  loop: { word: 'Goal loop', icon: Repeat },
+  code: { word: 'Code session', icon: Code2 },
+}
+
+/** The two ways the chat history groups, as the Group by control names them. */
+const GROUP_BY_WORD: Record<GroupBy, string> = { folder: 'Folders', tag: 'Tags' }
 
 /** Each pip's state family (the shared state tokens the orb and the buddy read) and its words. A
- *  project's page lists its threads with the same marks (`pages/projects/ProjectThreads.tsx`). */
+ *  project's page lists its chats with the same marks (`pages/projects/ProjectThreads.tsx`). */
 export const PIP: Record<ThreadPip, { family: PhaseFamily; word: string }> = {
   waiting: { family: 'waiting', word: 'waiting on you' },
   running: { family: 'active', word: 'running' },
@@ -80,25 +89,24 @@ function reveal(el: HTMLElement) {
 /** A row's label and mark, raised over its selected fill. */
 const ROW_LABEL_Z = 10
 
-/** The pinned bar: stuck to the top of the rail's scroll area (the sidebar, `NavRail`) while the
- *  threads scroll under it, on the rail's own solid surface and above the rows' labels, so no row
- *  shows through it.
+/** The pinned bar: the heading with its Group by control, New chat and the search, stuck to the
+ *  top of the rail's scroll area (the chat history, between the sidebar's two blocks: `NavRail`)
+ *  while the rows scroll under it, on the rail's own solid surface and above the rows' labels, so no
+ *  row shows through it.
  *
- *  A sticky box sticks inside its scroller's padding, and the sidebar's scroll area pads its top by
- *  `--spacing-l` (`pt-l`), so at `top: 0` the rows passing under the bar showed in that band above it. The bar
- *  sticks that far higher, flush with the sidebar's top edge, and pads its own top by a focus ring's
- *  reach (`RING_REACH`) so New thread's ring is not cut by that edge.
+ *  The scroll area pads nothing at its top, so the bar sticks flush with its top edge, and pads its
+ *  own top by a focus ring's reach (`RING_REACH`) so a control's ring is not cut by that edge.
  *
  *  While the rail shows the bar, the scroller's `scroll-padding-top` is the bar's height and a focus
  *  ring's reach (`RING_REACH`): the top the browser keeps clear when focus moves to a row (Tab,
  *  Shift+Tab, the arrow keys), and that `reveal` and `WindowedList` keep clear when they scroll one
  *  into view, so a row never takes the focus behind the bar, nor its ring under it (WCAG 2.4.11). */
 const PINNED_BAR = {
-  position: 'sticky', top: 'calc(-1 * var(--spacing-l))', zIndex: ROW_LABEL_Z + 1,
+  position: 'sticky', top: 0, zIndex: ROW_LABEL_Z + 1,
   background: 'var(--color-rail)', paddingTop: RING_REACH,
 } as const
 
-const countLabel = (n: number) => (n === 0 ? 'no threads' : `${n} thread${n === 1 ? '' : 's'}`)
+const countLabel = (n: number) => (n === 0 ? 'no chats' : `${n} chat${n === 1 ? '' : 's'}`)
 
 /** A group as the rail draws it: the threads it shows (all of them, or a search's matches) and
  *  whether it is open. */
@@ -119,37 +127,40 @@ export function railSections(
   groups: readonly ThreadRailGroup[], open: Record<string, boolean>, query: string, searchOpen: Record<string, boolean> = {},
 ): RailSection[] {
   const words = searchWords(query)
-  if (words === '') return groups.map((g) => ({ group: g, threads: g.threads, open: open[g.projectId] ?? g.threads.length > 0 }))
+  if (words === '') return groups.map((g) => ({ group: g, threads: g.threads, open: open[g.id] ?? g.threads.length > 0 }))
   return groups.flatMap((g) => {
     const threads = g.threads.filter((t) => t.title.toLocaleLowerCase().includes(words))
-    return threads.length > 0 ? [{ group: g, threads, open: searchOpen[g.projectId] ?? true }] : []
+    return threads.length > 0 ? [{ group: g, threads, open: searchOpen[g.id] ?? true }] : []
   })
 }
 
-/** The thread rows the rail shows, top to bottom: the threads of every open section. What ⌘1 to ⌘9
- *  count. */
+/** The rows the rail shows, top to bottom: the rows of every open section. What ⌘1 to ⌘9 count, a
+ *  chat listed under two tags once (`chatHistoryGroups.numberedRows`). */
 export function shownThreads(sections: readonly RailSection[]): Thread[] {
   return sections.flatMap((s) => (s.open ? s.threads : []))
 }
 
-/** The sidebar's threads: New thread and a search at the top, then each project a disclosure
- *  group and each thread a dense row that opens it.
+/** The sidebar's chat history (#5877): its heading with the Group by control, New chat and a search
+ *  at the top, then each folder (or tag) a disclosure group and each chat, goal loop or code session
+ *  a dense row that opens it.
  *
- *  New thread and the search sit above every project whatever the read says, one bar that stays at
- *  the top of the rail while the threads scroll under it, and leaves with them once they have
- *  scrolled past. The search filters the rows by name as the owner types, over what the rail has
- *  read (`railSections`), and nothing matching has a row of its own. The rail says which rows it
- *  shows, top to bottom (`onShown`): the threads ⌘1 to ⌘9 open.
+ *  The heading, New chat and the search sit above every group whatever the read says, one bar that
+ *  stays at the top of the chat history while the rows scroll under it. The Group by control
+ *  switches between the owner's folders and tags (`groupBy`, `onGroupBy`). The search filters the
+ *  rows by name as the owner types, over what the rail has read (`railSections`), and nothing
+ *  matching has a row of its own. The rail says which rows it shows, top to bottom (`onShown`): the
+ *  rows ⌘1 to ⌘9 open.
  *
- *  A row says its state in words beside one static mark (running, waiting on you, failed) and in
- *  its accessible name; nothing in the rail moves. The open thread (`selectedKey`, which the shell
- *  reads from the address) carries `aria-current="page"` and the rail's selected fill, and its
+ *  A row says its state in words beside one static mark (running, waiting on you, failed) and in its
+ *  accessible name; a goal loop's or code session's row also says its kind. Nothing in the rail
+ *  moves. The open row (`selectedKey`, which the shell reads from the address) carries
+ *  `aria-current="page"` and the rail's selected fill, under every group it is listed in, and its
  *  group opens so its row can be seen. A long name is cut short on screen, whole in the row's name
- *  and tooltip, and wraps while the row has keyboard focus. Loading, a failed read and an empty
- *  project each have a row of their own. A group's rows window past the shared threshold
- *  (`WindowedList`), so hundreds of threads keep the rail fast and keep their keyboard order. */
-export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRetry, onNewThread, onShown, search, onSearch }: {
-  /** The groups in the order they show, each with its threads in order. */
+ *  and tooltip, and wraps while the row has keyboard focus. Loading, a failed read and an empty list
+ *  each have a row of their own. A group's rows window past the shared threshold (`WindowedList`),
+ *  so hundreds of chats keep the rail fast and keep their keyboard order. */
+export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRetry, onNewThread, onShown, search, onSearch, groupBy = 'folder', onGroupBy }: {
+  /** The groups in the order they show, each with its rows in order. */
   groups: ThreadRailGroup[]
   /** The key of the open thread, or '' when the page is no thread. */
   selectedKey: string
@@ -160,7 +171,7 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   onOpen: (route: string) => void
   /** Reads the threads again after a failed read. */
   onRetry: () => void
-  /** Opens a new thread, from New thread at the top. */
+  /** Opens a new chat, from New chat at the top. */
   onNewThread: () => void
   /** Told the rows the rail shows, top to bottom, whenever they change; `null` while it shows none it
    *  has read (loading, or a failed first read). Keep it stable. */
@@ -169,6 +180,10 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
    *  gives it back as it was typed. Unset, the rail keeps its own. */
   search?: string
   onSearch?: (query: string) => void
+  /** How the groups are made, which the heading's Group by control says and changes. */
+  groupBy?: GroupBy
+  /** Called with the grouping the owner picks. Unset, the control is not drawn. */
+  onGroupBy?: (by: GroupBy) => void
 }) {
   const base = useId()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -182,7 +197,7 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   const changeQuery = (v: string) => { (onSearch ?? setOwnQuery)(v); setSearchOpen({}) }
   const sections = useMemo(() => railSections(groups, open, query, searchOpen), [groups, open, query, searchOpen])
   const toggle = (s: RailSection) => {
-    const id = s.group.projectId
+    const id = s.group.id
     if (searching) setSearchOpen((prev) => ({ ...prev, [id]: !s.open }))
     else setOpen((prev) => writeOpen({ ...prev, [id]: !(prev[id] ?? s.group.threads.length > 0) }))
   }
@@ -195,11 +210,11 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   // The open thread's group opens when the open thread changes (an arrival, a reload, Back), so its
   // row can be seen. Only then: closing that group afterwards keeps it closed.
   const selectedGroup = groups.find((g) => g.threads.some((t) => t.key === selectedKey))
-  const selectedProject = selectedGroup?.projectId
+  const selectedGroupId = selectedGroup?.id
   useLayoutEffect(() => {
-    if (selectedProject === undefined) return
-    setOpen((prev) => (prev[selectedProject] === false ? writeOpen({ ...prev, [selectedProject]: true }) : prev))
-  }, [selectedKey, selectedProject])
+    if (selectedGroupId === undefined) return
+    setOpen((prev) => (prev[selectedGroupId] === false ? writeOpen({ ...prev, [selectedGroupId]: true }) : prev))
+  }, [selectedKey, selectedGroupId])
 
   // The scroller keeps the bar's height clear at its top (`PINNED_BAR`), as long as the bar is there.
   useEffect(() => {
@@ -223,47 +238,50 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   }, [selectedKey, selectedShown])
 
   const matches = sections.reduce((n, sec) => n + sec.threads.length, 0)
-  const noMatch = `No threads match “${query.trim()}”`
+  const noMatch = `No chats match “${query.trim()}”`
   const headingId = `${base}-heading`
   return (
     <div ref={rootRef} role="group" aria-labelledby={headingId} className="flex flex-col">
-      <Eyebrow id={headingId} className="px-s pt-l">Threads</Eyebrow>
       <div ref={barRef} className="flex flex-col" style={PINNED_BAR}>
+        <div className="flex items-center gap-xs pl-s pt-s">
+          <Eyebrow id={headingId} className="min-w-0 flex-1 truncate">Chat history</Eyebrow>
+          {onGroupBy && <GroupByControl value={groupBy} onChange={onGroupBy} />}
+        </div>
         <button
-          type="button" onClick={onNewThread} title={`New thread (${bindingLabel('new-chat')})`}
+          type="button" onClick={onNewThread} title={`New chat (${bindingLabel('new-chat')})`}
           data-type="body-m"
           className="flex w-full items-center gap-s rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
           style={withWeight({ minHeight: 32 }, 400)}>
           <Edit3 size={16} strokeWidth={2} aria-hidden className="shrink-0" />
-          <span className="min-w-0 flex-1 truncate">New thread</span>
+          <span className="min-w-0 flex-1 truncate">New chat</span>
         </button>
         <div className="py-1">
           <SearchField size="sm" surface="container" value={query} onChange={changeQuery}
-            placeholder="Search threads" ariaLabel="Search threads" name="thread-search" />
+            placeholder="Search chats" ariaLabel="Search chats" name="chat-search" />
         </div>
       </div>
-      <ResultAnnouncement count={matches} noun="threads" active={searching && status !== 'loading'} empty={noMatch} />
+      <ResultAnnouncement count={matches} noun="chats" active={searching && status !== 'loading'} empty={noMatch} />
       {status === 'loading' && (
-        <div role="status" data-type="body-s" className="px-s py-1 text-on-surface-low">Loading threads…</div>
+        <div role="status" data-type="body-s" className="px-s py-1 text-on-surface-low">Loading chats…</div>
       )}
       {status === 'failed' && (
         <div data-type="body-s" className="flex items-center gap-s px-s py-1">
-          <span className="min-w-0 flex-1 text-on-surface-var">{failure || "Couldn't load your threads."}</span>
+          <span className="min-w-0 flex-1 text-on-surface-var">{failure || "Couldn't load your chats."}</span>
           <Button variant="ghost" size="xs" onClick={onRetry}>Retry</Button>
         </div>
       )}
       {status === 'offline' && (
-        // Offline is not a failed read and not an empty list: the gateway is away, so the threads
-        // are the last ones it listed, or none yet, and they come back with it.
+        // Offline is not a failed read and not an empty list: the gateway is away, so the chats are
+        // the last ones it listed, or none yet, and they come back with it.
         <div data-type="body-s" className="flex items-center gap-s px-s py-1">
           <span className="min-w-0 flex-1 text-on-surface-var">
-            {groups.length ? 'Offline. These are the threads from before the gateway stopped answering.' : 'Offline. Your threads show when the gateway answers again.'}
+            {groups.length ? 'Offline. These are the chats from before the gateway stopped answering.' : 'Offline. Your chats show when the gateway answers again.'}
           </span>
           <Button variant="ghost" size="xs" onClick={onRetry}>Retry</Button>
         </div>
       )}
       {status === 'ready' && groups.length === 0 && (
-        <div data-type="body-s" className="px-s py-1 text-on-surface-low">No threads yet</div>
+        <div data-type="body-s" className="px-s py-1 text-on-surface-low">No chats yet</div>
       )}
       {status !== 'loading' && searching && groups.length > 0 && sections.length === 0 && (
         // Said aloud by the announcement above; this is the row a sighted owner reads.
@@ -274,11 +292,11 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
         const listId = `${base}-group-${i}`
         const total = g.threads.length
         return (
-          <div key={`project:${g.projectId}`} className="flex flex-col">
+          <div key={`group:${g.id}`} className="flex flex-col">
             <button
               type="button" onClick={() => toggle(section)}
               aria-expanded={opened} aria-controls={opened ? listId : undefined}
-              aria-label={searching ? `${g.name}, ${threads.length} of ${total} thread${total === 1 ? '' : 's'}` : `${g.name}, ${countLabel(total)}`}
+              aria-label={searching ? `${g.name}, ${threads.length} of ${total} chat${total === 1 ? '' : 's'}` : `${g.name}, ${countLabel(total)}`}
               title={g.name}
               data-type="body-s"
               className="group flex w-full items-center gap-xs rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
@@ -290,14 +308,17 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
             {opened && (
               <div id={listId}>
                 {threads.length === 0
-                  ? <div data-type="body-s" className="py-1 pl-3xl pr-s text-on-surface-low">No threads yet</div>
+                  ? <div data-type="body-s" className="py-1 pl-3xl pr-s text-on-surface-low">No chats yet</div>
                   : (
                     <WindowedList
                       items={threads} rowKey={(t) => t.key}
                       // Variable: a row is 32 px, and grows while it has focus to show its whole name.
                       rowHeights="variable" estimateRowHeight={32}
-                      noun={`threads in ${g.name}`}
-                      findHint="use Search threads at the top of the threads, which searches every thread by name."
+                      // The open row, however far from the drawn window, in the first group that
+                      // lists it: the address lights it, so it is brought into view.
+                      revealKey={g.id === selectedGroupId ? selectedKey : undefined}
+                      noun={`chats in ${g.name}`}
+                      findHint="use Search chats at the top of the chat history, which searches every chat by name."
                       className="flex flex-col">
                       {(t) => <ThreadRow thread={t} selected={t.key === selectedKey} onOpen={onOpen} />}
                     </WindowedList>
@@ -311,14 +332,41 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   )
 }
 
+/** The Group by control on the chat history's heading: which of the two groupings shows, and the
+ *  menu that picks the other. Named by its value ("Group by: Folders"), so the heading row costs no
+ *  height of its own. */
+function GroupByControl({ value, onChange }: { value: GroupBy; onChange: (by: GroupBy) => void }) {
+  return (
+    <Popover align="right" placement="bottom" width={168} portal
+      trigger={(open, toggle) => (
+        <button type="button" onClick={toggle} aria-expanded={open} aria-label={`Group by: ${GROUP_BY_WORD[value]}`}
+          title="Group the chat history by your folders or your tags"
+          data-type="caption"
+          className="inline-flex shrink-0 items-center gap-1 rounded-pill px-s py-0.5 text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface">
+          {GROUP_BY_WORD[value]}
+          <ChevronDown size={14} strokeWidth={2} aria-hidden />
+        </button>
+      )}>
+      {(close) => (['folder', 'tag'] as const).map((by) => (
+        <MenuRow key={by} label={GROUP_BY_WORD[by]} nameIsLabel selected={by === value}
+          icon={by === value ? <Check size={15} aria-hidden /> : <span className="inline-block w-[15px]" aria-hidden />}
+          onClick={() => { onChange(by); close() }} />
+      ))}
+    </Popover>
+  )
+}
+
 function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boolean; onOpen: (route: string) => void }) {
   const pip = thread.pip ? PIP[thread.pip] : null
+  const kind = KIND_MARK[thread.kind]
+  const name = kind ? `${kind.word}: ${thread.title}` : thread.title
+  const KindIcon = kind?.icon
   return (
     <button
       type="button" onClick={() => onOpen(thread.route)}
       data-thread-key={thread.key}
-      aria-label={pip ? `${thread.title}, ${pip.word}` : thread.title}
-      title={thread.pipNote ? `${thread.title} — ${thread.pipNote}` : thread.title}
+      aria-label={pip ? `${name}, ${pip.word}` : name}
+      title={thread.pipNote ? `${name} — ${thread.pipNote}` : name}
       aria-current={selected ? 'page' : undefined}
       data-type="body-m"
       className={cx(
@@ -329,6 +377,9 @@ function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boo
       {/* The selected fill, the rail's own: quiet, and distinct from hover (a lighter fill) and from
           keyboard focus (the focus ring). */}
       {selected && <span aria-hidden className="absolute inset-0 rounded-pill bg-surface-low" />}
+      {KindIcon && (
+        <KindIcon size={14} strokeWidth={2} aria-hidden className="relative shrink-0 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }} />
+      )}
       <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{thread.title}</span>
       {pip && (
         <span data-type="caption" className="relative shrink-0" style={{ zIndex: ROW_LABEL_Z }}>

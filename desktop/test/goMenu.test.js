@@ -34,11 +34,11 @@ describe("the Go menu", () => {
     }
   });
 
-  it("names its items as the page's keymap names those rows: a new thread, and the sidebar's threads", () => {
+  it("names its items as the page's keymap names those rows: a new chat, and the sidebar's chats", () => {
     const labels = goMenuTemplate(() => {}).submenu.filter((i) => i.accelerator).map((i) => i.label);
-    assert.deepEqual(labels, ["New Thread", ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `Thread ${n}`)]);
-    assert.match(KEYMAP, /id: 'new-chat', label: 'New thread',/);
-    assert.match(KEYMAP, /id: `chat-\$\{n\}`, label: `Open thread \$\{n\} in the sidebar`,/);
+    assert.deepEqual(labels, ["New Chat", ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `Chat ${n}`)]);
+    assert.match(KEYMAP, /id: 'new-chat', label: 'New chat',/);
+    assert.match(KEYMAP, /id: `chat-\$\{n\}`, label: `Open chat \$\{n\} in the sidebar`,/);
   });
 
   it("keeps ⌘T for tabs", () => {

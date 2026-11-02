@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { toThreads, type ThreadChat, type ThreadLoop, type ThreadSources } from '../lib/useThreads'
 import type { ApprovalInput } from '../lib/attentionLanes'
 import { runState, runningState } from '../test/runState'
-import { railGroups, type RailProject } from './threadRail'
+import { projectGroups, type GroupedProject } from '../pages/projects/projectChatGroups'
+import { historyGroups } from './chatHistoryGroups'
 
-// ── The sidebar lists a project's threads in one named order (#3814) ───────────────────────────────
+// ── The sidebar lists its chat history in one named order (#3814, #5877) ──────────────────────────
 //
-// One order serves chats, goal loops and code sessions alike: pinned first, then the latest
-// activity, newest first, with ties broken by the thread's key. A chat's activity is the time its
+// One order serves chats, goal loops and code sessions alike, in every group of the sidebar's chat
+// history and of the Projects page's chats by project: pinned first, then the latest activity,
+// newest first, with ties broken by the row's key. A chat's activity is the time its
 // list row says it last did something (`sessionRecencyMs`); a loop's is its newest cycle's, which
 // its row says (`last_cycle_at`). A row with no cycle time falls back to its workers' latest
 // activity, else when it completed, started or was created.
@@ -38,14 +40,19 @@ function sources(over: Partial<ThreadSources> = {}): ThreadSources {
   return { sessions: [], loops: [], items: [], approvals: [], ...over }
 }
 
-const PROJECTS: RailProject[] = [
+const PROJECTS: GroupedProject[] = [
   { id: 'p-personal', name: 'Personal', status: 'active' },
   { id: 'p-garden', name: 'Garden', status: 'active' },
 ]
 
-/** The keys of each group the rail shows, by project id. */
+/** The keys of each group the chats by project show, by project id. */
 function order(src: ThreadSources): Record<string, string[]> {
-  return Object.fromEntries(railGroups(toThreads(src), PROJECTS).map((g) => [g.projectId, g.threads.map((t) => t.key)]))
+  return Object.fromEntries(projectGroups(toThreads(src), PROJECTS).map((g) => [g.id.replace(/^project:/, ''), g.threads.map((t) => t.key)]))
+}
+
+/** The keys the sidebar lists while no row has a folder: its one group, No folder. */
+function sidebarOrder(src: ThreadSources): string[] {
+  return historyGroups(toThreads(src), 'folder', [], []).flatMap((g) => g.threads.map((t) => t.key))
 }
 
 // Shuffled on purpose: chats, then loops, neither in the order they show.
@@ -77,9 +84,10 @@ const NAMED_ORDER = [
   'chat:chat-t2',
 ]
 
-describe('the threads of a project', () => {
+describe('the rows of a group', () => {
   it('show pinned first, then by latest activity across chats, loops and code sessions, with ties by key', () => {
     expect(order(SHUFFLED)['p-garden']).toEqual(NAMED_ORDER)
+    expect(sidebarOrder(SHUFFLED)).toEqual(NAMED_ORDER)
   })
 
   it('show in the same order whatever order the lists arrive in', () => {
@@ -134,7 +142,7 @@ describe('the threads of a project', () => {
     expect(order(src)['p-garden']).toEqual(['loop:d', 'chat:c', 'loop:r', 'loop:n'])
   })
 
-  it('pinned threads come first among themselves by activity, in every group, "No project" included', () => {
+  it('pinned rows come first among themselves by activity, in every group, "No project" included', () => {
     const src = sources({
       sessions: [
         chat('old-pin', '01:00', { pinned: true }),
@@ -151,7 +159,7 @@ describe('the threads of a project', () => {
     })
   })
 
-  it('a thread with no time it can read sorts last, by key, and never throws', () => {
+  it('a row with no time it can read sorts last, by key, and never throws', () => {
     const src = sources({
       sessions: [{ key: 'undated-b', title: 'b', run_state: runState({ session: 'undated-b' }), origin: 'manual', project_id: 'p-garden' }, chat('dated', '09:00')],
       loops: [loop('undated-a')],

@@ -86,7 +86,7 @@ describe('Start something', () => {
     const navigate = vi.fn()
     render(<HomeHarness navigate={navigate} />)
     await userEvent.type(start(), 'Plan the garden{Enter}')
-    expect(await screen.findByText('Could not start a new thread: the gateway is restarting. Nothing was sent, so try again.')).toBeInTheDocument()
+    expect(await screen.findByText('Could not start a new chat: the gateway is restarting. Nothing was sent, so try again.')).toBeInTheDocument()
     expect(start()).toHaveValue('Plan the garden')
     expect(navigate).not.toHaveBeenCalled()
   })

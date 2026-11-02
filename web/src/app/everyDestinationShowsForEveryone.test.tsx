@@ -111,8 +111,9 @@ const RECORDS = {
   'a corrupt record': '{not json',
 }
 
-/** Every destination the sidebar holds, in its order. */
-const EVERY_ROW = ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Automations', 'Capabilities', 'Settings']
+/** Every destination row the sidebar holds, in its order. Home has none: its link is the icon and
+ *  name at the sidebar's top (#5880, `homeOpensOnOverview.test.tsx`). */
+const EVERY_ROW = ['Chat', 'Projects', 'Library', 'Inbox', 'Automations', 'Capabilities', 'Settings']
 
 async function rows(): Promise<string[]> {
   return waitFor(() => {

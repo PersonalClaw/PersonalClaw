@@ -48,7 +48,7 @@ interface MountOpts {
 
 function mount({ n, anchorKey, rowHeights = 'uniform', enableRowKeyboard }: MountOpts) {
   const items = rows(n)
-  const tree = (anchor?: string) => (
+  const tree = (anchor?: string, revealKey?: string) => (
     <div data-testid="scroller" style={{ overflowY: 'auto' }}>
       <WindowedList
         items={items}
@@ -59,6 +59,7 @@ function mount({ n, anchorKey, rowHeights = 'uniform', enableRowKeyboard }: Moun
         noun="rows"
         findHint="use the Search rows field above."
         anchorKey={anchor}
+        revealKey={revealKey}
         className="flex flex-col"
         enableRowKeyboard={enableRowKeyboard}
       >
@@ -87,8 +88,9 @@ function mount({ n, anchorKey, rowHeights = 'uniform', enableRowKeyboard }: Moun
   // first scroll event. This is also the realistic path — a deep link arrives as a URL
   // param change on an already-mounted list.
   const setAnchor = (key: string) => act(() => { view.rerender(tree(key)) })
+  const setReveal = (key: string) => act(() => { view.rerender(tree(undefined, key)) })
   if (anchorKey) setAnchor(anchorKey)
-  return { items, scroller, list, scrollTo, setAnchor, ...view }
+  return { items, scroller, list, scrollTo, setAnchor, setReveal, ...view }
 }
 
 const renderedKeys = (list: HTMLElement) =>
@@ -267,7 +269,7 @@ describe('WindowedList — clause: anchor / deep-link to a row still scrolls to 
   })
 
   it('a row it scrolls up to lands clear of the top the scroller keeps clear (scroll-padding-top)', () => {
-    // A bar stuck over the scroller's top covers it, as the thread rail's New thread and search do:
+    // A bar stuck over the scroller's top covers it, as the chat history's New chat and search do:
     // the browser leaves that room when it scrolls focus into view, and so does the list.
     const { scroller, scrollTo, setAnchor } = mount({ n: 5000 })
     scroller.style.scrollPaddingTop = '40px'
@@ -280,6 +282,39 @@ describe('WindowedList — clause: anchor / deep-link to a row still scrolls to 
     const { list, scroller } = mount({ n: 5000, anchorKey: 'nope' })
     expect(renderedKeys(list)[0]).toBe('r0')
     expect(scroller.scrollTop).toBe(0)
+  })
+})
+
+describe('WindowedList — clause: the row the page shows is brought into view, the focus left where it is', () => {
+  // 🔴 Red before (#5877): only anchorKey reached a row outside the drawn window, and it takes the
+  // focus. A sidebar row the address opened far from the window stayed unmounted, so it was neither
+  // lit nor in view after Back or a copied address.
+  it('revealKey mounts and scrolls to a row 4,000 deep, and moves no focus', () => {
+    const { list, scroller, setReveal } = mount({ n: 5000 })
+    const page = document.createElement('button')
+    document.body.appendChild(page)
+    page.focus()
+    setReveal('r4000')
+    expect(renderedKeys(list)).toContain('r4000')
+    expect(scroller.scrollTop).toBeGreaterThan(0)
+    expect(document.activeElement, 'the focus stays on the page').toBe(page)
+    page.remove()
+  })
+
+  it('a row it scrolls up to lands clear of the top the scroller keeps clear (scroll-padding-top)', () => {
+    const { scroller, scrollTo, setReveal } = mount({ n: 5000 })
+    scroller.style.scrollPaddingTop = '40px'
+    scrollTo(4000 * ROW_H)
+    setReveal('r3990')
+    expect(scroller.scrollTop).toBe(3990 * ROW_H - 40)
+  })
+
+  it('the same key again moves nothing, so a scroll the owner made since wins', () => {
+    const { scroller, scrollTo, setReveal } = mount({ n: 5000 })
+    setReveal('r4000')
+    scrollTo(100 * ROW_H)
+    setReveal('r4000')
+    expect(scroller.scrollTop).toBe(100 * ROW_H)
   })
 })
 

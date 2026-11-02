@@ -91,12 +91,15 @@ function navItems(source: string): SidebarRow[] {
     .map(([, id, label, section]) => (section ? { id, label, section } : { id, label }))
 }
 
-/** `App.tsx`'s `NAV`: the sidebar's rows. */
+/** `App.tsx`'s `HOME` and `NAV`: the sidebar's rows. Home's is the icon and name at its top, which
+ *  are its link (#5880), so it is in the sidebar without a row in `NAV`. */
 function sidebarRows(source: string): SidebarRow[] {
+  const home = source.split('\n').find((l) => l.startsWith('const HOME: NavItem'))
+  expect(home, 'HOME was not found in App.tsx').toBeTruthy()
   const at = source.indexOf('const NAV: NavItem[] = [')
   const end = source.indexOf('\n]\n', at)
   expect(at, 'NAV was not found in App.tsx').toBeGreaterThan(0)
-  return navItems(source.slice(at, end))
+  return [...navItems(home!), ...navItems(source.slice(at, end))]
 }
 
 /** The rows only the phone's drawer carries (`COMPANION_RAIL_ITEM`). */

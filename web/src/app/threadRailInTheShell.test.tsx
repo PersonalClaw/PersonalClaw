@@ -4,21 +4,20 @@ import userEvent from '@testing-library/user-event'
 import { runState } from '../test/runState'
 import { SHIPPED_ROUTES } from './shippedRoutes'
 
-// ── The shell's sidebar lists the threads, and the address says which one is open (#3814) ─────────
+// ── The shell's sidebar lists the chat history, and the address says which row is open (#3814) ────
 //
 // Driven through the real shell: the rail lists every chat, goal loop and code session under its
-// project, "No project" last, and lights the one the address opens. A thread keeps the address of
-// its kind (`#/chat/<key>`, `#/loops/<id>`, `#/code/<id>`), the issue's default for the thread
-// address, so the selection is the address: a reload, Back and a copied address each light the
-// thread the page shows, and its group opens so its row can be seen. While a thread is lit, the
+// folder, "No folder" last, or under its tags once the owner picks Tags (#5877), and lights the one
+// the address opens. A row keeps the address of its kind (`#/chat/<key>`, `#/loops/<id>`,
+// `#/code/<id>`), so the selection is the address: a reload, Back and a copied address each light
+// the row the page shows, and its group opens so its row can be seen. While a row is lit, the
 // rail's Chat and Projects destinations are not also marked current.
 //
-// The compact path: at a phone's width the rail is the drawer the toolbar opens, and the threads
-// are in it; opening one closes the drawer.
+// The compact path: at a phone's width the rail is the drawer the toolbar opens, and the chat
+// history is in it; opening a chat closes the drawer.
 //
-// A project's page is its thread list beside its detail: the threads the rail lists under it, each
-// with the rail's mark, opening at its own address. And the pages threads came from still open at
-// their bare addresses.
+// A project's page lists its chats beside its detail, each with the rail's mark, opening at its own
+// address. And the pages the rows came from still open at their bare addresses.
 //
 // jsdom notes (the shape `everyDestinationShowsForEveryone.test.tsx` keeps): no gateway socket, every read
 // resolves empty unless named below, and the viewport is the `(max-width: 768px)` media query.
@@ -37,8 +36,8 @@ vi.mock('./identity', async (orig) => {
 })
 
 const SESSIONS = [
-  { key: 'chat-1', title: 'Plan the garden', messages: 2, run_state: runState({ session: 'chat-1' }), origin: 'manual', project_id: 'p-garden' },
-  { key: 'chat-2', title: 'Order the soil', messages: 2, run_state: runState({ session: 'chat-2' }), origin: 'manual', project_id: 'p-garden' },
+  { key: 'chat-1', title: 'Plan the garden', messages: 2, run_state: runState({ session: 'chat-1' }), origin: 'manual', project_id: 'p-garden', folder_id: 'f-garden' },
+  { key: 'chat-2', title: 'Order the soil', messages: 2, run_state: runState({ session: 'chat-2' }), origin: 'manual', project_id: 'p-garden', folder_id: 'f-garden', tags: ['t-buy'] },
   { key: 'chat-3', title: 'A question about tax', messages: 2, run_state: runState({ session: 'chat-3' }), origin: 'manual', project_id: '' },
 ]
 const LOOPS = [{
@@ -49,6 +48,9 @@ const PROJECTS = [
   { id: 'p-personal', name: 'Personal', is_builtin: true, status: 'active' },
   { id: 'p-garden', name: 'Garden', status: 'active' },
 ]
+// Errands and Later hold no chat, so the sidebar leaves them out.
+const FOLDERS = [{ id: 'f-errands', name: 'Errands' }, { id: 'f-garden', name: 'Garden' }]
+const TAGS = [{ id: 't-later', name: 'Later' }, { id: 't-buy', name: 'To buy' }]
 
 function detail(key: string) {
   const s = SESSIONS.find((x) => x.key === key)
@@ -73,6 +75,8 @@ const READS: Record<string, unknown> = {
   chatSessions: SESSIONS,
   uLoops: LOOPS,
   projects: PROJECTS,
+  chatFolders: FOLDERS,
+  chatTags: TAGS,
   chatSessionDetail: detail,
 }
 vi.mock('../lib/api', async (orig) => {
@@ -135,18 +139,34 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-describe('the sidebar lists the threads', () => {
-  it('under their projects, with "No project" last', async () => {
+/** The chat history's groups, by their names. */
+const groups = () => within(rail()).getAllByRole('button', { name: /, (\d+ chats?|no chats)$/ }).map((b) => b.getAttribute('aria-label'))
+
+describe('the sidebar lists the chat history', () => {
+  it('under the folders that hold a chat, with "No folder" last', async () => {
     renderApp()
     await row(/^Plan the garden/)
-    const groups = within(rail()).getAllByRole('button', { name: /, (\d+ threads?|no threads)$/ }).map((b) => b.getAttribute('aria-label'))
-    expect(groups).toEqual(['Personal, no threads', 'Garden, 3 threads', 'No project, 1 thread'])
-    expect(await row(/^Fence gate, failed$/)).toBeInTheDocument()
+    expect(groups()).toEqual(['Garden, 2 chats', 'No folder, 2 chats'])
+    expect(await row(/^Code session: Fence gate, failed$/)).toBeInTheDocument()
     expect(await row(/^A question about tax$/)).toBeInTheDocument()
+  })
+
+  it('under the tags that hold a chat once the owner picks Tags, "No tag" last, and a reload keeps the choice', async () => {
+    const user = userEvent.setup()
+    const first = renderApp()
+    await row(/^Plan the garden/)
+    await user.click(within(rail()).getByRole('button', { name: 'Group by: Folders' }))
+    await user.click(await screen.findByRole('button', { name: 'Tags' }))
+    await waitFor(() => expect(groups()).toEqual(['To buy, 1 chat', 'No tag, 3 chats']))
+    first.unmount()
+    renderApp()
+    await row(/^Plan the garden/)
+    expect(within(rail()).getByRole('button', { name: 'Group by: Tags' })).toBeInTheDocument()
+    expect(groups()).toEqual(['To buy, 1 chat', 'No tag, 3 chats'])
   })
 })
 
-describe('the open thread is the one the address opens', () => {
+describe('the open row is the one the address opens', () => {
   it('lights its row, and no destination beside it', async () => {
     location.hash = '#/chat/chat-1'
     renderApp()
@@ -154,7 +174,7 @@ describe('the open thread is the one the address opens', () => {
     await waitFor(() => expect(lit()).toEqual(['Plan the garden']))
   })
 
-  it('opening another thread moves the light to it, and Back moves it back', async () => {
+  it('opening another chat moves the light to it, and Back moves it back', async () => {
     location.hash = '#/chat/chat-1'
     const user = userEvent.setup()
     renderApp()
@@ -167,23 +187,23 @@ describe('the open thread is the one the address opens', () => {
     await waitFor(() => expect(lit()).toEqual(['Plan the garden']))
   })
 
-  it('a reload or a copied address lights the same thread, and opens its group', async () => {
+  it('a reload or a copied address lights the same row, and opens its group', async () => {
     location.hash = '#/chat/chat-1'
     const user = userEvent.setup()
     const first = renderApp()
     await waitFor(() => expect(lit()).toEqual(['Plan the garden']))
-    // Collapse the open thread's group, then load the address afresh, as a reload or a copied
+    // Collapse the code session's group, then load its address afresh, as a reload or a copied
     // address does: the row is lit, and its group is open again so it can be seen.
-    await user.click(await row(/^Garden, 3 threads$/))
-    await waitFor(() => expect(within(rail()).queryByRole('button', { name: 'Plan the garden' })).toBeNull())
+    await user.click(await row(/^No folder, 2 chats$/))
+    await waitFor(() => expect(within(rail()).queryByRole('button', { name: /^Code session: Fence gate/ })).toBeNull())
     first.unmount()
     location.hash = '#/code/e5f6a7b8'
     renderApp()
-    await waitFor(() => expect(lit()).toEqual(['Fence gate, failed']))
-    expect(await row(/^Garden, 3 threads$/)).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => expect(lit()).toEqual(['Code session: Fence gate, failed']))
+    expect(await row(/^No folder, 2 chats$/)).toHaveAttribute('aria-expanded', 'true')
   })
 
-  it('lights nothing on a page that is no thread, and the destination keeps its light', async () => {
+  it('lights nothing on a page that is no chat, and the destination keeps its light', async () => {
     location.hash = '#/chat/history'
     renderApp()
     await row(/^Plan the garden/)
@@ -192,7 +212,7 @@ describe('the open thread is the one the address opens', () => {
 })
 
 describe('the compact path', () => {
-  it("a phone's drawer holds the threads, and opening one closes it", async () => {
+  it("a phone's drawer holds the chat history, and opening a chat closes it", async () => {
     setViewport(true)
     const user = userEvent.setup()
     renderApp()
@@ -207,43 +227,63 @@ describe('the compact path', () => {
 })
 
 describe('a read that fails, and a gateway that is away, each say so', () => {
-  it('a failed projects read says the projects failed, offers a retry, and is not an empty sidebar', async () => {
-    FAILING.add('projects')
+  it('a failed folders read says the folders failed, offers a retry, and still lists the chats', async () => {
+    FAILING.add('chatFolders')
     renderApp()
-    expect(await within(rail()).findByText("Couldn't load your projects.")).toBeInTheDocument()
+    expect(await within(rail()).findByText("Couldn't load your folders.")).toBeInTheDocument()
     expect(within(rail()).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
-    expect(within(rail()).queryByText('No threads yet')).toBeNull()
+    expect(within(rail()).queryByText('No chats yet')).toBeNull()
+    expect(await row(/^Plan the garden/)).toBeInTheDocument()
   })
 
   it('a gateway that stopped answering is offline, not a failed read and not an empty list', async () => {
     FAILING.add('system')
     FAILING.add('chatSessions')
     FAILING.add('uLoops')
-    FAILING.add('projects')
+    FAILING.add('chatFolders')
+    FAILING.add('chatTags')
     renderApp()
     expect(await within(rail()).findByText(/^Offline\./)).toBeInTheDocument()
     expect(within(rail()).queryByText(/Couldn't load/)).toBeNull()
-    expect(within(rail()).queryByText('No threads yet')).toBeNull()
-    expect(within(rail()).queryByText('Loading threads…')).toBeNull()
+    expect(within(rail()).queryByText('No chats yet')).toBeNull()
+    expect(within(rail()).queryByText('Loading chats…')).toBeNull()
   })
 })
 
-describe("a project's page lists its threads, and the pages they came from still open", () => {
-  it("a project's page lists the threads the sidebar lists under it, and opens each at its address", async () => {
+describe("a project's page lists its chats, and the pages they came from still open", () => {
+  it("a project's page lists its chats, goal loops and code sessions, and opens each at its address", async () => {
     location.hash = '#/projects/p-garden'
     const user = userEvent.setup()
     renderApp()
     const main = () => document.querySelector('main') as HTMLElement
-    expect(await within(main()).findByText('Threads · 3')).toBeInTheDocument()
+    expect(await within(main()).findByText('Chats · 3')).toBeInTheDocument()
     const rows = within(main()).getAllByRole('button', { name: /^(Chat|Goal loop|Code session): / }).map((b) => b.getAttribute('aria-label'))
     expect(rows).toEqual(expect.arrayContaining(['Chat: Plan the garden', 'Chat: Order the soil', 'Code session: Fence gate, failed']))
-    expect(rows, 'another project\'s thread').not.toContain('Chat: A question about tax')
+    expect(rows, 'another project\'s chat').not.toContain('Chat: A question about tax')
+    await user.click(within(main()).getByRole('button', { name: 'Code session: Fence gate, failed' }))
+    await waitFor(() => expect(location.hash).toBe('#/code/e5f6a7b8'))
+  })
+
+  // 🔴 Red before (#5877): the Projects page had no view of the chats by project; the sidebar was it.
+  it("the Projects page's Chats by project view lists every project's chats, No project last, and opens each at its address", async () => {
+    location.hash = '#/projects'
+    const user = userEvent.setup()
+    renderApp()
+    const main = () => document.querySelector('main') as HTMLElement
+    const view = await within(main()).findByRole('radiogroup', { name: 'View' })
+    await user.click(within(view).getByRole('radio', { name: /^Chats by project/ }))
+    await waitFor(() => expect(location.hash).toBe('#/projects?view=chats'))
+    const sections = async () => (await within(main()).findAllByRole('heading', { level: 2 })).map((h) => h.textContent)
+    expect(await sections()).toEqual(['Personal · 0', 'Garden · 3', 'No project · 1'])
+    expect(within(main()).getByRole('button', { name: 'Chat: A question about tax' })).toBeInTheDocument()
+    await user.type(within(main()).getByRole('searchbox', { name: 'Search chats' }), 'gate')
+    await waitFor(async () => expect(await sections()).toEqual(['Garden · 1']))
     await user.click(within(main()).getByRole('button', { name: 'Code session: Fence gate, failed' }))
     await waitFor(() => expect(location.hash).toBe('#/code/e5f6a7b8'))
   })
 
   // Where each lands is the route catalogue's: the bare loop and code addresses open the composer a
-  // goal loop or code session starts from (`shippedRoutes.ts`), as they did before threads.
+  // goal loop or code session starts from (`shippedRoutes.ts`), as they did before the sidebar listed them.
   it.each([['chat', 'chat'], ['projects', 'projects'], ['loops', 'loop'], ['code', 'loop?kind=code']])('#/%s still opens a page: #/%s', async (route, lands) => {
     expect(SHIPPED_ROUTES.find((e) => e.route === route)?.lands ?? route, 'the catalogue agrees').toBe(lands)
     location.hash = `#/${route}`

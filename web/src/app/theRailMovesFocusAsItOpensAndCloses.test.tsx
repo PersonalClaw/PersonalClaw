@@ -201,7 +201,7 @@ describe('hiding the rail is chrome only', () => {
     location.hash = '#/chat/chat-1'
     renderApp()
     await waitFor(() => expect(lit()).toEqual(['Plan the garden, running']))
-    expect(await row(/^Fence gate, running$/)).toBeInTheDocument()
+    expect(await row(/^Code session: Fence gate, running$/)).toBeInTheDocument()
     calls.length = 0
     fireEvent.keyDown(window, CTRL_B)
     await waitFor(() => expect(toggle()).toHaveAttribute('aria-label', 'Expand sidebar'))
@@ -210,7 +210,7 @@ describe('hiding the rail is chrome only', () => {
     await waitFor(() => expect(toggle()).toHaveAttribute('aria-label', 'Collapse sidebar'))
     expect(location.hash).toBe('#/chat/chat-1')
     await waitFor(() => expect(lit()).toEqual(['Plan the garden, running']))
-    expect(await row(/^Fence gate, running$/)).toBeInTheDocument()
+    expect(await row(/^Code session: Fence gate, running$/)).toBeInTheDocument()
     expect(calls.filter(asksToStop), 'nothing asked the gateway to stop').toEqual([])
   })
 

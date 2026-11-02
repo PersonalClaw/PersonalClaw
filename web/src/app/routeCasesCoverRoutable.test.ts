@@ -85,12 +85,15 @@ describe('the routable set and the render switch agree', () => {
     // Every assertion here reads source. A regex that matched nothing would make the check above
     // pass on an empty array, so the sizes are pinned as non-trivial. The sidebar is meant to hold
     // fewer rows as destinations merge (#3812), so its floor is set well under today's count.
-    expect(navIds().length).toBeGreaterThanOrEqual(8)
+    // Seven since Home's row left the sidebar (its link is the icon and name, #5880): `dashboard`
+    // is one of ROUTABLE's extras now.
+    expect(navIds().length).toBeGreaterThanOrEqual(7)
     expect(routableExtras().length).toBeGreaterThanOrEqual(5)
     expect(caseLabels().length).toBeGreaterThanOrEqual(20)
     // And that they overlap at all — a scanner reading two unrelated regions would also pass above.
     expect(caseLabels()).toContain('dashboard')
-    expect(navIds()).toContain('dashboard')
+    expect(navIds()).toContain('chat')
+    expect(routableExtras(), 'Home is routable without a row of its own (#5880)').toContain('dashboard')
   })
 
   it('no case is registered for a route that is not routable', () => {

@@ -34,7 +34,7 @@ export function placeRows<T extends { group?: AutomationGroup; rank?: number }>(
 export function reportsToLabel(to: ReportsTo | undefined): string {
   if (!to || !('kind' in to)) return ''
   switch (to.kind) {
-    case 'thread': return to.title ? `Reports to “${to.title}”` : 'Reports to its thread'
+    case 'thread': return to.title ? `Reports to “${to.title}”` : 'Reports to its chat'
     case 'channel': return `Reports to ${to.channel.charAt(0).toUpperCase()}${to.channel.slice(1)}`
     case 'inbox': return 'Reports to the Inbox'
     case 'none': return 'Silent'

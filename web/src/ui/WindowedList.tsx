@@ -118,6 +118,11 @@ export interface WindowedListProps<T> {
   /** `rowKey` of a row to scroll to and focus once — the deep-link/anchor path.
    *  Changing it re-anchors; clearing it does nothing (the user's scroll wins). */
   anchorKey?: string
+  /** `rowKey` of a row to bring into the window and into view WITHOUT moving focus: the row the
+   *  page shows, as a sidebar lights it when the address opens it. Changing it reveals it; the same
+   *  key again, or clearing it, does nothing (the user's scroll wins). A key not listed yet is
+   *  revealed once its row arrives. */
+  revealKey?: string
   overscan?: number
   /** Applied to the list container — pass the same layout classes the un-windowed
    *  `<div>` had (`flex flex-col gap-s`), so short lists are byte-identical to before. */
@@ -129,7 +134,7 @@ export interface WindowedListProps<T> {
 
 export function WindowedList<T>({
   items, rowKey, rowHeights, estimateRowHeight, gap = 0, noun, findHint,
-  anchorKey, overscan = DEFAULT_OVERSCAN, className, enableRowKeyboard = true, children,
+  anchorKey, revealKey, overscan = DEFAULT_OVERSCAN, className, enableRowKeyboard = true, children,
 }: WindowedListProps<T>) {
   const total = items.length
   const windowed = total > WINDOWING_THRESHOLD
@@ -410,6 +415,16 @@ export function WindowedList<T>({
     const idx = keys.indexOf(anchorKey)
     if (idx >= 0) reveal(idx, true)
   }, [anchorKey, keys, reveal])
+
+  // ── The row the page shows ────────────────────────────────────────────────
+  const lastReveal = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!revealKey || revealKey === lastReveal.current) { lastReveal.current = revealKey; return }
+    const idx = keys.indexOf(revealKey)
+    if (idx < 0) return
+    lastReveal.current = revealKey
+    reveal(idx, false)
+  }, [revealKey, keys, reveal])
 
   const start = windowed ? Math.min(range.start, Math.max(0, total - 1)) : 0
   const end = windowed ? Math.min(range.end, total) : total

@@ -36,8 +36,8 @@ vi.mock('./identity', async (orig) => {
 })
 
 const SESSIONS = [
-  { key: 'chat-1', title: 'Plan the garden', messages: 2, run_state: runState({ session: 'chat-1' }), origin: 'manual', project_id: 'p-garden' },
-  { key: 'chat-2', title: 'Order the soil', messages: 2, run_state: runState({ session: 'chat-2' }), origin: 'manual', project_id: 'p-garden' },
+  { key: 'chat-1', title: 'Plan the garden', messages: 2, run_state: runState({ session: 'chat-1' }), origin: 'manual', project_id: 'p-garden', folder_id: 'f-garden' },
+  { key: 'chat-2', title: 'Order the soil', messages: 2, run_state: runState({ session: 'chat-2' }), origin: 'manual', project_id: 'p-garden', folder_id: 'f-garden' },
   { key: 'chat-3', title: 'A question about tax', messages: 2, run_state: runState({ session: 'chat-3' }), origin: 'manual', project_id: '' },
 ]
 const LOOPS = [{
@@ -72,6 +72,7 @@ const READS: Record<string, unknown> = {
   chatSessions: SESSIONS,
   uLoops: LOOPS,
   projects: PROJECTS,
+  chatFolders: [{ id: 'f-garden', name: 'Garden' }],
   chatSessionDetail: detail,
 }
 vi.mock('../lib/api', async (orig) => {
@@ -160,19 +161,19 @@ function scrollRailTo(y: number) {
 const paletteToggle = () => act(() => rows.find((r) => r.label === 'Show or hide the sidebar')!.run())
 
 describe('the sidebar after a collapse', () => {
-  it('opened again, it keeps the search as typed and what it found, the address and the lit thread', async () => {
+  it('opened again, it keeps the search as typed and what it found, the address and the lit chat', async () => {
     location.hash = '#/chat/chat-2'
     const user = userEvent.setup()
     renderApp()
     await row(/^Order the soil/)
-    await user.type(within(rail()).getByRole('searchbox', { name: 'Search threads' }), 'soil')
+    await user.type(within(rail()).getByRole('searchbox', { name: 'Search chats' }), 'soil')
     await waitFor(() => expect(within(rail()).queryByRole('button', { name: /^Plan the garden/ })).toBeNull())
 
     await user.click(toggle())
     await waitFor(() => expect(expanded()).toBe(false))
     await user.click(toggle())
     await waitFor(() => expect(expanded()).toBe(true))
-    expect(within(rail()).getByRole('searchbox', { name: 'Search threads' })).toHaveValue('soil')
+    expect(within(rail()).getByRole('searchbox', { name: 'Search chats' })).toHaveValue('soil')
     await row(/^Order the soil/)
     expect(within(rail()).queryByRole('button', { name: /^Plan the garden/ }), 'still what the search found').toBeNull()
     expect(location.hash).toBe('#/chat/chat-2')
@@ -184,11 +185,11 @@ describe('the sidebar after a collapse', () => {
     const user = userEvent.setup()
     const view = renderApp()
     await row(/^Order the soil/)
-    await user.type(within(rail()).getByRole('searchbox', { name: 'Search threads' }), 'soil')
+    await user.type(within(rail()).getByRole('searchbox', { name: 'Search chats' }), 'soil')
     view.unmount()
     renderApp()
     await row(/^Plan the garden/)
-    expect(within(rail()).getByRole('searchbox', { name: 'Search threads' })).toHaveValue('')
+    expect(within(rail()).getByRole('searchbox', { name: 'Search chats' })).toHaveValue('')
   })
 })
 
@@ -198,14 +199,14 @@ describe('the sidebar after a reload', () => {
     const user = userEvent.setup()
     const view = renderApp()
     await row(/^Order the soil/)
-    // Wider by two of its handle's steps, the "No project" group closed, scrolled 300 px down.
+    // Wider by two of its handle's steps, the "No folder" group closed, scrolled 300 px down.
     const handle = screen.getByRole('separator', { name: /Resize navigation/ })
     handle.focus()
     await user.keyboard('{ArrowRight}{ArrowRight}')
     const wide = railWidth()
     expect(wide).not.toBe('')
-    await user.click(group(/^No project, /))
-    expect(group(/^No project, /)).toHaveAttribute('aria-expanded', 'false')
+    await user.click(group(/^No folder, /))
+    expect(group(/^No folder, /)).toHaveAttribute('aria-expanded', 'false')
     scrollRailTo(300)
 
     await user.click(toggle())
@@ -224,7 +225,7 @@ describe('the sidebar after a reload', () => {
     expect(expanded()).toBe(true)
     expect(railWidth()).toBe(wide)
     expect(lit()).toEqual(['Order the soil'])
-    expect(group(/^No project, /)).toHaveAttribute('aria-expanded', 'false')
+    expect(group(/^No folder, /)).toHaveAttribute('aria-expanded', 'false')
     expect(group(/^Garden, /)).toHaveAttribute('aria-expanded', 'true')
     await waitFor(() => expect(scroller().scrollTop).toBe(300))
   })

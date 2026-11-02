@@ -15,7 +15,7 @@ interface after the first run.
 
 How often the owner needs a thing decides how much room it gets:
 
-- Every session: threads, review, approvals, running work. They get the sidebar and the work
+- Every session: chats, review, approvals, running work. They get the sidebar and the work
   surface.
 - Weekly: knowledge, memory, skills, automations. One click away.
 - Rarely: providers, models, tool servers, agent definitions, prompts, the store, security. They
@@ -23,27 +23,30 @@ How often the owner needs a thing decides how much room it gets:
 
 ## The sidebar, top to bottom
 
-The sidebar is a hierarchy, not a count. Projects and threads dominate; the work destinations come
-next; the utilities sit at the bottom.
+The sidebar is a shell of three parts (#5878). The top and bottom blocks keep their height; only
+the chat history between them scrolls, so a long list never carries a shortcut out of view. Below
+the chat history's floor (its heading bar and one row) the sidebar scrolls as one column instead.
 
-1. **Home:** Needs You, Running Now and Recent/Completed (#3813).
-2. **New thread**, and search.
-3. **Projects with their threads** (#3814). Chats, goal loops and code sessions are all threads: a
-   thread's type changes its layout, never its address. Pinned projects come first. Rows are about
-   32 px high, and each carries a static pip (running, waiting on you, failed) that reads the same
-   rule as Home's groups. Within a project, pinned threads come first, then the most recently
-   active; a status change never moves a row. Nothing in the sidebar animates. A project's own page
-   is its thread list beside its detail: the same threads, in the same order, with the same marks.
-4. **The work destinations:** Inbox (#3818), Library (#3815), Automations (#3816) and Capabilities
-   (#3817).
-5. **The utilities**, pinned at the bottom: Settings, which gains System, and diagnostics.
+1. **The top block:** the PersonalClaw icon and name, which is Home's link (#5880), then the leading
+   destinations. Home opens on Overview; its View control switches to Attention, which the
+   top-right needs-you shortcut also opens.
+2. **The chat history** (#5877): its heading with a Group by control (Folders or Tags), New chat
+   and a search, pinned at its top. Then every chat, goal loop and code session under the folder
+   Chat history keeps it in, No folder last, or under each of its tags, No tag last. A folder or
+   tag that holds nothing is left out. A row's kind changes its layout, never its address, and a
+   goal loop or code session says its kind on its row. Rows are about 32 px high, and each carries
+   a static pip (running, waiting on you, failed) that reads the same rule as Home's groups. Within
+   a group, pinned rows come first, then the most recently active; a status change never moves a
+   row. Nothing in the sidebar animates. The chats by project moved to the Projects page's Chats
+   by project view, and a project's own page lists its chats beside its detail.
+3. **The bottom block:** Inbox (#3818), Automations (#3816) and Capabilities (#3817), the pinned
+   app pages, then the phone's Companion and Settings.
 
 Every destination is reachable five ways, and primary navigation stays reachable at every
 supported width, 320 to 1440 px (#3812):
 
-1. The expanded rail, the desktop default: every entry with its label, and the projects with their
-   threads.
-2. The collapsed rail: the destinations as icons, each named in its tooltip. A thread is reached
+1. The expanded rail, the desktop default: every entry with its label, and the chat history.
+2. The collapsed rail: the destinations as icons, each named in its tooltip. A chat is reached
    from Home, from the palette, or by ⌘1 to ⌘9 for the first nine.
 3. The compact window: the same rail as a drawer the toolbar opens. It is never removed.
 4. The command palette: "Go to" for every destination, tab and project, each with its shortcut
@@ -57,10 +60,10 @@ only a typed address opens. It is generated (`npm run docs:feature-map`), and a 
 and the app differ.
 
 The rail toggles from the toolbar, ⌘B and the palette, and comes back as it was: its open state,
-its width, each project's disclosure and how far it was scrolled are kept on the device, and the
-thread it lights is the address's. Opening it puts focus on the row that last had it, else the lit
-thread; closing it puts focus back on the toggle. Hiding it changes chrome only: the address, the
-selected thread and running work are untouched.
+its width, how the chat history is grouped, each group's disclosure and how far it was scrolled
+are kept on the device, and the row it lights is the address's. Opening it puts focus on the row
+that last had it, else the lit row; closing it puts focus back on the toggle. Hiding it changes
+chrome only: the address, the open chat and running work are untouched.
 
 ## Where the rest goes
 
@@ -93,12 +96,12 @@ opens it (#3818, #3819). Every route and substate round-trips through the URL, b
 
 | Screen | Primary job | Work surface | Header (at most 3) | Right pane |
 |---|---|---|---|---|
-| Home | see what needs you, what is running and what finished | A Start something line, then Needs You (sorted by consequence, then age), Running Now (each row with its exact phase and last update), Recent/Completed, with a filter that shows one of them. An approval is answered inline, and an ask that takes words from its detail. | New thread, View (Attention or Overview) | the selected item's detail; a compact window opens it in place |
+| Home | see what needs you, what is running and what finished | A Start something line, then Needs You (sorted by consequence, then age), Running Now (each row with its exact phase and last update), Recent/Completed, with a filter that shows one of them. An approval is answered inline, and an ask that takes words from its detail. | New chat, View (Overview or Attention) | the selected item's detail; a compact window opens it in place |
 | Thread | delegate and converse | the reading column, folded work lines, artifact cards, the composer | the title (renamed inline), Share, overflow | activity, artifacts and sources, closed by default |
 | Goal loop | supervise an autonomous run | the run as a thread: the plan on top, cycles below, and at its foot a progress strip (its cycle, Start, Pause or Resume, a two-step Stop and how it reports) over the composer, which is its nudge | the title (renamed inline) and its link, Delete once it has ended, Details | plan review beside its planning; a cycle picked from Details, beside the thread, while Details keeps its list |
 | Code session | review the agent's changes | the thread, with the review pane open on uncommitted changes | Commit or open PR, overflow | the diff and its inline comments |
 | Library | find and curate what the agent knows or made | tabs for Knowledge, Memory, Files and Artifacts, each a fixed-width list beside a flexible detail; the graph is a view toggle | Add, View, overflow | the item's detail |
-| Automations | trust what runs without you | one list, with each item's next run, last result and the thread it reports to | New, overflow | detail and run history |
+| Automations | trust what runs without you | one list, with each item's next run, last result and the chat it reports to | New, overflow | detail and run history |
 | Capabilities | configure what the agent can do | tabs for Agents, Skills, Tools, Prompts, Apps and the Store, each a list beside a detail, and Learning, beside Skills, the page of what the agent learned and the proposals it links to | Add (Install on the Store tab) | detail and permissions |
 | Settings | configure the system | a section list beside the form, search on top | none | none |
 

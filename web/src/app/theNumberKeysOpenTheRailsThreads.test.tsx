@@ -4,15 +4,15 @@ import userEvent from '@testing-library/user-event'
 import { runState } from '../test/runState'
 import { COMMAND_EVENT, bindingOf } from './keymap'
 
-// ── ⌘1 to ⌘9 open the threads the sidebar shows, and New thread starts one (#3814) ───────────────
+// ── ⌘1 to ⌘9 open the chats the sidebar shows, and New chat starts one (#3814, #5877) ─────────────
 //
-// Driven through the real shell. ⌘n opens the nth thread row of the rail, top to bottom: the
-// projects in their order, each project's threads in the named order (pinned first, then the
-// latest activity), the threads of a project the owner closed skipped, and only the matches while a
-// search is typed. They replace the chat list's order the keys followed until threads replaced it.
-// With the rail collapsed to icons the keys open the same threads, read when the key is pressed.
-// A key past the last thread says so and goes nowhere. The desktop app's Go menu sends the same
-// rows by id. New thread, at the top of the threads, opens a new thread, as ⌘N does.
+// Driven through the real shell. ⌘n opens the nth row of the chat history, top to bottom: the
+// folders in their order, each folder's rows in the named order (pinned first, then the latest
+// activity), then No folder, the rows of a folder the owner closed skipped, and only the matches
+// while a search is typed. With the rail collapsed to icons the keys open the same rows, read when
+// the key is pressed. A key past the last row says so and goes nowhere. The desktop app's Go menu
+// sends the same rows by id. New chat, at the top of the chat history, opens a new chat, as ⌘N
+// does.
 
 vi.mock('../lib/useChatSocket', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
@@ -28,19 +28,19 @@ vi.mock('./identity', async (orig) => {
 })
 
 const at = (hhmm: string) => `2026-10-20T${hhmm}:00+00:00`
-const chat = (key: string, title: string, project: string, activity: string, over: Record<string, unknown> = {}) => ({
-  key, title, messages: 2, run_state: runState({ session: key }), origin: 'manual', project_id: project, last_activity_ts: at(activity), ...over,
+const chat = (key: string, title: string, folder: string, activity: string, over: Record<string, unknown> = {}) => ({
+  key, title, messages: 2, run_state: runState({ session: key }), origin: 'manual', project_id: 'p-garden', folder_id: folder, last_activity_ts: at(activity), ...over,
 })
 
 // Listed in no useful order: the rail sorts them.
 const SESSIONS = [
-  chat('chat-soil', 'Order the soil', 'p-garden', '09:00'),
+  chat('chat-soil', 'Order the soil', 'f-garden', '09:00'),
   chat('chat-tax', 'A question about tax', '', '12:00'),
-  chat('chat-plan', 'Plan the garden', 'p-garden', '11:00'),
-  chat('chat-boxes', 'Pack the boxes', 'p-house', '10:00'),
-  chat('chat-pin', 'Garden budget', 'p-garden', '01:00', { pinned: true }),
-  // A chat the phone started is not the owner's own list, but it is a thread like any other.
-  chat('chat-phone', 'Shopping list', 'p-house', '08:00', { origin: 'channel', source_id: 'C1', source_label: 'Telegram' }),
+  chat('chat-plan', 'Plan the garden', 'f-garden', '11:00'),
+  chat('chat-boxes', 'Pack the boxes', 'f-house', '10:00'),
+  chat('chat-pin', 'Garden budget', 'f-garden', '01:00', { pinned: true }),
+  // A chat the phone started is not the owner's own list, but it is a chat like any other.
+  chat('chat-phone', 'Shopping list', 'f-house', '08:00', { origin: 'channel', source_id: 'C1', source_label: 'Telegram' }),
 ]
 const LOOPS = [{
   id: 'e5f6a7b8', kind: 'code', name: 'Fence gate', task: 'fix the gate', status: 'failed', total_cycles: 2,
@@ -49,18 +49,19 @@ const LOOPS = [{
 const PROJECTS = [
   { id: 'p-personal', name: 'Personal', is_builtin: true, status: 'active' },
   { id: 'p-garden', name: 'Garden', status: 'active' },
-  { id: 'p-house', name: 'House move', status: 'active' },
 ]
+// An empty folder is left out of the sidebar.
+const FOLDERS = [{ id: 'f-empty', name: 'Empty' }, { id: 'f-garden', name: 'Garden' }, { id: 'f-house', name: 'House move' }]
 
 /** The rail's rows, top to bottom, as ⌘1 to ⌘9 count them. */
 const RAIL_ORDER = [
   ['chat/chat-pin', 'Garden budget'], // Garden: pinned first
   ['chat/chat-plan', 'Plan the garden'], // then 11:00
-  ['code/e5f6a7b8', 'Fence gate'], // 10:30
   ['chat/chat-soil', 'Order the soil'], // 09:00
   ['chat/chat-boxes', 'Pack the boxes'], // House move: 10:00
   ['chat/chat-phone', 'Shopping list'], // 08:00
-  ['chat/chat-tax', 'A question about tax'], // No project, last
+  ['chat/chat-tax', 'A question about tax'], // No folder, last: 12:00
+  ['code/e5f6a7b8', 'Fence gate'], // 10:30, a code session is in no folder
 ]
 
 function detail(key: string) {
@@ -84,6 +85,7 @@ const READS: Record<string, unknown> = {
   chatSessions: SESSIONS,
   uLoops: LOOPS,
   projects: PROJECTS,
+  chatFolders: FOLDERS,
   chatSessionDetail: detail,
 }
 vi.mock('../lib/api', async (orig) => {
@@ -142,13 +144,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('⌘1 to ⌘9', () => {
-  it("are the keymap's rows for the sidebar's threads", () => {
-    expect(bindingOf('chat-1')).toMatchObject({ label: 'Open thread 1 in the sidebar', chords: ['mod+1'] })
-    expect(bindingOf('chat-9')).toMatchObject({ label: 'Open thread 9 in the sidebar', chords: ['mod+9'] })
-    expect(bindingOf('new-chat')).toMatchObject({ label: 'New thread', chords: ['mod+n'] })
+  it("are the keymap's rows for the sidebar's chats", () => {
+    expect(bindingOf('chat-1')).toMatchObject({ label: 'Open chat 1 in the sidebar', chords: ['mod+1'] })
+    expect(bindingOf('chat-9')).toMatchObject({ label: 'Open chat 9 in the sidebar', chords: ['mod+9'] })
+    expect(bindingOf('new-chat')).toMatchObject({ label: 'New chat', chords: ['mod+n'] })
   })
 
-  it('open the rail\'s threads top to bottom, in its order, across projects', async () => {
+  it('open the rail\'s rows top to bottom, in its order, across folders', async () => {
     renderApp()
     await row(/^Garden budget/)
     for (const [i, [route]] of RAIL_ORDER.entries()) {
@@ -157,10 +159,10 @@ describe('⌘1 to ⌘9', () => {
     }
   })
 
-  it('skip the threads of a project the owner closed', async () => {
+  it('skip the rows of a folder the owner closed', async () => {
     const user = userEvent.setup()
     renderApp()
-    await user.click(await row(/^Garden, 4 threads$/))
+    await user.click(await row(/^Garden, 3 chats$/))
     expect(await afterKey(1)).toBe('chat/chat-boxes')
     location.hash = '#/dashboard'
     expect(await afterKey(3)).toBe('chat/chat-tax')
@@ -170,31 +172,31 @@ describe('⌘1 to ⌘9', () => {
     renderApp()
     await row(/^Garden budget/)
     // "the" matches Plan the garden and Order the soil in Garden, and Pack the boxes in House move.
-    fireEvent.change(within(rail()).getByRole('searchbox', { name: 'Search threads' }), { target: { value: 'the' } })
+    fireEvent.change(within(rail()).getByRole('searchbox', { name: 'Search chats' }), { target: { value: 'the' } })
     await waitFor(() => expect(within(rail()).queryByRole('button', { name: /^Garden budget/ })).toBeNull())
     expect(await afterKey(1)).toBe('chat/chat-plan')
     location.hash = '#/dashboard'
     expect(await afterKey(3)).toBe('chat/chat-boxes')
     location.hash = '#/dashboard'
     press(4)
-    expect((await screen.findAllByText('There is no thread 4 in the sidebar.')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('There is no chat 4 in the sidebar.')).length).toBeGreaterThan(0)
   })
 
-  it('with the rail collapsed to icons, open the same threads, read when pressed', async () => {
+  it('with the rail collapsed to icons, open the same rows, read when pressed', async () => {
     localStorage.setItem('nav-collapsed', '1')
     renderApp()
     await screen.findByRole('navigation')
-    expect(within(rail()).queryByRole('group', { name: 'Threads' })).toBeNull()
-    expect(await afterKey(3)).toBe('code/e5f6a7b8')
+    expect(within(rail()).queryByRole('group', { name: 'Chat history' })).toBeNull()
+    expect(await afterKey(7)).toBe('code/e5f6a7b8')
     expect(calls).toContain('uLoops')
-    expect(calls).toContain('projects')
+    expect(calls).toContain('chatFolders')
   })
 
-  it('a key past the last thread says so, and goes nowhere', async () => {
+  it('a key past the last row says so, and goes nowhere', async () => {
     renderApp()
     await row(/^Garden budget/)
     press(8)
-    expect((await screen.findAllByText('There is no thread 8 in the sidebar.')).length).toBeGreaterThan(0)
+    expect((await screen.findAllByText('There is no chat 8 in the sidebar.')).length).toBeGreaterThan(0)
     expect(location.hash).toBe('#/dashboard')
   })
 
@@ -206,12 +208,12 @@ describe('⌘1 to ⌘9', () => {
   })
 })
 
-describe('New thread', () => {
-  it('at the top of the threads, opens a new thread, as ⌘N does', async () => {
+describe('New chat', () => {
+  it('at the top of the chat history, opens a new chat, as ⌘N does', async () => {
     const user = userEvent.setup()
     renderApp()
     await row(/^Garden budget/)
-    await user.click(within(rail()).getByRole('button', { name: 'New thread' }))
+    await user.click(within(rail()).getByRole('button', { name: 'New chat' }))
     await waitFor(() => expect(location.hash).toBe('#/chat/new'))
   })
 })

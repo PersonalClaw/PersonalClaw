@@ -101,7 +101,7 @@ export const GROUP_LABEL: Record<Group, string> = {
 const GROUP_EMPTY: Record<Group, string> = {
   'needs-you': 'Nothing is waiting on you.',
   'running-now': 'Nothing is running right now.',
-  recent: 'Nothing has finished lately, and you have no threads yet.',
+  recent: 'Nothing has finished lately, and you have no chats yet.',
 }
 
 /** The views Home's header switches between. A phone shows each by its glyph, named by its label. */
@@ -117,7 +117,7 @@ const SHOWN_OPTIONS = [
   ...GROUPS.map((g) => ({ key: g, label: GROUP_LABEL[g] })),
 ]
 
-/** Your threads shown under Recent and completed. */
+/** Your chats shown under Recent and completed. */
 const RECENT_THREADS = 6
 
 const RUNNING_KEY = 'dashboard:running-now'
@@ -194,12 +194,14 @@ function rowKey(row: NeedsYouRow): string {
   return row.key
 }
 
-export function Home(route: RouteProps) {
+/** Home: Overview, or Attention when it is asked for (#5880). *defaultView* is the view the address
+ *  opens on with no `?view`: Overview at `#/dashboard`, Attention at `#/mission-control`. */
+export function Home({ defaultView = 'overview', ...route }: RouteProps & { defaultView?: 'overview' | 'attention' }) {
   const { query, setQuery, navigate } = route
-  const view = query.view === 'overview' ? 'overview' : 'attention'
+  const view = query.view === 'overview' || query.view === 'attention' ? query.view : defaultView
   const { name } = useIdentity()
   // The header's two actions go through the one responsive cluster, which sheds labels as the
-  // room narrows. A phone's New thread keeps a 44 px target beside the shell's corner controls.
+  // room narrows. A phone's New chat keeps a 44 px target beside the shell's corner controls.
   const phone = useIsMobile()
   const header = (
     <TopBar
@@ -207,10 +209,10 @@ export function Home(route: RouteProps) {
       left={<h1 data-type="headline-s" className="min-w-0 truncate text-on-surface">{greetingFor(name)}</h1>}
       right={(
         <HeaderActions>
-          <HeaderControl icon={Plus} label="New thread" variant="secondary" priority="primary"
+          <HeaderControl icon={Plus} label="New chat" variant="secondary" priority="primary"
             className={phone ? 'min-h-11 min-w-11' : undefined} onClick={() => navigate('chat/new')} />
           <HeaderSegmented ariaLabel="View" options={HOME_VIEWS} value={view}
-            onChange={(k) => setQuery({ view: k === 'overview' ? 'overview' : null, open: null })} />
+            onChange={(k) => setQuery({ view: k === defaultView ? null : k, open: null })} />
         </HeaderActions>
       )}
     />
@@ -453,8 +455,8 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
             selected={open.startsWith('run:') ? open.slice(4) : undefined} onOpen={(r) => select(`run:${r.work}`)} />
           {threads.length > 0 ? (
             <div className="flex min-w-0 flex-col gap-xs">
-              <p id="home-your-threads" data-type="label-s" className="text-on-surface-low">Your threads</p>
-              <ul aria-labelledby="home-your-threads" className="flex min-w-0 flex-col gap-xs">
+              <p id="home-your-chats" data-type="label-s" className="text-on-surface-low">Your chats</p>
+              <ul aria-labelledby="home-your-chats" className="flex min-w-0 flex-col gap-xs">
                 {threads.map((s) => (
                   <ThreadRow key={s.key} s={s} selected={open === `thread:${s.key}`} onOpen={() => select(`thread:${s.key}`)} />
                 ))}
@@ -462,7 +464,7 @@ function AttentionStack({ header, ...route }: RouteProps & { header: ReactNode }
             </div>
           ) : null}
           {sessionsError && !Array.isArray(sessionsData) ? (
-            <InlineLoadError what="your threads" error={sessionsError} onRetry={refreshSessions} />
+            <InlineLoadError what="your chats" error={sessionsError} onRetry={refreshSessions} />
           ) : finished.length === 0 && cut.interrupted.length === 0 && threads.length === 0 ? (
             <p data-type="body-s" className="text-on-surface-low">
               {sessionsLoading || runningLoading ? 'Loading…' : GROUP_EMPTY.recent}
@@ -764,7 +766,7 @@ function RunDetail({ row }: { row: RunningRow }) {
   )
 }
 
-/** One of your threads under Recent and completed: its title and when it last moved. */
+/** One of your chats under Recent and completed: its title and when it last moved. */
 function ThreadRow({ s, selected, onOpen }: { s: ChatSessionSummary; selected: boolean; onOpen: () => void }) {
   const title = sessionTitle(s)
   const at = clockTime(s.last_ts || null)
@@ -787,12 +789,12 @@ function ThreadRow({ s, selected, onOpen }: { s: ChatSessionSummary; selected: b
   )
 }
 
-/** A thread, in its detail: its last words and the way into it. */
+/** A chat, in its detail: its last words and the way into it. */
 function ThreadDetail({ s }: { s: ChatSessionSummary }) {
   return (
     <div className="flex min-w-0 flex-col gap-m">
       {s.last_message ? <p data-type="body-m" className="min-w-0 whitespace-pre-line text-on-surface">{s.last_message}</p> : null}
-      <TextLink href={`#/chat/${encodeURIComponent(s.key)}`} ink="emphasis" size="sm">Open the thread</TextLink>
+      <TextLink href={`#/chat/${encodeURIComponent(s.key)}`} ink="emphasis" size="sm">Open the chat</TextLink>
     </div>
   )
 }
@@ -856,7 +858,7 @@ function StartSomething({ navigate }: { navigate: RouteProps['navigate'] }) {
       navigate(`chat/${encodeURIComponent(chat.key)}`)
     } catch (err) {
       const detail = err instanceof Error && err.message ? err.message : String(err ?? 'unknown error')
-      setFailed(`Could not start a new thread: ${detail}. Nothing was sent, so try again.`)
+      setFailed(`Could not start a new chat: ${detail}. Nothing was sent, so try again.`)
     } finally {
       setBusy(false)
     }
@@ -864,7 +866,7 @@ function StartSomething({ navigate }: { navigate: RouteProps['navigate'] }) {
   return (
     <div className="flex min-w-0 flex-col gap-xs">
       <TextInput value={text} onChange={setText} ariaLabel="Start something"
-        placeholder="Start something: type it and press Enter for a new thread"
+        placeholder="Start something: type it and press Enter for a new chat"
         onKeyDown={(e) => {
           if (e.key !== 'Enter' || e.nativeEvent.isComposing || busy) return
           e.preventDefault()

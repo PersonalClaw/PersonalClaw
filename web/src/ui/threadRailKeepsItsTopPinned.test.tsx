@@ -3,10 +3,11 @@ import { cleanup, render, screen } from '@testing-library/react'
 import type { Thread } from '../lib/useThreads'
 import { ThreadRail, type ThreadRailGroup } from './ThreadRail'
 
-// ── New thread and the search stay pinned at the top of the rail while the threads scroll (#3814) ──
+// ── New chat and the search stay pinned at the top of the chat history while it scrolls (#3814) ───
 //
-// They are one bar at the top of the threads, pinned to the top of the rail's scroll area while the
-// threads scroll under it, so a long list never takes away the way to start a thread or find one.
+// They are one bar at the top of the chat history, with its heading, pinned to the top of the rail's
+// scroll area while the rows scroll under it, so a long list never takes away the way to start a
+// chat or find one.
 // The bar paints the rail's solid surface and sits above the rows, so no row shows through it.
 //
 // The rail's scroll area is the sidebar itself (`NavRail`), whose surface is `--color-rail`. While
@@ -15,26 +16,26 @@ import { ThreadRail, type ThreadRailGroup } from './ThreadRail'
 // far enough to show it below the bar, not under it.
 //
 // jsdom lays nothing out, so the sizes below are set by hand: the scroll area, the bar's height
-// (72 px), and the open thread's row scrolled just above the scroll area.
+// (72 px), and the open chat's row scrolled just above the scroll area.
 
 function thread(key: string, title: string): Thread {
   const id = key.split(':')[1]
-  return { kind: 'chat', id, projectId: 'p-garden', route: `chat/${id}`, pip: null, pinned: false, activeAt: 0, key, title }
+  return { kind: 'chat', id, projectId: 'p-garden', route: `chat/${id}`, pip: null, pinned: false, activeAt: 0, folderId: '', tagIds: [], key, title }
 }
 
 const GARDEN: ThreadRailGroup = {
-  projectId: 'p-garden',
+  id: 'folder:f-garden',
   name: 'Garden',
-  threads: Array.from({ length: 30 }, (_, i) => thread(`chat:chat-${i}`, `Garden thread ${i}`)),
+  threads: Array.from({ length: 30 }, (_, i) => thread(`chat:chat-${i}`, `Garden chat ${i}`)),
 }
 
 const rect = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 240, width: 240, height: bottom - top, x: 0, y: top, toJSON() {} }) as DOMRect
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
-/** The bar New thread sits in. */
-const bar = () => screen.getByRole('button', { name: 'New thread' }).parentElement as HTMLElement
-/** Whether *el* is the bar: it holds New thread and the search, and no row. */
+/** The bar New chat sits in. */
+const bar = () => screen.getByRole('button', { name: 'New chat' }).parentElement as HTMLElement
+/** Whether *el* is the bar: it holds New chat and the search, and no row. */
 const isBar = (el: Element) => el instanceof HTMLElement && !!el.querySelector('input[type="search"]')
   && !!el.querySelector('button') && !el.querySelector('[data-thread-key]') && el.parentElement?.getAttribute('role') === 'group'
 
@@ -43,16 +44,16 @@ function barIs72() {
   vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) { return isBar(this) ? 72 : 0 })
 }
 
-describe('the top of the thread rail', () => {
-  it('New thread and the search are one bar, pinned to the top of the scroll area', () => {
+describe('the top of the chat history', () => {
+  it('New chat and the search are one bar, pinned to the top of the scroll area', () => {
     render(<ThreadRail groups={[GARDEN]} selectedKey="" status="ready" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}} />)
     const top = bar()
-    expect(top.contains(screen.getByRole('searchbox', { name: 'Search threads' })), 'the search is in the bar').toBe(true)
+    expect(top.contains(screen.getByRole('searchbox', { name: 'Search chats' })), 'the search is in the bar').toBe(true)
     const style = getComputedStyle(top)
     expect(style.position).toBe('sticky')
-    // Flush with the sidebar's top edge: the sidebar pads its top by --spacing-l, and a sticky box
-    // sticks inside that padding.
-    expect(style.top).toBe('calc(-1 * var(--spacing-l))')
+    // Flush with the top edge of the chat history, the scroll area between the sidebar's two blocks,
+    // which pads nothing at its top (#5878).
+    expect(style.top).toBe('0px')
   })
 
   it('paints the rail\'s solid surface, above the rows, so no row shows through it', () => {
@@ -80,7 +81,7 @@ describe('the top of the thread rail', () => {
     expect(scroller.style.scrollPaddingTop, 'and gives it back when the rail goes').toBe('')
   })
 
-  it('scrolls the open thread\'s row into view below the pinned bar, not under it', () => {
+  it('scrolls the open chat\'s row into view below the pinned bar, not under it', () => {
     barIs72()
     let scrollTop = 400
     const scroller = (el: HTMLDivElement | null) => {

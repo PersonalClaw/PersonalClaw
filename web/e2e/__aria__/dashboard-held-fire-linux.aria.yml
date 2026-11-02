@@ -1,17 +1,17 @@
 - navigation:
-  - img "PersonalClaw"
-  - text: PersonalClaw
-  - button "Home"
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
   - button "Chat"
   - button "Projects"
   - button "Library"
-  - group "Threads":
-    - text: Threads
-    - button "New thread"
-    - searchbox "Search threads"
+  - group "Chat history":
+    - text: Chat history
+    - 'button "Group by: Folders"': Folders
+    - button "New chat"
+    - searchbox "Search chats"
     - status
-    - button "Personal, no threads": Personal #
-    - button "Repeatable, no threads": Repeatable #
+    - text: No chats yet
   - text: Platform
   - button "Inbox"
   - button "Automations"
@@ -25,7 +25,7 @@
   - 'button "Theme: <theme> — switch to <theme>"'
   - button "Choose a model"
   - heading "Good <time of day>, Alex" [level=#]
-  - button "New thread"
+  - button "New chat"
   - radiogroup "View":
     - radio "Attention"
     - radio "Overview" [checked]

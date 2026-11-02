@@ -187,7 +187,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
       ],
       "focus order": [
         "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\"",
@@ -384,7 +384,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
       ],
       "focus order": [
         "focus moves backwards from <button .grid.size-#.shrink-#> \"Actions for Calendar Tools\" to <button .absolute.inset-#.-z-#> \"Code Map — details\"",

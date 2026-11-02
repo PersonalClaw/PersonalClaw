@@ -273,6 +273,7 @@ const EMPTY_STATE_CENSUS: {
   { surface: 'Memory › Digests', file: 'pages/settings/MemoryPanel.tsx', verdict: 'produced', why: 'Digests are generated on a cadence.' },
   // ── a projection of a collection owned elsewhere ──
   { surface: 'Tasks › Graph', file: 'pages/tasks/TaskGraph.tsx', verdict: 'derived', why: 'A view of tasks. The create flow lives on the list, one segmented control away.' },
+  { surface: 'Projects › Chats by project', file: 'pages/projects/ChatsByProject.tsx', verdict: 'derived', why: 'A view of the chats, by project. New chat is at the top of the sidebar\'s chat history and on Home.' },
   { surface: 'Companion › sections', file: 'pages/companion/CompanionSections.tsx', verdict: 'derived',
     why: 'Four projections (what is running, open tasks, pending inbox, recent notifications) of collections owned by Mission Control and #/loops, #/tasks, #/inbox and #/notifications. A phone triages what already exists; the create flows belong to those surfaces, and the page footer links out to them rather than growing four CTAs that would each be a second entrance to someone else\'s flow.' },
   { surface: 'Files', file: 'pages/files/FilesSection.tsx', verdict: 'derived', why: '"No file open" is a selection state, not an empty collection.' },

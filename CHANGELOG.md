@@ -13,6 +13,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A channel app that runs a conversation on an agent CLI reports a call the CLI ran without asking the way PersonalClaw's own chat does: `personalclaw.sdk.channel.report_ungated_call` (core feature `ungated-calls`) judges the call, records it in the security log as run without asking, under the app that asked for the session and only for that session, and stops the turn when the app's answer says so.**
 - **An app can check the settings a form saves before they are written: a provider's `settingsCheck` (core feature `settings-check`) is asked by every settings route, off the event loop and bounded, and a sentence back refuses the save in the app's words.**
 
+### Changed
+
+- **The sidebar keeps its shortcuts in place: the PersonalClaw icon and name and the destinations under them stay at the top, and Inbox, Automations, Capabilities, your pinned app pages and Settings stay at the bottom, while only your chat history scrolls between them. In a window too short for both, the sidebar scrolls as one column, so every shortcut can still be reached.**
+- **The PersonalClaw icon and name at the top of the sidebar open Home, and Home opens on Overview. Home has no row of its own in the sidebar any more. Attention is in Home's View control and behind the needs-you shortcut at the top right, and the `#/mission-control` and `?view=attention` addresses still open it.**
+- **The middle of the sidebar is your Chat history, grouped by your folders, or by your tags from the Group by control on its heading, with No folder or No tag last and an empty folder or tag left out. A goal loop or code session says its kind on its row. The chats by project moved to the Projects page, as its Chats by project view. What the app called a thread is now a chat everywhere you read it: New chat, Your chats on Home, the Go menu and the keyboard shortcuts.**
+
 ### Fixed
 
 - **A chat turn shows what it recalled where it recalled it: a line above the text it fed, or between the steps it came between, the same after a reload, with how much was recalled and a link to review it one tap away. The turn's footer no longer says it; it keeps what the turn learned, the model that answered and the telemetry.**

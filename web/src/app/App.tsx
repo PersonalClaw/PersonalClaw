@@ -89,11 +89,14 @@ const Home = lazy(() => import('../pages/dashboard/Home').then((m) => ({ default
 const DiscoverPage = lazy(() => import('../pages/discover/DiscoverPage').then((m) => ({ default: m.DiscoverPage })))
 const CompanionPage = lazy(() => import('../pages/companion/CompanionPage').then((m) => ({ default: m.CompanionPage })))
 
+/** Home: the rail's icon and name are its link (`NavRail`'s `home`), so it has no row of its own
+ *  (#5880), and the palette goes to it as to every destination. */
+const HOME: NavItem = { id: 'dashboard', label: 'Home', icon: LayoutDashboard }
+
 const NAV: NavItem[] = [
-  // Primary group (no section header): the Dashboard is the home, then Chat,
-  // then Projects, then Library. Library is one destination (#3815): Knowledge, Memory, Files and
+  // Primary group (no section header): Chat, then Projects, then Library, under the icon and name,
+  // which are Home's link (`HOME`). Library is one destination (#3815): Knowledge, Memory, Files and
   // Artifacts are its tabs, each at its own address (ROUTABLE below).
-  { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
   { id: 'chat', label: 'Chat', icon: MessageSquare },
   { id: 'projects', label: 'Projects', icon: FolderKanban },
   { id: 'library', label: 'Library', icon: Library },
@@ -124,7 +127,7 @@ const NAV: NavItem[] = [
 // The six pages that are Capabilities' tabs keep their own addresses (`capabilityTabs.ts`), and so
 // do Library's four (`libraryTabs.ts`) and Automations' Workflows tab; the list's address from
 // before it was Automations, `#/triggers`, still opens it (`automationTabs.ts`).
-const ROUTABLE = new Set([...NAV.map((n) => n.id), 'tasks', 'terminal', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control', 'triggers', 'workflows'])
+const ROUTABLE = new Set([...NAV.map((n) => n.id), 'dashboard', 'tasks', 'terminal', 'agents', 'skills', 'learning', 'tools', 'prompts', 'apps', 'knowledge', 'memory', 'files', 'artifacts', 'notifications', 'discover', 'loop', 'loops', 'code', 'app', 'mission-control', 'triggers', 'workflows'])
 /** The routes the shell renders ITSELF, full-screen, from an early return above the nav switch —
  *  `#/onboarding`, `#/companion`, and the buddy (`#/buddy`, and its playground `#/buddy/playground`). Deliberately
  *  outside `NAV`/`ROUTABLE` (none is a rail destination) and every bit as real as the ones inside
@@ -171,9 +174,9 @@ function renderPage(active: string, r: RouteProps) {
   // Every page receives the full RouteProps bundle so its sub-pages, tabs,
   // filters, search, and open-panel state can all be URL-addressable.
   switch (active) {
-    // Home is the attention stack, and `#/mission-control` opens the same view (#3813).
+    // Home opens on Overview (#5880); `#/mission-control` is Home on its Attention view (#3813).
     case 'dashboard': return <Home {...r} />
-    case 'mission-control': return <Home {...r} />
+    case 'mission-control': return <Home {...r} defaultView="attention" />
     case 'chat': return <ChatPage {...r} />
     case 'loop': return <LoopSection {...r} />
     case 'loops': return <LoopsSection {...r} />
@@ -568,6 +571,7 @@ function AppInner() {
   // composer or a #/loops/<id> / #/code/<id> deep-link lights the Projects tile.
   // Highlight-only — must NOT change which page renders.
   const active = (rendered === 'loop' || rendered === 'loops' || rendered === 'code') ? 'projects'
+    : rendered === 'mission-control' ? HOME.id  // Home on its Attention view lights Home's link
     : rendered === 'app' ? `app/${(sub ?? '').split('/')[0]}`  // light the specific app tile
       : isCapabilityRoute(rendered) ? 'capabilities'  // each tab lights its destination
         : isLibraryRoute(rendered) ? 'library'
@@ -607,9 +611,9 @@ function AppInner() {
     threadNumberRoute(n)
       .then((to) => {
         if (to) onNavSelect(to)
-        else notify(`There is no thread ${n} in the sidebar.`, 'info')
+        else notify(`There is no chat ${n} in the sidebar.`, 'info')
       })
-      .catch(() => notify("Couldn't read your threads.", 'error'))
+      .catch(() => notify("Couldn't read your chats.", 'error'))
   }
   // Persist the embed flag at mount-time so in-page navigation (which strips the
   // query param from the hash) doesn't lose it. MUST be before any early return so
@@ -839,6 +843,8 @@ function AppInner() {
   // command palette (⌘K): every nav destination as a "Go to" + global actions, built from the full
   // `NAV`, and the door to every page the sidebar does not carry (`docs/feature-map.md`).
   const commands: Command[] = [
+    // Home has no row in the sidebar (its link is the icon and name, #5880), and keeps its "Go to".
+    { id: 'go:dashboard', label: HOME.label, hint: 'Go to', icon: HOME.icon, keywords: 'home overview', run: () => navigate('dashboard') },
     ...NAV.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: n.section ?? '', run: () => navigate(n.id) })),
     // pinned app tiles are nav destinations too — same "Go to" contract
     ...appNavItems.map((n) => ({ id: `go:${n.id}`, label: n.label, hint: 'Go to', icon: n.icon, keywords: 'app', run: () => navigate(n.id) })),
@@ -883,12 +889,12 @@ function AppInner() {
               leaves a notice in its place, and the page beside it and ⌘K keep working. */}
           {!railHidden && (
             <WidgetBoundary what="the navigation" compact className="m-s self-start">
-              <NavRail items={railItems} activeId={threadLit ? '' : active} onSelect={onNavSelect} collapsed={railCollapsed}
+              <NavRail items={railItems} home={HOME} activeId={threadLit ? '' : active} onSelect={onNavSelect} collapsed={railCollapsed}
                 overlay={isMobile} overlayOpen={isMobile && mobileNavOpen} onScrimClick={() => setMobileNavOpen(false)} material={material}
                 threads={(
-                  // Its own boundary: threads that throw leave a notice in their place, and the
-                  // destinations around them keep working.
-                  <WidgetBoundary what="your threads" className="mx-s">
+                  // Its own boundary: a chat history that throws leaves a notice in its place, and
+                  // the destinations around it keep working.
+                  <WidgetBoundary what="your chat history" className="mx-s">
                     <ShellThreadRail route={route} sub={sub} onOpen={onNavSelect} onLit={setThreadLit} search={railSearch} onSearch={setRailSearch} />
                   </WidgetBoundary>
                 )} />

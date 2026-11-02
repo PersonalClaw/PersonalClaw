@@ -61,11 +61,11 @@ function goMenuTemplate(send) {
   return {
     label: "Go",
     submenu: [
-      { label: "New Thread", accelerator: "CmdOrCtrl+N", click: () => send("new-chat") },
+      { label: "New Chat", accelerator: "CmdOrCtrl+N", click: () => send("new-chat") },
       { type: "separator" },
-      // The sidebar's threads by number: the page opens the nth thread row it shows.
+      // The sidebar's chat history by number: the page opens the nth row it shows.
       ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({
-        label: `Thread ${n}`,
+        label: `Chat ${n}`,
         accelerator: `CmdOrCtrl+${n}`,
         click: () => send(`chat-${n}`),
       })),

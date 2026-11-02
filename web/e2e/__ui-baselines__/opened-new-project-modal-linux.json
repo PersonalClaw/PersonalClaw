@@ -6,6 +6,8 @@
         "button \"Loops\"",
         "button \"More actions\"",
         "button \"New project\"",
+        "button[role=radio] \"Chats by project\"",
+        "button[role=radio] \"Projects\"",
         "input \"Search projects\""
       ],
       "390": [
@@ -13,6 +15,8 @@
         "button \"Loops\"",
         "button \"More actions\"",
         "button \"New project\"",
+        "button[role=radio] \"Chats by project\"",
+        "button[role=radio] \"Projects\"",
         "input \"Search projects\""
       ],
       "412": [
@@ -20,18 +24,22 @@
         "button \"Loops\"",
         "button \"More actions\"",
         "button \"New project\"",
+        "button[role=radio] \"Chats by project\"",
+        "button[role=radio] \"Projects\"",
         "input \"Search projects\""
       ],
       "768": [
         "button \"Import\"",
         "button \"Loops\"",
         "button \"New project\"",
+        "button[role=radio] \"Chats by project\"",
+        "button[role=radio] \"Projects\"",
         "input \"Search projects\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#",
         "<span> \"New project\" clips at #%: #x# in #x#"
       ]
     }
@@ -43,6 +51,8 @@
         "button \"Loops\"",
         "button \"More actions\"",
         "button \"New project\"",
+        "button[role=radio] \"Chats by project\"",
+        "button[role=radio] \"Projects\"",
         "input \"Search projects\""
       ],
       "390": [
@@ -50,6 +60,8 @@
         "button \"Loops\"",
         "button \"More actions\"",
         "button \"New project\"",
+        "button[role=radio] \"Chats by project\"",
+        "button[role=radio] \"Projects\"",
         "input \"Search projects\""
       ],
       "412": [
@@ -57,18 +69,22 @@
         "button \"Loops\"",
         "button \"More actions\"",
         "button \"New project\"",
+        "button[role=radio] \"Chats by project\"",
+        "button[role=radio] \"Projects\"",
         "input \"Search projects\""
       ],
       "768": [
         "button \"Import\"",
         "button \"Loops\"",
         "button \"New project\"",
+        "button[role=radio] \"Chats by project\"",
+        "button[role=radio] \"Projects\"",
         "input \"Search projects\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div> \"PersonalClawHomeChatProjectsLibraryThrea\" clips at #%: #x# in #x#",
+        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#",
         "<span> \"New project\" clips at #%: #x# in #x#"
       ]
     }

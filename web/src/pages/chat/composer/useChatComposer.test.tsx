@@ -143,12 +143,12 @@ describe('a goal loop starts from a new thread\'s composer (#3824)', () => {
     expect(m.navigate).toHaveBeenCalledWith(`loop?${new URLSearchParams({ kind: 'goal', task: 'Plan the raised beds', project: 'p-garden' })}`)
   })
 
-  it('a started chat says a goal loop starts from a new thread, and nothing reaches the model', async () => {
+  it('a started chat says a goal loop starts from a new chat, and nothing reaches the model', async () => {
     const m = mount({ sessionId: NEW_KEY, turns: [userTurn('Hello'), assistantTurn('Hello again.')] })
     await act(async () => { await m.result.current.c.send('/goal Find a seed supplier') })
     expect(h.sendChat).not.toHaveBeenCalled()
     expect(m.navigate).not.toHaveBeenCalled()
-    expect(turnText(m.result.current.turns.at(-1)!)).toContain('A goal loop starts from a new thread')
+    expect(turnText(m.result.current.turns.at(-1)!)).toContain('A goal loop starts from a new chat')
   })
 })
 

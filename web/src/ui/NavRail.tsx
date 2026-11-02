@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useRememberedScroll } from './railScroll'
 import { withWeight } from '../design/fontWeight'
 import type { LucideIcon } from 'lucide-react'
@@ -30,8 +30,8 @@ export interface NavItem {
    *  than dropping the signal, and it claims nothing the shell cannot back up. */
   badgeLabel?: string
   section?: string
-  /** Pinned to the rail's foot (`data-rail-pinned`), under the scroll area and never scrolled,
-   *  instead of inline in scroll order — e.g. Settings. */
+  /** Last in the rail's bottom block (`data-rail-pinned`), after every sectioned destination — e.g.
+   *  Settings. */
   pinBottom?: boolean
 }
 
@@ -46,6 +46,10 @@ const COLLAPSED_W = 64
 export const RING_REACH = 4
 
 const OVERLAY_W = 264
+/** The least height the chat history keeps between the rail's two blocks: its pinned bar (the
+ *  heading, New chat and the search) and one row. A window shorter than both blocks and this scrolls
+ *  the rail as one column instead (#5878). */
+export const HISTORY_FLOOR = 136
 // How far past its own width the CLOSED overlay drawer parks: `shadow-2xl`'s 38px reach
 // (spread −12 + blur 50), rounded up, so none of its shadow is left on screen.
 const CLOSED_SHADOW_CLEARANCE = 48
@@ -55,16 +59,25 @@ const DEFAULT_W = 196
 
 /** Side navigation — drag-resizable, persisted. Collapse is CONTROLLED by the
  *  shell (the collapse/expand toggle lives in the main area's top-left, not on
- *  the rail). When collapsed → icon-only 64px rail. Its foot holds the pinned rows (Settings); the
- *  live system state is the status line's, at the window's bottom left. No operator/identity
- *  footer (single-user; Settings is in nav). */
+ *  the rail). When collapsed → icon-only 64px rail.
+ *
+ *  A shell of three parts (#5878): a top block (the wordmark and the leading destinations) and a
+ *  bottom block (every sectioned destination, then the pinned rows), each keeping its own height,
+ *  and between them the chat history (`threads`), the one part that scrolls. The live system state
+ *  is the status line's, at the window's bottom left. No operator/identity footer (single-user;
+ *  Settings is in nav). */
 export function NavRail({
-  items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, material = false, threads,
+  items, home, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, material = false, threads,
 }: {
   items: NavItem[]
-  /** The projects with their threads (`ThreadRail`), shown after the leading destinations and
-   *  before the sectioned ones, in the expanded rail and the phone's drawer. The collapsed rail is
-   *  icons only and shows none: a thread is reached there from Home, the palette or a key. */
+  /** The destination the rail's icon and name open, Home (#5880): its header is then that
+   *  destination's link, first in the rail's order, named "<wordmark>, <label>" expanded (its visible
+   *  text first) and "<label>" collapsed, and lit while it is the page. Unset, the header only names
+   *  the app. */
+  home?: Pick<NavItem, 'id' | 'label'>
+  /** The chat history (`ThreadRail`), between the top and the bottom block, in the expanded rail
+   *  and the phone's drawer: the one part of the rail that scrolls. The collapsed rail is icons only
+   *  and shows none: a chat is reached there from Home, the palette or a key. */
   threads?: ReactNode
   /** The desktop window's translucent material shows behind the rail (`app/windowMaterial.ts`):
    *  the in-flow column is then clear so the material shows through it. The phone drawer floats
@@ -105,8 +118,12 @@ export function NavRail({
   const w = collapsed ? COLLAPSED_W : width
   let lastSection: string | undefined
 
-  // Top (scroll-order) items vs bottom-pinned items (e.g. Settings).
-  const topItems = items.filter((i) => !i.pinBottom)
+  // The leading destinations hold the top; from the first sectioned one on, every destination is in
+  // the bottom block, and the pinned rows (e.g. Settings) close it.
+  const unpinned = items.filter((i) => !i.pinBottom)
+  const firstSectioned = unpinned.findIndex((i) => i.section)
+  const topItems = firstSectioned < 0 ? unpinned : unpinned.slice(0, firstSectioned)
+  const bottomItems = firstSectioned < 0 ? [] : unpinned.slice(firstSectioned)
   const pinnedItems = items.filter((i) => i.pinBottom)
 
   // ONE geometry recipe for every row in the rail. Hand-tuning a second copy is how a 32px row
@@ -188,43 +205,52 @@ export function NavRail({
   const showFull = overlay ? true : !collapsed
   // The full rail comes back to where it was scrolled, after a reload or a collapse (`railScroll.ts`).
   useRememberedScroll(scrollArea, showFull)
-  // The threads sit after the leading (unsectioned) destinations, before the first sectioned one.
-  const firstSectioned = topItems.findIndex((i) => i.section)
-  const threadsAt = firstSectioned < 0 ? topItems.length : firstSectioned
-  // One keyed list, so the threads keep their place in React's tree (and their state) when the
-  // destinations around them change, as an app pinned to the sidebar changes them.
-  const topRows = topItems.map((item) => renderItem(item, true))
-  if (showFull && threads) topRows.splice(threadsAt, 0, <Fragment key="threads">{threads}</Fragment>)
+  const history = showFull && threads ? threads : null
   const railBody = (
     // `data-tour` is the product tour's anchor for its first stop. A
     // literal, not a prop: the rail is the shell's one navigation and the tour points at it
     // by name, so a prop would only let a second rail claim the same anchor.
     //
-    // Two parts, top to bottom: what scrolls (the wordmark, the destinations and the threads) and
-    // the rows pinned under it (Settings, and the phone's Companion), which
-    // never scroll. One scroller with Settings at its foot overflowed a 720 px window by 14 px, which
-    // pushed Settings into the rail's bottom padding and cut its focus ring off at the edge. The foot
-    // never meets the scroll area's edges. A row in the scroll area can sit at its fold while it
-    // scrolls, so the scroll area keeps the ring's reach clear at its bottom (`RING_REACH`, and at its
-    // top the thread rail's pinned bar and the ring): the browser scrolls the row the focus moves to
-    // clear of either edge, ring and all.
-    <nav data-tour="rail" className="flex h-full flex-col"
+    // Three parts, top to bottom, which is the order focus moves in (#5878): the top block (the
+    // wordmark and the leading destinations), the chat history, and the bottom block (the sectioned
+    // destinations, then the pinned rows). The blocks keep their own height; the chat history takes
+    // what is left and is the one part that scrolls, so a long list never carries a shortcut away. A
+    // row in it can sit at its fold while it scrolls, so it keeps a focus ring's reach clear at its
+    // bottom (`RING_REACH`, and at its top the chat history's pinned bar and the ring): the browser
+    // scrolls the row the focus moves to clear of either edge, ring and all.
+    //
+    // A window too short for both blocks and the chat history's floor (`HISTORY_FLOOR`) scrolls the
+    // rail as one column, so every shortcut stays reachable; it never squeezes one.
+    <nav data-tour="rail" className="flex h-full flex-col overflow-y-auto overflow-x-hidden"
       style={{ width: overlay ? OVERLAY_W : w, background: material && !overlay ? 'transparent' : 'var(--color-rail)' }}>
-      <div ref={scrollArea} data-rail-scroll className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden px-m pt-l pb-s"
-        style={{ scrollPaddingBottom: RING_REACH }}>
+      <div data-rail-top className="flex shrink-0 flex-col gap-1 px-m pt-l pb-xs">
         {/* header — logo (the collapse toggle lives in the main area, not here) */}
-        <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
-          {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}
-          {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
+        <div className={cx('flex items-center pb-m', !home && (showFull ? 'px-s' : 'justify-center'))}>
+          {home ? (
+            // Home's link (#5880): the icon and name open it. The accessible name starts with the
+            // visible wordmark, so a voice command naming what is on screen reaches it (WCAG 2.5.3);
+            // collapsed there is no visible text, and the icon is Home's.
+            <button type="button" onClick={() => onSelect(home.id)}
+              aria-label={showFull ? `${wordmarkLabel}, ${home.label}` : home.label} title={home.label}
+              aria-current={home.id === activeId ? 'page' : undefined}
+              className={cx(rowCls('text-on-surface hover:bg-surface-low/60'), showFull ? 'px-s' : 'justify-center')}
+              style={{ minHeight: 32 }}>
+              {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}
+              {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
+            </button>
+          ) : showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
         </div>
-
-        {topRows}
+        {topItems.map((item) => renderItem(item, true))}
       </div>
-      {/* The pinned rows, under the scroller at the rail's foot. The live system widget lives in the
-          status line at the window's bottom left (app/StatusLine), collapsed to the gateway
-          connection. */}
-      {pinnedItems.length > 0 && (
+      <div ref={scrollArea} data-rail-scroll className="flex flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden px-m pb-s"
+        style={{ scrollPaddingBottom: RING_REACH, minHeight: history ? HISTORY_FLOOR : 0 }}>
+        {history}
+      </div>
+      {/* The bottom block. The live system widget lives in the status line at the window's bottom
+          left (app/StatusLine), collapsed to the gateway connection. */}
+      {bottomItems.length + pinnedItems.length > 0 && (
         <div data-rail-pinned className="flex shrink-0 flex-col gap-1 px-m pt-xs pb-l">
+          {bottomItems.map((item) => renderItem(item, true))}
           {pinnedItems.map((item) => renderItem(item, false))}
         </div>
       )}

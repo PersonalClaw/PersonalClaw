@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 import { gotoRoute } from './helpers'
 import { idleRunState } from '../src/lib/workPhase'
 
-// ── THE SIDEBAR HOLDS ITS PLACE: HUNDREDS OF THREADS, A LONG NAME, THE WAY BACK, AND THE PHONE ──────
+// ── THE SIDEBAR HOLDS ITS PLACE: HUNDREDS OF CHATS, A LONG NAME, THE WAY BACK, AND THE PHONE ────────
 //
 // #3814's and #3812's acceptance, asked of a real browser, since jsdom lays nothing out:
 //
@@ -19,7 +19,7 @@ import { idleRunState } from '../src/lib/workPhase'
 //   destination and the threads, the open thread lit; a thread opened from it closes it; and Back
 //   and Forward go between the two threads with the pane as it was.
 //
-// The threads and their project are route stubs, so the gateway's own state is never the variable.
+// The chats and their folder are route stubs, so the gateway's own state is never the variable.
 
 const RAIL = 'nav[data-tour="rail"]'
 const SCROLLER = `${RAIL} [data-rail-scroll]`
@@ -30,21 +30,21 @@ const pad = (i: number) => String(i).padStart(3, '0')
 const key = (i: number) => `e2e-many-${pad(i)}`
 const rowKey = (i: number) => `chat:${key(i)}`
 
-/** Three hundred chats in one project, newest first in the sidebar: `e2e-many-000` is the newest. */
+/** Three hundred chats in one folder, newest first in the sidebar: `e2e-many-000` is the newest. */
 const MANY = Array.from({ length: COUNT }, (_, i) => ({
-  key: key(i), title: `Garden thread ${pad(i)}`, messages: 2, run_state: 'idle', project_id: 'p-garden',
+  key: key(i), title: `Garden chat ${pad(i)}`, messages: 2, run_state: 'idle', project_id: 'p-garden', folder_id: 'f-garden',
   last_activity_ts: new Date(Date.UTC(2026, 9, 1) - i * 60_000).toISOString(),
 }))
 
 const LONG = 'Find a supplier for heritage tomato seeds that ships to the north before the first frost of the year'
-const LONG_PROJECT = 'The garden behind the house on the hill, with the raised beds, the greenhouse and the orchard'
+const LONG_FOLDER = 'The garden behind the house on the hill, with the raised beds, the greenhouse and the orchard'
 const FEW = [
-  { key: 'e2e-few-0', title: 'Plan the beds', messages: 2, run_state: 'idle', project_id: 'p-garden', last_activity_ts: '2026-10-01T00:03:00Z' },
-  { key: 'e2e-few-1', title: LONG, messages: 2, run_state: 'idle', project_id: 'p-garden', last_activity_ts: '2026-10-01T00:02:00Z' },
-  { key: 'e2e-few-2', title: 'Order the soil', messages: 2, run_state: 'idle', project_id: 'p-garden', last_activity_ts: '2026-10-01T00:01:00Z' },
+  { key: 'e2e-few-0', title: 'Plan the beds', messages: 2, run_state: 'idle', project_id: 'p-garden', folder_id: 'f-garden', last_activity_ts: '2026-10-01T00:03:00Z' },
+  { key: 'e2e-few-1', title: LONG, messages: 2, run_state: 'idle', project_id: 'p-garden', folder_id: 'f-garden', last_activity_ts: '2026-10-01T00:02:00Z' },
+  { key: 'e2e-few-2', title: 'Order the soil', messages: 2, run_state: 'idle', project_id: 'p-garden', folder_id: 'f-garden', last_activity_ts: '2026-10-01T00:01:00Z' },
 ]
 
-async function stubThreads(page: Page, sessions: { key: string; title: string }[], project = 'Garden'): Promise<void> {
+async function stubThreads(page: Page, sessions: { key: string; title: string }[], folder = 'Garden'): Promise<void> {
   const json = (body: unknown) => ({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
   await page.route('**/api/loops', (route) =>
     route.request().method() === 'GET' ? route.fulfill(json({ loops: [] })) : route.fallback())
@@ -52,8 +52,12 @@ async function stubThreads(page: Page, sessions: { key: string; title: string }[
     route.request().method() === 'GET' ? route.fulfill(json(sessions)) : route.fallback())
   await page.route('**/api/projects', (route) =>
     route.request().method() === 'GET'
-      ? route.fulfill(json({ projects: [{ id: 'p-garden', name: project, status: 'active' }] }))
+      ? route.fulfill(json({ projects: [{ id: 'p-garden', name: 'Garden', status: 'active' }] }))
       : route.fallback())
+  await page.route('**/api/chat/folders', (route) =>
+    route.request().method() === 'GET' ? route.fulfill(json([{ id: 'f-garden', name: folder }])) : route.fallback())
+  await page.route('**/api/chat/tags', (route) =>
+    route.request().method() === 'GET' ? route.fulfill(json([])) : route.fallback())
   // A thread the address opens reads its own detail: an idle chat with one exchange.
   await page.route(/\/api\/chat\/sessions\/e2e-(many|few)-\d+$/, (route) => {
     const k = new URL(route.request().url()).pathname.split('/').pop()!
@@ -125,8 +129,8 @@ const measure = (row: ReturnType<Page['locator']>) => row.evaluate((b) => {
 test.describe('a long name', () => {
   test.use({ viewport: { width: 1280, height: 800 } })
 
-  test("a thread's and a project's are cut short on screen, and shown whole while the row has keyboard focus", async ({ page }) => {
-    await stubThreads(page, FEW, LONG_PROJECT)
+  test("a chat's and a folder's are cut short on screen, and shown whole while the row has keyboard focus", async ({ page }) => {
+    await stubThreads(page, FEW, LONG_FOLDER)
     await gotoRoute(page, 'dashboard')
     const row = page.locator(`${RAIL} [data-thread-key="chat:e2e-few-1"]`)
     await expect(row).toBeVisible()
@@ -142,16 +146,16 @@ test.describe('a long name', () => {
     expect(focused.cut, 'the whole name shows while the row has focus').toBe(false)
     expect(focused.height, 'the row grows to hold it').toBeGreaterThan(resting.height)
 
-    // The project's own row, its disclosure.
-    const project = page.locator(RAIL).getByRole('button', { name: `${LONG_PROJECT}, 3 threads` })
-    const projectResting = await measure(project)
-    expect(projectResting.cut, "the project's name is cut short on screen").toBe(true)
-    await page.locator(RAIL).getByRole('searchbox', { name: 'Search threads' }).focus()
+    // The folder's own row, its disclosure.
+    const folder = page.locator(RAIL).getByRole('button', { name: `${LONG_FOLDER}, 3 chats` })
+    const folderResting = await measure(folder)
+    expect(folderResting.cut, "the folder's name is cut short on screen").toBe(true)
+    await page.locator(RAIL).getByRole('searchbox', { name: 'Search chats' }).focus()
     await page.keyboard.press('Tab')
-    await expect(project, 'Tab from the search reaches the project').toBeFocused()
-    const projectFocused = await measure(project)
-    expect(projectFocused.cut, "the project's whole name shows while its row has focus").toBe(false)
-    expect(projectFocused.height).toBeGreaterThan(projectResting.height)
+    await expect(folder, 'Tab from the search reaches the folder').toBeFocused()
+    const folderFocused = await measure(folder)
+    expect(folderFocused.cut, "the folder's whole name shows while its row has focus").toBe(false)
+    expect(folderFocused.height).toBeGreaterThan(folderResting.height)
   })
 })
 
@@ -198,9 +202,10 @@ test.describe('the way back to a thread', () => {
 /** The rows a person reaches the primary destinations by. */
 const PRIMARY = ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Automations', 'Capabilities', 'Settings']
 
-/** A destination's row, by its name: a row's badge rides its name ("Inbox, 2 new"). */
+/** A destination's row, by its name: a row's badge rides its name ("Inbox, 2 new"). Home has no
+ *  row: it is the icon and name at the top (#5880), "PersonalClaw, Home", or "Home" collapsed. */
 const destination = (within: ReturnType<Page['locator']>, name: string) =>
-  within.getByRole('button', { name: new RegExp(`^${name}(,|$)`) }).first()
+  within.getByRole('button', { name: name === 'Home' ? /^(PersonalClaw, )?Home$/ : new RegExp(`^${name}(,|$)`) }).first()
 
 for (const width of [320, 390, 412, 768, 1024, 1440]) {
   test.describe(`every primary destination at ${width} px`, () => {
@@ -250,7 +255,8 @@ for (const width of [320, 390, 412]) {
       await page.getByRole('button', { name: 'Expand sidebar' }).click()
       const drawer = page.locator(DRAWER)
       await expect.poll(() => drawerOpen(page), { message: 'the toolbar opens the drawer' }).toBe(true)
-      const rows = await drawer.locator('nav button[aria-label]').evaluateAll((bs) => bs.map((b) => (b.getAttribute('aria-label') ?? '').split(', ')[0]))
+      const rows = await drawer.locator('nav button[aria-label]')
+        .evaluateAll((bs) => bs.map((b) => (b.getAttribute('aria-label') ?? '').replace(/^PersonalClaw, /, '').split(', ')[0]))
       for (const name of PRIMARY) expect(rows, `the drawer has ${name}`).toContain(name)
       await expect.poll(() => litThread(page, DRAWER), { message: 'the open thread is lit in the drawer' }).toBe('chat:e2e-few-0')
 

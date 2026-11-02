@@ -189,7 +189,7 @@ function paletteAddresses(app: string): string[] {
     { id: SAMPLE.code, kind: 'code' },
     { id: SAMPLE.run, kind: 'general', run_id: SAMPLE.run },
   ] as ThreadLoop[]
-  const threads = numberedThreads({ sessions: [chat], loops, items: [], approvals: [] }, [], {})
+  const threads = numberedThreads({ sessions: [chat], loops, items: [], approvals: [] }, [], [], 'folder', {})
   return [
     ...[...nav.matchAll(/id: '([^']+)'/g)].map((m) => m[1]),
     ...[...(rows + keys).matchAll(/navigate\('([^']+)'\)/g)].map((m) => m[1]),

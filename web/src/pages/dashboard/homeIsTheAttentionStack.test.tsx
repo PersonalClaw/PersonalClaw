@@ -115,7 +115,7 @@ describe('the three groups', () => {
     expect(within(needsYou()).getByText('2')).toHaveAttribute('data-group-count')
   })
 
-  it('Recent and completed lists your threads, newest first, and leaves out a chat that runs', async () => {
+  it('Recent and completed lists your chats, newest first, and leaves out a chat that runs', async () => {
     chatSessions.mockResolvedValue([
       thread('c-old', 'Old plan', { last_ts: '2026-10-20T09:00:00Z' }),
       thread('c-new', 'Release notes', { last_ts: '2026-10-21T09:00:00Z' }),
@@ -123,7 +123,7 @@ describe('the three groups', () => {
     ])
     running.mockResolvedValue({ running: [runningRow({ work: 'chat:c-live', session: 'c-live', name: 'Live one' })], finished: [] })
     render(<HomeHarness />)
-    const list = await within(group('Recent and completed')).findByRole('list', { name: 'Your threads' })
+    const list = await within(group('Recent and completed')).findByRole('list', { name: 'Your chats' })
     const rows = within(list).getAllByRole('listitem').map((li) => li.textContent)
     expect(rows[0]).toContain('Release notes')
     expect(rows[1]).toContain('Old plan')
@@ -251,11 +251,11 @@ describe('the selected item’s detail', () => {
 })
 
 describe('the header', () => {
-  it('starts a new thread, and its View switches to Overview and back', async () => {
+  it('starts a new chat, and its View switches to Overview and back', async () => {
     const navigate = vi.fn()
     render(<HomeHarness navigate={navigate} />)
     await screen.findByText('Nothing is waiting on you.')
-    await userEvent.click(screen.getByRole('button', { name: /New thread/ }))
+    await userEvent.click(screen.getByRole('button', { name: /New chat/ }))
     expect(navigate).toHaveBeenCalledWith('chat/new')
     await userEvent.click(screen.getByRole('radio', { name: 'Overview' }))
     expect(await screen.findByTestId('home-overview')).toBeInTheDocument()
@@ -272,7 +272,8 @@ describe('the route is Home', () => {
     const src = app()
     expect(src).toMatch(/lazy\(\(\) => import\('\.\.\/pages\/dashboard\/Home'\)/)
     expect(src).toMatch(/case 'dashboard': return <Home \{\.\.\.r\} \/>/)
-    expect(src).toMatch(/case 'mission-control': return <Home \{\.\.\.r\} \/>/)
+    // Mission Control is Home on its Attention view; the old home opens on Overview (#5880).
+    expect(src).toMatch(/case 'mission-control': return <Home \{\.\.\.r\} defaultView="attention" \/>/)
   })
 
   it('keeps mission-control routable, and reachable from the palette', () => {

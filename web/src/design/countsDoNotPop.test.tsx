@@ -53,12 +53,12 @@ describe('the needs-you badge swaps its number in place', () => {
 
   it('a count going 1 → 2 keeps its element and writes no pop', () => {
     const { rerender } = render(<NeedsYouBadge navigate={() => {}} />)
-    const before = within(screen.getByRole('button', { name: '1 waiting on you — open Home' })).getByText('1')
+    const before = within(screen.getByRole('button', { name: '1 waiting on you — open Attention' })).getByText('1')
     expect(before.getAttribute('style') ?? '', 'the count animates in on its first frame').not.toMatch(/scale|opacity/)
 
     needs.value = { ...needs.value, rows: [row('a1'), row('a2')] }
     rerender(<NeedsYouBadge navigate={() => {}} />)
-    const after = within(screen.getByRole('button', { name: '2 waiting on you — open Home' })).getByText('2')
+    const after = within(screen.getByRole('button', { name: '2 waiting on you — open Attention' })).getByText('2')
     expectNoPop(before, after, 'the needs-you count')
   })
 })
