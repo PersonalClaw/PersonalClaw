@@ -67,6 +67,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     stand_in.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     stand_in.chmod(0o755)
     monkeypatch.setattr("personalclaw.agent._PERSONALCLAW_BIN", str(stand_in))
+    # The Doctor's sandbox line is the host's, and an issue of its own on a computer with none.
+    monkeypatch.setattr("personalclaw.cli_doctor._doctor_sandbox", lambda: [])
     return SimpleNamespace(
         root=tmp_path,
         pc=pc_home,

@@ -101,7 +101,8 @@ async def test_a_computer_with_no_sandbox_says_its_commands_run_unsandboxed(tmp_
         "label": "Not sandboxed",
         "said": (
             "This computer has no sandbox PersonalClaw can use, so the commands it runs are not "
-            "sandboxed: they run with your account's access."
+            "sandboxed: they run with your account's access, held only by PersonalClaw's own "
+            f"checks. {sandbox.no_sandbox_remedy()}"
         ),
     }
 

@@ -567,6 +567,30 @@ def _doctor_timezone() -> list[str]:
     return [f"timezone: unresolved — schedules fall back to {facts['resolved']}"]
 
 
+def _doctor_sandbox() -> list[str]:
+    """Print whether the commands PersonalClaw runs are sandboxed on this computer; return an
+    issue, naming what gives it the sandbox, where it has none (`sandbox.no_sandbox_remedy`).
+
+    A computer with no sandbox runs a chat's commands with PersonalClaw's own checks only, and
+    refuses one set to the strict sandbox: the log said so once, and nothing a user reads did."""
+    from personalclaw import sandbox
+
+    backend = sandbox.detect_backend(config_mode="standard")
+    if backend == sandbox.UNCHECKED:
+        print("  sandbox:     ⏳ its check did not answer in time; run the Doctor again")
+        return []
+    if backend != "none":
+        print(f"  sandbox:     🔒 {backend}")
+        return []
+    remedy = sandbox.no_sandbox_remedy()
+    print(
+        "  sandbox:     ⚠️  none: commands run with PersonalClaw's own checks only, and one set "
+        "to the strict sandbox is not run"
+    )
+    print(f"               {remedy}")
+    return [f"sandbox: none on this computer. {remedy}"]
+
+
 def _doctor_session_lifetime(cfg: AppConfig) -> list[str]:
     """Print how long a sign-in lasts; return an issue when ``auth.session_ttl`` is over the
     90-day limit.
@@ -1054,7 +1078,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     print(f"  approval:    {approval_grants.setting_sentence()}")
     issues.extend(_doctor_config_readable())
 
-    issues.extend(_doctor_timezone())
+    issues.extend(_doctor_timezone() + _doctor_sandbox())
     issues.extend(_doctor_credentials())
     issues.extend(_doctor_session_lifetime(cfg))
 

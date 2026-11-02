@@ -34,6 +34,13 @@ def _set_up_agent_config(tmp_path):
 
 
 class TestDoctor:
+    @pytest.fixture(autouse=True)
+    def _a_computer_with_a_sandbox(self, monkeypatch):
+        """These read the Doctor's other lines. A computer with no sandbox is an issue of its own
+        (``test_a_computer_with_no_sandbox_runs_no_strict_command``), so the host running them
+        has no say in whether they pass."""
+        monkeypatch.setattr("personalclaw.cli_doctor._doctor_sandbox", lambda: [])
+
     def test_doctor_with_agent(self, tmp_path):
         _set_up_agent_config(tmp_path)
         mock_run = MagicMock(returncode=0, stdout="personalclaw-cli 1.0.0", stderr="")
@@ -925,6 +932,13 @@ class TestDoctorStt:
     use_case_settings/stt.json (read via load_use_case_settings) and the
     active model in active_models.json (read via active_stt).
     """
+
+    @pytest.fixture(autouse=True)
+    def _a_computer_with_a_sandbox(self, monkeypatch):
+        """These read the Doctor's other lines. A computer with no sandbox is an issue of its own
+        (``test_a_computer_with_no_sandbox_runs_no_strict_command``), so the host running them
+        has no say in whether they pass."""
+        monkeypatch.setattr("personalclaw.cli_doctor._doctor_sandbox", lambda: [])
 
     def _agent_file(self, tmp_path):
         _set_up_agent_config(tmp_path)

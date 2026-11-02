@@ -99,12 +99,23 @@ def _on_this_computer(mode: str, *, subject: str) -> dict[str, object]:
             ),
         }
     if backend == "none":
+        remedy = sandbox.no_sandbox_remedy()
+        if sandbox.wrap_level(mode) == "strict":
+            return {
+                "confined": True,
+                "label": "Not run",
+                "said": (
+                    f"{subject[0].upper()}{subject[1:]} are set to the strict sandbox, and this "
+                    f"computer has no sandbox PersonalClaw can use, so they are not run. {remedy}"
+                ),
+            }
         return {
             "confined": False,
             "label": "Not sandboxed",
             "said": (
                 f"This computer has no sandbox PersonalClaw can use, so {subject} are not "
-                "sandboxed: they run with your account's access."
+                "sandboxed: they run with your account's access, held only by PersonalClaw's own "
+                f"checks. {remedy}"
             ),
         }
     level = sandbox.wrap_level(mode)
