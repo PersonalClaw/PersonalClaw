@@ -462,6 +462,13 @@ OWNER_ONLY_API_PATHS: dict[str, str] = {
     "/api/session-keepalive": (
         "keeping a chat's agent running past its idle limit — the chat's own tools send it"
     ),
+    # ── Your automations ──
+    # Morning triage's install and reconcile: it writes the schedule an unattended digest runs and
+    # spends on, the row `PUT /api/triggers/{id}` holds to you. The card's first install is yours,
+    # and so is the reconcile your Settings switch fires.
+    "/api/proactive/install": (
+        "installing Morning triage and setting when its unattended digest runs"
+    ),
 }
 
 

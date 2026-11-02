@@ -8,6 +8,11 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **Morning triage's install no longer moves a schedule you've installed: a different time sent to it is refused, and its schedule changes on the Triggers page. The install is yours alone: an installed app is refused it.**
+- **Pairing a new owner on a chat channel ends the previous owner's access there, and the Configure page says so before the code is made. Revoke on your owner's row in Settings › Sender trust unpairs them, so approvals and messages for you stop going to that account; the row is marked as your owner.**
+
 ## [0.3.4] — 2026-11-01
 
 An A2A client reads only the tasks it started, and its retry key names only its own request. Which search provider each search use goes to is yours: an installed app can no longer change it or test a provider. Every sign-in link PersonalClaw prints or opens names the exact address the gateway listens on. The agent's file tools, the Files view and the shell's screen refuse a project's secret files by name in every approval mode, so a step like copying `.env.example` to `.env` is now yours to do, and the git settings file and what runs at your login are yours to change. A command started in a folder takes only credentials from that folder's `.env`, and the shell's screen holds a glob it did not expand, and a bash action's payload keys, to stricter rules. A chat spans its pane's full width: its conversation, its composer and a new chat's prompts.

@@ -806,6 +806,8 @@ export interface ChannelTrustSender {
   name: string
   added_at: string
   via: string
+  /** The owner core keeps for this channel: Revoke on this row unpairs them. */
+  owner?: boolean
 }
 export interface ChannelTrustChannel { channel_id: string; name: string; added_at: string }
 /** An untracked group that messaged the agent (newest first). Its messages were refused; the

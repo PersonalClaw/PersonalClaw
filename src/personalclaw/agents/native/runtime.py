@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import logging
 import time
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -1371,7 +1372,9 @@ class NativeAgentRuntime(
                 # Said to whoever consumes this stream, which can reach the Inbox.
                 meta[TOOL_META_AUTO_DENIED] = True
             else:
-                request_id = call.tool_call_id or tool_name
+                # The id an answer names: the call's own, and for a call a model sent with none, one
+                # of its own, rather than the tool's name every such call of the tool would share.
+                request_id = call.tool_call_id or f"{tool_name}:{uuid.uuid4().hex[:12]}"
                 # Register the pending Future BEFORE surfacing the request, so an
                 # approve/reject that arrives the instant the UI sees the prompt
                 # (or synchronously, as in tests) is not lost to a race.

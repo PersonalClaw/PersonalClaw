@@ -209,6 +209,10 @@ async def api_channel_trust_revoke(request: web.Request) -> web.Response:
     ``sender_id`` is percent-decoded because a provider's sender id is opaque to core and
     may legitimately contain characters (an email address, say) that must be escaped in a
     path segment.
+
+    Revoking the channel's owner unpairs them (``channel_trust.forget_owner``): off the trust list
+    alone, they would stay the owner core sends approval prompts and messages to. The answer says
+    which it was (``owner``).
     """
     provider = request.match_info["provider"]
     sender_id = unquote(request.match_info["sender_id"])
@@ -216,6 +220,14 @@ async def api_channel_trust_revoke(request: web.Request) -> web.Response:
     if not channel_trust.is_allowed_sender(provider, sender_id):
         return json_error("channel_trust_sender_unknown", status=404)
 
-    channel_trust.deny_sender(provider, sender_id)
-    logger.info("channel trust: revoked sender on provider=%s", provider)
-    return web.json_response({"ok": True, "provider": provider, "sender_id": sender_id})
+    # Who the owner is, read once, by the unpairing itself: an owner paired anew since the page
+    # showed this row is revoked as the sender it now is.
+    owner = channel_trust.forget_owner(provider, sender_id)
+    if not owner:
+        channel_trust.deny_sender(provider, sender_id)
+    logger.info(
+        "channel trust: revoked %s on provider=%s", "owner" if owner else "sender", provider
+    )
+    return web.json_response(
+        {"ok": True, "provider": provider, "sender_id": sender_id, "owner": owner}
+    )
