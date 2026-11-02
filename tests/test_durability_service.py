@@ -27,6 +27,20 @@ def _snap(directory: Path, when: datetime, *, size: int = 100) -> Path:
     return path
 
 
+def _two_days_in_one_week_and_month(now: datetime) -> tuple[datetime, datetime]:
+    """The newest two consecutive days before *now* that share an ISO week and a calendar month,
+    as retention groups snapshots (``Snapshot.week``, ``Snapshot.month``). Yesterday and the day
+    before straddle both on a Monday the 2nd or a Tuesday the 1st, and then the weekly and the
+    monthly tier each keep one of them."""
+    newer = now - timedelta(days=1)
+    while True:
+        older = newer - timedelta(days=1)
+        a, b = (retention.Snapshot(Path("."), when) for when in (newer, older))
+        if (a.week, a.month) == (b.week, b.month):
+            return newer, older
+        newer = older
+
+
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("PERSONALCLAW_HOME", str(tmp_path / "home"))
@@ -406,14 +420,32 @@ class TestNightlySnapshot:
         snap_dir.mkdir(parents=True, exist_ok=True)
         # Two dailies inside a single week+month, so only the weekly/monthly promotion
         # may keep anything: a working daily=0 keeps exactly one of them, the `or` chain
-        # (daily=14) keeps both.
-        base = datetime.now(timezone.utc) - timedelta(days=1)
-        _snap(snap_dir, base)
-        _snap(snap_dir, base - timedelta(days=1))
+        # (daily=14) keeps both. Picked so on any calendar day.
+        for when in _two_days_in_one_week_and_month(datetime.now(timezone.utc)):
+            _snap(snap_dir, when)
         result = service.run_nightly_snapshot()
         assert result.ok, result.detail
         assert result.extra["tiers"]["daily"] == 0, "the configured 0 must reach apply_retention"
         assert result.extra["pruned"], "daily=0 must disable the daily tier, not restore 14"
+
+    def test_the_zeroed_tiers_two_dailies_share_a_week_and_month_on_any_day(self):
+        """🔴 Red before: the two dailies were yesterday and the day before, which on Monday
+        2 November 2026 are a Sunday in October's last ISO week and the 31st of October. The
+        weekly and the monthly tier then kept one each, nothing was pruned, and the test above
+        failed, as it did on every Monday the 2nd and Tuesday the 1st (five days in 2026). Every
+        day of two years now gives a pair in one week and month, at most a week back."""
+        monday_the_2nd = datetime(2026, 11, 2, 1, tzinfo=timezone.utc)
+        yesterday, before = (
+            retention.Snapshot(Path("."), monday_the_2nd - timedelta(days=n)) for n in (1, 2)
+        )
+        assert (yesterday.week, yesterday.month) != (before.week, before.month)
+        start = datetime(2026, 1, 1, 1, tzinfo=timezone.utc)
+        for n in range(731):
+            now = start + timedelta(days=n)
+            newer, older = _two_days_in_one_week_and_month(now)
+            a, b = (retention.Snapshot(Path("."), when) for when in (newer, older))
+            assert (a.week, a.month) == (b.week, b.month), now
+            assert newer - older == timedelta(days=1) and now - newer <= timedelta(days=7), now
 
     def test_all_tiers_zero_retains_nothing(self):
         """The boundary the `or` chain hid completely: every tier disabled."""
