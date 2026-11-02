@@ -89,7 +89,9 @@ class AttachmentExtractor:
         except Exception:
             logger.warning("attachment extract failed for %s", path, exc_info=True)
             return Extracted("", False)
-        return Extracted(scanned_head(got.text)[:_MAX_TEXT_CHARS], got.read, got.unread)
+        text = scanned_head(got.text)[:_MAX_TEXT_CHARS]
+        cut = len(got.text) if len(text) < len(got.text) else 0
+        return Extracted(text, got.read, got.unread, full_chars=cut)
 
     def peek(self, path: str, mime: str | None, on_done: Callable[[], None]) -> Extracted | None:
         """What extraction got from *path* when it has finished, else None. Never waits.
@@ -149,21 +151,29 @@ def get_extractor() -> AttachmentExtractor:
 def file_block(name: str, got: Extracted) -> str:
     """One attached file as a turn hands it to the model: core's label, then the text read from
     it, masked and fenced as data (``security.fence_untrusted``), as a fetched page or an Inbox
-    message is. Where nothing was read, core says what it hands instead: the file's size and
-    format, or why its text is withheld."""
+    message is. Where that text is a cut of what was read, core's line after the fence says how
+    much of it the model was given. Where nothing was read, core says what it hands instead: the
+    file's size and format, or why its text is withheld."""
     from personalclaw.knowledge.extract import withheld
     from personalclaw.security import fence_untrusted, redact_for_model
 
     head = f"### Attached file: {name}\n\n"
     if got.read and got.text:
         text = redact_for_model(got.text)
-        return head + fence_untrusted(
+        fenced = fence_untrusted(
             text,
             source="attachment",
             source_type="file",
             source_id=name,
             transformation_path="extract",
         )
+        if not got.full_chars:
+            return head + fenced
+        cut = (
+            f"(Only the first {len(got.text):,} of {got.full_chars:,} characters of this file "
+            "were given to you. The rest was left out: say so if your answer depends on it.)"
+        )
+        return f"{head}{fenced}\n\n{cut}"
     if why := withheld(got.unread):
         return f"{head}(Not given to you: {why}.)"
     return head + (redact_for_model(got.text) if got.text else "(No extractable text content.)")

@@ -433,8 +433,10 @@ A binary file named as text or code is not read, and the model is told only its 
 size. The text is scanned first: text that fails the content safety scan is not given to the
 model, and the model and the file's preview say so. Keys the file holds are masked, as the
 Files view masks them. The model gets at most 200,000 characters of one file, and of a text
-larger than 512 KB only its first 256 KB. Click the file's chip on your sent message to see
-the text the model was given.
+larger than 512 KB only its first 256 KB. A file cut this way comes with a line after its text
+telling the model how many of the file's characters it was given, so it can say its answer
+covers only the beginning. Click the file's chip on your sent message to see the text the
+model was given.
 
 ### How an attached image reaches the model
 

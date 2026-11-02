@@ -19,6 +19,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A page rendered with the `js-render` extra makes no request the egress guard doesn't see: everything it loads, its scripts' requests and each redirect are checked under the run's egress policy and fetched at the address the guard checked, a refused one is in the security log, and the sockets a page can open are refused.**
 - **The gateway's children (the tool server an agent CLI runs and a scheduled script's calls back) send its credential only to this home's gateway: before every call each asks the port it was handed, at `127.0.0.1`, which home it serves, and has the gateway prove it holds the home's secret, and sends nothing to another home's gateway or a program that is not one. Every command that sends the home's secret asks for the same proof, so a gateway from an older PersonalClaw is asked to restart.**
 - **An agent working for an allowed automation's run changes only a run of its own: an edit, a rewind, a run from a step or a fork of a run started by hand or by another fire is refused in words and leaves that run as it was, through its tools and the gateway's routes alike.**
+- **A file attached in a chat that is cut to its size limit now tells the model so: a line after the file's text says how many of its characters the model was given, so an answer about a long log or document can say it covers only the beginning. Before, the model answered as if it had read the whole file.**
 
 ## [0.3.4] — 2026-11-01
 
