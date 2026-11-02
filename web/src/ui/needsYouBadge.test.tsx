@@ -50,32 +50,33 @@ describe('the needs-you badge', () => {
   it('keeps a dash until the first read lands: its absence would say nothing waits', async () => {
     waiting.mockReturnValue(new Promise(() => {}))
     render(<NeedsYouBadge navigate={() => {}} />)
-    const b = await screen.findByRole('button', { name: 'What waits on you is not read yet — open Home' })
+    const b = await screen.findByRole('button', { name: 'What waits on you is not read yet — open Attention' })
     expect(within(b).getByText('—')).toBeInTheDocument()
   })
 
   it('says the count could not be read, never that nothing waits', async () => {
     waiting.mockRejectedValue(new Error('gateway down'))
     render(<NeedsYouBadge navigate={() => {}} />)
-    const b = await screen.findByRole('button', { name: 'What waits on you couldn’t be read — open Home' })
+    const b = await screen.findByRole('button', { name: 'What waits on you couldn’t be read — open Attention' })
     expect(within(b).getByText('—')).toBeInTheDocument()
   })
 
-  it('counts every row of Needs You, notes included, and opens Home', async () => {
+  it('counts every row of Needs You, notes included, and opens Home on Attention', async () => {
     waiting.mockResolvedValue(waitingList([waitingItem(), waitingItem({ id: 'question:q', kind: 'question', brief: { questions: [{ question: 'Q?' }] } })]))
     inboxOpen.mockResolvedValue([{ id: 'n1', item_kind: 'user_note', status: 'pending', message: 'Call the bank', created_at: 1 }])
     const navigate = vi.fn()
     render(<NeedsYouBadge navigate={navigate} />)
-    const b = await screen.findByRole('button', { name: '3 waiting on you — open Home' })
+    const b = await screen.findByRole('button', { name: '3 waiting on you — open Attention' })
     expect(within(b).getByText('3')).toBeInTheDocument()
     await userEvent.click(b)
-    expect(navigate).toHaveBeenCalledWith('dashboard')
+    // 🔴 Red before: it opened `#/dashboard`, which now shows Overview (#5880).
+    expect(navigate).toHaveBeenCalledWith('dashboard?view=attention')
   })
 
   it('agrees with Home’s Needs You, read once for both', async () => {
     waiting.mockResolvedValue(waitingList([waitingItem(), waitingItem({ id: 'question:q', kind: 'question', brief: { questions: [{ question: 'Q?' }] } })]))
     render(<><NeedsYouBadge navigate={() => {}} /><HomeHarness /></>)
-    await screen.findByRole('button', { name: '2 waiting on you — open Home' })
+    await screen.findByRole('button', { name: '2 waiting on you — open Attention' })
     const group = screen.getByRole('region', { name: 'Needs You' })
     expect(within(group).getByText('2')).toHaveAttribute('data-group-count')
     expect(waiting).toHaveBeenCalledTimes(1)

@@ -194,9 +194,11 @@ function rowKey(row: NeedsYouRow): string {
   return row.key
 }
 
-export function Home(route: RouteProps) {
+/** Home: Overview, or Attention when it is asked for (#5880). *defaultView* is the view the address
+ *  opens on with no `?view`: Overview at `#/dashboard`, Attention at `#/mission-control`. */
+export function Home({ defaultView = 'overview', ...route }: RouteProps & { defaultView?: 'overview' | 'attention' }) {
   const { query, setQuery, navigate } = route
-  const view = query.view === 'overview' ? 'overview' : 'attention'
+  const view = query.view === 'overview' || query.view === 'attention' ? query.view : defaultView
   const { name } = useIdentity()
   // The header's two actions go through the one responsive cluster, which sheds labels as the
   // room narrows. A phone's New thread keeps a 44 px target beside the shell's corner controls.
@@ -210,7 +212,7 @@ export function Home(route: RouteProps) {
           <HeaderControl icon={Plus} label="New thread" variant="secondary" priority="primary"
             className={phone ? 'min-h-11 min-w-11' : undefined} onClick={() => navigate('chat/new')} />
           <HeaderSegmented ariaLabel="View" options={HOME_VIEWS} value={view}
-            onChange={(k) => setQuery({ view: k === 'overview' ? 'overview' : null, open: null })} />
+            onChange={(k) => setQuery({ view: k === defaultView ? null : k, open: null })} />
         </HeaderActions>
       )}
     />

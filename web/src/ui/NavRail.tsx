@@ -67,9 +67,14 @@ const DEFAULT_W = 196
  *  is the status line's, at the window's bottom left. No operator/identity footer (single-user;
  *  Settings is in nav). */
 export function NavRail({
-  items, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, material = false, threads,
+  items, home, activeId, onSelect, collapsed, overlay = false, overlayOpen = false, onScrimClick, material = false, threads,
 }: {
   items: NavItem[]
+  /** The destination the rail's icon and name open, Home (#5880): its header is then that
+   *  destination's link, first in the rail's order, named "<wordmark>, <label>" expanded (its visible
+   *  text first) and "<label>" collapsed, and lit while it is the page. Unset, the header only names
+   *  the app. */
+  home?: Pick<NavItem, 'id' | 'label'>
   /** The chat history (`ThreadRail`), between the top and the bottom block, in the expanded rail
    *  and the phone's drawer: the one part of the rail that scrolls. The collapsed rail is icons only
    *  and shows none: a chat is reached there from Home, the palette or a key. */
@@ -220,9 +225,20 @@ export function NavRail({
       style={{ width: overlay ? OVERLAY_W : w, background: material && !overlay ? 'transparent' : 'var(--color-rail)' }}>
       <div data-rail-top className="flex shrink-0 flex-col gap-1 px-m pt-l pb-xs">
         {/* header — logo (the collapse toggle lives in the main area, not here) */}
-        <div className={cx('flex items-center pb-m', showFull ? 'px-s' : 'justify-center')}>
-          {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}
-          {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
+        <div className={cx('flex items-center pb-m', !home && (showFull ? 'px-s' : 'justify-center'))}>
+          {home ? (
+            // Home's link (#5880): the icon and name open it. The accessible name starts with the
+            // visible wordmark, so a voice command naming what is on screen reaches it (WCAG 2.5.3);
+            // collapsed there is no visible text, and the icon is Home's.
+            <button type="button" onClick={() => onSelect(home.id)}
+              aria-label={showFull ? `${wordmarkLabel}, ${home.label}` : home.label} title={home.label}
+              aria-current={home.id === activeId ? 'page' : undefined}
+              className={cx(rowCls('text-on-surface hover:bg-surface-low/60'), showFull ? 'px-s' : 'justify-center')}
+              style={{ minHeight: 32 }}>
+              {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}
+              {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
+            </button>
+          ) : showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}
         </div>
         {topItems.map((item) => renderItem(item, true))}
       </div>

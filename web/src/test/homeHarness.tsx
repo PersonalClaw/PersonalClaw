@@ -9,8 +9,11 @@ import { Home } from '../pages/dashboard/Home'
  *
  *  Lives in `src/test/` beside the vitest setup file: it is test support, not app code, and nothing
  *  in the app imports it. The `api` a test mocks is its own (`vi.mock` is per file). */
-export function HomeHarness({ query: initial = {}, navigate = () => {}, onQuery }: {
+export function HomeHarness({ query: initial = {}, navigate = () => {}, onQuery, defaultView = 'attention' }: {
   query?: Record<string, string>
+  /** The view Home opens on with no `?view`: Attention, as `#/mission-control` opens it, since the
+   *  tests that mount it read Needs You and the rest of that view. */
+  defaultView?: 'overview' | 'attention'
   navigate?: RouteProps['navigate']
   onQuery?: (query: Record<string, string>) => void
 }) {
@@ -26,7 +29,7 @@ export function HomeHarness({ query: initial = {}, navigate = () => {}, onQuery 
       return next
     })
   }
-  return <Home sub="" navEpoch={0} navigate={navigate} query={query} setQuery={setQuery} />
+  return <Home sub="" navEpoch={0} navigate={navigate} query={query} setQuery={setQuery} defaultView={defaultView} />
 }
 
 /** One waiting item as `GET /api/waiting` serves it (`personalclaw.waiting._item`): an approval of

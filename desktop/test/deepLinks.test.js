@@ -733,8 +733,11 @@ describe("the route list is the app's own", () => {
     // The floor names pages rather than counting them: the redesign folds the sidebar into fewer
     // top-level destinations (8 since Automations), and a count sized to the old nav read that as
     // a list the matcher had lost.
-    for (const id of ["dashboard", "chat", "settings"]) assert.ok(navIds.includes(id), `vacuity floor: NAV must hold ${id}`);
+    for (const id of ["chat", "projects", "settings"]) assert.ok(navIds.includes(id), `vacuity floor: NAV must hold ${id}`);
     assert.ok(extras.length >= 3, "vacuity floor");
+    // Home has no row in NAV since its link is the sidebar's icon and name, so ROUTABLE names it:
+    // `personalclaw://dashboard` still opens Home.
+    assert.ok([...navIds, ...extras].includes("dashboard"), "Home stays routable");
     assert.deepStrictEqual([...ROUTES].sort(), [...new Set([...navIds, ...extras])].sort());
   });
 

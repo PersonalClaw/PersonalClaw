@@ -198,9 +198,10 @@ test.describe('the way back to a thread', () => {
 /** The rows a person reaches the primary destinations by. */
 const PRIMARY = ['Home', 'Chat', 'Projects', 'Library', 'Inbox', 'Automations', 'Capabilities', 'Settings']
 
-/** A destination's row, by its name: a row's badge rides its name ("Inbox, 2 new"). */
+/** A destination's row, by its name: a row's badge rides its name ("Inbox, 2 new"). Home has no
+ *  row: it is the icon and name at the top (#5880), "PersonalClaw, Home", or "Home" collapsed. */
 const destination = (within: ReturnType<Page['locator']>, name: string) =>
-  within.getByRole('button', { name: new RegExp(`^${name}(,|$)`) }).first()
+  within.getByRole('button', { name: name === 'Home' ? /^(PersonalClaw, )?Home$/ : new RegExp(`^${name}(,|$)`) }).first()
 
 for (const width of [320, 390, 412, 768, 1024, 1440]) {
   test.describe(`every primary destination at ${width} px`, () => {
@@ -250,7 +251,8 @@ for (const width of [320, 390, 412]) {
       await page.getByRole('button', { name: 'Expand sidebar' }).click()
       const drawer = page.locator(DRAWER)
       await expect.poll(() => drawerOpen(page), { message: 'the toolbar opens the drawer' }).toBe(true)
-      const rows = await drawer.locator('nav button[aria-label]').evaluateAll((bs) => bs.map((b) => (b.getAttribute('aria-label') ?? '').split(', ')[0]))
+      const rows = await drawer.locator('nav button[aria-label]')
+        .evaluateAll((bs) => bs.map((b) => (b.getAttribute('aria-label') ?? '').replace(/^PersonalClaw, /, '').split(', ')[0]))
       for (const name of PRIMARY) expect(rows, `the drawer has ${name}`).toContain(name)
       await expect.poll(() => litThread(page, DRAWER), { message: 'the open thread is lit in the drawer' }).toBe('chat:e2e-few-0')
 

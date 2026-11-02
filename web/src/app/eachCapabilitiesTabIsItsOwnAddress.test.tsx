@@ -279,10 +279,11 @@ describe('the sidebar holds one Capabilities row', () => {
  *  the pinned rows. */
 function railGroups(): { header: string, rows: string[] }[] {
   const groups = [{ header: '', rows: [] as string[] }]
-  const area = rail().querySelector('[data-rail-scroll]')!
+  // The destinations are in the rail's two blocks (#5878): the top block's leading rows, then the
+  // bottom block's sectioned rows and the pinned rows that close it.
+  const top = rail().querySelector('[data-rail-top]')!
   const foot = rail().querySelector('[data-rail-pinned]')
-  for (const item of [...area.children, ...(foot ? [null, ...foot.children] : [])]) {
-    // The foot's pinned rows end every section.
+  for (const item of [...top.children, ...(foot ? [null, ...foot.children] : [])]) {
     if (item === null) { groups.push({ header: '', rows: [] }); continue }
     const button = item.lastElementChild
     if (item.tagName !== 'DIV' || item.getAttribute('role') === 'group' || !(button instanceof HTMLButtonElement)) continue
@@ -295,7 +296,7 @@ function railGroups(): { header: string, rows: string[] }[] {
 
 /** The destinations the full sidebar holds, top to bottom, each with the address its row opens. */
 const DESTINATIONS = [
-  ['Home', 'dashboard'],
+  // Home has no row: its link is the icon and name at the sidebar's top (#5880).
   ['Chat', 'chat'],
   ['Projects', 'projects'],
   ['Library', 'library'],

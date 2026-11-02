@@ -28,7 +28,7 @@ const STOPS: Stop[] = [
     body: 'Messages, reminders and finished runs queue up here instead of chasing you across the app.',
   },
   {
-    id: 'approvals', anchor: 'approvals', route: 'dashboard', icon: ShieldCheck,
+    id: 'approvals', anchor: 'approvals', route: 'dashboard?view=attention', icon: ShieldCheck,
     title: 'Anything risky waits for you here',
     body: '"Needs You" on your home screen holds everything waiting on your answer: approvals, questions, runs stopped at a step and skill proposals. Approve or reject it in one click.',
   },
@@ -88,13 +88,18 @@ export function ProductTour({ route, navigate }: {
     return onProductTourRequest(() => { if (consumeProductTourRequest()) start() })
   }, [start])
 
-  // Take the user to the stop's surface. The spotlight polls for its anchor, so it is fine
-  // that the page mounts a few frames after this.
+  // Take the user to the stop's surface, once, as the stop opens. The shell's `navigate` is a new
+  // function on every render and re-renders the shell even to the address it is at, so a run on
+  // each new `navigate` went on for ever at a stop whose route carries a query
+  // (`dashboard?view=attention`), which the route id never equals. The spotlight polls for its
+  // anchor, so it is fine that the page mounts a few frames after this.
+  const navigateRef = useRef(navigate)
+  navigateRef.current = navigate
   useEffect(() => {
     if (index === null) return
     const target = STOPS[index].route
-    if (target && target !== routeRef.current) navigate(target)
-  }, [index, navigate])
+    if (target && target !== routeRef.current) navigateRef.current(target)
+  }, [index])
 
   const exit = useCallback(() => {
     const back = launchedFrom.current

@@ -272,7 +272,8 @@ describe('the route is Home', () => {
     const src = app()
     expect(src).toMatch(/lazy\(\(\) => import\('\.\.\/pages\/dashboard\/Home'\)/)
     expect(src).toMatch(/case 'dashboard': return <Home \{\.\.\.r\} \/>/)
-    expect(src).toMatch(/case 'mission-control': return <Home \{\.\.\.r\} \/>/)
+    // Mission Control is Home on its Attention view; the old home opens on Overview (#5880).
+    expect(src).toMatch(/case 'mission-control': return <Home \{\.\.\.r\} defaultView="attention" \/>/)
   })
 
   it('keeps mission-control routable, and reachable from the palette', () => {

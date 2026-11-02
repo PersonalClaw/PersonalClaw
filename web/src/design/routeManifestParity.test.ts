@@ -65,12 +65,15 @@ const EXEMPT_FROM_THE_HARNESS: Record<string, string> = {
 
 const WEB = process.cwd()
 
-/** The `id` fields of `const NAV: NavItem[] = [...]` in App.tsx, in order. */
+/** The sidebar's destinations in App.tsx, in order: Home (`const HOME: NavItem`), which the icon and
+ *  name at the top open (#5880), then the `id` fields of `const NAV: NavItem[] = [...]`. */
 function navIds(): string[] {
   const src = readFileSync(join(WEB, 'src/app/App.tsx'), 'utf8')
+  const home = src.match(/const HOME: NavItem = \{\s*id: '([^']+)'/)
+  if (!home) throw new Error('could not locate the HOME literal in App.tsx')
   const block = src.match(/const NAV: NavItem\[\] = \[(.*?)\n\]/s)
   if (!block) throw new Error('could not locate the NAV literal in App.tsx')
-  return [...block[1].matchAll(/\{\s*id: '([^']+)'/g)].map((m) => m[1])
+  return [home[1], ...[...block[1].matchAll(/\{\s*id: '([^']+)'/g)].map((m) => m[1])]
 }
 
 /** The `route` fields of `export const ROUTES: RouteEntry[] = [...]` in e2e/routes.ts. */

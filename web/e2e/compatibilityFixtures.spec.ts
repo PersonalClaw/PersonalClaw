@@ -92,7 +92,10 @@ function look(page: Page): Promise<Seen> {
       chosen[name] = title.startsWith(`${name}: `) ? title.slice(name.length + 2) : (pill.textContent ?? '').trim()
     }
     const rail = document.querySelector('[role="dialog"][aria-label="Navigation"] nav') ?? document.querySelector('nav[data-tour="rail"]')
-    const rows = rail ? [...rail.querySelectorAll('button[aria-label]')].filter(shown).map((b) => b.getAttribute('aria-label') ?? '') : []
+    // Home is the icon and name at the top (#5880), named by the wordmark the personality shows
+    // ("PersonalClaw, Home"), or "Home" collapsed: read by its title, which is Home's alone.
+    const rows = rail ? [...rail.querySelectorAll('button[aria-label]')].filter(shown)
+      .map((b) => (b.closest('[data-rail-top]') && b.getAttribute('title') === 'Home' ? 'Home' : b.getAttribute('aria-label') ?? '')) : []
     const main = document.querySelector('main') as HTMLElement | null
     return {
       hash: location.hash,
@@ -437,9 +440,13 @@ async function sees(page: Page, f: Fixture, form: Form, step: string): Promise<v
     .toEqual(f.expected(form))
 }
 
+/** The icon and name at the top of the sidebar, Home's link (#5880): named by the wordmark the
+ *  personality shows ("PersonalClaw, Home"), or "Home" collapsed, and titled Home either way. */
+const homeLink = (within: ReturnType<Page['locator']>) => within.locator('[data-rail-top] button[title="Home"]')
+
 /** Home, pushed on top of the page as a click in the sidebar pushes it. */
 async function goHomeFromTheSidebar(page: Page): Promise<void> {
-  await page.locator(RAIL).getByRole('button', { name: 'Home', exact: true }).click()
+  await homeLink(page.locator(RAIL)).click()
   await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/dashboard')
 }
 
@@ -481,7 +488,7 @@ function holdsAsItWasLeft(f: Fixture): void {
         const held = Object.keys(f.drawer) as (keyof NonNullable<Fixture['drawer']>)[]
         expect(Object.fromEntries(held.map((k) => [k, { rows, lit }[k]])), `${f.name}: the drawer at 390 px`).toEqual(f.drawer)
       }
-      await drawer.getByRole('button', { name: 'Home', exact: true }).click()
+      await homeLink(drawer).click()
       await expect.poll(() => phone.evaluate(() => location.hash), { message: `${f.name}: the drawer's Home` }).toBe('#/dashboard')
       await phone.goBack()
       await sees(phone, f, 'compact', 'after Back from the drawer at 390 px')

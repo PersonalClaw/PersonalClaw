@@ -65,7 +65,7 @@ describe('the group filter', () => {
   it('never hides what waits from the badge: with Needs You filtered out, it still counts every ask', async () => {
     localStorage.setItem('home-groups', 'running-now')
     render(<><NeedsYouBadge navigate={() => {}} /><HomeHarness /></>)
-    expect(await screen.findByRole('button', { name: '2 waiting on you — open Home' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: '2 waiting on you — open Attention' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Needs You' })).toBeNull()
   })
 

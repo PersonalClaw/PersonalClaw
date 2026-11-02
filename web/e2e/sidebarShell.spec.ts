@@ -12,6 +12,9 @@ import { gotoRoute } from './helpers'
 // history's floor, the sidebar scrolls as one column, the chat history keeps its floor, and Settings,
 // the last control, is still reached and shown whole.
 //
+// #5880's, asked of the same browser: the icon and name at the top are Home's link, from any page
+// they open Home on Overview and light while it is open, and Home has no row of its own.
+//
 // The chats are route stubs, so the layout is the only variable.
 
 const RAIL = 'nav[data-tour="rail"]'
@@ -137,5 +140,21 @@ test.describe('the sidebar in a window too short for both blocks and the chat hi
       return { whole: r.top >= 0 && r.bottom <= innerHeight, mine: !!hit && el.contains(hit) }
     })
     expect(shown, 'focus brings Settings into view, whole and topmost').toEqual({ whole: true, mine: true })
+  })
+})
+
+test.describe('the icon and name', () => {
+  test.use({ viewport: { width: 1280, height: 800 } })
+
+  test("are Home's link: from any page they open Home on Overview, and light while it is open", async ({ page }) => {
+    await stubChats(page)
+    await gotoRoute(page, 'projects')
+    const home = page.locator(RAIL).getByRole('button', { name: 'PersonalClaw, Home', exact: true })
+    await expect(home).not.toHaveAttribute('aria-current', 'page')
+    await home.click()
+    await expect.poll(() => page.evaluate(() => location.hash)).toBe('#/dashboard')
+    await expect(page.getByRole('radiogroup', { name: 'View' }).getByRole('radio', { name: /Overview/ })).toBeChecked()
+    await expect(home).toHaveAttribute('aria-current', 'page')
+    await expect(page.locator(RAIL).getByRole('button', { name: /^Home(,|$)/ }), 'and Home has no row of its own').toHaveCount(0)
   })
 })

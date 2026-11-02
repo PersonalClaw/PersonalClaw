@@ -2,7 +2,8 @@ import { Hand } from 'lucide-react'
 import { withWeight } from '../design/fontWeight'
 import { useNeedsYou } from '../lib/useNeedsYou'
 
-/** The toolbar's needs-you badge: how many things wait on you, on every page, opening Home.
+/** The toolbar's needs-you badge: how many things wait on you, on every page, opening Home on its
+ *  Attention view (#5880), where they are.
  *
  *  It counts the rows of Home's Needs You from the same read (`useNeedsYou`), so the badge and the
  *  group can never disagree about how many there are. It shows nothing at 0: a counter reading 0
@@ -21,8 +22,8 @@ export function NeedsYouBadge({ navigate, className }: {
   const label = !unknown ? `${n} waiting on you`
     : error ? 'What waits on you couldn’t be read' : 'What waits on you is not read yet'
   return (
-    <button type="button" onClick={() => navigate('dashboard')}
-      aria-label={`${label} — open Home`} title={label}
+    <button type="button" onClick={() => navigate('dashboard?view=attention')}
+      aria-label={`${label} — open Attention`} title={label}
       className={`relative grid size-7 place-items-center rounded-pill transition-colors${className ? ` ${className}` : ''}`}
       style={{ color: 'var(--color-on-surface-low)' }}>
       <Hand size={16} aria-hidden />
