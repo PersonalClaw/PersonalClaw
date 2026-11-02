@@ -586,10 +586,13 @@ Data leaving the running system:
   agent config carry a `{{secret:…}}` reference, resolved where the value is used: an MCP
   server's at spawn, the webhook token when a request is checked. An app setting kept as plain
   text refuses an address with a password or token written into it, at the one store every app
-  settings writer goes through (`secret_refs.store`). Every path that adds or changes
-  an MCP server writes through `secret_refs.write_mcp_document`. Deleting a provider, removing an MCP
-  server (the Tools page and the provider card share one delete, `secret_refs.remove_mcp_servers`,
-  which takes it out of both documents), or either removal rung of an app, deletes what it owned.
+  settings writer goes through (`secret_refs.store`). An automation's action settings its app
+  declares sensitive are held the same way, under a key that automation alone holds
+  (`triggers.held_secrets`, `secret_refs.trigger_owner`), in `triggers.json` and `hooks.json`.
+  Every path that adds or changes an MCP server writes through `secret_refs.write_mcp_document`.
+  Deleting a provider, removing an MCP server (the Tools page and the provider card share one
+  delete, `secret_refs.remove_mcp_servers`, which takes it out of both documents), or either
+  removal rung of an app, deletes what it owned.
   An owned secret is never put in the gateway's environment, so no child process, an MCP server
   included, inherits another record's value: `AppConfig.load_credentials` and the CLI's `.env`
   loader (`cli.main`) both skip `PCSECRET_` keys. `GET /api/mcp/importable` sends another tool's

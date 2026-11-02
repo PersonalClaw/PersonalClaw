@@ -43,6 +43,7 @@ from personalclaw.dashboard.state import DashboardState
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import bool_field, json_object_body, require_bool
 from personalclaw.security import redact_values_for_display
+from personalclaw.triggers import held_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -494,7 +495,9 @@ async def _run_store(raw: str, request: web.Request) -> web.Response:
                 "name": _redact(row.trigger.name),
                 "result": result.data,
                 "text": result.text,
-                "would_run": redact_values_for_display(_inline_action(row.trigger)),
+                "would_run": redact_values_for_display(
+                    held_secrets.shown_action(_inline_action(row.trigger))
+                ),
             }
         )
 
@@ -909,7 +912,9 @@ async def _dispatch_store_action(
     # answers, or raises, is masked of each value filled in before it is recorded, told or answered.
     written = action.get("config") or {}
     try:
-        config, filled = trigger_secrets.resolve_for(provider, written)
+        config, filled = trigger_secrets.resolve_for(
+            provider, written, trigger_id=str(getattr(trigger, "id", "") or "")
+        )
     except trigger_secrets.UnresolvedSecret as exc:
         return await _refused(trigger, cannot_run.missing_secret(exc), state=state)
     # 🔴 RECORD THE RUN (#308). #702 made this path resolve and dispatch the nested action, but it

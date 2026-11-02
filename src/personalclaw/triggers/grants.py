@@ -72,6 +72,10 @@ logger = logging.getLogger(__name__)
 RUNS_A_WORKFLOW = "run-workflow"
 #: Where in a grant's block that version is kept (`automation_version.Allowed`).
 _ALLOWED_WORKFLOW = "workflow"
+#: Where in a grant's block the owner's yes keeps where each web address its action holds as a
+#: secret went when she gave it (`held_secrets.origins`): read beside a masked value, it is how a
+#: later question names the host an edit moved it from. Kept when an edit takes the grant away.
+_ALLOWED_HOSTS = "hosts"
 #: What a version's saver is called where the owner reads it (`versions.SAVERS`).
 _SAVED_BY_WORDS = {
     "owner": "you, in the workflow's editor",
@@ -248,6 +252,13 @@ def narrow(trigger: Any, before: Any) -> list[str]:
             block["providers"] = kept
         else:
             block.pop("providers")
+        # Where the grant this edit takes away let a held address go, kept for the question that
+        # gives one back, since a masked value cannot show the owner where it went.
+        from personalclaw.triggers.held_secrets import origins
+
+        allowed = block.get(_ALLOWED_HOSTS) or origins(_action_of(before)[1])
+        if allowed:
+            block[_ALLOWED_HOSTS] = allowed
         if RUNS_A_WORKFLOW not in kept:
             # The version of the workflow a yes was given for goes with the yes.
             block.pop(_ALLOWED_WORKFLOW, None)
@@ -287,6 +298,14 @@ def asking(
     sentence, shown = _consent(
         trigger, providers, creating=creating, saving=saving, changed=changed
     )
+    # A held web address reads masked, so where an edit moved it is said here, both hosts named.
+    from personalclaw.triggers.held_secrets import moved_origins
+
+    block = getattr(trigger, "capabilities", None)
+    allowed = block.get(_ALLOWED_HOSTS) if isinstance(block, dict) else None
+    moved = moved_origins(_action_of(trigger)[1], allowed)
+    if moved:
+        sentence = f"{sentence} {moved}"
     heading = title(trigger, providers, creating=creating, saving=saving, changed=changed)
     return Question(providers, sentence, heading, shown)
 
@@ -579,6 +598,7 @@ def give(trigger: Any, *, allowing: Allowing | None = None) -> list[str]:
         # An action that runs no workflow, or one whose workflow this yes does not grant: it holds
         # its grant, and the version that grant was given for, already.
         granted = grant_action(trigger)
+        _remember_hosts(trigger)
         adopt(trigger)
         return granted
     if allowing is None or (allowing.now is not None and allowing.now.name != name):
@@ -595,8 +615,24 @@ def give(trigger: Any, *, allowing: Allowing | None = None) -> list[str]:
         return []
     granted = grant_action(trigger)
     _allow(trigger, allowing.now, calls=allowing.calls)
+    _remember_hosts(trigger)
     adopt(trigger)
     return granted
+
+
+def _remember_hosts(trigger: Any) -> None:
+    """Keep in `trigger`'s grant where each held web address its action holds goes, as the owner's
+    yes now allows it (`held_secrets.origins`): what a later edit's question names it moved from."""
+    from personalclaw.triggers.held_secrets import origins
+
+    block = getattr(trigger, "capabilities", None)
+    if not isinstance(block, dict):
+        return
+    hosts = origins(_action_of(trigger)[1])
+    if hosts:
+        block[_ALLOWED_HOSTS] = hosts
+    else:
+        block.pop(_ALLOWED_HOSTS, None)
 
 
 def allowing(trigger: Any, shown: Any) -> Allowing | None:

@@ -173,7 +173,7 @@ def _resolved(config: Any, resolver: Callable[[str], str] | None) -> tuple[Any, 
     return _sub(config), tuple(values.values())
 
 
-def resolve_for(provider: Any, config: Any) -> tuple[Any, tuple[str, ...]]:
+def resolve_for(provider: Any, config: Any, *, trigger_id: str = "") -> tuple[Any, tuple[str, ...]]:
     """*config* as the action *provider* is handed it, by either dispatch (a fire, and a run by
     hand or from outside), and the values filled into it: every `{{secret:KEY}}` filled
     (:func:`resolve`, which raises `UnresolvedSecret`), except in an action that IS a model turn
@@ -186,14 +186,22 @@ def resolve_for(provider: Any, config: Any) -> tuple[Any, tuple[str, ...]]:
     model's context. A run's inputs are what its record keeps, so a reference there stays the
     reference and the run fills it where a step uses it; resolved here, the record would hold the
     value. The second is checked all the same, against the secrets that run reads (:func:`check`),
-    so a fire whose run could not read one is refused as any other such fire is."""
+    so a fire whose run could not read one is refused as any other such fire is.
+
+    *trigger_id* names the automation whose config this is: what it keeps in the credential store
+    (``triggers.held_secrets``) is filled first, under its own key, and counted among the values
+    filled, and a key of its that is gone refuses the fire."""
     if getattr(provider, "hands_config_to_a_model", False):
         return config, ()
     if getattr(provider, "hands_config_to_a_run", False):
         project = config.get("project_id", "") if isinstance(config, dict) else ""
         check(references(config), project_id=str(project or ""))
         return config, ()
-    return _resolved(config, None)
+    from personalclaw.triggers.held_secrets import fill
+
+    config, held = fill(trigger_id, config)
+    config, filled = _resolved(config, None)
+    return config, held + filled
 
 
 def handed(provider: Any, config: Any) -> tuple[str, ...]:

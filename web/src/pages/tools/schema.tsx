@@ -248,7 +248,10 @@ export function SchemaField({ name, schema, required, value, onChange, widgets }
     // using it for both printed the same sentence twice — visible the moment a form whose fields
     // all carry `help` came through here (the workflow launch form, #327). `description` is the
     // fallback because a JSON Schema's `description` has no other slot in this layout.
-    control = <input id={id} data-type="body-s" value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={meta.help ? undefined : schema.description?.slice(0, 60)} className={base} />
+    // A field the schema marks `sensitive` is a credential (an automation's webhook URL, its
+    // password): typed into a password input, and what a read hands back for one kept in the
+    // credential store is the mask, which a save sends back to keep it.
+    control = <input id={id} data-type="body-s" type={meta.sensitive ? 'password' : 'text'} autoComplete={meta.sensitive ? 'off' : undefined} value={String(value ?? '')} onChange={(e) => onChange(e.target.value)} placeholder={meta.help ? undefined : schema.description?.slice(0, 60)} className={base} />
   }
   // The boolean Toggle carries its own aria-label; everything else binds the
   // <label> to the control by id (htmlFor). A plain-label span id lets custom

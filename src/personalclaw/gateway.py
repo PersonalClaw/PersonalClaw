@@ -1624,7 +1624,7 @@ class GatewayOrchestrator:
         # it used to be a log line, so the automation read healthy and never ran.
         written = config
         try:
-            config, filled = _trigger_secrets.resolve_for(provider, config)
+            config, filled = _trigger_secrets.resolve_for(provider, config, trigger_id=trigger.id)
         except _trigger_secrets.UnresolvedSecret as exc:
             return await self._refuse_unrunnable(
                 trigger, cannot_run.missing_secret(exc), source=source

@@ -55,6 +55,7 @@ async def api_action_providers(request: web.Request) -> web.Response:
     and the list's "check schedule" warning answer the same question the same way."""
     from personalclaw.action_providers.registry import (
         _ensure_default_providers_registered,
+        action_origin,
         get_action_provider,
         list_action_providers,
     )
@@ -76,9 +77,14 @@ async def api_action_providers(request: web.Request) -> web.Response:
     except Exception:
         logger.debug("action-providers: manifest schema lookup failed", exc_info=True)
 
-    # Map provider runtime name → its manifest schema. Bundled action manifests
-    # are named "<provider>-action" (bash-action, notify-action, …); fall back to {}.
+    # Map provider runtime name → its manifest schema: the app that registered it
+    # (`action_origin`), which is how an action whose name is not its app's is found (A2A Agent
+    # Call registers `a2a-call` from `a2a-action`, and its form had no fields). Bundled action
+    # manifests are named "<provider>-action" (bash-action, notify-action, …); fall back to {}.
     def _schema_for(provider_name: str) -> dict:
+        origin = action_origin(provider_name)
+        if origin is not None and origin.app in schemas:
+            return schemas[origin.app]
         return schemas.get(f"{provider_name}-action", {})
 
     result: list[dict] = []

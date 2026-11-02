@@ -267,6 +267,22 @@ def test_the_grant_copy_only_reads_the_display_name():
     assert '"display_name"' in src, "the only reason to resolve here is the display name"
 
 
+def test_the_held_settings_only_read_whose_config_it_is():
+    """The properties that earn `triggers.held_secrets`' exemption.
+
+    An automation's credential settings are kept in the credential store unless its action's config
+    is a model turn's or a run's, which keeps references by name. Telling which takes the provider's
+    two declarations and nothing more. If this module ever USES the provider it resolves, this
+    fails and it must argue its way into `EXECUTION_SITES` with a real policy gate.
+    """
+    src = _source("personalclaw.triggers.held_secrets")
+    assert _reaches_the_registry(src), "the exemption is stale if this site no longer resolves"
+    assert ".execute(" not in src, "the held settings must never execute a provider"
+    assert ".reverse(" not in src, "the held settings must never undo through a provider"
+    for declaration in ('"hands_config_to_a_model"', '"hands_config_to_a_run"'):
+        assert declaration in src, "the only reason to resolve here is whose config it is"
+
+
 def test_the_delegating_provider_only_hands_off_to_a_frozen_name():
     """The properties that earn `selfqa_watch_provider`'s exemption.
 

@@ -318,11 +318,38 @@ def test_a_credential_shaped_literal_is_FLAGGED(tmp_path):
     assert "secret:KEY" in row.warnings[0].message, "and must name the fix"
 
 
-def test_a_secret_named_field_holding_a_literal_is_FLAGGED(tmp_path):
+def _bash_from(monkeypatch, app: str) -> None:
+    """`bash` as core registers it (*app* ""), or as an app does: the gateway's start registers it
+    again for the bundled `bash-action` app, and that origin stays for the rest of the process."""
+    from personalclaw.action_providers import registry
+
+    registry._ensure_default_providers_registered()
+    origins = {k: v for k, v in registry._origins.items() if k != "bash"}
+    if app:
+        origins["bash"] = registry.ActionOrigin(app=app, app_label=app, label="Bash Command")
+    monkeypatch.setattr(registry, "_origins", origins)
+
+
+def test_a_secret_named_field_holding_a_literal_is_FLAGGED(tmp_path, monkeypatch):
     """The second independent signal: a secret-NAMED key with a literal value, which no credential
-    regex would catch on its own."""
+    regex would catch on its own. Core's `bash`, which keeps its config as it is."""
+    _bash_from(monkeypatch, "")
     row = _row(tmp_path, {"api_key": "literal-value-here"})
     assert any("api_key" in i.message for i in row.warnings)
+
+
+def test_a_secret_named_field_of_an_apps_action_is_held_instead(tmp_path, monkeypatch):
+    """Once the gateway has started, `bash` is the bundled `bash-action` app's, and an app action's
+    credential-named field is kept in the credential store (`triggers.held_secrets`): the file holds
+    a reference, so there is no literal left to flag."""
+    from personalclaw.config import secret_refs
+
+    _bash_from(monkeypatch, "bash-action")
+    row = _row(tmp_path, {"api_key": "literal-value-here"})
+    stored = row.trigger.workflow["inline"]["config"]["api_key"]
+    assert secret_refs.is_trigger_key(secret_refs.ref_key(stored)), stored
+    assert "literal-value-here" not in (tmp_path / "triggers.json").read_text()
+    assert not row.warnings
 
 
 def test_the_SANCTIONED_form_is_not_flagged(tmp_path):

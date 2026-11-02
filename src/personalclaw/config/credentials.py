@@ -576,7 +576,7 @@ def _keychain_get(key: str, home: Path | None = None) -> str:
     try:
         return kr.get_password(service, key) or ""  # type: ignore[attr-defined]
     except Exception:
-        logger.debug("keychain read failed for %s", key, exc_info=True)
+        logger.debug("keychain read failed; the credential reads as absent", exc_info=True)
         return ""
 
 

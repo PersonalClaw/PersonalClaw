@@ -528,16 +528,22 @@ def _move_stored_settings() -> None:
     First any secret an earlier release left inline in a settings file (a provider key or the
     webhook token in config.json, an app's tokens in its data/config.json, an instance's key, an
     MCP server's env and headers in mcp.json and the agent config) into the credential store; then
+    each automation's and lifecycle trigger's held settings in triggers.json and hooks.json; then
     each capability's own settings out of its app's shared file, for an app that declares account
     settings (#3842), re-stored under the capability's owner. Each is idempotent and fail-safe per
     file or app: what it cannot move keeps working where it is, and the next start retries."""
     from personalclaw.config.secret_refs import migrate_plaintext_secrets
     from personalclaw.providers.capability_settings_move import move_capability_settings
+    from personalclaw.triggers.held_secrets import move_held_settings_at_start
 
     try:
         migrate_plaintext_secrets()
     except Exception:  # noqa: BLE001 — never block boot; the next start retries
         logger.warning("moving plaintext secrets into the credential store failed", exc_info=True)
+    try:
+        move_held_settings_at_start()
+    except Exception:  # noqa: BLE001 — never block boot; the next start retries
+        logger.warning("moving the automations' held settings failed", exc_info=True)
     try:
         move_capability_settings()
     except Exception:  # noqa: BLE001 — never block boot; the next start retries
