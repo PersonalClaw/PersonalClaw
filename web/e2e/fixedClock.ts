@@ -21,6 +21,11 @@ export const FIXED_CLOCK: Record<string, string> = {
   'mission-control': '2026-11-02T12:00:00Z',
   companion: '2026-11-02T12:00:00Z',
   'companion?approval=ap-0a1b2c3d': '2026-11-02T12:00:00Z',
+  // The buddy's card says how long its approval has waited (`waitedFor`), asked at 11:58 in the
+  // fixed list it reads (`FIXED_WAITING`). Under the browser's real clock that read seconds only
+  // before 11:58 that day and minutes after (run 41439170764), so its tree held only on one
+  // morning. Thirty seconds on, so it reads seconds on every run.
+  buddy: '2026-11-02T11:58:30Z',
   // The week strip names the seven days that end today, so the goldens made on a Saturday read
   // Sun to Sat and a refresh a day later Mon to Sun (run 40150040941, eight Learning shots).
   learning: '2026-11-02T12:00:00Z',
