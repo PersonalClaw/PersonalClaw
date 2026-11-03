@@ -43,7 +43,8 @@ const ROUTES = [
   ['09-apps',            '#/apps?view=native'],
   ['10-skills',          '#/skills'],
   ['11-settings',        '#/settings'],
-  ['12-settings-models', '#/settings/models'],
+  // The Models section of the page that holds it (Settings → Models & Providers).
+  ['12-settings-models', '#/settings/models?section=models'],
   ['13-agents',          '#/agents'],
 ];
 
@@ -66,6 +67,8 @@ for (const mode of ['light', 'dark']) {
     try {
       await page.goto(`${gateway.url}/${route}`, { waitUntil: 'networkidle', timeout: 20000 });
       await page.waitForTimeout(2000); // let motion settle, and the cards that load after it
+      // As a pointer user sees it: a section the address opens holds focus, which the capture has not earned.
+      if (route.includes('?section=')) await page.evaluate(() => (document.activeElement instanceof HTMLElement) && document.activeElement.blur());
       await page.screenshot({ path: `docs/screenshots/${mode}/${name}.png` });
       console.log(`✓ ${mode}/${name}.png`);
     } catch (e) {
