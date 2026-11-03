@@ -205,6 +205,19 @@ def _pinned(ids: set[str]) -> list[str]:
 
 
 _PINNED = _pinned({j.id for j in _CAT.jobs})
+
+#: The web, desktop and mobile tests are one job, web-unit, or three, each planned by what its own
+#: workspace reads (#5810). The split lands in two merges (#4584 step 4), these rows first, so they
+#: take the shape the catalogue holds: both of the split's jobs, or neither.
+_WEB_SPLIT = ("desktop-unit", "mobile-unit")
+
+
+def _split(ids: set[str]) -> list[str]:
+    """The split's jobs among *ids*: a list, so a test can see one without the other."""
+    return [n for n in _WEB_SPLIT if n in ids]
+
+
+_SPLIT = bool(_split({j.id for j in _CAT.jobs}))
 _INPUT_ROWS = {
     "static": ("Makefile", None),
     "rails": ("tests/rails/test_ci_plan_tree.py", None),
@@ -212,7 +225,17 @@ _INPUT_ROWS = {
     "python-suite": ("src/personalclaw/app.py", None),
     "python-suite-macos": ("src/personalclaw/app.py", None),
     "client": ("packages/personalclaw-client-py/src/x.py", "docs/vision.md"),
-    "web-unit": ("web/src/App.tsx", "docs/vision.md"),
+    # Split, each plans for its own workspace: a desktop change plans no web suite, and a web
+    # change no mobile tests.
+    "web-unit": ("web/src/App.tsx", "desktop/main.js" if _SPLIT else "docs/vision.md"),
+    **(
+        {
+            "desktop-unit": ("desktop/main.js", "src/personalclaw/app.py"),
+            "mobile-unit": ("mobile/test/connect.test.mjs", "web/src/App.tsx"),
+        }
+        if _SPLIT
+        else {}
+    ),
     "web-build": ("web/src/App.tsx", "docs/vision.md"),
     "desktop-smoke": ("desktop/main.js", "src/personalclaw/app.py"),
     "package": ("setup.cfg", "docs/vision.md"),
@@ -233,6 +256,23 @@ _INPUT_ROWS = {
 def test_the_rows_name_every_job_of_the_change_and_merge_tiers() -> None:
     planned = {j.id for t in ("change", "merge") for j in _CAT.tier(t)}
     assert set(_INPUT_ROWS) == planned
+
+
+def test_the_catalogue_holds_the_web_tests_split_whole_or_not_at_all() -> None:
+    found = _split({j.id for j in _CAT.jobs})
+    assert found in ([], list(_WEB_SPLIT)), f"both of {_WEB_SPLIT}, or neither: {found}"
+
+
+@pytest.mark.parametrize(
+    "ids, found",
+    [
+        ({"web-unit"}, []),
+        ({"web-unit", "desktop-unit", "mobile-unit"}, ["desktop-unit", "mobile-unit"]),
+        ({"web-unit", "desktop-unit"}, ["desktop-unit"]),
+    ],
+)
+def test_the_split_reads_each_of_its_jobs(ids: set[str], found: list[str]) -> None:
+    assert _split(ids) == found
 
 
 def test_the_catalogue_names_the_pinned_browser_run_once() -> None:
