@@ -6,7 +6,10 @@
  *  redirect rows themselves are held to the router's rules by `app/routeRedirects.test.tsx`, and every
  *  old address is opened in the real shell by `app/everyShippedRouteResolves.test.tsx`. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import ts from 'typescript'
 
 vi.mock('../../lib/useChatSocket', () => ({ useChatSocket: () => {} }))
 vi.mock('../../lib/api', async (orig) => {
@@ -20,6 +23,9 @@ vi.mock('../../lib/api', async (orig) => {
 const { SETTINGS_PAGES, SETTINGS_GROUPS, pageOfSection, sectionAddress } = await import('./settingsPages')
 const { SECTIONS, SettingsPage } = await import('./SettingsPage')
 const { redirectFor } = await import('../../app/routeRedirects')
+const { SETTINGS_TERMS } = await import('./settingsTerms')
+const { SETTINGS_WIDGETS } = await import('./settingsWidgets')
+const { SettingsHome } = await import('./SettingsHome')
 const { ThemeProvider } = await import('../../app/theme')
 const { AppearanceProvider } = await import('../../app/appearance')
 const { PersonalityProvider } = await import('../../app/personality')
@@ -131,5 +137,110 @@ describe('each section renders on its page, under its own heading', () => {
     const label = SECTIONS.find((s) => s.id === id)!.label
     expect(document.activeElement?.tagName).toBe('H2')
     expect(document.activeElement?.textContent).toBe(label)
+  })
+})
+
+// ── Search: a setting is found by its own name, and by everything it was found by before ──────────
+
+const DIR = join(process.cwd(), 'src/pages/settings')
+/** The row primitives a panel declares a setting with, and the prop that names it. `Section`'s
+ *  title names a group of settings, which a search for it should find too. */
+const NAMED_BY: Record<string, string> = {
+  Row: 'label', Field: 'label', ToggleRow: 'label', NumberRow: 'label', SegRow: 'label',
+  SelectRow: 'label', TextRow: 'label', StrListField: 'label', Section: 'title',
+}
+
+/** Section id → its panel's file, read off `SECTIONS`' renderers and `SettingsPage.tsx`'s imports. */
+function panelFiles(): Map<string, string> {
+  const page = readFileSync(join(DIR, 'SettingsPage.tsx'), 'utf8')
+  const from = new Map([...page.matchAll(/import \{ (\w+) \} from '\.\/(\w+)'/g)].map((m) => [m[1], m[2]]))
+  const block = page.slice(page.indexOf('export const SECTIONS'), page.indexOf('\n]\n', page.indexOf('export const SECTIONS')))
+  const out = new Map<string, string>()
+  for (const m of block.matchAll(/\{ id: '([a-z-]+)', label: '[^']*', icon: \w+, render: [^\n]*?<(\w+)/g)) {
+    const file = from.get(m[2])
+    if (file) out.set(m[1], join(DIR, `${file}.tsx`))
+  }
+  return out
+}
+
+/** Every setting name a panel's JSX declares: the exact string a naming prop is given, read from
+ *  the syntax tree, never matched as words. A prop given anything but a string (a variable, a
+ *  template with a hole) names nothing this can read, and is left out rather than guessed. */
+function declaredNames(file: string, text = readFileSync(file, 'utf8')): string[] {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TSX)
+  const out: string[] = []
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      const prop = NAMED_BY[node.tagName.getText(sf)]
+      for (const a of prop ? node.attributes.properties : []) {
+        if (!ts.isJsxAttribute(a) || a.name.getText(sf) !== prop || !a.initializer) continue
+        const v = a.initializer
+        const text = ts.isStringLiteral(v) ? v.text
+          : ts.isJsxExpression(v) && v.expression && (ts.isStringLiteral(v.expression) || ts.isNoSubstitutionTemplateLiteral(v.expression)) ? v.expression.text
+          : ''
+        // An empty label names nothing (a row whose control carries its own name).
+        if (text.trim()) out.push(text)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sf)
+  return out
+}
+
+describe('the overview\'s search holds every setting its panels declare', () => {
+  const files = panelFiles()
+
+  it('🪤 vacuity floor: forty panels, and at least the 346 setting names they declared when this was written', () => {
+    expect(files.size).toBe(40)
+    const total = [...files.values()].reduce((n, f) => n + new Set(declaredNames(f)).size, 0)
+    expect(total).toBeGreaterThanOrEqual(346)
+  })
+
+  it('🔑 every name a panel declares is in its section\'s search terms', () => {
+    const missing: string[] = []
+    for (const [id, file] of files) {
+      for (const name of declaredNames(file)) {
+        if (!(SETTINGS_TERMS[id] ?? []).includes(name)) missing.push(`${id}: '${name}'`)
+      }
+    }
+    expect(missing, 'Add each to its section in web/src/pages/settings/settingsTerms.ts, as the panel spells it').toEqual([])
+  })
+
+  it('🔴 control: a name planted in a panel is read, and a name it cannot read is left out', () => {
+    const planted = '<><ToggleRow label="Planted switch" hint="not a name" /><Row label={name} /><Section title={`Planted group`} /><Toggle label="not a row" /></>'
+    expect(declaredNames('planted.tsx', `const x = ${planted}`)).toEqual(['Planted switch', 'Planted group'])
+  })
+})
+
+/** The overview, searched for `query`: the pages whose cards stay on screen. */
+async function searched(query: string): Promise<string[]> {
+  cleanup()
+  render(
+    <ThemeProvider><AppearanceProvider><PersonalityProvider><IdentityProvider>
+      <SettingsHome go={() => {}} />
+    </IdentityProvider></PersonalityProvider></AppearanceProvider></ThemeProvider>,
+  )
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search settings' }), { target: { value: query } })
+  await act(async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)) })
+  return SETTINGS_PAGES.filter((p) => {
+    const button = screen.getByRole('button', { name: `Open ${p.label} settings`, hidden: true })
+    return button.closest('[style*="display: none"]') === null
+  }).map((p) => p.id)
+}
+
+describe('search finds at least what it found before, on the page that holds it', () => {
+  it.each(SETTINGS_WIDGETS.map((w) => [w.id, w] as const))('the old %s card\'s name and description still find its page', async (id, w) => {
+    const page = pageOfSection(id)!.id
+    expect(await searched(w.label), w.label).toContain(page)
+    expect(await searched(w.description.split(/[.—;,]/)[0].trim()), w.description).toContain(page)
+  })
+
+  // Names no card's text held before #5897, so the search could not find them.
+  it.each([
+    ['Restore window', 'chat'], ['Sign-in lockout', 'security'], ['Backend log level', 'health'],
+    ['Daily budget', 'security'], ['LAN discovery', 'devices'], ['Automatic backups', 'durability'],
+  ])('a setting\'s own name, %s, finds its page', async (name, page) => {
+    expect(await searched(name)).toContain(page)
   })
 })

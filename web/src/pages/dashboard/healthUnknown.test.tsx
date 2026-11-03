@@ -138,7 +138,7 @@ describe('the settings health and safety cards say when they could not check', (
    *  it is strictly stronger: an unrelated adopter is invisible, and either named card dropping
    *  the state fails by name. */
   const cardBlock = (c: string, id: string) => {
-    const at = c.indexOf(`id: '${id}', group:`)
+    const at = c.indexOf(`id: '${id}', label:`)
     expect(at, `the ${id} card must exist`).toBeGreaterThan(-1)
     const open = c.lastIndexOf('{', at)
     let i = open

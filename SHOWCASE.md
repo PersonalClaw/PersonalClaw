@@ -205,11 +205,13 @@ fixed and its model swappable; agents you create are fully editable.
 
 ## ⚙️ Settings — provider-agnostic by design
 
-One hub for the whole system: security rules, secrets, the audit chain, apps, providers,
-routing and search, each with its live figures. **Models** are assigned per use case (chat
-and its routing sub-categories, embedding, speech-to-text, text-to-speech, and more) from
-whatever providers you've added. This capture has none bound yet; the one model available
-is the bundled offline one. Nothing ties you to one vendor.
+One hub for the whole system, in seventeen pages under three groups. Each card shows its
+sections' live figures, such as the security rules, the audit chain, providers, routing and
+search, and carries the switches you reach for most. A card that needs the room spans two
+columns. **Models** are assigned per use case (chat and its routing sub-categories, embedding,
+speech-to-text, text-to-speech, and more) from whatever providers you've added, on Models &
+Providers. This capture has none bound yet; the one model available is the bundled offline
+one. Nothing ties you to one vendor.
 
 | Settings — light | Settings — dark |
 |---|---|

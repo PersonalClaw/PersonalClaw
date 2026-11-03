@@ -15,6 +15,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 ### Changed
 
 - **Turning off or removing a native app is refused with why. The disable and uninstall routes answer 409 with the code `app_native` and a sentence saying the app ships with PersonalClaw and is always on, where uninstall said the app was not installed and disable gave no reason, and the security log records the refusal as refused. A name that is not installed still answers 404 on both.**
+- **Settings opens on seventeen cards in three groups, General, AI & Automation, and Security & System, one card per page, and each page holds the settings that belong together. The forty pages Settings had are sections of those pages now, and an old link opens its section. A card that needs the room takes two columns, every row of cards ends even, and each card carries the switches people change most and the ones that cut something off, such as pausing unattended work or closing inbound access, which a card turns only one way. Search finds a setting by its own name.**
 
 ### Fixed
 

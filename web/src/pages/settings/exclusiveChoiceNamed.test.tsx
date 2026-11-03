@@ -105,9 +105,10 @@ describe('every SegToggle call site names its dimension', () => {
   const sites = walk(SRC).flatMap((f) => tags(stripComments(readSource(f)), 'SegToggle').map((t) => ({ f, t })))
 
   it('finds the call sites (not vacuously green)', () => {
-    // Three at the time of writing. `ariaLabel` is a required prop, so typecheck is the real
-    // gate; this floor only stops the assertion below from passing by matching nothing.
-    expect(sites.length, 'the matcher must find the SegToggle call sites').toBeGreaterThanOrEqual(3)
+    // Three at the time of writing, two since Widget density left the Chat card for the Chat page
+    // (#5897). `ariaLabel` is a required prop, so typecheck is the real gate; this floor only stops
+    // the assertion below from passing by matching nothing.
+    expect(sites.length, 'the matcher must find the SegToggle call sites').toBeGreaterThanOrEqual(2)
   })
 
   it('has no unnamed call site', () => {

@@ -320,7 +320,7 @@ describe('the sidebar holds one Library row', () => {
 
   it('and Settings no longer lists Memory, which is a tab of Library', async () => {
     await open('settings')
-    expect(screen.getByRole('button', { name: 'Open Models settings' }), 'the Settings home drew its cards').toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open Models & Providers settings' }), 'the Settings home drew its cards').toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Open Memory settings' })).toBeNull()
   })
 })

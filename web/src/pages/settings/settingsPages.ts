@@ -26,18 +26,21 @@ export interface SettingsPageDef {
   readonly span: 1 | 2
   /** Its sections, in page order. The first section a page is named for leads. */
   readonly sections: readonly string[]
+  /** The sections its card shows, when not all of them: the rest are named on the card as links,
+   *  and their text is in the card's search all the same. */
+  readonly parts?: readonly string[]
 }
 
 export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
   // ── General ──
   { id: 'design', label: 'Appearance', group: 'General', span: 2, sections: ['design', 'buddy'] },
   { id: 'account', label: 'Account', group: 'General', span: 1, sections: ['account'] },
-  { id: 'chat', label: 'Chat', group: 'General', span: 1, sections: ['chat', 'archive'] },
+  { id: 'chat', label: 'Chat', group: 'General', span: 1, sections: ['chat', 'archive'], parts: ['chat'] },
   { id: 'notifications', label: 'Notifications & Inbox', group: 'General', span: 1, sections: ['notifications', 'inbox'] },
   { id: 'voice', label: 'Speech & Transcription', group: 'General', span: 1, sections: ['voice'] },
   // ── AI & Automation ──
   { id: 'models', label: 'Models & Providers', group: 'AI & Automation', span: 2, sections: ['providers', 'models', 'routing', 'search'] },
-  { id: 'agent', label: 'Agent', group: 'AI & Automation', span: 1, sections: ['agent', 'prompts', 'tool-output', 'legibility'] },
+  { id: 'agent', label: 'Agent', group: 'AI & Automation', span: 1, sections: ['agent', 'prompts', 'tool-output', 'legibility'], parts: ['agent'] },
   { id: 'evals', label: 'Evaluations & Feedback', group: 'AI & Automation', span: 1, sections: ['evals', 'feedback'] },
   { id: 'automations', label: 'Automations', group: 'AI & Automation', span: 2, sections: ['workflows', 'loops', 'sources', 'ambient'] },
   { id: 'apps', label: 'Apps & Packs', group: 'AI & Automation', span: 2, sections: ['apps', 'packs'] },
@@ -47,7 +50,7 @@ export const SETTINGS_PAGES: readonly SettingsPageDef[] = [
   { id: 'devices', label: 'Devices & Access', group: 'Security & System', span: 1, sections: ['devices', 'sender-trust', 'external-access', 'companion'] },
   { id: 'health', label: 'Health', group: 'Security & System', span: 1, sections: ['system', 'doctor', 'diagnostics'] },
   { id: 'secrets', label: 'Secrets', group: 'Security & System', span: 1, sections: ['secrets'] },
-  { id: 'durability', label: 'Backups & Data', group: 'Security & System', span: 1, sections: ['durability', 'portability', 'documents'] },
+  { id: 'durability', label: 'Backups & Data', group: 'Security & System', span: 1, sections: ['durability', 'portability', 'documents'], parts: ['durability'] },
   { id: 'updates', label: 'Updates', group: 'Security & System', span: 1, sections: ['updates'] },
 ]
 

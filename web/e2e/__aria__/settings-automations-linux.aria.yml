@@ -1,0 +1,226 @@
+- navigation:
+  - button "PersonalClaw, Home":
+    - img "PersonalClaw"
+    - text: PersonalClaw
+  - button "Chat"
+  - button "Projects"
+  - button "Library"
+  - group "Chat history":
+    - text: Chat history
+    - 'button "Group by: Folders"': Folders
+    - button "New chat"
+    - searchbox "Search chats"
+    - status
+    - text: No chats yet
+  - text: Platform
+  - button "Inbox"
+  - button "Automations"
+  - button "Capabilities"
+  - button "Settings"
+- separator "Resize navigation — arrow keys to resize"
+- main:
+  - button "Collapse sidebar"
+  - button "Open terminal"
+  - button "Notifications"
+  - 'button "Theme: <theme> — switch to <theme>"'
+  - button "Choose a model"
+  - button "Back to Settings"
+  - button "Settings"
+  - text: Automations
+  - heading "Automations" [level=#]
+  - navigation "On this page":
+    - list:
+      - listitem:
+        - link "Workflows":
+          - /url: "#/settings/automations?section=workflows"
+      - listitem:
+        - link "Autonomous loops":
+          - /url: "#/settings/automations?section=loops"
+      - listitem:
+        - link "Watched sources":
+          - /url: "#/settings/automations?section=sources"
+      - listitem:
+        - link "Ambient surfaces":
+          - /url: "#/settings/automations?section=ambient"
+  - region "Workflows":
+    - heading "Workflows" [level=#]
+    - paragraph: "How the workflow engine runs: what may start, how much runs at once, how long a node gets, and what a newly authored workflow is allowed to do before you opt it in."
+    - heading "Engine" [level=#]
+    - paragraph: The master switch and the ceiling on work the agent schedules for itself.
+    - text: Workflow engine Master switch. Off stops new runs from starting and leaves stored definitions untouched — nothing is deleted.
+    - status
+    - switch "Workflow engine" [checked]
+    - text: Self-scheduled tasks — max outstanding How many enabled automations the agent may hold at once via its own scheduling tools. Counted over enabled agent-created automations, so pausing one frees a slot without deleting it.
+    - spinbutton "Self-scheduled tasks — max outstanding": "#"
+    - status
+    - heading "Concurrency & timeouts" [level=#]
+    - paragraph: Typed lanes so a long local-model action cannot block a run's model calls, plus the clocks that stop a wedged node.
+    - text: Lane cap — model calls How many model-backed nodes may run at once in one workflow.
+    - spinbutton "Lane cap — model calls": "#"
+    - status
+    - text: "Lane cap — actions How many action nodes may run at once. Kept low on purpose: a fan-out over minutes-long local-model actions would otherwise starve the run's model calls behind it."
+    - spinbutton "Lane cap — actions": "#"
+    - status
+    - text: Node timeout — total (seconds) Wall-clock cap for one node. # disables it.
+    - spinbutton "Node timeout — total (seconds)": "#"
+    - status
+    - text: Node timeout — stall (seconds) Stop a node after this long with NO progress, even when it is under the total cap. Progress events reset the clock, so a slow-but-working node survives while a wedged one does not. # disables it.
+    - spinbutton "Node timeout — stall (seconds)": "#"
+    - status
+    - text: "Task claim lifetime (seconds) How long a session's exclusive claim on a task lasts before another may take it. Deliberately short: a worker that needs longer renews, which proves it is alive."
+    - spinbutton "Task claim lifetime (seconds)": "#"
+    - status
+    - heading "Model tiers" [level=#]
+    - paragraph: Templates name an intent — reasoning, standard, fast — never a model, so they stay portable. This maps each intent onto one of your model use cases.
+    - text: Reasoning tier Which model use case a node asking for the reasoning tier resolves to.
+    - combobox "Reasoning tier":
+      - option "Chat"
+      - option "Code & tools"
+      - option "Reasoning" [selected]
+      - option "Background"
+      - option "Orchestration"
+      - option "Loops"
+    - status
+    - text: "Standard tier Use case for the standard tier. Keep it distinct from Fast: if both point at one use case the three tiers are decorative, and a node asking for a mid-capability model silently gets the cheapest one."
+    - combobox "Standard tier":
+      - option "Chat"
+      - option "Code & tools"
+      - option "Reasoning"
+      - option "Background"
+      - option "Orchestration" [selected]
+      - option "Loops"
+    - status
+    - text: Fast tier Use case for the fast tier.
+    - combobox "Fast tier":
+      - option "Chat"
+      - option "Code & tools"
+      - option "Reasoning"
+      - option "Background" [selected]
+      - option "Orchestration"
+      - option "Loops"
+    - status
+    - heading "Surfacing & matching" [level=#]
+    - paragraph: What a workflow may do on its own before you opt it in, and how a tie between two templates is broken.
+    - text: New workflow surfacing What a NEWLY authored workflow does before you opt it in. Off never surfaces itself (running it explicitly always works); Passive injects its guidance; Suggest may propose running itself. Off is the default — auto-trigger-by-default is the mistake that let pasted content fire workflows.
+    - status
+    - 'button "New workflow surfacing: Off" [pressed]': "Off"
+    - 'button "New workflow surfacing: Passive"': Passive
+    - 'button "New workflow surfacing: Suggest"': Suggest
+    - text: Template match threshold How confident the embedding tie-breaker must be to override a keyword tie when two templates score alike. Only consulted on a tie — a keyword match always decides first.
+    - spinbutton "Template match threshold": "#.#"
+    - status
+    - heading "Fan-out & retention" [level=#]
+    - paragraph: Bounds so one run cannot bury your task board or grow history without limit.
+    - text: Task fan-out cap The most Tasks one foreach node may put on your board. The run still executes every item — only the board rows are capped, and the run reports what it withheld.
+    - spinbutton "Task fan-out cap": "#"
+    - status
+    - text: Runs kept per workflow Oldest runs beyond this are pruned. Matches the per-job cap schedules use.
+    - spinbutton "Runs kept per workflow": "#"
+    - status
+    - heading "Approvals & scheduling defaults" [level=#]
+    - paragraph: How long a run waits for you, and the defaults a new automation inherits when it declares none of its own.
+    - text: Approval lifetime (seconds) How long a pending approval stays live. A week by default, because the realistic case is being away. # means it never expires. A destructive confirmation auto-rejects on expiry; an ordinary one keeps waiting.
+    - spinbutton "Approval lifetime (seconds)": "#"
+    - status
+    - text: Default quiet hours A quiet window applied to new automations that set none of their own, as HH:MM-HH:MM in #-hour time — #:#-#:#, not #pm-#am. A window may wrap midnight. Empty means no default — an automation you created deliberately should run when you told it to. Per-trigger settings always win.
+    - textbox "Default quiet hours":
+      - /placeholder: #:#-#:#
+    - button "Save" [disabled]
+    - status
+    - text: Default duty gate The are-you-on-duty check applied to new automations that name none. Empty means no gate; manual is the built-in on/off toggle, and apps can supply others. The gate always fails open, so a broken calendar app can never silence everything.
+    - textbox "Default duty gate":
+      - /placeholder: manual
+    - button "Save" [disabled]
+    - status
+    - heading "Workspaces" [level=#]
+    - paragraph: Where a run does its work when its template does not say, and what happens to that directory afterwards.
+    - text: Default workspace mode Scratch is a per-run directory, Worktree a git worktree of the project, In place the real tree with no isolation, Container an isolated image. A template's own declaration always wins. Scratch is the default because being wrong about isolation should cost a copy, not the original.
+    - status
+    - 'button "Default workspace mode: Scratch" [pressed]': Scratch
+    - 'button "Default workspace mode: Worktree"': Worktree
+    - 'button "Default workspace mode: In place"': In place
+    - 'button "Default workspace mode: Container"': Container
+    - text: Run teardown before deletion Run a workspace's declared teardown command before its directory is deleted by retention or an explicit delete. On, because teardown's whole job is to stop services and sync work out while the directory still exists.
+    - status
+    - switch "Run teardown before deletion" [checked]
+  - region "Autonomous loops":
+    - heading "Autonomous loops" [level=#]
+    - paragraph: "Long-horizon goal loops: which model certifies a cycle is done, how many stuck cycles count as stalled, and how much of your repo a parallel task checks out."
+    - heading "Judging" [level=#]
+    - paragraph: The reviewer that certifies a cycle, and the patience the supervisor has for a loop that is not moving.
+    - text: Judge model axis Which model use case the loop JUDGE rides — deliberately not the Loops axis the worker rides. Reasoning by default, so the reviewer gets its own (typically stronger) binding and a reviewer mistake is not correlated with the mistake it is reviewing. Set it to Loops to put judge and worker back on one binding.
+    - combobox "Judge model axis":
+      - option "Reasoning" [selected]
+      - option "Chat"
+      - option "Code & tools"
+      - option "Background"
+      - option "Orchestration"
+      - option "Loops"
+    - status
+    - text: Stagnation window (cycles) How many consecutive cycles of no progress stall a loop. Lower is more trigger-happy; higher spends more cycles before asking you for direction. Minimum # — a window of # can only compare a cycle with itself.
+    - spinbutton "Stagnation window (cycles)": "#"
+    - status
+    - heading "Verification" [level=#]
+    - paragraph: An extra pass that checks what a stage CLAIMED, not just that its gate command exited zero.
+    - text: "Check work after stage gates After an SDLC stage's gate passes, re-derive a few executable checks from what the stage claimed and run them. Catches the case where the gate command passed but the claim was broader than the command — a deliverable file the stage said it wrote but didn't. Off by default: it adds a filesystem pass per stage advance."
+    - status
+    - switch "Check work after stage gates"
+    - heading "Parallel task worktrees" [level=#]
+    - paragraph: How much of the repository a parallel task hydrates before it starts.
+    - text: Sparse task worktrees When a parallel task's plan names the files it will touch, hydrate only those directories instead of the whole repo — on a large codebase that is most of a worktree's setup cost. A task that writes outside its stated scope widens its own worktree automatically, and the merged result is identical either way. Off always hydrates the full repo.
+    - status
+    - switch "Sparse task worktrees" [checked]
+  - region "Watched sources":
+    - heading "Watched sources" [level=#]
+    - paragraph: Poll feeds, pages and local directories into your knowledge library on a schedule. Off parks the loop — nothing is fetched.
+    - heading "Polling" [level=#]
+    - paragraph: How often sources are checked, and the floor that keeps polling polite.
+    - text: Watched sources Enable the poll engine. Off parks the loop; sources you add are not fetched until you turn it back on.
+    - status
+    - switch "Watched sources" [checked]
+    - text: Default poll interval (seconds) How often a source is polled when it does not set its own interval. Clamped up to the network floor for a source that fetches; a folder on this machine can be polled as often as once a minute.
+    - spinbutton "Default poll interval (seconds)": "#"
+    - status
+    - text: Network poll floor (seconds) The fastest any network source is polled regardless of its own setting — the rate floor that keeps a poll from being abusive to the target server. A folder on this machine is not held to it.
+    - spinbutton "Network poll floor (seconds)": "#"
+    - status
+    - heading "Limits" [level=#]
+    - paragraph: Bounds so a busy feed or a runaway config cannot flood ingestion.
+    - text: Max active sources Cap on how many enabled sources the engine arms per tick.
+    - spinbutton "Max active sources": "#"
+    - status
+    - text: Max items per poll How many new items one poll may ingest before the rest wait for the next cycle.
+    - spinbutton "Max items per poll": "#"
+    - status
+    - heading "Artifacts" [level=#]
+    - paragraph: Artifacts you and the agent write, mirrored into knowledge search.
+    - text: "Index artifacts for search Make text artifacts (markdown, HTML, text, JSON, CSV) findable from knowledge search. They stay in the Artifacts library and are never listed as knowledge items — only found by a search. Indexing is local: a mirrored artifact never reaches a model. Off stops indexing new changes and removes nothing already indexed."
+    - status
+    - switch "Index artifacts for search" [checked]
+    - heading "Watched scratchpad" [level=#]
+    - paragraph: A notes file whose jotted todos become plan proposals you accept — never runs on its own.
+    - text: Scratchpad path Full path to a local notes file. Each new actionable line becomes a PROPOSED plan in your inbox, linked back to its source line. Checked (- [x]) and struck-through lines are ignored. Leave empty to turn this off — no file is read.
+    - textbox "Scratchpad path":
+      - /placeholder: ~/notes/today.md
+    - button "Save" [disabled]
+  - region "Ambient surfaces":
+    - heading "Ambient surfaces" [level=#]
+    - paragraph: Your composable home and agent-authored widgets. Nothing here is enabled behind your back — agent tiles are proposals you accept.
+    - heading "Composable home" [level=#]
+    - paragraph: Pin saved artifacts as self-refreshing dashboard tiles.
+    - text: Composable home Turn saved artifacts into pinnable dashboard tiles. Off leaves the dashboard as its fixed default layout and refuses new pins — the tiles you already pinned are kept, and come back when you turn this on.
+    - status
+    - switch "Composable home" [checked]
+    - text: Max tiles per view Cap on how many artifact tiles a single view can hold — an unbounded home is an unreadable one.
+    - spinbutton "Max tiles per view": "#"
+    - status
+    - text: Default tile refresh (seconds) How often a TTL-mode tile re-runs its bound data workflow. A view-trigger binding overrides this.
+    - spinbutton "Default tile refresh (seconds)": "#"
+    - status
+    - heading "Generative UI" [level=#]
+    - paragraph: Agent-authored widgets, rendered through the typed component registry.
+    - text: Generative UI Let agent-authored widgets render through the typed component registry alongside markdown. Off refuses every widget request — in chat, in a workflow node and on a tile — and says so instead of producing one.
+    - status
+    - switch "Generative UI" [checked]
+- contentinfo "Status":
+  - button "<theme> status — Gateway connected"

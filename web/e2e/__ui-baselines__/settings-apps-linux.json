@@ -2,34 +2,61 @@
   "dark": {
     "targets": {
       "320": [
+        "a \"Apps\"",
+        "a \"Packs\"",
         "button \"Back to Settings\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
         "button \"Store\"",
+        "button \"Suggest packs\"",
         "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\""
+        "button[role=switch] \"Curated app registry\"",
+        "button[role=switch] \"Project fingerprinting\""
       ],
       "390": [
+        "a \"Apps\"",
+        "a \"Packs\"",
         "button \"Back to Settings\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
         "button \"Store\"",
+        "button \"Suggest packs\"",
         "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\""
+        "button[role=switch] \"Curated app registry\"",
+        "button[role=switch] \"Project fingerprinting\""
       ],
       "412": [
+        "a \"Apps\"",
+        "a \"Packs\"",
         "button \"Back to Settings\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
         "button \"Store\"",
+        "button \"Suggest packs\"",
         "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\""
+        "button[role=switch] \"Curated app registry\"",
+        "button[role=switch] \"Project fingerprinting\""
       ],
       "768": [
+        "a \"Apps\"",
+        "a \"Packs\"",
         "button \"Back to Settings\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
         "button \"Settings\"",
         "button \"Store\"",
+        "button \"Suggest packs\"",
         "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\""
+        "button[role=switch] \"Curated app registry\"",
+        "button[role=switch] \"Project fingerprinting\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div#root> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
       ]
     }
@@ -37,34 +64,61 @@
   "light": {
     "targets": {
       "320": [
+        "a \"Apps\"",
+        "a \"Packs\"",
         "button \"Back to Settings\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
         "button \"Store\"",
+        "button \"Suggest packs\"",
         "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\""
+        "button[role=switch] \"Curated app registry\"",
+        "button[role=switch] \"Project fingerprinting\""
       ],
       "390": [
+        "a \"Apps\"",
+        "a \"Packs\"",
         "button \"Back to Settings\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
         "button \"Store\"",
+        "button \"Suggest packs\"",
         "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\""
+        "button[role=switch] \"Curated app registry\"",
+        "button[role=switch] \"Project fingerprinting\""
       ],
       "412": [
+        "a \"Apps\"",
+        "a \"Packs\"",
         "button \"Back to Settings\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
         "button \"Store\"",
+        "button \"Suggest packs\"",
         "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\""
+        "button[role=switch] \"Curated app registry\"",
+        "button[role=switch] \"Project fingerprinting\""
       ],
       "768": [
+        "a \"Apps\"",
+        "a \"Packs\"",
         "button \"Back to Settings\"",
+        "button \"Install Health OS\"",
+        "button \"Install Infra Ops\"",
+        "button \"Install Personal CFO\"",
         "button \"Settings\"",
         "button \"Store\"",
+        "button \"Suggest packs\"",
         "button[role=switch] \"Bundled app source\"",
-        "button[role=switch] \"Curated app registry\""
+        "button[role=switch] \"Curated app registry\"",
+        "button[role=switch] \"Project fingerprinting\""
       ]
     },
     "known": {
       "200% text zoom": [
-        "<div#root> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#",
         "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
       ]
     }

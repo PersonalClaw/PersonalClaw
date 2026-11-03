@@ -91,3 +91,22 @@ describe('columnsFor: the column count follows the space the grid has, not the d
     expect(columnsFor(2400)).toBe(3)
   })
 })
+
+describe('the overview as laid out: nothing widens where the spans were chosen to fit', () => {
+  // The spans in `settingsPages.ts` are chosen so each group fills its rows on its own: a group of
+  // spans summing to 6 or 9, each two-column card opening a row or following one one-column card.
+  // So at the desktop widths no card is stretched to fill a row, and packRows' widening is left for
+  // the rows a search breaks.
+  it('🔑 at three columns no card widens, and at two only Usage, the last card of its group', async () => {
+    const { SETTINGS_GROUPS, SETTINGS_PAGES } = await import('./settingsPages')
+    const widened = (columns: number) => SETTINGS_GROUPS.flatMap((g) => {
+      const pages = SETTINGS_PAGES.filter((p) => p.group === g)
+      const spans = pages.map((p) => Math.min(p.span, columns))
+      const packed = packRows(spans, columns)
+      return pages.filter((_, i) => packed[i] !== spans[i]).map((p) => p.id)
+    })
+    expect(widened(3)).toEqual([])
+    expect(widened(2)).toEqual(['usage'])
+    expect(widened(1)).toEqual([])
+  })
+})

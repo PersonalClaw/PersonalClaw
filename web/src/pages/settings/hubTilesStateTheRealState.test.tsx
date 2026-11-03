@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 
 // ── Three Settings hub tiles that said things the server never said ──────────────────────────────
 //
@@ -17,7 +17,6 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 let routes: Record<string, unknown> = {}
 const puts: { url: string; body: unknown }[] = []
 const ok = (v: unknown) => new Response(JSON.stringify(v), { status: 200, headers: { 'Content-Type': 'application/json' } })
-const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0)) }
 
 beforeEach(() => {
   vi.resetModules()
@@ -83,7 +82,7 @@ describe('the Search tile reads the real state', () => {
   })
 })
 
-describe('the Chat tile names widget density for what it is', () => {
+describe('the Chat tile leaves widget density to the Chat page', () => {
   beforeEach(() => {
     routes = {
       '/api/dashboard/config': {
@@ -92,18 +91,16 @@ describe('the Chat tile names widget density for what it is', () => {
     }
   })
 
-  it('labels it the way the Chat panel does — More / Less inline widgets, not a layout density', async () => {
+  // The Chat card carries the three switches people flip (#5897). How readily the agent reaches for
+  // inline widgets is set once and rarely, on the Chat page, under the label it has there, which is
+  // where the relabel that once fixed this tile's words now lives alone.
+  it('carries the three chat switches and no density control', async () => {
     const { container } = await mountTile('chat')
-    await screen.findByRole('button', { name: 'Widget density: More' })
-    expect(screen.getByRole('button', { name: 'Widget density: Less' })).toBeTruthy()
+    for (const name of ['Restore sessions', 'Send on Enter', 'Timestamps']) {
+      expect(await screen.findByRole('switch', { name }), name).toBeTruthy()
+    }
+    expect(screen.queryByRole('button', { name: /^Widget density/ })).toBeNull()
     expect(container.textContent).not.toMatch(/Comfortable|Compact/)
-  })
-
-  it('still writes `widget_density` — the relabel changed the words, not the wiring', async () => {
-    await mountTile('chat')
-    const less = await screen.findByRole('button', { name: 'Widget density: Less' })
-    await act(async () => { fireEvent.click(less); await flush() })
-    expect(puts).toContainEqual({ url: '/api/dashboard/config', body: { widget_density: 'less' } })
   })
 })
 

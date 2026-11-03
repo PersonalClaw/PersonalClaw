@@ -40,7 +40,7 @@
   - paragraph:
     - text: Installing adds a schedule you can edit or pause any time. Turn the digest itself on under
     - link "Settings → Inbox":
-      - /url: "#/settings/inbox"
+      - /url: "#/settings/notifications?section=inbox"
     - text: .
   - heading "Nothing has arrived yet" [level=#]
   - paragraph: Messages, questions and notifications from your agents land here for triage — they post directly, so nothing needs connecting first. Add a filesystem or Slack source to collect from outside too.

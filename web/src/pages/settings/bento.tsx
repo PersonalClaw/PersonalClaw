@@ -1,4 +1,4 @@
-import { type ReactNode, useId, useState } from 'react'
+import { createContext, type ReactNode, useContext, useId, useState } from 'react'
 import { motion } from 'framer-motion'
 import { AlertTriangle, ArrowRight, Loader2, RotateCcw, type LucideIcon } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -10,10 +10,14 @@ import { ERROR_SURFACE_PAINT } from '../../design/errorTreatments'
 import { readableErrText } from '../../lib/errText'
 import { fvs, withWeight } from '../../design/fontWeight'
 
-/** A coarse weight hint kept on each widget for future tuning. The home page lays
- *  cards out as a fixed-width masonry (each card sizes to its own content), so this
- *  no longer drives a column span — card height is intrinsic to its content. */
-export type BentoSize = 'sm' | 'md' | 'lg' | 'wide' | 'tall'
+/** A tile drawn as one PART of its page's card on the overview (#5897), rather than as a card of
+ *  its own. The page's card draws the chrome and the overlay that opens the page; a part draws its
+ *  body, its own loading and failure states (each part has its own read), and, when the card shows
+ *  several parts, its title as a label. Not a link: the card is the one target, so a card of four
+ *  parts is one tab stop and not five, and its page lists its sections at the top. `titled: false`
+ *  is the part a card leads with, which the card's own title already names. */
+const BentoPart = createContext<{ titled: boolean } | null>(null)
+export const BentoPartProvider = BentoPart.Provider
 
 /** Highlight every occurrence of `query` inside `text` with a marked span — used
  *  so a settings search that matches a value surfaced ON a card visibly marks it. */
@@ -50,9 +54,12 @@ export function Highlight({ text, query }: { text: string; query: string }) {
  *
  *  `loading` shows a skeleton mirroring the card shape so it paints instantly.
  *  `failed` REPLACES the body with a failure band — see the prop's own note. */
-export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, error, onRetry, stale, accent, footer, rows, children }: {
+export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, error, onRetry, stale, accent, footer, rows, heading, children }: {
   icon: LucideIcon
   title: string
+  /** Render the title as an `h3`: a page's card on the overview, under its group's `h2` (#5897), so
+   *  a screen reader's heading list reaches every card. */
+  heading?: boolean
   query?: string
   onClick: () => void
   loading?: boolean
@@ -109,6 +116,27 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, 
 }) {
   const tint = accent || 'var(--color-primary)'
   const failId = `bento-fail-${useId()}`
+  const part = useContext(BentoPart)
+  if (part) {
+    return (
+      <div className="relative flex min-w-0 flex-col">
+        {part.titled && (
+          <div data-type="label-m" className="mb-1.5 inline-flex max-w-full items-center gap-1.5 self-start text-on-surface-var">
+            <Icon size={13} className="shrink-0 text-on-surface-low" aria-hidden />
+            <span className="truncate">{query ? <Highlight text={title} query={query} /> : title}</span>
+            <StaleNotice stale={!loading && !!stale} what={title.toLowerCase()} announce={false} className="shrink-0" />
+          </div>
+        )}
+        {failed
+          ? <TileLoadError id={failId} title={title} error={error} onRetry={onRetry} />
+          : loading
+            ? <CardSkeleton rows={rows ?? 2} />
+            : <div className="flex min-h-0 flex-1 flex-col">{children}</div>}
+        {footer && !failed && <div data-type="caption" className="mt-2 text-on-surface-low">{footer}</div>}
+      </div>
+    )
+  }
+  const Title = heading ? 'h3' : 'span'
   return (
     <motion.div
       layout
@@ -141,9 +169,9 @@ export function BentoCard({ icon: Icon, title, query, onClick, loading, failed, 
           <span className="grid size-7 shrink-0 place-items-center rounded-md" style={{ background: `color-mix(in srgb, ${tint} 16%, transparent)`, color: tint }}>
             <Icon size={15} />
           </span>
-          <span data-type="title-m" className="flex-1 truncate text-on-surface" style={fvs(600)}>
+          <Title data-type="title-m" className="min-w-0 flex-1 truncate text-on-surface" style={fvs(600)}>
             {query ? <Highlight text={title} query={query} /> : title}
-          </span>
+          </Title>
           <StaleNotice stale={!loading && !!stale} what={title.toLowerCase()} announce={false} className="shrink-0" />
           <ArrowRight size={14} className="shrink-0 text-on-surface-low" />
         </div>
@@ -265,6 +293,25 @@ export function Switch({ on, onToggle, label, disabled, disabledReason }: {
   )
 }
 
+/** A switch a card may turn only ONE way: the way that cuts something off (#5897). Stopping the
+ *  workflow engine, closing inbound access, ending LAN discovery and pausing unattended work are one
+ *  click from the overview; the other direction widens what reaches in or what runs, so it is done on
+ *  the page, which says what it opens. While it cannot move, the switch says where to go instead and
+ *  stays reachable (`Toggle`'s soft-off), so the reason is read rather than guessed. */
+export function OneWaySwitch({ on, allow, onToggle, label, reason }: {
+  on: boolean
+  /** The one direction the card turns it: `off` for a switch that lets something in or run, `on`
+   *  for one that stops things (the incident switch). */
+  allow: 'on' | 'off'
+  onToggle: () => void | Promise<void>
+  label: string
+  /** Where the other direction is done, said while the switch cannot move. */
+  reason: string
+}) {
+  const movable = allow === 'off' ? on : !on
+  return <Switch on={on} onToggle={() => onToggle()} label={label} disabled={!movable} disabledReason={reason} />
+}
+
 /** A compact segmented toggle for a small set of choices.
  *
  *  `ariaLabel` is the DIMENSION the choices belong to, and it is required: of the three
@@ -353,16 +400,19 @@ export function KVList({ rows, query }: { rows: { k: string; v: ReactNode; vText
  *  primitive's business. Local metrics (px-2, 22px height, label gap) stay here. */
 export function StatusPill({ label, tone, query }: { label: string; tone?: 'ok' | 'warn' | 'muted' | 'primary'; query?: string }) {
   const content = query ? <Highlight text={label} query={query} /> : label
+  // `w-fit`: a card's part lays its lines out in a column, which stretches each one across the part,
+  // and a pill stretched that way read as a bar (#5897). Its own width keeps it a pill there, and it
+  // changes nothing in a row.
   if (!tone || tone === 'muted') {
     return (
-      <span data-type="caption" className="inline-flex items-center gap-1 rounded-pill px-2 h-[22px]"
+      <span data-type="caption" className="inline-flex w-fit items-center gap-1 rounded-pill px-2 h-[22px]"
         style={{ background: 'var(--color-surface-high)', color: 'var(--color-on-surface-low)' }}>
         {content}
       </span>
     )
   }
   return (
-    <UiStatusPill tone={tone} pad={false} className="gap-1 px-2 h-[22px]">
+    <UiStatusPill tone={tone} pad={false} className="w-fit gap-1 px-2 h-[22px]">
       {content}
     </UiStatusPill>
   )

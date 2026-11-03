@@ -26,17 +26,135 @@
   - button "Choose a model"
   - button "Back to Settings"
   - button "Settings"
-  - text: Devices
-  - heading "Devices" [level=#]
-  - paragraph: "Everything signed in to this gateway: your browsers, paired phones and the desktop app, and the tokens the CLI and scripts use. Sign out anything you don't recognise — it is told why the next time it is used."
-  - heading "Pair a device" [level=#]
-  - paragraph: Open the link on the other device — on the same network — and it joins with the code below. The code is single-use and short-lived.
-  - paragraph: Generates a one-time code and a link for the device to open.
-  - button "Pair a device"
-  - status
-  - heading "Signed in (#)" [level=#]
-  - paragraph: Browsers, paired devices and the desktop app. Each kind has a limit of #; past it, the one used least recently is signed out and told why, so a script minting tokens never signs one of these out.
-  - text: Headless Chrome on <platform> This device Browser · Last seen <when> · from #.#.#.# · Signed in with the harness token (--json-ready) Signed in <when> · session expires <month> #, #:# <am/pm>
-  - button "Sign out of this device": Sign out
+  - text: Devices & Access
+  - heading "Devices & Access" [level=#]
+  - navigation "On this page":
+    - list:
+      - listitem:
+        - link "Devices":
+          - /url: "#/settings/devices?section=devices"
+      - listitem:
+        - link "Sender trust":
+          - /url: "#/settings/devices?section=sender-trust"
+      - listitem:
+        - link "External access":
+          - /url: "#/settings/devices?section=external-access"
+      - listitem:
+        - link "Companion apps":
+          - /url: "#/settings/devices?section=companion"
+  - region "Devices":
+    - heading "Devices" [level=#]
+    - paragraph: "Everything signed in to this gateway: your browsers, paired phones and the desktop app, and the tokens the CLI and scripts use. Sign out anything you don't recognise — it is told why the next time it is used."
+    - heading "Pair a device" [level=#]
+    - paragraph: Open the link on the other device — on the same network — and it joins with the code below. The code is single-use and short-lived.
+    - paragraph: Generates a one-time code and a link for the device to open.
+    - button "Pair a device"
+    - status
+    - heading "Signed in (#)" [level=#]
+    - paragraph: Browsers, paired devices and the desktop app. Each kind has a limit of #; past it, the one used least recently is signed out and told why, so a script minting tokens never signs one of these out.
+    - text: Headless Chrome on <platform> This device Browser · Last seen <when> · from #.#.#.# · Signed in with the harness token (--json-ready) Signed in <when> · session expires <month> #, #:# <am/pm>
+    - button "Sign out of this device": Sign out
+  - region "Sender trust":
+    - heading "Sender trust" [level=#]
+    - paragraph: Who can talk to your agent through each chat channel, and what happens to someone it doesn't know. Each channel below says what a stranger gets there and how you let someone in.
+    - heading "No chat channel is set up" [level=#]
+    - paragraph: Install one from Apps, and its people and groups show up here.
+    - button "Open Apps"
+    - status
+    - text: # trusted senders in total
+  - region "External access":
+    - heading "External access" [level=#]
+    - paragraph: Ways for something outside this machine to reach PersonalClaw. Every surface is off until you turn it on AND give it its own token, and every one is loopback-only unless you deliberately widen it in config.json. Nothing here is on by default.
+    - heading "Master switch" [level=#]
+    - paragraph: One switch over all five surfaces. Off unmounts every one of them on the next request — no restart needed.
+    - text: Allow inbound access While this is off, nothing below can serve, whatever its own switch says.
+    - switch "Allow inbound access"
+    - heading "Surfaces" [level=#]
+    - paragraph:
+      - text: Each needs its own ≥#-byte token, created with
+      - code: personalclaw inbound token create <surface>
+      - text: . A token that is missing, too short, or equal to your dashboard token is refused — the surface does not serve and says so here.
+    - text: OpenAI-compatible API Lets a tool that speaks the OpenAI API talk to one of your agents. The model name selects the agent.
+    - switch "OpenAI-compatible API"
+    - text: MCP tool surface A curated, read-only MCP server your IDE can query. Cannot write, install, or change settings.
+    - switch "MCP tool surface"
+    - text: A#A gateway Agent-to-agent requests from another assistant you run.
+    - switch "A#A gateway"
+    - text: Capture proxy Records an external agent’s sessions by proxying them. Carries full prompts, so it is the most sensitive surface here.
+    - switch "Capture proxy"
+    - text: Control bridge Semantic actions against your own dashboard. Loopback-only, always — it cannot be exposed remotely. Cannot be exposed remotely.
+    - switch "Control bridge"
+    - heading "Limits" [level=#]
+    - paragraph: Applied per client, not per surface, so one busy integration cannot spend another one’s allowance. A request over the rate gets a # and is recorded; a client that keeps going over is switched off and you are notified.
+    - text: Requests per second Sustained rate for each client. Fractional rates are legal but need a config.json edit — this stepper works in whole requests.
+    - spinbutton "Requests per second": "#"
+    - status
+    - text: Burst How many requests a client may make back-to-back before the sustained rate starts holding it back.
+    - spinbutton "Burst": "#"
+    - status
+    - text: Concurrent requests How many of a client’s requests may be in flight at once.
+    - spinbutton "Concurrent requests": "#"
+    - status
+    - text: Switch a client off after Limit breaches within an hour before a client is disabled automatically. Set # to never do that — a client will then keep getting #s indefinitely.
+    - spinbutton "Switch a client off after": "#"
+    - status
+    - text: Keep captured sessions for (days) Applies to the capture proxy only. It records full prompts, so this is the one limit here that is about privacy rather than load.
+    - spinbutton "Keep captured sessions for (days)": "#"
+    - status
+    - text: Capture upstream allow-list Hosts the capture proxy may forward a recorded turn to. Empty means it may forward NOWHERE, so a freshly enabled capture proxy refuses everything until you name at least one host (api.openai.com, api.anthropic.com).
+    - textbox "Add to capture upstream allow-list":
+      - /placeholder: Add host…
+    - status
+    - text: "Public URL: not set — every surface is loopback-only This and each surface’s “allow remote” are the boundary for anything off this machine, so they are not editable here — they are deliberately a"
+    - code: config.json
+    - text: edit. Tokens are not shown at all; only their hashes are stored.
+    - heading "Clients" [level=#]
+    - paragraph: "A client is one integration, with its own token and its own limits. Its bindings are pins, not defaults: a request that asks for a different agent or an un-listed tool is refused, never quietly redirected."
+    - text: No clients yet. A client is created through the API,
+    - code: POST /api/external-access/clients
+    - text: ", which returns its token once; send"
+    - code: "\"persistent_sessions\": true"
+    - text: "for a client of the OpenAI-compatible API to keep its conversation, or choose that here later. A plain surface token also works, but it cannot be scoped. A webhook automation's sender tokens are clients too: make one on the automation's page, or with"
+    - code: personalclaw inbound webhook create <automation-id>
+    - text: . Every token lasts at most # days, and Settings → Devices lists each one, with a revoke.
+    - heading "Remote access" [level=#]
+    - paragraph: Not editable here, on purpose.
+    - text: No public URL is set, so every surface is loopback-only. The public URL and each surface’s
+    - code: allow_remote
+    - text: flag are edited in
+    - code: config.json
+    - text: ", not from this page — widening a network surface should be a deliberate act, not one click. Prefer an SSH tunnel to loopback over opening a port."
+  - region "Companion apps":
+    - heading "Companion apps" [level=#]
+    - paragraph: Native clients — phone or desktop — that connect to this gateway. Nothing is announced on your network unless you turn discovery on.
+    - heading "Local network" [level=#]
+    - paragraph: How companion apps find this gateway on your LAN.
+    - text: LAN discovery Advertise this gateway on your local network so companion apps can find it without a typed URL. Off by default — announcing a service on your LAN is an opt-in.
+    - status
+    - switch "LAN discovery"
+    - text: Instance name Friendly name companion apps show for this gateway. Empty falls back to the machine hostname.
+    - textbox "Instance name":
+      - /placeholder: e.g. Living room Mac
+    - button "Save" [disabled]
+    - text: Status LAN discovery is off — companion apps need the URL typed in. Not advertising
+    - heading "Browser control" [level=#]
+    - paragraph: Whether a browse task may drive your own browser, with the sites you are already signed in to.
+    - text: Let tasks drive my browser Off by default. When off, a task that asks for your browser is skipped with a reason — it is never switched to this machine's own browser profile, which has different logins. Scheduled and unattended runs can never use your browser at all.
+    - status
+    - switch "Let tasks drive my browser"
+    - heading "Phone push" [level=#]
+    - paragraph: How a wake-up reaches your phone. Every push carries ids only — never the tool, its arguments or any message text.
+    - text: Push backend 'Web push' uses your browser's own subscription and needs a keypair from
+    - code: personalclaw push init
+    - text: . 'ntfy' publishes to a self-hosted topic. 'Off' sends nothing.
+    - 'button "Push backend: Web push" [pressed]': Web push
+    - 'button "Push backend: ntfy"': ntfy
+    - 'button "Push backend: Off"': "Off"
+    - text: Keypair Missing — run
+    - code: personalclaw push init
+    - text: on the gateway host, then reload. Until then, Web push sends nothing. Not set up
+    - heading "Install & offline" [level=#]
+    - paragraph: Whether this browser can install the dashboard as an app and keep its shell available offline.
+    - text: Install & offline support Available — the app shell is cached, and your browser can install this page as an app. Available
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

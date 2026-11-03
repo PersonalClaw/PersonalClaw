@@ -161,9 +161,11 @@ describe('Settings › System', () => {
 describe('Settings › System is reached and scanned', () => {
   const WEB = process.cwd()
 
-  it('has a card on the Settings hub, in the System group', () => {
+  it('has a part on the Settings hub, on Health\'s card in Security & System', () => {
     const src = readFileSync(join(WEB, 'src/pages/settings/settingsWidgets.tsx'), 'utf8')
-    expect(src).toMatch(/id: 'system', group: 'System', label: 'System'/)
+    expect(src).toMatch(/id: 'system', label: 'System'/)
+    const pages = readFileSync(join(WEB, 'src/pages/settings/settingsPages.ts'), 'utf8')
+    expect(pages).toMatch(/id: 'health', label: 'Health', group: 'Security & System'[^\n]*sections: \['system', 'doctor', 'diagnostics'\]/)
   })
 
   it('is in the axe manifest, on the page that holds it', () => {
