@@ -58,6 +58,17 @@ export type ReducedMotionMember = {
   positiveControl: (el: Element) => unknown
 }
 
+/** The chat history with one chat, in the state `pip`. */
+function railWith(pip: 'running' | 'waiting') {
+  return (
+    <ThreadRail status="ready" selectedKey="" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}}
+      groups={[{ id: 'folder:', name: 'No folder', threads: [{
+        key: 'chat:c1', kind: 'chat', id: 'c1', title: 'Seed order', projectId: '', route: 'chat/c1',
+        pip, pinned: false, activeAt: 0, folderId: '', tagIds: [],
+      }] }]} />
+  )
+}
+
 export const REDUCED_MOTION_FAMILY: ReducedMotionMember[] = [
   {
     id: 'Morph — drops the shared element',
@@ -144,13 +155,7 @@ export const REDUCED_MOTION_FAMILY: ReducedMotionMember[] = [
   {
     id: "ThreadRail — a running row's glow is a still ring",
     source: 'ui/ThreadRail.tsx',
-    render: () => (
-      <ThreadRail status="ready" selectedKey="" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}}
-        groups={[{ id: 'folder:', name: 'No folder', threads: [{
-          key: 'chat:c1', kind: 'chat', id: 'c1', title: 'Seed order', projectId: '', route: 'chat/c1',
-          pip: 'running', pinned: false, activeAt: 0, folderId: '', tagIds: [],
-        }] }]} />
-    ),
+    render: () => railWith('running'),
     selector: '[data-state-dot]',
     attr: 'data-state-dot',
     reduced: 'still',
@@ -159,6 +164,18 @@ export const REDUCED_MOTION_FAMILY: ReducedMotionMember[] = [
     // glow was: the branch is not "draw nothing".
     positiveControl: (el) =>
       el.getAttribute('data-state-family') === 'active' && el.getAttribute('title') === 'Running' ? el.querySelector('[data-still-glow]') : null,
+  },
+  {
+    id: "ThreadRail — a waiting row's glow is a still ring",
+    source: 'ui/ThreadRail.tsx',
+    render: () => railWith('waiting'),
+    selector: '[data-state-dot]',
+    attr: 'data-state-dot',
+    reduced: 'still',
+    animated: 'glowing',
+    // The same for a chat that waits on you: its dot, its word, and its ring.
+    positiveControl: (el) =>
+      el.getAttribute('data-state-family') === 'waiting' && el.getAttribute('title') === 'Waiting on you' ? el.querySelector('[data-still-glow]') : null,
   },
   {
     id: 'WavyProgress (indeterminate) — the traveling crest never starts',

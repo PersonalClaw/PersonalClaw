@@ -7,7 +7,7 @@ import { ThreadRail, type ThreadRailGroup } from './ThreadRail'
 //
 // Each folder (or tag) is a disclosure group, and under it each chat, goal loop or code session is a
 // dense row that opens it. A row can carry one state dot, its state in the dot's tooltip and in the
-// row's name: running, waiting on you, failed. Only a running row's glow moves. The open row is lit
+// row's name: running, waiting on you, failed. Only a running or waiting row's glow moves. The open row is lit
 // (`aria-current="page"`), and its group opens so the lit row can be seen. A group's disclosure
 // lasts across a reload. Loading, a failed read and an empty group each have a row of their own, so
 // none of them reads as a group with nothing in it.
@@ -75,15 +75,17 @@ describe('the chat history rail', () => {
     expect(screen.getByRole('button', { name: 'Plan the garden' }).querySelector('[data-state-family]')).toBeNull()
   })
 
-  it("a running row's one motion is the shared running glow, and it schedules no frame", () => {
+  it("a running or waiting row's one motion is the shared glow, and it schedules no frame", () => {
     const raf = vi.spyOn(window, 'requestAnimationFrame')
     rail()
-    const row = screen.getByRole('button', { name: /^Goal loop: Find a seed supplier/ })
     expect(raf).not.toHaveBeenCalled()
-    expect(row.querySelectorAll('.status-pulse')).toHaveLength(1)
-    expect(row.outerHTML).not.toMatch(/animate-|spin/)
-    // Nothing else in the rail moves: a row whose work has stopped has no glow.
-    for (const name of [/^Code session: Fence gate/, /^Order the soil/, /^Plan the garden/]) {
+    for (const name of [/^Goal loop: Find a seed supplier/, /^Order the soil/]) {
+      const row = screen.getByRole('button', { name })
+      expect(row.querySelectorAll('.status-pulse')).toHaveLength(1)
+      expect(row.outerHTML).not.toMatch(/animate-|spin/)
+    }
+    // Nothing else in the rail moves: a failed row and a calm one have no glow.
+    for (const name of [/^Code session: Fence gate/, /^Plan the garden/]) {
       expect(screen.getByRole('button', { name }).outerHTML).not.toMatch(/animate-|pulse|spin/)
     }
   })
