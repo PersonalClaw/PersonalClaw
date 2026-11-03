@@ -6,7 +6,7 @@ const doc: UiDoc = {
   name: 'Toaster',
   keywords: ['toast', 'toaster', 'notify', 'transient', 'message', 'snackbar', 'host', 'ne:toast'],
   description:
-    'The global toast host. Renders transient messages dispatched via the `ne:toast` CustomEvent — what contributed apps reach through the SDK\'s useNotify, and any host code can use too. Auto-dismisses after 5s; stacks bottom-right with a Sonner-style fan-out (newest in front, capped at 4 visible) and velocity swipe-to-dismiss. Mount once in the app shell. `children` is a card the shell keeps at the corner end of the stack, under the toasts, so a toast arriving never moves it (the interface-updated notice).',
+    'The global toast host. Renders transient messages dispatched via the `ne:toast` CustomEvent — what contributed apps reach through the SDK\'s useNotify, and any host code can use too. Auto-dismisses after 5s, a time that stops while the pointer or keyboard focus is on the stack; stacks bottom-right with a Sonner-style fan-out (newest in front, capped at 4 visible) and velocity swipe-to-dismiss. Mount once in the app shell. `children` is a card the shell keeps at the corner end of the stack, under the toasts, so a toast arriving never moves it (the interface-updated notice).',
   props: [
     { name: 'children', description: 'A host-owned card kept at the corner end of the stack, under the toasts. The shell passes the interface-updated notice.' },
   ],

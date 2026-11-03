@@ -45,6 +45,9 @@ _lock = threading.Lock()
 #: The app → why its previous code is still in this process. In memory on purpose: restarting
 #: the gateway is the one thing that clears it.
 _restart: dict[str, list[str]] = {}
+#: The app → its seeded skills an unload kept because their owner changed them, until the
+#: disable, update or uninstall that ran it says so (:func:`take_kept`).
+_kept: dict[str, list[str]] = {}
 
 #: How far apart the process table is read twice when looking for a process still running an
 #: unloaded app's files. One that shows up once is on its way out (a server the unload just
@@ -313,6 +316,15 @@ def note_restart(name: str, reasons: list[str]) -> None:
         known.extend(r for r in reasons if r not in known)
 
 
+def take_kept(name: str) -> list[str]:
+    """What the last unloads of *name* kept of its seeded skills because their owner changed them,
+    one sentence each, for the disable, update or uninstall that ran them to say; then forgotten,
+    so each is said once."""
+    with _lock:
+        kept = _kept.pop(name, [])
+    return [f"Kept the skill {skill}: you changed it, so it stays yours." for skill in kept]
+
+
 def restart_reason(name: str) -> str:
     """Why *name* needs a gateway restart to run only its installed version; ``""`` if it does not.
 
@@ -482,14 +494,20 @@ def _seed_skills(manifest: AppManifest) -> None:
 
 
 def _remove_skills(manifest: AppManifest) -> None:
-    """Remove the app's own seeded skills (provenance-keyed, never a user's skill)."""
+    """Remove the app's own seeded skills (provenance-keyed, never a user's skill), and note the
+    ones kept because their owner changed them (:func:`take_kept`)."""
     try:
         from personalclaw.apps.manager import app_dir
         from personalclaw.apps.skill_seed import remove_app_skills
 
-        remove_app_skills(manifest, app_dir(manifest.name))
+        kept = remove_app_skills(manifest, app_dir(manifest.name))
     except Exception:  # noqa: BLE001
         logger.debug("app %s: skill remove failed", manifest.name, exc_info=True)
+        return
+    if kept:
+        with _lock:
+            known = _kept.setdefault(manifest.name, [])
+            known.extend(k for k in kept if k not in known)
 
 
 def _settle_channel_receivers() -> None:

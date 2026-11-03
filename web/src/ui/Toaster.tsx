@@ -1,9 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion, type Transition } from 'framer-motion'
 import { Info, CheckCircle2, AlertCircle, X } from 'lucide-react'
 import { dragElastic, spring, swipeDismiss } from '../design/motion'
 import { playCue } from '../design/soundCues'
 import { TextLink } from './TextLink'
+import { useHold } from './useHold'
 
 interface Toast {
   id: number
@@ -27,6 +28,16 @@ interface Toast {
 }
 
 const ICONS = { info: Info, success: CheckCircle2, error: AlertCircle }
+
+/** How long a toast stays, counted only while nothing is on the stack. */
+export const TOAST_MS = 5_000
+
+/** A toast's time: what is left of it, and while it runs, when it ends and the timer that ends it. */
+interface Clock {
+  left: number
+  endsAt: number
+  timer?: number
+}
 const TONES = { info: 'text-on-surface-var', success: 'text-ok', error: 'text-danger' }
 
 /** Global toast host. Renders transient messages dispatched via the `ne:toast`
@@ -36,11 +47,49 @@ const TONES = { info: 'text-on-surface-var', success: 'text-ok', error: 'text-da
  *  velocity swipe-to-dismiss (drag right past a threshold or with enough flick).
  *  Reduced-motion is honored via the root MotionConfig.
  *
+ *  A toast's time stops while the pointer or the keyboard focus is on the stack (WCAG 2.2.1), and
+ *  each goes on with the time it had left once both have gone: a keyboard user who tabs to a
+ *  toast's link or its Dismiss could lose it while reading, and so could anyone pointing at it.
+ *
  *  `children` is a card the shell keeps at the corner end of the stack, under the toasts, so a toast
  *  arriving never moves it: the interface-updated notice (`app/UpdatedInterfaceNotice`). */
 export function Toaster({ children }: { children?: ReactNode } = {}) {
   const [toasts, setToasts] = useState<Toast[]>([])
-  const dismiss = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id))
+  const clocks = useRef(new Map<number, Clock>())
+  // While the pointer or focus is on the stack every toast's time stops; after, each runs on.
+  const { held, hold, releaseFocus } = useHold()
+  // Each card, so a toast dismissed with focus in it lets go of the hold that focus made.
+  const cards = useRef(new Map<number, HTMLElement>())
+  const dismiss = useCallback((id: number) => {
+    const clock = clocks.current.get(id)
+    if (clock?.timer !== undefined) window.clearTimeout(clock.timer)
+    clocks.current.delete(id)
+    if (cards.current.get(id)?.contains(document.activeElement)) releaseFocus()
+    cards.current.delete(id)
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [releaseFocus])
+  const run = useCallback((id: number) => {
+    const clock = clocks.current.get(id)
+    if (!clock || clock.timer !== undefined) return
+    clock.endsAt = Date.now() + clock.left
+    clock.timer = window.setTimeout(() => dismiss(id), clock.left)
+  }, [dismiss])
+
+  const heldNow = useRef(held)
+  useEffect(() => {
+    heldNow.current = held
+    for (const [id, clock] of clocks.current) {
+      if (!held) run(id)
+      else if (clock.timer !== undefined) {
+        window.clearTimeout(clock.timer)
+        clock.timer = undefined
+        clock.left = Math.max(0, clock.endsAt - Date.now())
+      }
+    }
+  }, [held, run])
+  useEffect(() => () => {
+    for (const clock of clocks.current.values()) if (clock.timer !== undefined) window.clearTimeout(clock.timer)
+  }, [])
 
   // A toast the user just FLICKED away, with the transition `swipeDismiss()` resolved
   // for that gesture. Set on drag end and consumed one render later by the effect
@@ -52,7 +101,7 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
     if (!flicked) return
     dismiss(flicked.id)
     setFlicked(null)
-  }, [flicked])
+  }, [flicked, dismiss])
 
   useEffect(() => {
     let seq = 0
@@ -74,11 +123,12 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
       const linked = href.startsWith('#/') ? href : ''
       const hrefLabel = String(d.hrefLabel ?? '').trim() || 'Open'
       setToasts((prev) => [...prev, { id, message, level, href: linked || undefined, hrefLabel }])
-      window.setTimeout(() => dismiss(id), 5000)
+      clocks.current.set(id, { left: TOAST_MS, endsAt: 0 })
+      if (!heldNow.current) run(id)
     }
     window.addEventListener('ne:toast', onToast as EventListener)
     return () => window.removeEventListener('ne:toast', onToast as EventListener)
-  }, [])
+  }, [run])
 
   // Newest at the BOTTOM (closest to the corner) — the most recent toast is the
   // most prominent. Cap the visible count so a burst doesn't build a tall tower;
@@ -100,7 +150,7 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
     // auto-dismiss removal re-announces the region as it empties. The region element itself
     // is always mounted (never conditional) — a live region created at the same moment its
     // content appears is not reliably observed.
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[var(--z-toast)] flex max-w-sm flex-col items-stretch gap-2">
+    <div {...hold} className="pointer-events-none fixed bottom-4 right-4 z-[var(--z-toast)] flex max-w-sm flex-col items-stretch gap-2">
       <div role="status" aria-live="polite" aria-relevant="additions" aria-atomic="false" className="sr-only">
         {visible.filter((t) => t.level !== 'error').map((t) => <div key={t.id}>{t.message}</div>)}
       </div>
@@ -113,6 +163,7 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
           return (
             <motion.div
               key={t.id}
+              ref={(el: HTMLDivElement | null) => { if (el) cards.current.set(t.id, el) }}
               layout
               drag="x"
               dragConstraints={{ left: 0, right: 0 }}

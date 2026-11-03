@@ -4,6 +4,7 @@ import { RefreshCw, X } from 'lucide-react'
 import { prefersReducedMotion, spring } from '../design/motion'
 import { Button } from '../ui/Button'
 import { IconButton } from '../ui/IconButton'
+import { useHold } from '../ui/useHold'
 import { useUpdateSheetOpen } from '../ui/updateSheetOpen'
 import { markNoticed, noticedBuild, useNewerServedBuild } from './servedBuild'
 
@@ -36,8 +37,8 @@ export function UpdatedInterfaceNotice({ reload = reloadPage }: { reload?: () =>
   const held = useUpdateSheetOpen()
   // The build the notice is showing for, or '' when it shows nothing.
   const [showing, setShowing] = useState('')
-  const [hovered, setHovered] = useState(false)
-  const [focused, setFocused] = useState(false)
+  // While the pointer or focus is on it, its time stops, and it gets the whole time again after.
+  const { held: on, hold, release } = useHold()
 
   useEffect(() => {
     if (!newer || held || newer === showing || newer === noticedBuild()) return
@@ -49,15 +50,14 @@ export function UpdatedInterfaceNotice({ reload = reloadPage }: { reload?: () =>
   // Under reduced motion it comes and goes with no fade at all, read at render as `spring` is.
   const still = prefersReducedMotion()
   useEffect(() => {
-    if (!visible || hovered || focused) return
+    if (!visible || on) return
     const timer = window.setTimeout(() => setShowing(''), NOTICE_MS)
     return () => window.clearTimeout(timer)
-  }, [visible, hovered, focused, showing])
+  }, [visible, on, showing])
 
   const dismiss = () => {
     setShowing('')
-    setHovered(false)
-    setFocused(false)
+    release()
   }
 
   return (
@@ -77,10 +77,7 @@ export function UpdatedInterfaceNotice({ reload = reloadPage }: { reload?: () =>
             animate={{ opacity: 1 }}
             exit={still ? undefined : { opacity: 0 }}
             transition={spring.effects}
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
-            onFocus={() => setFocused(true)}
-            onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false) }}
+            {...hold}
             className="glass pointer-events-auto flex max-w-[calc(100vw-2rem)] items-start gap-s rounded-lg px-m py-s"
           >
             <RefreshCw size={16} aria-hidden className="mt-0.5 shrink-0 text-on-surface-var" />

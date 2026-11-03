@@ -44,13 +44,14 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from personalclaw.apps import app_runtime, capability_lifecycle
 from personalclaw.apps import disclosure as app_disclosure
 from personalclaw.apps import staging as app_staging
+from personalclaw.apps import update_recovery
 from personalclaw.apps.manager import (
     APP_MANIFEST_FILENAME,
     APP_VENV_DIRNAME,
@@ -64,6 +65,9 @@ from personalclaw.apps.manager import (
     apps_dir,
 )
 from personalclaw.apps.manifest import KEBAB_RE, AppManifest
+from personalclaw.apps.update_recovery import (  # noqa: F401 — called here
+    recover_interrupted_updates,
+)
 from personalclaw.atomic_write import atomic_write, ensure_home_for
 from personalclaw.durability import sqlite_files
 from personalclaw.security import mask_child_output
@@ -142,6 +146,9 @@ class InstallResult:
     disclosure: dict[str, Any] | None = None
     previous: dict[str, Any] | None = None
     consent: str = ""
+    # An update's seeded skills it kept because their owner changed them, one sentence each
+    # (`app_runtime.take_kept`).
+    kept: list[str] = field(default_factory=list)
 
     @property
     def restart_required(self) -> bool:
@@ -191,6 +198,7 @@ class InstallResult:
             "disclosure": self.disclosure,
             "previous": self.previous,
             "consent": self.consent,
+            "kept": list(self.kept),
         }
 
 
@@ -1654,6 +1662,7 @@ def update(
         old_manifest = _manifest_of(name)
         previous_meta = _read_installed(name)
         was_enabled = previous_meta is None or previous_meta.enabled
+        update_recovery.write_note(name, manifest.version, report.tier.value)  # before any change
         app_runtime.unload(name, old_manifest)
 
         # ── the swap: live → .rollback, new → live, then the state the new files lack ──
@@ -1689,11 +1698,13 @@ def update(
                 else:
                     app_runtime.record(old_manifest)
             _collect_app_packages()  # what only the refused new version needed
+            update_recovery.drop_note(name)
             _audit("update", "error", name, caller=caller, error=str(exc))
             return InstallResult(
                 ok=False,
                 name=name,
                 scan=report,
+                kept=app_runtime.take_kept(name),
                 error=f"update failed, rolled back: {exc}",
                 # An onUpdate-hook failure carries the subprocess tail; a swap OSError
                 # does not (getattr → ""). Surfaces the same Fix-with-AI seed.
@@ -1705,6 +1716,7 @@ def update(
         # Only now: the old version's tree (and the packages only it needed) is gone.
         _collect_app_packages()
         meta = _record_update(name, was, manifest, report.tier.value)
+        update_recovery.drop_note(name)
         # The new version starts now — imported from the files just swapped in. A disabled app
         # stays off: its providers are listed, and nothing of it runs until it is enabled.
         if meta is None or meta.enabled:
@@ -1723,6 +1735,7 @@ def update(
             restart_reason=app_runtime.restart_reason(name),
             display_name=manifest.displayName or name,
             version=manifest.version,
+            kept=app_runtime.take_kept(name),
         )
     except AppLifecycleError as exc:
         _audit("update", "error", name, caller=caller, error=str(exc))
@@ -2058,44 +2071,6 @@ def retire_orphaned_builtins(seeded: set[str], present: set[str]) -> list[str]:
         changed.append(name)
     _write_seed_marker(seeded)
     return changed
-
-
-def recover_interrupted_updates() -> list[str]:
-    """Reconcile leftover ``.{name}.rollback`` dirs from an update that crashed
-    mid-swap (called at startup). If ``live`` is missing/empty, restore from the
-    rollback; otherwise the swap completed and the rollback is stale — drop it, after
-    handing the live version whatever of the app's state the update had not moved over
-    yet (:func:`_drop_stale_rollback`). Returns the names recovered."""
-    recovered: list[str] = []
-    root = apps_dir()
-    if not root.is_dir():
-        return recovered
-    for entry in root.iterdir():
-        if not (
-            entry.is_dir() and entry.name.startswith(".") and entry.name.endswith(_ROLLBACK_SUFFIX)
-        ):
-            continue
-        name = entry.name[1 : -len(_ROLLBACK_SUFFIX)]
-        live = app_dir(name)
-        try:
-            if not live.exists() or not any(live.iterdir()):
-                # Crash between "move live→rollback" and "move new→live": restore.
-                if live.exists():
-                    shutil.rmtree(live, ignore_errors=True)
-                shutil.move(str(entry), str(live))
-                recovered.append(name)
-                _audit("update_recover", "restored", name)
-            else:
-                carried = _drop_stale_rollback(entry, live)
-                _audit(
-                    "update_recover",
-                    "dropped_stale",
-                    name,
-                    detail=f"carried={','.join(carried)}" if carried else "",
-                )
-        except OSError:
-            logger.warning("failed to reconcile rollback dir %s", entry, exc_info=True)
-    return recovered
 
 
 def repair_app_packages() -> list[str]:

@@ -11,7 +11,14 @@ import { notify } from './appSdk'
  *  provider holds, so that provider is off while the app is on. The answer names it, and that is
  *  said out loud here (its card in Settings → Providers keeps the same sentence). */
 export async function setActivation(app: { name: string; enabled: boolean }): Promise<void> {
-  if (app.enabled) { await api.disableApp(app.name); return }
+  if (app.enabled) { sayKept((await api.disableApp(app.name))?.kept); return }
   const { providerErrors = [] } = await api.enableApp(app.name)
   for (const why of providerErrors) notify(why, 'error')
+}
+
+/** Say each seeded skill a disable, update or removal kept because its owner changed it: the
+ *  skill stays in the library as the user's own, and nothing else would tell them it outlived its
+ *  app. */
+export function sayKept(kept: readonly string[] | undefined): void {
+  for (const line of kept ?? []) notify(line, 'info')
 }

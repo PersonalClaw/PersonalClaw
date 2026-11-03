@@ -138,7 +138,12 @@ const write = <T>(method: string, p: string, body?: unknown, extra?: Record<stri
 const post = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('POST', p, body, extra)
 const put = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('PUT', p, body, extra)
 const patch = <T>(p: string, body?: unknown, extra?: Record<string, string>) => write<T>('PATCH', p, body, extra)
-const del = (p: string) => refuseIfSignedOut() ?? withFreshSignIn(() => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => { if (!r.ok) throw await apiError(r) }))
+// Resolves with the answer when the route sends one (a removal that says what it did, as an app's
+// uninstall names the skills it kept), and with nothing otherwise.
+const del = <T = void>(p: string) => refuseIfSignedOut() ?? withFreshSignIn(() => fetch(p, { method: 'DELETE', headers: { ...SK } }).then(async (r) => {
+  if (!r.ok) throw await apiError(r)
+  try { return (await r.json()) as T } catch { return undefined as T }
+}))
 
 /** The query of a skill's route: a file `path`, and the `agent` whose own copy it addresses. */
 const skillQuery = (fields: { path?: string; agent?: string }): string => {
@@ -1482,6 +1487,8 @@ export interface AppInstallResult {
   /** On success: why a provider the app registered serves nothing, one sentence each — a tool it
    *  offers has a name another provider holds. The app is installed and on; that provider is not. */
   providerErrors?: string[]
+  /** An update's seeded skills it kept because their owner changed them, one sentence each. */
+  kept?: string[]
 }
 export interface SkillInstallResult {
   ok?: boolean; path?: string; error?: string
@@ -11565,16 +11572,17 @@ export const api = {
   updateApp: (name: string, source: string, consent: string) =>
     _installReq(`/api/apps/${encodeURIComponent(name)}/update`, { source, consent }),
   enableApp: (name: string) => post<{ ok: boolean; providerErrors?: string[] }>(`/api/apps/${encodeURIComponent(name)}/enable`),
-  disableApp: (name: string) => post<{ ok: boolean }>(`/api/apps/${encodeURIComponent(name)}/disable`),
+  disableApp: (name: string) => post<{ ok: boolean; kept?: string[] }>(`/api/apps/${encodeURIComponent(name)}/disable`),
   // The three removal rungs (issue #2541), each a different promise about `data/`:
   //   uninstallApp(name)        → deactivate. Nothing leaves disk.
   //   removeApp(name)           → the app's files go, the user's `data/` is KEPT.
   //   uninstallApp(name, true)  → everything goes, `data/` included.
   // Kept as two functions rather than one flag pair so a call site cannot land on the
   // destructive rung by getting a boolean the wrong way round.
+  // Each answers with `kept`: the seeded skills it kept because their owner changed them.
   uninstallApp: (name: string, force = false) =>
-    del(`/api/apps/${encodeURIComponent(name)}${force ? '?force=1' : ''}`),
-  removeApp: (name: string) => del(`/api/apps/${encodeURIComponent(name)}?remove=1`),
+    del<{ ok: boolean; kept?: string[] } | undefined>(`/api/apps/${encodeURIComponent(name)}${force ? '?force=1' : ''}`),
+  removeApp: (name: string) => del<{ ok: boolean; kept?: string[] } | undefined>(`/api/apps/${encodeURIComponent(name)}?remove=1`),
   appUninstallPreview: (name: string) =>
     get<{ name: string; dependencies: AppDepClassification[]; data?: AppDataFacts }>(`/api/apps/${encodeURIComponent(name)}/uninstall-preview`),
   // The save REPLACES the app's settings file, so it names the revision of the (masked) config it
