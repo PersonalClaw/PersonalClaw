@@ -13,7 +13,7 @@ const radius = (over: Partial<BlastRadius>): BlastRadius => ({
 describe('approvalToastMessage', () => {
   it('names who is asking, the tool, what it can touch, and where to answer', () => {
     const msg = approvalToastMessage({ who: 'A subagent', tool: 'bash', place: { session: 'main', work: 'chat:main' }, blastRadius: radius({ shell: true }) })
-    expect(msg).toBe('A subagent needs approval to run bash (runs a command) — open main to respond.')
+    expect(msg).toBe('A subagent needs approval to run bash (runs a command) — open the chat to respond.')
   })
 
   it('says what the backend established the call does, not what its name suggests', () => {
@@ -47,7 +47,7 @@ describe('approvalToastMessage', () => {
     // Not "(nothing established)": a reader hears that as "nothing happens". Silence is the
     // unknown channel, exactly as it is on the card.
     const msg = approvalToastMessage({ who: 'A background task', tool: 'ponder', place: { session: 's1', work: 'chat:s1' } })
-    expect(msg).toBe('A background task needs approval to run ponder — open s1 to respond.')
+    expect(msg).toBe('A background task needs approval to run ponder — open the chat to respond.')
     expect(msg).not.toMatch(/\(/)
   })
 

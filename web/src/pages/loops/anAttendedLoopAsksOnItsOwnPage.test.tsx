@@ -112,7 +112,7 @@ describe('where a loop worker’s ask is answered', () => {
     }
     expect(toasts).toHaveLength(1)
     expect(toasts[0].message).toMatch(/^Loop “Digest titles” needs approval to run bash/)
-    expect(toasts[0].message).toContain(`open loop ${LOOP_ID} to respond.`)
+    expect(toasts[0].message).toContain('open the loop to respond.')
     expect(toasts[0].href).toBe(`#/loops/${LOOP_ID}`)
   })
 })

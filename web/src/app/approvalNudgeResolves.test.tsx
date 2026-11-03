@@ -186,7 +186,7 @@ describe('the approval nudge for a workflow stage resolves to a surface that can
     // chat/subagent approval is answered on the chat page and its sentence already worked.
     const nudge = await nudgeFor({ session: 'main', work: 'chat:main', step: '', room: '' })
     expect(nudge.href).toBe('#/chat/main')
-    expect(nudge.message).toContain('open main to respond.')
+    expect(nudge.message).toContain('open the chat to respond.')
   })
 })
 
@@ -205,6 +205,16 @@ describe('the sentence and the link cannot name different places', () => {
       expect(dest.linkLabel.toLowerCase(), place.session).toMatch(/workflow run|chat/)
       expect(dest.label, place.session).not.toBe('')
     }
+  })
+
+  it('names a chat and a loop in words, never by their key', () => {
+    // "open main to respond", "open loop 7f3a… to respond": the sentence's `who` already names the
+    // chat or the loop (`source_label`), so the place it is answered in is "the chat", "the loop",
+    // as a room's is "the room". The link still goes to that one chat or loop.
+    const chat = approvalDestination({ session: 'dashboard:abc', work: 'chat:abc' })
+    expect([chat.label, chat.href]).toEqual(['the chat', '#/chat/abc'])
+    const loop = approvalDestination({ session: 'loop-7f3a-t-1a2b', work: 'loop:7f3a' })
+    expect([loop.label, loop.href]).toEqual(['the loop', '#/loops/7f3a'])
   })
 
   it('an instance path with a dot survives the round trip into the run view', () => {
