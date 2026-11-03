@@ -304,6 +304,154 @@ def test_a_security_job_in_breadth_is_kept_not_demanded() -> None:
     assert _against(text, trusted=text) == []
 
 
+# ── the entry tier: the one tier a security job may leave in one merge ──────────────────
+
+_RAILS_CHECKS = """
+[[job]]
+id = "rails-checks"
+tiers = ["change", "entry", "merge"]
+inputs = [":(glob)**"]
+external_inputs = []
+toolchain = ["uv-sync"]
+cache = ["uv"]
+security = "ordinary"
+reuse = "tree"
+timeout_min = 5
+command = [{ argv = ["uv", "run", "python", "-m", "tools.ci", "rails", "check"] }]
+"""
+
+_MERGE_LIST = '[tier.merge]\njobs = ["rails", "python-suite", "python-suite-macos", "security"]\n'
+
+
+def _tiers(text: str, job_id: str, tiers: list[str]) -> str:
+    """``text`` with the entry ``job_id`` claiming ``tiers``, and each tier list naming it as
+    they say."""
+    head, entries = _entries(text)
+    claimed = "tiers = [" + ", ".join(f'"{t}"' for t in tiers) + "]"
+    edited = [
+        (
+            "\n".join(claimed if line.startswith("tiers = ") else line for line in e.split("\n"))
+            if e.startswith(f'id = "{job_id}"\n')
+            else e
+        )
+        for e in entries
+    ]
+    assert edited != entries, job_id
+    for table in ("merge", "entry"):
+        opening = f"[tier.{table}]\njobs = ["
+        start = head.index(opening) + len(opening)
+        end = head.index("]\n", start)
+        listed = [j.strip().strip('"') for j in head[start:end].split(",")]
+        listed = [j for j in listed if j != job_id] + ([job_id] if table in tiers else [])
+        head = head[:start] + ", ".join(f'"{j}"' for j in listed) + head[end:]
+    return "\n[[job]]\n".join([head, *edited])
+
+
+def _queued() -> str:
+    """main once the queue gates it: rails-checks beside the rails, and an entry tier that
+    holds every merge-tier job, so each can leave it."""
+    text = (
+        _MAIN.replace(
+            _MERGE_LIST,
+            _MERGE_LIST.replace('"rails", ', '"rails", "rails-checks", ')
+            + '[tier.entry]\njobs = ["rails-checks"]\n',
+            1,
+        )
+        + _RAILS_CHECKS
+    )
+    text = _tiers(text, "rails", ["change", "entry", "merge"])
+    for job_id in ("python-suite", "python-suite-macos", "security"):
+        text = _tiers(text, job_id, ["entry", "merge"])
+    return text
+
+
+_QUEUED = _queued()
+
+
+def _refused(candidate: str, trusted: str = _QUEUED) -> list[str]:
+    """Every problem the loader names in ``candidate`` with ``trusted`` as its reference."""
+    with pytest.raises(catalogue.CatalogueError) as caught:
+        catalogue.load(candidate, "candidate", reference=_load(trusted))
+    return caught.value.problems
+
+
+def test_main_has_no_objection_to_its_own_queued_catalogue() -> None:
+    assert _load(_QUEUED).entry_jobs == (
+        "rails-checks",
+        "rails",
+        "python-suite",
+        "python-suite-macos",
+        "security",
+    )
+    assert _against(_QUEUED, trusted=_QUEUED) == []
+
+
+def test_a_security_job_leaving_the_entry_tier_loads() -> None:
+    """The macOS suite leaves the pull request's run in one merge: the queue's run of the merge
+    tier, judged by main's plan, still holds it."""
+    candidate = _tiers(_QUEUED, "python-suite-macos", ["merge"])
+    assert _against(candidate, trusted=_QUEUED) == []
+    assert "python-suite-macos" not in _load(candidate).entry_jobs
+
+
+def test_a_security_job_leaving_the_merge_tier_is_refused_though_entry_keeps_it() -> None:
+    candidate = _tiers(_QUEUED, "python-suite-macos", ["entry"])
+    assert (
+        "python-suite-macos: it leaves the merge tier, where main's catalogue runs this security"
+        " job" in _refused(candidate)
+    )
+
+
+def _every_tier() -> str:
+    """The queued main with the breadth corpus in every tier, so it can leave each one."""
+    return _tiers(_QUEUED, "corpus", list(catalogue.TIERS))
+
+
+@pytest.mark.parametrize("tier", [t for t in catalogue.TIERS if t != catalogue.ENTRY_TIER])
+def test_a_security_job_leaving_any_tier_but_entry_is_refused(tier: str) -> None:
+    trusted = _every_tier()
+    candidate = _tiers(trusted, "corpus", [t for t in catalogue.TIERS if t != tier])
+    assert (
+        f"corpus: it leaves the {tier} tier, where main's catalogue runs this security job"
+        in _refused(candidate, trusted=trusted)
+    )
+
+
+def test_the_same_security_job_leaving_entry_loads() -> None:
+    trusted = _every_tier()
+    candidate = _tiers(trusted, "corpus", [t for t in catalogue.TIERS if t != "entry"])
+    assert _against(candidate, trusted=trusted) == []
+
+
+def test_the_exemption_names_the_entry_tier_alone() -> None:
+    assert catalogue.ENTRY_TIER == "entry"
+    assert catalogue.ENTRY_TIER in catalogue.TIERS
+
+
+def test_the_security_corpus_never_leaves_the_entry_tier() -> None:
+    """The one security job the entry tier must hold is refused by main's rules too, not only by the
+    candidate's own loader."""
+    problems = _refused(_tiers(_QUEUED, "security", ["merge"]))
+    assert (
+        "security: it leaves the entry tier, where main's catalogue runs this security job"
+        in problems
+    )
+    assert (
+        "the entry tier lacks security, the security corpus, so a pull request could enter"
+        " the queue without it" in problems
+    )
+
+
+@pytest.mark.parametrize("job_id", ["rails", "rails-checks"])
+def test_the_rails_and_their_check_never_leave_the_entry_tier(job_id: str) -> None:
+    problems = _refused(_tiers(_QUEUED, job_id, ["change", "merge"]))
+    what = catalogue.ENTRY_NEEDS_JOBS[job_id]
+    assert problems == [
+        f"the entry tier lacks {job_id}, {what}, so a pull request could enter the queue"
+        " without it"
+    ]
+
+
 # ── the loader, given main's catalogue as its reference ─────────────────────────────────────
 
 
