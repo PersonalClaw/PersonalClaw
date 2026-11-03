@@ -58,9 +58,13 @@ class TestTheSpaDocument:
         assert html.count(f"<script {owner_token_url.SCRUB_ATTR}>") == 1
 
     @pytest.mark.asyncio
-    async def test_a_plain_load_is_served_unchanged(self, dist):
+    async def test_a_plain_load_carries_no_scrub(self, dist):
+        from personalclaw.frontend import inject_spa_build_meta, spa_build_id
+
         resp = await dist.index(_request())
-        assert resp.text == _INDEX
+        # Only the build the page was served (#5901), which every load carries.
+        assert resp.text == inject_spa_build_meta(_INDEX, spa_build_id(dist._DIST_DIR))
+        assert owner_token_url.SCRUB_ATTR not in resp.text
 
     def test_injection_is_idempotent_and_leaves_a_headless_document_alone(self):
         once = owner_token_url.inject_scrub(_INDEX)

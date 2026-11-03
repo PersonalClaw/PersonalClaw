@@ -47,6 +47,7 @@ import { useNotificationToasts } from '../lib/notificationToasts'
 import { DialogHost } from '../ui/dialog/DialogHost'
 import { PersonalityShellElement } from './personality'
 import { UpdateProgressOverlay } from '../ui/UpdateProgressOverlay'
+import { UpdatedInterfaceNotice } from './UpdatedInterfaceNotice'
 import { runInTerminal, runInTerminalWhenReady, subscribeTerminal, hasActiveTerminal } from '../pages/terminal/terminalBridge'
 import { LoadError, LoadingStatus } from '../ui/ListScaffold'
 import { useQuery } from '../lib/data'
@@ -736,8 +737,9 @@ function AppInner() {
           </Suspense>
         </ErrorBoundary>
         {/* Outside the boundary: a resolve failure is announced through the toast host, so it
-            must survive a page-level crash rather than being replaced by the fallback. */}
-        <Toaster />
+            must survive a page-level crash rather than being replaced by the fallback. The phone
+            view is a page left open too, so it says when the interface was updated (#5901). */}
+        <Toaster><UpdatedInterfaceNotice /></Toaster>
       </>
     )
   }
@@ -985,7 +987,8 @@ function AppInner() {
             under a personality that declares one it mounts an aria-hidden,
             pointer-events-none overlay from the closed SHELL_ELEMENTS registry. */}
         <PersonalityShellElement />
-        <Toaster />
+        {/* The gateway now serves a newer interface than this page runs: Reload (#5901). */}
+        <Toaster><UpdatedInterfaceNotice /></Toaster>
         <DialogHost />
         {/* Self-update step progression (WS `update_progress`) — shell-level so the
             modal appears from ANY page while an update pipeline runs. */}

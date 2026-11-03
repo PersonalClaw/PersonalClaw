@@ -105,6 +105,15 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
     except Exception:  # noqa: BLE001 — a snapshot that won't serialize must not kill the socket
         logger.debug("ws: initial sessions push failed", exc_info=True)
 
+    # The interface build this gateway serves, on every open, so a page that reconnects after a
+    # restart learns whether it now runs an older one than the gateway serves (#5901). Gated like
+    # every frame: an app's socket gets it only when its manifest declares `spa_build`.
+    from personalclaw.dashboard.handlers.core import served_build
+
+    build = await asyncio.to_thread(served_build)  # a new build is a whole file read and hashed
+    if build:
+        await state.send_ws_event(ws, "spa_build", {"build": build})
+
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:

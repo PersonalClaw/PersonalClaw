@@ -70,6 +70,7 @@ from personalclaw.dashboard import origin as origin_mod
 from personalclaw.dashboard import session_store as ss
 from personalclaw.dashboard import token_auth
 from personalclaw.dashboard import ws as ws_mod
+from personalclaw.dashboard.handlers import core as handlers_core
 from personalclaw.dashboard.origin import build_allowed_origins
 from personalclaw.dashboard.state import DashboardState
 
@@ -323,6 +324,10 @@ async def rig(tmp_path: Path) -> AsyncIterator[_Rig]:
     mode with no `asyncio_mode` setting and has no async-fixture precedent, so an
     `async def` fixture errors at setup instead of running. `async with` needs no plugin support.
     """
+    # No built interface, so a socket's on-connect frames are `sessions` alone, whatever the
+    # checkout running this has built: a gateway serving one also says which (`spa_build`).
+    no_build = mock.patch.object(handlers_core, "_DIST_DIR", tmp_path / "no-build")
+    no_build.start()
     server_ctx, client_ctx = _self_signed(tmp_path)
     app, seen = _app()
     server = TestServer(app)
@@ -343,6 +348,7 @@ async def rig(tmp_path: Path) -> AsyncIterator[_Rig]:
             await asyncio.wait_for(server.close(), timeout=10)
         except asyncio.TimeoutError:  # pragma: no cover — belt and braces
             pass
+        no_build.stop()
 
 
 async def _open(rig: _Rig, token: str, *, origin: str | None = None) -> Any:

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion, type Transition } from 'framer-motion'
 import { Info, CheckCircle2, AlertCircle, X } from 'lucide-react'
 import { dragElastic, spring, swipeDismiss } from '../design/motion'
@@ -34,8 +34,11 @@ const TONES = { info: 'text-on-surface-var', success: 'text-ok', error: 'text-da
  *  and any host code can use too. Auto-dismisses; stacks bottom-right with a
  *  Sonner-style fan-out (newest in front, older ones scaled + tucked behind) and
  *  velocity swipe-to-dismiss (drag right past a threshold or with enough flick).
- *  Reduced-motion is honored via the root MotionConfig. */
-export function Toaster() {
+ *  Reduced-motion is honored via the root MotionConfig.
+ *
+ *  `children` is a card the shell keeps at the corner end of the stack, under the toasts, so a toast
+ *  arriving never moves it: the interface-updated notice (`app/UpdatedInterfaceNotice`). */
+export function Toaster({ children }: { children?: ReactNode } = {}) {
   const [toasts, setToasts] = useState<Toast[]>([])
   const dismiss = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id))
 
@@ -168,6 +171,7 @@ export function Toaster() {
           )
         })}
       </AnimatePresence>
+      {children}
     </div>
   )
 }
