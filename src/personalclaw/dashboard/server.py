@@ -18,6 +18,7 @@ from personalclaw.dashboard.handlers.research_reports import setup_research_repo
 from personalclaw.dashboard.origin import build_allowed_origins, check_origin, gateway_bind_host
 from personalclaw.dashboard.state import _DEFAULT_PORT, DashboardState
 from personalclaw.dashboard.token_auth import served_port, token_auth_middleware
+from personalclaw.frontend import served_spa_dist
 from personalclaw.hooks import ScriptHookStore, set_global_hook_store
 from personalclaw.inbound.webhook import is_door as _webhook_door
 from personalclaw.workflows import agent_routes
@@ -46,7 +47,8 @@ def _single_post_ceiling() -> int:
     return single_post_threshold() + 16 * 1024 * 1024  # threshold + multipart overhead
 
 
-_DIST_DIR = Path(__file__).resolve().parent.parent / "static" / "dist"
+# The packaged `static/dist`, or the folder the gateway's environment names (`served_spa_dist`).
+_DIST_DIR = served_spa_dist()
 
 #: How long a request still being answered when the gateway stops is given to finish, before the
 #: server cancels it (and as long again to leave once cancelled). Every event stream ends the moment

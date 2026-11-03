@@ -39,9 +39,11 @@ from personalclaw.dashboard import session_store as ss
 from personalclaw.dashboard import state as state_mod
 from personalclaw.dashboard import token_auth
 from personalclaw.dashboard import ws as ws_mod
+from personalclaw.dashboard.handlers import core as handlers_core
 from personalclaw.dashboard.handlers.updates import _log_ring, _RingLogHandler
 from personalclaw.dashboard.origin import build_allowed_origins
 from personalclaw.dashboard.state import DashboardState
+from personalclaw.frontend import spa_build_id
 
 PORT = 10000
 
@@ -51,6 +53,8 @@ NOSY = "nosy-app"
 DECLARED = "nosy_ping"
 #: A second app, declaring the subagent chunk stream — the floor for that path.
 CHATTY = "chatty-app"
+#: A third, declaring the frame that says which interface build the gateway serves (#5901).
+BUILDWATCH = "buildwatch-app"
 
 
 def _install(home, name: str, events: list[str]) -> None:
@@ -88,6 +92,13 @@ def home(tmp_path, monkeypatch):
     assert apps_manager.app_dir(NOSY).parent == tmp_path / "apps", "apps/ redirect missed"
     _install(tmp_path, NOSY, [DECLARED])
     _install(tmp_path, CHATTY, ["subagent_chunk"])
+    _install(tmp_path, BUILDWATCH, ["spa_build"])
+    # The interface build the gateway serves, pinned: every socket open says which one it is
+    # (`spa_build`), so a build in the checkout running this would change the frames read here.
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><html><head></head></html>", encoding="utf-8")
+    monkeypatch.setattr(handlers_core, "_DIST_DIR", dist)
     token_auth.use_persistent_secret()
     token_auth.revoke_all_sessions()
     yield tmp_path
@@ -170,10 +181,12 @@ async def test_app_socket_receives_neither_the_session_list_nor_the_log_stream(s
             async with sess.ws_connect(
                 url, headers={"Origin": f"http://localhost:{server.port}"}
             ) as sock:
-                # (A) the on-connect push — the FIRST frame of every connection
-                assert "sessions" not in _types(
-                    await _drain(sock)
+                # (A) the on-connect pushes — the FIRST frames of every connection
+                on_connect = _types(await _drain(sock))
+                assert (
+                    "sessions" not in on_connect
                 ), "the app got the session list (keys/titles/yolo) it never declared"
+                assert "spa_build" not in on_connect, "the app got a frame it never declared"
 
                 # (B) the log stream: ring replay + every live record after
                 await sock.send_json({"type": "subscribe_logs"})
@@ -248,10 +261,11 @@ async def test_owner_socket_still_gets_sessions_the_ring_replay_and_live_logs(st
                 url, headers={"Origin": f"http://localhost:{server.port}"}
             ) as sock:
                 first = await _drain(sock)
-                assert _types(first) == ["sessions"]
+                assert _types(first) == ["sessions", "spa_build"]
                 assert first[0]["data"] == [{"key": "chat-1", "title": "quarterly board notes"}]
                 # The rows and nothing beside them: no approval posture rides the frame.
                 assert set(first[0]) == {"type", "data"}, first[0]
+                assert first[1]["data"] == {"build": spa_build_id(handlers_core._DIST_DIR)}
 
                 await sock.send_json({"type": "subscribe_logs"})
                 replay = await _drain(sock)
@@ -264,3 +278,46 @@ async def test_owner_socket_still_gets_sessions_the_ring_replay_and_live_logs(st
                 assert live[0]["data"]["msg"] == "a live record"
     finally:
         await server.close()
+
+
+# ── the served interface build (#5901) ───────────────────────────────────────────────────
+
+
+async def _on_connect(state: DashboardState, app: str = "") -> list[dict]:
+    """The frames a socket reads on connect: an owner's, or *app*'s through its app token."""
+    server = TestServer(_server_app(state))
+    await server.start_server()
+    try:
+        owner = token_auth.generate_token("owner")
+        query = f"token={owner}"
+        if app:
+            query += f"&app_token={token_auth.generate_token('owner', app=app)}"
+        async with ClientSession() as sess:
+            async with sess.ws_connect(
+                server.make_url(f"/api/ws?{query}"),
+                headers={"Origin": f"http://localhost:{server.port}"},
+            ) as sock:
+                return await _drain(sock)
+    finally:
+        await server.close()
+
+
+@pytest.mark.asyncio
+async def test_an_app_hears_the_served_build_only_when_its_manifest_declares_it(state) -> None:
+    """The frame is additive and gated like any other: an app socket gets it on connect only when
+    `permissions.events` names `spa_build`, and the app that names it gets nothing else."""
+    served = {"build": spa_build_id(handlers_core._DIST_DIR)}
+    assert served["build"], "the fixture serves no build, so nothing below is meaningful"
+
+    assert "spa_build" not in _types(await _on_connect(state, NOSY))
+    declared = await _on_connect(state, BUILDWATCH)
+    assert _types(declared) == ["spa_build"]
+    assert declared[0]["data"] == served
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_with_no_built_interface_says_nothing_about_one(
+    state, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(handlers_core, "_DIST_DIR", tmp_path / "no-build")
+    assert _types(await _on_connect(state)) == ["sessions"]

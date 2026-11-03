@@ -77,6 +77,7 @@ FOLDER_VARIABLES = (
     "PERSONALCLAW_CEILING_FILE",
     "PERSONALCLAW_COMPUTER_USE_ENABLE_FILE",
     "PERSONALCLAW_LOCAL_MODEL_APPS_DIR",
+    "PERSONALCLAW_SPA_DIST",
 )
 
 #: Asks the harness for one run's places and the gateway's environment prefix, and prints both.

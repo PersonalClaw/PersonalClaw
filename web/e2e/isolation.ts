@@ -87,6 +87,12 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
     mode: 'shared',
     why: 'serves web/dist from its own server on its own port, and is serial within itself',
   },
+  'updatedInterface.spec.ts': {
+    mode: 'shared',
+    why:
+      'starts a gateway, home and port of its own, serving a copy of dist/, and restarts only that ' +
+      'gateway; it never reaches the run\'s gateway',
+  },
   'sessionMap.spec.ts': { mode: 'shared', why: 'adds its own chat sessions and reads only its own' },
   'streamStall.spec.ts': { mode: 'shared', why: 'adds its own chat session and reads only its own' },
   'keyboard.spec.ts': {

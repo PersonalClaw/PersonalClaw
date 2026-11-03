@@ -6,7 +6,6 @@ import hmac
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Any
 
 from aiohttp import web
@@ -42,6 +41,7 @@ from personalclaw.dashboard.token_auth import (
     mint_session,
     parse_duration,
 )
+from personalclaw.frontend import inject_spa_build_meta, served_spa_dist, spa_build_id
 from personalclaw.http_errors import consent_required, json_error
 from personalclaw.request_validation import bool_field, json_object_body, require_bool
 from personalclaw.safety_flags import confirm_granted
@@ -51,7 +51,8 @@ from personalclaw.stale_write import refusal_outcome, revision_of, stale_write_r
 
 logger = logging.getLogger(__name__)
 
-_DIST_DIR = Path(__file__).resolve().parent.parent.parent / "static" / "dist"
+# The packaged `static/dist`, or the folder the gateway's environment names (`served_spa_dist`).
+_DIST_DIR = served_spa_dist()
 
 # The composer mic-recording transcribe cap: a short voice clip (~25 MB ≈ 30+ min
 # of speech), deliberately far below the audio-file-upload category so a runaway
@@ -166,6 +167,9 @@ async def index(request: web.Request) -> web.Response:
     from personalclaw.surface_layers import inject_safe_meta
 
     html = inject_safe_meta(html)
+    # The build this document is, so the page can tell when the gateway serves a newer one. Off the
+    # loop: a new build is a whole file read and hashed.
+    html = inject_spa_build_meta(html, await asyncio.to_thread(served_build))
     # A `?token=` link: the token middleware sets the session cookie on THIS response, so by
     # the time the document runs the URL copy of the credential is only something to leak.
     # The scrub is inlined first in <head> — ahead of every resource declaration, and
@@ -175,6 +179,12 @@ async def index(request: web.Request) -> web.Response:
 
         html = inject_scrub(html)
     return web.Response(text=html, content_type="text/html")
+
+
+def served_build() -> str:
+    """The interface build the gateway serves (`frontend.spa_build_id`), or "" with none built.
+    The document carries it (`index`), and so does a socket's first frames (`ws.api_ws`)."""
+    return spa_build_id(_DIST_DIR)
 
 
 async def favicon(request: web.Request) -> web.StreamResponse:

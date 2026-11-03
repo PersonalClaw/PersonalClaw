@@ -8,6 +8,7 @@ import { api } from '../lib/api'
 import { readableErrText } from '../lib/errText'
 import { notify } from '../app/appSdk'
 import { Button } from './Button'
+import { setUpdateSheetOpen } from './updateSheetOpen'
 import { useFocusTrap } from './useFocusTrap'
 import { accentChip } from '../design/accent'
 
@@ -218,6 +219,12 @@ function StepRow({ label, status }: { label: string; status: 'done' | 'active' |
  *  restart), and how the update ended. */
 export function UpdateProgressOverlay() {
   const { progress, actions } = useUpdateProgress()
+  // A shell notice that waits for the sheet reads this (`updateSheetOpen`).
+  const sheetOpen = progress !== null
+  useEffect(() => {
+    setUpdateSheetOpen(sheetOpen)
+    return () => setUpdateSheetOpen(false)
+  }, [sheetOpen])
   return createPortal(
     <AnimatePresence>
       {progress && <UpdateSheet progress={progress} actions={actions} />}

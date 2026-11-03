@@ -4,7 +4,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import shutil
+import stat
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
@@ -176,6 +178,75 @@ def spa_dist_freshness(repo_root: Path) -> tuple[str, dict]:
         return "unstamped", {"inputs_sha256": actual}
     evidence = {"inputs_sha256": actual, "built_from_sha256": recorded}
     return ("fresh" if recorded == actual else "stale"), evidence
+
+
+# ---------------------------------------------------------------------------
+# The build a gateway SERVES, which an open page compares with the one it booted (#5901).
+#
+# An update builds a new SPA and restarts the gateway, and a page that was open kept running the
+# old build: nothing told it, until a lazy chunk it had never loaded was gone. The gateway now says
+# which build it serves in the document (``SPA_BUILD_META``) and in a ``spa_build`` frame on every
+# socket open, so a page that reconnects after the restart sees the two differ and offers Reload.
+#
+# The build is the served ``index.html`` itself, hashed. It names every hashed entry asset, so it
+# changes whenever the build's output does, and it holds for a build nothing stamped (the stamp
+# above records inputs, and a CI build has none).
+# ---------------------------------------------------------------------------
+
+#: The meta tag the gateway stamps into ``index.html`` with the build it serves. Keep in sync with
+#: ``web/src/app/servedBuild.ts``.
+SPA_BUILD_META = "personalclaw-spa-build"
+
+#: Names a built SPA folder for the gateway to serve instead of the packaged ``static/dist``. Only
+#: the gateway's own environment can set it. The browser spec that restarts a gateway into a
+#: changed build serves a copy of ``web/dist`` through it, so no run ever writes the real build.
+SPA_DIST_ENV = "PERSONALCLAW_SPA_DIST"
+
+#: ``index.html`` path -> (mtime_ns, size, build), so a socket open costs one stat.
+_SPA_BUILDS: dict[Path, tuple[int, int, str]] = {}
+
+
+def served_spa_dist() -> Path:
+    """The folder the gateway serves the SPA from: ``static/dist`` in the package, or the folder
+    ``PERSONALCLAW_SPA_DIST`` names. Read once, when the serving modules load, so a restart, which
+    starts the gateway again with its launch environment, reads it again."""
+    named = os.environ.get(SPA_DIST_ENV, "").strip()
+    if named:
+        return Path(named).expanduser().resolve()
+    return Path(__file__).resolve().parent / "static" / "dist"
+
+
+def spa_build_id(dist: Path) -> str:
+    """The build *dist* serves: the first 16 hex of the sha256 of its ``index.html``, or ``""``
+    when it has none. Recomputed only when the file's mtime or size moves."""
+    index = dist / "index.html"
+    try:
+        st = index.stat()
+    except OSError:
+        return ""
+    if not stat.S_ISREG(st.st_mode):
+        return ""
+    cached = _SPA_BUILDS.get(index)
+    if cached is not None and cached[:2] == (st.st_mtime_ns, st.st_size):
+        return cached[2]
+    try:
+        build = hashlib.sha256(index.read_bytes()).hexdigest()[:16]
+    except OSError:
+        return ""
+    _SPA_BUILDS[index] = (st.st_mtime_ns, st.st_size, build)
+    return build
+
+
+def inject_spa_build_meta(html: str, build: str) -> str:
+    """Add the served build's meta tag to *html*, first in ``<head>``. A no-op with no build, on a
+    document that has one already, and on one with no ``<head>``, which is served unchanged."""
+    if not build or SPA_BUILD_META in html:
+        return html
+    head = html.find("<head>")
+    if head < 0:
+        return html
+    at = head + len("<head>")
+    return f'{html[:at]}<meta name="{SPA_BUILD_META}" content="{build}">{html[at:]}'
 
 
 def ensure_dev_dist_symlink() -> Optional[Path]:

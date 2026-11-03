@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **An open page tells you when PersonalClaw's interface was updated, and offers Reload. When an update restarts PersonalClaw into a newer interface, the page you had open says the changes take effect when you reload, once for each new interface in that tab. It goes after 30 seconds, and waits while the pointer or focus is on it.**
+
 ## [0.3.5] — 2026-11-02
 
 The sidebar keeps its shortcuts fixed at the top and the bottom, with your chat history between them, grouped by your folders or your tags; the icon at the top opens Home, and the chats by project moved to the Projects page. A chat turn shows what it recalled where it recalled it, a file cut to its size limit tells the model so, and a Chat history board card gives its room to the chat's title. A rendered page's requests, a workbook added to Knowledge and an imported home export are each held to their limits, the gateway's children send its credential only to this home's gateway, and an automation's credentials are kept in the credential store. Pairing a new owner on a chat channel ends the previous owner's access there, an agent working for an automation changes only its own run, an app setting refuses an address with a password written into it, a command set to the strict sandbox isn't run where there's no sandbox, and Morning triage's install keeps a schedule you set. Apps can report a call an agent CLI ran without asking, and check a form's settings before they're saved.
