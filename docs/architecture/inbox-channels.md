@@ -386,7 +386,10 @@ when nobody answered it carry the same three in their `refs`, under keys of thei
 closed on its `room`, which a member's approval row must not carry), and so does an agent's
 question's row. A row kept from before is read the same way when it is served
 (`inbox.redact_item`). Every surface links to an approval and claims it on a loop's, a run's or a
-room's page from them (`app/approvalDestination.ts`), so none reads a session key's shape.
+room's page from them (`app/approvalDestination.ts`), so none reads a session key's shape. Work
+no page answers is answered on its Inbox row: the nudge says "open the Inbox" and links there, and
+the row itself has no link, where both went to a chat named by the session's key, which did not
+exist.
 
 A room member's call asks the same way (`rooms.posture.registry_approver`, bound by the round):
 its `session` is the member's own key (`room:<room>:<member>`), its `source` is `room`, and its

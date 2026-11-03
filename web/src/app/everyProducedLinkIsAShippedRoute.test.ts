@@ -264,7 +264,8 @@ describe('the notification taps and the approval links are catalogued', () => {
   })
 
   it('🔑 every approval\'s destination is an entry naming approvals, and every such entry is one', () => {
-    expect(new Set(approvalAddresses).size, 'each shape lands somewhere of its own').toBe(4)
+    // Five: work no page answers lands on the Inbox, where it went to its session's chat.
+    expect(new Set(approvalAddresses).size, 'each shape lands somewhere of its own').toBe(5)
     expect(uncatalogued(approvalAddresses)).toEqual([])
     expect(misattributed('approval', approvalAddresses)).toEqual([])
     expect(unattributed('approval', approvalAddresses)).toEqual([])

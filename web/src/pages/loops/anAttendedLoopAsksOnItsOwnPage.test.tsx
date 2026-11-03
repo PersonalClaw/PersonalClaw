@@ -85,8 +85,9 @@ describe('where a loop worker’s ask is answered', () => {
 
   it('🪤 VACUITY: a chat and another loop keep their own places', () => {
     expect(approvalDestination({ session: 'main', work: 'chat:main' }).href).toBe('#/chat/main')
-    // Shaped like a loop's key, and no loop's: the gateway names no work for it.
-    expect(approvalDestination({ session: 'loop-plan-notaloop', work: '' }).href).toBe('#/chat/loop-plan-notaloop')
+    // Shaped like a loop's key, and no loop's: the gateway names no work for it, so no page
+    // answers it and its Inbox row does.
+    expect(approvalDestination({ session: 'loop-plan-notaloop', work: '' }).href).toBe('#/inbox')
     expect(loopApprovalOf({ session: `loop-${LOOP_ID}`, work: 'loop:99999999' }, LOOP_ID)).toBe(false)
     expect(loopApprovalOf({ session: `loop-${LOOP_ID}`, work: '' }, LOOP_ID)).toBe(false)
   })

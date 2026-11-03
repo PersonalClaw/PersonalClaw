@@ -154,6 +154,17 @@ describe('refTarget', () => {
     expect(refLabel(stage)).toBe('Open the workflow run')
   })
 
+  it('an approval row for work no page answers has no link: it is answered on the row', () => {
+    // Its destination is the Inbox (`approvalDestination`), so a link would open the Inbox the row
+    // is in. It went to `chat/<its key>`, a chat that does not exist. The note an unanswered one
+    // leaves names nowhere either.
+    for (const session of ['hook:deploy', 'cron:nightly', 'app:acme:sync', 'subagent:3f9c']) {
+      const place = { session, place_work: '', place_step: '', place_room: '' }
+      expect(refTarget({ refs: { approval: `${session}:1`, ...place } }), session).toBe('')
+      expect(refTarget({ refs: { auto_denied: 'unattended', ...place } }), session).toBe('')
+    }
+  })
+
   it("sends a room member's approval row to its room, never to a chat route that 404s", () => {
     // A member asks under its own session (`room:<room>:<member>`), which no chat route renders.
     const member = { refs: { approval: 'room:demo-room:talk-editor:c1', session: 'room:demo-room:talk-editor', place_work: '', place_step: '', place_room: 'demo-room' } }

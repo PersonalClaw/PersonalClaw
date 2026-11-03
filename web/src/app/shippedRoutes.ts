@@ -113,7 +113,7 @@ export const SHIPPED_ROUTES: readonly ShippedRoute[] = [
   // Library's Memory tab, which was Settings › Memory.
   { route: 'memory', from: ['router', 'palette', 'deep-link', 'documented'], since: UNRELEASED },
   { route: 'tasks', from: ['router', 'palette', 'deep-link', 'notification', 'documented'], since: 'v0.1.0' },
-  { route: 'inbox', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'documented'], since: 'v0.1.0' },
+  { route: 'inbox', from: ['router', 'palette', 'deep-link', 'tray', 'notification', 'approval', 'documented'], since: 'v0.1.0' },
   // Automations (#3816): one sidebar row, whose tabs are the one list and Workflows. The list's
   // address from before, `#/triggers`, opens it still.
   { route: 'automations', from: ['router', 'palette', 'deep-link', 'documented'], since: UNRELEASED },

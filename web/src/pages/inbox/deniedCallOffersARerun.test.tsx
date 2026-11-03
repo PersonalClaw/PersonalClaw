@@ -70,6 +70,8 @@ describe('a denied call in the Inbox', () => {
   it('an unattended denial has nobody to ask again, so it only says where it happened', () => {
     render(<InboxDetail item={note({ auto_denied: 'unattended', tool: 'write_file', session: 'cron:nightly', place_work: '', place_step: '', place_room: '' }, 'Denied, no one to ask: write_file')} onChanged={() => {}} navigate={() => {}} />)
     expect(screen.queryByRole('button', { name: 'Ask it to try again' })).toBeNull()
+    // No page answers a schedule's work, so the note links nowhere: not to `chat/cron:nightly`.
+    expect(screen.queryByRole('button', { name: /^Open the / })).toBeNull()
   })
 
   it.each([

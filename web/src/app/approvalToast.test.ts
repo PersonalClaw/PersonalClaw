@@ -38,6 +38,11 @@ describe('approvalToastMessage', () => {
     )
   })
 
+  it('sends work no page answers to the Inbox, never to a chat named by its key', () => {
+    const msg = approvalToastMessage({ who: 'Trigger “Deploy hook”', tool: 'bash', place: { session: 'hook:deploy', work: '' } })
+    expect(msg).toBe('Trigger “Deploy hook” needs approval to run bash — open the Inbox to respond.')
+  })
+
   it('uses the SAME facet words as the card, so the two cannot drift', () => {
     expect(approvalToastMessage({ who: 'Another chat session', tool: 'web_fetch', place: { session: 's1', work: 'chat:s1' }, blastRadius: radius({ network: true }) }))
       .toContain('(uses the network)')
