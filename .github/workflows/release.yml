@@ -116,7 +116,7 @@ jobs:
             --select 'personalclaw-[0-9]*.whl' --select 'personalclaw-[0-9]*.tar.gz' --published "$HELD"
       # skip-existing: a re-run of an already-published tag no-ops instead of
       # failing on PyPI's no-re-upload rule (idempotent releases).
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           skip-existing: true
 
@@ -187,7 +187,7 @@ jobs:
           python3 -I tools/ci/release_manifest.py compare --manifest "$MANIFEST" --digest "$DIGEST" \
             --select 'personalclaw_client-[0-9]*.whl' --select 'personalclaw_client-[0-9]*.tar.gz' \
             --published "$HELD"
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           packages-dir: dist-client/
           skip-existing: true
@@ -232,7 +232,7 @@ jobs:
         with:
           name: release-manifest
           path: ${{ runner.temp }}/manifest
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
