@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { invalidateKeys } from '../../lib/data'
 import type { Loop } from '../../lib/api'
 
@@ -65,9 +65,20 @@ describe('the cockpit says where the worker’s files went', () => {
   it('names the working directory, with a way to open it', async () => {
     STORE.loop = goal()
     await mount()
-    expect(await screen.findByText('/home/me/personalclaw-workspace')).toBeTruthy()
+    // By the folder's name, as the header's pill does, with the whole path in its title: the
+    // absolute path put the account's name on the page.
+    const line = (await screen.findByText(/Files the worker writes land in/)).closest('p')!
+    expect(within(line).getByText('personalclaw-workspace').getAttribute('title')).toBe('/home/me/personalclaw-workspace')
+    expect(line.textContent).not.toMatch(/\/home\/me/)
     const link = screen.getByRole('link', { name: /open it in Files/ })
     expect(link.getAttribute('href')).toBe(`#/files?dir=${encodeURIComponent('/home/me/personalclaw-workspace')}`)
+  })
+
+  it('names a folder given with a trailing slash, not its whole path', async () => {
+    STORE.loop = goal({ work_dir: '/home/me/trip-notes/' })
+    await mount()
+    const line = (await screen.findByText(/Files the worker writes land in/)).closest('p')!
+    expect(within(line).getByText('trip-notes').getAttribute('title')).toBe('/home/me/trip-notes/')
   })
 
   it('says nothing about a directory it was not told', async () => {

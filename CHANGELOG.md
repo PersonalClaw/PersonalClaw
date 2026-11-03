@@ -24,6 +24,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An app update the gateway stopped in after its files were swapped is finished at the next start: the new version is recorded, a renamed capability's settings, secrets and switches move to its new id, and an id it dropped is kept as retired. An update that never went live is forgotten, and the version that was there stays.**
 - **A pinned artifact on Home opens that artifact. Each pin opened the Artifacts library instead, since its link carried the artifact in a query the page does not read.**
 - **The agent-and-model pill in the composer works from the keyboard on every row. It opens on the chat's agent, the arrow keys move through the agents, the models and the effort levels, Enter picks, and Tab closes it; with the agent search shown, the arrows go from the field to the rows. A keyboard could reach only its first row before.**
+- **A loop's page names the folder its worker writes in by the folder's name, with the whole path in its title, where it printed the whole path and with it your account's name. Its Outputs tab is in the address (`?tab=`), so a link or a reload opens the tab you were on, where the page always opened on the Deliverable.**
 
 ## [0.3.5] — 2026-11-02
 

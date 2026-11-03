@@ -46,7 +46,7 @@ import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSo
 import { isAChatsPhase, livePhaseOf, phaseFeedLine } from '../../lib/workPhase'
 import { belongsToLoop } from '../workflows/containerKey'
 import { type SkillUsed, joinedSkillsOf, skillsUsedLabel, skillsUsedTitle } from '../chat/chatTypes'
-import { useQueryFlag, type RouteProps } from '../../app/useQueryState'
+import { useQueryFlag, useQueryParam, type RouteProps } from '../../app/useQueryState'
 import { SURFACE_WIDTHS } from '../../app/appearance'
 import { accentChip } from '../../design/accent'
 import { tabListKeys } from '../../lib/tabListKeys'
@@ -74,6 +74,9 @@ function parseSel(raw?: string): { kind: 'log' } | { kind: 'roi' } | { kind: 'cy
 // (open_ended, balanced, …) but the UI should never surface the underscore form.
 const GOAL_TYPE_LABEL: Record<string, string> = { verifiable: 'Verifiable', open_ended: 'Open-ended', monitor: 'Monitor' }
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s)
+/** A folder by its own name, as the page shows it: the whole path names the account it sits under,
+ *  so it goes in the title. */
+const folderName = (path: string) => path.split('/').filter(Boolean).pop() || path
 
 // The granularity dial → marginal-value threshold (mirrors loops/granularity.py).
 // 'forever' has no threshold (never self-stops on value).
@@ -207,6 +210,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
   // Right rail + its drill-down are URL-backed (?details=1, ?sel=log|roi|cycle-N)
   // so a refresh / shared link reopens the same Details view.
   const railOpen = q.details === '1'
+  // The Outputs tab, by its id: in place, since picking a tab refines the page rather than leaving it.
+  const [outputTab, setOutputTab] = useQueryParam(q, sq, 'tab', '', { replace: true })
   const setRailOpen = (v: boolean) => sq(v ? { details: '1' } : { details: null, sel: null })
   const selected = parseSel(q.sel)
   // A cycle opens in the pane beside the thread (#3824, the pane host #3821 made), and the rail keeps
@@ -727,8 +732,8 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
           </button>
         : <MetaPill icon={<FolderKanban size={11} />} text={projName} tone="primary" title="Project" />)}
       {wsDir
-        ? <MetaPill icon={<FolderOpen size={11} />} text={wsDir.split('/').pop() || wsDir} title={`Workspace: ${wsDir}`} />
-        : c.work_dir && <MetaPill icon={<FolderOpen size={11} />} text={c.work_dir.split('/').pop() || c.work_dir} title={`Works in: ${c.work_dir}`} />}
+        ? <MetaPill icon={<FolderOpen size={11} />} text={folderName(wsDir)} title={`Workspace: ${wsDir}`} />
+        : c.work_dir && <MetaPill icon={<FolderOpen size={11} />} text={folderName(c.work_dir)} title={`Works in: ${c.work_dir}`} />}
       {/* What its planner and workers run on — before launch, the picker. A native worker agent the
           loop names (one the API set) is that agent, on PersonalClaw. */}
       {!c.provider && c.agent
@@ -921,6 +926,7 @@ export function LoopCockpitPage({ id, onBack, onDeleted, onOpenArtifact, onOpenT
               its inner content scrolls. */}
           <OutputsPanel
             loop={c} artifacts={artifacts} tasks={tasks} report={report} active={active} outputsError={outputsError}
+            tab={outputTab} onTab={setOutputTab}
             onOpenArtifact={onOpenArtifact}
             onOpenTask={onOpenTask}
             onExpandReport={() => setReportOpen(true)}
@@ -1115,9 +1121,11 @@ export function pendingNudgeLabel(status: string): string {
   return 'nudge not applied — the loop ended before its next cycle'
 }
 
-function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, onOpenArtifact, onOpenTask, onExpandReport, onDownloadReport }: {
+function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, tab, onTab, onOpenArtifact, onOpenTask, onExpandReport, onDownloadReport }: {
   loop: GoalLoop; artifacts: Artifact[]; tasks: TaskItem[]; report: string; active: boolean
   outputsError: unknown
+  /** The tab the address names (`?tab=`), and the way to pick another. */
+  tab: string; onTab: (id: string) => void
   onOpenArtifact?: (slug: string) => void
   onOpenTask?: (taskId: string) => void
   onExpandReport: () => void; onDownloadReport: () => void
@@ -1136,16 +1144,13 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, on
     ...artifactTabs,
     ...(tasks.length ? [{ id: 'tasks', kind: 'tasks', label: `Tasks · ${tasks.length}` } as OutputTab] : []),
   ]
-  const [activeId, setActiveId] = useState<string>('')
   const [copiedReport, setCopiedReport] = useState(false)
   const copyReport = () => {
     void copyText(report, 'the report').then((ok) => { if (ok) { setCopiedReport(true); setTimeout(() => setCopiedReport(false), 1500) } })
   }
-  // Keep the active tab valid as outputs stream in (default to the first).
-  const current = tabs.find((t) => t.id === activeId) ?? tabs[0]
-  useEffect(() => {
-    if (tabs.length && !tabs.some((t) => t.id === activeId)) setActiveId(tabs[0].id)
-  }, [tabs.map((t) => t.id).join(','), activeId])
+  // The tab the address names, or the first while it names none this loop has (yet: outputs stream
+  // in). The address itself changes only when a tab is picked, so a link to a tab still loading holds.
+  const current = tabs.find((t) => t.id === tab) ?? tabs[0]
 
   return (
     // Shell-like: the panel fills the body's remaining height. The tab strip +
@@ -1160,14 +1165,14 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, on
                 `role="tablist"` — which axe reports as `aria-required-parent` (critical) — and
                 every tab was its own tab stop instead of the one-stop-plus-arrows a tablist
                 promises. Same contract as the terminal strips and `#/chat`'s activity panel. */}
-            <div role="tablist" aria-label="Loop views" onKeyDown={tabListKeys((i) => setActiveId(tabs[i].id))}
+            <div role="tablist" aria-label="Loop views" onKeyDown={tabListKeys((i) => onTab(tabs[i].id))}
               className="flex-1 min-w-0 flex items-end gap-1 overflow-x-auto -mb-px">
               {tabs.map((t) => {
                 const on = current?.id === t.id
                 const Icon = t.kind === 'tasks' ? ListChecks : t.kind === 'deliverable' ? Spark : FileText
                 // Raw: a tab in a tablist that swaps a pane; no tab primitive exists (Segmented is a radiogroup).
                 return (
-                  <button key={t.id} type="button" onClick={() => setActiveId(t.id)} role="tab" aria-selected={on}
+                  <button key={t.id} type="button" onClick={() => onTab(t.id)} role="tab" aria-selected={on}
                     tabIndex={on ? 0 : -1}
                     data-type="body-s" className={`shrink-0 inline-flex items-center gap-1.5 px-m h-9 max-w-[14rem] border-b-2 transition-colors ${on ? 'border-primary text-on-surface' : 'border-transparent text-on-surface-low hover:text-on-surface-var'}`}
                     style={on ? fvs(600) : undefined}
@@ -1217,7 +1222,7 @@ function OutputsPanel({ loop, artifacts, tasks, report, active, outputsError, on
                 makes that result findable. */}
             {loop.work_dir && (
               <p data-type="body-s" className="text-on-surface-low">
-                Files the worker writes land in <span className="font-mono text-on-surface-var">{loop.work_dir}</span>{' — '}
+                Files the worker writes land in <span className="font-mono text-on-surface-var" title={loop.work_dir}>{folderName(loop.work_dir)}</span>{' — '}
                 <TextLink href={`#/files?dir=${encodeURIComponent(loop.work_dir)}`} ink="emphasis">open it in Files</TextLink>.
               </p>
             )}
