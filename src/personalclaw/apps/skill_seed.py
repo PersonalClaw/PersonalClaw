@@ -18,7 +18,11 @@ ones re-seeded post-swap, so a changed skill re-passes the scan.
 
 On ``disable``/uninstall, :func:`remove_app_skills` removes ONLY the skills this
 app shipped — keyed by the ``.pclaw-lock.json`` provenance (``source ==
-app:<name>``), never a user's own skill (no lock, or a different source).
+app:<name>``), never a user's own skill (no lock, or a different source). And only
+one still exactly as the app seeded it: a seeded skill its owner changed is theirs,
+by the rule :mod:`personalclaw.skills.shipped` keeps for the skills PersonalClaw
+ships. It is kept, and its record re-owned (:data:`KEPT_SOURCE`), so neither this
+removal nor a later one takes it, and a later seed never writes over it.
 """
 
 from __future__ import annotations
@@ -31,13 +35,21 @@ from pathlib import Path
 from typing import Any
 
 from personalclaw.skills.marketplace import (
+    LOCK_FILENAME,
+    DamagedInstallRecord,
     SkillDetail,
     SkillEntry,
     SkillsMarketplace,
+    file_digests,
+    files_digest,
+    install_record,
     read_skill_file_entry,
 )
 
 logger = logging.getLogger(__name__)
+
+#: The ``source`` a seeded skill's record names once its owner changed it and its app went: theirs.
+KEPT_SOURCE = "kept"
 
 
 def _app_source(app_name: str) -> str:
@@ -166,36 +178,62 @@ def seed_app_skills(manifest, app_dir: str | Path, *, origin: str) -> None:
             logger.debug("failed to seed app %r skill %r", app_name, rel, exc_info=True)
 
 
-def remove_app_skills(manifest, app_dir: str | Path) -> None:
+def remove_app_skills(manifest, app_dir: str | Path) -> list[str]:
     """Remove an app's shipped skill dirs — provenance-keyed, never a user's skill.
 
     A declared skill's installed dir is removed only when its ``.pclaw-lock.json``
-    records ``source == app:<name>`` (proof this app installed it). A dir with no
-    lock, or a lock naming a different source, is left alone — it's the user's own
-    skill or another app's."""
+    records ``source == app:<name>`` (proof this app installed it) and its files are
+    still exactly what that record says was installed. A dir with no lock, a lock
+    naming a different source, a lock that cannot be read, or a link is left alone.
+
+    One whose files differ from the record is its owner's now: kept, and its record
+    re-owned (:data:`KEPT_SOURCE`). Returns the names kept that way, so the disable,
+    update or uninstall that called this can say so."""
     skills = list(getattr(manifest, "skills", None) or [])
     if not skills:
-        return
+        return []
 
     from personalclaw.skills.loader import skills_dir
 
     app_name = getattr(manifest, "name", "") or ""
     src = _app_source(app_name)
     target = skills_dir()
+    kept: list[str] = []
     for sk in skills:
         rel = str(getattr(sk, "path", "") or "").strip().strip("/")
         if not rel:
             continue
         leaf = Path(rel).name  # installed dir name == the declared dir's leaf
         dest = target / leaf
-        lock = dest / ".pclaw-lock.json"
-        if not dest.is_dir() or not lock.is_file():
+        if dest.is_symlink() or not dest.is_dir():
             continue
         try:
-            recorded = (json.loads(lock.read_text(encoding="utf-8")) or {}).get("source")
-        except (OSError, json.JSONDecodeError):
-            continue
-        if recorded != src:
+            record = install_record(dest)
+        except DamagedInstallRecord:
+            continue  # nothing can say what was installed there: left as it is
+        if record is None or record.source != src:
             continue  # not ours — leave it
+        if files_digest(file_digests(dest)) != record.digest:
+            _reown(dest)
+            kept.append(leaf)
+            logger.info("Kept app %r skill %r: its owner changed it", app_name, leaf)
+            continue
         shutil.rmtree(dest, ignore_errors=True)
         logger.info("Removed app %r skill %r", app_name, leaf)
+    return kept
+
+
+def _reown(dest: Path) -> None:
+    """Rewrite *dest*'s install record so it no longer names the app that seeded it. The digests
+    stay what the app installed, so the Skills page still reads the copy as changed from it. A
+    record that cannot be rewritten still names the app, and the next removal keeps the copy
+    again by its files."""
+    from personalclaw.atomic_write import atomic_json_write
+
+    lock = dest / LOCK_FILENAME
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+        data["source"] = KEPT_SOURCE
+        atomic_json_write(lock, data)
+    except (OSError, ValueError, TypeError):
+        logger.warning("could not re-own the record of %s", dest, exc_info=True)

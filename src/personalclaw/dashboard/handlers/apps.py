@@ -909,6 +909,23 @@ async def api_app_enable(request: web.Request) -> web.Response:
     )
 
 
+def _native_refusal(name: str) -> web.Response | None:
+    """The 409 a native app's disable or removal is refused with, or ``None`` for any other app.
+
+    The manager answers ``False`` for both a native app and one that is not installed, and these
+    routes guessed the second: uninstalling a native app answered 404 "not installed". A native app
+    ships with PersonalClaw and is always on, which is what the Library says of it too."""
+    from personalclaw.apps import app_manager
+
+    if not app_manager.is_native(name):
+        return None
+    sentence = (
+        f"{app_manager.display_name_of(name)} is a native app: it ships with PersonalClaw and is "
+        "always on, so it can't be turned off or removed."
+    )
+    return json_error("app_native", message=sentence, status=409)
+
+
 async def api_app_disable(request: web.Request) -> web.Response:
     from personalclaw.apps import app_manager
 
@@ -918,11 +935,19 @@ async def api_app_disable(request: web.Request) -> web.Response:
         name,
         caller=request.get("user", "dashboard"),
     )
-    await sel_log_async(_sel_log, "apps.disable", "ok" if ok else "error", name, request)
+    refused = None if ok else await asyncio.to_thread(_native_refusal, name)
+    outcome = "ok" if ok else "refused" if refused is not None else "error"
+    await sel_log_async(_sel_log, "apps.disable", outcome, name, request)
+    if refused is not None:
+        return refused
     if not ok:
-        return web.json_response({"error": f"disable failed for {name!r}"}, status=400)
+        return web.json_response({"error": f"app {name!r} not installed"}, status=404)
     _reconcile_app_crons(request)  # prune the now-disabled app's crons immediately
-    return web.json_response({"ok": True, "name": name, "enabled": False})
+    from personalclaw.apps import app_runtime
+
+    # A seeded skill its owner changed stays theirs, and the answer says so.
+    kept = app_runtime.take_kept(name)
+    return web.json_response({"ok": True, "name": name, "enabled": False, "kept": kept})
 
 
 async def api_app_uninstall(request: web.Request) -> web.Response:
@@ -956,12 +981,26 @@ async def api_app_uninstall(request: web.Request) -> web.Response:
     if (force or remove) and (busy := _engine_installing(request, name)) is not None:
         return busy
     ok = await asyncio.to_thread(fn, name, caller=caller)
-    await sel_log_async(_sel_log, op, "ok" if ok else "error", name, request)
+    refused = None if ok else await asyncio.to_thread(_native_refusal, name)
+    outcome = "ok" if ok else "refused" if refused is not None else "error"
+    await sel_log_async(_sel_log, op, outcome, name, request)
+    if refused is not None:
+        return refused
     if not ok:
         return web.json_response({"error": f"app {name!r} not installed"}, status=404)
     _reconcile_app_crons(request)  # prune the uninstalled app's crons immediately
+    from personalclaw.apps import app_runtime
+
+    kept = app_runtime.take_kept(name)  # seeded skills its owner changed, which stay theirs
     return web.json_response(
-        {"ok": True, "name": name, "forced": force, "removed": remove, "dataPreserved": remove}
+        {
+            "ok": True,
+            "name": name,
+            "forced": force,
+            "removed": remove,
+            "dataPreserved": remove,
+            "kept": kept,
+        }
     )
 
 

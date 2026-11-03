@@ -19,6 +19,7 @@ import { terminalRefusalReason } from '../../lib/useGuardedInstall'
 import { readableErrText } from '../../lib/errText'
 import { copyText } from '../../app/clipboard'
 import { launchChat } from '../../app/appSdk'
+import { sayKept } from '../../app/appActivation'
 
 /** The APP INSTALL-CONSENT surface — the one path every install and update takes, and
  *  everything a user is shown before anything is installed.
@@ -1198,6 +1199,7 @@ function announce(r: AppInstallResult, target: InstallTarget, label: string) {
       detail: { level: 'error', message: why, href: '#/settings/providers', hrefLabel: 'Open Providers' },
     }))
   }
+  sayKept(r.kept)
 }
 
 function announceFailure(r: AppInstallResult, target: InstallTarget, label: string) {

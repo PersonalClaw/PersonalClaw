@@ -40,7 +40,7 @@ import { ChannelOwnerSection } from '../settings/ChannelOwnerSection'
 import { EngineSection } from '../settings/EngineSection'
 import { readableErrText } from '../../lib/errText'
 import { reportingWrite } from '../../app/reportingWrite'
-import { setActivation } from '../../app/appActivation'
+import { sayKept, setActivation } from '../../app/appActivation'
 import { provenance, registryListing } from '../../lib/provenance'
 import { dayStamp } from '../../lib/epoch'
 import { AppIcon } from './appIcon'
@@ -2055,7 +2055,7 @@ export function RemoveAppModal({ name, displayName, onClose, onDone }: { name: s
     // Not a toast: the eye is on the dialog, and `refusedWriteVisible`'s rule is that a
     // surface with a place to put the sentence puts it there. Not closing either — closing is
     // this dialog's success signal, and the app is still installed.
-    try { await api.removeApp(name); onDone() }
+    try { sayKept((await api.removeApp(name))?.kept); onDone() }
     catch (e) { setErr(readableErrText(e) || 'That uninstall did not go through, and the app is still installed.') }
     finally { setBusy(false) }
   }
@@ -2158,7 +2158,7 @@ export function UninstallModal({ name, displayName, onClose, onDone }: { name: s
     // Same fix and same reasoning as `RemoveAppModal.remove()` above — and it matters more here,
     // because this dialog's own copy promises "it cannot be undone": a silent failure leaves the
     // user unable to tell a deletion that happened from one that did not.
-    try { await api.uninstallApp(name, true); onDone() }  // force=true → delete files
+    try { sayKept((await api.uninstallApp(name, true))?.kept); onDone() }  // force=true → delete files
     catch (e) { setErr(readableErrText(e) || 'That force uninstall did not go through, and nothing was deleted.') }
     finally { setBusy(false) }
   }

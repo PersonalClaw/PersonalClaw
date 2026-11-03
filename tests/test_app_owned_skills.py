@@ -177,3 +177,109 @@ def test_no_declared_skills_is_a_no_op(tmp_path):
     assert app_manager.install(d, confirm=True).ok
     tree = skills_dir()
     assert not tree.exists() or not any(tree.iterdir())
+
+
+# ── a seeded skill you changed is yours: its app going never takes it ───────────────────────
+
+
+def _installed_edited(tmp_path: Path, *, add_file: bool = False) -> Path:
+    """skilly installed, its seeded `deploy` skill then changed by its owner."""
+    from personalclaw.skills.loader import skills_dir
+
+    assert app_manager.install(_skill_app(tmp_path), confirm=True).ok
+    dest = skills_dir() / "deploy"
+    if add_file:
+        (dest / "notes.md").write_text("my own notes\n", encoding="utf-8")
+    else:
+        (dest / "SKILL.md").write_text(_skill_md("deploy", "Mine now: deploy to staging first."))
+    return dest
+
+
+def _edit_survives(dest: Path, *, add_file: bool) -> None:
+    assert dest.is_dir(), "the edited skill was deleted with its app"
+    if add_file:
+        assert (dest / "notes.md").read_text(encoding="utf-8") == "my own notes\n"
+    else:
+        assert "deploy to staging first" in (dest / "SKILL.md").read_text(encoding="utf-8")
+    recorded = json.loads((dest / ".pclaw-lock.json").read_text(encoding="utf-8"))
+    assert recorded["source"] != "app:skilly", "the kept copy's record still names the app"
+
+
+@pytest.mark.parametrize("add_file", [False, True], ids=["edited-SKILL.md", "added-a-file"])
+@pytest.mark.parametrize("forget", [False, True], ids=["disable-or-update", "uninstall"])
+def test_an_edited_seeded_skill_outlives_its_app(tmp_path, add_file, forget):
+    from personalclaw.apps import app_runtime
+
+    dest = _installed_edited(tmp_path, add_file=add_file)
+    manifest = AppManifest.from_json_file(manager.app_dir("skilly") / "app.json")
+    app_runtime.unload("skilly", manifest, forget=forget)
+    _edit_survives(dest, add_file=add_file)
+    assert app_runtime.take_kept("skilly") == [
+        "Kept the skill deploy: you changed it, so it stays yours."
+    ]
+    assert app_runtime.take_kept("skilly") == [], "each kept line is said once"
+
+
+def test_an_unchanged_seeded_skill_still_goes_with_its_app(tmp_path):
+    from personalclaw.apps import app_runtime
+    from personalclaw.skills.loader import skills_dir
+
+    assert app_manager.install(_skill_app(tmp_path), confirm=True).ok
+    assert app_manager.disable("skilly") is True
+    assert not (skills_dir() / "deploy").exists()
+    assert app_runtime.take_kept("skilly") == []
+
+
+def test_a_damaged_record_leaves_the_folder_as_it_is(tmp_path):
+    from personalclaw.skills.loader import skills_dir
+
+    assert app_manager.install(_skill_app(tmp_path), confirm=True).ok
+    lock = skills_dir() / "deploy" / ".pclaw-lock.json"
+    lock.write_text("{not json", encoding="utf-8")
+    manifest = AppManifest.from_json_file(manager.app_dir("skilly") / "app.json")
+    assert remove_app_skills(manifest, manager.app_dir("skilly")) == []
+    assert (skills_dir() / "deploy" / "SKILL.md").is_file()
+    assert lock.read_text(encoding="utf-8") == "{not json"
+
+
+def test_a_kept_skill_is_not_taken_back_by_a_later_enable(tmp_path):
+    """Seeding never clobbers: once kept, the app's own version is not seeded over it."""
+    dest = _installed_edited(tmp_path)
+    assert app_manager.disable("skilly") is True
+    assert app_manager.enable("skilly") is True
+    assert app_manager.disable("skilly") is True
+    _edit_survives(dest, add_file=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", ["disable", "uninstall", "remove", "force"])
+async def test_the_results_say_the_skill_was_kept(tmp_path, route):
+    from aiohttp import web
+    from aiohttp.test_utils import make_mocked_request
+
+    from personalclaw.dashboard.handlers import apps as apps_handlers
+
+    _installed_edited(tmp_path)
+    if route == "disable":
+        handler, method, query = apps_handlers.api_app_disable, "POST", ""
+    else:
+        handler, method = apps_handlers.api_app_uninstall, "DELETE"
+        query = {"uninstall": "", "remove": "?remove=1", "force": "?force=1"}[route]
+    request = make_mocked_request(
+        method, f"/api/apps/skilly{query}", match_info={"name": "skilly"}, app=web.Application()
+    )
+    response = await handler(request)
+    body = json.loads(response.body.decode())
+    assert response.status == 200, body
+    assert body["kept"] == ["Kept the skill deploy: you changed it, so it stays yours."]
+
+
+def test_an_update_says_the_skill_was_kept(tmp_path):
+    dest = _installed_edited(tmp_path)
+    newer = _skill_app(tmp_path / "v2")
+    manifest = json.loads((newer / "app.json").read_text(encoding="utf-8"))
+    (newer / "app.json").write_text(json.dumps({**manifest, "version": "1.1.0"}), encoding="utf-8")
+    result = app_manager.update(newer, "skilly", confirm=True)
+    assert result.ok, result.error
+    assert result.to_dict()["kept"] == ["Kept the skill deploy: you changed it, so it stays yours."]
+    _edit_survives(dest, add_file=False)

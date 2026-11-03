@@ -127,48 +127,54 @@ describe('the notice shows when the gateway serves another build than this page 
 describe('it leaves on its own after a while, but never while you are on it', () => {
   beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }) })
 
-  /** Run the notice's clock forward. Its exit then finishes on real time (`waitFor`). */
+  /** Run the notice's clock forward. */
   function after(ms: number) {
     act(() => { vi.advanceTimersByTime(ms) })
   }
+
+  // Whether the notice is up, read off its polite region, which empties the moment it leaves. The
+  // card itself stays in the DOM while it fades, so "the card is there" holds for a notice already
+  // leaving, and a hold that never held passed with it.
+  const up = () => live()?.textContent === NOTICE_TEXT
 
   it('leaves after NOTICE_MS', async () => {
     expect(NOTICE_MS).toBe(30_000)
     render(<UpdatedInterfaceNotice reload={reload} />)
     serves(NEWER)
     after(NOTICE_MS - 1)
-    expect(card()).not.toBeNull()
+    expect(up()).toBe(true)
     after(1)
+    expect(up()).toBe(false)
     vi.useRealTimers()
     await waitFor(() => expect(card()).toBeNull())
   })
 
-  it('waits while the pointer is over it, and gives the whole time again after', async () => {
+  it('waits while the pointer is over it, and gives the whole time again after', () => {
     render(<UpdatedInterfaceNotice reload={reload} />)
     serves(NEWER)
-    fireEvent.mouseEnter(card()!)
+    fireEvent.pointerEnter(card()!)
     after(NOTICE_MS * 3)
-    expect(card()).not.toBeNull()
+    expect(up(), 'it left with the pointer on it').toBe(true)
 
-    fireEvent.mouseLeave(card()!)
+    fireEvent.pointerLeave(card()!)
     after(NOTICE_MS - 1)
-    expect(card()).not.toBeNull()
+    expect(up()).toBe(true)
     after(1)
-    vi.useRealTimers()
-    await waitFor(() => expect(card()).toBeNull())
+    expect(up()).toBe(false)
   })
 
-  it('waits while focus is inside it', async () => {
+  it('waits while focus is inside it', () => {
     render(<UpdatedInterfaceNotice reload={reload} />)
     serves(NEWER)
     const button = screen.getByRole('button', { name: /^Reload/ })
     act(() => button.focus())
     after(NOTICE_MS * 3)
-    expect(card()).not.toBeNull()
+    expect(up(), 'it left with focus in it').toBe(true)
 
     act(() => button.blur())
-    after(NOTICE_MS)
-    vi.useRealTimers()
-    await waitFor(() => expect(card()).toBeNull())
+    after(NOTICE_MS - 1)
+    expect(up()).toBe(true)
+    after(1)
+    expect(up()).toBe(false)
   })
 })

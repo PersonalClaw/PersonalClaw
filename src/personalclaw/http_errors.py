@@ -1546,6 +1546,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "triage_schedule_installed": (
         "Morning triage is installed, so its schedule is changed on the Triggers page."
     ),
+    # 409: a disable or removal of a native app, which ships with PersonalClaw and is always on.
+    "app_native": "That app is a native app: it ships with PersonalClaw and is always on.",
 }
 
 

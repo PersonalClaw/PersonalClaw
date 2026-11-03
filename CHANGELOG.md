@@ -12,6 +12,16 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **An open page tells you when PersonalClaw's interface was updated, and offers Reload. When an update restarts PersonalClaw into a newer interface, the page you had open says the changes take effect when you reload, once for each new interface in that tab. It goes after 30 seconds, and waits while the pointer or focus is on it.**
 
+### Changed
+
+- **Turning off or removing a native app is refused with why. The disable and uninstall routes answer 409 with the code `app_native` and a sentence saying the app ships with PersonalClaw and is always on, where uninstall said the app was not installed and disable gave no reason, and the security log records the refusal as refused. A name that is not installed still answers 404 on both.**
+
+### Fixed
+
+- **A toast waits while the pointer or the keyboard focus is on the toasts, and then goes on with the time it had left, so a toast's link or Dismiss can be reached without the toast leaving first.**
+- **A skill an app seeded that you changed is yours: disabling, updating or uninstalling the app keeps it, with your changes, and says so, and the app's own version is never seeded over it. A seeded skill you never changed still goes with its app.**
+- **An app update the gateway stopped in after its files were swapped is finished at the next start: the new version is recorded, a renamed capability's settings, secrets and switches move to its new id, and an id it dropped is kept as retired. An update that never went live is forgotten, and the version that was there stays.**
+
 ## [0.3.5] — 2026-11-02
 
 The sidebar keeps its shortcuts fixed at the top and the bottom, with your chat history between them, grouped by your folders or your tags; the icon at the top opens Home, and the chats by project moved to the Projects page. A chat turn shows what it recalled where it recalled it, a file cut to its size limit tells the model so, and a Chat history board card gives its room to the chat's title. A rendered page's requests, a workbook added to Knowledge and an imported home export are each held to their limits, the gateway's children send its credential only to this home's gateway, and an automation's credentials are kept in the credential store. Pairing a new owner on a chat channel ends the previous owner's access there, an agent working for an automation changes only its own run, an app setting refuses an address with a password written into it, a command set to the strict sandbox isn't run where there's no sandbox, and Morning triage's install keeps a schedule you set. Apps can report a call an agent CLI ran without asking, and check a form's settings before they're saved.
