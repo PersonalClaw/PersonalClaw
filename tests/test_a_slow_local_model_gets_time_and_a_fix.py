@@ -130,7 +130,8 @@ def test_no_first_token_in_time_names_the_setting_and_where_it_is(module, path):
         "gemma4:12b on Ollama at 127.0.0.1:11434 did not start answering within 120 seconds, "
         "so the request was stopped. A model can take minutes to read a long conversation "
         "before it answers: raise Request Timeout on the “ollama” instance in Settings → "
-        "Providers (under Advanced), or pick a faster model in the composer's model selector."
+        "Models & Providers → Providers (under Advanced), or pick a faster model in the "
+        "composer's model selector."
     )
     assert timed_out.value.mode is FailureMode.TIMEOUT
     # The line a fallback and a failed chain name each model by is the same reading.
@@ -147,8 +148,9 @@ def test_in_a_room_the_fix_is_the_members_agent(module):
 
     sentence = humanize_provider_error(timed_out.value, room_member="Researcher")
     assert sentence.endswith(
-        "raise Request Timeout on the “ollama” instance in Settings → Providers (under "
-        "Advanced), or give the Researcher agent a faster model on the Agents page."
+        "raise Request Timeout on the “ollama” instance in Settings → Models & Providers → "
+        "Providers (under Advanced), or give the Researcher agent a faster model on the Agents "
+        "page."
     )
 
 

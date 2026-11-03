@@ -59,7 +59,7 @@ REMEDIATION = {
 
 NO_CREDENTIALS = (
     "No AWS credentials were found: this Amazon Bedrock instance names no AWS profile. Set its "
-    "AWS profile in Settings → Providers to a profile that has credentials."
+    "AWS profile in Settings → Models & Providers → Providers to a profile that has credentials."
 )
 
 PROVIDERS = {

@@ -313,8 +313,8 @@ def _setup_noninteractive(
     if provider and not _is_agent_runtime(provider):
         print(
             f"  ❌ --provider {provider!r} is not an agent runtime. Valid values: native (the "
-            "built-in loop, on the models Settings → Models binds), acp, or acp:<cli> for a "
-            "connected agent CLI. The chat model itself is chosen in Settings → Models.",
+            "built-in loop, on the models bound in Settings → Models & Providers → Models), acp, "
+            "or acp:<cli> for a connected agent CLI. The chat model itself is chosen there too.",
             file=sys.stderr,
         )
         applied = False

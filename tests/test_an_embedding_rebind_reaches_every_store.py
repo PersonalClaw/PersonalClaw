@@ -391,12 +391,12 @@ def test_a_recall_over_stale_memories_says_what_it_read_by_keyword(recorded, tmp
         "Keyword-ranked only: every stored vector is another embedding model's"
     )
     assert rebound["summary"].endswith(
-        " The re-index in Settings → Models re-embeds the 2 memories."
+        " The re-index in Settings → Models & Providers → Models re-embeds the 2 memories."
     )
     assert (partial["mode"], partial["stale"], partial["degraded"]) == ("semantic", 2, True)
     assert partial["summary"] == before["summary"] + (
         " 2 memories embedded by another embedding model are read by keyword until the re-index "
-        "in Settings → Models re-embeds them."
+        "in Settings → Models & Providers → Models re-embeds them."
     )
 
 

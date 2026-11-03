@@ -121,7 +121,7 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
             "tts_unbound",
             message=(
                 "No text-to-speech model is set up. Choose one for Text-to-speech in "
-                "Settings → Models."
+                "Settings → Models & Providers → Models."
             ),
             status=503,
         )
@@ -214,7 +214,7 @@ async def api_voice_synthesize(request: web.Request) -> web.Response:
         if not chunk_paths:
             return web.json_response(
                 {
-                    "error": "Speech synthesis produced no audio — check the TTS runtime in Settings → AI & Models"  # noqa: E501
+                    "error": "Speech synthesis produced no audio — check the TTS runtime in Settings → Models & Providers → Models"  # noqa: E501
                 },
                 status=502,
             )

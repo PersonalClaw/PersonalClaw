@@ -156,7 +156,7 @@ describe("the chat's Share menu", () => {
     const menu = await share(banner)
     fireEvent.click(await within(menu).findByRole('menuitem', { name: /^Continue on Discord/ }))
     await waitFor(() => expect(h.notify).toHaveBeenCalled())
-    expect(String(h.notify.mock.calls[0][0])).toMatch(/Discord doesn't know who you are yet. Pair its owner in Settings → Providers → Discord → Configure/)
+    expect(String(h.notify.mock.calls[0][0])).toMatch(/Discord doesn't know who you are yet. Pair its owner in Settings → Models & Providers → Providers → Discord → Configure/)
     expect(h.handoffSession).not.toHaveBeenCalled()
   })
 })

@@ -485,7 +485,7 @@ def enforce_action(
                     notification_kinds.WARNING,
                     "Action needs your approval",
                     f"An automated action via {provider_name!r} was held: {decision.reason}. "
-                    f"Review it in Settings → Guardrails.",
+                    f"Review it in Settings → Security → Guardrails.",
                     meta={"provider": provider_name, "matched": decision.matched},
                 )
         except Exception:

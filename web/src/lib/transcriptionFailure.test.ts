@@ -18,7 +18,7 @@ import { transcriptionFailure } from './api'
 describe('§1 what a composer says for a transcription result', () => {
   it('shows the gateway’s sentence as it is when speech-to-text cannot run', () => {
     const reason = 'The Bedrock speech-to-text model is not available until an S3 Bucket is set. '
-      + 'Set S3 Bucket on this Amazon Bedrock instance in Settings → Providers (under Advanced).'
+      + 'Set S3 Bucket on this Amazon Bedrock instance in Settings → Models & Providers → Providers (under Advanced).'
     expect(transcriptionFailure({ error: reason, code: 'stt_unavailable' })).toBe(reason)
   })
 

@@ -1074,8 +1074,9 @@ def test_a_member_whose_model_cannot_run_says_which_model_answered_instead(enabl
     provider.model_substitution = ModelSubstitution(
         requested="fake-oai:no-such-model",
         served="fake-oai:fake-model-1",
-        why="it is not one of the chat models set up in Settings → Models",
-        fix="pick another model for analyst on the Agents page, or add it in Settings → Models",
+        why="it is not one of the chat models set up in Settings → Models & Providers → Models",
+        fix="pick another model for analyst on the Agents page, or add it in Settings → Models & "
+        "Providers → Models",
         who="analyst's model",
     )
     sessions.providers[key] = provider
@@ -1089,8 +1090,9 @@ def test_a_member_whose_model_cannot_run_says_which_model_answered_instead(enabl
             store.ROOM_NOTE_ROLE,
             "analyst",
             "Ran on fake-oai:fake-model-1 instead of analyst's model fake-oai:no-such-model: it "
-            "is not one of the chat models set up in Settings → Models. Pick another model for "
-            "analyst on the Agents page, or add it in Settings → Models.",
+            "is not one of the chat models set up in Settings → Models & Providers → Models. Pick "
+            "another model for analyst on the Agents page, or add it in Settings → Models & "
+            "Providers → Models.",
         ),
         ("assistant", "analyst", "the numbers say yes"),
     ]

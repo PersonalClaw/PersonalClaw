@@ -27,7 +27,7 @@ const { ProjectFooter } = await import('../pages/code/CodeCockpitPage')
 const { api } = await import('../lib/api')
 type WalkthroughConfig = import('./PlanningWalkthrough').WalkthroughConfig
 
-const CAP = 'The daily dollar budget has $3.94 of $4.00 spent, and a call to cloud:example-large may cost $0.30, more than the $0.06 left: raise Max dollars / day in Settings → Guardrails (0 removes the cap), or wait for it to reset at midnight.'
+const CAP = 'The daily dollar budget has $3.94 of $4.00 spent, and a call to cloud:example-large may cost $0.30, more than the $0.06 left: raise Max dollars / day in Settings → Security → Guardrails (0 removes the cap), or wait for it to reset at midnight.'
 const nowS = () => Date.now() / 1000
 
 function paused(): PlanSession {
@@ -76,8 +76,8 @@ describe('a planning walkthrough a spend cap paused', () => {
     expect(screen.queryByText(/drafting this step/i), 'it claims the planner is drafting').toBeNull()
     expect(screen.getByText('Planning paused')).toBeTruthy()
     expect(document.querySelectorAll('.animate-spin').length, 'a spinner still claims work in flight').toBe(0)
-    const link = screen.getByRole('link', { name: /open settings → guardrails/i })
-    expect(link.getAttribute('href')).toBe('#/settings/guardrails')
+    const link = screen.getByRole('link', { name: /open settings → security → guardrails/i })
+    expect(link.getAttribute('href')).toBe('#/settings/security?section=guardrails')
     expect(screen.queryByRole('button', { name: /retry this step/i }), 'the cap is read as a failed pass').toBeNull()
 
     await userEvent.click(screen.getByRole('button', { name: /resume planning/i }))

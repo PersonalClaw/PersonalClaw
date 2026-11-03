@@ -375,7 +375,7 @@ describe('Speak says what is actually missing', () => {
 
   it('shows the server sentence when no text-to-speech model is set up', async () => {
     const { ApiError } = await import('../../lib/api')
-    const sentence = 'No text-to-speech model is set up. Choose one for Text-to-speech in Settings → Models.'
+    const sentence = 'No text-to-speech model is set up. Choose one for Text-to-speech in Settings → Models & Providers → Models.'
     h.voiceSynthesize.mockRejectedValue(new ApiError(sentence, 503, 'tts_unbound'))
     await openWith({}, { messages: [{ role: 'user', content: 'hi', ts: 't1' }, { role: 'assistant', content: ANSWER, ts: 't2' }] })
     const user = userEvent.setup()

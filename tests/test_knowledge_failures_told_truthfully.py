@@ -386,7 +386,7 @@ def test_regenerate_says_no_model_before_queuing_anything(tmp_path):
     assert resp.status == 409, body
     assert body["error"]["code"] == "model_unresolved", body
     message = body["error"]["message"]
-    assert "Settings → Models" in message, message
+    assert "Settings → Models & Providers → Models" in message, message
     assert enq == [], "nothing may be queued for a job that cannot run"
     after = {n: store.get_item(n)["processing_status"] for n in notes}
     assert after == before, "no item may be flipped to queued by a refused request"

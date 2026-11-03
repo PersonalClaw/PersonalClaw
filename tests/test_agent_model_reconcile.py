@@ -30,8 +30,8 @@ def test_a_stale_pin_is_unavailable_and_says_why(monkeypatch):
     monkeypatch.setattr(pb, "_active_chat_model_ids", lambda: {"glm-6"})
     # glm-5 no longer active: unavailable, with the reason the surfaces show.
     why, fix = pb.named_model_problem("glm-5")
-    assert "not one of the chat models set up in Settings → Models" in why
-    assert "Settings → Models" in fix
+    assert "not one of the chat models set up in Settings → Models & Providers → Models" in why
+    assert "Settings → Models & Providers → Models" in fix
 
 
 def test_no_pin_has_no_problem(monkeypatch):

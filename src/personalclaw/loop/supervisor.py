@@ -210,7 +210,8 @@ async def _all_criteria_met(
     why = (
         f"its answer was neither PASS nor FAIL (“{answer}”)"
         if answer
-        else f"its model (the {_judge_setting()} setting in Settings → Models) could not "
+        else f"its model (the {_judge_setting()} setting in Settings → Models & Providers → "
+        "Models) could not "
         "be reached, or answered nothing"
     )
     return None, {"outcome": "no_answer", "answer": answer, "why": why}
@@ -363,8 +364,8 @@ async def _judge_assessment_signal(
         # reads as one nobody checked. It carries no score, so the returns rail skips it.
         sentence = (
             "The judge gave no verdict for this cycle: its model (the "
-            f"{_judge_setting()} setting in Settings → Models) could not be reached, or its "
-            "answer could not be read."
+            f"{_judge_setting()} setting in Settings → Models & Providers → Models) could not be "
+            "reached, or its answer could not be read."
         )
         loop_files.write_verdict(
             loop.id,

@@ -92,7 +92,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
           <EmptyState
             icon={Compass}
             title="Discover is off"
-            hint="Curated tips that guide you to the parts of PersonalClaw you haven't tried yet. Turn them back on in Settings › Legibility."
+            hint="Curated tips that guide you to the parts of PersonalClaw you haven't tried yet. Turn them back on in Settings › Agent › Legibility."
             action={{ label: 'Open Settings', onClick: () => navigate('settings/agent?section=legibility'), icon: Compass }}
           />
         ) : data.visible_count === 0 ? (

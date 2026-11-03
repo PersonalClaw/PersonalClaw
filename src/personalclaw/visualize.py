@@ -42,8 +42,8 @@ class GenUiDisabled(RuntimeError):
 #: The message every surface shows for a disabled generative UI. Defined once so the MCP
 #: tool and the workflow node cannot describe one switch two ways.
 GENUI_DISABLED_MESSAGE = (
-    "generative UI is off — turn on Settings → Ambient surfaces → Generative UI to render "
-    "agent-authored widgets, or present the data as text"
+    "generative UI is off — turn on Settings → Automations → Ambient surfaces → Generative UI to "
+    "render agent-authored widgets, or present the data as text"
 )
 
 

@@ -10,7 +10,7 @@ deliberate trade — a ~147 MiB wheel for every `pip install` is a
 real cost, and it is over PyPI's 100 MiB per-file limit. If you need a genuinely offline first
 run, pre-seed a home once with `PERSONALCLAW_HOME=/path make bundled-model` and copy it.
 
-This is the **floor**, not a recommendation. Bind a real model in Settings → Models and the
+This is the **floor**, not a recommendation. Bind a real model in Settings → Models & Providers → Models and the
 floor stops being used automatically.
 
 ## What it runs

@@ -167,7 +167,8 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # surface says "connect a model" rather than reporting a fake success or a bare 500.
     "model_unresolved": (
         "No model provider resolves for the use case this route needs — no provider is "
-        "configured, or the bound one is absent. Connect a model in Settings → Models."
+        "configured, or the bound one is absent. Connect a model in Settings → Models & Providers "
+        "→ Models."
     ),
     # ── resilience doctor (dashboard/handlers/doctor.py) ──
     "doctor_disabled": "The Doctor surface is turned off on this instance.",
@@ -773,7 +774,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # `forbidden` so the UI can say WHICH switch to turn on instead of "not allowed".
     "document_editing_off": (
         "In-place document editing is off, so this document cannot be re-rendered. Fix: turn "
-        "on Settings › Documents › 'Edit documents in place'."
+        "on Settings › Backups & Data › Documents › 'Edit documents in place'."
     ),
     # ── automation would-execute simulator (handlers/doctor.py) ──
     # Two codes, not the generic `bad_request`/`not_found` pair, because the trust surface
@@ -837,7 +838,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # speak with. Its own code because its fix is a different page from `tts_disabled`'s.
     "tts_unbound": (
         "No text-to-speech model is set up. Fix: choose one for Text-to-speech in "
-        "Settings → Models."
+        "Settings → Models & Providers → Models."
     ),
     # Speech synthesis refused before any audio was asked for, because the bound provider says it
     # cannot speak with the bound model now (`TtsProvider.can_synthesize`): a voice that is not
@@ -845,7 +846,7 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # `tts_unbound`'s fix would send the user to choose one they already chose.
     "tts_not_ready": (
         "The text-to-speech model is chosen but cannot speak yet. Fix: check it in "
-        "Settings → Models."
+        "Settings → Models & Providers → Models."
     ),
     # Speech refused by a spend cap: the request is work nobody watches (an app's, a scheduled
     # script's), and the daily or run dollar cap for such work refused it. The message is the
@@ -1258,13 +1259,13 @@ HTTP_ERROR_CODES: dict[str, str] = {
     # 400: an entry of the chain names no model ("" or "provider:"); the message names it.
     "model_ref_names_no_model": (
         'A model in the chain names no model; name each as "provider:model", or choose one in '
-        "Settings → Models."
+        "Settings → Models & Providers → Models."
     ),
     # 400: a model the chain adds is one its own provider lists for other jobs (an embedding
     # model bound to Chat, a reranker to anything); the message names what it is listed for.
     "model_cannot_serve_use_case": (
         "A model in the chain is one its provider lists for other jobs than this one; choose one "
-        "of the models Settings → Models offers for it."
+        "of the models Settings → Models & Providers → Models offers for it."
     ),
     # 400: a model the Loops chain adds can't use tools, and a loop's worker and planner do all
     # their work with them; the message names the model.

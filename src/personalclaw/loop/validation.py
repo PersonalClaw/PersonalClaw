@@ -206,7 +206,7 @@ def runtime_errors(config: dict, *, kind: str) -> list[str]:
     if not provider.startswith("acp:"):
         return [
             f"{provider!r} isn't an agent runtime: a loop runs on PersonalClaw, or on an agent "
-            "CLI set up under Settings → Providers."
+            "CLI set up under Settings → Models & Providers → Providers."
         ]
     entry = _runtime_entry(provider)
     if entry is None:
@@ -299,7 +299,7 @@ async def tools_blocker(body: dict) -> str | None:
     return (
         f"This loop can't do its work: {cannot_use_tools(steps[0][1])}, and each of its steps "
         "works with them (its judge re-runs what a step cites). Choose a model that uses tools "
-        "for Orchestration in Settings → Models."
+        "for Orchestration in Settings → Models & Providers → Models."
     )
 
 
@@ -340,7 +340,7 @@ def _choose_instead(loop: object, agent: str) -> str:
         return "Choose a model that uses tools for this loop."
     if str(getattr((AppConfig.load().agents or {}).get(agent), "model", "") or ""):
         return f"Pick a model that uses tools for {agent} on the Agents page."
-    return "Choose a model that uses tools for Loops in Settings → Models."
+    return "Choose a model that uses tools for Loops in Settings → Models & Providers → Models."
 
 
 #: What a loop held for a model without tools does next, beside the sentence that says why.

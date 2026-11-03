@@ -159,7 +159,8 @@ def resolve_binding(model_ref: str, *, use_case: str = "chat") -> CellProviderBi
     if entry is None:
         raise CellBindingError(
             f"no providers[] entry named {provider_name!r} in this home — bind the model in "
-            "Settings → Models first, so the cell runs the provider the pin names"
+            "Settings → Models & Providers → Models first, so the cell runs the provider the pin "
+            "names"
         )
     options = dict(entry.get("options") or {})
     spec = registered_spec(str(entry.get("type") or ""))

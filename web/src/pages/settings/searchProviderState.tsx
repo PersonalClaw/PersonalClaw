@@ -14,7 +14,7 @@ import { StatusPill } from '../../ui/StatusPill'
 export function searchState(p: SearchProviderInfo): { word: string; tone: 'ok' | 'danger' | null; title: string } {
   const when = p.check ? fullStamp(p.check.checked_at) : ''
   if (!p.available) {
-    return { word: 'not configured', tone: null, title: 'It is missing what it needs to search, an API key or an endpoint. Add it in Settings → Providers.' }
+    return { word: 'not configured', tone: null, title: 'It is missing what it needs to search, an API key or an endpoint. Add it in Settings → Models & Providers → Providers.' }
   }
   if (p.check?.state === 'ok') {
     return { word: 'working', tone: 'ok', title: `Its last search worked${when ? ` (${when})` : ''}.` }

@@ -828,7 +828,7 @@ def push_cmd(args: Any) -> int:
             print("VAPID keypair already present (use --force to rotate).")
         elif had:
             print("VAPID keypair ROTATED — every existing subscription is now invalid.")
-            print("Re-subscribe each device from Settings → Companion apps.")
+            print("Re-subscribe each device from Settings → Devices & Access → Companion apps.")
         else:
             print("VAPID keypair generated and stored in the credential store.")
         print(f"\nPublic key: {public_key}")

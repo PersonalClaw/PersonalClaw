@@ -271,7 +271,7 @@ def _pair(args: argparse.Namespace) -> None:
     if trust_policies(provider).get("dm") != "pairing":
         print(
             f"It lets nobody in until {provider}'s rule for strangers asks for a code again "
-            "(Settings › Sender trust)."
+            "(Settings › Devices & Access › Sender trust)."
         )
 
 
@@ -297,8 +297,8 @@ def _discover(args: argparse.Namespace) -> None:
         print(
             "That is not necessarily a problem: discovery is off by default, is a no-op on a\n"
             "loopback-only gateway, and many networks filter multicast. On the machine running\n"
-            "the gateway, turn on Settings → Companion apps → LAN discovery, then open the\n"
-            "dashboard by typing its LAN address."
+            "the gateway, turn on Settings → Devices & Access → Companion apps → LAN discovery, "
+            "then open the\ndashboard by typing its LAN address."
         )
         return
     print(f"Found {len(found)} gateway{'s' if len(found) != 1 else ''}:")

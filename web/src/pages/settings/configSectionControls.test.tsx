@@ -61,7 +61,7 @@ vi.mock('../../lib/api', () => ({
 
 beforeEach(() => { patchConfig.mockClear() })
 
-describe('Settings › Workflows writes workflows.* (issue #2801, the 21-key block)', () => {
+describe('Settings › Automations › Workflows writes workflows.* (issue #2801, the 21-key block)', () => {
   it('the master switch PATCHes workflows.enabled', async () => {
     const { WorkflowsPanel } = await import('./WorkflowsPanel')
     render(<WorkflowsPanel />)
@@ -118,7 +118,7 @@ describe('Settings › Workflows writes workflows.* (issue #2801, the 21-key blo
   })
 })
 
-describe('Settings › Autonomous loops writes loops.* (issue #2801)', () => {
+describe('Settings › Automations › Autonomous loops writes loops.* (issue #2801)', () => {
   it('the judge axis is a select over the enum the allowlist declares', async () => {
     const { LoopsPanel } = await import('./LoopsPanel')
     render(<LoopsPanel />)

@@ -75,7 +75,8 @@ def migrate_active_to_default_profile(*, name: str = "") -> vp.VoiceProfile:
     fields = active_voice_fields()
     if fields is None:
         raise vp.VoiceProfileError(
-            "no active TTS voice to migrate — bind one in Settings → Models first",
+            "no active TTS voice to migrate — bind one in Settings → Models & Providers → Models "
+            "first",
             409,
             "no_active_voice",
         )

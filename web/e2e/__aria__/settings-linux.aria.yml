@@ -35,7 +35,7 @@
     - 'button "Mode: <theme>" [pressed]': <theme>
     - 'button "Mode: <theme>"': <theme>
     - 'button "Mode: Auto"': Auto
-    - text: Buddy Off
+    - text: Buddy Buddy status Off
     - switch "Buddy status"
     - button "Open Account settings"
     - heading "Account" [level=#]
@@ -52,9 +52,9 @@
     - button "Archive"
     - button "Open Notifications & Inbox settings"
     - heading "Notifications & Inbox" [level=#]
-    - text: Mute all
+    - text: Mute all notifications
     - switch "Mute all notifications"
-    - text: Quiet hours
+    - text: Enable quiet hours
     - switch "Enable quiet hours"
     - text: Min severity
     - 'button "Min severity: All" [pressed]': All
@@ -73,12 +73,12 @@
     - text: Search No search provider The agent can’t search the web until you install a search provider app from the Store.
     - button "Open Agent settings"
     - heading "Agent" [level=#]
-    - text: Default agent PersonalClaw Approval
+    - text: Default agent PersonalClaw Approval mode
     - combobox "Approval mode":
       - option "Ask each time" [selected]
       - option "Trust reads"
       - option "Auto"
-    - text: YOLO
+    - text: YOLO auto-approve all
     - switch "YOLO auto-approve all"
     - text: "Also here:"
     - button "Prompts"
@@ -93,7 +93,7 @@
     - text: Off — the four eval panels on Learning stay empty AI feedback 👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing.
     - button "Open Automations settings"
     - heading "Automations" [level=#]
-    - text: Workflows Running
+    - text: Workflows Running Workflow engine
     - switch "Workflow engine" [checked]
     - text: "New workflows surface: off · workspace: scratch Autonomous loops Judge axis reasoning Stagnation window # cycles Check work after gates Off Watched sources Polling Every # hr by default; network sources never faster than # min Ambient surfaces Composable home On Generative UI On"
     - button "Open Apps & Packs settings"
@@ -106,19 +106,19 @@
     - heading "Security & <theme>" [level=#]
     - button "Open Security settings"
     - heading "Security" [level=#]
-    - text: # denied-command rules Suspicious patterns # Redaction paths # Tool schemas # Guardrails Normal operation
+    - text: # denied-command rules Suspicious patterns # Redaction paths # Tool schemas # Guardrails Normal operation Pause unattended work
     - switch "Pause unattended work"
     - text: Kill switch · budgets · outbound scan Audit log Chain intact all # events verified
     - button "Open Devices & Access settings"
     - heading "Devices & Access" [level=#]
-    - text: # paired device Headless Chrome on <platform> Sender trust No trusted senders Strangers must pair before they can talk External access No inbound access
+    - text: # paired device Headless Chrome on <platform> Sender trust No trusted senders Strangers must pair before they can talk External access No inbound access Allow inbound access
     - switch "Allow inbound access" [disabled]
-    - text: Nothing outside can reach in Companion apps Not advertising
+    - text: Nothing outside can reach in Companion apps Not advertising LAN discovery
     - switch "LAN discovery" [disabled]
     - text: LAN discovery is off — companion apps need the URL typed in.
     - button "Open Health settings"
     - heading "Health" [level=#]
-    - text: "<theme> CPU <cpu> Memory #.#/#.#GB Doctor All systems healthy Diagnostics Live log stream Level: WARNING"
+    - text: "CPU <cpu> Memory #.#/#.#GB Doctor All systems healthy Diagnostics Live log stream Level: WARNING"
     - button "Open Secrets settings"
     - heading "Secrets" [level=#]
     - text: # secrets known Global # Per-project # From host env #

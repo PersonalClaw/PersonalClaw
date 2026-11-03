@@ -126,8 +126,8 @@ async def test_a_cap_that_holds_an_unpriced_call_says_its_total_leaves_it_out():
     assert isinstance(refusal, BudgetExceededError)
     assert refusal.sentence() == (
         "The daily dollar budget is spent ($3.50 of $1.00, not counting 1 call that had no "
-        "price): raise Max dollars / day in Settings → Guardrails (0 removes the cap), or wait "
-        "for it to reset at midnight."
+        "price): raise Max dollars / day in Settings → Security → Guardrails (0 removes the cap), "
+        "or wait for it to reset at midnight."
     )
 
 
@@ -141,8 +141,8 @@ def test_a_spent_cap_says_how_many_calls_its_total_leaves_out():
     assert isinstance(refusal, BudgetExceededError)
     assert refusal.sentence() == (
         "The daily dollar budget is spent ($5.00 of $5.00, not counting 1 call that had no "
-        "price): raise Max dollars / day in Settings → Guardrails (0 removes the cap), or wait "
-        "for it to reset at midnight."
+        "price): raise Max dollars / day in Settings → Security → Guardrails (0 removes the cap), "
+        "or wait for it to reset at midnight."
     )
     verdict, reason = meter.check_day(Budget(max_dollars=5.0))
     assert verdict is BudgetVerdict.EXCEEDED

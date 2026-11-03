@@ -422,12 +422,13 @@ async def regenerate_synthesis(store: Any, item_id: str, *, completion: Any = No
         raise SynthesisUnavailable(
             f"{exc.ref or 'the model'} {exc.reason().removeprefix('it ')}, so there is no "
             "synthesis to propose — give it more output room where its provider's settings have "
-            f"one, or bind another model for the {SYNTHESIS_USE_CASE} use case in Settings → Models"
+            f"one, or bind another model for the {SYNTHESIS_USE_CASE} use case in Settings → "
+            "Models & Providers → Models"
         ) from exc
     if not text:
         raise SynthesisUnavailable(
             "regeneration needs a model and none produced a synthesis — bind one for the "
-            f"{SYNTHESIS_USE_CASE} use case in Settings → Models"
+            f"{SYNTHESIS_USE_CASE} use case in Settings → Models & Providers → Models"
         )
 
     # Carry the attribution the recompute actually used. Without this the gate at

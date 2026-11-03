@@ -396,7 +396,7 @@ describe("#/agents: a runtime whose agents are not known says why, and shows no 
   })
 
   it.each([
-    ['untested', 'Not tried yet. PersonalClaw starts it only when you press Test (Settings → Providers).', 'not tried yet'],
+    ['untested', 'Not tried yet. PersonalClaw starts it only when you press Test (Settings → Models & Providers → Providers).', 'not tried yet'],
     ['needs_login', 'demo-cli: sign in first', 'unavailable'],
   ])('%s: the reason in place of a count', async (state, detail, badge) => {
     mount({ agentProviders: () => Promise.resolve([runtime({ ready: false, state, detail, tested_at: null })]) })

@@ -28,7 +28,7 @@ describe('the web search card', () => {
     render(<>{renderToolOutput(seg({ results: RESULTS, provider: 'duckduckgo', fallback: { provider: 'brave', notice: NOTICE, reason: 'x' } }))}</>)
     const note = screen.getByRole('note')
     expect(note.textContent).toContain(NOTICE)
-    expect(note.textContent).toContain('Settings › Search')
+    expect(note.textContent).toContain('Settings › Models & Providers › Search')
     expect(screen.getByText('Changelog')).toBeTruthy()
   })
 

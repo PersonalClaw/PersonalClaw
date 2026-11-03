@@ -101,14 +101,14 @@ describe('the owner\'s knobs', () => {
 })
 
 describe('what the buddy follows, shown and not set here', () => {
-  it('the notification posture, with the way to Settings → Notifications', async () => {
+  it('the notification posture, with the way to Settings → Notifications & Inbox → Notifications', async () => {
     // 7:00 on this machine's clock, whatever its zone: the line says the time where the owner is.
     const sevenHere = new Date(2026, 9, 22, 7, 0).toISOString()
     POLICY.value = policy({}, { quiet_now: true, may_interrupt: false, changes_at: sevenHere })
     await mount()
     const notes = await screen.findByRole('group', { name: 'Notifications' })
     expect(await within(notes).findByText(/In quiet hours until 7:00/)).toBeInTheDocument()
-    expect(within(notes).getByRole('link', { name: /Settings → Notifications/ }).getAttribute('href')).toBe('#/settings/notifications')
+    expect(within(notes).getByRole('link', { name: /Settings → Notifications & Inbox → Notifications/ }).getAttribute('href')).toBe('#/settings/notifications')
     expect(within(notes).queryByRole('switch')).toBeNull()
   })
 

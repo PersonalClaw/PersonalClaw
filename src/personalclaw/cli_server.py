@@ -157,8 +157,8 @@ def _token_lifetime_note(reply: dict) -> str:
         )
     return (
         f"This is a sign-in link for your PersonalClaw dashboard. {how}\n"
-        "Treat it like a password: anyone who has it can use your dashboard. Settings → Devices "
-        "lists every sign-in, and signs any of them out."
+        "Treat it like a password: anyone who has it can use your dashboard. Settings → Devices & "
+        "Access → Devices lists every sign-in, and signs any of them out."
     )
 
 

@@ -113,7 +113,7 @@ export function LookControls() {
   return (
     <section role="group" aria-label="Look" className="flex min-w-0 flex-col gap-s">
       <Eyebrow as="h3">Look</Eyebrow>
-      <p data-type="body-s" className="text-on-surface-var">These are the app's own settings, as in Settings → Design.</p>
+      <p data-type="body-s" className="text-on-surface-var">These are the app's own settings, as in Settings → Appearance → Design.</p>
       <div className="flex flex-wrap items-center gap-m">
         <Segmented
           ariaLabel="Colour scheme" size="sm" collapse="wrap" value={SHEET_SCHEMES.some((s) => s.key === activeScheme) ? activeScheme : ''}

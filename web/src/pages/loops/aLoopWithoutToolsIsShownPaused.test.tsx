@@ -26,7 +26,7 @@ const { RUN_LIFECYCLE } = await import('./useRunStream')
 const { ProjectFooter } = await import('../code/CodeCockpitPage')
 const { api } = await import('../../lib/api')
 
-const SAID = '“Pocket:tiny-1” can’t use tools, and a cycle counts only for the finding it writes. Choose a model that uses tools for Loops in Settings → Models. Then resume the loop.'
+const SAID = '“Pocket:tiny-1” can’t use tools, and a cycle counts only for the finding it writes. Choose a model that uses tools for Loops in Settings → Models & Providers → Models. Then resume the loop.'
 const WHY = 'Its worker writes each finding with tools; without them a cycle writes nothing.'
 
 afterEach(cleanup)
@@ -44,7 +44,7 @@ describe('the pause', () => {
     expect(band.textContent).toContain('Paused: its model can’t use tools')
     expect(screen.getByText(SAID)).toBeTruthy()
     expect(screen.getByText(WHY)).toBeTruthy()
-    expect(screen.getByRole('link', { name: /open settings → models/i }).getAttribute('href')).toBe('#/settings/models')
+    expect(screen.getByRole('link', { name: /open settings → models & providers → models/i }).getAttribute('href')).toBe('#/settings/models')
     await userEvent.click(screen.getByRole('button', { name: /resume/i }))
     expect(onResume).toHaveBeenCalledTimes(1)
   })

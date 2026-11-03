@@ -30,7 +30,7 @@ export function NoToolsPause({ question, why, onResume, busy = false, className 
       {why && <p data-type="caption" className="whitespace-pre-wrap text-on-surface-low">{why}</p>}
       <div className="flex flex-wrap items-center gap-m">
         <TextLink href="#/settings/models" icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis">
-          Open Settings → Models
+          Open Settings → Models & Providers → Models
         </TextLink>
         {onResume && (
           <Button variant="secondary" size="xs" onClick={onResume} loading={busy}>

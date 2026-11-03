@@ -20,7 +20,7 @@ function runtime(over: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
     name: 'acp:demo-cli', provider_id: 'acp:demo-cli', type: 'acp_agent', extension: 'demo-cli-agent',
     ready: false, state: 'untested',
-    detail: 'Not tried yet. PersonalClaw starts it only when you press Test (Settings → Providers).',
+    detail: 'Not tried yet. PersonalClaw starts it only when you press Test (Settings → Models & Providers → Providers).',
     login_command: null, tested_at: null, ...over,
   }
 }

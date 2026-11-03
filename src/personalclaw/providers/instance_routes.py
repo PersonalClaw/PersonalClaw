@@ -168,7 +168,8 @@ def _model_instances_elsewhere(ext: object) -> web.Response | None:
     return json_error(
         "model_instances_elsewhere",
         message="A model provider's instances are added, edited, tested and removed in "
-        "Settings → Providers → Model providers (/api/model-providers), not in this store.",
+        "Settings → Models & Providers → Providers → Model providers (/api/model-providers), not "
+        "in this store.",
         status=400,
     )
 

@@ -1044,7 +1044,7 @@ function DoneScreen({ name, model, tried: triedRec, settled, readFailed, modelCh
           <TextLink size="sm" ink="emphasis" onClick={() => onExitTo('inbox')}>Open the Inbox instead</TextLink>
         </Pointer>
         <Pointer icon={Waves} title="How much the interface moves is a dial"
-          body="Every animation scales with it — all the way down to none. This is the real control from Settings → Design.">
+          body="Every animation scales with it — all the way down to none. This is the real control from Settings → Appearance → Design.">
           {BOUNCINESS && <ScalarControl token={BOUNCINESS} />}
         </Pointer>
         <Pointer icon={RefreshCw} title={updateTitle} body={updateBody}>

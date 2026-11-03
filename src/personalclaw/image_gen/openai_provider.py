@@ -96,8 +96,8 @@ class OpenAIImageProvider(ImageGenProvider):
         if not self._resolve_api_key():
             return (
                 f"{self._provider_name} has no API key, so it can't make images. Add the key on "
-                f"the {self._provider_name} instance in Settings → Providers, or set "
-                "OPENAI_API_KEY."
+                f"the {self._provider_name} instance in Settings → Models & Providers → Providers, "
+                "or set OPENAI_API_KEY."
             )
         return (
             f"{self._provider_name} can't make images: the openai package isn't installed. "

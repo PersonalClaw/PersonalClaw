@@ -129,7 +129,7 @@ function StoreReport({ store, report, k }: { store: string; report: RetrievalSto
           {dead.join(', ')} returned no candidates in this run, so {dead.length > 1 ? 'those arms' : 'that arm'}{' '}
           never ran and {dead.length > 1 ? 'their deltas say' : 'its delta says'} nothing about the
           arm. Check that an embedding model is bound AND reachable on{' '}
-          <a className="underline" href="#/settings/models">Settings → Models</a> — an expired
+          <a className="underline" href="#/settings/models">Settings → Models & Providers → Models</a> — an expired
           credential leaves the model bound and embeds nothing, which looks identical here.
         </Warn>
       )}

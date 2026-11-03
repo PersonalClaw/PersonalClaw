@@ -365,4 +365,4 @@ def test_a_restored_chat_whose_model_no_longer_fits_follows_its_binding(tmp_path
     assert session.title == "Restored", "the chat really was restored from its file"
     assert (
         session.model == ""
-    ), "no model of its own: Settings → Models decides, rebind after rebind"
+    ), "no model of its own: Settings → Models & Providers → Models decides, rebind after rebind"

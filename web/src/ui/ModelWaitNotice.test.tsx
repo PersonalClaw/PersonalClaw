@@ -41,7 +41,7 @@ describe('ModelWaitNotice', () => {
   it('with no other model, says it starts once the model is free and what would take over', () => {
     const { next } = waitSentences(wait({ next: '', left_secs: null, movesOnAt: null }), NOW)
     expect(next).toBe(
-      'It starts as soon as that is done. A second model for this use in Settings → Models would take over instead of waiting.',
+      'It starts as soon as that is done. A second model for this use in Settings → Models & Providers → Models would take over instead of waiting.',
     )
   })
 

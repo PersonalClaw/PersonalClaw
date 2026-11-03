@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 NO_DIARIZATION_MODEL = (
     "No speaker diarization model is chosen, so the speakers can't be told apart. Choose one "
-    "under Speaker diarization in Settings → Models."
+    "under Speaker diarization in Settings → Models & Providers → Models."
 )
 SENSITIVE_DIARIZATION_PATH = (
     "This file is in a folder PersonalClaw never reads, so its speakers were not told apart."
@@ -31,7 +31,7 @@ SENSITIVE_DIARIZATION_PATH = (
 NO_TURNS_NO_REASON = (
     "The speaker diarization model gave back nothing and its provider doesn't say why, so the "
     "transcript has no speaker labels. Check the gateway log, or choose another model under "
-    "Speaker diarization in Settings → Models."
+    "Speaker diarization in Settings → Models & Providers → Models."
 )
 #: The sentence ahead of an unexpected error's own words.
 DIARIZATION_FAILED = (

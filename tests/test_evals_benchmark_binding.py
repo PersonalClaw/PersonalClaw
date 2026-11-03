@@ -154,8 +154,10 @@ def test_a_declared_ref_that_does_not_resolve_never_falls_back(tmp_path, monkeyp
     # Models" — the panel that holds providers, not the one holding the ref the operator
     # mistyped. Both panels have to appear, or the message sends the reader to the wrong one.
     assert bb.CONFIG_FIELD in bound.detail
-    assert "Settings → Evaluations" in bound.detail
-    assert "Settings → Models" in bound.detail, "cell_provider's own diagnosis is kept verbatim"
+    assert "Settings → Evaluations & Feedback → Evaluations" in bound.detail
+    assert (
+        "Settings → Models & Providers → Models" in bound.detail
+    ), "cell_provider's own diagnosis is kept verbatim"
 
 
 def test_the_chain_is_walked_in_order_so_a_broken_default_does_not_refuse_the_home(

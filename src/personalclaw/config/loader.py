@@ -672,7 +672,7 @@ class AgentConfig:
         metadata=_meta(
             "Provider",
             "Default agent runtime backend for agents that don't set their own: "
-            "'native' (in-process loop, governed by Settings → Models), 'acp' "
+            "'native' (in-process loop, governed by Settings → Models & Providers → Models), 'acp' "
             "(external CLI), or 'acp:<cli>' to pin a specific connected runtime "
             "(e.g. 'acp:claude-code'). Per-agent 'provider' overrides this. Not a "
             "closed enum — the acp:<cli> space is open over connected runtimes, "
@@ -834,7 +834,7 @@ class AgentConfig:
         metadata=_meta(
             "Runner Health Check Interval",
             "How long a runner's measured health evidence stays current, in seconds. "
-            "Past this, Settings → Agents marks the row's check overdue instead of "
+            "Past this, Capabilities → Agents marks the row's check overdue instead of "
             "presenting an old reading as the present state. Probing is never "
             "automatic — this only decides when a stored measurement stops counting "
             "as an answer.",
@@ -845,7 +845,7 @@ class AgentConfig:
         metadata=_meta(
             "Runner Idle Release",
             "How long a session may hold an agent runner without using it, in seconds. "
-            "Past this the hold is released: Settings → Agents stops showing that "
+            "Past this the hold is released: Capabilities → Agents stops showing that "
             "session as the holder and the runner reads as free. The session itself is "
             "untouched — this releases the RECORD of who holds what, so a session that "
             "went quiet (or a gateway that was killed) cannot leave a runner looking "
@@ -1233,10 +1233,10 @@ class LocalModelsConfig:
         default=90,
         metadata=_meta(
             "Model Test timeout",
-            "How long (seconds) a model's Test in Settings → Models may run before it is "
-            "stopped and reported as timed out — any model, hosted or on this machine. A Test "
-            "makes one small real call on click, so this bounds a model that hangs while it "
-            "loads.",
+            "How long (seconds) a model's Test in Settings → Models & Providers → Models may run "
+            "before it is stopped and reported as timed out — any model, hosted or on this "
+            "machine. A Test makes one small real call on click, so this bounds a model that "
+            "hangs while it loads.",
         ),
     )
 
@@ -1931,8 +1931,8 @@ class AgentProfile:
         metadata=_meta(
             "Provider",
             "Agent runtime backend: 'native' (in-process loop, governed by "
-            "Settings → Models) or 'acp:<cli>' (external CLI). Empty inherits the "
-            "global agent.provider default.",
+            "Settings → Models & Providers → Models) or 'acp:<cli>' (external CLI). "
+            "Empty inherits the global agent.provider default.",
         ),
     )
     provider_agent: str = field(
@@ -2574,7 +2574,7 @@ class ResilienceConfig:
         default=True,
         metadata=_meta(
             "Doctor",
-            "Show the Doctor health surface (Settings → Doctor + GET /api/doctor). "
+            "Show the Doctor health surface (Settings → Health → Doctor + GET /api/doctor). "
             "Guard-class: a missing/unknown value keeps it ON.",
             guard_class=True,
             safe_values=[True],

@@ -54,7 +54,9 @@ IMAGE_USE_CASE = "image_modality"
 NO_IMAGE_MODEL = "No image model is set up."
 
 #: A binding exists, but no model in its chain can serve right now (not downloaded, say).
-BOUND_IMAGE_MODEL_UNAVAILABLE = "The image model chosen in Settings → Models can't run right now."
+BOUND_IMAGE_MODEL_UNAVAILABLE = (
+    "The image model chosen in Settings → Models & Providers → Models can't run right now."
+)
 
 _tags_memo: dict[tuple[str, str], tuple[float, frozenset[str]]] = {}
 

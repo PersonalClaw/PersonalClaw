@@ -25,8 +25,8 @@ from personalclaw.llm_helpers import humanize_provider_error
 _SAID = (
     "The daily dollar budget has $3.94 of $4.00 spent (not counting 11 calls that had no price), "
     "and a call to cloud:example-large may cost $0.30, more than the $0.06 left: raise Max "
-    "dollars / day in Settings → Guardrails (0 removes the cap), or wait for it to reset at "
-    "midnight."
+    "dollars / day in Settings → Security → Guardrails (0 removes the cap), or wait for it to "
+    "reset at midnight."
 )
 
 
@@ -47,7 +47,7 @@ def test_a_spent_cap_says_so_and_names_its_control():
     spent = BudgetExceededError("day", "tokens", 50_000, 50_400, why=SPENT)
     assert spent.sentence() == (
         "The daily token budget is spent (50,400 of 50,000 tokens): raise Max tokens / day in "
-        "Settings → Guardrails (0 removes the cap), or wait for it to reset at midnight."
+        "Settings → Security → Guardrails (0 removes the cap), or wait for it to reset at midnight."
     )
     assert spent.settings_page == "guardrails"
 

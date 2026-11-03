@@ -91,7 +91,7 @@ describe('the agent orb’s states', () => {
   })
 })
 
-describe('Settings → Design', () => {
+describe('Settings → Appearance → Design', () => {
   it('carries the states beside the scheme preview', async () => {
     const { ThemeProvider } = await import('../../app/theme')
     const { AppearanceProvider } = await import('../../app/appearance')

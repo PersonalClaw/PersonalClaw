@@ -169,7 +169,7 @@ describe('classification: which failures are the provider refusing a real call',
         findings: [{
           code: 'WF_PRE_MODEL_UNRESOLVED',
           message: "no model resolves for the 'orchestration' use case",
-          remediation: "select a model for orchestration in Settings → Models, or change the node's model_tier",
+          remediation: "select a model for orchestration in Settings → Models & Providers → Models, or change the node's model_tier",
           severity: 'error',
           kind: 'models',
         }],
@@ -190,7 +190,7 @@ describe('classification: which failures are the provider refusing a real call',
   it('uses the server\'s remediation verbatim, and names no credential', () => {
     const t = settingsTargetFor(PREFLIGHT_422())
     expect(t.path).toBe('settings/models')
-    expect(t.because).toBe("select a model for orchestration in Settings → Models, or change the node's model_tier")
+    expect(t.because).toBe("select a model for orchestration in Settings → Models & Providers → Models, or change the node's model_tier")
     // The specific sentence the defect produced, and the vocabulary it belongs to.
     expect(t.because).not.toMatch(/passed its test/)
     expect(t.because).not.toMatch(/key|plan|billing|quota/i)
@@ -308,7 +308,7 @@ describe('a FRESH INSTALL with no provider is not told to check a key it never h
         findings: [{
           code: 'WF_PRE_MODEL_UNRESOLVED',
           message: "no model resolves for the 'orchestration' use case",
-          remediation: "select a model for orchestration in Settings → Models, or change the node's model_tier",
+          remediation: "select a model for orchestration in Settings → Models & Providers → Models, or change the node's model_tier",
           severity: 'error',
           kind: 'models',
         }],
@@ -331,8 +331,8 @@ describe('a FRESH INSTALL with no provider is not told to check a key it never h
     createULoop.mockRejectedValue(NO_PROVIDER())
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
-    expect(await screen.findByText(/select a model for orchestration in Settings → Models/)).toBeTruthy()
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Settings → Models' }))
+    expect(await screen.findByText(/select a model for orchestration in Settings → Models & Providers → Models/)).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Settings → Models & Providers → Models' }))
     expect(onExitTo).toHaveBeenCalledWith('settings/models')
   })
 
@@ -357,7 +357,7 @@ describe('a non-provider failure is not blamed on the provider', () => {
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
     expect((await screen.findByRole('alert')).textContent).toContain('Task is too short')
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Settings → Doctor' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Settings → Health → Doctor' }))
     expect(onExitTo).toHaveBeenCalledWith('settings/health?section=doctor')
     expect(screen.queryByText(/passed its test and then refused/)).toBeNull()
   })

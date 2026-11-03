@@ -54,7 +54,7 @@ class TestVoiceSynthesize:
             assert error["code"] == "tts_unbound"
             assert error["message"] == (
                 "No text-to-speech model is set up. Choose one for Text-to-speech in "
-                "Settings → Models."
+                "Settings → Models & Providers → Models."
             )
 
     @pytest.mark.asyncio

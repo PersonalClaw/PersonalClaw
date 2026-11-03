@@ -70,7 +70,7 @@ def needs_a_model(what: str) -> str:
     """What a surface says while no model is chosen for its chores, *what* naming them as she
     knows them ("Suggestions", "Follow-ups"): the one sentence each of those surfaces shows, naming
     where the model is chosen."""
-    return f"{what} need a model: choose one in Settings → Models."
+    return f"{what} need a model: choose one in Settings → Models & Providers → Models."
 
 
 async def run_chore(
@@ -130,9 +130,9 @@ def room_for(capped: OutOfOutputRoom) -> str:
     if 0 < capped.output_cap < int(background_limits().max_output_tokens):
         return (
             "raise that model's own output limit where its provider's settings have one, or add "
-            "another model to Background in Settings → Models"
+            "another model to Background in Settings → Models & Providers → Models"
         )
-    return "raise the Background output limit in Settings → Models"
+    return "raise the Background output limit in Settings → Models & Providers → Models"
 
 
 def _reaches_no_model(chat_key: str, memory_mode: str | None) -> bool:

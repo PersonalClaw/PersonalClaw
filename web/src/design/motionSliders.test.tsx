@@ -59,7 +59,7 @@ afterEach(() => {
   Object.assign(runtime, DEFAULTS)
 })
 
-describe('Settings → Design → Motion sliders', () => {
+describe('Settings → Appearance → Design → Motion sliders', () => {
   it('renders one named slider per Motion scalar, Bounciness among them', () => {
     renderMotionGroup()
     for (const t of MOTION_SCALARS) {

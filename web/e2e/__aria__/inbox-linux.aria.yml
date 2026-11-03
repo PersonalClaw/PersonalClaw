@@ -39,7 +39,7 @@
   - button "Install"
   - paragraph:
     - text: Installing adds a schedule you can edit or pause any time. Turn the digest itself on under
-    - link "Settings → Inbox":
+    - link "Settings → Notifications & Inbox → Inbox":
       - /url: "#/settings/notifications?section=inbox"
     - text: .
   - heading "Nothing has arrived yet" [level=#]

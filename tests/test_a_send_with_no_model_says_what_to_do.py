@@ -46,8 +46,8 @@ async def test_a_send_with_no_model_bound_says_what_to_do(tmp_path, caplog):
     assert "Try again" not in said, "a retry cannot bind a model"
     assert said == (
         "No model provider resolves for use case 'chat': no provider in config.json declares "
-        "the capability this use case needs. Add a model provider in Settings → Providers, "
-        "then bind 'chat' to it."
+        "the capability this use case needs. Add a model provider in Settings → Models & "
+        "Providers → Providers, then bind 'chat' to it."
     )
     # The chat's calm setup card still recognises it (web/src/pages/chat/NoModelSetupState.tsx).
     assert matches_no_model_text(said)
@@ -69,12 +69,12 @@ def test_a_provider_with_no_model_chosen_is_named_in_the_sentence():
             code="ERR_MODEL_UNRESOLVED",
             what="no model provider resolves for use case 'chat'",
             why="no model is chosen for “local”",
-            fix="choose one of its models in Settings → Models",
+            fix="choose one of its models in Settings → Models & Providers → Models",
         ),
     )
     assert humanize_provider_error(refusal) == (
         "No model provider resolves for use case 'chat': no model is chosen for “local”. "
-        "Choose one of its models in Settings → Models."
+        "Choose one of its models in Settings → Models & Providers → Models."
     )
 
 
@@ -87,14 +87,15 @@ def test_a_stale_pin_reads_as_its_own_sentence_and_not_as_first_run_setup():
             code="ERR_MODEL_UNRESOLVED",
             what="the model pinned for use case 'chat' ('Gone:m-1') cannot be built",
             why="no provider named 'Gone' is in config.json",
-            fix="re-add 'Gone' in Settings → Providers, or rebind 'chat' in Settings → Models",
+            fix="re-add 'Gone' in Settings → Models & Providers → Providers, or rebind 'chat' in "
+            "Settings → Models & Providers → Models",
         ),
     )
     said = humanize_provider_error(refusal)
     assert said == (
         "The model pinned for use case 'chat' ('Gone:m-1') cannot be built: no provider named "
-        "'Gone' is in config.json. Re-add 'Gone' in Settings → Providers, or rebind 'chat' in "
-        "Settings → Models."
+        "'Gone' is in config.json. Re-add 'Gone' in Settings → Models & Providers → Providers, or "
+        "rebind 'chat' in Settings → Models & Providers → Models."
     )
     assert not matches_no_model_text(said)
 

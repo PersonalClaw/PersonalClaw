@@ -206,7 +206,7 @@ export function ExternalAccessPanel() {
           <ShieldOff size={14} className="mt-0.5 shrink-0" aria-hidden />
           <span>
             Incident mode is on, so every inbound request is being refused regardless of the
-            switches below. Clear it in Settings › Guardrails to resume.
+            switches below. Clear it in Settings › Security › Guardrails to resume.
           </span>
         </div>
       )}
@@ -355,7 +355,7 @@ export function ExternalAccessPanel() {
             keep its conversation, or choose that here later. A plain surface token also works, but
             it cannot be scoped. A webhook automation&apos;s sender tokens are clients too: make one
             on the automation&apos;s page, or with <code>personalclaw inbound webhook create &lt;automation-id&gt;</code>.
-            Every token lasts at most 90 days, and Settings → Devices lists each one, with a revoke.
+            Every token lasts at most 90 days, and Settings → Devices & Access → Devices lists each one, with a revoke.
           </div>
         ) : (
           <div className="flex flex-col gap-1">

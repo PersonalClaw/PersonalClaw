@@ -131,6 +131,7 @@
         "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
       ],
       "focus order": [
+        "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Health settings\" to <button .absolute.inset-#.z-#> \"Open Secrets settings\"",
         "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Speech & Transcription settings\" to <button .absolute.inset-#.z-#> \"Open Models & Providers settings\""
       ]
     }
@@ -267,6 +268,7 @@
         "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
       ],
       "focus order": [
+        "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Health settings\" to <button .absolute.inset-#.z-#> \"Open Secrets settings\"",
         "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Speech & Transcription settings\" to <button .absolute.inset-#.z-#> \"Open Models & Providers settings\""
       ]
     }

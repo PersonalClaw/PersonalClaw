@@ -73,8 +73,8 @@ export function NoModelSetupState({ detail, onSetup }: { detail: string; onSetup
           </p>
           <p data-type="body-s" className="mt-0.5 text-on-surface-var">
             {provider
-              ? 'Choose which of its models to chat with in Settings → Models.'
-              : 'Connect a model to start chatting. You can set one up in Settings → Models.'}
+              ? 'Choose which of its models to chat with in Settings → Models & Providers → Models.'
+              : 'Connect a model to start chatting. You can set one up in Settings → Models & Providers → Models.'}
           </p>
           <div className="mt-2.5">
             <Button size="sm" onClick={onSetup}>

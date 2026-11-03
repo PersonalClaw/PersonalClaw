@@ -266,7 +266,8 @@ async def test_nothing_is_sent_while_sorting_is_off(svc, monkeypatch):
     assert model.calls == []
     assert _row(svc, 1).classification == ""
     assert svc.health()["sorting"] == {
-        "held": "Sorting is off in Settings › Inbox, so new messages stay unsorted.",
+        "held": "Sorting is off in Settings › Notifications & Inbox › Inbox, so new messages "
+        "stay unsorted.",
         "waiting": 1,
     }
 

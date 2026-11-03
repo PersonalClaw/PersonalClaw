@@ -30,7 +30,7 @@ import { join } from 'node:path'
 
 const PANEL = join(process.cwd(), 'src/pages/settings/DoctorPanel.tsx')
 
-const BLOCKER = 'no embedding model is bound — pick one in Settings → Models'
+const BLOCKER = 'no embedding model is bound — pick one in Settings → Models & Providers → Models'
 
 const DEFICITS = [
   { key: 'knowledge_missing_embeddings', count: 26, penalty: 13.0, reachable: false, blocked_by: BLOCKER },

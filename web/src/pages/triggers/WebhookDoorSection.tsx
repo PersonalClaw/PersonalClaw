@@ -131,7 +131,7 @@ export function WebhookDoorSection({ automationId, automationName, door, onChang
 function SenderRow({ sender, busy, onRevoke }: { sender: WebhookSender; busy: boolean; onRevoke: () => void }) {
   const ended = sender.expires_at > 0 && sender.expires_at * 1000 <= Date.now()
   const state = sender.disabled
-    ? 'switched off in Settings → External Access'
+    ? 'switched off in Settings → Devices & Access → External access'
     : ended ? `stopped working ${absTime(sender.expires_at)}` : `works until ${absTime(sender.expires_at)}`
   return (
     <li className="flex flex-wrap items-center gap-s rounded-lg bg-surface-container px-m py-s">

@@ -240,7 +240,7 @@
       - paragraph: Alerts may interrupt you now.
       - paragraph:
         - text: Mute, quiet hours and which alerts reach you are your notification settings. Change them in
-        - link "Settings → Notifications":
+        - link "Settings → Notifications & Inbox → Notifications":
           - /url: "#/settings/notifications"
         - text: .
     - group "Reduced motion":

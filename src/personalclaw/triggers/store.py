@@ -564,9 +564,9 @@ def unreadable_said(found: record_files.Unreadable) -> dict[str, str]:
     )
     if found.kept is not None:
         remedy = (
-            "Repair the file, restore it from a snapshot under Settings → Durability, or remove "
-            "it to start over; the copy keeps what it held. Every automation in it is listed and "
-            "runs again as soon as it can be read."
+            "Repair the file, restore it from a snapshot under Settings → Backups & Data → "
+            "Backups, or remove it to start over; the copy keeps what it held. Every automation "
+            "in it is listed and runs again as soon as it can be read."
         )
     else:
         remedy = "Once it can be opened again, every automation in it is listed and runs again."

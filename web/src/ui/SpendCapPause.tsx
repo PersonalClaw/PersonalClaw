@@ -6,7 +6,12 @@ import { withWeight } from '../design/fontWeight'
 
 /** The Settings pages a spend ceiling's refusal is lifted on, by the route id the gateway names
  *  them with (`BudgetExceededError.settings_page`): the ceilings, and a model's price. */
-const SETTINGS_PAGES: Record<string, string> = { guardrails: 'Guardrails', usage: 'Usage' }
+/** Each Settings page a cap is lifted on, by the route id the refusal names: where it is, and the
+ *  words that name it. Guardrails is a section of Security since #5897. */
+const SETTINGS_PAGES: Record<string, { route: string; name: string }> = {
+  guardrails: { route: 'settings/security?section=guardrails', name: 'Open Settings → Security → Guardrails' },
+  usage: { route: 'settings/usage', name: 'Open Settings → Usage' },
+}
 
 /** A run a spend ceiling stopped: paused, not failed. The refusal's own sentence (which ceiling,
  *  what was spent against it, what the call needed, where it is lifted), a link to the Settings
@@ -57,8 +62,8 @@ export function SpendCapSettingsLink({ settings, size = 'xs' }: { settings: stri
   const page = SETTINGS_PAGES[settings]
   if (!page) return null
   return (
-    <TextLink href={`#/settings/${settings}`} icon={ArrowRight} iconPosition="trailing" size={size} ink="emphasis">
-      Open Settings → {page}
+    <TextLink href={`#/${page.route}`} icon={ArrowRight} iconPosition="trailing" size={size} ink="emphasis">
+      {page.name}
     </TextLink>
   )
 }

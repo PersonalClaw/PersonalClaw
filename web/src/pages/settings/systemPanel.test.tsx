@@ -83,7 +83,7 @@ async function mountSystem() {
   render(<SystemPanel navigate={navigate} />)
 }
 
-describe('Settings › System', () => {
+describe('Settings › Health › System', () => {
   // A section of Health since #5897, beside Doctor and Diagnostics: its old address opens it there.
   it('is a section of Health, titled System', async () => {
     const { pageOfSection } = await import('./settingsPages')
@@ -134,7 +134,7 @@ describe('Settings › System', () => {
     expect(screen.getByText('uptime'), 'the status half still renders').toBeInTheDocument()
   })
 
-  it('sends what is holding memory to Settings › Models, its one home', async () => {
+  it('sends what is holding memory to Settings › Models & Providers › Models, its one home', async () => {
     await mountSystem()
     await waitFor(() => expect(screen.getByText('cpu')).toBeInTheDocument())
     // Settings › Models already lists the resident models with Unload and the pressure meter, under
@@ -142,7 +142,7 @@ describe('Settings › System', () => {
     expect(screen.queryByRole('heading', { name: 'On this machine' })).toBeNull()
     expect(screen.queryByRole('progressbar', { name: /system memory in use/i })).toBeNull()
     expect(calls.modelsLoaded ?? 0, 'nor is the loaded-models read made here').toBe(0)
-    screen.getByRole('button', { name: /Settings › Models/ }).click()
+    screen.getByRole('button', { name: /Settings › Models & Providers › Models/ }).click()
     expect(navigate).toHaveBeenCalledWith('settings/models')
   })
 
@@ -158,7 +158,7 @@ describe('Settings › System', () => {
   })
 })
 
-describe('Settings › System is reached and scanned', () => {
+describe('Settings › Health › System is reached and scanned', () => {
   const WEB = process.cwd()
 
   it('has a part on the Settings hub, on Health\'s card in Security & System', () => {

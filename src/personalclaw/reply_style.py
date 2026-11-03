@@ -524,7 +524,7 @@ def instruction(style: str) -> str:
     if _FENCE.search(text):
         raise StyleRefused(
             f"The {_TITLES[style]} reply style's text opens or closes the style section "
-            f"(reply-style-{style} in Settings → Prompts), so it is not sent."
+            f"(reply-style-{style} in Settings → Agent → Prompts), so it is not sent."
         )
     return text
 

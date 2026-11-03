@@ -59,7 +59,7 @@ def instance():
                 else (
                     lambda _entry, *, implicit: (
                         "the model alpha:1b is not downloaded yet",
-                        "download it in Settings → Models",
+                        "download it in Settings → Models & Providers → Models",
                     )
                 )
             ),
@@ -139,8 +139,8 @@ def test_a_chosen_model_that_cannot_serve_says_why(instance):
     [(kind, title, body)] = bell.notes
     assert (kind, title) == ("warning", f"{len(went_down)} surfaces degraded")
     assert body == (
-        "The model alpha:1b is not downloaded yet. Download it in Settings → Models. Until then "
-        f"{_labels(rows, went_down)} do only what works without a model."
+        "The model alpha:1b is not downloaded yet. Download it in Settings → Models & Providers → "
+        f"Models. Until then {_labels(rows, went_down)} do only what works without a model."
     )
     assert body.startswith(rows["chat"]["problem"] + " "), "the chip's row says it too"
 

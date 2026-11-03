@@ -127,7 +127,8 @@ FLOOR_NOTICE = (
     "This is the small offline model bundled with PersonalClaw. It runs on your machine "
     "with no account and no API key, which is why it can answer at all before you have set "
     "anything up — but it is tiny (135M parameters), so expect short, shaky answers and no "
-    "tool use. Bind a real model in Settings → Models and this stops being used."
+    "tool use. Bind a real model in Settings → Models & Providers → Models and this stops being "
+    "used."
 )
 
 #: Sampling + budget defaults. Small on purpose: a CPU-only 135M model generates at roughly
@@ -1035,7 +1036,10 @@ async def download_weight(*, progress: Any = None) -> Path:
     return target
 
 
-_STILL_USABLE = "You can still use PersonalClaw: bind any provider in Settings → Models."
+_STILL_USABLE = (
+    "You can still use PersonalClaw: bind any provider in Settings → Models & "
+    "Providers → Models."
+)
 
 #: Statuses a source answers when it cannot serve the request RIGHT NOW: the request timed out
 #: (408), it is rate-limited (429), or the server failed (5xx). The pin is fine and waiting is
@@ -1123,7 +1127,7 @@ def _connection_failure(exc: BaseException) -> DownloadFailed:
         DOWNLOAD_UNREACHABLE,
         f"could not reach the model source ({exc}). This download needs network access once; "
         "everything after it works offline. Retry when you are connected, or bind a provider "
-        "you already have in Settings → Models.",
+        "you already have in Settings → Models & Providers → Models.",
     )
 
 
@@ -1268,7 +1272,7 @@ def load_bundled_model(path: Path | None = None) -> LlamaCpuModel:
             raise BundleUnavailable(
                 f"the default chat model is not downloaded yet ({resolved or weight_path()}). It "
                 "is a one-time download; start it from the chat screen, onboarding's model step, "
-                "or Settings → Providers → Bundled offline model."
+                "or Settings → Models & Providers → Providers → Bundled offline model."
             )
         logger.info("bundled-chat: loading %s", resolved.name)
         model = LlamaCpuModel(GgufModel(resolved))
@@ -1815,15 +1819,16 @@ def _readiness(entry: ProviderEntry, *, implicit: bool) -> tuple[str, str] | Non
         return (
             f"{display_model_name()}, the small offline model, is not downloaded yet — it is a "
             f"one-time {size}download",
-            "download it from onboarding's model step, the chat screen, or Settings → Providers "
-            "→ Bundled offline model — or bind chat to another model in Settings → Models",
+            "download it from onboarding's model step, the chat screen, or Settings → Models & "
+            "Providers → Providers → Bundled offline model — or bind chat to another model in "
+            "Settings → Models & Providers → Models",
         )
     if implicit and not _as_bool(ProviderSettings.load(APP_NAME).get("offer_as_fallback", True)):
         return (
             f"{display_model_name()} is downloaded, but “Answer when nothing else is bound” is "
             "switched off, so it only answers when chat is bound to it",
-            "bind chat to it in Settings → Models, or switch that setting back on in Settings → "
-            "Providers → Bundled offline model",
+            "bind chat to it in Settings → Models & Providers → Models, or switch that setting "
+            "back on in Settings → Models & Providers → Providers → Bundled offline model",
         )
     return None
 

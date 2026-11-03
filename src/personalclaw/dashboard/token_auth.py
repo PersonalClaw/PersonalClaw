@@ -991,7 +991,9 @@ REFUSED_ENDED = "ended"
 
 
 #: How a device that has no sign-in gets one, when nothing is known about what it was.
-_PAIR_THIS_DEVICE = "pair this device from Settings → Devices on a device that is signed in"
+_PAIR_THIS_DEVICE = (
+    "pair this device from Settings → Devices & Access → Devices on a device that is signed in"
+)
 
 
 def _how_to_sign_back_in(via: str, kind: str = "") -> str:
@@ -1008,14 +1010,14 @@ def _how_to_sign_back_in(via: str, kind: str = "") -> str:
             # The desktop app redeems a pairing link in its own Gateways window, not in a
             # browser — "choose Pair a device" alone left it holding a code with nowhere to go.
             pair = (
-                "To sign it back in, choose Pair a device in Settings → Devices on a device that "
-                "is still signed in, then paste the pairing link into this app’s Gateway → "
-                "Gateways… window"
+                "To sign it back in, choose Pair a device in Settings → Devices & Access → "
+                "Devices on a device that is still signed in, then paste the pairing link into "
+                "this app’s Gateway → Gateways… window"
             )
         else:
             pair = (
-                "To sign it back in, open Settings → Devices on a device that is still signed "
-                "in and choose Pair a device"
+                "To sign it back in, open Settings → Devices & Access → Devices on a device that "
+                "is still signed in and choose Pair a device"
             )
         return f"{pair}, or sign in with your password." if password else f"{pair}."
     if password:
@@ -1132,7 +1134,8 @@ def _ended_notice(claims: dict[str, Any]) -> SignedOutNotice | None:
         why = {
             END_SIGNED_OUT: f"{device} signed out {when}.",
             END_SIGNED_OUT_ELSEWHERE: (
-                f"{device} was signed out {when} from Settings → Devices on another device."
+                f"{device} was signed out {when} from Settings → Devices & Access → Devices on "
+                "another device."
             ),
             END_SIGNED_OUT_OTHERS: (
                 f"{device} was signed out {when}, when another device chose "

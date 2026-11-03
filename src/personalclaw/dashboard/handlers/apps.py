@@ -1078,7 +1078,7 @@ def _configured_per_instance(manifest) -> str | None:
     who = manifest.displayName or manifest.name
     return (
         f"{who} keeps its settings on each instance, not on the app. Add, edit, test or "
-        "remove its instances in Settings → Providers."
+        "remove its instances in Settings → Models & Providers → Providers."
     )
 
 

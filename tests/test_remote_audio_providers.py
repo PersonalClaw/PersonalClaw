@@ -274,7 +274,9 @@ class TestOpenAISttProvider:
         with (
             patch.dict("os.environ", {}, clear=True),
             patch.dict("sys.modules", {"openai": MagicMock()}),
-            pytest.raises(SttError, match="Add its key in Settings → Providers"),
+            pytest.raises(
+                SttError, match="Add its key in Settings → Models & Providers → Providers"
+            ),
         ):
             await prov.transcribe(str(audio), model="whisper-1")
 

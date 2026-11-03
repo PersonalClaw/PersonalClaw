@@ -578,7 +578,7 @@ async def test_an_app_configured_per_instance_has_no_app_level_config(
             r = await client.request(method, path, json={"endpoint": "http://elsewhere:11434"})
             body = await r.json()
             assert r.status == 409, (method, path, body)
-            assert "Settings → Providers" in body["error"], body
+            assert "Settings → Models & Providers → Providers" in body["error"], body
         apps = await (await client.get("/api/apps")).json()
         providers = await (await client.get("/api/providers")).json()
         if board is not None:

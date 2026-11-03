@@ -108,7 +108,7 @@ async def test_a_provider_that_keeps_no_wait_of_its_own_is_stopped_at_the_guards
     sentence = humanize_provider_error(caught.value)
     assert "doesn't recognize" not in sentence, sentence
     assert "m1 on cloud-no-wait" in sentence and "1 second" in sentence, sentence
-    assert "Loops" in sentence and "Settings → Models" in sentence, sentence
+    assert "Loops" in sentence and "Settings → Models & Providers → Models" in sentence, sentence
     # One reading of the failure: the clause a fallback line shows opens the same sentence.
     clause = failure_clause(caught.value).rstrip("…")
     assert sentence.lower().startswith(clause.lower()), (clause, sentence)

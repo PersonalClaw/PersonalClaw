@@ -1334,7 +1334,7 @@ class SubagentManager:
                     )
                     return (
                         f"spawn refused: {_reason} (resets next day, or raise the budget in "
-                        "Settings → Guardrails)",
+                        "Settings → Security → Guardrails)",
                         "",
                         agent,
                     )

@@ -499,7 +499,8 @@ def _notify_auto_disabled(client_id: str, count: int, reason: str) -> None:
             "Inbound client auto-disabled",
             (
                 f"Client {client_id} tripped inbound caps {count} times in an hour "
-                f"({reason}) and was disabled. Re-enable it in Settings → External Access."
+                f"({reason}) and was disabled. Re-enable it in Settings → Devices & Access → "
+                "External access."
             ),
             meta={"client_id": client_id, "breaches": count, "reason": reason},
         )

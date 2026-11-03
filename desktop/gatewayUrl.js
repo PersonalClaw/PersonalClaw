@@ -361,7 +361,7 @@ const PAIR_ROUTE = "/pair";
  */
 function parsePairingUrl(raw) {
   const text = String(raw ?? "").trim();
-  if (!text) return reject("EMPTY", "Paste the pairing link from Settings → Devices.");
+  if (!text) return reject("EMPTY", "Paste the pairing link from Settings → Devices & Access → Devices.");
   let url;
   try {
     url = new URL(text);

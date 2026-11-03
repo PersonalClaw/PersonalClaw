@@ -253,7 +253,7 @@ async def test_when_every_model_fails_the_error_names_each_one(world):
     assert humanize_provider_error(failed.value) == (
         f"None of this chat's models answered: {DOWN_REF} failed before it replied "
         f"({OVERLOADED_CLAUSE}), and so did {ALSO_DOWN_REF} ({REFUSED}). Try again in a "
-        "moment, or check them in Settings → Models."
+        "moment, or check them in Settings → Models & Providers → Models."
     )
     assert [c[0] for c in world.calls] == [DOWN, DOWN, ALSO_DOWN]
 

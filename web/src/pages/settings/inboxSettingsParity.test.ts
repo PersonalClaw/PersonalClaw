@@ -54,17 +54,17 @@ describe('the two InboxSettingsPanel implementations', () => {
     expect(drawer.length).toBeGreaterThan(500)
   })
 
-  it('Settings → Inbox reaches every config flag the drawer does', () => {
+  it('Settings → Notifications & Inbox → Inbox reaches every config flag the drawer does', () => {
     const missing = [...patchedFlags(drawer)].filter((f) => !patchedFlags(settings).has(f))
     expect(
       missing,
       'These inbox config flags are editable ONLY from the in-context drawer, so a user who ' +
-        'goes to Settings → Inbox — where every other inbox setting lives — cannot reach them:\n  ' +
+        'goes to Settings → Notifications & Inbox → Inbox — where every other inbox setting lives — cannot reach them:\n  ' +
         missing.join('\n  '),
     ).toEqual([])
   })
 
-  it('Settings → Inbox reaches every stored field the drawer does', () => {
+  it('Settings → Notifications & Inbox → Inbox reaches every stored field the drawer does', () => {
     const missing = [...savedFields(drawer)].filter((f) => !savedFields(settings).has(f))
     expect(missing, `entity-settings fields missing from the canonical panel: ${missing}`).toEqual([])
   })

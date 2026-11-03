@@ -48,7 +48,7 @@ export function waitSentences(w: ShownWait, now: number): { why: string; next: s
   if (!w.next) {
     return {
       why,
-      next: 'It starts as soon as that is done. A second model for this use in Settings → Models '
+      next: 'It starts as soon as that is done. A second model for this use in Settings → Models & Providers → Models '
         + 'would take over instead of waiting.',
     }
   }

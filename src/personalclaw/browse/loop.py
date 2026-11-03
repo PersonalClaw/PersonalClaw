@@ -1006,8 +1006,8 @@ async def _click_vision(
         # that says only "no vision model available" is one nobody can act on.
         return (
             f"{vision.REASON_NO_VISION_MODEL}: bind one to the image_modality use case in "
-            f"Settings → Models (e.g. `{vision.RECOMMENDED_MODELS[0].obtain}`, "
-            f"{vision.RECOMMENDED_MODELS[0].licence})",
+            "Settings → Models & Providers → Models (e.g. "
+            f"`{vision.RECOMMENDED_MODELS[0].obtain}`, {vision.RECOMMENDED_MODELS[0].licence})",
             PARK_VISION_UNAVAILABLE,
         )
     if not result.ok or result.point is None:

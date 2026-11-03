@@ -253,7 +253,7 @@ export function settingsTargetFor(e: unknown): SettingsTarget {
   if (models) {
     return {
       path: 'settings/models',
-      label: 'Open Settings → Models',
+      label: 'Open Settings → Models & Providers → Models',
       // The server's remediation, not a paraphrase of it — and never a sentence about a key,
       // because a missing model is not a refused credential.
       because: models.remediation || 'No model is set up yet, so nothing can run this.',
@@ -261,7 +261,7 @@ export function settingsTargetFor(e: unknown): SettingsTarget {
   }
   const other = backendFindings(e).find((f) => f.severity === 'error' && f.remediation)
   if (other) {
-    return { path: 'settings/health?section=doctor', label: 'Open Settings → Doctor', because: other.remediation }
+    return { path: 'settings/health?section=doctor', label: 'Open Settings → Health → Doctor', because: other.remediation }
   }
 
   // 2. A machine-readable refusal status means a provider exists and said no.
@@ -272,14 +272,14 @@ export function settingsTargetFor(e: unknown): SettingsTarget {
   if (isUnconfigured(message)) {
     return {
       path: 'settings/models',
-      label: 'Open Settings → Models',
+      label: 'Open Settings → Models & Providers → Models',
       because: 'No model is set up yet — this needs one before it can run.',
     }
   }
   if (isProviderFailure(message, status)) return PROVIDER_TARGET
   return {
     path: 'settings/health?section=doctor',
-    label: 'Open Settings → Doctor',
+    label: 'Open Settings → Health → Doctor',
     because: 'Doctor checks the parts of your install this call depends on.',
   }
 }

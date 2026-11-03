@@ -268,7 +268,7 @@ describe('what a member row says about its reach — three different facts, not 
     // The panel named the pin while every turn ran on the chat model.
     expect(memberModelLabel({
       name: 'a', configured: true, model: 'fake-oai:no-such-model', provider: 'native',
-      model_unavailable: { why: 'it is not one of the chat models set up in Settings → Models', fix: 'add it in Settings → Models' },
+      model_unavailable: { why: 'it is not one of the chat models set up in Settings → Models & Providers → Models', fix: 'add it in Settings → Models & Providers → Models' },
     })).toBe('fake-oai:no-such-model · unavailable — answering on the chat model')
   })
 

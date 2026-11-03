@@ -244,7 +244,7 @@ async def test_the_doctor_says_a_sync_cannot_run_before_it_has_failed(folder):
     res = await doctor._probe_sync(DoctorContext())
     assert res.ok is False
     assert "passphrase" in res.detail.lower()
-    assert "Settings → Backups → Sync" in res.remedy
+    assert "Settings → Backups & Data → Backups → Sync" in res.remedy
 
 
 @pytest.mark.asyncio

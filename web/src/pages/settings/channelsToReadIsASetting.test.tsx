@@ -37,7 +37,7 @@ function mockApi(providers: InboxProvider[] | Error, stored: string[]) {
 }
 
 const COPIES: Array<[string, () => Promise<{ InboxSettingsPanel: ComponentType }>]> = [
-  ['Settings → Inbox', () => import('./InboxSettingsPanel')],
+  ['Settings → Notifications & Inbox → Inbox', () => import('./InboxSettingsPanel')],
   ['the Inbox drawer', () => import('../inbox/InboxSettingsPanel')],
 ]
 

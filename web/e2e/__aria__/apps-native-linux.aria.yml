@@ -64,7 +64,7 @@
   - button "Bundled offline model — details"
   - text: Bundled offline model v#.#.# Model provider
   - button "Actions for Bundled offline model"
-  - paragraph: "A small Apache-#.# chat model, SmolLM#-#M-Instruct, that PersonalClaw downloads when you ask — # MiB, once — so a fresh install can hold a conversation before any provider is bound. After that one download it runs on your machine with no account, no API key and no network. It is deliberately tiny, with no tools, so it is only ever the floor: bind a real model in Settings → Models and this stops being used."
+  - paragraph: "A small Apache-#.# chat model, SmolLM#-#M-Instruct, that PersonalClaw downloads when you ask — # MiB, once — so a fresh install can hold a conversation before any provider is bound. After that one download it runs on your machine with no account, no API key and no network. It is deliberately tiny, with no tools, so it is only ever the floor: bind a real model in Settings → Models & Providers → Models and this stops being used."
   - text: model llm local … # more tags Installed
   - button "Calendar Tools — details"
   - text: Calendar Tools v#.#.# Tool provider

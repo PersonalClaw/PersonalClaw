@@ -166,7 +166,7 @@ def without_tools(info: SubagentInfo, client: object) -> str:
         return ""
     return (
         f"{_COULDNT}: {cannot_use_tools(model)}{_STARTED_WITH_TOOLS} Choose a model that uses "
-        "tools for Orchestration in Settings → Models, or start it on one."
+        "tools for Orchestration in Settings → Models & Providers → Models, or start it on one."
     )
 
 

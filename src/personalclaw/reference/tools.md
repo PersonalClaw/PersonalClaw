@@ -243,7 +243,7 @@ List the document formats this instance can actually generate right now. Check b
 
 ### `image_generate`
 
-Generate an image from a text prompt, using the model bound to the 'image_gen' use-case in Settings → Models, and save it as a versioned kind='image' artifact; returns its slug so it can be shown, referenced, or embedded in a document. To change an existing image, pass its slug: the image is saved as that artifact's next version instead of as a new artifact. With slug alone the model makes a new image from the prompt and never sees the current one, so the prompt describes the whole picture with the change made. Add edit=true to send the current image to the model to change as the prompt says, which only a model that edits images can do: each result says which way the bound model takes. Requires an image_gen model to be configured; if none is, it says so.
+Generate an image from a text prompt, using the model bound to the 'image_gen' use-case in Settings → Models & Providers → Models, and save it as a versioned kind='image' artifact; returns its slug so it can be shown, referenced, or embedded in a document. To change an existing image, pass its slug: the image is saved as that artifact's next version instead of as a new artifact. With slug alone the model makes a new image from the prompt and never sees the current one, so the prompt describes the whole picture with the change made. Add edit=true to send the current image to the model to change as the prompt says, which only a model that edits images can do: each result says which way the bound model takes. Requires an image_gen model to be configured; if none is, it says so.
 
 **Response type:** `artifact.detail`
 
@@ -314,7 +314,7 @@ Generate a real spreadsheet (.xlsx) and save it as a versioned artifact. Supply 
 
 ### `video_generate`
 
-Generate a video from a text prompt, using the model bound to the 'video_gen' use-case in Settings → Models. The result is saved as a versioned kind='video' artifact; returns its slug so it can be referenced or embedded. Video generation is asynchronous and may take 1-3 minutes. Requires a video_gen model to be configured; if none is, it says so.
+Generate a video from a text prompt, using the model bound to the 'video_gen' use-case in Settings → Models & Providers → Models. The result is saved as a versioned kind='video' artifact; returns its slug so it can be referenced or embedded. Video generation is asynchronous and may take 1-3 minutes. Requires a video_gen model to be configured; if none is, it says so.
 
 **Response type:** `artifact.detail`
 

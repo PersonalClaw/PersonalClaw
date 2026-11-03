@@ -55,7 +55,7 @@ describe('#/learning with evals off: six decided answers, no failures', () => {
     for (const what of ['judge benchmark', 'study', 'retrieval benchmark', 'ablation', 'benchmark', 'lab-vs-field table']) {
       expect(screen.getByText(new RegExp(`no ${what} can run`)), what).toBeTruthy()
     }
-    expect(screen.getAllByRole('link', { name: 'Evals enabled in Settings → Evaluations' })).toHaveLength(6)
+    expect(screen.getAllByRole('link', { name: 'Evals enabled in Settings → Evaluations & Feedback → Evaluations' })).toHaveLength(6)
     // The answer is decided, so nothing on the page may read as a failed load.
     expect(screen.queryByText(/Couldn't load your (judge benchmark|studies|retrieval benchmark|ablation report|skill-impact benchmark|lab vs field)/)).toBeNull()
   })

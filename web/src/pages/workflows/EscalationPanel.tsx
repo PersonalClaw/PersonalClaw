@@ -172,7 +172,7 @@ function capForward(
 ): string {
   const own = oneLine(fix)
   const parts: string[] = []
-  if (!fixShown) parts.push(own ? `${own.charAt(0).toUpperCase()}${own.slice(1)}.` : 'Raise or remove the cap in Settings → Guardrails, or wait for it to reset.')
+  if (!fixShown) parts.push(own ? `${own.charAt(0).toUpperCase()}${own.slice(1)}.` : 'Raise or remove the cap in Settings → Security → Guardrails, or wait for it to reset.')
   const at = capResetTime(resetsAt)
   if (at) parts.push(`The day's caps reset at ${at}, your time.`)
   if (room === true) parts.push('The caps have room now: a new run keeps every finished step and re-runs the rest.')
@@ -183,7 +183,7 @@ function capForward(
 /** Why Retry waits while the caps are still full. */
 function capFullReason(resetsAt: number): string {
   const at = capResetTime(resetsAt)
-  return `The cap has no room yet. Raise it in Settings → Guardrails${at ? `, or Retry after it resets at ${at}` : ', or wait for it to reset'}`
+  return `The cap has no room yet. Raise it in Settings → Security → Guardrails${at ? `, or Retry after it resets at ${at}` : ', or wait for it to reset'}`
 }
 
 /** The panel's heading, true for the run's own status. An escalation is not always a stop: a

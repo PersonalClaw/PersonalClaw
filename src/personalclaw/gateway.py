@@ -1308,7 +1308,7 @@ class GatewayOrchestrator:
             self._notify_budget_once(
                 "Daily token budget reached",
                 f"{context} was skipped — {reason}. Unattended runs resume "
-                f"tomorrow, or raise the budget in Settings → Guardrails.",
+                f"tomorrow, or raise the budget in Settings → Security → Guardrails.",
             )
             logger.info("%s skipped: %s", context, reason)
             return True
@@ -1334,7 +1334,7 @@ class GatewayOrchestrator:
                 "Daily dollar budget reached",
                 f"Calls to models that cost money are refused until it resets tomorrow "
                 f"(${spent:.2f} of ${cap:.2f} spent); models that cost nothing keep running. "
-                "Raise it in Settings → Guardrails.",
+                "Raise it in Settings → Security → Guardrails.",
             )
         except Exception:
             logger.debug("dollar budget notify failed", exc_info=True)
@@ -1782,7 +1782,7 @@ class GatewayOrchestrator:
                 status="needs_input",
                 error=(
                     "paused — the daily token budget is spent. Unattended runs resume "
-                    "tomorrow, or raise the budget in Settings → Guardrails."
+                    "tomorrow, or raise the budget in Settings → Security → Guardrails."
                 ),
                 source=source,
             )
@@ -5510,14 +5510,14 @@ class GatewayOrchestrator:
             print(
                 f"   (a sign-in link: open it within {duration_words(startup.open_within_secs)}"
                 f"; a browser that opens it stays signed in for "
-                f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
-                "sign-in.)"
+                f"{duration_words(startup.lifetime_secs)}. Settings → Devices & Access → Devices "
+                "lists every sign-in.)"
             )
         elif startup is not None:
             print(
                 "   (Opening it in the default browser, which stays signed in for "
-                f"{duration_words(startup.lifetime_secs)}. Settings → Devices lists every "
-                "sign-in.)"
+                f"{duration_words(startup.lifetime_secs)}. Settings → Devices & Access → Devices "
+                "lists every sign-in.)"
             )
         if headless:
             print("Headless remote session — skipping browser auto-open")

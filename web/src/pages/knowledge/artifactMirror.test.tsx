@@ -65,7 +65,7 @@ describe('an event-driven source is not described as a broken poller', () => {
     renderRow()
 
     expect(screen.getByText(eventDrivenMetaLine())).toBeTruthy()
-    expect(eventDrivenMetaLine()).toMatch(/Settings → Sources/)
+    expect(eventDrivenMetaLine()).toMatch(/Settings → Automations → Watched sources/)
   })
 
   it('does not open by repeating the row title as a lowercase provider name', () => {

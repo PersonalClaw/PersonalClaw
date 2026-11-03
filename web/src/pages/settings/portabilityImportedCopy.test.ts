@@ -9,7 +9,7 @@ import { importedCopy } from './PortabilityPanel'
 
 const restart = 'Restart the gateway to pick up everything the merge brought in.'
 
-describe('Settings → Import / Export, a merge import', () => {
+describe('Settings → Backups & Data → Import / Export, a merge import', () => {
   it('says it is complete when every part came in', () => {
     expect(
       importedCopy({

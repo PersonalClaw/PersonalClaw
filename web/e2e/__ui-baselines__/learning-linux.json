@@ -9,7 +9,6 @@
         "button[role=radio] \"Weekly\""
       ],
       "390": [
-        "a \"Evals enabled in Settings → Evaluations\"",
         "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
         "button[role=radio] \"Monthly\"",
@@ -17,7 +16,6 @@
         "button[role=radio] \"Weekly\""
       ],
       "412": [
-        "a \"Evals enabled in Settings → Evaluations\"",
         "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
         "button[role=radio] \"Monthly\"",
@@ -25,7 +23,6 @@
         "button[role=radio] \"Weekly\""
       ],
       "768": [
-        "a \"Evals enabled in Settings → Evaluations\"",
         "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
         "button[role=radio] \"Agents\"",
@@ -56,7 +53,6 @@
         "button[role=radio] \"Weekly\""
       ],
       "390": [
-        "a \"Evals enabled in Settings → Evaluations\"",
         "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
         "button[role=radio] \"Monthly\"",
@@ -64,7 +60,6 @@
         "button[role=radio] \"Weekly\""
       ],
       "412": [
-        "a \"Evals enabled in Settings → Evaluations\"",
         "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
         "button[role=radio] \"Monthly\"",
@@ -72,7 +67,6 @@
         "button[role=radio] \"Weekly\""
       ],
       "768": [
-        "a \"Evals enabled in Settings → Evaluations\"",
         "button \"Compose the narrative, save it as a versioned artifact and s\"",
         "button \"Refresh\"",
         "button[role=radio] \"Agents\"",

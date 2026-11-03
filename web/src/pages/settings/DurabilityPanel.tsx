@@ -872,12 +872,12 @@ function SyncSection({ cfg, setCfg, status, transports, onChanged }: {
           <div data-type="body-s" className="border-t border-outline-variant py-3 text-on-surface-low">
             No sync transport is installed and enabled yet. Install one from the Store (git-sync
             keeps a human-readable history in a repo you own; dir-sync uses any folder that
-            already syncs itself), then enable it under Settings → Providers, where its own
+            already syncs itself), then enable it under Settings → Models & Providers → Providers, where its own
             settings live.
           </div>
         ) : (
           <Row label="Transport"
-            hint="Which installed transport carries the shards. Its own settings — repo, folder, host — live on its provider card under Settings → Providers.">
+            hint="Which installed transport carries the shards. Its own settings — repo, folder, host — live on its provider card under Settings → Models & Providers → Providers.">
             <Select
               value={chosen}
               ariaLabel="Sync transport"

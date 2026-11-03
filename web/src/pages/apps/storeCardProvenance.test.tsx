@@ -131,7 +131,7 @@ describe('the Store discloses which hosts a listing read contacts', () => {
     expect(screen.queryByRole('button', { name: /Remove source/i })).toBeNull()
     // …and instead of leaving that silent, the disclosure says where the switch IS.
     const text = (screen.getByTestId('store-egress-disclosure').textContent ?? '').replace(/\s+/g, ' ')
-    expect(text).toMatch(/no remove button; turn it off in Settings → Apps/)
+    expect(text).toMatch(/no remove button; turn it off in Settings → Apps & Packs → Apps/)
   })
 
   it('does not mention an off switch when no shipped source is listed', () => {

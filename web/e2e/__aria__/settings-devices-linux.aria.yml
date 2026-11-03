@@ -116,7 +116,7 @@
     - code: "\"persistent_sessions\": true"
     - text: "for a client of the OpenAI-compatible API to keep its conversation, or choose that here later. A plain surface token also works, but it cannot be scoped. A webhook automation's sender tokens are clients too: make one on the automation's page, or with"
     - code: personalclaw inbound webhook create <automation-id>
-    - text: . Every token lasts at most # days, and Settings → Devices lists each one, with a revoke.
+    - text: . Every token lasts at most # days, and Settings → Devices & Access → Devices lists each one, with a revoke.
     - heading "Remote access" [level=#]
     - paragraph: Not editable here, on purpose.
     - text: No public URL is set, so every surface is loopback-only. The public URL and each surface’s

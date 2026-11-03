@@ -378,7 +378,7 @@ phone) or on your paired chat channel. Ctrl+C during a reply stops that turn.
     )
     chat_parser.add_argument("-m", "--message", help="One message: print its reply and exit")
     chat_parser.add_argument(
-        "--model", help="Model for this chat (default: the chat model bound in Settings → Models)"
+        "--model", help="Model for this chat (default: Settings → Models & Providers → Models)"
     )
     chat_parser.add_argument(
         "--port",
@@ -472,9 +472,9 @@ The posture is announced on stderr, so stdout stays pipeable.
         action="store_true",
         help=(
             "Also START each agent CLI an installed agent app set up, once — its ACP handshake "
-            "and one empty session, as its Test in Settings → Providers does — to check it runs "
-            "and is signed in. Without this, doctor only checks each is installed and shows its "
-            "last Test"
+            "and one empty session, as its Test in Settings → Models & Providers → Providers does "
+            "— to check it runs and is signed in. Without this, doctor only checks each is "
+            "installed and shows its last Test"
         ),
     )
 
@@ -585,8 +585,8 @@ The posture is announced on stderr, so stdout stays pipeable.
         default="",
         metavar="RUNTIME",
         help=(
-            "Set the runtime an agent runs on when it names none: native (the built-in loop, "
-            "on the models Settings → Models binds), acp, or acp:<cli> for a connected agent CLI"
+            "Runtime for an agent that names none: native (the built-in loop, on the models bound "
+            "in Settings → Models & Providers → Models), acp, or acp:<cli> for an agent CLI"
         ),
     )
     setup_parser.add_argument(
@@ -776,7 +776,7 @@ Examples:
     rest_parser.add_argument(
         "snapshot",
         nargs="?",
-        help="Path to a snapshot .tar.gz, or an export .zip from Settings → Import / Export",
+        help="Snapshot .tar.gz, or export .zip from Settings → Backups & Data → Import / Export",
     )
     rest_parser.add_argument("--mode", choices=("replace", "merge"))
     rest_parser.add_argument("--dry-run", action="store_true")
@@ -1334,8 +1334,8 @@ per-arm marginal contribution is the leave-one-out delta with an enable/hold ver
         description=(
             "Print a sign-in link for the dashboard. Open it in a browser to sign that browser "
             "in, or send the token after ?token= as an 'Authorization: Bearer' header from a "
-            "script. Every sign-in is listed under Settings → Devices, where it can be signed "
-            "out."
+            "script. Every sign-in is listed under Settings → Devices & Access → Devices, where "
+            "it can be signed out."
         ),
     )
 

@@ -470,7 +470,7 @@ def inbound_cmd(args) -> int:
     print(f"🔑 stored as {key} in the credential store (keychain, else .env at 0600)")
     print(
         f"⏱  It works for {duration_words(ttl)}, until {until_words(time.time() + ttl)}; then "
-        "create a new one. Settings → Devices lists it, and revokes it."
+        "create a new one. Settings → Devices & Access → Devices lists it, and revokes it."
     )
     print()
     print("Copy it into your client now — it is not shown again:")

@@ -198,7 +198,7 @@ class NetFetchActionProvider(ActionProvider):
                     code="ERR_NET_FETCH_INCIDENT_ACTIVE",
                     what="net-fetch refused to run because incident mode is active",
                     why="incident mode suspends all unattended work",
-                    fix="clear incident mode in Settings → Guardrails, then re-run",
+                    fix="clear incident mode in Settings → Security → Guardrails, then re-run",
                 ),
                 # An operator's switch: only clearing it helps, and a retry meets it again.
                 failure_class="user",

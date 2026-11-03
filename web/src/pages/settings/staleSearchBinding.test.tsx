@@ -99,7 +99,7 @@ describe('pickableProviders offers every binding, not only the bindable ones', (
   })
 })
 
-describe('Settings → Search tells the truth about a binding whose app was uninstalled', () => {
+describe('Settings → Models & Providers → Search tells the truth about a binding whose app was uninstalled', () => {
   beforeEach(() => {
     localStorage.clear()   // `useQuery(persist: true)` would otherwise carry a prior test's data
     vi.clearAllMocks()

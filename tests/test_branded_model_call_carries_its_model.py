@@ -117,7 +117,7 @@ async def test_with_nothing_configured_no_model_is_picked_and_the_call_is_refuse
     with pytest.raises(ProviderResolutionError, match="No model is chosen for this call"):
         async for _event in provider.complete([{"role": "user", "content": PROMPT}]):
             pass
-    with pytest.raises(ProviderResolutionError, match="Settings → Models"):
+    with pytest.raises(ProviderResolutionError, match="Settings → Models & Providers → Models"):
         async for _event in provider.stream(PROMPT):
             pass
     assert provider._history == [], "a refused call leaves nothing in the conversation"

@@ -361,7 +361,7 @@ def test_a_message_that_cannot_fit_is_refused_with_the_model_its_limit_and_the_f
     assert "SmolLM2-135M-Instruct-Q8_0" in text, text
     assert "tokens" in text and "characters" in text, text
     assert f"{len(paste):,} characters" in text, text
-    assert "Shorten it" in text and "Settings → Models" in text, text
+    assert "Shorten it" in text and "Settings → Models & Providers → Models" in text, text
 
 
 # ── the resolver never costs a turn ─────────────────────────────────────────────────────

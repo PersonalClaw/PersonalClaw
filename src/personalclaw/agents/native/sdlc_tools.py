@@ -128,7 +128,7 @@ async def _launch(kind: str, lid: str, deep_path: str, label: str) -> ToolResult
                 error=not_ready,
                 recovery_hints=[
                     "Tell the user which agent CLI isn't ready; they Test it under Settings → "
-                    "Providers, or choose another runtime for the loop."
+                    "Models & Providers → Providers, or choose another runtime for the loop."
                 ],
             )
         kinds.ensure_loaded()

@@ -744,8 +744,8 @@ PROBLEMS: dict[str, dict[str, tuple[str, str]]] = {
         "passphrase": (
             "Nothing was synced: shards are encrypted for this transport, and no sync passphrase "
             "was saved on this machine.",
-            "Save a sync passphrase under Settings → Backups → Sync, and use the same one on every "
-            "machine that syncs with this one.",
+            "Save a sync passphrase under Settings → Backups & Data → Backups → Sync, and use the "
+            "same one on every machine that syncs with this one.",
         ),
         "salt": (
             "Nothing was synced: the shared store's encryption salt could not be read or written.",
@@ -754,13 +754,13 @@ PROBLEMS: dict[str, dict[str, tuple[str, str]]] = {
         ),
         "pull": (
             "Nothing was synced: reading the shared store failed ({reason}).",
-            "Check the transport's settings under Settings → Providers and that its storage is "
-            "reachable; the next sync tries again.",
+            "Check the transport's settings under Settings → Models & Providers → Providers and "
+            "that its storage is reachable; the next sync tries again.",
         ),
         "push": (
             "This machine's changes were not sent: writing to the shared store failed ({reason}).",
-            "Check the transport's settings under Settings → Providers and that its storage is "
-            "writable; the next sync tries again.",
+            "Check the transport's settings under Settings → Models & Providers → Providers and "
+            "that its storage is writable; the next sync tries again.",
         ),
         "refused": (
             "The sync ran, and {reason}.",

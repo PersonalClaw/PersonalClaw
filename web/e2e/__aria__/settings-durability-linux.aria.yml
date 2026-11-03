@@ -119,7 +119,7 @@
     - text: "Sync this instance Push this machine's changes and pull the other machines' on the schedule below. Sync carries your records: folders of files — skills, scripts, uploads — stay on each machine, and a snapshot is what keeps them. Off means nothing leaves this machine."
     - status
     - switch "Sync this instance"
-    - text: "No sync transport is installed and enabled yet. Install one from the Store (git-sync keeps a human-readable history in a repo you own; dir-sync uses any folder that already syncs itself), then enable it under Settings → Providers, where its own settings live. Pull no more often than The staleness window: how long this machine may go between checking the shared store. Sync is deliberately not continuous."
+    - text: "No sync transport is installed and enabled yet. Install one from the Store (git-sync keeps a human-readable history in a repo you own; dir-sync uses any folder that already syncs itself), then enable it under Settings → Models & Providers → Providers, where its own settings live. Pull no more often than The staleness window: how long this machine may go between checking the shared store. Sync is deliberately not continuous."
     - status
     - spinbutton "Pull no more often than": "#"
     - text: seconds Encrypt shards Encrypt each shard before it leaves this machine. Automatic encrypts for third-party storage (buckets, shared folders) and leaves a private git repo readable, because a diffable history is the point of using git.

@@ -41,7 +41,7 @@
             "default": "",
             "x-meta": {
               "label": "Default Model",
-              "help": "The model this instance answers with when nothing in Settings → Models names one. Leave it empty to choose its models in Settings → Models."
+              "help": "The model this instance answers with when nothing in Settings → Models & Providers → Models names one. Leave it empty to choose its models in Settings → Models & Providers → Models."
             }
           },
           "embedding_model": {

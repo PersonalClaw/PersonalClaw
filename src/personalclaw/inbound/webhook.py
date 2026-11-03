@@ -82,7 +82,7 @@ SENDER_TOKEN_NEEDED = (
     "Authorization: Bearer <sender token>, and this request carried none that can fire it. The "
     "automation's owner makes one on its page in PersonalClaw, or with "
     "`personalclaw inbound webhook create <automation-id>`, and switches one back on in "
-    "Settings → External Access."
+    "Settings → Devices & Access → External access."
 )
 #: A sender token presented at another automation's address.
 MADE_FOR_ANOTHER = "This sender token was made for another automation, and fires only that one."
@@ -492,7 +492,8 @@ def _create(store: Any, args: Any) -> int:
     print(f"✅ Made the sender token “{client.label}” for “{name}” ({automation}).")
     print(
         f"⏱  It works for {duration_words(ttl)}, until {until_words(client.expires_at)}; then make "
-        "a new one. Settings → External Access and Settings → Devices list it, and revoke it."
+        "a new one. Settings → Devices & Access → External access and Settings → Devices & Access "
+        "→ Devices list it, and revoke it."
     )
     print()
     print("Copy it into the program now — it is stored only as a hash and is not shown again:")

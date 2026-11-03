@@ -299,7 +299,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
       ? 'The backend is ntfy but no topic URL is configured.'
       : data.approval_targeted
         ? 'Pings go to your ntfy topic. Nothing to set up on this device.'
-        : 'Pings go to your ntfy topic, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
+        : 'Pings go to your ntfy topic, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications & Inbox → Notifications.'
   } else if (data.backend === 'relay') {
     // Registration needs the store app's native bridge — a browser tab cannot hold an
     // vendor push token, and saying so beats a button that cannot work. Every state named, as
@@ -311,7 +311,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
     } else if (registered) {
       line = data.approval_targeted
         ? 'Push is on for this device.'
-        : 'Push is on for this device, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
+        : 'Push is on for this device, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications & Inbox → Notifications.'
       action = (
         <Button variant="ghost" size="sm" disabled={busy} disabledReason={BUSY_REASON}
           onClick={async () => {
@@ -357,7 +357,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
     // the switch is.
     line = data.approval_targeted
       ? 'Push is on for this device.'
-      : 'Push is on for this device, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications.'
+      : 'Push is on for this device, but approvals are not routed to it. Tick “push” for “Approval needed” in Settings → Notifications & Inbox → Notifications.'
     action = <Button variant="ghost" size="sm" onClick={disable} disabled={busy} disabledReason={BUSY_REASON}>Turn off</Button>
   } else if (!supported) {
     // The honest iOS story: web push needs an INSTALLED PWA there, so a Safari tab

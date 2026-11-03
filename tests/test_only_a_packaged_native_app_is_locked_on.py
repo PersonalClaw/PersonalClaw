@@ -231,7 +231,9 @@ def test_the_providers_card_reads_managed_from_where_the_app_came_from(tmp_path)
             registry.disable(name)
         reset_provider_registry()
 
-    assert cards[STORE_APP]["managed"] is True, "Settings → Providers hid the Store app's switch"
+    assert (
+        cards[STORE_APP]["managed"] is True
+    ), "Settings → Models & Providers → Providers hid the Store app's switch"
     assert cards[SHIPPED]["managed"] is False
 
 

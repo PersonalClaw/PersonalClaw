@@ -463,7 +463,8 @@ def _plan(
             status=SKIPPED_NAME_TAKEN,
             detail=(
                 f"The provider {PROVIDER_ENTRY_NAME!r} already uses {there}, so nothing was "
-                f"written for {endpoint}. Add it under another name in Settings → Providers."
+                f"written for {endpoint}. Add it under another name in Settings → Models & "
+                "Providers → Providers."
             ),
             endpoint=endpoint,
         )

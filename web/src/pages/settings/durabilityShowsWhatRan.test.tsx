@@ -377,7 +377,7 @@ describe('the Sync card says a failed run failed', () => {
       problem: {
         code: 'passphrase',
         message: 'Nothing was synced: shards are encrypted for this transport, and no sync passphrase was saved on this machine.',
-        remedy: 'Save a sync passphrase under Settings → Backups → Sync, and use the same one on every machine that syncs with this one.',
+        remedy: 'Save a sync passphrase under Settings → Backups & Data → Backups → Sync, and use the same one on every machine that syncs with this one.',
         since: NOW() - 30, failures: 1,
       },
     })
@@ -397,7 +397,7 @@ describe('the Sync card says a failed run failed', () => {
       last_run: NOW() - 60, ok: false, passphrase_stored: true,
       problem: {
         code: 'pull', message: 'Nothing was synced: reading the shared store failed (the folder is not mounted).',
-        remedy: 'Check the transport’s settings under Settings → Providers and that its storage is reachable; the next sync tries again.',
+        remedy: 'Check the transport’s settings under Settings → Models & Providers → Providers and that its storage is reachable; the next sync tries again.',
         since: NOW() - 3600, failures: 4,
       },
     })

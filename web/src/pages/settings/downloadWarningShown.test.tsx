@@ -67,7 +67,7 @@ describe('the progress row says a download was never checked for space', () => {
     expect(card).not.toHaveTextContent(/could not be checked/)
   })
 
-  it('on a Settings → Models row, from the job the start answered with', async () => {
+  it('on a Settings → Models & Providers → Models row, from the job the start answered with', async () => {
     const models: AvailableModel[] = [{
       id: 'llama3:8b', name: 'llama3:8b', capabilities: ['chat'], provider: 'ollama',
       provider_type: 'ollama', size_mb: 4600, downloaded: false,

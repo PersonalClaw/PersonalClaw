@@ -591,6 +591,6 @@ def _render_recommendation_md(rec: Recommendation) -> str:
     lines.append("")
     lines.append(
         "> Applying a recommendation is manual: edit `active_models.json` "
-        "(Settings → Models). The bake-off proposes; it never re-pins for you."
+        "(Settings → Models & Providers → Models). The bake-off proposes; it never re-pins for you."
     )
     return "\n".join(lines) + "\n"

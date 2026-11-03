@@ -74,7 +74,7 @@ async def test_speak_refuses_a_voice_its_provider_cannot_speak_with(tmp_path, mo
     assert body["error"]["code"] == "tts_not_ready"
     assert body["error"]["message"] == (
         f"Fake TTS says it cannot speak with {VOICE} right now. "
-        "Check the text-to-speech model in Settings → Models."
+        "Check the text-to-speech model in Settings → Models & Providers → Models."
     )
     assert provider.asked == [VOICE]
     assert provider.synthesized == []

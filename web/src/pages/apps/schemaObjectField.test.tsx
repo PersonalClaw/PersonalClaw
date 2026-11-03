@@ -154,7 +154,7 @@ describe('what stays the JSON editor', () => {
   })
 })
 
-describe('Settings › Providers edits the same objects the same way', () => {
+describe('Settings › Models & Providers › Providers edits the same objects the same way', () => {
   it('renders named fields and entries by key, with no JSON box', () => {
     const onReactions = vi.fn()
     const onChannels = vi.fn()

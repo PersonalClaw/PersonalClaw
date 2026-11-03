@@ -47,7 +47,7 @@
     - button "Details →"
     - paragraph:
       - text: Which local models are holding memory, with Unload and the memory meter, is in
-      - button "Settings › Models"
+      - button "Settings › Models & Providers › Models"
       - text: .
   - region "Doctor":
     - heading "Doctor" [level=#]

@@ -92,7 +92,7 @@ export function cadenceNote(source: Pick<WatchedSource, 'poll_interval_secs' | '
   const chosen = source.poll_interval_secs
   if (!chosen || chosen >= source.poll_every_secs) return ''
   return `Set to every ${fmtInterval(chosen)}, but a source that fetches over the network is checked `
-    + `at most every ${fmtInterval(source.poll_every_secs)} (Settings → Watched sources).`
+    + `at most every ${fmtInterval(source.poll_every_secs)} (Settings → Automations → Watched sources).`
 }
 
 /** A watched folder's first scan while it still has something to say: files still waiting to
@@ -153,5 +153,5 @@ export const INTERVAL_CHOICES = [900, 3600, 21600, 86400]
  *  "Artifacts" heading — the same word twice, in two casings, separating nothing.
  */
 export function eventDrivenMetaLine(): string {
-  return 'Indexed as artifacts change · turn off in Settings → Sources'
+  return 'Indexed as artifacts change · turn off in Settings → Automations → Watched sources'
 }

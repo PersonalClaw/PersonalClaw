@@ -103,13 +103,13 @@ class TestAnExceptionIsClassifiedByItsType:
         failure = classify_exception(_status_error(401, "Incorrect API key provided: sk-...a1b2"))
         assert failure.failure_class is FailureClass.PERMISSION
         assert not failure.retryable
-        assert "Settings → Providers" in failure.remediation
+        assert "Settings → Models & Providers → Providers" in failure.remediation
 
     def test_a_model_the_provider_does_not_have_is_the_users_to_change(self) -> None:
         failure = classify_exception(_status_error(404, "model 'gemma3:4b' not found"))
         assert failure.failure_class is FailureClass.USER
         assert not failure.retryable
-        assert "Settings → Models" in failure.remediation
+        assert "Settings → Models & Providers → Models" in failure.remediation
 
     @pytest.mark.parametrize("code", [429, 500, 503])
     def test_a_rate_limit_or_a_server_fault_offers_a_retry(self, code: int) -> None:
@@ -142,7 +142,10 @@ class TestAnExceptionIsClassifiedByItsType:
         from personalclaw.errors import AgentError
         from personalclaw.providers.provider_bridge import ProviderResolutionError
 
-        fix = "add a model provider in Settings → Providers, then bind 'background' to it"
+        fix = (
+            "add a model provider in Settings → Models & Providers → Providers, then bind "
+            "'background' to it"
+        )
         exc = ProviderResolutionError(
             "No provider configured for use case 'background'.",
             AgentError(
@@ -252,7 +255,7 @@ class TestASecretThatIsNotSet:
         (finding,) = [f for f in result.errors if f.code == "WF_PRE_CREDENTIAL_MISSING"]
         assert "'K1'" in finding.remediation
         assert "Settings → Secrets" in finding.remediation, finding.remediation
-        assert "Settings → Providers" not in finding.remediation
+        assert "Settings → Models & Providers → Providers" not in finding.remediation
 
 
 class TestABindingSaysWhatToChange:

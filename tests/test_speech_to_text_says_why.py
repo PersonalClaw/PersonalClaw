@@ -96,7 +96,7 @@ async def test_a_provider_that_cannot_say_leaves_the_microphone_its_own_words(ho
         {
             "error": "The speech-to-text model can't run right now, and its provider doesn't say "
             "why. Check the gateway log, or choose another model under Speech-to-text in "
-            "Settings → Models.",
+            "Settings → Models & Providers → Models.",
             "code": "stt_unavailable",
         },
     )
@@ -113,7 +113,7 @@ async def test_the_microphone_says_no_model_is_chosen(home):
         503,
         {
             "error": "No speech-to-text model is chosen, so nothing can be transcribed. Choose one "
-            "under Speech-to-text in Settings → Models.",
+            "under Speech-to-text in Settings → Models & Providers → Models.",
             "code": "stt_unavailable",
         },
     )

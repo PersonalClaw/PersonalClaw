@@ -38,7 +38,7 @@
           - /url: "#/settings/apps?section=packs"
   - region "Apps":
     - heading "Apps" [level=#]
-    - paragraph: Where apps come from, plus the settings installed apps contribute — all in one place. Provider apps are configured under Settings › Providers; everything else lives here.
+    - paragraph: Where apps come from, plus the settings installed apps contribute — all in one place. Provider apps are configured under Settings › Models & Providers › Providers; everything else lives here.
     - heading "Store sources" [level=#]
     - paragraph: Where the Store looks for installable apps. A source only ever contributes listings — installing still runs the security scanner, and nothing is installed without your consent.
     - text: Bundled app source List the published first-party apps repo in the Store. On, opening the Store contacts github.com to read what it offers; off, the Store reaches no network of its own and shows only sources on this machine. This source has no remove button because it ships with PersonalClaw — this switch is how you turn it off.

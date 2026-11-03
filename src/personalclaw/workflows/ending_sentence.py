@@ -118,7 +118,8 @@ _REMEDY = {
     ),
     SPEND_CAP: (
         "A spend cap refused the call a step needed, so the workflow needs no change: raise or "
-        "remove the cap in Settings › Guardrails, or wait for it to reset, then retry the run."
+        "remove the cap in Settings › Security › Guardrails, or wait for it to reset, then retry "
+        "the run."
     ),
     STEP: _CHANGE_THE_STEP,
 }

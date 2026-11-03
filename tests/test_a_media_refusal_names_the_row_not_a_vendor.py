@@ -55,5 +55,5 @@ def test_the_refusal_names_the_row_to_choose_a_model_in(_no_model, tool, use_cas
 
     assert out == (
         f"Error: no {what}-generation model is configured. Choose one under "
-        f"{_row_label(use_case)} in Settings → Models."
+        f"{_row_label(use_case)} in Settings → Models & Providers → Models."
     )

@@ -45,7 +45,7 @@ export function BundledFloorNotice() {
   const refused = bindError && (
     <p data-type="caption" role="alert" className="mt-0.5 text-on-surface-var">
       It could not be set as your chat model ({bindError}). It still answers while nothing else is
-      chosen; you can choose it in Settings → Models.
+      chosen; you can choose it in Settings → Models & Providers → Models.
     </p>
   )
 

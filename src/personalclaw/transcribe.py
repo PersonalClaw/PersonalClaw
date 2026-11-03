@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 #: Why a transcription cannot start, in the words :func:`unavailable_sentence` also uses.
 NO_STT_MODEL = (
     "No speech-to-text model is chosen, so nothing can be transcribed. Choose one under "
-    "Speech-to-text in Settings → Models."
+    "Speech-to-text in Settings → Models & Providers → Models."
 )
 STT_TURNED_OFF = (
     "Speech-to-text is turned off. Turn on Enable speech-to-text in Settings → Speech & "
@@ -48,7 +48,8 @@ SENSITIVE_AUDIO_PATH = (
 #: speech": a provider that heard none answers with empty text.
 NO_TRANSCRIPT_NO_REASON = (
     "The speech-to-text model gave back no transcript and its provider doesn't say why. Check "
-    "the gateway log, or choose another model under Speech-to-text in Settings → Models."
+    "the gateway log, or choose another model under Speech-to-text in Settings → Models & "
+    "Providers → Models."
 )
 #: After the reason a long recording sent whole could not be transcribed: it went in one piece
 #: only because there was no ffmpeg to cut it (:func:`ffmpeg_not_found` follows).
@@ -126,7 +127,8 @@ async def unavailable_sentence() -> str:
         return STT_TURNED_OFF
     return (
         "The speech-to-text model can't run right now, and its provider doesn't say why. Check "
-        "the gateway log, or choose another model under Speech-to-text in Settings → Models."
+        "the gateway log, or choose another model under Speech-to-text in Settings → Models & "
+        "Providers → Models."
     )
 
 

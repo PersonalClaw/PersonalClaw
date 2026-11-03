@@ -420,7 +420,7 @@ export function ModelPricesSection() {
         )}
         {shown.models.length === 0 && others.length === 0 && (
           <div data-type="body-s" className="rounded-lg bg-surface-container px-m py-2.5 text-on-surface-low">
-            No models are bound yet. Bind one in Settings → Models, or add a price for one below.
+            No models are bound yet. Bind one in Settings → Models & Providers → Models, or add a price for one below.
           </div>
         )}
         {shown.models.map((m) => {

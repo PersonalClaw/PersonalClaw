@@ -1273,7 +1273,7 @@ async def api_artifact_model_write(request: web.Request) -> web.Response:
         return json_error(
             "document_editing_off",
             message=(
-                "in-place document editing is off; turn on Settings › Documents › "
+                "in-place document editing is off; turn on Settings › Backups & Data › Documents › "
                 "'Edit documents in place' to allow a re-render of this file"
             ),
             status=403,

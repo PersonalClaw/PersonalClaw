@@ -21,7 +21,7 @@ const ID = '1289011223344556677'
 const APPLICATION_ID: SchemaProp = { type: 'string', default: '', 'x-meta': { label: 'Application ID' } }
 
 describe('a long numeric ID in a text setting', () => {
-  it('reaches Settings › Providers as the digits typed', async () => {
+  it('reaches Settings › Models & Providers › Providers as the digits typed', async () => {
     const seen: unknown[] = []
     function Form() {
       const [v, setV] = useState<unknown>('')
@@ -48,7 +48,7 @@ describe('a long numeric ID in a text setting', () => {
     expect(container.textContent).toContain(`⚠ ${ID} has more digits than a number here can keep`)
   })
 
-  it('pasted whole into Settings › Providers, is saved as those digits', async () => {
+  it('pasted whole into Settings › Models & Providers › Providers, is saved as those digits', async () => {
     // One input event carrying the whole value: a paste, or a browser driver's fill.
     vi.spyOn(api, 'providerSchema').mockResolvedValue({ properties: { application_id: APPLICATION_ID as ProviderSchemaProp } })
     vi.spyOn(api, 'providerConfig').mockResolvedValue({ config: { application_id: '' }, _secret_set: [], revision: 'rev-1' })

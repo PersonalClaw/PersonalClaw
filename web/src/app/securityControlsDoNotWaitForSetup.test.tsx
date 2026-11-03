@@ -148,7 +148,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('a home whose setup is not done reaches the controls that cut off access', () => {
-  it('Settings › Devices opens, not setup', async () => {
+  it('Settings › Devices & Access › Devices opens, not setup', async () => {
     openAt('#/settings/devices')
     // Devices is a section of Devices & Access since #5897, and the page opens on it.
     expect(await pageHeading('Devices & Access')).toBeTruthy()
@@ -216,7 +216,7 @@ describe('a home whose setup is not done reaches the controls that cut off acces
 })
 
 describe('…and the switch that stops the agent', () => {
-  it('the incident kill switch on Settings › Guardrails turns on', async () => {
+  it('the incident kill switch on Settings › Security › Guardrails turns on', async () => {
     openAt('#/settings/guardrails')
     const toggle = await screen.findByRole('switch', { name: 'Incident mode' })
     // Enabled only once the switch's state has been read; a guessed state is never offered.

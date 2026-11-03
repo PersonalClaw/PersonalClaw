@@ -122,7 +122,7 @@ export function useChatHeader({ stream, composer }: {
     const s = sessionRef.current
     if (!s) return
     if (!c.owner?.id) {
-      notify(`${c.display_name} doesn't know who you are yet. Pair its owner in Settings → Providers → ${c.display_name} → Configure, then try again.`, 'error')
+      notify(`${c.display_name} doesn't know who you are yet. Pair its owner in Settings → Models & Providers → Providers → ${c.display_name} → Configure, then try again.`, 'error')
       return
     }
     const ok = await confirm({

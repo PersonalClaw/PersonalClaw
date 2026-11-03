@@ -180,8 +180,8 @@ def test_a_model_nothing_prices_is_refused_under_a_dollar_cap_with_how_to_lift_i
     assert refused.value.sentence() == (
         "bedrock:us.anthropic.claude-nonexistent-9-9 has no price, so the daily dollar budget "
         "cannot count what a call to it would spend: set its price in Settings → Usage → Model "
-        "prices ($0 if it costs nothing), or set Max dollars / day to 0 in Settings → Guardrails "
-        "to lift the daily dollar cap."
+        "prices ($0 if it costs nothing), or set Max dollars / day to 0 in Settings → Security → "
+        "Guardrails to lift the daily dollar cap."
     )
 
 

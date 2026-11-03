@@ -78,8 +78,8 @@ def _from_its_app(provider: str) -> str:
     action = f"its “{origin.label}” action"
     if any(r.error for r in records):
         return (
-            f"{app} that provides {action} did not start, and Settings → Providers says why. Fix "
-            "the app, or change what it runs."
+            f"{app} that provides {action} did not start, and Settings → Models & Providers → "
+            "Providers says why. Fix the app, or change what it runs."
         )
     if not any(r.enabled for r in records):
         return (

@@ -550,7 +550,7 @@ async def test_a_cause_longer_than_the_note_is_cut_at_a_line_not_mid_word(monkey
     )
     fix = (
         "FIX: install an app that provides 'brokenapp' in the App Store, or change the "
-        "provider's type in Settings → Providers"
+        "provider's type in Settings → Models & Providers → Providers"
     )
 
     async def unbuildable(prompt, *, use_case="background", temperature=None, **_kw):

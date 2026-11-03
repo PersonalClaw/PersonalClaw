@@ -153,5 +153,6 @@ def test_every_emitted_constant_resolves():
     )
     assert not generic, (
         f"these emitted constants resolve to the generic fallback: {generic} — they carry "
-        "GENERIC's severity and mode and show no row of their own in Settings → Notifications"
+        "GENERIC's severity and mode and show no row of their own in Settings → Notifications & "
+        "Inbox → Notifications"
     )

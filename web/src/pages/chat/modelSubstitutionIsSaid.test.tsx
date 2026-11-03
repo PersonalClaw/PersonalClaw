@@ -13,8 +13,8 @@ import { runState } from '../../test/runState'
 
 const SENTENCE =
   "Ran on fake-oai:fake-model-1 instead of Researcher's model fake-oai:no-such-model: it is not " +
-  'one of the chat models set up in Settings → Models. Pick another model for Researcher on the ' +
-  'Agents page, or add it in Settings → Models.'
+  'one of the chat models set up in Settings → Models & Providers → Models. Pick another model for Researcher on the ' +
+  'Agents page, or add it in Settings → Models & Providers → Models.'
 
 const msg = (role: string, content: string, meta?: HistMsg['meta']): HistMsg =>
   ({ role, content, ts: `2026-09-26T10:00:0${content.length % 10}+00:00`, ...(meta ? { meta } : {}) })

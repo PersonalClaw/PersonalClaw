@@ -4,7 +4,7 @@
       "320": [
         "a \"Buddy\"",
         "a \"Design\"",
-        "a \"Settings → Notifications\"",
+        "a \"Settings → Notifications & Inbox → Notifications\"",
         "button \"Arrangement: brick\"",
         "button \"Arrangement: diamond\"",
         "button \"Arrangement: grid\"",
@@ -102,7 +102,7 @@
       "390": [
         "a \"Buddy\"",
         "a \"Design\"",
-        "a \"Settings → Notifications\"",
+        "a \"Settings → Notifications & Inbox → Notifications\"",
         "button \"Arrangement: brick\"",
         "button \"Arrangement: diamond\"",
         "button \"Arrangement: grid\"",
@@ -203,7 +203,7 @@
       "412": [
         "a \"Buddy\"",
         "a \"Design\"",
-        "a \"Settings → Notifications\"",
+        "a \"Settings → Notifications & Inbox → Notifications\"",
         "button \"Arrangement: brick\"",
         "button \"Arrangement: diamond\"",
         "button \"Arrangement: grid\"",
@@ -305,7 +305,7 @@
       "768": [
         "a \"Buddy\"",
         "a \"Design\"",
-        "a \"Settings → Notifications\"",
+        "a \"Settings → Notifications & Inbox → Notifications\"",
         "button \"Arrangement: brick\"",
         "button \"Arrangement: diamond\"",
         "button \"Arrangement: grid\"",
@@ -434,7 +434,7 @@
       "320": [
         "a \"Buddy\"",
         "a \"Design\"",
-        "a \"Settings → Notifications\"",
+        "a \"Settings → Notifications & Inbox → Notifications\"",
         "button \"Arrangement: brick\"",
         "button \"Arrangement: diamond\"",
         "button \"Arrangement: grid\"",
@@ -532,7 +532,7 @@
       "390": [
         "a \"Buddy\"",
         "a \"Design\"",
-        "a \"Settings → Notifications\"",
+        "a \"Settings → Notifications & Inbox → Notifications\"",
         "button \"Arrangement: brick\"",
         "button \"Arrangement: diamond\"",
         "button \"Arrangement: grid\"",
@@ -633,7 +633,7 @@
       "412": [
         "a \"Buddy\"",
         "a \"Design\"",
-        "a \"Settings → Notifications\"",
+        "a \"Settings → Notifications & Inbox → Notifications\"",
         "button \"Arrangement: brick\"",
         "button \"Arrangement: diamond\"",
         "button \"Arrangement: grid\"",
@@ -735,7 +735,7 @@
       "768": [
         "a \"Buddy\"",
         "a \"Design\"",
-        "a \"Settings → Notifications\"",
+        "a \"Settings → Notifications & Inbox → Notifications\"",
         "button \"Arrangement: brick\"",
         "button \"Arrangement: diamond\"",
         "button \"Arrangement: grid\"",

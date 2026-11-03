@@ -79,7 +79,7 @@ const clamp = (pct: number) => Math.max(0, Math.min(100, pct))
  *  Otherwise nothing has been measured since this page opened or the session restarted, which the
  *  next answer puts right. */
 export function unmeasuredSaid(windowTokens: number | null | undefined): string {
-  if (windowTokens === null) return 'Context usage unknown — no context window is declared for this model. Set “Served context window” on the provider in Settings → Models.'
+  if (windowTokens === null) return 'Context usage unknown — no context window is declared for this model. Set “Served context window” on the provider in Settings → Models & Providers → Models.'
   const against = typeof windowTokens === 'number' ? `, against its ${windowTokens.toLocaleString('en-US')}-token window` : ''
   return `Context usage not measured yet — it's measured each time the model answers${against}.`
 }

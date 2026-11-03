@@ -595,7 +595,7 @@ def test_store_trigger_day_budget_pause_records_each_fire_and_notifies_once(tmp_
     ]
     pause = (
         "paused — the daily token budget is spent. Unattended runs resume tomorrow, "
-        "or raise the budget in Settings → Guardrails."
+        "or raise the budget in Settings → Security → Guardrails."
     )
     assert [row["error"] for row in rows] == [pause, pause]
     assert len(notes) == 1

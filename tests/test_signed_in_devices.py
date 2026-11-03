@@ -355,7 +355,9 @@ async def test_a_device_signed_out_from_settings_is_told_why_and_how_to_sign_bac
         assert error["code"] == "session_signed_out"
         assert error["detail"]["reason"] == "signed_out_elsewhere"
         message = error["message"]
-        assert "signed out" in message and "Settings → Devices" in message, message
+        assert (
+            "signed out" in message and "Settings → Devices & Access → Devices" in message
+        ), message
         assert "Pair a device" in message, "a paired phone signs back in by pairing again"
 
 
@@ -387,7 +389,10 @@ async def test_a_signed_out_browser_reads_the_sentence_on_the_page_it_opens() ->
         page = await browser_b.get("/")
         html = await page.text()
         assert page.status == 403
-        assert "signed out" in html and "Settings → Devices" in html, html[-600:]
+        # The sentence is HTML-escaped on the page, so its "&" is "&amp;".
+        assert "signed out" in html and "Settings → Devices &amp; Access → Devices" in html, html[
+            -600:
+        ]
         assert "403 — no active sessions" not in html
 
 

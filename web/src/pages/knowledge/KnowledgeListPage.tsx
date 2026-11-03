@@ -78,7 +78,7 @@ function EmbeddingChip({ stats, reindex, starting, onReindex }: {
   const e = stats.embeddings
   if (!e?.enabled) {
     return (
-      <div className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 text-on-surface-low" title="No embedding model active — search is keyword + entity-graph only. Set one in Settings › AI & Models.">
+      <div className="flex items-center gap-s rounded-lg bg-surface-container px-m py-2 text-on-surface-low" title="No embedding model active — search is keyword + entity-graph only. Set one in Settings › Models & Providers › Models.">
         <Boxes size={15} className="shrink-0" />
         <span data-type="caption" >semantic search off</span>
       </div>

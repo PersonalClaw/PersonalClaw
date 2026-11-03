@@ -93,7 +93,7 @@ describe('chainEntryStatus', () => {
   it('a model a local instance no longer lists is unavailable, and says where to prune it', () => {
     expect(chainEntryStatus('ollama-small:qwen3:1.7b', listings['ollama-small'], undefined, undefined)).toEqual({
       tone: 'danger', label: 'unavailable',
-      detail: 'ollama-small no longer lists qwen3:1.7b, so it cannot run. Remove it here, or prune it from Settings → Doctor.',
+      detail: 'ollama-small no longer lists qwen3:1.7b, so it cannot run. Remove it here, or prune it from Settings → Health → Doctor.',
     })
   })
 
@@ -136,7 +136,7 @@ describe('chainEntryStatus', () => {
   })
 })
 
-describe('Settings › Models › Background', () => {
+describe('Settings › Models & Providers › Models › Background', () => {
   beforeEach(() => {
     resetDataStore()
     modelsAvailable.mockReset().mockResolvedValue(CATALOG)

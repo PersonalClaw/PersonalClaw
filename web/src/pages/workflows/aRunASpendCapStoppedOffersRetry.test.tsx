@@ -47,7 +47,7 @@ vi.mock('./RunToolApprovals', () => ({ RunToolApprovals: () => null }))
 vi.mock('./DeliverablePanel', () => ({ DeliverablePanel: () => null }))
 
 /** The step's own way out, as the gateway words every cap refusal (`BudgetExceededError.fix`). */
-const FIX = 'raise Max dollars / day in Settings → Guardrails (0 removes the cap), or wait for it to reset at midnight, then Retry'
+const FIX = 'raise Max dollars / day in Settings → Security → Guardrails (0 removes the cap), or wait for it to reset at midnight, then Retry'
 
 /** The measured run: `sample` refused by the daily dollar cap, `select` skipped. */
 function cappedRun(failureClass = 'budget', fixInstruction = ''): WorkflowRunDetailData {
@@ -129,13 +129,13 @@ describe('a run a spend cap stopped', () => {
     expect(panel.textContent?.split('wait for it to reset at midnight').length).toBe(2)
   })
 
-  it('links Settings → Guardrails and says when the caps reset, on her own clock', async () => {
+  it('links Settings → Security → Guardrails and says when the caps reset, on her own clock', async () => {
     workflowRun.mockResolvedValue(cappedRun())
     usageBudget.mockResolvedValue(caps(33.79, 33.5))
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
     const panel = await screen.findByTestId('escalation-panel')
-    const link = within(panel).getByRole('link', { name: /open settings → guardrails/i })
-    expect(link.getAttribute('href')).toBe('#/settings/guardrails')
+    const link = within(panel).getByRole('link', { name: /open settings → security → guardrails/i })
+    expect(link.getAttribute('href')).toBe('#/settings/security?section=guardrails')
     expect(capResetTime(nextMidnight())).toMatch(/^12:00\sAM$/)
     await waitFor(() =>
       expect(panel.textContent).toContain(`The day's caps reset at ${capResetTime(nextMidnight())}, your time.`),
@@ -148,7 +148,7 @@ describe('a run a spend cap stopped', () => {
     render(<WorkflowRunDetail runId="run-1" onBack={() => {}} onOpenRun={() => {}} />)
     const button = await screen.findByRole('button', { name: /retry/i })
     await waitFor(() => expect(button.getAttribute('aria-disabled')).toBe('true'))
-    expect(button.getAttribute('title')).toMatch(/Raise it in Settings → Guardrails, or Retry after it resets at 12:00\sAM/)
+    expect(button.getAttribute('title')).toMatch(/Raise it in Settings → Security → Guardrails, or Retry after it resets at 12:00\sAM/)
     expect(screen.getByText(/Retry is offered once the cap has room\./)).toBeTruthy()
     fireEvent.click(button)
     expect(forkWorkflowRun).not.toHaveBeenCalled()

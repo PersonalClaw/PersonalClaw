@@ -51,7 +51,10 @@ class _ReasonedImg(_UnavailableImg):
     """An unavailable provider that says why, as an app's adapter with no key does."""
 
     async def unavailable_reason(self) -> str:
-        return "No key is set on Down. Add it on the Down instance in Settings → Providers."
+        return (
+            "No key is set on Down. Add it on the Down instance in Settings → Models & "
+            "Providers → Providers."
+        )
 
 
 class _FailingImg(_FakeImg):
@@ -100,7 +103,8 @@ class TestImageGenDiscovery:
             "name": "Down",
             "type": "image_gen",
             "models": [],
-            "error": "No key is set on Down. Add it on the Down instance in Settings → Providers.",
+            "error": "No key is set on Down. Add it on the Down instance in Settings → Models & "
+            "Providers → Providers.",
         }
         assert rows["MyOpenAI"]["models"]
 

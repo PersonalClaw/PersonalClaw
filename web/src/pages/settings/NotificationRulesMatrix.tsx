@@ -174,7 +174,7 @@ export function NotificationRulesMatrix({ doc, onSaved }: { doc: NotificationRul
                           </div>
                         </Field>
                         <Field label="Sound"
-                          hint="Played on an open device when a push for this kind arrives — silent unless you turn on sound cues (Settings → Design → Personality).">
+                          hint="Played on an open device when a push for this kind arrives — silent unless you turn on sound cues (Settings → Appearance → Design → Personality).">
                           <Select value={r.sound ?? ''}
                             onChange={(v) => save(r.key, { sound: (v || null) as NotificationSound | null })}
                             options={SOUND_OPTIONS}

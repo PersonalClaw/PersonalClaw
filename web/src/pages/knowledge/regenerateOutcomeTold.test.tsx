@@ -18,7 +18,7 @@ import { resetDataStore } from '../../lib/data/store'
 // row itself — including an `unsearchable` row, the status no badge used to know.
 
 const SERVER_SENTENCE =
-  'No model is set up, so there is nothing to extract insights or entities with. Connect a model in Settings → Models, then regenerate.'
+  'No model is set up, so there is nothing to extract insights or entities with. Connect a model in Settings → Models & Providers → Models, then regenerate.'
 
 function statsWith(enrichment: KnowledgeEnrichment) {
   return { items: 2, entities: 0, relations: 0, embeddings: { enabled: false }, enrichment }

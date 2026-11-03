@@ -160,8 +160,8 @@ def _mask(text: str) -> str:
 #: The remedy for a check that could not run at all: its own exception, not a finding.
 _CHECK_CRASHED_REMEDY = (
     "No automatic fix — the check itself failed to run, which is a defect in PersonalClaw rather "
-    "than a problem with your data. Re-run it; if it fails again, Settings → Diagnostics → Live "
-    "logs shows the error to report."
+    "than a problem with your data. Re-run it; if it fails again, Settings → Health → Diagnostics "
+    "→ Live logs shows the error to report."
 )
 
 #: "Restart the gateway", for the core-tier failures: the one step that clears them.
@@ -474,8 +474,8 @@ async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
             detail="memory.db integrity check failed",
             evidence=ev,
             remedy=(
-                "No automatic fix — restore memory.db from a snapshot under Settings → "
-                "Durability, or copy the file aside before anything writes to it again."
+                "No automatic fix — restore memory.db from a snapshot under Settings → Backups & "
+                "Data → Backups, or copy the file aside before anything writes to it again."
             ),
         )
     missing = ev["missing"]
@@ -505,8 +505,8 @@ async def _probe_memory(ctx: DoctorContext) -> ProbeResult:
             evidence=ev,
             remedy=(
                 "No automatic fix while no embedding model is bound — nothing can re-embed them. "
-                "Bind one in Settings → Models: that re-embeds every memory. Keyword recall still "
-                "finds them meanwhile."
+                "Bind one in Settings → Models & Providers → Models: that re-embeds every memory. "
+                "Keyword recall still finds them meanwhile."
             ),
         )
     if not ev.get("faiss_available"):
@@ -573,9 +573,9 @@ async def _probe_memory_keyword_search(ctx: DoctorContext) -> ProbeResult:
             ),
             evidence=ev,
             remedy=(
-                "No automatic fix — the memories it held are in that file, and a new database "
-                "was started in its place. Restore them from a snapshot under Settings → "
-                "Durability, or recover them from the file; remove it when you no longer need it."
+                "No automatic fix — the memories it held are in that file, and a new database was "
+                "started in its place. Restore them from a snapshot in Settings → Backups & Data → "
+                "Backups, or recover them from the file; remove it when you no longer need it."
             ),
         )
     if copies:
@@ -628,8 +628,8 @@ async def _probe_channels(ctx: DoctorContext) -> ProbeResult:
         evidence={"transports": transports},
         remedy=(
             "No automatic fix — check the connection and credentials of each channel this row's "
-            "details mark `error` under Settings → Providers → Channel providers, or disable one "
-            "you no longer use there."
+            "details mark `error` under Settings → Models & Providers → Providers → Channel "
+            "providers, or disable one you no longer use there."
             if errored
             else ""
         ),
@@ -751,8 +751,8 @@ async def _probe_local_models(ctx: DoctorContext) -> ProbeResult:
             f"No automatic fix — {', '.join(bound_down)} "
             f"{'is' if len(bound_down) == 1 else 'are'} not available, so the use cases bound to "
             f"{'it' if len(bound_down) == 1 else 'them'} run on the next model of their chain, or "
-            "on none. Settings → Providers says why: an instance that is not answering (start it, "
-            "or check its address), or a runtime that is not installed."
+            "on none. Settings → Models & Providers → Providers says why: an instance that is not "
+            "answering (start it, or check its address), or a runtime that is not installed."
             if bound_down and not phantom
             else ""
         ),
@@ -832,10 +832,10 @@ async def _probe_apps(ctx: DoctorContext) -> ProbeResult:
         # decided by the apps reconciler) — a working Fix for that half.
         fix_id="serving-fs.orphan-prune" if ev["rollback_leftovers"] else None,
         remedy=(
-            "No automatic fix for a backend that is down: the app watchdog already relaunches "
-            "one every 30 seconds, so a backend that stays down is failing to start — the app's "
-            "panel under Apps shows the last lines it printed, as does Settings → Diagnostics → "
-            "Live logs. Disable the app under Settings → Apps to stop the retries."
+            "No automatic fix for a backend that is down: the app watchdog already relaunches one "
+            "every 30 seconds, so a backend that stays down is failing to start — the app's panel "
+            "under Apps shows the last lines it printed, as does Settings → Health → Diagnostics → "
+            "Live logs. Disable the app under Settings → Apps & Packs → Apps to stop the retries."
             if dead
             else ""
         ),
@@ -1045,7 +1045,7 @@ async def _probe_model_providers(ctx: DoctorContext) -> ProbeResult:
             "case with no other model fails until it answers, and a background chore no model "
             "answered is tried again once one does. A call after a short wait tests it, and a "
             "success brings it back. If calls keep failing, check its address, key and status "
-            "under Settings → Providers."
+            "under Settings → Models & Providers → Providers."
             if failing
             else ""
         ),
@@ -1196,7 +1196,7 @@ async def _probe_memory_pipeline(ctx: DoctorContext) -> ProbeResult:
             evidence=ev,
             remedy=(
                 "No automatic fix — this row's details count the week's passes by outcome, and "
-                "Settings → Diagnostics → Live logs has each flush error in full."
+                "Settings → Health → Diagnostics → Live logs has each flush error in full."
             ),
         )
     return ProbeResult(
@@ -2118,15 +2118,15 @@ async def _probe_knowledge_searchability(ctx: DoctorContext) -> ProbeResult:
         remedy=(
             "Each row under `items` is in your library and missing from part of search; its "
             "reason names which part. `no_embedding_provider`/`not_indexed`: keyword search "
-            "already finds the item, so bind an embedding model (Settings → Models) and re-index "
-            "to add semantic search. `awaiting_embedding`: an embedding model is bound now and "
-            "the item was saved before it was, so Run now under Maintenance (or the re-index) "
-            "embeds it. `no_extractable_text`: the file is a scan, so add a text "
-            "version or bind an OCR/vision model, then re-ingest the item. `stale_index`: the "
-            "item is fine and its vectors are not — they came from a different embedding model, "
-            "or record none, so run the embedding re-index; nothing needs re-ingesting. Rows under "
-            "`unlisted_items` are search copies the library does not list (an artifact's mirror, "
-            "a report's finding) and take the same fix."
+            "already finds the item, so bind an embedding model (Settings → Models & Providers → "
+            "Models) and re-index to add semantic search. `awaiting_embedding`: an embedding "
+            "model is bound now and the item was saved before it was, so Run now under "
+            "Maintenance (or the re-index) embeds it. `no_extractable_text`: the file is a scan, "
+            "so add a text version or bind an OCR/vision model, then re-ingest the item. "
+            "`stale_index`: the item is fine and its vectors are not — they came from a different "
+            "embedding model, or record none, so run the embedding re-index; nothing needs "
+            "re-ingesting. Rows under `unlisted_items` are search copies the library does not "
+            "list (an artifact's mirror, a report's finding) and take the same fix."
         ),
     )
 

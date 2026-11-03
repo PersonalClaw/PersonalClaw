@@ -22,7 +22,7 @@ const NODES: WorkflowNodeState[] = [
 const LINE =
   "ran on fake-oai:fake-model-1 instead of broken-app:model-x: provider 'broken-app' declares type " +
   "'brokenapp', and no installed app registers that type. Install an app that provides 'brokenapp' " +
-  "in the App Store, or change 'broken-app''s type in Settings → Providers"
+  "in the App Store, or change 'broken-app''s type in Settings → Models & Providers → Providers"
 
 function snapshot(over: Partial<WorkflowRunDetailData> = {}): WorkflowRunDetailData {
   return {

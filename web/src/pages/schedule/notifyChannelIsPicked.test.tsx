@@ -88,7 +88,7 @@ describe('the Notify channel picker', () => {
     expect(picker().value).toBe('C0EXAMPLE01')
   })
 
-  it("says it couldn't load your chat channels, even after Settings → Providers cached none", async () => {
+  it("says it couldn't load your chat channels, even after Settings → Models & Providers → Providers cached none", async () => {
     // Settings → Providers reads the same list with a catch and caches `[]` when it fails. Under
     // that key, this read's failure looked like "you have no chat channels".
     const { writeQuery } = await import('../../lib/data')
