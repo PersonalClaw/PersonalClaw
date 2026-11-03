@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+## [0.3.6] — 2026-11-03
+
+Settings opens on seventeen cards in three groups, one for each of its pages, where it had forty pages: each page holds the settings that belong together, a card carries the switches people change most, search finds a setting by its own name, and every old link opens its section. An open page says when PersonalClaw's interface was updated and offers Reload, and a toast waits while you are on it. Turning off or removing a native app is refused with why, a skill an app seeded that you changed outlives the app, and an app update a stop cut short is finished at the next start. A pin on Home opens its artifact, the composer's agent-and-model menu works from the keyboard, and a loop's page names its work folder without your account's name and keeps its tab in the address. An answered approval's notification says how it ended, and an approval's note names the chat or the loop that asks, or the Inbox for work no page answers.
+
 ### Added
 
 - **An open page tells you when PersonalClaw's interface was updated, and offers Reload. When an update restarts PersonalClaw into a newer interface, the page you had open says the changes take effect when you reload, once for each new interface in that tab. It goes after 30 seconds, and waits while the pointer or focus is on it.**
