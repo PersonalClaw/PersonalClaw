@@ -5,7 +5,7 @@ const doc: UiDoc = {
   name: 'ThreadRail',
   keywords: ['chat history', 'chats', 'sidebar', 'rail', 'folders', 'tags', 'group by', 'loops', 'code sessions', 'pip', 'running', 'waiting on you', 'failed', 'disclosure', 'No folder', 'No tag', 'New chat', 'search', 'filter', '⌘1'],
   description:
-    "The sidebar's chat history: its heading with a Group by control (Folders or Tags), New chat and a search at the top, one bar pinned to the top of the chat history while the rows scroll under it, on the rail's solid surface so no row shows through; then every chat, goal loop and code session under its folder (or each of its tags), each group a disclosure and each row a dense button (about 32 px) that opens it. A goal loop's or code session's row says its kind by an icon and in its name. A row says its state in words beside one static StateMark (running, waiting on you, failed); the open row is lit with aria-current=\"page\" and its group opens so it can be seen. The search filters the rows by name over what the rail has read; a group with no match leaves the list while it lasts, and nothing matching has its own row. Loading, a failed read and an empty list each have their own row. The rail reports the rows it shows, top to bottom, which ⌘1 to ⌘9 open. NavRail renders it through its `threads` slot, in the expanded rail and the phone's drawer.",
+    "The sidebar's chat history: New chat and a search with a Group by control (Folders or Tags) at the end of its row, at the top, one bar pinned to the top of the chat history while the rows scroll under it, on the rail's solid surface so no row shows through; then every chat, goal loop and code session under its folder (or each of its tags), each group a disclosure and each row a dense button (about 32 px) that opens it. A goal loop's or code session's row says its kind by an icon and in its name. A row says its state in words beside one static StateMark (running, waiting on you, failed); the open row is lit with aria-current=\"page\" and its group opens so it can be seen. The search filters the rows by name over what the rail has read; a group with no match leaves the list while it lasts, and nothing matching has its own row. Loading, a failed read and an empty list each have their own row. The rail reports the rows it shows, top to bottom, which ⌘1 to ⌘9 open. NavRail renders it through its `threads` slot, in the expanded rail and the phone's drawer.",
   props: [
     { name: 'groups', description: 'The groups in the order they show, each {id, name, threads}. The shell builds them with historyGroups (app/chatHistoryGroups.ts): the folders (or tags) that hold a row, in Chat history\'s order, then No folder (or No tag) last, each group\'s rows in the named order (byRailOrder: pinned first, then the latest activity, ties by key). A chat under two tags is in both groups.' },
     { name: 'selectedKey', description: 'The key of the open row (threadAt in app/threadRail.tsx reads it from the address), or "" when the page is no chat. Never kept by the rail itself, so reload, Back and a copied address light the same row, under every group it is in.' },
@@ -17,7 +17,7 @@ const doc: UiDoc = {
     { name: 'onShown', description: 'Told the rows the rail shows, top to bottom (closed groups and the search applied), whenever they change; null while it shows none it has read. The shell keeps them for ⌘1 to ⌘9, a chat under two tags counted once. Keep it stable.' },
     { name: 'search', description: 'The search, when the caller keeps it. The shell does (App.tsx), so a collapse, which unmounts the rail, gives back what was typed; a reload starts with none. Unset, the rail keeps its own.' },
     { name: 'onSearch', description: 'Told each change of the search, with search.' },
-    { name: 'groupBy', description: "How the groups are made, 'folder' (the default) or 'tag'; the heading's Group by control names it." },
+    { name: 'groupBy', description: "How the groups are made, 'folder' (the default) or 'tag'; the search row's Group by control names it." },
     { name: 'onGroupBy', description: 'Told the grouping the owner picks from the Group by control. The shell keeps it on the device (writeGroupBy). Unset, the control is not drawn.' },
   ],
   bestPractices: [
@@ -28,11 +28,10 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not sort by status: a turn starting or a run failing changes a pip, never a row\'s place.' },
   ],
   anatomy: [
-    'div[role=group] labelled by its "Chat history" Eyebrow',
+    'div[role=group] named "Chat history" (aria-label: no label row on screen)',
     'the pinned bar: sticky at the top of the chat history, painted --color-rail, above the rows',
-    'the heading row, in the bar: the "Chat history" Eyebrow and the Group by control (a pill named "Group by: Folders" or "Group by: Tags" opening a two-row menu)',
     'New chat, in the bar: a button with its key in the tooltip',
-    'Search chats, in the bar: a SearchField (sm), Escape clears it',
+    'the search row, in the bar: Search chats, a SearchField (sm) that Escape clears, and at its end the Group by control (the field\'s height, a folder or tag icon with a chevron, named "Group by: Folders" or "Group by: Tags", opening a two-row menu), after the field in tab order; the field\'s placeholder is "Search" and its name "Search chats"',
     'status row: Loading chats (role=status), or the failure sentence with Retry, or No chats yet, or No chats match (role=status) while a search finds nothing',
     'per group: a disclosure button (chevron, name, count; aria-expanded) and, when open, its rows or "No chats yet"',
     'row: a button (aria-current="page" when open, the selected fill), a goal loop\'s or code session\'s kind icon, its title truncated, and a StateMark with the state\'s words',

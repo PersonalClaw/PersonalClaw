@@ -128,7 +128,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ],
       "focus order": [
         "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Health settings\" to <button .absolute.inset-#.z-#> \"Open Secrets settings\"",
@@ -265,7 +265,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ],
       "focus order": [
         "focus moves backwards from <button .absolute.inset-#.z-#> \"Open Health settings\" to <button .absolute.inset-#.z-#> \"Open Secrets settings\"",

@@ -6,10 +6,9 @@
   - button "Projects"
   - button "Library"
   - group "Chat history":
-    - text: Chat history
-    - 'button "Group by: Folders"': Folders
     - button "New chat"
     - searchbox "Search chats"
+    - 'button "Group by: Folders"'
     - status
     - text: No chats yet
   - text: Platform

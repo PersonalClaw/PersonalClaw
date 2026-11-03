@@ -113,7 +113,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ],
       "focus order": [
         "focus moves backwards from <select#<react id> .w-full.appearance-none.rounded-md> \"Encrypt shards\" to <button .relative.inline-flex.shrink-#> \"Export everything\""
@@ -234,7 +234,7 @@
     },
     "known": {
       "200% text zoom": [
-        "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
+        "<nav> \"PersonalClawChatProjectsLibraryNew chatN\" clips at #%: #x# in #x#"
       ],
       "focus order": [
         "focus moves backwards from <select#<react id> .w-full.appearance-none.rounded-md> \"Encrypt shards\" to <button .relative.inline-flex.shrink-#> \"Export everything\""
