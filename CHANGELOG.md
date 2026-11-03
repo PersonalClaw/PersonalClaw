@@ -22,6 +22,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A toast waits while the pointer or the keyboard focus is on the toasts, and then goes on with the time it had left, so a toast's link or Dismiss can be reached without the toast leaving first.**
 - **A skill an app seeded that you changed is yours: disabling, updating or uninstalling the app keeps it, with your changes, and says so, and the app's own version is never seeded over it. A seeded skill you never changed still goes with its app.**
 - **An app update the gateway stopped in after its files were swapped is finished at the next start: the new version is recorded, a renamed capability's settings, secrets and switches move to its new id, and an id it dropped is kept as retired. An update that never went live is forgotten, and the version that was there stays.**
+- **A pinned artifact on Home opens that artifact. Each pin opened the Artifacts library instead, since its link carried the artifact in a query the page does not read.**
 
 ## [0.3.5] — 2026-11-02
 
