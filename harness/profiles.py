@@ -99,12 +99,16 @@ _register(
 _register(
     Profile(
         name="web",
-        description="Frontend gate: the catalogue's web-unit job (typecheck, vitest, desktop"
-        " and mobile tests), run as CI runs it, on the working tree as it stands. A local gate:"
-        " refused on GitHub, where CI runs web-unit on the commit under test.",
+        description="Frontend gate: the catalogue's web-unit, desktop-unit and mobile-unit jobs"
+        " (typecheck, vitest and the design detector; the desktop tests; the mobile tests), run"
+        " as CI runs them, on the working tree as it stands. A local gate: refused on GitHub,"
+        " where CI runs them on the commit under test.",
         # tools/ci/catalogue.toml holds the commands; --working-tree runs them on the
         # uncommitted change too, writes no record, and exits by the steps' result.
-        commands=(f"{HARNESS_PY} -m tools.ci run-job web-unit --working-tree",),
+        commands=tuple(
+            f"{HARNESS_PY} -m tools.ci run-job {job} --working-tree"
+            for job in ("web-unit", "desktop-unit", "mobile-unit")
+        ),
     )
 )
 _register(

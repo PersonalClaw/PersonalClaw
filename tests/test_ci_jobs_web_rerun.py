@@ -409,8 +409,8 @@ def test_a_vitest_failure_is_rerun_once_alone_and_the_job_stays_red(tmp_path):
 
 
 def test_a_vitest_steps_failed_tests_let_the_jobs_next_steps_run(tmp_path):
-    """As web-unit's design detector and its desktop and mobile tests run after its Vitest step:
-    a flake there leaves the job red, and every step after it still runs."""
+    """As web-unit's design detector runs after its Vitest step: a flake there leaves the job
+    red, and every step after it still runs."""
     after = tmp_path / "after"
     root, path = _plant(tmp_path, vitest=(VITEST_CASES[0], VITEST_CASES[1]))
     later = Step((sys.executable, "-c", f"open({str(after)!r}, 'w').close()"))
