@@ -5,11 +5,11 @@ import type { GroupBy, HistoryGroup } from '../app/chatHistoryGroups'
 import type { PhaseFamily } from '../lib/workPhase'
 import { bindingLabel } from '../app/keymap'
 import { withWeight } from '../design/fontWeight'
+import { prefersReducedMotion } from '../design/motion'
 import { Button } from './Button'
 import { MenuRow, Popover } from './Popover'
 import { ResultAnnouncement } from './ListControls'
 import { SearchField } from './SearchField'
-import { StateMark } from './StateMark'
 import { WindowedList } from './WindowedList'
 import { cx } from './cx'
 import { RING_REACH } from './NavRail'
@@ -384,11 +384,27 @@ function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boo
         <KindIcon size={14} strokeWidth={2} aria-hidden className="relative shrink-0 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }} />
       )}
       <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{thread.title}</span>
-      {pip && (
-        <span data-type="caption" className="relative shrink-0" style={{ zIndex: ROW_LABEL_Z }}>
-          <StateMark family={pip.family}>{pip.word}</StateMark>
-        </span>
-      )}
+      {pip && <StateDot family={pip.family} word={pip.word} />}
     </button>
+  )
+}
+
+/** A row's state as a dot in its family's colour (`--color-state-<family>`, the tokens every state
+ *  mark reads), with the running glow (`.status-pulse`) while its work runs. The words are the dot's
+ *  tooltip and part of the row's name, so the colour is never the only cue; the row itself spends no
+ *  width on them. Under reduced motion the glow is a still ring around the dot, so a running row
+ *  still reads apart from a failed one, whose colour is close. Bordered in its own colour, as a state
+ *  mark is, so forced colours still draw it. */
+function StateDot({ family, word }: { family: PhaseFamily; word: string }) {
+  const tone = `var(--color-state-${family})`
+  const running = family === 'active'
+  const glow = running && !prefersReducedMotion()
+  return (
+    <span data-state-family={family} data-state-dot={glow ? 'glowing' : 'still'} title={word.charAt(0).toUpperCase() + word.slice(1)}
+      className="relative inline-flex size-2 shrink-0" style={{ zIndex: ROW_LABEL_Z }}>
+      {glow && <span aria-hidden className="status-pulse absolute inset-0 rounded-pill" style={{ background: tone }} />}
+      {running && !glow && <span aria-hidden data-still-glow className="absolute rounded-pill border" style={{ inset: -3, borderColor: tone, opacity: 0.6 }} />}
+      <span aria-hidden className="relative size-2 rounded-pill border" style={{ background: tone, borderColor: tone }} />
+    </span>
   )
 }

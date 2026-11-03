@@ -3,9 +3,9 @@ import type { UiDoc } from './uiDoc'
 // Doc object for ThreadRail — the sidebar's chat history, grouped by folder or tag (#3814, #5877).
 const doc: UiDoc = {
   name: 'ThreadRail',
-  keywords: ['chat history', 'chats', 'sidebar', 'rail', 'folders', 'tags', 'group by', 'loops', 'code sessions', 'pip', 'running', 'waiting on you', 'failed', 'disclosure', 'No folder', 'No tag', 'New chat', 'search', 'filter', '⌘1'],
+  keywords: ['chat history', 'chats', 'sidebar', 'rail', 'folders', 'tags', 'group by', 'loops', 'code sessions', 'pip', 'state dot', 'running', 'waiting on you', 'failed', 'disclosure', 'No folder', 'No tag', 'New chat', 'search', 'filter', '⌘1'],
   description:
-    "The sidebar's chat history: New chat and a search with a Group by control (Folders or Tags) at the end of its row, at the top, one bar pinned to the top of the chat history while the rows scroll under it, on the rail's solid surface so no row shows through; then every chat, goal loop and code session under its folder (or each of its tags), each group a disclosure and each row a dense button (about 32 px) that opens it. A goal loop's or code session's row says its kind by an icon and in its name. A row says its state in words beside one static StateMark (running, waiting on you, failed); the open row is lit with aria-current=\"page\" and its group opens so it can be seen. The search filters the rows by name over what the rail has read; a group with no match leaves the list while it lasts, and nothing matching has its own row. Loading, a failed read and an empty list each have their own row. The rail reports the rows it shows, top to bottom, which ⌘1 to ⌘9 open. NavRail renders it through its `threads` slot, in the expanded rail and the phone's drawer.",
+    "The sidebar's chat history: New chat and a search with a Group by control (Folders or Tags) at the end of its row, at the top, one bar pinned to the top of the chat history while the rows scroll under it, on the rail's solid surface so no row shows through; then every chat, goal loop and code session under its folder (or each of its tags), each group a disclosure and each row a dense button (about 32 px) that opens it. A goal loop's or code session's row says its kind by an icon and in its name. A row shows its state as one dot in the state's colour (running, waiting on you, failed, unread), the word in the dot's tooltip and the row's name, and a running row's dot glows (a still ring under reduced motion); the open row is lit with aria-current=\"page\" and its group opens so it can be seen. The search filters the rows by name over what the rail has read; a group with no match leaves the list while it lasts, and nothing matching has its own row. Loading, a failed read and an empty list each have their own row. The rail reports the rows it shows, top to bottom, which ⌘1 to ⌘9 open. NavRail renders it through its `threads` slot, in the expanded rail and the phone's drawer.",
   props: [
     { name: 'groups', description: 'The groups in the order they show, each {id, name, threads}. The shell builds them with historyGroups (app/chatHistoryGroups.ts): the folders (or tags) that hold a row, in Chat history\'s order, then No folder (or No tag) last, each group\'s rows in the named order (byRailOrder: pinned first, then the latest activity, ties by key). A chat under two tags is in both groups.' },
     { name: 'selectedKey', description: 'The key of the open row (threadAt in app/threadRail.tsx reads it from the address), or "" when the page is no chat. Never kept by the rail itself, so reload, Back and a copied address light the same row, under every group it is in.' },
@@ -24,7 +24,8 @@ const doc: UiDoc = {
     { guidance: true, description: 'Derive selectedKey from the address on every render; the address is the selection.' },
     { guidance: true, description: "Pass the groups whole: a group's rows window past the shared threshold (WindowedList), so a long folder stays fast and keeps its keyboard order." },
     { guidance: false, description: 'Do not show a failed or loading read as an empty list: pass status, and the rail says which it is.' },
-    { guidance: false, description: 'Do not animate a row or its mark: a running chat updates its static mark and nothing in the rail moves.' },
+    { guidance: false, description: 'Do not move anything in a row but the running glow: a running row\'s dot glows (the shared status-pulse), a still ring around it under reduced motion, and every other state is a still dot.' },
+    { guidance: false, description: 'Do not show a state by colour alone: the dot\'s tooltip and the row\'s name say it in words.' },
     { guidance: false, description: 'Do not sort by status: a turn starting or a run failing changes a pip, never a row\'s place.' },
   ],
   anatomy: [
@@ -34,7 +35,7 @@ const doc: UiDoc = {
     'the search row, in the bar: Search chats, a SearchField (sm) that Escape clears, and at its end the Group by control (the field\'s height, a folder or tag icon with a chevron, named "Group by: Folders" or "Group by: Tags", opening a two-row menu), after the field in tab order; the field\'s placeholder is "Search" and its name "Search chats"',
     'status row: Loading chats (role=status), or the failure sentence with Retry, or No chats yet, or No chats match (role=status) while a search finds nothing',
     'per group: a disclosure button (chevron, name, count; aria-expanded) and, when open, its rows or "No chats yet"',
-    'row: a button (aria-current="page" when open, the selected fill), a goal loop\'s or code session\'s kind icon, its title truncated, and a StateMark with the state\'s words',
+    'row: a button (aria-current="page" when open, the selected fill), a goal loop\'s or code session\'s kind icon, its title truncated, and a state dot (data-state-family, the word as its tooltip, the running glow behind it while it runs, or a still ring under reduced motion)',
   ],
 }
 

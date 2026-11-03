@@ -28,6 +28,7 @@ import type { ReactElement } from 'react'
 import { AgentOrb } from '../AgentOrb'
 import { BuddyOrb } from '../BuddyOrb'
 import { DotGlow } from '../DotGlow'
+import { ThreadRail } from '../ThreadRail'
 import { WavyProgress } from '../WavyProgress'
 import { Bud } from './Bud'
 import { Disintegrate } from './Disintegrate'
@@ -139,6 +140,25 @@ export const REDUCED_MOTION_FAMILY: ReducedMotionMember[] = [
     animated: 'animated',
     // The orb is still drawn, and still named for its phase: the branch is not "draw nothing".
     positiveControl: (el) => el.querySelector('canvas[role="img"][aria-label="Thinking"]'),
+  },
+  {
+    id: "ThreadRail — a running row's glow is a still ring",
+    source: 'ui/ThreadRail.tsx',
+    render: () => (
+      <ThreadRail status="ready" selectedKey="" onOpen={() => {}} onRetry={() => {}} onNewThread={() => {}}
+        groups={[{ id: 'folder:', name: 'No folder', threads: [{
+          key: 'chat:c1', kind: 'chat', id: 'c1', title: 'Seed order', projectId: '', route: 'chat/c1',
+          pip: 'running', pinned: false, activeAt: 0, folderId: '', tagIds: [],
+        }] }]} />
+    ),
+    selector: '[data-state-dot]',
+    attr: 'data-state-dot',
+    reduced: 'still',
+    animated: 'glowing',
+    // The dot is still drawn, in the running family, named by its tooltip, and ringed where the
+    // glow was: the branch is not "draw nothing".
+    positiveControl: (el) =>
+      el.getAttribute('data-state-family') === 'active' && el.getAttribute('title') === 'Running' ? el.querySelector('[data-still-glow]') : null,
   },
   {
     id: 'WavyProgress (indeterminate) — the traveling crest never starts',

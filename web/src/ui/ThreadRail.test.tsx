@@ -6,8 +6,8 @@ import { ThreadRail, type ThreadRailGroup } from './ThreadRail'
 // ── The chat history rail: groups with their chats beneath (#3814, #5877) ─────────────────────────
 //
 // Each folder (or tag) is a disclosure group, and under it each chat, goal loop or code session is a
-// dense row that opens it. A row can carry one static marker, and its state is said in words beside
-// it and in its name: running, waiting on you, failed. Nothing in it moves. The open row is lit
+// dense row that opens it. A row can carry one state dot, its state in the dot's tooltip and in the
+// row's name: running, waiting on you, failed. Only a running row's glow moves. The open row is lit
 // (`aria-current="page"`), and its group opens so the lit row can be seen. A group's disclosure
 // lasts across a reload. Loading, a failed read and an empty group each have a row of their own, so
 // none of them reads as a group with nothing in it.
@@ -59,7 +59,7 @@ describe('the chat history rail', () => {
     ])
   })
 
-  it('says each state in words beside its marker, never by the marker alone', () => {
+  it('says each state in its name and its dot\'s tooltip, never by the dot alone', () => {
     rail()
     for (const [name, word, family] of [
       [/^Goal loop: Find a seed supplier/, 'running', 'active'],
@@ -69,17 +69,23 @@ describe('the chat history rail', () => {
       const row = screen.getByRole('button', { name })
       const mark = row.querySelector('[data-state-family]')
       expect(mark?.getAttribute('data-state-family')).toBe(family)
-      expect(mark?.textContent).toBe(word)
+      expect(mark?.getAttribute('title')).toBe(word.charAt(0).toUpperCase() + word.slice(1))
+      expect(row.getAttribute('aria-label')).toMatch(new RegExp(`, ${word}$`))
     }
     expect(screen.getByRole('button', { name: 'Plan the garden' }).querySelector('[data-state-family]')).toBeNull()
   })
 
-  it('a running row schedules no animation and carries no moving class', () => {
+  it("a running row's one motion is the shared running glow, and it schedules no frame", () => {
     const raf = vi.spyOn(window, 'requestAnimationFrame')
     rail()
     const row = screen.getByRole('button', { name: /^Goal loop: Find a seed supplier/ })
     expect(raf).not.toHaveBeenCalled()
-    expect(row.outerHTML).not.toMatch(/animate-|pulse|spin/)
+    expect(row.querySelectorAll('.status-pulse')).toHaveLength(1)
+    expect(row.outerHTML).not.toMatch(/animate-|spin/)
+    // Nothing else in the rail moves: a row whose work has stopped has no glow.
+    for (const name of [/^Code session: Fence gate/, /^Order the soil/, /^Plan the garden/]) {
+      expect(screen.getByRole('button', { name }).outerHTML).not.toMatch(/animate-|pulse|spin/)
+    }
   })
 
   it('lights the open row, and only it', () => {
