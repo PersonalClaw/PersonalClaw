@@ -2652,13 +2652,13 @@ def restore_main(argv: list[str] | None = None, *, parsed: argparse.Namespace | 
         if has_one:
             print(
                 f"⚠️  {name}'s engine here does not match the version the restore brought back. "
-                "Install engine, on the app's card in Settings → Providers, brings it up to date."
+                "Install engine, on the app's card in Settings → Models & Providers → Providers, brings it up to date."  # noqa: E501
             )
             continue
         print(
             f"⚠️  {name} has no engine here: a snapshot leaves engines out, since each one is "
             "built for the machine it runs on. Install it with Install engine, on the app's card "
-            "in Settings → Providers."
+            "in Settings → Models & Providers → Providers."
         )
     _offer_to_resume(pc, done)
     print("\n⚠️  Restart personalclaw gateway to pick up changes: personalclaw restart")

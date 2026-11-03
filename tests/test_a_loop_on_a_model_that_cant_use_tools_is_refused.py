@@ -206,7 +206,10 @@ def test_a_loop_on_a_model_that_cant_use_tools_is_not_created(built, bindings):
     message = _refusal(_create())
 
     assert "“Pocket:tiny-1” can't use tools" in message
-    assert "Choose a model that uses tools for Loops in Settings → Models." in message
+    assert (
+        "Choose a model that uses tools for Loops in Settings → Models & Providers → Models."
+        in message
+    )
     assert store.list_all() == [], "nothing was stored for a loop that could not work"
     assert built and all(m.closed for m in built), "every model the check built was closed"
 
@@ -274,7 +277,7 @@ def test_a_general_loop_is_refused_for_the_model_its_steps_run_on(built, binding
         bindings["orchestration"] = [WITHOUT]
         message = _refusal(_create(kind="general"))
         assert "“Pocket:tiny-1” can't use tools" in message
-        assert "for Orchestration in Settings → Models" in message
+        assert "for Orchestration in Settings → Models & Providers → Models" in message
     finally:
         if not preexisting:
             unregister_provider(PROVIDER_NAME)

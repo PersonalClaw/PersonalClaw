@@ -79,6 +79,7 @@ describe('SegToggle pills are 24px targets', () => {
   it('has enough adopters that fixing the component was the right move', () => {
     const widgets = readFileSync(join(process.cwd(), 'src/pages/settings/settingsWidgets.tsx'), 'utf8')
     const uses = (widgets.match(/<SegToggle\b/g) ?? []).length
-    expect(uses, 'Mode, Density, Min severity, …').toBeGreaterThanOrEqual(3)
+    // Two since Widget density left the Chat card for the Chat page (#5897).
+    expect(uses, 'Mode, Min severity, …').toBeGreaterThanOrEqual(2)
   })
 })

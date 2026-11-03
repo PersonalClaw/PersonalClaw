@@ -28,7 +28,7 @@ import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { useEmbeddingReindex } from '../../lib/useEmbeddingReindex'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { confirm } from '../../ui/dialog'
-import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow, useHeadingTag } from './settingsUI'
 import { notify } from '../../app/appSdk'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
@@ -62,10 +62,10 @@ const CHAT_TEST = 'sends the model one short message and expects a one-word repl
 const USE_CASE_META: Record<string, { label: string; group?: string; description: string; chain: boolean; icon: LucideIcon; fallback?: string; test?: string }> = {
   chat: { label: 'Chat', description: 'Conversational models for chat and agent interactions, and the description written for a video you add. A chat working in a folder of its own uses Code & tools instead, once that binds a model. Order matters: the first model is the default; later ones are fallbacks used when an earlier provider is down.', chain: true, icon: MessageSquare, test: CHAT_TEST },
   code_tools: { label: 'Code & tools', group: 'Chat routing', description: 'Every turn of a chat working in a folder of its own (the working directory set for the chat, its project\'s folder or its agent\'s), and the side questions asked beside it. A model picked for the chat still comes first.', chain: true, icon: Code2, fallback: 'Chat', test: CHAT_TEST },
-  reasoning: { label: 'Reasoning', group: 'Chat routing', description: 'One-shot judgment calls: web-page extraction, browse steps, research reports, knowledge summaries and charts, and every loop judge and gate and workflow judge unless Settings → Autonomous loops or the workflow names another use case.', chain: true, icon: BrainCircuit, fallback: 'Chat', test: CHAT_TEST },
+  reasoning: { label: 'Reasoning', group: 'Chat routing', description: 'One-shot judgment calls: web-page extraction, browse steps, research reports, knowledge summaries and charts, and every loop judge and gate and workflow judge unless Settings → Automations → Autonomous loops or the workflow names another use case.', chain: true, icon: BrainCircuit, fallback: 'Chat', test: CHAT_TEST },
   background: { label: 'Background', group: 'Chat routing', description: 'Background work and small one-shot calls: session titles, tags, suggestions, digests and consolidation; the facts and insights drawn from what you add to the library; Inbox sorting and reply drafts; heartbeat tasks, which run with your agent\'s tools; the Workflows fast tier. Bind a cheap or local model here so this work stops burning your main chat model.', chain: true, icon: Moon, fallback: 'Chat', test: CHAT_TEST },
   orchestration: { label: 'Orchestration', group: 'Chat routing', description: 'Agent work nobody types: subagents and what runs as one (workflow steps, general loops, scheduled prompts, an automation\'s agent, an app\'s scheduled jobs), webhook agent turns, and the turns that read their results. A subagent given a model of its own runs on that model.', chain: true, icon: Network, fallback: 'Chat', test: CHAT_TEST },
-  loops: { label: 'Loops', group: 'Chat routing', description: 'Workers and planners of goal, research, design and code loops — long-horizon work that benefits from a long-context model. A loop\'s judges and gates run on the judge model axis in Settings → Autonomous loops (Reasoning by default), and a general loop runs as a workflow, on Orchestration.', chain: true, icon: RefreshCcw, fallback: 'Chat', test: CHAT_TEST },
+  loops: { label: 'Loops', group: 'Chat routing', description: 'Workers and planners of goal, research, design and code loops — long-horizon work that benefits from a long-context model. A loop\'s judges and gates run on the judge model axis in Settings → Automations → Autonomous loops (Reasoning by default), and a general loop runs as a workflow, on Orchestration.', chain: true, icon: RefreshCcw, fallback: 'Chat', test: CHAT_TEST },
   embedding: { label: 'Embedding', group: 'Capabilities', description: 'Vector embedding models for knowledge and memory.', chain: false, icon: Boxes, test: 'embeds one word.' },
   stt: { label: 'Speech-to-text', group: 'Capabilities', description: 'Voice transcription models.', chain: false, icon: Mic, test: 'transcribes a half-second test tone.' },
   tts: { label: 'Text-to-speech', group: 'Capabilities', description: 'Voice synthesis models.', chain: false, icon: Volume2, test: 'speaks one word.' },
@@ -228,7 +228,7 @@ export function chainEntryStatus(
   if (listing?.local && !listing.listed.includes(id)) {
     return {
       tone: 'danger', label: 'unavailable',
-      detail: `${provider} no longer lists ${id}, so it cannot run. Remove it here, or prune it from Settings → Doctor.`,
+      detail: `${provider} no longer lists ${id}, so it cannot run. Remove it here, or prune it from Settings → Health → Doctor.`,
     }
   }
   if (listing?.local && model?.downloaded === false) {
@@ -1350,6 +1350,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
  *  to write. The bounds are the PATCH allowlist's, so the control never offers a value the save path
  *  refuses. The gateway reads each one at its next call, so a change needs no restart. */
 function BackgroundLimits() {
+  const limitsHeading = useHeadingTag(3)
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
   const { data, error: loadErr, refresh } = useQuery('settings:background-limits', () =>
     api.personalclawConfig().then((c) => (c.background ?? {}) as Record<string, unknown>),
@@ -1376,7 +1377,7 @@ function BackgroundLimits() {
 
   return (
     <div className="flex flex-col gap-xs">
-      <Eyebrow as="h3">Limits</Eyebrow>
+      <Eyebrow as={limitsHeading}>Limits</Eyebrow>
       <p data-type="caption" className="text-on-surface-low">A change applies to the next call; nothing restarts.</p>
       <div className="rounded-lg bg-surface px-m">
         <NumberRow label="Time limit (seconds)" cfg={cfg} field="call_timeout_secs" min={30} max={3600} patch={patch}

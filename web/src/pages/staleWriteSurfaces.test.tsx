@@ -652,7 +652,7 @@ const SURFACES: Surface[] = [
     reapplied: ['project_instruction:overview.md', 'p-1', OVERVIEW_EDIT + '\n- deploy → complete: shipped', 'o2'],
     landed: () => waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(OVERVIEW_EDIT + '\n- deploy → complete: shipped')),
   },
-  { surface: "an app's settings (Settings → Apps)",
+  { surface: "an app's settings (Settings → Apps & Packs → Apps)",
     stage: () => {
       let stored = { config: { room: 'general', greeting: 'hi' } as Record<string, unknown>, revision: 'rev-1' }
       let written = 0

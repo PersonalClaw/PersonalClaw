@@ -195,7 +195,7 @@ describe('the per-device push control', () => {
     approvals.mockResolvedValue([])
     render(<CompanionPage {...routeWith({})} />)
     const line = await screen.findByText(/approvals are not routed to it/)
-    expect(line.textContent).toContain('Settings → Notifications')
+    expect(line.textContent).toContain('Settings → Notifications & Inbox → Notifications')
   })
 
   it('names an ntfy backend with no topic configured, instead of looking healthy', async () => {

@@ -14,10 +14,10 @@ Conventions: a key like `loops.max_cycles_hard_cap` means
 
 | Key | Default | What it does |
 |---|---|---|
-| `agent.provider` | `native` | Default agent runtime for agents that don't set their own: `native` (in-process loop, models governed by Settings → Models), `acp`, or `acp:<cli>` to pin a connected CLI runtime. Per-agent `provider` (Agents page) overrides this. Deployment-level; switching it mid-flight would strand live sessions, hence file-only + restart. |
+| `agent.provider` | `native` | Default agent runtime for agents that don't set their own: `native` (in-process loop, models governed by Settings → Models & Providers → Models), `acp`, or `acp:<cli>` to pin a connected CLI runtime. Per-agent `provider` (Agents page) overrides this. Deployment-level; switching it mid-flight would strand live sessions, hence file-only + restart. |
 
 The chat **model** is not a config field — bind models per use case in
-Settings → Models (`~/.personalclaw/active_models.json`), or per agent on the
+Settings → Models & Providers → Models (`~/.personalclaw/active_models.json`), or per agent on the
 Agents page.
 
 ## Goal loops (`loops.*`)

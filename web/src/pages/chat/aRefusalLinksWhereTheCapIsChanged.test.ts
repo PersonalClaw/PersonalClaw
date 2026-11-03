@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest'
 import { hydrateTurns, type ErrorSegment } from './chatTypes'
 
-const CAP = 'The daily dollar budget is spent ($4.10 of $4.00): raise Max dollars / day in Settings → Guardrails (0 removes the cap), or wait for it to reset at midnight.'
+const CAP = 'The daily dollar budget is spent ($4.10 of $4.00): raise Max dollars / day in Settings → Security → Guardrails (0 removes the cap), or wait for it to reset at midnight.'
 
 function errorOf(meta?: Record<string, unknown>): ErrorSegment {
   const turns = hydrateTurns([

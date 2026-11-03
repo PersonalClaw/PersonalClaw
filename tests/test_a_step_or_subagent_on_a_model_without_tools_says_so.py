@@ -39,8 +39,8 @@ from personalclaw.workflows import controller as controller_mod
 #: What a subagent started on the scripted model that can't use tools ends with.
 REFUSED = (
     "Couldn't do its task: “fake-cloud:m-1” can't use tools, and it was started to work with "
-    "them. Choose a model that uses tools for Orchestration in Settings → Models, or start it on "
-    "one."
+    "them. Choose a model that uses tools for Orchestration in Settings → Models & Providers → "
+    "Models, or start it on one."
 )
 
 
@@ -272,7 +272,10 @@ async def test_a_step_without_tools_fails_with_a_fix_about_its_model(
         assert step.state is InstanceState.FAILED, step.state
         assert step.failure.failure_class is FailureClass.USER, step.failure.to_dict()
         assert "“fake-cloud:m-1” can't use tools" in step.failure.cause_plain
-        assert "for Orchestration in Settings → Models" in step.failure.remediation
+        assert (
+            "for Orchestration in Settings → Models & Providers → Models"
+            in step.failure.remediation
+        )
         assert "give this step the tools" not in step.failure.remediation
     assert status is RunStatus.FAILED, status
 
@@ -445,7 +448,9 @@ async def test_a_run_whose_steps_would_run_without_tools_is_refused_naming_them(
     findings = [f for f in body["preflight"]["findings"] if f["code"] == "WF_PRE_MODEL_NO_TOOLS"]
     assert len(findings) == 2, findings
     assert {f["kind"] for f in findings} == {"tools"}
-    assert "for Orchestration in Settings → Models" in findings[0]["remediation"]
+    assert (
+        "for Orchestration in Settings → Models & Providers → Models" in findings[0]["remediation"]
+    )
     assert sup.launched == [], "no run was launched"
 
 

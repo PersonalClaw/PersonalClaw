@@ -351,8 +351,8 @@ async def test_the_daily_dollar_cap_refuses_a_named_spawns_next_call_once_the_da
         await _turn(runtime)
     assert refused.value.sentence() == (
         f"The daily dollar budget is spent (${_price('gpt-4o'):.2f} of $0.01): raise Max "
-        "dollars / day in Settings → Guardrails (0 removes the cap), or wait for it to reset at "
-        "midnight."
+        "dollars / day in Settings → Security → Guardrails (0 removes the cap), or wait for it to "
+        "reset at midnight."
     )
 
     manager = SubagentManager(
@@ -692,6 +692,6 @@ def test_a_webhook_turn_rides_the_metered_axis_and_says_a_refusal_for_what_it_is
     assert audit == ["refused_budget_exceeded"]
     assert notes == [
         "Hook agent stopped: The daily dollar budget is spent ($5.25 of $5.00): raise Max "
-        "dollars / day in Settings → Guardrails (0 removes the cap), or wait for it to reset at "
-        "midnight."
+        "dollars / day in Settings → Security → Guardrails (0 removes the cap), or wait for it to "
+        "reset at midnight."
     ]

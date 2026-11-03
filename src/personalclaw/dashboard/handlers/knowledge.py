@@ -445,7 +445,7 @@ async def regenerate_intelligence(request: web.Request) -> web.Response:
             "model_unresolved",
             message=(
                 "No model is set up, so there is nothing to extract insights or entities "
-                "with. Connect a model in Settings → Models, then regenerate."
+                "with. Connect a model in Settings → Models & Providers → Models, then regenerate."
             ),
             status=409,
         )
@@ -977,13 +977,14 @@ def _not_compared_note(count: int) -> str:
         return (
             "1 item titled like this one was not compared with it: a different embedding model "
             "embedded it, so no score between the two would mean anything. Once the re-index in "
-            "Settings → Models has embedded both with one model, they are compared."
+            "Settings → Models & Providers → Models has embedded both with one model, they are "
+            "compared."
         )
     return (
         f"{count} items titled like this one were not compared with it: a different embedding "
         "model embedded them, so no score between them and this one would mean anything. Once "
-        "the re-index in Settings → Models has embedded them all with one model, they are "
-        "compared."
+        "the re-index in Settings → Models & Providers → Models has embedded them all with one "
+        "model, they are compared."
     )
 
 

@@ -9,7 +9,7 @@ import { Suggestions } from './Suggestions'
 // chosen for it the gateway answers the standard list and the sentence that says why
 // (`needs_model`); the widget shows it under the list as the way to Settings → Models.
 
-const NEED = 'Suggestions need a model: choose one in Settings → Models.'
+const NEED = 'Suggestions need a model: choose one in Settings → Models & Providers → Models.'
 let needs_model = NEED
 
 vi.mock('../../../lib/api', async (importActual) => {
@@ -34,7 +34,7 @@ const route: RouteProps = { sub: '', navigate: () => {}, navEpoch: 0, query: {},
 beforeEach(() => { needs_model = NEED })
 
 describe("the dashboard's Suggestions with no model chosen", () => {
-  it('lists the standard suggestions and says why, as the way to Settings → Models', async () => {
+  it('lists the standard suggestions and says why, as the way to Settings → Models & Providers → Models', async () => {
     render(<Suggestions {...route} />)
     expect(await screen.findByText('Set up a daily briefing')).toBeTruthy()
     const why = await screen.findByRole('link', { name: NEED })

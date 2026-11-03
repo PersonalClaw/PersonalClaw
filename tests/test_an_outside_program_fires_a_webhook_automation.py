@@ -425,7 +425,7 @@ async def test_a_sender_token_switched_off_in_settings_fires_nothing_until_switc
         assert status == 200, body
         status, refused = await _post(fire, headers=sent)
         assert status == 401, refused
-        assert "Settings → External Access" in refused["error"]["message"]
+        assert "Settings → Devices & Access → External access" in refused["error"]["message"]
         (row,) = [r for r in _audit(gw.home) if r["surface"] == "webhook"]
         assert "disabled" in row["refused_reason"]
 

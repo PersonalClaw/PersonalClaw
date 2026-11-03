@@ -16,7 +16,8 @@ import { harnessHome } from './runPlaces'
 // reload and re-apply it; and a list of names is edited one name at a time, so two tabs' edits both
 // land without any refusal at all. Two real pages in one browser context are the two tabs.
 
-const RULES = 'settings/tool-output'
+// Tool output is a section of Agent since #5897, and this is its address there.
+const RULES = 'settings/agent?section=tool-output'
 
 /** A same-origin call from inside a tab — the SPA's own cookie and CSRF posture, not a side door. */
 async function inTab<T>(page: Page, path: string, init?: { method: string; body?: unknown; headers?: Record<string, string> }): Promise<T> {

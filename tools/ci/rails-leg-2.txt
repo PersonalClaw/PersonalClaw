@@ -115,6 +115,7 @@ tests/rails/test_session_organize_tree.py
 tests/rails/test_source_index.py
 tests/rails/test_sqlite_compat_tree.py
 tests/rails/test_sqlite_driver_is_shared_tree.py
+tests/rails/test_settings_names_in_text_are_pages_tree.py
 tests/rails/test_sso_design_note_citations.py
 tests/rails/test_stale_write_refusals_read_right_tree.py
 tests/rails/test_stats_tree.py

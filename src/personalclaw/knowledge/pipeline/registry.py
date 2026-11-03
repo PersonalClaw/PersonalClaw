@@ -120,7 +120,10 @@ def unserved_reason_sync(use_case: str) -> str:
         if can_resolve_use_case(use_case):
             return ""
         if active_model_refs(use_case):
-            return f"The {name} model chosen in Settings → Models can't run right now."
+            return (
+                f"The {name} model chosen in Settings → Models & Providers → Models can't run "
+                "right now."
+            )
         return f"No {name} model is set up."
     except Exception:
         logger.debug("use-case resolvability check failed for %s", use_case, exc_info=True)

@@ -17,14 +17,14 @@ const REAL_BODY = {
           {
             code: 'WF_PRE_MODEL_UNRESOLVED',
             message: "no model resolves for the 'background' use case",
-            remediation: "select a model for background in Settings → Models, or change the node's model_tier",
+            remediation: "select a model for background in Settings → Models & Providers → Models, or change the node's model_tier",
             severity: 'error',
             kind: 'models',
           },
           {
             code: 'WF_PRE_MODEL_UNRESOLVED',
             message: "no model resolves for the 'orchestration' use case",
-            remediation: "select a model for orchestration in Settings → Models, or change the node's model_tier",
+            remediation: "select a model for orchestration in Settings → Models & Providers → Models, or change the node's model_tier",
             severity: 'error',
             kind: 'models',
           },
@@ -67,7 +67,7 @@ describe('preflightRemediations', () => {
   it('collapses the real refusal to one instruction — its two findings share kind: models', async () => {
     const { detail } = await errEnvelope(res(REAL_BODY))
     expect(preflightRemediations(detail)).toEqual([
-      "select a model for background in Settings → Models, or change the node's model_tier",
+      "select a model for background in Settings → Models & Providers → Models, or change the node's model_tier",
     ])
   })
 
@@ -75,16 +75,16 @@ describe('preflightRemediations', () => {
     const fixes = preflightRemediations({
       preflight: {
         findings: [
-          { kind: 'models', remediation: 'select a model for background in Settings → Models' },
-          { kind: 'credentials', remediation: 'add OPENAI_API_KEY in Settings → Providers' },
-          { kind: 'models', remediation: 'select a model for reasoning in Settings → Models' },
+          { kind: 'models', remediation: 'select a model for background in Settings → Models & Providers → Models' },
+          { kind: 'credentials', remediation: 'add OPENAI_API_KEY in Settings → Models & Providers → Providers' },
+          { kind: 'models', remediation: 'select a model for reasoning in Settings → Models & Providers → Models' },
           { kind: 'binaries', remediation: 'install rg, or edit the workflow to not need it' },
         ],
       },
     })
     expect(fixes).toEqual([
-      'select a model for background in Settings → Models',
-      'add OPENAI_API_KEY in Settings → Providers',
+      'select a model for background in Settings → Models & Providers → Models',
+      'add OPENAI_API_KEY in Settings → Models & Providers → Providers',
       'install rg, or edit the workflow to not need it',
     ])
   })
@@ -93,14 +93,14 @@ describe('preflightRemediations', () => {
     const fixes = preflightRemediations({
       preflight: {
         findings: [
-          { remediation: 'add OPENAI_API_KEY in Settings → Providers, then start the run again' },
-          { remediation: 'add OPENAI_API_KEY in Settings → Providers, then start the run again' },
+          { remediation: 'add OPENAI_API_KEY in Settings → Models & Providers → Providers, then start the run again' },
+          { remediation: 'add OPENAI_API_KEY in Settings → Models & Providers → Providers, then start the run again' },
           { remediation: 'install rg, or edit the workflow to not need it' },
         ],
       },
     })
     expect(fixes).toEqual([
-      'add OPENAI_API_KEY in Settings → Providers, then start the run again',
+      'add OPENAI_API_KEY in Settings → Models & Providers → Providers, then start the run again',
       'install rg, or edit the workflow to not need it',
     ])
   })
@@ -108,10 +108,10 @@ describe('preflightRemediations', () => {
   it('keeps a warning-severity remediation — it is still the answer to "what do I do"', () => {
     const fixes = preflightRemediations({
       preflight: {
-        findings: [{ severity: 'warning', remediation: 'check Settings → Providers if it fails' }],
+        findings: [{ severity: 'warning', remediation: 'check Settings → Models & Providers → Providers if it fails' }],
       },
     })
-    expect(fixes).toEqual(['check Settings → Providers if it fails'])
+    expect(fixes).toEqual(['check Settings → Models & Providers → Providers if it fails'])
   })
 
   it('never throws on a shape it does not expect — the error path is the worst place to crash', () => {

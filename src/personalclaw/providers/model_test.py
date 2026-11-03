@@ -128,7 +128,7 @@ def untestable_reason(use_case: str, provider_name: str) -> str:
     from personalclaw.providers.use_cases import VALID_USE_CASES, parent_capability
 
     if use_case not in VALID_USE_CASES:
-        return f"“{use_case}” isn't a use case Settings → Models lists."
+        return f"“{use_case}” isn't a use case Settings → Models & Providers → Models lists."
     capability = parent_capability(use_case)
     if capability in _NO_TEST:
         return _NO_TEST[capability]

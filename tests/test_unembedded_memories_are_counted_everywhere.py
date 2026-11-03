@@ -38,8 +38,8 @@ DAWN = "An osprey dives at dawn"
 
 #: The sentence for one memory no model embedded.
 ONE_UNEMBEDDED = (
-    "1 memory not embedded yet is read by keyword until the re-index in Settings → Models "
-    "embeds it."
+    "1 memory not embedded yet is read by keyword until the re-index in Settings → Models & "
+    "Providers → Models embeds it."
 )
 
 
@@ -97,7 +97,9 @@ def test_with_no_memory_embedded_yet_the_disclosure_says_the_recall_was_by_keywo
 
     assert (ranking["mode"], ranking["degraded"]) == ("keyword", True)
     assert ranking["summary"].startswith("Keyword-ranked only: no memory is embedded yet")
-    assert ranking["summary"].endswith(" The re-index in Settings → Models embeds the 2 memories.")
+    assert ranking["summary"].endswith(
+        " The re-index in Settings → Models & Providers → Models embeds the 2 memories."
+    )
 
 
 def test_another_models_vectors_and_the_memories_with_none_are_one_count():
@@ -118,7 +120,8 @@ def test_another_models_vectors_and_the_memories_with_none_are_one_count():
     assert stats["read_by_keyword"] == 3
     note = (
         "3 memories not embedded by the model bound now (2 by another embedding model, 1 not at "
-        "all) are read by keyword until the re-index in Settings → Models embeds them."
+        "all) are read by keyword until the re-index in Settings → Models & Providers → Models "
+        "embeds them."
     )
     assert stats["read_by_keyword_note"] == note
     assert ranking["summary"].endswith(" " + note)

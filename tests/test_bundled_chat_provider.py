@@ -797,7 +797,7 @@ def test_the_off_switch_withholds_the_floor_from_implicit_use_live(
     settings["offer_as_fallback"] = False
     assert rail.floor_entry() is not None, "the switch must not make a downloaded model unbindable"
     why, fix = rail._readiness(entry, implicit=True)
-    assert "switched off" in why and "Settings → Models" in fix
+    assert "switched off" in why and "Settings → Models & Providers → Models" in fix
     assert rail._readiness(entry, implicit=False) is None, "a binding to it still answers"
 
 
@@ -1030,7 +1030,7 @@ def test_a_row_whose_model_is_not_downloaded_is_not_a_ready_model(rail, home, li
     verdict = asyncio.run(_route(api_onboarding_model_check))
     assert verdict["ok"] is False, "the model check built a provider for a model not on disk"
     assert "not downloaded yet" in verdict["why"]
-    assert "Settings → Providers" in verdict["fix"]
+    assert "Settings → Models & Providers → Providers" in verdict["fix"]
 
 
 def test_a_binding_to_the_model_before_its_download_says_why_it_cannot_answer(
@@ -1229,10 +1229,10 @@ def test_the_not_downloaded_sentence_names_the_page_that_offers_the_download(
     message = str(raised.value)
     # Every place that offers it: onboarding's model step leads with the offer too.
     assert (
-        "start it from the chat screen, onboarding's model step, or Settings → Providers → "
-        "Bundled offline model"
+        "start it from the chat screen, onboarding's model step, or Settings → Models & Providers "
+        "→ Providers → Bundled offline model"
     ) in message, message
-    assert "Settings → Models" not in message, message
+    assert "Settings → Models & Providers → Models" not in message, message
     panel = Path(__file__).resolve().parents[1] / "web/src/pages/settings/ProvidersPanel.tsx"
     assert "<LocalModelManager" in panel.read_text(encoding="utf-8")
 
@@ -1461,7 +1461,7 @@ def test_a_source_that_cannot_answer_now_says_retry_later_not_fix_the_pin(
     assert f"HTTP {code}" in said
     assert "retry in a few minutes" in said
     assert "not a transient error" not in said and "pin needs fixing" not in said
-    assert "Settings → Models" in said
+    assert "Settings → Models & Providers → Models" in said
     assert _leftovers(target) == []
 
 
@@ -2067,7 +2067,7 @@ def test_a_message_longer_than_the_window_is_refused_before_anything_is_prefille
     text = str(refusal)
     assert rail.model_name() in text, text
     assert "tokens" in text and "characters" in text, text
-    assert "Shorten it" in text and "Settings → Models" in text, text
+    assert "Shorten it" in text and "Settings → Models & Providers → Models" in text, text
     # The numbers are this turn's own, not a template's: the message really is ~400 tokens and
     # 800 characters, and the room it is compared against is the served window minus the reply
     # reserve minus the chat template's own framing.

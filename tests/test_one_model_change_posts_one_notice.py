@@ -50,7 +50,10 @@ def models(monkeypatch):
     )
     monkeypatch.setattr(
         "personalclaw.providers.provider_bridge.use_case_problem",
-        lambda uc: ("the key was rejected", "update it in Settings → Providers"),
+        lambda uc: (
+            "the key was rejected",
+            "update it in Settings → Models & Providers → Providers",
+        ),
     )
     return state
 
@@ -78,8 +81,8 @@ def test_three_surfaces_down_at_once_are_one_notice_and_back_at_once_one_more(mo
         (
             "warning",
             "3 surfaces degraded",
-            "The key was rejected. Update it in Settings → Providers. Until then Alpha, Beta "
-            "and Gamma do only what works without a model.",
+            "The key was rejected. Update it in Settings → Models & Providers → Providers. Until "
+            "then Alpha, Beta and Gamma do only what works without a model.",
         ),
         (
             "info",

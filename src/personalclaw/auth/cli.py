@@ -309,7 +309,7 @@ def _totp_cmd(args) -> int:
             # impossible — the state `auth status` warns about, reached on purpose.
             print(
                 "❌ Login still requires a 2FA code (auth.require_totp). Turn that off first "
-                "(Settings → Login), then turn 2FA off.",
+                "(Settings → Account), then turn 2FA off.",
                 file=sys.stderr,
             )
             return 1
@@ -330,6 +330,6 @@ def _totp_cmd(args) -> int:
     print(f"    secret: {secret}")
     print(f"    uri:    {provisioning_uri(secret, user)}")
     print()
-    print("Then set `auth.require_totp` to true (Settings → Login, or config.json) to")
+    print("Then set `auth.require_totp` to true (Settings → Account, or config.json) to")
     print("require the code at login. Verify the code works BEFORE requiring it.")
     return 0

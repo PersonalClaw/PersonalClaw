@@ -41,8 +41,8 @@ describe('the chat provider half of the degraded chip', () => {
     const panel = await screen.findByRole('dialog')
     expect(panel.textContent).toContain("Your chat model's provider, my-anthropic, isn't answering.")
     expect(panel.textContent).toContain('rejected the credential (HTTP 401)')
-    const link = screen.getByRole('link', { name: /update its key in settings → providers/i })
-    expect(link.getAttribute('href')).toBe('#/settings/providers')
+    const link = screen.getByRole('link', { name: /update its key in settings → models & providers → providers/i })
+    expect(link.getAttribute('href')).toBe('#/settings/models?section=providers')
   })
 
   it('stays silent for a connected, a still-checking, or an unmeasured chat provider', async () => {
@@ -85,6 +85,6 @@ describe('the chat provider half of the degraded chip', () => {
     } as never)
     render(<DegradedChip />)
     fireEvent.click(await screen.findByRole('button', { name: /chat provider not answering/i }))
-    expect(await screen.findByRole('link', { name: /check it in settings → providers/i })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: /check it in settings → models & providers → providers/i })).toBeTruthy()
   })
 })

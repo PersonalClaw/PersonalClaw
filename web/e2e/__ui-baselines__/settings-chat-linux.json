@@ -2,6 +2,8 @@
   "dark": {
     "targets": {
       "320": [
+        "a \"Archive\"",
+        "a \"Chat\"",
         "button \"Back to Settings\"",
         "button \"Default handling: Queue\"",
         "button \"Default handling: Replace\"",
@@ -36,6 +38,8 @@
         "input \"Warm pool size\""
       ],
       "390": [
+        "a \"Archive\"",
+        "a \"Chat\"",
         "button \"Back to Settings\"",
         "button \"Default handling: Queue\"",
         "button \"Default handling: Replace\"",
@@ -70,6 +74,8 @@
         "input \"Warm pool size\""
       ],
       "412": [
+        "a \"Archive\"",
+        "a \"Chat\"",
         "button \"Back to Settings\"",
         "button \"Default handling: Queue\"",
         "button \"Default handling: Replace\"",
@@ -104,6 +110,8 @@
         "input \"Warm pool size\""
       ],
       "768": [
+        "a \"Archive\"",
+        "a \"Chat\"",
         "button \"Back to Settings\"",
         "button \"Default handling: Queue\"",
         "button \"Default handling: Replace\"",
@@ -148,6 +156,8 @@
   "light": {
     "targets": {
       "320": [
+        "a \"Archive\"",
+        "a \"Chat\"",
         "button \"Back to Settings\"",
         "button \"Default handling: Queue\"",
         "button \"Default handling: Replace\"",
@@ -182,6 +192,8 @@
         "input \"Warm pool size\""
       ],
       "390": [
+        "a \"Archive\"",
+        "a \"Chat\"",
         "button \"Back to Settings\"",
         "button \"Default handling: Queue\"",
         "button \"Default handling: Replace\"",
@@ -216,6 +228,8 @@
         "input \"Warm pool size\""
       ],
       "412": [
+        "a \"Archive\"",
+        "a \"Chat\"",
         "button \"Back to Settings\"",
         "button \"Default handling: Queue\"",
         "button \"Default handling: Replace\"",
@@ -250,6 +264,8 @@
         "input \"Warm pool size\""
       ],
       "768": [
+        "a \"Archive\"",
+        "a \"Chat\"",
         "button \"Back to Settings\"",
         "button \"Default handling: Queue\"",
         "button \"Default handling: Replace\"",

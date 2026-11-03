@@ -71,12 +71,13 @@ def _names_no_model(entry: object) -> str:
     if parsed is None or not parsed[0].strip():
         return (
             'One of the models in the chain is empty. Name it as "provider:model", or choose '
-            "one in Settings → Models."
+            "one in Settings → Models & Providers → Models."
         )
     provider = parsed[0]
     return (
         f"“{entry}” names the provider {provider} and no model. Name one as "
-        f"“{provider}:<model id>”, or choose one of its models in Settings → Models."
+        f"“{provider}:<model id>”, or choose one of its models in Settings → Models & Providers → "
+        "Models."
     )
 
 
@@ -176,7 +177,7 @@ def _cannot_serve(use_case: str, provider: str, model: str, jobs: list[str]) -> 
         return ""
     wanted = _JOB_WORDS.get(need, need)
     named = [_JOB_WORDS[j] for j in jobs if j in _JOB_WORDS]
-    choose = "Choose one of the models Settings → Models offers for it."
+    choose = "Choose one of the models Settings → Models & Providers → Models offers for it."
     if not named:
         return (
             f"{provider} lists “{model}” for nothing PersonalClaw can use it for, so it can't be "
@@ -1091,7 +1092,8 @@ async def api_model_test(request: web.Request) -> web.Response:
     if parsed is None or not parsed[0].strip() or not parsed[1].strip():
         return json_error(
             "invalid_request",
-            message='Name the model to test as "provider:model", as Settings → Models lists it.',
+            message='Name the model to test as "provider:model", as Settings → Models & '
+            "Providers → Models lists it.",
             status=400,
         )
     provider_name, model = parsed

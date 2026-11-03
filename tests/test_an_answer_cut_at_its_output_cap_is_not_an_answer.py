@@ -345,7 +345,8 @@ def test_a_consolidation_no_model_could_finish_is_owed_said_and_kept_once_one_do
             "Memory from a chat isn't saved yet",
             f"PersonalClaw couldn't save what it learned from “{TITLE}” to memory: {HERE_REF} "
             "ran out of output room before it finished its answer (4,096 tokens). It tries again "
-            "later. To give it room, raise the Background output limit in Settings → Models.",
+            "later. To give it room, raise the Background output limit in Settings → Models & "
+            "Providers → Models.",
         )
     ], "said once, when it was first owed"
 
@@ -383,7 +384,7 @@ def test_a_model_whose_own_limit_is_the_smaller_is_named_as_the_one_to_raise(
     ((_kind, _title, body),) = notices
     assert body.endswith(
         "To give it room, raise that model's own output limit where its provider's settings have "
-        "one, or add another model to Background in Settings → Models."
+        "one, or add another model to Background in Settings → Models & Providers → Models."
     ), body
 
 

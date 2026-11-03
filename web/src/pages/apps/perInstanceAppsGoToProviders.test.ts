@@ -20,10 +20,10 @@ const code = strip(readFileSync(resolve(__dirname, 'AppsSection.tsx'), 'utf8'))
 const apps = readFileSync(resolve(__dirname, '../../../../src/personalclaw/dashboard/handlers/apps.py'), 'utf8')
 
 describe('Configure on an app configured per instance', () => {
-  it('routes to Settings → Providers instead of opening a form the gateway refuses', () => {
+  it('routes to Settings → Models & Providers → Providers instead of opening a form the gateway refuses', () => {
     const configure = code.slice(code.indexOf("case 'configure':"), code.indexOf("case 'update':"))
     expect(configure, 'the per-instance branch comes first').toMatch(
-      /if \(app\.configuredPerInstance\) \{ nav\('settings\/providers'\); return \}[\s\S]*setConfigFor/,
+      /if \(app\.configuredPerInstance\) \{ nav\('settings\/models\?section=providers'\); return \}[\s\S]*setConfigFor/,
     )
   })
 
@@ -37,7 +37,7 @@ describe('Configure on an app configured per instance', () => {
   it('names the action for what it does, on every surface that offers it', () => {
     // The card menu (native + non-native), the context menu, and the detail panel.
     expect((code.match(/Manage instances/g) ?? []).length).toBeGreaterThanOrEqual(5)
-    expect(code).toMatch(/onManageInstances=\{\(\) => nav\('settings\/providers'\)\}/)
+    expect(code).toMatch(/onManageInstances=\{\(\) => nav\('settings\/models\?section=providers'\)\}/)
   })
 
   it('the flag it follows is the one the gateway sends', () => {

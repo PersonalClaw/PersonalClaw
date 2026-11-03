@@ -19,7 +19,7 @@ function Host() {
 
 const REASON =
   'Speech-to-text with Amazon Transcribe needs an S3 bucket to upload each recording to. Set S3 ' +
-  'Bucket on this Amazon Bedrock instance in Settings → Providers (under Advanced), or the ' +
+  'Bucket on this Amazon Bedrock instance in Settings → Models & Providers → Providers (under Advanced), or the ' +
   'BEDROCK_VIDEO_S3_BUCKET environment variable, then try again.'
 
 beforeEach(() => { vi.useFakeTimers() })

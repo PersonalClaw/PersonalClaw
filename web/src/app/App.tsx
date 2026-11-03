@@ -526,7 +526,7 @@ function AppInner() {
       // device out or suspending unattended work runs on nothing setup asks, and cannot wait for it.
       // No redirect, and no destination recorded, since nothing was deferred; one recorded earlier
       // stays pending, because a visit here is not the end of setup.
-      if (opensDuringSetup(route, sub)) return
+      if (opensDuringSetup(route, sub, query.section)) return
       if (route !== 'onboarding') {
         if (ROUTABLE.has(route) && route !== 'dashboard') {
           const path = [route, sub].filter(Boolean).join('/')
@@ -675,7 +675,7 @@ function AppInner() {
   // the toast and dialog hosts: every control here asks before it acts and reports how it went, and a
   // confirmation with no host to render it never resolves, which leaves the control doing nothing.
   // No shell corners are drawn, so the page header keeps none of their room (as in embed mode).
-  if ((!onboarded || setupRerun) && opensDuringSetup(route, sub)) {
+  if ((!onboarded || setupRerun) && opensDuringSetup(route, sub, query.section)) {
     return (
       <div className="flex h-full flex-col" style={{
         background: 'var(--color-canvas)',

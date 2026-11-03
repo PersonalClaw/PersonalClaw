@@ -360,7 +360,7 @@ def test_personalclaw_doctor_prints_the_deficit_and_its_blocker(tmp_path, monkey
     assert "Maintenance" in out, "the doctor grew no maintenance section"
     assert "knowledge missing embeddings ×25" in out, f"the measured backlog is not printed:\n{out}"
     assert "no embedding model is bound" in out, f"the blocker is not printed:\n{out}"
-    assert "Settings → Models" in out, "the next step is not printed"
+    assert "Settings → Models & Providers → Models" in out, "the next step is not printed"
 
 
 def test_the_cost_exemption_expires_when_a_priced_job_appears():

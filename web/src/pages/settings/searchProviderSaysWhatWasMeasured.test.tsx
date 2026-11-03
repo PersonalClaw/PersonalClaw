@@ -107,7 +107,7 @@ describe("a provider's Test", () => {
   })
 })
 
-describe('Settings › Providers shows the same state and Test on the app', () => {
+describe('Settings › Models & Providers › Providers shows the same state and Test on the app', () => {
   it("puts the provider's state and its Test on the search app's card", async () => {
     const { SearchProviderCheck } = await import('./searchProviderState')
     testSearchProvider.mockResolvedValue(brave({ check: { state: 'failed', detail: REFUSED, checked_at: 1 } }))

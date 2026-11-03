@@ -419,7 +419,10 @@ async def web_extract(
             url=fetched.url,
             title=fetched.title,
             error=f"extraction model call failed: {exc}",
-            recovery_hints=["Ensure a chat/reasoning model is configured in Settings → Models."],
+            recovery_hints=[
+                "Ensure a chat/reasoning model is configured in Settings → Models & "
+                "Providers → Models."
+            ],
         )
 
     # Guaranteed parseable (output_type=dict succeeded, possibly after the retry).

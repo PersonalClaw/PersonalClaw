@@ -132,7 +132,7 @@ describe('what stays the JSON editor', () => {
   })
 })
 
-describe('Settings › Providers edits the same lists the same way', () => {
+describe('Settings › Models & Providers › Providers edits the same lists the same way', () => {
   it('renders a list of records as rows, with the caption naming the group', () => {
     const onChange = vi.fn()
     render(

@@ -533,7 +533,7 @@ def _announce_set_aside(
     if held_memories:
         after = (
             "The memories this folder kept in it are in that file: restore them from a snapshot "
-            "under Settings → Durability, or recover them from the file."
+            "under Settings → Backups & Data → Backups, or recover them from the file."
         )
     elif rebuilt:
         after = "Keyword search was rebuilt from the memory files, so nothing is missing."

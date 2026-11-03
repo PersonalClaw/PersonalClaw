@@ -69,7 +69,7 @@ beforeEach(() => { vi.resetModules(); sessionStorage.clear() })
 
 describe('the badge is a measurement', () => {
   it('a keyless instance whose test failed never reads "Configured"', async () => {
-    await mount({ providers: [instance({ connection: conn('failed', 'No API key or endpoint configured for this provider — set its endpoint (and key, if the endpoint needs one) in Settings → Providers.') })] })
+    await mount({ providers: [instance({ connection: conn('failed', 'No API key or endpoint configured for this provider — set its endpoint (and key, if the endpoint needs one) in Settings → Models & Providers → Providers.') })] })
 
     await screen.findByText('my-openai')
     expect(screen.queryByText('Configured'), 'the presence badge').toBeNull()

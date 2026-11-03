@@ -97,12 +97,12 @@ supervisor's judge still runs on the model its use case binds (`loops.judge_use_
   loop again, a plan's start and retry, and the agent's create and start tools answer
   `422 loop_model_cannot_use_tools`, naming the model and where to choose another ("This loop
   can't do its work: “…” can't use tools, and its worker does everything with them (a cycle counts
-  only for the finding it writes). Choose a model that uses tools for Loops in Settings → Models.";
+  only for the finding it writes). Choose a model that uses tools for Loops in Settings → Models & Providers → Models.";
   the loop itself, or its agent's page, when the model is the loop's own or its agent's pin;
   `loop/validation.worker_tools_blocker`). The model asked is the one the worker would run on,
   built the way its runtime builds it with no call made
   (`providers/provider_bridge.model_without_tools`), and asked through the one reader of what a
-  provider declares (`llm/tool_use.uses_tools`). Settings → Models refuses to bind Loops to such a
+  provider declares (`llm/tool_use.uses_tools`). Settings → Models & Providers → Models refuses to bind Loops to such a
   model (`400 model_cannot_use_tools`); Chat may still be bound to one. A loop on an agent CLI is
   not asked: the CLI brings its own tools. A `general` loop runs as a workflow whose steps run on
   Orchestration, so it is refused for that model, as its run's start would be
@@ -297,7 +297,7 @@ stretch's `started_at` (the trust window and deadline are measured from it), and
 credited-cycle baseline is durable (`credited.json`), so a restart neither resets elapsed time nor
 re-credits a cycle.
 
-Incident mode (`personalclaw incident on`, or Settings → Guardrails) **holds** a running loops-table
+Incident mode (`personalclaw incident on`, or Settings → Security → Guardrails) **holds** a running loops-table
 loop, the way it suspends cron, hooks, triggers and app workers. The idle runtime fires no nudge row
 while the switch is on (`triggers/idle_poll.py`, skip reason `incident_active`), so no cycle starts;
 the watchdog stops the turn in flight on every worker through the same stop a pause uses and does no
@@ -311,7 +311,7 @@ deadline restarts at the release), and a turn the hold stopped is not counted as
 The gateway watches the switch (`guardrails/incident.watch`) and sends the `refresh` hint naming
 `incident` and `loops` when it moves, the CLI's flips included, so open pages re-read at once.
 
-A spend ceiling (Settings → Guardrails → Daily budget) that refuses a loop's call **pauses** the loop
+A spend ceiling (Settings → Security → Guardrails → Daily budget) that refuses a loop's call **pauses** the loop
 rather than failing it. The refused session's nudge loop is switched off at once
 (`AutoNudgeService.notify_turn_complete(refused=True)`), so the same refused call is not sent again.
 A running loop waits as `needs_input`, its question being the refusal's own sentence (which ceiling,
@@ -324,7 +324,7 @@ notification (`loop/spend_cap.py`), and the loop's page shows it in place of "Dr
 question, with a link to the Settings page and Resume. Chat, a workflow step and a subagent say the
 same sentence (`guardrails.failure.budget_refusal`).
 
-A loop let start on a model that uses tools can still come to run without them: Settings → Models
+A loop let start on a model that uses tools can still come to run without them: Settings → Models & Providers → Models
 moved Loops (or Chat, which an unbound Loops borrows) onto a model that can't, a later model of the
 chain served in place of the head, or a model refused the tools a call offered it (a local server
 answers a model that can't use them so, and its provider retries without them). Such a cycle
@@ -337,8 +337,8 @@ and the loop waits as `needs_input` (`watchdog.LoopWatchdog.hold_without_tools`)
 naming the model and where to choose another as its question (`no_tools: true`), ONE Inbox item
 and its notification ("Loop paused — its model can't use tools"), and a `no_tools` event, every
 worker's nudge loop switched off, kept. The workers that ran without tools are reset, so a Resume
-builds them from Settings → Models as it reads then, and a Resume is let through only once that
-model uses tools. The loop's page shows the pause, with a link to Settings → Models and Resume, in
+builds them from Settings → Models & Providers → Models as it reads then, and a Resume is let through only once that
+model uses tools. The loop's page shows the pause, with a link to Settings → Models & Providers → Models and Resume, in
 place of a question.
 
 A workflow run, and so a general loop, is held the same way (`workflows/incident_hold.py`). On its
@@ -415,7 +415,7 @@ puts no clock of its own on a call whose provider instance keeps one (`ModelProv
 an Ollama instance's Request Timeout, the wait for the first word and then between the parts of the
 answer); for a provider that keeps none it stops the call at 300 s. A call stopped either way says
 which model on which instance, how long it waited, and that a faster model can be bound to Loops in
-Settings → Models (`guardrails.failure.ModelCallTimeout`). On a local model the call first waits for
+Settings → Models & Providers → Models (`guardrails.failure.ModelCallTimeout`). On a local model the call first waits for
 its turn ([overview.md](overview.md#a-local-model-takes-one-call-at-a-time-yours-first)), and that
 wait counts against the same limit.
 

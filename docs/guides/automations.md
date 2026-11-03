@@ -378,8 +378,8 @@ needs your yes. Its page there shows two things:
 - **Its sender tokens.** A program fires the automation with a token made for it, sent as the
   header `Authorization: Bearer <sender token>`. **Make a sender token** shows the token once,
   with a command that tries it from this machine. It is kept only as a hash, works at most 90
-  days, and fires this automation and nothing else. The page and Settings → Devices list it and
-  revoke it, and Settings → External Access lists it, switches it off and revokes it. From a
+  days, and fires this automation and nothing else. The page and Settings → Devices & Access → Devices list it and
+  revoke it, and Settings → Devices & Access → External Access lists it, switches it off and revokes it. From a
   terminal: `personalclaw inbound webhook
   create store:webhook:<name>`, `personalclaw inbound webhook list` and `personalclaw inbound
   webhook revoke <id>`. Deleting the automation revokes its sender tokens.
@@ -396,7 +396,7 @@ says why, in a sentence: `401` for no token or one PersonalClaw does not know (a
 was revoked or ran its lifetime, saying so), `403` for a token made for another automation, a
 request from another machine, or an action you have not allowed yet, `404` when the automation is
 switched off or not there, `429` when a sender posts faster than its rate, and `503` during an
-incident. Every request the address answers is in the inbound audit (Settings → External Access
+incident. Every request the address answers is in the inbound audit (Settings → Devices & Access → External Access
 counts each sender token's), and every refusal and accepted fire is in the Security log.
 
 A program that may send a post again (it retries one whose answer it never got) names each post
@@ -415,7 +415,7 @@ same name again for the same `sessionKey`, within a week, answers `already_recei
 
 | | |
 |---|---|
-| **Checked on** | the automation's page (its address and sender tokens), its run history, Settings → External Access, and the Security log |
+| **Checked on** | the automation's page (its address and sender tokens), its run history, Settings → Devices & Access → External Access, and the Security log |
 | **The setting** | none: its sender tokens, and its own switch |
 
 - `src/personalclaw/inbound/webhook.py` — the two addresses, the rules both keep, and their words.

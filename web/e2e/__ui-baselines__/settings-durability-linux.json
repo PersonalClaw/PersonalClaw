@@ -2,13 +2,22 @@
   "dark": {
     "targets": {
       "320": [
+        "a \"Backups\"",
+        "a \"Documents\"",
+        "a \"Import / Export\"",
         "button \"Back to Settings\"",
+        "button \"Choose a file first\"",
+        "button \"Choose archive…\"",
+        "button \"Export everything\"",
+        "button \"Export knowledge\"",
+        "button \"Export memory\"",
         "button \"Export\"",
         "button \"Merge-restore: personalclaw-snapshot-#T#Z.tar.gz\"",
         "button \"Preview restore: personalclaw-snapshot-#T#Z.tar.\"",
         "button \"Snapshot\"",
         "button \"Verify a restore\"",
         "button[role=switch] \"Automatic backups\"",
+        "button[role=switch] \"Edit documents in place\"",
         "button[role=switch] \"Keep a local edit history\"",
         "button[role=switch] \"Monthly restore drill\"",
         "button[role=switch] \"Only what changed while I slept\"",
@@ -20,13 +29,22 @@
         "select \"Encrypt shards\""
       ],
       "390": [
+        "a \"Backups\"",
+        "a \"Documents\"",
+        "a \"Import / Export\"",
         "button \"Back to Settings\"",
+        "button \"Choose a file first\"",
+        "button \"Choose archive…\"",
+        "button \"Export everything\"",
+        "button \"Export knowledge\"",
+        "button \"Export memory\"",
         "button \"Export\"",
         "button \"Merge-restore: personalclaw-snapshot-#T#Z.tar.gz\"",
         "button \"Preview restore: personalclaw-snapshot-#T#Z.tar.\"",
         "button \"Snapshot\"",
         "button \"Verify a restore\"",
         "button[role=switch] \"Automatic backups\"",
+        "button[role=switch] \"Edit documents in place\"",
         "button[role=switch] \"Keep a local edit history\"",
         "button[role=switch] \"Monthly restore drill\"",
         "button[role=switch] \"Only what changed while I slept\"",
@@ -38,13 +56,22 @@
         "select \"Encrypt shards\""
       ],
       "412": [
+        "a \"Backups\"",
+        "a \"Documents\"",
+        "a \"Import / Export\"",
         "button \"Back to Settings\"",
+        "button \"Choose a file first\"",
+        "button \"Choose archive…\"",
+        "button \"Export everything\"",
+        "button \"Export knowledge\"",
+        "button \"Export memory\"",
         "button \"Export\"",
         "button \"Merge-restore: personalclaw-snapshot-#T#Z.tar.gz\"",
         "button \"Preview restore: personalclaw-snapshot-#T#Z.tar.\"",
         "button \"Snapshot\"",
         "button \"Verify a restore\"",
         "button[role=switch] \"Automatic backups\"",
+        "button[role=switch] \"Edit documents in place\"",
         "button[role=switch] \"Keep a local edit history\"",
         "button[role=switch] \"Monthly restore drill\"",
         "button[role=switch] \"Only what changed while I slept\"",
@@ -56,7 +83,15 @@
         "select \"Encrypt shards\""
       ],
       "768": [
+        "a \"Backups\"",
+        "a \"Documents\"",
+        "a \"Import / Export\"",
         "button \"Back to Settings\"",
+        "button \"Choose a file first\"",
+        "button \"Choose archive…\"",
+        "button \"Export everything\"",
+        "button \"Export knowledge\"",
+        "button \"Export memory\"",
         "button \"Export\"",
         "button \"Merge-restore: personalclaw-snapshot-#T#Z.tar.gz\"",
         "button \"Preview restore: personalclaw-snapshot-#T#Z.tar.\"",
@@ -64,6 +99,7 @@
         "button \"Snapshot\"",
         "button \"Verify a restore\"",
         "button[role=switch] \"Automatic backups\"",
+        "button[role=switch] \"Edit documents in place\"",
         "button[role=switch] \"Keep a local edit history\"",
         "button[role=switch] \"Monthly restore drill\"",
         "button[role=switch] \"Only what changed while I slept\"",
@@ -78,19 +114,31 @@
     "known": {
       "200% text zoom": [
         "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
+      ],
+      "focus order": [
+        "focus moves backwards from <select#<react id> .w-full.appearance-none.rounded-md> \"Encrypt shards\" to <button .relative.inline-flex.shrink-#> \"Export everything\""
       ]
     }
   },
   "light": {
     "targets": {
       "320": [
+        "a \"Backups\"",
+        "a \"Documents\"",
+        "a \"Import / Export\"",
         "button \"Back to Settings\"",
+        "button \"Choose a file first\"",
+        "button \"Choose archive…\"",
+        "button \"Export everything\"",
+        "button \"Export knowledge\"",
+        "button \"Export memory\"",
         "button \"Export\"",
         "button \"Merge-restore: personalclaw-snapshot-#T#Z.tar.gz\"",
         "button \"Preview restore: personalclaw-snapshot-#T#Z.tar.\"",
         "button \"Snapshot\"",
         "button \"Verify a restore\"",
         "button[role=switch] \"Automatic backups\"",
+        "button[role=switch] \"Edit documents in place\"",
         "button[role=switch] \"Keep a local edit history\"",
         "button[role=switch] \"Monthly restore drill\"",
         "button[role=switch] \"Only what changed while I slept\"",
@@ -102,13 +150,22 @@
         "select \"Encrypt shards\""
       ],
       "390": [
+        "a \"Backups\"",
+        "a \"Documents\"",
+        "a \"Import / Export\"",
         "button \"Back to Settings\"",
+        "button \"Choose a file first\"",
+        "button \"Choose archive…\"",
+        "button \"Export everything\"",
+        "button \"Export knowledge\"",
+        "button \"Export memory\"",
         "button \"Export\"",
         "button \"Merge-restore: personalclaw-snapshot-#T#Z.tar.gz\"",
         "button \"Preview restore: personalclaw-snapshot-#T#Z.tar.\"",
         "button \"Snapshot\"",
         "button \"Verify a restore\"",
         "button[role=switch] \"Automatic backups\"",
+        "button[role=switch] \"Edit documents in place\"",
         "button[role=switch] \"Keep a local edit history\"",
         "button[role=switch] \"Monthly restore drill\"",
         "button[role=switch] \"Only what changed while I slept\"",
@@ -120,13 +177,22 @@
         "select \"Encrypt shards\""
       ],
       "412": [
+        "a \"Backups\"",
+        "a \"Documents\"",
+        "a \"Import / Export\"",
         "button \"Back to Settings\"",
+        "button \"Choose a file first\"",
+        "button \"Choose archive…\"",
+        "button \"Export everything\"",
+        "button \"Export knowledge\"",
+        "button \"Export memory\"",
         "button \"Export\"",
         "button \"Merge-restore: personalclaw-snapshot-#T#Z.tar.gz\"",
         "button \"Preview restore: personalclaw-snapshot-#T#Z.tar.\"",
         "button \"Snapshot\"",
         "button \"Verify a restore\"",
         "button[role=switch] \"Automatic backups\"",
+        "button[role=switch] \"Edit documents in place\"",
         "button[role=switch] \"Keep a local edit history\"",
         "button[role=switch] \"Monthly restore drill\"",
         "button[role=switch] \"Only what changed while I slept\"",
@@ -138,7 +204,15 @@
         "select \"Encrypt shards\""
       ],
       "768": [
+        "a \"Backups\"",
+        "a \"Documents\"",
+        "a \"Import / Export\"",
         "button \"Back to Settings\"",
+        "button \"Choose a file first\"",
+        "button \"Choose archive…\"",
+        "button \"Export everything\"",
+        "button \"Export knowledge\"",
+        "button \"Export memory\"",
         "button \"Export\"",
         "button \"Merge-restore: personalclaw-snapshot-#T#Z.tar.gz\"",
         "button \"Preview restore: personalclaw-snapshot-#T#Z.tar.\"",
@@ -146,6 +220,7 @@
         "button \"Snapshot\"",
         "button \"Verify a restore\"",
         "button[role=switch] \"Automatic backups\"",
+        "button[role=switch] \"Edit documents in place\"",
         "button[role=switch] \"Keep a local edit history\"",
         "button[role=switch] \"Monthly restore drill\"",
         "button[role=switch] \"Only what changed while I slept\"",
@@ -160,6 +235,9 @@
     "known": {
       "200% text zoom": [
         "<nav> \"PersonalClawChatProjectsLibraryChat hist\" clips at #%: #x# in #x#"
+      ],
+      "focus order": [
+        "focus moves backwards from <select#<react id> .w-full.appearance-none.rounded-md> \"Encrypt shards\" to <button .relative.inline-flex.shrink-#> \"Export everything\""
       ]
     }
   }

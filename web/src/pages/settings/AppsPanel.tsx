@@ -42,7 +42,7 @@ export function AppsPanel({ navigate }: { navigate?: (p: string) => void }) {
     <div>
       <PanelHeader
         title="Apps"
-        hint="Where apps come from, plus the settings installed apps contribute — all in one place. Provider apps are configured under Settings › Providers; everything else lives here."
+        hint="Where apps come from, plus the settings installed apps contribute — all in one place. Provider apps are configured under Settings › Models & Providers › Providers; everything else lives here."
       />
 
       {/* Store sources is `apps.*` config, not per-app config, so it renders on its own read.

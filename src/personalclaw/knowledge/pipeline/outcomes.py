@@ -122,7 +122,7 @@ def model_fix(use_case: str) -> Fix:
 def _models_fix(use_cases: list[str]) -> Fix:
     names = _one_of([use_case_name(uc) for uc in use_cases])
     return Fix(
-        f"Choose a model for {names} in Settings → Models",
+        f"Choose a model for {names} in Settings → Models & Providers → Models",
         MODELS_HREF,
         use_case=",".join(use_cases),
     )

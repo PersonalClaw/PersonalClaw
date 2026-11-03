@@ -218,8 +218,9 @@ def test_an_agent_pinned_to_a_missing_model_says_which_model_it_ran_on(active):
     assert runtime.served_model_ref == LIVE_REF
     assert note.sentence() == (
         "ran on fake-oai:fake-model-1 instead of Researcher's model fake-oai:no-such-model: "
-        "it is not one of the chat models set up in Settings → Models. Pick another model for "
-        "Researcher on the Agents page, or add it in Settings → Models"
+        "it is not one of the chat models set up in Settings → Models & Providers → Models. Pick "
+        "another model for Researcher on the Agents page, or add it in Settings → Models & "
+        "Providers → Models"
     )
     # The user's choice is KEPT: nothing rewrote the pin.
     assert AppConfig.load().agents["Researcher"].model == "fake-oai:no-such-model"
@@ -349,8 +350,9 @@ def _substitution():
     return ModelSubstitution(
         requested="fake-oai:no-such-model",
         served=LIVE_REF,
-        why="it is not one of the chat models set up in Settings → Models",
-        fix="pick another model for Researcher on the Agents page, or add it in Settings → Models",
+        why="it is not one of the chat models set up in Settings → Models & Providers → Models",
+        fix="pick another model for Researcher on the Agents page, or add it in Settings → "
+        "Models & Providers → Models",
         who="Researcher's model",
     )
 
@@ -413,8 +415,9 @@ async def test_a_chat_turn_on_a_substitute_says_so_before_the_reply_and_on_it(tm
     lines, replies = await _chat_turn(tmp_path, substitution=_substitution())
     expected = (
         "Ran on fake-oai:fake-model-1 instead of Researcher's model fake-oai:no-such-model: it "
-        "is not one of the chat models set up in Settings → Models. Pick another model for "
-        "Researcher on the Agents page, or add it in Settings → Models."
+        "is not one of the chat models set up in Settings → Models & Providers → Models. Pick "
+        "another model for Researcher on the Agents page, or add it in Settings → Models & "
+        "Providers → Models."
     )
     assert lines == [expected]
     assert replies[-1]["meta"]["model_substitution"] == expected
@@ -449,8 +452,8 @@ def test_the_agents_page_marks_a_pin_that_cannot_run_and_keeps_it(active):
     rows = {a["name"]: a for a in body["agents"]}
     assert rows["Researcher"]["model"] == "fake-oai:no-such-model"
     assert rows["Researcher"]["model_unavailable"] == {
-        "why": "it is not one of the chat models set up in Settings → Models",
-        "fix": "add it in Settings → Models",
+        "why": "it is not one of the chat models set up in Settings → Models & Providers → Models",
+        "fix": "add it in Settings → Models & Providers → Models",
     }
     assert rows["Writer"]["model_unavailable"] is None
 
@@ -579,6 +582,6 @@ def test_a_room_s_members_panel_marks_a_pin_that_cannot_run(active):
     rows = {b["name"]: b for b in _member_bindings(room)}
     assert rows["Researcher"]["model"] == "fake-oai:no-such-model"
     assert rows["Researcher"]["model_unavailable"]["why"] == (
-        "it is not one of the chat models set up in Settings → Models"
+        "it is not one of the chat models set up in Settings → Models & Providers → Models"
     )
     assert rows["Writer"]["model_unavailable"] is None

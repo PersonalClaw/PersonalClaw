@@ -215,9 +215,9 @@ export function DegradedChip({ className }: {
                   <div data-type="caption" className="mt-0.5 text-on-surface-var">{providerDown.detail}</div>
                 )}
                 <div className="mt-1">
-                  <TextLink href="#/settings/providers" icon={ArrowRight} iconPosition="trailing" size="xs"
+                  <TextLink href="#/settings/models?section=providers" icon={ArrowRight} iconPosition="trailing" size="xs"
                     onClick={() => { setOpen(false); triggerRef.current?.focus() }}>
-                    {providerDown.rejected_credential ? 'Update its key in Settings → Providers' : 'Check it in Settings → Providers'}
+                    {providerDown.rejected_credential ? 'Update its key in Settings → Models & Providers → Providers' : 'Check it in Settings → Models & Providers → Providers'}
                   </TextLink>
                 </div>
               </div>
@@ -257,7 +257,7 @@ export function DegradedChip({ className }: {
               <div className="mb-2 border-b border-outline-variant/30 pb-2">
                 <TextLink href="#/settings/models" icon={ArrowRight} iconPosition="trailing" size="xs"
                   onClick={() => { setOpen(false); triggerRef.current?.focus() }}>
-                  {choose ? 'Choose a model in Settings → Models' : 'Bind a model in Settings → Models'}
+                  {choose ? 'Choose a model in Settings → Models & Providers → Models' : 'Bind a model in Settings → Models & Providers → Models'}
                 </TextLink>
               </div>
             )}

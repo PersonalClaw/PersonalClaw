@@ -298,7 +298,8 @@ def _check_models(spec: dict[str, Any], result: PreflightResult, probe: Any) -> 
                 Finding(
                     code="WF_PRE_MODELS_UNVERIFIABLE",
                     message="could not check model availability",
-                    remediation="the run may still work; check Settings → Models if it fails",
+                    remediation="the run may still work; check Settings → Models & Providers → "
+                    "Models if it fails",
                     severity=SEVERITY_WARNING,
                     kind="models",
                 )
@@ -317,8 +318,8 @@ def _check_models(spec: dict[str, Any], result: PreflightResult, probe: Any) -> 
                     code="WF_PRE_MODEL_UNRESOLVED",
                     message=f"no model resolves for the {use_case!r} use case",
                     remediation=(
-                        f"select a model for {use_case} in Settings → Models, or change the "
-                        "node's model_tier"
+                        f"select a model for {use_case} in Settings → Models & Providers → Models, "
+                        "or change the node's model_tier"
                     ),
                     kind="models",
                 )
@@ -382,7 +383,7 @@ def provider_requirement_gap(spec: dict[str, Any]) -> list[Finding]:
                 ),
                 remediation=(
                     "if a node fails on a missing credential the provider needs, add it in "
-                    "Settings → Providers and start the run again"
+                    "Settings → Models & Providers → Providers and start the run again"
                 ),
                 severity=SEVERITY_WARNING,
                 kind="action_providers",
@@ -518,8 +519,8 @@ def no_tools_finding(step: str, model: str) -> Finding:
             f"{cannot_use_tools(model)}"
         ),
         remediation=(
-            "choose a model that uses tools for Orchestration in Settings → Models, or give the "
-            "step one that does"
+            "choose a model that uses tools for Orchestration in Settings → Models & Providers → "
+            "Models, or give the step one that does"
         ),
         kind="tools",
     )

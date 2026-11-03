@@ -155,7 +155,8 @@ class TestMaybeFollowups:
                 {
                     "session": session.key,
                     "items": [],
-                    "needs_model": "Follow-ups need a model: choose one in Settings → Models.",
+                    "needs_model": "Follow-ups need a model: choose one in Settings → Models & "
+                    "Providers → Models.",
                 },
             )
         ]

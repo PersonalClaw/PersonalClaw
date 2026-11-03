@@ -88,7 +88,7 @@ describe('a pasted list', () => {
     expect(set).toHaveBeenLastCalledWith('allow_senders', ['1289011223344556677', '1052983746291048451'])
   })
 
-  it('is taken the same way in Settings › Providers', async () => {
+  it('is taken the same way in Settings › Models & Providers › Providers', async () => {
     const onChange = vi.fn()
     function Form() {
       const [v, setV] = useState<unknown>([])
@@ -179,7 +179,7 @@ describe('Save', () => {
   })
 })
 
-describe('Settings › Providers refuses the same save', () => {
+describe('Settings › Models & Providers › Providers refuses the same save', () => {
   it('disables Save with the field named while its JSON does not parse', async () => {
     const saveProviderConfig = vi.fn(() => Promise.resolve({ config: {}, _secret_set: [], revision: 'rev-2' }))
     vi.doMock('../../lib/api', async (orig) => ({

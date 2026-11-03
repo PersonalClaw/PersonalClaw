@@ -207,7 +207,7 @@ def _configured_per_instance(ext: Any) -> web.Response | None:
     return web.json_response(
         {
             "error": f"{who} keeps its settings on each instance, not on the app. Add, edit, "
-            "test or remove its instances in Settings → Providers."
+            "test or remove its instances in Settings → Models & Providers → Providers."
         },
         status=409,
     )

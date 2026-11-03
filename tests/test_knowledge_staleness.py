@@ -404,7 +404,8 @@ def test_a_synthesis_its_model_cut_at_its_output_cap_is_not_filed(store, queue, 
     assert body["error"] == (
         "relay:swift ran out of output room before it finished its answer (8,192 tokens), so "
         "there is no synthesis to propose — give it more output room where its provider's "
-        "settings have one, or bind another model for the reasoning use case in Settings → Models"
+        "settings have one, or bind another model for the reasoning use case in Settings → Models "
+        "& Providers → Models"
     )
     assert _pending(queue, insight) == []
 

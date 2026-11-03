@@ -7,7 +7,7 @@ import { mergedCopy } from './DurabilityPanel'
 // had left the whole knowledge library as it was. The gateway names each part it left unchanged,
 // and the toast says them.
 
-describe('Settings → Backups, a merge restore', () => {
+describe('Settings → Backups & Data → Backups, a merge restore', () => {
   it('says it merged when every part came in', () => {
     expect(mergedCopy('personalclaw-snapshot-20260930T070105Z.tar.gz', { ok: true, left_unchanged: [], restart: 'Restart the gateway.' }))
       .toBe('Merged personalclaw-snapshot-20260930T070105Z.tar.gz. Restart the gateway.')

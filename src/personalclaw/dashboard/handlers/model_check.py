@@ -184,7 +184,8 @@ def _envelope(e: Exception) -> dict[str, str]:
         "code": "ERR_MODEL_UNRESOLVED",
         "what": f"no model provider resolves for use case {_USE_CASE!r}",
         "why": detail,
-        "fix": "add or fix a model provider in Settings → Providers, then bind chat to it",
+        "fix": "add or fix a model provider in Settings → Models & Providers → Providers, then "
+        "bind chat to it",
     }
 
 
@@ -202,7 +203,7 @@ def _unexpected(e: Exception) -> dict[str, str]:
         "why": f"{type(e).__name__}: {redact_for_display(str(e))}".strip().rstrip(":"),
         "fix": (
             "check the gateway log for the traceback, then correct or re-add the provider "
-            "in Settings → Providers"
+            "in Settings → Models & Providers → Providers"
         ),
     }
 

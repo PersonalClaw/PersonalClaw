@@ -138,15 +138,16 @@ REASON_REMEDY: dict[str, str] = {
     NO_EXTRACTABLE_TEXT: (
         "Install an OCR app or bind a vision model and re-ingest, or add a text version."
     ),
-    NO_EMBEDDING_PROVIDER: "Bind an embedding model in Settings → Models, then re-index.",
+    NO_EMBEDDING_PROVIDER: "Bind an embedding model in Settings → Models & Providers → Models, "
+    "then re-index.",
     NOT_INDEXED: "Re-ingest, and check the embedding provider's health in Doctor.",
     AWAITING_EMBEDDING: (
         "Run now under Maintenance on the Doctor page, or the embedding re-index in Settings → "
-        "Models, embeds it; nothing needs re-ingesting."
+        "Models & Providers → Models, embeds it; nothing needs re-ingesting."
     ),
     STALE_INDEX: (
-        "Run the embedding re-index (Settings → Models) to rebuild the vectors; nothing "
-        "needs re-ingesting."
+        "Run the embedding re-index (Settings → Models & Providers → Models) to rebuild the "
+        "vectors; nothing needs re-ingesting."
     ),
 }
 

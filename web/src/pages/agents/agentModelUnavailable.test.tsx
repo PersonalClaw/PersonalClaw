@@ -34,8 +34,8 @@ import { NativeAgentDetail } from './AgentDetail'
 import { AgentForm, toDraft } from './AgentForm'
 
 const PIN = 'fake-oai:no-such-model'
-const WHY = 'it is not one of the chat models set up in Settings → Models'
-const FIX = 'add it in Settings → Models'
+const WHY = 'it is not one of the chat models set up in Settings → Models & Providers → Models'
+const FIX = 'add it in Settings → Models & Providers → Models'
 
 const researcher = (unavailable = true): SavedAgent =>
   ({

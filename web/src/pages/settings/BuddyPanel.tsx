@@ -162,7 +162,7 @@ export function BuddyPanel() {
             : <p data-type="body-s" className="text-on-surface">{policy ? postureLine(policy.notifications) : 'Reading your notification settings…'}</p>}
           <p data-type="body-s" className="text-on-surface-low">
             Mute, quiet hours and which alerts reach you are your notification settings. Change them in{' '}
-            <TextLink href="#/settings/notifications" size="sm">Settings → Notifications</TextLink>.
+            <TextLink href="#/settings/notifications" size="sm">Settings → Notifications & Inbox → Notifications</TextLink>.
           </p>
         </div>
         <div role="group" aria-label="Reduced motion" className="flex flex-col gap-xs">

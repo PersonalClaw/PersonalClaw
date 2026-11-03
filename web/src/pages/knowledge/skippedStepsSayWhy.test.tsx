@@ -10,7 +10,7 @@ import * as store from './knowledgeStore'
 // (status, reason, fix) and the item's processing strip shows one line per step that was skipped
 // or failed, each with its fix as a link. A step that does not apply to this item gets no line.
 
-const MODELS_FIX = { text: 'Choose a model for Image · Modality in Settings → Models', href: '#/settings/models' }
+const MODELS_FIX = { text: 'Choose a model for Image · Modality in Settings → Models & Providers → Models', href: '#/settings/models' }
 
 function videoItem(): KnowledgeItem {
   return {
@@ -61,9 +61,9 @@ describe('the processing strip of an item whose steps were skipped', () => {
     const list = await waitFor(() => screen.getByRole('list', { name: 'Steps that did not run' }))
     const lines = within(list).getAllByRole('listitem')
     expect(lines.map((l) => l.textContent)).toEqual([
-      'Video classify skipped: No image model is set up. Choose a model for Image · Modality in Settings → Models',
-      'OCR skipped: It needs Video classify first, which was skipped because no image model is set up. Choose a model for Image · Modality in Settings → Models',
-      'Vision skipped: It needs Video classify first, which was skipped because no image model is set up. Choose a model for Image · Modality in Settings → Models',
+      'Video classify skipped: No image model is set up. Choose a model for Image · Modality in Settings → Models & Providers → Models',
+      'OCR skipped: It needs Video classify first, which was skipped because no image model is set up. Choose a model for Image · Modality in Settings → Models & Providers → Models',
+      'Vision skipped: It needs Video classify first, which was skipped because no image model is set up. Choose a model for Image · Modality in Settings → Models & Providers → Models',
     ])
     for (const line of lines) {
       const link = within(line).getByRole('link', { name: MODELS_FIX.text })

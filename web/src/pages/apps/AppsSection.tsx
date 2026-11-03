@@ -229,7 +229,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       // An app configured per instance has no app-level settings to open: its instances are
       // managed in Settings → Providers, and its Configure goes there instead.
       case 'configure':
-        if (app.configuredPerInstance) { nav('settings/providers'); return }
+        if (app.configuredPerInstance) { nav('settings/models?section=providers'); return }
         setConfigFor({ name: app.name, displayName: app.displayName, sidecar: app.sidecar }); return
       case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, start: updateStart(app) }); return
       case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
@@ -714,7 +714,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     body: open ? (
       <AppDetailPanel app={open} onClose={() => setOpenName('')} onChanged={reload}
         onOpen={() => nav(`app/${encodeURIComponent(open.name)}`)}
-        onManageInstances={() => nav('settings/providers')} />
+        onManageInstances={() => nav('settings/models?section=providers')} />
     ) : (
       <StoreDetailPanel item={openStore!} onInstalled={noteInstalled} />
     ),
@@ -1202,7 +1202,7 @@ export function SourcesPanel({ catalog, catalogError, reloadCatalog, onInstalled
           <p data-testid="store-egress-disclosure" data-type="caption" className="mt-2 text-on-surface-low">
             Reading these listings contacts {networkSources.join(', ')}. Only listings are
             fetched — nothing is installed or run without your consent.
-            {builtinSources.size > 0 && ' A source that ships with PersonalClaw has no remove button; turn it off in Settings → Apps.'}
+            {builtinSources.size > 0 && ' A source that ships with PersonalClaw has no remove button; turn it off in Settings → Apps & Packs → Apps.'}
           </p>
         )}
         <p className="mt-2 text-on-surface-low text-[0.75rem]">
@@ -1764,7 +1764,7 @@ function AppDetailPanel({ app, onClose, onChanged, onOpen, onManageInstances }: 
               <div className="flex items-center gap-2 text-on-surface"><Power size={14} /> Native app — always on</div>
               <div className="mt-1 text-on-surface-low" data-type="label-s">
                 {app.configuredPerInstance
-                  ? "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. Its settings live on each of its instances, which you add, edit, test and remove in Settings → Providers."
+                  ? "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. Its settings live on each of its instances, which you add, edit, test and remove in Settings → Models & Providers → Providers."
                   : app.hasConfig
                     ? "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. You can change its settings below."
                     : "Ships with PersonalClaw as part of the baseline and is updated with it; it can't be deactivated or disabled. Manage its individual tools from the Tools page."}

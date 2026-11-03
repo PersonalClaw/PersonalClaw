@@ -89,7 +89,7 @@ function ImagesAsTextNote({ input, images }: { input: ChatImageInput; images: st
 function SetUpAnImageModel() {
   return (
     <>Choose one in{' '}
-      <TextLink href="#/settings/models" ink="emphasis" className="underline">Settings → Models</TextLink>.
+      <TextLink href="#/settings/models" ink="emphasis" className="underline">Settings → Models & Providers → Models</TextLink>.
     </>
   )
 }

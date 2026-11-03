@@ -104,7 +104,7 @@ def test_an_unmappable_use_case_says_so_instead_of_blaming_the_provider(home):
     assert "maps to no provider capability" in why
     assert "audio_modality" in why
     assert "absent from config.json" not in why
-    assert "Settings → Models" in fix
+    assert "Settings → Models & Providers → Models" in fix
 
 
 # ── Cause: config.json cannot be read ────────────────────────────────────────
@@ -127,7 +127,7 @@ def test_a_genuinely_absent_entry_says_absent_and_says_re_add_it(home):
     why, fix = _diagnose()
     assert f"no provider named {GHOST!r} is in config.json" in why
     assert "renamed or removed" in why
-    assert f"re-add {GHOST!r} in Settings → Providers" in fix
+    assert f"re-add {GHOST!r} in Settings → Models & Providers → Providers" in fix
 
 
 # ── Cause: in config.json, but never registered in the running gateway ───────

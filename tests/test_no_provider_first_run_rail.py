@@ -243,7 +243,7 @@ async def test_suggestions_no_provider_returns_declared_empty_state():
                 code="ERR_MODEL_UNRESOLVED",
                 what="no model provider resolves for use case 'background'",
                 why="no provider in config.json declares the capability this use case needs",
-                fix="add a model provider in Settings → Providers",
+                fix="add a model provider in Settings → Models & Providers → Providers",
             ),
         )
     )
@@ -391,7 +391,8 @@ class TestRailIsNotVacuous:
             code="ERR_MODEL_UNRESOLVED",
             what="no model provider resolves for use case 'chat'",
             why="no provider in config.json declares the capability this use case needs",
-            fix="add a model provider in Settings → Providers, then bind 'chat' to it",
+            fix="add a model provider in Settings → Models & Providers → Providers, then bind "
+            "'chat' to it",
         )
         why, fix = _diagnose_unbuildable_ref("DoesNotExistAnywhere", "x", "chat", "chat")
         # Precondition: the diagnosis fired the absent-from-config cause, so the render

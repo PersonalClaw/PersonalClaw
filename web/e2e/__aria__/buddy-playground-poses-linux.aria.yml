@@ -8,7 +8,7 @@
     - radio "Poses" [checked]
   - group "Look":
     - heading "Look" [level=#]
-    - paragraph: These are the app's own settings, as in Settings → Design.
+    - paragraph: These are the app's own settings, as in Settings → Appearance → Design.
     - radiogroup "Colour scheme":
       - radio "Coral" [checked]
       - radio "Jade"

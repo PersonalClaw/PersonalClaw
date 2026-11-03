@@ -202,7 +202,7 @@ export function AgentForm({ draft, onChange, nameLocked, compact, unavailable, r
       </Field>
 
       <Field label="System prompt" hint={isBuiltinDefaultAgent(draft)
-        ? 'Leave empty to answer with the prompt bound in Settings → Prompts. A prompt written here replaces that binding for this agent.'
+        ? 'Leave empty to answer with the prompt bound in Settings → Agent → Prompts. A prompt written here replaces that binding for this agent.'
         : "The agent's standing instructions — WHAT it does (operating rules)."}>
         <TextArea value={draft.system_prompt} onChange={(v) => set('system_prompt', v)} rows={compact ? 5 : 8} placeholder={isBuiltinDefaultAgent(draft) ? 'Empty — uses the bound prompt' : 'You are a focused research assistant. …'} />
       </Field>

@@ -409,7 +409,7 @@ class TestOpenAIImageCatalogByType:
         with patch.dict("os.environ", {}, clear=True):
             assert await prov.unavailable_reason() == (
                 "OpenAI has no API key, so it can't make images. Add the key on the OpenAI "
-                "instance in Settings → Providers, or set OPENAI_API_KEY."
+                "instance in Settings → Models & Providers → Providers, or set OPENAI_API_KEY."
             )
         keyed = OpenAIImageProvider(provider_name="OpenAI", provider_type="openai", api_key="sk-x")
         assert await keyed.unavailable_reason() == ""

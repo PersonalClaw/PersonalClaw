@@ -179,7 +179,7 @@ def test_doctor_leaves_the_agent_config_byte_for_byte(home, capsys, case):
         assert f"{REF}: ❌" in rows and f"starts {gone}, which is not a program" in rows, rows
     assert f"tools:       does not list {REF}" in rows, rows
     assert f"allowedTools: does not list {REF}" in rows, rows
-    assert "Settings → Doctor → Tools has a Fix" in rows, rows
+    assert "Settings → Health → Doctor → Tools has a Fix" in rows, rows
     assert code == 1, out
     assert f"{REF} server entry" in _summary(out), out
 

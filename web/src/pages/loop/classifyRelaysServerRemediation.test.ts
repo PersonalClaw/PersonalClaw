@@ -23,7 +23,7 @@ import { classifyFailure, CLASSIFY_OPAQUE_FALLBACK } from './classifyFailure'
  *  into Python. */
 const SERVER_SENTENCE
   = "No model provider resolves for use case 'background'. "
-  + 'Connect a model in Settings → Models to analyze tasks.'
+  + 'Connect a model in Settings → Models & Providers → Models to analyze tasks.'
 
 const SRC = join(__dirname, '..', '..')
 const composer = () => readFileSync(join(SRC, 'pages/loop/LoopComposer.tsx'), 'utf8')
@@ -34,7 +34,7 @@ describe('§1 a classify refusal keeps the sentence the server authored', () => 
     expect(got).toBe(SERVER_SENTENCE)
     // Named separately from the equality above: the pointer is the whole remediation, and a
     // future "tidy the sentence" change that drops it would still satisfy a looser check.
-    expect(got, 'the remediation pointer is the point').toContain('Settings → Models')
+    expect(got, 'the remediation pointer is the point').toContain('Settings → Models & Providers → Models')
   })
 
   it('does NOT ask the user a question the server already answered', () => {

@@ -53,12 +53,14 @@ OWN_REASON_FIX = (
 #: What to do about each class when the provider named the class but not the fix.
 _CLASS_FIX: dict[FailureClass, str] = {
     FailureClass.USER: f"check this step's configuration, {_THEN_FORK}",
-    FailureClass.PERMISSION: f"check the credential in Settings → Providers, {_THEN_FORK}",
+    FailureClass.PERMISSION: "check the credential in Settings → Models & Providers → Providers, "
+    f"{_THEN_FORK}",
     FailureClass.NETWORK: "check that the provider is running and reachable, then Retry",
     FailureClass.TRANSIENT: "Retry in a moment",
     FailureClass.TIMEOUT: "raise the step's timeout, or split it into smaller steps",
     FailureClass.BUDGET: (
-        "raise or remove the cap in Settings → Guardrails, or wait for it to reset, then Retry"
+        "raise or remove the cap in Settings → Security → Guardrails, or wait for it to reset, "
+        "then Retry"
     ),
     FailureClass.PROTOCOL: "tighten the schema in the prompt, or use produce-then-extract",
     FailureClass.INTERNAL: "check the gateway log",
@@ -175,7 +177,8 @@ def _typed(exc: BaseException, use_case: str) -> Failure | None:
     if isinstance(exc, CredentialMissing):
         return Failure(
             failure_class=FailureClass.PERMISSION,
-            remediation=f"add the provider's credential in Settings → Providers, {_THEN_FORK}",
+            remediation="add the provider's credential in Settings → Models & Providers → "
+            f"Providers, {_THEN_FORK}",
         )
     if isinstance(exc, (ProviderResolutionError, RegistryResolutionError)):
         # The bridge derives its fix from the cause that actually fired (#3408), and carries it
@@ -219,8 +222,8 @@ def _by_status(status: int, use_case: str) -> Failure:
     """A model provider's HTTP refusal, with what to change for this status."""
     if status in (401, 403):
         fix = (
-            f"the provider rejected the credential; fix its key in Settings → Providers, "
-            f"{_THEN_FORK}"
+            "the provider rejected the credential; fix its key in Settings → Models & Providers → "
+            f"Providers, {_THEN_FORK}"
         )
     elif status == 402:
         fix = (
@@ -269,7 +272,7 @@ def _by_transport(exc: BaseException) -> Failure | None:
         return Failure(
             failure_class=FailureClass.USER,
             remediation=f"the provider's endpoint is not a usable URL; fix it in Settings → "
-            f"Providers, {_THEN_FORK}",
+            f"Models & Providers → Providers, {_THEN_FORK}",
         )
     if (
         isinstance(exc, httpx.TimeoutException) and not isinstance(exc, httpx.ConnectTimeout)
@@ -324,7 +327,8 @@ def _by_text(name: str, text: str, *, timed_out: bool) -> Failure:
         return Failure(
             failure_class=FailureClass.PERMISSION,
             cause_plain=cause,
-            remediation="check the credential in Settings → Providers, or the tool's "
+            remediation="check the credential in Settings → Models & Providers → Providers, or "
+            "the tool's "
             "approval policy",
         )
     if any(k in low for k in ("rate limit", "429", "throttl", "overloaded", "capacity")):

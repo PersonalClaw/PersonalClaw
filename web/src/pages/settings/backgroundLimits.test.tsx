@@ -67,7 +67,7 @@ async function openBackground() {
   return within(heading.parentElement as HTMLElement)
 }
 
-describe('Settings › Models › Background limits', () => {
+describe('Settings › Models & Providers › Models › Background limits', () => {
   it('shows each limit with its unit, its shipped value and the window the save path accepts', async () => {
     const limits = await openBackground()
     const time = await limits.findByRole('spinbutton', { name: 'Time limit (seconds)' })

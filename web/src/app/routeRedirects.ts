@@ -64,6 +64,35 @@ export const ROUTE_REDIRECTS: readonly RouteRedirect[] = [
   // the filter's `show`, beside the `filter` that names it, and the note it had open is the one
   // the filter opens. The bell, the palette and old transcripts held this address.
   { from: 'notifications', to: 'inbox?filter=notifications', keeps: { filter: 'show', open: 'open' }, pr: 3818 },
+  // Twenty-five Settings pages became sections of the page they belong with (#5897), and each old
+  // address opens its section there. The two that carried state keep it: Providers' expanded
+  // provider (`open`), and Routing's use case and request kind (`uc`, `qc`), which their panels
+  // still read under the same names on the page that holds them now.
+  { from: 'settings/archive', to: 'settings/chat?section=archive', pr: 5897 },
+  { from: 'settings/buddy', to: 'settings/design?section=buddy', pr: 5897 },
+  { from: 'settings/inbox', to: 'settings/notifications?section=inbox', pr: 5897 },
+  { from: 'settings/providers', to: 'settings/models?section=providers', keeps: { open: 'open' }, pr: 5897 },
+  { from: 'settings/routing', to: 'settings/models?section=routing', keeps: { uc: 'uc', qc: 'qc' }, pr: 5897 },
+  { from: 'settings/search', to: 'settings/models?section=search', pr: 5897 },
+  { from: 'settings/prompts', to: 'settings/agent?section=prompts', pr: 5897 },
+  { from: 'settings/tool-output', to: 'settings/agent?section=tool-output', pr: 5897 },
+  { from: 'settings/legibility', to: 'settings/agent?section=legibility', pr: 5897 },
+  { from: 'settings/feedback', to: 'settings/evals?section=feedback', pr: 5897 },
+  { from: 'settings/workflows', to: 'settings/automations?section=workflows', pr: 5897 },
+  { from: 'settings/loops', to: 'settings/automations?section=loops', pr: 5897 },
+  { from: 'settings/sources', to: 'settings/automations?section=sources', pr: 5897 },
+  { from: 'settings/ambient', to: 'settings/automations?section=ambient', pr: 5897 },
+  { from: 'settings/packs', to: 'settings/apps?section=packs', pr: 5897 },
+  { from: 'settings/guardrails', to: 'settings/security?section=guardrails', pr: 5897 },
+  { from: 'settings/audit', to: 'settings/security?section=audit', pr: 5897 },
+  { from: 'settings/sender-trust', to: 'settings/devices?section=sender-trust', pr: 5897 },
+  { from: 'settings/external-access', to: 'settings/devices?section=external-access', pr: 5897 },
+  { from: 'settings/companion', to: 'settings/devices?section=companion', pr: 5897 },
+  { from: 'settings/system', to: 'settings/health?section=system', pr: 5897 },
+  { from: 'settings/doctor', to: 'settings/health?section=doctor', pr: 5897 },
+  { from: 'settings/diagnostics', to: 'settings/health?section=diagnostics', pr: 5897 },
+  { from: 'settings/portability', to: 'settings/durability?section=portability', pr: 5897 },
+  { from: 'settings/documents', to: 'settings/durability?section=documents', pr: 5897 },
 ]
 
 /** A segment as the router hands it to a page: decoded, or as written when it is not valid

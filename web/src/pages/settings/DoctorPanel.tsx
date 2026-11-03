@@ -684,7 +684,7 @@ function CapabilityCard({ name, cap, onFixed }: { name: string; cap: DoctorCapab
             opens a chat with the findings + any offered fix's dry-run preview —
             discussing a fix, never applying one. */}
         <span className="ml-auto">
-          <InvestigateButton kind="doctor_finding" id={name} backLink="#/settings/doctor" size={28} />
+          <InvestigateButton kind="doctor_finding" id={name} backLink="#/settings/health?section=doctor" size={28} />
         </span>
       </div>
       <div className="mt-s flex flex-col gap-1.5">

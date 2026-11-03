@@ -186,7 +186,8 @@ def measure_deficits() -> list[Deficit]:
                 blocked_by=(
                     ""
                     if embedder_ready
-                    else "no embedding model is bound — pick one in Settings → Models"
+                    else "no embedding model is bound — pick one in Settings → Models & Providers "
+                    "→ Models"
                 ),
             )
         )

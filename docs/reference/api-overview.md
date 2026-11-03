@@ -53,7 +53,7 @@ that answers `400 token_ttl_too_long`, and a `ttl` that is not a duration like `
 `7d` answers `400 token_ttl_invalid`, each with a `message` that says what to ask for instead. Up to 20 tokens a browser has not opened can be live at
 once, and past that the one used least recently is signed out — so a script that mints a token
 per run keeps its own in use, and never signs out a browser, a paired phone or the desktop app,
-which have limits of their own. Settings → Devices lists every sign-in and signs any of them out.
+which have limits of their own. Settings → Devices & Access → Devices lists every sign-in and signs any of them out.
 
 A browser (cookie or `?token=`) that cannot be signed in gets `403` and a `message` that says
 why and how to sign in, with `detail.reason` and `detail.at`, and `X-Auth-Required: true`:
@@ -204,7 +204,7 @@ has cost someone a debugging session.
   this home has), copied into a home without it, or left unchanged and why (this home keeps
   its own settings, feedback and any other single-file store it already has).
   `summary.left_unchanged` names each part the merge could not bring in (a store, or
-  `store (table)`), as a restore's `left_unchanged` does, and Settings → Import / Export says
+  `store (table)`), as a restore's `left_unchanged` does, and Settings → Backups & Data → Import / Export says
   so in the error tone. An archive that cannot be an export is refused `400 invalid_archive`
   before anything is read or written, with a sentence naming the limit: more than 100,000
   members, a manifest over 64 MB, more to unpack than the disk it is unpacked to has free

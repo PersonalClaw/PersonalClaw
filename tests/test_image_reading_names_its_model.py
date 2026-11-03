@@ -250,7 +250,7 @@ async def test_the_resolver_never_builds_an_image_reader_it_cannot_name():
 
     envelope = refused.value.agent_error
     assert envelope is not None and envelope.code == "ERR_MODEL_UNRESOLVED"
-    assert "Settings → Models" in envelope.fix
+    assert "Settings → Models & Providers → Models" in envelope.fix
     assert fake.chats == []
 
 
@@ -278,7 +278,7 @@ async def test_screen_share_offers_no_description_when_nothing_can_read_the_fram
         mode, reason = await screen_context.resolve_delivery(False)
 
     assert mode == screen_context.DELIVERY_NONE
-    assert "Settings → Models" in reason
+    assert "Settings → Models & Providers → Models" in reason
     assert fake.chats == []
 
 

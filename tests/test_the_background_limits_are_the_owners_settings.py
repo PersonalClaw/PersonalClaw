@@ -324,7 +324,7 @@ def test_a_stopped_background_call_says_which_limit_stopped_it_and_where_to_rais
     sentence = str(stopped.value)
     assert sentence.startswith("tiny on here did not finish answering within 30 seconds")
     assert "the time limit of a background task" in sentence
-    assert "Background use case in Settings → Models" in sentence
+    assert "Background use case in Settings → Models & Providers → Models" in sentence
     assert "raise its time limit there" in sentence
 
 

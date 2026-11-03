@@ -180,7 +180,7 @@ function RecommendationCard({ rec }: { rec: JudgeBenchRecommendation }) {
         <p className="text-on-surface-low text-[0.8125rem]">
           Bind <code className="text-on-surface-var">{rec.use_case}</code>
           {rec.model_ref ? <> to <code className="text-on-surface-var">{rec.model_ref}</code></> : null}{' '}
-          on <a className="underline" href="#/settings/models">Settings → Models</a>. The harness
+          on <a className="underline" href="#/settings/models">Settings → Models & Providers → Models</a>. The harness
           recommends; you rebind.
         </p>
       )}

@@ -128,7 +128,7 @@ describe('the inbox blank slate never contradicts its own source banner', () => 
     const navigate = await renderInbox()
     const cta = await screen.findByRole('button', { name: /Add a message source/i })
     await userEvent.click(cta)
-    expect(navigate, 'the CTA must reach the section the hint names').toHaveBeenCalledWith('settings/inbox')
+    expect(navigate, 'the CTA must reach the section the hint names').toHaveBeenCalledWith('settings/notifications?section=inbox')
   })
 
   it('withholds that offer once a poll source IS collecting and simply has nothing yet', async () => {

@@ -44,13 +44,11 @@ export const ROUTES: RouteEntry[] = [
 // src/pages/settings/SettingsPage.tsx — `settingsSubpageCoverage.test.ts` fails if the
 // two lists drift, so a new panel cannot ship unscanned.
 export const SETTINGS_PANELS = [
-  'account', 'design', 'chat', 'providers', 'models', 'search', 'prompts', 'evals',
-  'agent', 'voice', 'apps', 'inbox', 'documents', 'notifications', 'security', 'secrets', 'devices',
-  'sender-trust', 'guardrails',
-  'external-access', 'audit',
-  'system', 'doctor', 'diagnostics', 'tool-output', 'feedback', 'usage', 'routing', 'legibility',
-  'workflows', 'loops',
-  'ambient', 'companion', 'buddy', 'sources', 'packs', 'archive', 'portability', 'durability', 'updates',
+  // Settings' pages (#5897), in `settingsPages.ts`' order. A page renders every section it holds, so
+  // these seventeen scan all forty panels; a section's old address opens it on its page.
+  'design', 'account', 'chat', 'notifications', 'voice',
+  'models', 'agent', 'evals', 'automations', 'apps', 'usage',
+  'security', 'devices', 'health', 'secrets', 'durability', 'updates',
 ] as const
 
 /** The settings panels as ROUTES, for the axe scan to iterate alongside ROUTES. */

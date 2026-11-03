@@ -149,7 +149,10 @@ class RecallRanking:
         if self._vectors_stale:
             _what, verb = _waiting(self.stale, self.unembedded)
             n = f"{self.waiting} {'memory' if self.waiting == 1 else 'memories'}"
-            return f"{ranked} The re-index in Settings → Models {verb} the {n}."
+            return (
+                f"{ranked} The re-index in Settings → Models & Providers → Models {verb} the "
+                f"{n}."
+            )
         return f"{ranked} {keyword_read_note(self.stale, self.unembedded)}"
 
     def to_dict(self) -> dict[str, object]:
@@ -219,7 +222,8 @@ def keyword_read_note(stale: int, unembedded: int) -> str:
     one = n == 1
     return (
         f"{n} {'memory' if one else 'memories'} {what} {'is' if one else 'are'} read by keyword "
-        f"until the re-index in Settings → Models {verb} {'it' if one else 'them'}."
+        f"until the re-index in Settings → Models & Providers → Models {verb} "
+        f"{'it' if one else 'them'}."
     )
 
 

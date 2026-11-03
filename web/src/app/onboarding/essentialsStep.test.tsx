@@ -1083,7 +1083,8 @@ describe('once chat is ready, a local model can still be added beside it', () =>
     renderStep({ readiness: READY })
     expect(await screen.findByText(`Chat model: ${CHAT}`)).toBeTruthy()
     expect(await screen.findByText('Also add a local model — no API key')).toBeTruthy()
-    expect(screen.getByText(new RegExp(`Chat keeps using ${CHAT.replace(/\./g, '\\.')}`))).toBeTruthy()
+    // Every character a pattern reads as syntax is escaped, so the model's name is matched as written.
+    expect(screen.getByText(new RegExp(`Chat keeps using ${CHAT.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`))).toBeTruthy()
     expect(screen.getByRole('button', { name: /Scan my local network/ })).toBeTruthy()
 
     // The server answers the next detection with the instance it is now.
@@ -1092,7 +1093,7 @@ describe('once chat is ready, a local model can still be added beside it', () =>
     await act(async () => { fireEvent.click(add) })
 
     await waitFor(() => expect(bindLocalModel).toHaveBeenCalledWith('http://localhost:11434', false))
-    const said = await screen.findByText('Added Local Ollama. To chat with gemma4:12b, add it to Chat in Settings → Models.')
+    const said = await screen.findByText('Added Local Ollama. To chat with gemma4:12b, add it to Chat in Settings → Models & Providers → Models.')
     expect(said.getAttribute('role')).toBe('status')
     expect(await screen.findByText(/added as Local Ollama/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Add this model/ })).toBeNull()
@@ -1125,10 +1126,10 @@ describe('once chat is ready, a local model can still be added beside it', () =>
     expect(setActiveModel).not.toHaveBeenCalled()
   })
 
-  it('when nothing is found it points at the route that exists then: Settings → Providers', async () => {
+  it('when nothing is found it points at the route that exists then: Settings → Models & Providers → Providers', async () => {
     modelProviderTypes.mockResolvedValue([OLLAMA_TYPE])
     renderStep({ readiness: READY })
-    expect(await screen.findByText('Nothing found on this machine yet. You can add one by its address in Settings → Providers.')).toBeTruthy()
+    expect(await screen.findByText('Nothing found on this machine yet. You can add one by its address in Settings → Models & Providers → Providers.')).toBeTruthy()
     // The manual form below is the PICK phase's route; it is not on screen once chat is ready.
     expect(screen.queryByRole('button', { name: /Configure Ollama/ })).toBeNull()
   })
@@ -1320,7 +1321,7 @@ describe('the model lane reads ready only after a build check', () => {
   it('known-false: a claimed-ready home whose provider cannot build is NOT reported ready', async () => {
     onboardingModelCheck.mockResolvedValue(refusal({
       why: "provider 'my-openai' declares type 'openai', and no installed app registers that type",
-      fix: "install an app that provides 'openai' in the App Store, or change 'my-openai''s type in Settings → Providers",
+      fix: "install an app that provides 'openai' in the App Store, or change 'my-openai''s type in Settings → Models & Providers → Providers",
     }))
     const { onDone } = renderStep({ readiness: READY })
     // The green claim is gone…
@@ -1361,7 +1362,7 @@ describe('the model lane reads ready only after a build check', () => {
   it('known-false: a bind the check then refuses leaves the lane unresolved', async () => {
     onboardingModelCheck.mockResolvedValue(refusal({
       why: "provider 'openai' needs credential 'openai', which has no secret in the credential store",
-      fix: "set 'openai' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models",
+      fix: "set 'openai' in Settings → Models & Providers → Providers, or rebind 'chat' to an available model in Settings → Models & Providers → Models",
     }))
     const { onDone } = renderStep()
     await installCard('openai')
@@ -1383,31 +1384,31 @@ describe('the model lane reads ready only after a build check', () => {
   const CAUSES: { name: string; why: string; fix: string }[] = [
     { name: 'the use case maps to no capability',
       why: "use case 'chat' maps to no provider capability, so no configured provider can satisfy it",
-      fix: "rebind 'chat' to an available model in Settings → Models — and report use case 'chat' as unmappable" },
+      fix: "rebind 'chat' to an available model in Settings → Models & Providers → Models — and report use case 'chat' as unmappable" },
     { name: 'config.json is unreadable',
       why: "config.json could not be read, so whether 'my-openai' is still configured is unknown",
-      fix: "repair config.json (see the gateway log), or rebind 'chat' to an available model in Settings → Models" },
+      fix: "repair config.json (see the gateway log), or rebind 'chat' to an available model in Settings → Models & Providers → Models" },
     { name: 'no entry by that name',
       why: "no provider named 'my-openai' is in config.json — the entry was renamed or removed, or its app was uninstalled",
-      fix: "re-add 'my-openai' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models" },
+      fix: "re-add 'my-openai' in Settings → Models & Providers → Providers, or rebind 'chat' to an available model in Settings → Models & Providers → Models" },
     { name: 'in config.json but not registered',
       why: "provider 'my-openai' IS in config.json but is not registered in the running gateway, so nothing can build it",
-      fix: "re-save 'my-openai' in Settings → Providers to register it now, or restart the gateway to replay config.json" },
+      fix: "re-save 'my-openai' in Settings → Models & Providers → Providers to register it now, or restart the gateway to replay config.json" },
     { name: 'no installed app registers the type',
       why: "provider 'my-openai' declares type 'openai', and no installed app registers that type",
-      fix: "install an app that provides 'openai' in the App Store, or change 'my-openai''s type in Settings → Providers" },
+      fix: "install an app that provides 'openai' in the App Store, or change 'my-openai''s type in Settings → Models & Providers → Providers" },
     { name: 'the type\'s app is installed but DISABLED',
       why: "provider 'my-openai' declares type 'openai', whose app 'openai-models' is installed but DISABLED, so the type is not registered",
       fix: "enable 'openai-models' on the Apps page" },
     { name: 'the type\'s app failed to load',
       why: "provider 'my-openai' declares type 'openai' and its app 'openai-models' is installed and enabled, but the type never registered — the app failed to load",
-      fix: "check the gateway log for 'openai-models''s import error, or rebind 'chat' to an available model in Settings → Models" },
+      fix: "check the gateway log for 'openai-models''s import error, or rebind 'chat' to an available model in Settings → Models & Providers → Models" },
     { name: 'capability mismatch',
       why: "provider 'my-openai' (type 'openai') does not declare the 'chat' capability that use case 'chat' needs",
-      fix: "rebind 'chat' to an available model in Settings → Models, or bind 'chat' to a provider that declares 'chat'" },
+      fix: "rebind 'chat' to an available model in Settings → Models & Providers → Models, or bind 'chat' to a provider that declares 'chat'" },
     { name: 'the credential has no secret',
       why: "provider 'my-openai' needs credential 'openai', which has no secret in the credential store",
-      fix: "set 'openai' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models" },
+      fix: "set 'openai' in Settings → Models & Providers → Providers, or rebind 'chat' to an available model in Settings → Models & Providers → Models" },
   ]
 
   it.each(CAUSES)('shows the backend\'s own words for: $name', async ({ why, fix }) => {

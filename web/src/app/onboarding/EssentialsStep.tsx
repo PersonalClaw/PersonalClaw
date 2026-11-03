@@ -784,7 +784,7 @@ function ModelSubFlow({ app, phase, chatModel, configured, verifyRun, floor, dow
   const refused = bindError && (
     <p data-type="caption" className="text-on-surface-var" role="alert">
       It could not be set as your chat model ({bindError}). It still answers while nothing else is
-      chosen; you can choose it in Settings → Models.
+      chosen; you can choose it in Settings → Models & Providers → Models.
     </p>
   )
   if (phase === 'done') {
@@ -807,7 +807,7 @@ function ModelSubFlow({ app, phase, chatModel, configured, verifyRun, floor, dow
           <p data-type="caption" className="text-on-surface-var">
             It&rsquo;s the small model PersonalClaw downloaded: it runs on this machine with no key
             and no network, but it&rsquo;s tiny &mdash; expect short answers and no tools. Add a real
-            provider in Settings → Providers whenever you like.
+            provider in Settings → Models & Providers → Providers whenever you like.
           </p>
           {refused}
         </div>
@@ -1060,7 +1060,7 @@ function LocalModelOnRamp({ role }: { role: OnRampRole }) {
   // found, naming no next step — a spinner that ends in an unchanged card is the same dead
   // end #3529 already named, wearing a different hat. `pointer` names only a route that exists.
   const pointer = role.kind === 'also'
-    ? ' You can add one by its address in Settings → Providers.'
+    ? ' You can add one by its address in Settings → Models & Providers → Providers.'
     : role.hasManualRoute ? ' Enter its address directly below.' : ''
   let notFound: string | null = null
   if (scanState === 'done' && !scanError && lan.length === 0 && !localhost) {
@@ -1088,7 +1088,7 @@ function LocalModelOnRamp({ role }: { role: OnRampRole }) {
       {bindError && <div className="text-danger" data-type="body-s" role="alert">{bindError}</div>}
       {justAdded.map(([endpoint, a]) => (
         <p key={endpoint} role="status" className="text-on-surface" data-type="body-s">
-          Added {a.provider}. To chat with {a.model}, add it to Chat in Settings → Models.
+          Added {a.provider}. To chat with {a.model}, add it to Chat in Settings → Models & Providers → Models.
         </p>
       ))}
       {localhost && (
@@ -1514,7 +1514,7 @@ function NoModelsDiscovered({ configured, onRetry, pickAnother }: {
 
   let verdict: string
   if (!provider) {
-    verdict = 'Nothing came back. That means either the configured provider offers no chat-capable model, or it could not be reached — this list cannot tell those apart. Test the provider in Settings → Providers to find out which.'
+    verdict = 'Nothing came back. That means either the configured provider offers no chat-capable model, or it could not be reached — this list cannot tell those apart. Test the provider in Settings → Models & Providers → Providers to find out which.'
   } else if (probeFailed) {
     verdict = `Nothing came back, and ${provider}'s connection test could not run either: ${probeFailed}`
   } else if (probe === null) {
@@ -1522,9 +1522,9 @@ function NoModelsDiscovered({ configured, onRetry, pickAnother }: {
   } else if (!probe.ok) {
     verdict = `${provider} could not be reached: ${probe.message} So this empty list is a connection problem, not a provider without models — correct its settings and try again.`
   } else if (probe.status === 'no_probe') {
-    verdict = `Nothing came back, and ${provider} offers no connectivity test (${probe.message}), so an empty list here cannot be told apart from a provider that is not answering. Set a model id on it in Settings → Providers, or pick a different provider.`
+    verdict = `Nothing came back, and ${provider} offers no connectivity test (${probe.message}), so an empty list here cannot be told apart from a provider that is not answering. Set a model id on it in Settings → Models & Providers → Providers, or pick a different provider.`
   } else {
-    verdict = `${provider} answered, and offered no chat-capable model. Set a model id on it in Settings → Providers, or pick a different provider.`
+    verdict = `${provider} answered, and offered no chat-capable model. Set a model id on it in Settings → Models & Providers → Providers, or pick a different provider.`
   }
 
   return (

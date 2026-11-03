@@ -56,7 +56,8 @@ logger = logging.getLogger(__name__)
 #: it speaks ACP and is signed in, and PersonalClaw starts another agent's CLI only when the user
 #: asks for that: the Test on its card.
 UNTESTED_DETAIL = (
-    "Not tried yet. PersonalClaw starts it only when you press Test (Settings → Providers)."
+    "Not tried yet. PersonalClaw starts it only when you press Test (Settings → Models & "
+    "Providers → Providers)."
 )
 
 

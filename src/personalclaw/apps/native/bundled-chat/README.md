@@ -10,7 +10,7 @@ deliberate trade — a ~147 MiB wheel for every `pip install` is a
 real cost, and it is over PyPI's 100 MiB per-file limit. If you need a genuinely offline first
 run, pre-seed a home once with `PERSONALCLAW_HOME=/path make bundled-model` and copy it.
 
-This is the **floor**, not a recommendation. Bind a real model in Settings → Models and the
+This is the **floor**, not a recommendation. Bind a real model in Settings → Models & Providers → Models and the
 floor stops being used automatically.
 
 ## What it runs
@@ -32,7 +32,7 @@ that fetch are all in `provider.py::download_weight` rather than in any caller:
 
 | | |
 |---|---|
-| **Asked for** | never automatic. A button labelled with the model, its licence and its size — onboarding's model step, the chat screen, or Settings → Providers → Bundled offline model. Declining costs nothing |
+| **Asked for** | never automatic. A button labelled with the model, its licence and its size — onboarding's model step, the chat screen, or Settings → Models & Providers → Providers → Bundled offline model. Declining costs nothing |
 | **Visible** | bytes, a percentage and an ETA — core's generic download job (`POST /api/models/downloads` → SSE) measures the download directory as it grows. A reload re-attaches to a running job on every one of those surfaces |
 | **Bounded** | https only, a 30 s per-read socket timeout **and** a 45-minute total deadline. Both, because a socket timeout does not catch a connection that delivers a byte at a time forever. The 150 MiB ceiling is enforced **while** the bytes arrive (`admit_transfer`): a source announcing more is refused before the first write, and a transfer that passes it is stopped and its partial removed |
 | **Cancellable** | for real. The transfer is a loop of `await asyncio.to_thread(read, 4 MiB)`, so a cancel lands between chunks and the partial file is removed |
@@ -99,7 +99,7 @@ grouped-query attention, SwiGLU and a tied output projection.
 
 ## Settings
 
-Editable in Settings → Providers → Bundled offline model (a native app is locked on, but its
+Editable in Settings → Models & Providers → Providers → Bundled offline model (a native app is locked on, but its
 settings are editable). Every one takes effect when saved — the readiness probe and the
 provider factory read the saved settings on each use, not once at startup:
 

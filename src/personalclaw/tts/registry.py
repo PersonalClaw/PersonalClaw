@@ -326,7 +326,7 @@ class TtsNotReady(Exception):
         shown = str(getattr(provider, "display_name", "") or name or "The provider")
         self.message = (
             f"{shown} says it cannot speak with {voice or 'the chosen voice'} right now. "
-            "Check the text-to-speech model in Settings → Models."
+            "Check the text-to-speech model in Settings → Models & Providers → Models."
         )
         super().__init__(self.message)
 

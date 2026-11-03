@@ -382,9 +382,11 @@ def test_other_model_memories_with_no_embedder_bound_say_what_to_do(home, monkey
     assert res.ok is False and res.fix_id is None, res
     assert res.detail == (
         "2 memories embedded by another embedding model are read by keyword until the re-index "
-        "in Settings → Models re-embeds them."
+        "in Settings → Models & Providers → Models re-embeds them."
     ), "the recall disclosure's sentence for the same count"
-    assert "Settings → Models" in res.remedy and res.remedy.startswith("No automatic fix")
+    assert "Settings → Models & Providers → Models" in res.remedy and res.remedy.startswith(
+        "No automatic fix"
+    )
     store.close()
 
 

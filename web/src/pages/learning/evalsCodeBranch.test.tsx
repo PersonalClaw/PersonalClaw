@@ -233,7 +233,7 @@ describe('every eval panel says "the substrate is off" — and says it alike', (
       expect(screen.getByText(new RegExp(`no ${c.what} can run`))).toBeTruthy()
       // ONE instruction, and it is the control's own `_meta` label — not the dotted config path,
       // which appears nowhere on the destination page.
-      expect(screen.getByRole('link', { name: 'Evals enabled in Settings → Evaluations' })).toBeTruthy()
+      expect(screen.getByRole('link', { name: 'Evals enabled in Settings → Evaluations & Feedback → Evaluations' })).toBeTruthy()
       expect(screen.queryByText(/personalclaw config set/), 'two ways to flip one switch is not guidance').toBeNull()
       // A switch that is off does not flip because the fetch is repeated.
       expect(screen.queryByRole('button', { name: /Retry/ })).toBeNull()

@@ -289,7 +289,8 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
     },
     why: "today's usage counts the turns other specs ran first in the shared home",
   }],
-  'settings/audit': [{
+  // The audit log is a section of Security since #5897, so its read is stubbed where Security opens.
+  'settings/security': [{
     url: /\/api\/security\/audit(\?.*)?$/,
     // One fixed page of the log, one row per outcome family and one unclassified, and no older
     // page. The shared home's log is every request other specs made before this row loaded, so its
@@ -390,7 +391,8 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
     json: { tasks: FIXED_TASKS, total: FIXED_TASKS.length, complete: true, owner: '' },
     why: "the run's home has no project, so no task of one",
   }],
-  'settings/doctor': [{
+  // Doctor and System are sections of Health since #5897: both pages' reads, where Health opens.
+  'settings/health': [{
     url: /\/api\/doctor(\?.*)?$/,
     // The memory pipeline's row as a fresh home reads it. The gateway's first flush pass writes the
     // staging log some minutes after it starts, so the row read "no staging log yet" on a visit
@@ -401,8 +403,7 @@ const STUBBED_READS: Record<string, StubbedRead[]> = {
       ok: true, detail: 'no staging log yet (nothing captured on this home)', evidence: { staging_log: false },
     }),
     why: "the memory pipeline's first pass lands at a time the run does not decide",
-  }],
-  'settings/system': [{
+  }, {
     url: /\/api\/status(\?.*)?$/,
     // No update waiting. The real check compares this checkout with its remote, so the strip
     // offered "Update available" once a commit landed on main during the run, and not on the

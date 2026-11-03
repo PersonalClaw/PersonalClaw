@@ -367,7 +367,7 @@ async def api_loop_classify(request: web.Request) -> web.Response:
             "model_unresolved",
             message=(
                 "No model provider resolves for use case 'background'. Connect a model in "
-                "Settings → Models to analyze tasks."
+                "Settings → Models & Providers → Models to analyze tasks."
             ),
             status=409,
         )

@@ -72,17 +72,17 @@ describe('the composer chip for an attached image', () => {
     await waitFor(() => expect(screen.getByRole('note').textContent)
       .toBe("gemma3:1b can't take images. Nothing could read the image, so it gets only the image's size and format."))
     // An image model read it and found nothing: "set one up" would say none is.
-    expect(screen.queryByRole('link', { name: 'Settings → Models' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Settings → Models & Providers → Models' })).toBeNull()
   })
 
-  it('says no image model is set up, and links to Settings → Models, when nothing can read images', async () => {
+  it('says no image model is set up, and links to Settings → Models & Providers → Models, when nothing can read images', async () => {
     h.imageInput.mockResolvedValue({ accepted: false, reason: "gemma3:1b can't take images.", model: 'gemma3:1b' })
     h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'Image: shot.png (240×160, PNG, 1 KB) — not read: no image model is set up.', read: false, unread: 'no_image_model' })
     chips()
     await waitFor(() => expect(screen.getByRole('note').textContent).toBe(
-      "gemma3:1b can't take images. No image model is set up, so it gets only the image's size and format. Choose one in Settings → Models.",
+      "gemma3:1b can't take images. No image model is set up, so it gets only the image's size and format. Choose one in Settings → Models & Providers → Models.",
     ))
-    expect(screen.getByRole('link', { name: 'Settings → Models' }).getAttribute('href')).toBe('#/settings/models')
+    expect(screen.getByRole('link', { name: 'Settings → Models & Providers → Models' }).getAttribute('href')).toBe('#/settings/models')
     expect(screen.getByText('as text')).toBeTruthy()
   })
 
@@ -147,14 +147,14 @@ describe('the chip on a sent turn', () => {
     expect(await screen.findByText('TEXT READ FROM IT')).toBeTruthy()
   })
 
-  it('says no image model is set up, and links to Settings → Models, when nothing read the image', async () => {
+  it('says no image model is set up, and links to Settings → Models & Providers → Models, when nothing read the image', async () => {
     h.attachmentExtract.mockResolvedValue({ name: 'shot.png', text: 'Image: shot.png (240×160, PNG, 1 KB) — not read: no image model is set up.', read: false, unread: 'no_image_model' })
     render(<TurnAttachments paths={[IMG]} delivery={{ byPath: { [IMG]: 'text' }, reason: "gemma3:1b can't take images." }} onOpenFile={() => {}} />)
     fireEvent.click(screen.getByRole('button', { name: /shot\.png/ }))
-    const link = await screen.findByRole('link', { name: 'Settings → Models' })
+    const link = await screen.findByRole('link', { name: 'Settings → Models & Providers → Models' })
     expect(link.getAttribute('href')).toBe('#/settings/models')
     expect(link.closest('p')?.textContent).toBe(
-      "gemma3:1b can't take images. No image model is set up, so only its size and format were sent. Choose one in Settings → Models.",
+      "gemma3:1b can't take images. No image model is set up, so only its size and format were sent. Choose one in Settings → Models & Providers → Models.",
     )
   })
 

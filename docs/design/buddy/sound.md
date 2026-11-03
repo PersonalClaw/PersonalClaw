@@ -32,7 +32,7 @@ gulp, and with the hit chain ending at annoyed the blips are for poked and annoy
 
 Later work: sound ([#3900]).
 
-- Off by default; the owner switches it on in Settings → Buddy. The existing sound-cue switch and
+- Off by default; the owner switches it on in Settings → Appearance → Buddy. The existing sound-cue switch and
   its cap still apply, so the buddy is never louder than the app's own cues.
 - Silent in quiet hours, when muted, when the system output is muted, and while listening (the
   microphone is open).

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { memoryEmbeddedStat } from './memoryEmbeddedStat'
 
 // The server's sentence for the count, as `GET /api/memory/stats` sends it (`keyword_read_note`).
-const NOTE = '2 memories not embedded yet are read by keyword until the re-index in Settings → Models embeds them.'
+const NOTE = '2 memories not embedded yet are read by keyword until the re-index in Settings → Models & Providers → Models embeds them.'
 
 describe('the Memory panel Embedded stat', () => {
   it('names the provider when every memory is embedded by the bound model', () => {
@@ -18,7 +18,7 @@ describe('the Memory panel Embedded stat', () => {
   })
 
   it('counts another model’s vectors the same way', () => {
-    const note = '2 memories embedded by another embedding model are read by keyword until the re-index in Settings → Models re-embeds them.'
+    const note = '2 memories embedded by another embedding model are read by keyword until the re-index in Settings → Models & Providers → Models re-embeds them.'
     expect(memoryEmbeddedStat({ embedded_count: 1, read_by_keyword: 2, read_by_keyword_note: note, embedding_provider: 'ollama' }))
       .toEqual({ value: 1, sub: '2 read by keyword', title: note })
   })
@@ -30,7 +30,7 @@ describe('the Memory panel Embedded stat', () => {
       value: 6,
       sub: 'no model bound',
       title: 'No embedding model is bound, so memory search matches by keyword. The embeddings memories '
-        + 'already hold are kept; choosing a model in Settings → Models re-indexes them.',
+        + 'already hold are kept; choosing a model in Settings → Models & Providers → Models re-indexes them.',
     })
   })
 })

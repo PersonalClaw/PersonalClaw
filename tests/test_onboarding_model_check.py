@@ -211,7 +211,7 @@ class TestVerdict:
         body = await _call()
         assert body["ok"] is False
         assert "no provider" in body["why"].lower()
-        assert "Settings → Providers" in body["fix"]
+        assert "Settings → Models & Providers → Providers" in body["fix"]
 
 
 # ── 3. the cause is relayed, not paraphrased ──────────────────────────────────

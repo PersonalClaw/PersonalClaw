@@ -26,21 +26,54 @@
   - button "Choose a model"
   - button "Back to Settings"
   - button "Settings"
-  - text: Apps
-  - heading "Apps" [level=#]
-  - paragraph: Where apps come from, plus the settings installed apps contribute — all in one place. Provider apps are configured under Settings › Providers; everything else lives here.
-  - heading "Store sources" [level=#]
-  - paragraph: Where the Store looks for installable apps. A source only ever contributes listings — installing still runs the security scanner, and nothing is installed without your consent.
-  - text: Bundled app source List the published first-party apps repo in the Store. On, opening the Store contacts github.com to read what it offers; off, the Store reaches no network of its own and shows only sources on this machine. This source has no remove button because it ships with PersonalClaw — this switch is how you turn it off.
-  - status
-  - switch "Bundled app source" [checked]
-  - text: Curated app registry Ship the community app registry as a default Store source, so registry apps are discoverable out of the box. Added once as a removable source — turning this off stops it being added again, but does not remove one already there (do that in the Store).
-  - status
-  - switch "Curated app registry" [checked]
-  - heading "Installed app settings" [level=#]
-  - paragraph: Settings contributed by non-provider apps you have installed. An app with nothing to configure does not appear.
-  - text: No installed apps expose configurable settings. Browse the
-  - button "Store"
-  - text: to add some.
+  - text: Apps & Packs
+  - heading "Apps & Packs" [level=#]
+  - navigation "On this page":
+    - list:
+      - listitem:
+        - link "Apps":
+          - /url: "#/settings/apps?section=apps"
+      - listitem:
+        - link "Packs":
+          - /url: "#/settings/apps?section=packs"
+  - region "Apps":
+    - heading "Apps" [level=#]
+    - paragraph: Where apps come from, plus the settings installed apps contribute — all in one place. Provider apps are configured under Settings › Models & Providers › Providers; everything else lives here.
+    - heading "Store sources" [level=#]
+    - paragraph: Where the Store looks for installable apps. A source only ever contributes listings — installing still runs the security scanner, and nothing is installed without your consent.
+    - text: Bundled app source List the published first-party apps repo in the Store. On, opening the Store contacts github.com to read what it offers; off, the Store reaches no network of its own and shows only sources on this machine. This source has no remove button because it ships with PersonalClaw — this switch is how you turn it off.
+    - status
+    - switch "Bundled app source" [checked]
+    - text: Curated app registry Ship the community app registry as a default Store source, so registry apps are discoverable out of the box. Added once as a removable source — turning this off stops it being added again, but does not remove one already there (do that in the Store).
+    - status
+    - switch "Curated app registry" [checked]
+    - heading "Installed app settings" [level=#]
+    - paragraph: Settings contributed by non-provider apps you have installed. An app with nothing to configure does not appear.
+    - text: No installed apps expose configurable settings. Browse the
+    - button "Store"
+    - text: to add some.
+  - region "Packs":
+    - heading "Packs" [level=#]
+    - paragraph: Importable capability bundles — skills, templates, agents and connector declarations one user can hand to another.
+    - heading "Discovery" [level=#]
+    - paragraph: How packs get proposed for a project. Fingerprinting only ever proposes — it never installs anything on its own.
+    - text: Project fingerprinting Let the zero-LLM scanner propose matching packs for a project (e.g. a Terraform-shaped dir). Off stops scanning.
+    - status
+    - switch "Project fingerprinting" [checked]
+    - heading "Suggested for your projects" [level=#]
+    - paragraph: Matched by file shape only — no model reads your code. A suggestion never installs anything, and declining one is remembered for that project.
+    - button "Suggest packs"
+    - text: No pack matches any project's workspace. Bind a project to a codebase directory to get suggestions.
+    - heading "Pack store" [level=#]
+    - paragraph: The packs shipped in this build. Installing one scans every component, lands its triggers disabled, and stages its roster until you deploy it.
+    - text: "Health OS #.#.# An honest health log: daily capture that records rather than advises, a routine-checkup cadence tracker, a weekly assembly template, and a two-tier health roster."
+    - button "Install Health OS": Install
+    - text: "Infra Ops #.#.# Review infrastructure-as-code changes honestly: plan counts before commentary, the destroy/replace list first, and a drift audit that names the attribute behind every divergence."
+    - button "Install Infra Ops": Install
+    - text: "Personal CFO #.#.# Close each month honestly: statement collection, a budget review that separates measurement from inference, a weekly spending digest, and a two-tier finance roster."
+    - button "Install Personal CFO": Install
+    - heading "Installed packs" [level=#]
+    - paragraph: Each imported pack, its skipped-connector markers, a re-runnable setup interview when it ships one, and an update or uninstall that never touches a component you have edited.
+    - text: No packs installed yet — install one from the pack store below and it shows up here with its setup state.
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

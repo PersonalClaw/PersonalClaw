@@ -136,12 +136,14 @@ def no_model_chosen(entry_name: str) -> tuple[str, str]:
     """``(why, fix)`` for a call that names no model, on an instance that names none either."""
     return (
         f"no model is chosen for “{entry_name}”",
-        "choose one of its models in Settings → Models",
+        "choose one of its models in Settings → Models & Providers → Models",
     )
 
 
 #: What a wire client says instead of sending a request that names no model.
-NO_MODEL_NAMED = "No model is chosen for this call. Choose one in Settings → Models."
+NO_MODEL_NAMED = (
+    "No model is chosen for this call. Choose one in Settings → Models & Providers → Models."
+)
 
 
 def require_model(model: object) -> str:

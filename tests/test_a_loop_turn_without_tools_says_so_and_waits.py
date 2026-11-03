@@ -351,7 +351,7 @@ async def test_a_cycle_run_without_tools_puts_its_loop_on_hold_naming_the_model(
     assert question["question"] == (
         "Its worker ran this cycle without tools: “Pocket:tiny-1” can't use tools, and a cycle "
         "counts only for the finding it writes. Choose a model that uses tools for Loops in "
-        "Settings → Models. Then resume the loop."
+        "Settings → Models & Providers → Models. Then resume the loop."
     )
     assert svc.rows[key].active is False, "no next cycle runs while it waits"
     assert live.sessions.reset_keys == [f"dashboard:{key}"], "a resume builds the worker afresh"

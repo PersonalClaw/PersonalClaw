@@ -59,7 +59,7 @@ describe('OwnReplyStyles', () => {
     expect(screen.getByText('Polite and precise.')).toBeTruthy()
     expect(screen.getByText('Brief')).toBeTruthy()
     expect(screen.getByText(/added by Acme/)).toBeTruthy()
-    expect(screen.queryByText('Terse'), 'the bundled styles are edited in Settings › Prompts').toBeNull()
+    expect(screen.queryByText('Terse'), 'the bundled styles are edited in Settings › Agent › Prompts').toBeNull()
   })
 
   it('lists a refused style file with the file and why', async () => {

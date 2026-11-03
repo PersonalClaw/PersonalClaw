@@ -281,7 +281,7 @@ class BrowseActionProvider(ActionProvider):
                     code="ERR_BROWSE_INCIDENT_ACTIVE",
                     what="browse refused to start because incident mode is active",
                     why="incident mode suspends all unattended work",
-                    fix="clear incident mode in Settings → Guardrails, then re-run",
+                    fix="clear incident mode in Settings → Security → Guardrails, then re-run",
                 ),
             )
 

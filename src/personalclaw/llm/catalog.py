@@ -747,7 +747,7 @@ async def openai_compatible_discover_models(
     if not api_key and not endpoint:
         raise ModelDiscoveryError(
             "No endpoint or API key configured for this provider — set its endpoint "
-            "(and key, if the endpoint needs one) in Settings → Providers."
+            "(and key, if the endpoint needs one) in Settings → Models & Providers → Providers."
         )
     url = openai_compatible_models_url(endpoint, default_base=default_base)
     headers: dict[str, str] = {}

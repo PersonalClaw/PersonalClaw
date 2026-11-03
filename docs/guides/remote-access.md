@@ -302,7 +302,7 @@ Sessions survive a gateway restart (they are recorded in `~/.personalclaw/sessio
 0600). That is deliberate: being logged out by an unattended update, while away from home, is
 exactly the situation this feature exists to prevent.
 
-**Settings → Devices** lists everything signed in: each browser, paired phone and desktop app,
+**Settings → Devices & Access → Devices** lists everything signed in: each browser, paired phone and desktop app,
 and every token a script or the CLI minted — what it is, when it signed in, when it was last
 seen and from which address. Sign one out there, or choose **Sign out all other devices** if a
 device is lost or you do not recognise one. Under **Integrations** it also lists every token an
@@ -332,7 +332,7 @@ admit one, and is forgotten once none of those sign-outs is remembered (97 days 
 90-day sign-in limit, then the week a sign-out is explained for).
 
 A signed-out device is told why the next time it is used — "This device was signed out today
-at 09:14 from Settings → Devices on another device", or "Your sign-in on this device lasted 30
+at 09:14 from Settings → Devices & Access → Devices on another device", or "Your sign-in on this device lasted 30
 days and ended…" — and how to sign back in, on the page it opens and in the dashboard if it was
 open. Each kind of sign-in has a limit of 20 (browsers, paired devices, and tokens separately),
 so the CLI or a script minting tokens never signs a browser or a phone out.
@@ -380,7 +380,7 @@ the decision from *your* gateway over the link you set up above. A push service 
 Mozilla's, or your own ntfy host — never sees what is being approved. That is not a nicety: it is the
 only claim that holds for every transport below, since not all of them are encrypted.
 
-Pick a transport in **Settings → Companion apps → Phone push**. The guide leads with ntfy
+Pick a transport in **Settings → Devices & Access → Companion apps → Phone push**. The guide leads with ntfy
 because it is the documented default recommendation: fully self-hosted, no keys, no third
 party. Web push is what a browser or installed PWA uses; the relay is only for the store app.
 
@@ -389,7 +389,7 @@ party. Web push is what a browser or installed PWA uses; the relay is only for t
 The documented default: no third party is involved at all. Run [ntfy](https://ntfy.sh/docs/install/)
 and point the gateway at a topic:
 
-1. Settings → Companion apps → **Push backend → ntfy**.
+1. Settings → Devices & Access → Companion apps → **Push backend → ntfy**.
 2. Paste your topic's full **https** URL, e.g. `https://ntfy.example/personalclaw`. Plain `http` is
    refused at both the settings field and the sender — an unencrypted ping would put the item id on
    the wire in the clear.
@@ -424,7 +424,7 @@ Two real constraints, stated rather than discovered:
   the installed app. The companion screen says so instead of showing a button that cannot work.
 - **A service worker needs a secure context: an `https` page, or `localhost` on the gateway's own
   machine.** Plain `http://` is not one, at a LAN address or at the tailnet address the steps above
-  open, so there is no service worker there: no web push and no install. Settings → Companion apps
+  open, so there is no service worker there: no web push and no install. Settings → Devices & Access → Companion apps
   → *Install & offline* names that as the reason. On the plain-`http` tailnet path, use the ntfy
   backend above for push: it needs no service worker.
 
@@ -442,7 +442,7 @@ that forwards it to APNs/FCM. Deploy it yourself, with the push credentials of t
 sends for. The relay stores nothing, retries nothing, and refuses any body that is not
 exactly the two ids, so it is a dumb pipe by construction, not a cloud middle tier.
 
-1. Settings → Companion apps → **Push backend → relay**, and paste the relay's **https**
+1. Settings → Devices & Access → Companion apps → **Push backend → relay**, and paste the relay's **https**
    URL (plain `http` is refused at the sender, same as ntfy).
 2. In the store app, open the companion screen and tap **Turn on push** — the app
    registers its device token with *your gateway*, which holds it; the relay sees a token
@@ -492,7 +492,7 @@ follows what changes while it is open, and reads again when you come back to it 
 returns, so a page you left open days ago shows what is true now: a loop that has ended is not
 offered for pausing, and a task finished at your desk is not listed as open.
 
-Which notifications reach the phone at all is **Settings → Notifications**: every kind has a row,
+Which notifications reach the phone at all is **Settings → Notifications & Inbox → Notifications**: every kind has a row,
 and *Approval needed* ships with the phone among its targets. Turn it off there and nothing else
 changes. A row pushes only while it is set to **Notify**, and by default only approvals, questions
 and errors are.
@@ -540,7 +540,7 @@ Being straight about the limits, because a false sense of safety is worse than n
 - **A weak password.** Rate limiting slows online guessing; it does nothing about a password that
   appears in a breach list. Use a passphrase.
 - **A compromised device.** A session cookie on a stolen unlocked phone is a session. Sign it out
-  from Settings → Devices.
+  from Settings → Devices & Access → Devices.
 - **Your tunnel provider.** Anything terminating your TLS can see your traffic. That is inherent
   to the arrangement, not specific to PersonalClaw.
 - **The agent's own reach.** Sign-in controls who reaches the *dashboard*. What the agent may do

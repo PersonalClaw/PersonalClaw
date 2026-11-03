@@ -31,7 +31,7 @@ against core protocols). Paths are relative to
   verdict, and `POST /api/inbox/{id}/sort` sends it again. A message is sent once: never again
   after it has a verdict or a failure, and an answer lands only on a row still unsorted, so a
   verdict she gave while the model read it stands. Nothing is sent while `inbox.sort_messages`
-  is off (Settings → Inbox → Sort new messages) or incident mode is on, and a call the daily
+  is off (Settings → Notifications & Inbox → Inbox → Sort new messages) or incident mode is on, and a call the daily
   spend ceiling refuses, or that no background model can take (none is set up, or the bound one
   is resting after failing), leaves its messages waiting; each is a hold whose sentence is
   `health.sorting.held` in `/api/inbox/status`, and the next tick tries again. Only messages
@@ -220,7 +220,7 @@ against core protocols). Paths are relative to
   text is the message's. An app whose source hands one over declares the `message-instructions`
   core feature.
   **Watched channels.** Every source's `poll` is handed `inbox.watched_channels`; a source
-  that reads it sets `watches_channels = True` (Slack's), and Settings → Inbox shows the
+  that reads it sets `watches_channels = True` (Slack's), and Settings → Notifications & Inbox → Inbox shows the
   list ("Channels to read"), named by those sources, while one is polled.
 - **Settings** live solely in
   `~/.personalclaw/entity_settings/inbox.json` (`auto_cleanup_enabled`,
@@ -461,7 +461,7 @@ person asking is there, and its prompt is that chat's
 approval card, which PersonalClaw shows for a chat of its own under any rule too. It used to wait for
 the rule's `channel_dm` target, which the default rule does not have, so a chat started on Telegram
 asked nobody on Telegram. The rule's `channel_dm` target (off under `never`) adds the owner's **Send
-approvals to** (`agent.approval_channel`, Settings → Notifications): it asks an approval with no
+approvals to** (`agent.approval_channel`, Settings → Notifications & Inbox → Notifications): it asks an approval with no
 channel origin (a chat in PersonalClaw, an unattended run, a trigger), and is tried after a chat's
 own channel that cannot ask. Without the target no other channel stands in, and the approval waits in
 the dashboard. A subagent's request to start always asks (`GatewayOrchestrator._interactive_approval`).
@@ -838,7 +838,7 @@ to a rule:
   never matches.
 
 Rules live in `entity_settings/notification_rules.json` with a guarded
-`PUT /api/notifications/rules`; the matrix is Settings → Notifications →
+`PUT /api/notifications/rules`; the matrix is Settings → Notifications & Inbox → Notifications →
 Per-kind delivery. A rule's two lists change one entry per write —
 `targets: {"add"|"remove": name}`, `conditions.keywords: {"add"|"remove": keyword}` —
 applied to the rule as stored at that moment, and never as a whole list, so a save

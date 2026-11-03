@@ -312,8 +312,18 @@ def _failure(run_id: str, node_id: str) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("status", "error", "failure_class", "where"),
     [
-        (401, "unauthorized", "permission", "fix its key in Settings → Providers"),
-        (404, f"model '{MODEL}' not found", "user", "the Background use case in Settings → Models"),
+        (
+            401,
+            "unauthorized",
+            "permission",
+            "fix its key in Settings → Models & Providers → Providers",
+        ),
+        (
+            404,
+            f"model '{MODEL}' not found",
+            "user",
+            "the Background use case in Settings → Models & Providers → Models",
+        ),
     ],
 )
 async def test_a_refusal_a_retry_cannot_clear_offers_none_and_says_what_to_change(

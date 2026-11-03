@@ -354,7 +354,8 @@ async def api_external_access_client(request: web.Request) -> web.Response:
             "token_notice": (
                 "Copy this now — it is stored only as a hash and cannot be shown again. It "
                 f"works for {lifetimes.duration_words(ttl_secs)}, until "
-                f"{lifetimes.until_words(client.expires_at)}; Settings → Devices lists it."
+                f"{lifetimes.until_words(client.expires_at)}; Settings → Devices & Access → "
+                "Devices lists it."
             ),
             **({"webhook": webhook.instructions(automation, token)} if automation else {}),
         }

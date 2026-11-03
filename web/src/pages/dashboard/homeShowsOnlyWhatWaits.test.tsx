@@ -98,7 +98,7 @@ describe('Home draws no count pills', () => {
 })
 
 describe('Home reads nothing it does not show', () => {
-  it('no system metrics or health probe reads: those are Settings › System\'s', async () => {
+  it('no system metrics or health probe reads: those are Settings › Health › System\'s', async () => {
     await mountHome()
     await waitFor(() => expect(calls.waiting ?? 0).toBeGreaterThan(0))
     expect(calls.system ?? 0, 'the host metrics poll').toBe(0)

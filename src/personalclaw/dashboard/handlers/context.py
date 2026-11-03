@@ -200,7 +200,7 @@ async def api_project_context_regenerate(request: web.Request) -> web.Response:
         return web.json_response(
             {
                 "error": "context adapters are disabled",
-                "hint": "Enable Settings › Legibility › Context files first.",
+                "hint": "Enable Settings › Agent › Legibility › Context files first.",
             },
             status=403,
         )

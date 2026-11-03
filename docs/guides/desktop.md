@@ -105,7 +105,7 @@ app reads, and the app signs its windows in with it:
   holds it, and the app never writes it to its log.
 - **Every window is signed in.** The main window, a new tab, a page a link opens in its own
   window, and the menu bar's and notifications' links into the dashboard all share it.
-- **Quitting signs it out.** While the app runs, Settings → Devices lists it as "PersonalClaw
+- **Quitting signs it out.** While the app runs, Settings → Devices & Access → Devices lists it as "PersonalClaw
   desktop app". Quitting ends that sign-in, and the next launch makes a new one.
 - **A restart signs the windows in again.** When the gateway restarts in place, it comes back on
   a new port with a new sign-in. The app follows it there: each window reloads the page it was
@@ -116,7 +116,7 @@ list or answer your approvals without signing in, an app you installed reaches o
 its permissions declare, and the credential an agent CLI's tools hold opens only the operations
 it exists for.
 
-If the app is signed out from another device (Settings → Devices), or its sign-in runs out
+If the app is signed out from another device (Settings → Devices & Access → Devices), or its sign-in runs out
 (`auth.session_ttl`, 30 days by default), the window says so. Quit PersonalClaw and open it again
 to sign it back in.
 
@@ -257,7 +257,7 @@ Picking a different one reloads the dashboard from that gateway. Nothing is shar
 
 ### Adding one: paste the pairing link
 
-On the gateway you want to reach, open **Settings → Devices → Pair a device**. It gives you a link
+On the gateway you want to reach, open **Settings → Devices & Access → Devices → Pair a device**. It gives you a link
 that looks like `http://claw.local:10000/pair?code=ABCD-2345`. Paste that whole link into the
 switcher.
 
@@ -318,10 +318,10 @@ The switcher shows a status per row, and the statuses mean different things on p
 - **Not answering** / **Timed out** — the machine is off, asleep, or off the network. The app
   re-checks on a widening delay a bounded number of times, then stops and waits for you. When it
   answers again, the dashboard reloads by itself.
-- **Signed out** — the gateway signed this app out: from Settings → Devices on another device, with
+- **Signed out** — the gateway signed this app out: from Settings → Devices & Access → Devices on another device, with
   "Sign out all other devices", or because its sign-in ran out. The window shows the gateway's own
   sentence saying why, when, and how to sign back in, and the row carries the same sentence. To pair
-  it again, choose **Pair a device** in Settings → Devices on a device that is still signed in, and
+  it again, choose **Pair a device** in Settings → Devices & Access → Devices on a device that is still signed in, and
   paste the pairing link into **Gateway → Gateways…** here.
 - **Refused the connection check** — the address answered the app's health check with a refusal.
   A PersonalClaw gateway never does (the check needs no sign-in), so something in front of it — a
@@ -392,7 +392,7 @@ installed version can:
 | What | Where the desktop app says so |
 |---|---|
 | An app that runs its own Python server or background worker, an engine in a Python environment of its own, connector-pack parse scripts, or Python packages the bundle does not carry | its Store card and details, which offer no Install; the install dialog; Activate. An app like this already installed, in a PersonalClaw folder the installed version also uses, says it on its Library card and details, and never starts, so nothing retries it. |
-| Install engine, for an app whose engine runs in a Python environment of its own | its engine section in Settings → Providers, when you press it |
+| Install engine, for an app whose engine runs in a Python environment of its own | its engine section in Settings → Models & Providers → Providers, when you press it |
 | A command in the Linux sandbox: the agent's bash tool, a hook or command automation, a scheduled script, an agent CLI's session, the terminal (Linux only) | where it would run: the tool call, the run, the terminal. The command is not run, and it never runs outside the sandbox. |
 | `personalclaw doctor`'s `pip:` row | the row says the desktop app installs no Python packages |
 
@@ -412,7 +412,7 @@ once.
 ## Push-to-talk
 
 Press the shortcut, speak, press it again. The recording is transcribed by whichever
-model you bound to the **STT** use case (Settings → Models) and the text is inserted into
+model you bound to the **STT** use case (Settings → Models & Providers → Models) and the text is inserted into
 the composer **at your cursor** — it does not replace or append to what you had already
 typed.
 
@@ -487,7 +487,7 @@ release will simply turn it on.
 
 The desktop app can deliver notifications as real OS notifications instead of only as a
 badge on the dashboard's bell. It is **per notification kind**, not a global switch:
-Settings → Notifications → the rules matrix → open a row's *detail* → tick **Desktop
+Settings → Notifications & Inbox → Notifications → the rules matrix → open a row's *detail* → tick **Desktop
 notification**. Nothing is ticked for you.
 
 Two things follow from where that switch lives:
@@ -520,16 +520,16 @@ whole brief. Every other kind of notification sounds as before.
 macOS never tells an app whether notifications are authorized, so PersonalClaw cannot show
 you a truthful "granted" state for this one and does not pretend to (Settings → Security →
 Desktop capabilities says as much). The first notification asks; after that, **System
-Settings → Notifications → PersonalClaw** is the only control. If you have turned them off
+Settings → Notifications & Inbox → Notifications → PersonalClaw** is the only control. If you have turned them off
 there, ticking Desktop in a rule will silently do nothing — that is macOS's answer, not a
 bug in the rule.
 
 ## The buddy
 
 The buddy is a small window of its own that shows what PersonalClaw is doing and what is waiting
-on you, without opening the app. It is off until you turn on **Buddy status**, in Settings → Buddy
+on you, without opening the app. It is off until you turn on **Buddy status**, in Settings → Appearance → Buddy
 or with the menu bar's **Show Buddy**: one switch, kept by your gateway, that every window and the
-phone follow at once. Turning it off closes the window. Settings → Buddy also chooses which surfaces
+phone follow at once. Turning it off closes the window. Settings → Appearance → Buddy also chooses which surfaces
 show it (the window, the menu-bar icon, the dock), and the app follows each. If the app starts before
 its gateway answers, it does what you last chose.
 
@@ -545,7 +545,7 @@ its gateway answers, it does what you last chose.
   reaches the window underneath.
 - **Kept out of screen sharing and screenshots** on macOS and Windows, by default, so what is
   waiting on you does not show in a share. Linux offers no way to keep a window out of a capture,
-  so there the buddy shows in a share, and Settings → Buddy says the row is not available on this
+  so there the buddy shows in a share, and Settings → Appearance → Buddy says the row is not available on this
   computer instead of offering a switch.
 - **It costs nothing while hidden.** Hidden, its page schedules no timer and no frame and reads no
   pointer, and it opens no connection of its own.
@@ -560,13 +560,13 @@ has none of the main window's desktop capabilities.
 
 ### Its settings
 
-**Settings → Buddy** holds every buddy setting in one place: Buddy status, which surfaces show it
+**Settings → Appearance → Buddy** holds every buddy setting in one place: Buddy status, which surfaces show it
 (its window, its tray and dock faces, its alerts' notifications), and how long you are away before
 it steps back (docked it hides, floating it dozes; alerts still appear). They are kept by the
 gateway (`buddy.*`, see the configuration reference), so every window and every computer signed in
 to it follows the same answer, `GET /api/buddy/policy`, and a change applies at once, with no
 restart. The page also shows what the buddy follows from elsewhere, without a second copy of it:
-whether your notifications are muted or in quiet hours (changed in Settings → Notifications), and
+whether your notifications are muted or in quiet hours (changed in Settings → Notifications & Inbox → Notifications), and
 whether your system asks for reduced motion (changed in its accessibility settings). In the desktop
 app, its **This computer** rows say where the buddy sits on this computer, dock a floating buddy,
 and choose whether screen sharing and screenshots see it; those two are this computer's own, kept by

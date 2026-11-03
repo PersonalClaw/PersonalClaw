@@ -478,7 +478,9 @@ describe('a user can find it', () => {
     const home = web('SettingsHome.tsx')
     expect(home).toContain('SETTINGS_WIDGETS')
     const widgets = web('settingsWidgets.tsx')
-    expect(widgets).toMatch(/id: 'evals', group: '[^']+', label: 'Evaluations'/)
+    expect(widgets).toMatch(/id: 'evals', label: 'Evaluations'/)
+    // …a section of Evaluations & Feedback, whose card on the overview carries its part (#5897).
+    expect(web('settingsPages.ts')).toMatch(/id: 'evals', label: 'Evaluations & Feedback'[^\n]*sections: \['evals', 'feedback'\]/)
     // The search index must answer BOTH words: the product says "Evaluations", the config key and
     // every backend message say "evals".
     const at = widgets.indexOf("id: 'evals'")

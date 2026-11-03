@@ -295,15 +295,15 @@ def _list_tools() -> list[dict[str, Any]]:
             "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Generate an image from a text prompt, using the model bound to the "
-                "'image_gen' use-case in Settings → Models, and save it as a versioned "
-                "kind='image' artifact; returns its slug so it can be shown, referenced, or "
-                "embedded in a document. To change an existing image, pass its slug: the image "
-                "is saved as that artifact's next version instead of as a new artifact. With "
-                "slug alone the model makes a new image from the prompt and never sees the "
-                "current one, so the prompt describes the whole picture with the change made. "
-                "Add edit=true to send the current image to the model to change as the prompt "
-                "says, which only a model that edits images can do: each result says which way "
-                "the bound model takes. Requires an image_gen model to be configured; if none "
+                "'image_gen' use-case in Settings → Models & Providers → Models, and save it as a "
+                "versioned kind='image' artifact; returns its slug so it can be shown, "
+                "referenced, or embedded in a document. To change an existing image, pass its "
+                "slug: the image is saved as that artifact's next version instead of as a new "
+                "artifact. With slug alone the model makes a new image from the prompt and never "
+                "sees the current one, so the prompt describes the whole picture with the change "
+                "made. Add edit=true to send the current image to the model to change as the "
+                "prompt says, which only a model that edits images can do: each result says which "
+                "way the bound model takes. Requires an image_gen model to be configured; if none "
                 "is, it says so."
             ),
             "inputSchema": {
@@ -339,8 +339,8 @@ def _list_tools() -> list[dict[str, Any]]:
             "_meta": {BUILDS_META_KEY: True},
             "description": (
                 "Generate a video from a text prompt, using the model bound to the "
-                "'video_gen' use-case in Settings → Models. The result is saved as a "
-                "versioned kind='video' artifact; returns its slug so it can be "
+                "'video_gen' use-case in Settings → Models & Providers → Models. The result is "
+                "saved as a versioned kind='video' artifact; returns its slug so it can be "
                 "referenced or embedded. Video generation is asynchronous and may take "
                 "1-3 minutes. Requires a video_gen model to be configured; if none is, "
                 "it says so."
@@ -1835,7 +1835,7 @@ def _image_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         _audit("denied", error="no image_gen model configured")
         return tool_failure(
             "no image-generation model is configured. Choose one under Image · Generation "
-            "in Settings → Models."
+            "in Settings → Models & Providers → Models."
         )
     provider, model_id = resolved
     model_ref = f"{provider.name}:{model_id}"
@@ -2003,7 +2003,7 @@ def _video_generate(prov: Any, args: dict[str, Any], sk: str | None, _audit: Any
         _audit("denied", error="no video_gen model configured")
         return tool_failure(
             "no video-generation model is configured. Choose one under Video · Generation "
-            "in Settings → Models."
+            "in Settings → Models & Providers → Models."
         )
     provider, model_id = resolved
     refused = _other_model_refusal(f"{provider.name}:{model_id}")
@@ -2197,7 +2197,8 @@ def _visualize(args: dict[str, Any], _audit: Any) -> str:
         _audit("error", error=str(e))
         return tool_failure(
             f"could not produce a visualization ({e}). No reasoning model may be "
-            "configured — bind one in Settings → Models, or present the data as text."
+            "configured — bind one in Settings → Models & Providers → Models, or present the data "
+            "as text."
         )
     if not result.dsl.strip():
         _audit("error", error="empty visualization")

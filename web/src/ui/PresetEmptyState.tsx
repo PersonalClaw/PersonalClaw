@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
 import { TileButton } from './TileButton'
+import { useHeadingTag } from './headingDepth'
 import { fvs } from '../design/fontWeight'
 
 /** One preset offered by a {@link PresetEmptyState}. `prefill` is the consuming
@@ -78,10 +79,11 @@ export function PresetEmptyState<P>({ title, hint, presets, onPick, footer }: {
   /** The expert escape hatch (a blank-create button) rendered under the grid. */
   footer?: ReactNode
 }) {
+  const Heading = useHeadingTag(2)
   return (
     <div className="flex flex-col items-center gap-l py-2xl">
       <div className="text-center">
-        <h2 data-type="headline-s" className="text-on-surface">{title}</h2>
+        <Heading data-type="headline-s" className="text-on-surface">{title}</Heading>
         {hint && <p data-type="body-m" className="mt-xs mx-auto max-w-[520px] text-on-surface-low">{hint}</p>}
       </div>
       {/* Two columns from `sm` up, one below — four presets read as a block, not a list.

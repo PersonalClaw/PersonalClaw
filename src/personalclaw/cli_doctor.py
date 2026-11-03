@@ -128,8 +128,8 @@ def _read_running_gateway() -> _GatewayReading:
             port=port,
             providers=providers,
             why=f"here: the gateway running on port {port} has its Doctor switched off "
-            "(Settings → Doctor), so the checks of its channels and app backends read this "
-            "command's process instead",
+            "(Settings → Health → Doctor), so the checks of its channels and app backends read "
+            "this command's process instead",
         )
     return _GatewayReading(port=port, remediation=remediation, providers=providers)
 
@@ -154,7 +154,10 @@ def _connection_row(name: str, gateway: _GatewayReading) -> str:
     if state == FAILED:
         return f"⚠️  cannot be used: {detail or 'its connection test failed without saying why'}"
     if state == CHECKING:
-        return "⏳ being tested now; its card in Settings → Providers shows the answer"
+        return (
+            "⏳ being tested now; its card in Settings → Models & Providers → Providers shows "
+            "the answer"
+        )
     if state == UNTESTABLE:
         return f"⏹  registered; {detail or 'its type has no connection test'}"
     return "⏹  registered; the running gateway lists no connection test for it"
@@ -237,7 +240,8 @@ def _report_acp_agent(entry: object, label: str, issues: list[str], *, start: bo
     if state == "untested":
         detail = (
             "installed, not started — run `personalclaw doctor --start-agent-clis` to start "
-            "each agent CLI once, or press Test on its card in Settings → Providers"
+            "each agent CLI once, or press Test on its card in Settings → Models & Providers → "
+            "Providers"
         )
     elif tested_at and not start:
         detail = f"{detail} (last Test {tested_at})"
@@ -250,13 +254,14 @@ def _report_acp_agent(entry: object, label: str, issues: list[str], *, start: bo
     if adapter and adapter["error"]:
         print(
             "      its ACP adapter did not install when its app was enabled: "
-            f"{adapter['error']}. Retry on its card in Settings → Providers installs it again."
+            f"{adapter['error']}. Retry on its card in Settings → Models & Providers → Providers "
+            "installs it again."
         )
         issues.append(f"{label}: ACP adapter not installed")
     elif adapter:
         print(
             "      its ACP adapter is not installed here, so it runs through npx. Retry on its "
-            "card in Settings → Providers installs it."
+            "card in Settings → Models & Providers → Providers installs it."
         )
 
 
@@ -675,7 +680,7 @@ def _doctor_external_vector_store() -> list[str]:
     if local and info.count == 0:
         print(f"               Empty while {local} local chunk(s) are embedded — searches")
         print("               find no chunks. Fix: re-enable the app to backfill, or")
-        print("               reindex from Settings → Doctor → Maintenance.")
+        print("               reindex from Settings → Health → Doctor → Maintenance.")
         return [f"vector store {name} empty"]
     if local is not None and info.count is not None and info.count != local:
         print("               ⚠️  count differs from local — a backfill may be in flight.")
@@ -710,7 +715,7 @@ def _doctor_backups() -> None:
 
 #: The Fix line for a server entry the Doctor page's Fix can set up: this command repairs nothing.
 _CORE_SERVER_FIX_LINES = (
-    "Fix: personalclaw doctor repairs nothing. Settings → Doctor → Tools has a Fix",
+    "Fix: personalclaw doctor repairs nothing. Settings → Health → Doctor → Tools has a Fix",
     "for this, which shows what it writes and asks first. The gateway's next start",
     "sets the entry up too.",
 )
@@ -831,7 +836,10 @@ def _doctor_maintenance(gateway: _GatewayReading) -> None:
                 print(f"  deficit:     ⏹  {label} ×{count} (−{penalty:.1f})")
                 print(f"               {d['blocked_by']}")
         if any(d["reachable"] for d in present):
-            print("               Fix: personalclaw doctor runs no jobs — use Settings → Doctor")
+            print(
+                "               Fix: personalclaw doctor runs no jobs — use Settings → Health "
+                "→ Doctor"
+            )
             print("               → Maintenance → Run now, or wait for the adaptive pass.")
     except Exception as exc:
         print(f"  health:      ⚠️  could not measure ({str(exc)[:120]})")
@@ -1250,7 +1258,7 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     if _active_embedding_spec():
         print("  embeddings:  ✅ enabled")
     else:
-        print("  embeddings:  ⏹ disabled (pick an embedding model in Settings → Models)")
+        print("  embeddings:  ⏹ disabled (bind one in Settings → Models & Providers → Models)")
     issues.extend(_doctor_external_vector_store())
 
     _doctor_backups()
@@ -1267,14 +1275,14 @@ def _doctor(*, start_agent_clis: bool = False) -> None:
     stt_resolved = active_stt()
 
     if not stt_active:
-        print("  status:      ⏹ disabled (enable in Settings → Voice)")
+        print("  status:      ⏹ disabled (enable in Settings → Speech & Transcription)")
     elif stt_resolved is None:
         # Not a failure: STT backends are opt-in apps now (e.g. the faster-whisper
         # app) plus remote OpenAI-family providers. With none installed/bound, STT is
         # simply unconfigured — report it, but don't fail the doctor (a fresh core is
         # expected to boot without media backends).
         print(
-            "  status:      ⏹  no STT model configured (install an STT app or bind one in Settings → Models)"  # noqa: E501
+            "  status:      ⏹  no STT model configured (install an STT app or bind one in Settings → Models & Providers → Models)"  # noqa: E501
         )
     else:
         print(f"  model:       ✅ {stt_resolved[0].name}:{stt_resolved[1]}")

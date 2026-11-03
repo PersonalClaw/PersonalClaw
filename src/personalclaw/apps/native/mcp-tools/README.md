@@ -5,7 +5,7 @@ PersonalClaw starts with a command (stdio), or one at a URL over Streamable HTTP
 SSE transport.
 
 **MCP Tool Servers** is a **tool provider** that ships with PersonalClaw. The gateway runs the
-servers you add under Settings → Providers or on the Tools page, and those servers' tools
+servers you add under Settings → Models & Providers → Providers or on the Tools page, and those servers' tools
 reach an agent through this provider, named `mcp/<server>/<tool>`. It is built in because a
 connected server is otherwise useless: without it, a server the gateway is already running
 exposes nothing an agent can call.

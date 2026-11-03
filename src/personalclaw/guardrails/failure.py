@@ -182,8 +182,11 @@ def inference_failure_mode(exc: BaseException) -> FailureMode:
 def use_case_binding(use_case: str) -> str:
     """Where a use case's model is bound, named the way Settings → Models labels it."""
     if not use_case:
-        return "its use case in Settings → Models"
-    return f"the {use_case.replace('_', ' ').capitalize()} use case in Settings → Models"
+        return "its use case in Settings → Models & Providers → Models"
+    return (
+        f"the {use_case.replace('_', ' ').capitalize()} use case in Settings → Models & "
+        "Providers → Models"
+    )
 
 
 class ModelCallTimeout(GuardError):
@@ -291,7 +294,7 @@ class LocalModelBusy(GuardError):
         fix = (
             f"give the {room_member} agent a second model on the Agents page"
             if room_member
-            else "add a second model after it in Settings → Models"
+            else "add a second model after it in Settings → Models & Providers → Models"
         )
         return (
             f"{self.model or self.provider} on this machine was busy with {self.busy_with}"
@@ -468,7 +471,8 @@ class CircuitOpenError(GuardError):
         wait = max(1, int(round(self.retry_after)))
         return (
             f"Calls to {self.provider!r} are paused after it failed repeatedly. It is asked again "
-            f"in about {wait} s; if it keeps failing, check it under Settings → Providers."
+            f"in about {wait} s; if it keeps failing, check it under Settings → Models & Providers "
+            "→ Providers."
         )
 
 
@@ -642,7 +646,8 @@ class BudgetExceededError(GuardError):
         """How the dollar cap that refused the call is lifted (raising it would not help)."""
         if self.scope == "day":
             return (
-                "set Max dollars / day to 0 in Settings → Guardrails to lift the daily dollar cap"
+                "set Max dollars / day to 0 in Settings → Security → Guardrails to lift the daily "
+                "dollar cap"
             )
         return "remove the dollar limit per run its automation sets"
 
@@ -660,11 +665,14 @@ class BudgetExceededError(GuardError):
             )
         if self.scope == "day":
             return (
-                f"raise {self._control()} in Settings → Guardrails (0 removes the cap), or wait "
-                "for it to reset at midnight"
+                f"raise {self._control()} in Settings → Security → Guardrails (0 removes the cap), "
+                "or wait for it to reset at midnight"
             )
         if self.dimension == "tokens":
-            return f"raise {self._control()} in Settings → Guardrails (0 removes the cap)"
+            return (
+                f"raise {self._control()} in Settings → Security → Guardrails (0 removes the "
+                "cap)"
+            )
         return "raise or remove the dollar limit per run its automation sets"
 
     def _control(self) -> str:
@@ -810,7 +818,7 @@ def request_exceeds_window_sentence(
     return (
         f"Your message is too long for {model}: {capacity}, and this message is "
         f"{request_tokens:,} tokens ({request_chars:,} characters). Shorten it, or bind a model "
-        "with a larger context window in Settings → Models."
+        "with a larger context window in Settings → Models & Providers → Models."
     )
 
 
@@ -889,7 +897,8 @@ def first_token_timeout_sentence(
     return (
         f"{who} did not start answering within {int(round(waited_secs))} seconds, so the "
         "request was stopped. A model can take minutes to read a long conversation before it "
-        f"answers: raise {setting} on {on} in Settings → Providers (under Advanced), or {faster}."
+        f"answers: raise {setting} on {on} in Settings → Models & Providers → Providers (under "
+        f"Advanced), or {faster}."
     )
 
 
@@ -980,5 +989,5 @@ class NoModelAnswered(GuardError):
             )
         return (
             f"None of this chat's models answered: {tried}. Try again in a moment, or check them "
-            "in Settings → Models."
+            "in Settings → Models & Providers → Models."
         )

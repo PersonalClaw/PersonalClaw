@@ -1829,7 +1829,7 @@ describe('every route that reads says when a read failed', () => {
     expect(reads.has('agents') && reads.has('toolsIndex'), 'the reads the surfaces table drives').toBe(true)
     expect(reads.has('updateAgent') || reads.has('createAgent'), 'and no write').toBe(false)
     expect(reads.size, 'the client reads').toBeGreaterThan(200)
-    expect(routes.length, 'renderPage and SUBPAGES').toBeGreaterThan(60)
+    expect(routes.length, 'renderPage and SECTIONS').toBeGreaterThan(60)
     const reading = [...own.values()].filter((o) => o.reads.length)
     expect(reading.length, 'routes that read').toBeGreaterThan(50)
     expect(own.get('agents')?.reads, 'a route owns the adapter its page reads through').toContain('pages/agents/agentsData.ts')
@@ -1862,7 +1862,7 @@ describe('a planted page that reads and says nothing is named', () => {
     ].join('\n'),
     [`${src}/pages/settings/SettingsPage.tsx`]: [
       'import { HubPanel } from "./HubPanel"',
-      'const SUBPAGES = [',
+      'const SECTIONS = [',
       "  { id: 'hub', label: 'Hub', render: () => <HubPanel /> },",
       ']',
     ].join('\n'),

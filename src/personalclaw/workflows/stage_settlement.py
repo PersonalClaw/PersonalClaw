@@ -343,8 +343,8 @@ def _subagent_failure(error: str, *, reaped: bool) -> Failure:
     elif without_tools_ending(error):
         cls = FailureClass.USER
         remedy = (
-            "choose a model that uses tools for Orchestration in Settings → Models, or give this "
-            "step one that does, then fork this run to try again"
+            "choose a model that uses tools for Orchestration in Settings → Models & Providers → "
+            "Models, or give this step one that does, then fork this run to try again"
         )
     elif couldnt_do_it(error):
         cls, named = FailureClass.PERMISSION, ending_sentence.REFUSAL

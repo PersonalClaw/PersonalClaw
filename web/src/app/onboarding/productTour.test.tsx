@@ -85,12 +85,16 @@ vi.mock('./TryOneStep', () => ({
     <button type="button" onClick={onSkip}>stub-skip-try</button>
   ),
 }))
-// The settings bento's THIRTY cards each read their own endpoint and several destructure the
+// The settings bento's cards each read their own endpoint and several destructure the
 // envelope (`doctor.capabilities`, `channels.length`, …). Stubbing every one of them here
 // would make this file a settings fixture; an empty registry keeps SettingsHome's OWN
 // markup — the `data-tour="settings"` wrapper and the autofocusing search — which is all the
 // tour interacts with. `settingsSubpageCoverage.test.ts` owns the card set.
 vi.mock('../../pages/settings/settingsWidgets', () => ({ SETTINGS_WIDGETS: [] }))
+// …and no pages to draw cards for (#5897): each card is a page whose parts are those widgets.
+vi.mock('../../pages/settings/settingsPages', async (orig) => ({
+  ...(await orig<typeof import('../../pages/settings/settingsPages')>()), SETTINGS_PAGES: [],
+}))
 
 /** Every gateway method name this test's run called, in order — the recorder that makes the
  *  "zero requests for tour progress" claim measurable instead of asserted in prose. */

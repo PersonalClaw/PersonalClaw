@@ -29,7 +29,7 @@ import { useAppearance } from '../../app/appearance'
 import { useMode } from '../../app/theme'
 import {
   BentoCard, BigStat, KVList, StatusPill, ChipRow, Highlight,
-  Switch, SegToggle, InlineSelect, type BentoSize,
+  Switch, OneWaySwitch, SegToggle, InlineSelect,
 } from './bento'
 import { fvs } from '../../design/fontWeight'
 import { NO_READING, fixedReading, isReading } from '../../lib/readings'
@@ -43,11 +43,9 @@ import { updateVerdict, updateVerdictLabel, type UpdateVerdict } from './updateV
  *  (`searchText`), and highlights query matches in its rendered body. */
 export interface SettingsWidget {
   id: string
-  group: string
   label: string
   icon: LucideIcon
   description: string
-  size: BentoSize
   /** A React hook returning the text blob this card surfaces (for search match +
    *  highlight). Returns '' while loading. Each widget owns its own cached fetch. */
   useSearchText: () => string
@@ -316,6 +314,22 @@ const usePacksInstalled = () => useQuery('settings:packs:installed', () =>
 const useCompanionDiscovery = () => useQuery('settings:companion:discovery', () => api.companionDiscovery())
 // The same key Settings → Buddy reads, so the card and the panel share one read.
 const useBuddyPolicy = () => useQuery('settings:buddy:policy', () => api.buddyPolicy())
+// `RoutingPanel`'s Router section's key and fetcher, verbatim, for the Adaptive routing switch the
+// Routing part of the Models & Providers card carries (#5897): one read for the card and the panel.
+const useRoutingConfig = () => useQuery('settings:routing-config', () =>
+  api.personalclawConfig().then((c) => (c.routing ?? {}) as Record<string, unknown>),
+  { persist: true },
+)
+// `CompanionPanel`'s key and fetcher, verbatim, for the LAN discovery switch the Companion apps part
+// of the Devices & Access card carries (#5897). The STORED flag, which is what the switch turns:
+// the live advertiser (`useCompanionDiscovery`) is what the part reports, and the two can disagree.
+const useCompanionCfg = () => useQuery('settings:companion', () =>
+  api.personalclawConfig().then((c) => ({
+    companion: (c.companion ?? {}) as Record<string, unknown>,
+    browse: (c.browse ?? {}) as Record<string, unknown>,
+  })),
+  { persist: true },
+)
 
 /** Run an async mutation, then invalidate the widget's cache key(s) so its data re-reads the new
  *  value — so a REJECTED write reconciles: the control snaps back to the server's answer.
@@ -365,7 +379,7 @@ const UPDATE_PILL_TONE: Record<UpdateVerdict, 'ok' | 'warn' | 'muted' | 'primary
 export const SETTINGS_WIDGETS: SettingsWidget[] = [
   // ── General ──────────────────────────────────────────────────────────────
   {
-    id: 'account', group: 'General', label: 'Account', icon: User, size: 'sm',
+    id: 'account', label: 'Account', icon: User,
     description: 'Your name and onboarding.',
     useSearchText() { const { name } = useIdentity(); return `account name ${name ?? ''}` },
     render(query, go) {
@@ -379,7 +393,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'design', group: 'General', label: 'Design', icon: Palette, size: 'sm',
+    id: 'design', label: 'Design', icon: Palette,
     description: 'Theme, accent, typography, and surface tokens.',
     useSearchText() { const { activeScheme, allSchemes } = useAppearance(); const { preference } = useMode(); const sc = allSchemes.find((s) => s.id === activeScheme); return `design theme appearance color accent typography scheme ${sc?.label ?? activeScheme} ${preference} mode` },
     render(query, go) {
@@ -412,7 +426,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'chat', group: 'General', label: 'Chat', icon: MessageSquare, size: 'md',
+    id: 'chat', label: 'Chat', icon: MessageSquare,
     description: 'Message behavior, history, and session preferences.',
     // `agent routing … muted unmute` is in here on purpose: the panel's Agent-routing section is the
     // ONLY place a muted agent can be un-muted from the whole list, and a user hunting for it has no
@@ -435,13 +449,9 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             { k: 'Restore sessions', control: true, v: <Switch on={c.restore_sessions} label="Restore sessions" onToggle={(v) => save({ restore_sessions: v })} /> },
             { k: 'Send on Enter', control: true, v: <Switch on={c.send_on_enter} label="Send on Enter" onToggle={(v) => save({ send_on_enter: v })} /> },
             { k: 'Timestamps', control: true, v: <Switch on={c.show_timestamps} label="Timestamps" onToggle={(v) => save({ show_timestamps: v })} /> },
-            // 🔴 THIS READ "Density: Comfortable / Compact" — the vocabulary of a LAYOUT setting — over
-            // `widget_density`, which is how readily the AGENT reaches for inline widgets in its
-            // replies (`AppConfig.dashboard.widget_density`, read into the prompt). Clicking Compact
-            // changed nothing on screen, because it changes what future turns are told. The panel's
-            // own label and options, verbatim, so the two surfaces name one setting one way.
-            { k: 'Widget density', control: true, v: <SegToggle value={c.widget_density} onPick={(v) => save({ widget_density: v })} ariaLabel="Widget density"
-              options={[{ key: 'more', label: 'More' }, { key: 'less', label: 'Less' }]} /> },
+            // Widget density is the Chat page's, by its own label there (#5897): the card keeps the
+            // three switches people flip, and how readily the agent reaches for inline widgets is
+            // set once and rarely.
           ]} />}
         </BentoCard>
       )
@@ -449,7 +459,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   // ── AI & Models ──────────────────────────────────────────────────────────
   {
-    id: 'providers', group: 'AI & Models', label: 'Providers', icon: Plug, size: 'lg',
+    id: 'providers', label: 'Providers', icon: Plug,
     description: 'Model backends and capability providers; credentials and runtimes.',
     useSearchText() {
       const { data: provs } = useProviders(); const { data: rt } = useRuntimes()
@@ -477,7 +487,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'models', group: 'AI & Models', label: 'Models', icon: Cpu, size: 'md',
+    id: 'models', label: 'Models', icon: Cpu,
     description: 'Which model serves each use case (chat, embeddings, voice).',
     useSearchText() {
       const { data: a } = useModelsActive()
@@ -508,7 +518,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'routing', group: 'AI & Models', label: 'Routing & Efficiency', icon: Route, size: 'sm',
+    id: 'routing', label: 'Routing & Efficiency', icon: Route,
     description: 'Per-model efficiency for each kind of request — success, latency, cost — and which models are on the Pareto frontier. Observation only.',
     useSearchText() {
       const { data } = useRoutingTelemetry()
@@ -517,21 +527,30 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
     render(query, go) {
       const { data, stale: isStalePaint, status, error, refresh } = useRoutingTelemetry()
+      const { data: router } = useRoutingConfig()
       const frontier = (data ?? []).filter((r) => r.on_frontier).length
       return (
         <BentoCard icon={Route} title="Routing & Efficiency" query={query} onClick={() => go('routing')} loading={data === undefined} stale={isStalePaint} failed={status === 'error'} error={error} onRetry={refresh}>
           {data === null || (data && data.length === 0)
-            ? <div data-type="body-s" className="text-on-surface-low">Per-model success, latency, and cost land here as models answer the calls PersonalClaw makes on its own — every call on reasoning, background, loops and orchestration, and automation’s calls on any other axis — showing which is most efficient.</div>
+            // Three lines at most: on the overview this sits beside Models in one row, and its whole
+            // sentence is on the Routing section a click away (#5897).
+            ? <div data-type="body-s" className="line-clamp-3 text-on-surface-low">Per-model success, latency, and cost land here as models answer the calls PersonalClaw makes on its own — every call on reasoning, background, loops and orchestration, and automation’s calls on any other axis — showing which is most efficient.</div>
             : data && <><BigStat value={data.length} caption={data.length === 1 ? 'model measured' : 'models measured'} />
                 <div data-type="body-s" className="mt-1 inline-flex items-center gap-1 text-on-surface-low">
                   <Trophy size={11} className="text-ok" /> {frontier} on the frontier
                 </div></>}
+          {/* The router's master switch, by the Routing page's label, writing the key it writes. Shown
+              once the router's own settings are read: a guessed position is never offered. */}
+          {router && <div className="mt-2"><KVList query={query} rows={[
+            { k: 'Adaptive routing', control: true, v: <Switch on={!!router.enabled} label="Adaptive routing"
+              onToggle={(v) => mutate(() => api.patchConfig('routing.enabled', v), 'settings:routing-config')} /> },
+          ]} /></div>}
         </BentoCard>
       )
     },
   },
   {
-    id: 'search', group: 'AI & Models', label: 'Search', icon: Search, size: 'md',
+    id: 'search', label: 'Search', icon: Search,
     description: 'Which search provider serves each web search use case.',
     useSearchText() {
       const { data } = useSearchEntity()
@@ -576,7 +595,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'prompts', group: 'AI & Models', label: 'Prompts', icon: FileText, size: 'md',
+    id: 'prompts', label: 'Prompts', icon: FileText,
     description: 'Which system prompt serves each context.',
     useSearchText() {
       const { data: b } = usePromptBindings()
@@ -597,7 +616,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'evals', group: 'AI & Models', label: 'Evaluations', icon: FlaskConical, size: 'sm',
+    id: 'evals', label: 'Evaluations', icon: FlaskConical,
     description: 'Paired A/B studies over prompt templates, retrieval and judge benchmarks, and monthly ablations — the substrate that says whether a change actually helped.',
     // 🔑 THE HUB IS THE ONLY NAVIGATION. `#/settings` renders `SETTINGS_WIDGETS` and nothing else
     // (`SettingsHome` has no second list), so a subpage without a widget here is reachable only by
@@ -635,7 +654,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'agent', group: 'AI & Models', label: 'Agent defaults', icon: Bot, size: 'md',
+    id: 'agent', label: 'Agent defaults', icon: Bot,
     description: 'Default agent, approval mode, and execution settings.',
     useSearchText() { const { data } = useAgentDefaults(); const c = data?.cfg ?? {}; return `agent defaults default agent approval sandbox subagents ${data?.defaultAgent ?? ''} ${String(c.approval_mode ?? '')} ${c.yolo ? 'yolo' : ''}` },
     render(query, go) {
@@ -668,16 +687,16 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
         <BentoCard icon={Bot} title="Agent defaults" query={query} onClick={() => go('agent')} loading={data === undefined} rows={3} stale={isStalePaint} failed={status === 'error'} error={agentErr} onRetry={refresh}>
           {data && <KVList query={query} rows={[
             { k: 'Default agent', v: data.defaultAgent || '—', vText: data.defaultAgent || '—' },
-            { k: 'Approval', control: true, v: <InlineSelect value={approval} ariaLabel="Approval mode" onPick={(v) => setCfg('approval_mode', v)}
+            { k: 'Approval mode', control: true, v: <InlineSelect value={approval} ariaLabel="Approval mode" onPick={(v) => setCfg('approval_mode', v)}
               options={APPROVAL_MODES.map((m) => ({ value: m.key, label: m.label }))} /> },
-            { k: 'YOLO', control: true, v: <Switch on={!!c.yolo} label="YOLO auto-approve all" onToggle={setYolo} /> },
+            { k: 'YOLO auto-approve all', control: true, v: <Switch on={!!c.yolo} label="YOLO auto-approve all" onToggle={setYolo} /> },
           ]} />}
         </BentoCard>
       )
     },
   },
   {
-    id: 'voice', group: 'AI & Models', label: 'Speech & Transcription', icon: AudioLines, size: 'sm',
+    id: 'voice', label: 'Speech & Transcription', icon: AudioLines,
     description: 'Speech-to-text, text-to-speech, and the vocabulary that biases all transcription.',
     useSearchText() { const { data } = useVoice(); const stt = !!data?.stt?.value.enabled; const tts = !!data?.tts?.value.enabled; return `voice speech text stt tts streaming speaking speed transcription vocabulary lexicon corrections terms ${stt ? 'stt on' : 'stt off'} ${tts ? 'tts on' : 'tts off'}` },
     render(query, go) {
@@ -712,6 +731,15 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                 ? <Switch on={!!data.tts.value.enabled} label="Text-to-speech" onToggle={(v) => toggle('tts', data.tts, v)}
                     disabled={guards.tts.conflict !== null} disabledReason={HELD_CHANGE_REASON} />
                 : <span className="text-on-surface-low">No model bound</span> },
+            // The page offers it once text-to-speech is on and bound, and so does the card: the same
+            // switch over the same settings file, through the same stale-write guard (#5897).
+            ...(ttsBound && data.tts.value.enabled ? [{ k: 'Speak replies aloud', control: true,
+              v: <Switch on={!!data.tts.value.auto_speak} label="Speak replies aloud"
+                onToggle={(v) => mutate(async () => {
+                  const mine = { ...data.tts.value, auto_speak: v }
+                  await guards.tts.save(data.tts, mine, rebaseRecord(data.tts.value, mine))
+                })}
+                disabled={guards.tts.conflict !== null} disabledReason={HELD_CHANGE_REASON} /> }] : []),
           ]} />}
           {/* A refused save's notice sits in the card's click-through layer like the switches do:
               pointer events back on, and a click on it kept from reaching the nav overlay. */}
@@ -727,7 +755,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   // ── Workspace ──────────────────────────────────────────────────────────────
   {
-    id: 'inbox', group: 'Workspace', label: 'Inbox', icon: Inbox, size: 'md',
+    id: 'inbox', label: 'Inbox', icon: Inbox,
     description: 'Retention policy and automatic cleanup.',
     useSearchText() { return 'inbox retention auto cleanup' },
     render(query, go) {
@@ -741,10 +769,10 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
             <div className="flex items-baseline gap-1.5">
               <BigStat value={s.retention_days} caption="day retention" />
             </div>
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <span data-type="caption" className="text-on-surface-low">Auto-cleanup</span>
-              <Switch on={s.auto_cleanup_enabled} label="Auto-cleanup"
-                onToggle={(v) => mutate(() => api.saveInboxSettings({ auto_cleanup_enabled: v }).then(refresh), 'settings:inbox')} />
+            {/* Said, not switched: this is the Inbox part of the Notifications & Inbox card (#5897),
+                whose three controls are Notifications'. Cleanup is set on the page. */}
+            <div data-type="caption" className="mt-1.5 text-on-surface-low">
+              {s.auto_cleanup_enabled ? 'Older items are cleaned up automatically' : 'Auto-cleanup is off'}
             </div>
           </>}
         </BentoCard>
@@ -752,7 +780,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'notifications', group: 'Workspace', label: 'Notifications', icon: Bell, size: 'md',
+    id: 'notifications', label: 'Notifications', icon: Bell,
     description: 'Mute, quiet hours, and severity filtering.',
     useSearchText() { const { data: s } = useNotif(); return `notifications quiet hours severity mute ${s ? `${s.min_severity} ${s.mute_all ? 'muted' : ''} ${s.quiet_hours_enabled ? 'quiet hours' : ''}` : ''}` },
     render(query, go) {
@@ -762,18 +790,25 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       )
       return (
         <BentoCard icon={Bell} title="Notifications" query={query} onClick={() => go('notifications')} loading={s === undefined} rows={3} stale={sStale} failed={sStatus === 'error'} error={sErr} onRetry={refresh}>
+          {/* The page's own two switches by the page's own names (#5897), so a card and its page say
+              one thing one way: "Mute all" where this read "Delivery" over the inverse of the same
+              flag, and quiet hours as a switch, with its window beside it once it is on. */}
           {s && <KVList query={query} rows={[
-            { k: 'Delivery', control: true, v: <Switch on={!s.mute_all} label="Deliver notifications" onToggle={(v) => save({ mute_all: !v })} /> },
+            { k: 'Mute all notifications', control: true, v: <Switch on={!!s.mute_all} label="Mute all notifications" onToggle={(v) => save({ mute_all: v })} /> },
+            { k: 'Enable quiet hours', control: true, vText: s.quiet_hours_enabled ? `${s.quiet_hours_start}-${s.quiet_hours_end}` : undefined,
+              v: <span className="inline-flex items-center gap-2">
+                {s.quiet_hours_enabled && <span className="tabular-nums text-on-surface-low">{s.quiet_hours_start}–{s.quiet_hours_end}</span>}
+                <Switch on={!!s.quiet_hours_enabled} label="Enable quiet hours" onToggle={(v) => save({ quiet_hours_enabled: v })} />
+              </span> },
             { k: 'Min severity', control: true, v: <SegToggle value={s.min_severity} onPick={(v) => save({ min_severity: v })} ariaLabel="Min severity"
               options={[{ key: 'info', label: 'All' }, { key: 'warning', label: 'Warn+' }, { key: 'error', label: 'Errors' }]} /> },
-            ...(s.quiet_hours_enabled ? [{ k: 'Quiet hours', v: `${s.quiet_hours_start}–${s.quiet_hours_end}`, vText: `${s.quiet_hours_start}-${s.quiet_hours_end}` }] : []),
           ]} />}
         </BentoCard>
       )
     },
   },
   {
-    id: 'apps', group: 'Workspace', label: 'Apps', icon: Blocks, size: 'sm',
+    id: 'apps', label: 'Apps', icon: Blocks,
     description: 'Settings contributed by installed (non-provider) apps.',
     useSearchText() {
       const { data } = useApps()
@@ -843,7 +878,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   // sentence one navigation away, is the wrong trade for all four. They report state and open the
   // page that explains it — the `Documents`/`Diagnostics` shape, which is also a shipped one.
   {
-    id: 'packs', group: 'Workspace', label: 'Packs', icon: Package, size: 'sm',
+    id: 'packs', label: 'Packs', icon: Package,
     description: 'Importable capability bundles — skills, templates, agents and connector declarations one user can hand to another.',
     // Beside Apps because they are the two INSTALL surfaces: an app is a running extension, a pack
     // is a bundle you import. A user looking for either looks in one place.
@@ -878,7 +913,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'documents', group: 'Workspace', label: 'Documents', icon: FileType2, size: 'sm',
+    id: 'documents', label: 'Documents', icon: FileType2,
     description: 'Whether generated Word documents can be edited in place.',
     useSearchText() { return 'documents word docx office editing edit in place download only fidelity lossy re-render' },
     render(query, go) {
@@ -903,7 +938,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'sources', group: 'Workspace', label: 'Watched sources', icon: Rss, size: 'sm',
+    id: 'sources', label: 'Watched sources', icon: Rss,
     description: 'Poll feeds, pages and local directories into your knowledge library on a schedule.',
     // Workspace, not AI & Models: the panel's other two sections govern `knowledge.*` (the artifact
     // mirror) and `planning.scratchpad_path` (a notes file), so everything on it is about content
@@ -933,7 +968,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'workflows', group: 'Workspace', label: 'Workflows', icon: Workflow, size: 'sm',
+    id: 'workflows', label: 'Workflows', icon: Workflow,
     description: 'How the workflow engine runs — what may start, how much runs at once, and what a new workflow may do on its own.',
     useSearchText() {
       const { data: w } = useWorkflowsCfg()
@@ -947,7 +982,12 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const on = w?.enabled !== false
       return (
         <BentoCard icon={Workflow} title="Workflows" query={query} onClick={() => go('workflows')} loading={w === undefined && !wfErr} stale={wStale} failed={wStatus === 'error'} error={wfErr} onRetry={wRefresh}>
+          {/* The engine's switch, which a card turns only OFF (#5897): stopping is one click from here,
+              and starting it again, which lets new runs begin, is the Workflows page's. */}
           {w && <><StatusPill query={query} label={on ? 'Running' : 'Stopped'} tone={on ? 'ok' : 'muted'} />
+            <KVList query={query} rows={[{ k: 'Workflow engine', control: true,
+              v: <OneWaySwitch on={on} allow="off" label="Workflow engine" reason="Start the workflow engine from Automations › Workflows"
+                onToggle={() => mutate(() => api.patchConfig('workflows.enabled', false), 'settings:workflows')} /> }]} />
             <div data-type="caption" className="mt-1.5 text-on-surface-low">
               {on
                 ? `New workflows surface: ${String(w.surface_mode_default ?? 'off')} · workspace: ${String(w.workspace_default_mode ?? 'scratch')}`
@@ -958,7 +998,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'loops', group: 'Workspace', label: 'Autonomous loops', icon: RefreshCcw, size: 'sm',
+    id: 'loops', label: 'Autonomous loops', icon: RefreshCcw,
     description: 'Long-horizon goal loops — which model certifies a cycle, and when one counts as stalled.',
     useSearchText() {
       const { data: l } = useLoopsCfg()
@@ -982,7 +1022,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'ambient', group: 'Workspace', label: 'Ambient surfaces', icon: LayoutDashboard, size: 'sm',
+    id: 'ambient', label: 'Ambient surfaces', icon: LayoutDashboard,
     description: 'Your composable home and agent-authored widgets.',
     useSearchText() {
       const { data: a } = useAmbient()
@@ -1012,7 +1052,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
   },
   // ── System ──────────────────────────────────────────────────────────────
   {
-    id: 'security', group: 'System', label: 'Security', icon: Shield, size: 'md',
+    id: 'security', label: 'Security', icon: Shield,
     description: 'Enforcement posture and defense layers.',
     useSearchText() { const { data: s } = useSecurity(); return `security enforcement denied commands suspicious patterns redaction tool schemas ${s ? `${s.denied_commands} denied ${s.suspicious_patterns} suspicious` : ''}` },
     render(query, go) {
@@ -1032,7 +1072,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'secrets', group: 'System', label: 'Secrets', icon: KeyRound, size: 'md',
+    id: 'secrets', label: 'Secrets', icon: KeyRound,
     description: 'Stored credentials, their scope, and what uses them.',
     useSearchText() {
       const { data: v } = useSecretsVault()
@@ -1055,7 +1095,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'audit', group: 'System', label: 'Audit log', icon: ScrollText, size: 'sm',
+    id: 'audit', label: 'Audit log', icon: ScrollText,
     description: 'The live security-event log stream.',
     useSearchText() { return 'audit log security event chain tamper evident verify' },
     render(query, go) {
@@ -1082,7 +1122,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'system', group: 'System', label: 'System', icon: Gauge, size: 'sm',
+    id: 'system', label: 'System', icon: Gauge,
     description: 'This machine, read live: cpu, memory, network, disk, load, uptime, and which local models hold memory.',
     useSearchText() { return 'system health telemetry machine cpu memory mem network disk load uptime version triggers subagents yolo sparkline on this machine local models loaded unload memory pressure' },
     render(query, go) {
@@ -1100,7 +1140,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'diagnostics', group: 'System', label: 'Diagnostics', icon: Activity, size: 'sm',
+    id: 'diagnostics', label: 'Diagnostics', icon: Activity,
     description: 'Live backend log stream and runtime log level.',
     useSearchText() { const { data: l } = useLogLevel(); return `diagnostics logs live log stream tail level debug info warning error verbosity troubleshoot ${l ?? ''}` },
     render(query, go) {
@@ -1118,7 +1158,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'doctor', group: 'System', label: 'Doctor', icon: Stethoscope, size: 'sm',
+    id: 'doctor', label: 'Doctor', icon: Stethoscope,
     // 🔴 SAME FALSE PROMISE AS THE PANEL'S OWN HEADER (issue 537), one surface EARLIER. This said
     // "Read-only health probes", and the hub tile is what a user reads BEFORE opening the panel —
     // so fixing only `DoctorPanel`'s hint would have left the claim standing on the surface that
@@ -1155,7 +1195,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     // Devices sits beside Security because "what is paired to my gateway" is a security
     // question. Without a card here the panel would be reachable only by typing the URL —
     // this home grid IS the navigation, and it renders SETTINGS_WIDGETS with no fallback.
-    id: 'devices', group: 'System', label: 'Devices', icon: MonitorSmartphone, size: 'sm',
+    id: 'devices', label: 'Devices', icon: MonitorSmartphone,
     description: 'Paired phones, tablets and browsers — and the switch that locks one out.',
     useSearchText() {
       const { data: d } = useDevices()
@@ -1186,7 +1226,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     // SESSION on this gateway; this is who may talk to the agent through a messaging channel.
     // Without a card here the panel is reachable only by typing the URL — this home grid IS
     // the navigation and renders SETTINGS_WIDGETS with no fallback.
-    id: 'sender-trust', group: 'System', label: 'Sender trust', icon: MessageCircle, size: 'sm',
+    id: 'sender-trust', label: 'Sender trust', icon: MessageCircle,
     description: 'Who may talk to your agent on a messaging channel — and the switch that cuts one off.',
     useSearchText() {
       const { data: t } = useSenderTrust()
@@ -1211,7 +1251,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'companion', group: 'System', label: 'Companion apps', icon: Smartphone, size: 'sm',
+    id: 'companion', label: 'Companion apps', icon: Smartphone,
     description: 'Native clients — phone or desktop — that connect to this gateway.',
     // Beside Devices, and the `SUBPAGES` comment draws the line this card must not blur: Devices is
     // the ONE device registry, this is the LAN/PWA transport. So the tile states the TRANSPORT's
@@ -1223,19 +1263,25 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
     render(query, go) {
       const { data: d, error: discErr, stale: dStale, status: dStatus, refresh: dRefresh } = useCompanionDiscovery()
+      const { data: cfg } = useCompanionCfg()
       return (
         <BentoCard icon={Smartphone} title="Companion apps" query={query} onClick={() => go('companion')} loading={d === undefined} stale={dStale} failed={dStatus === 'error'} error={discErr} onRetry={dRefresh}>
           {/* The advertiser's LIVE state plus the backend's own sentence for the reason code — the
               same two things the panel's Status row shows, in the same vocabulary, so "on but
               inert" can never read here as "on". State in words as well as tone (1.4.1). */}
+          {/* LAN discovery's STORED switch, which a card turns only OFF (#5897): announcing this
+              gateway on the network again is the page's, which says what the network is told. */}
           {d && <><StatusPill query={query} label={d.advertising ? 'Advertising' : 'Not advertising'} tone={d.advertising ? 'ok' : 'muted'} />
+            {cfg && <KVList query={query} rows={[{ k: 'LAN discovery', control: true,
+              v: <OneWaySwitch on={!!cfg.companion.discovery_enabled} allow="off" label="LAN discovery" reason="Turn LAN discovery on from Devices & Access › Companion apps"
+                onToggle={() => mutate(() => api.patchConfig('companion.discovery_enabled', false), 'settings:companion', 'settings:companion:discovery')} /> }]} />}
             <div data-type="caption" className="mt-1.5 text-on-surface-low"><Highlight text={d.detail} query={query} /></div></>}
         </BentoCard>
       )
     },
   },
   {
-    id: 'buddy', group: 'System', label: 'Buddy', icon: Smile, size: 'sm',
+    id: 'buddy', label: 'Buddy', icon: Smile,
     description: 'Whether the buddy shows, on which surfaces, and when it steps back.',
     useSearchText() {
       const { data: p } = useBuddyPolicy()
@@ -1245,31 +1291,49 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       const { data: p, error: pErr, stale: pStale, status: pStatus, refresh: pRefresh } = useBuddyPolicy()
       return (
         <BentoCard icon={Smile} title="Buddy" query={query} onClick={() => go('buddy')} loading={p === undefined} stale={pStale} failed={pStatus === 'error'} error={pErr} onRetry={pRefresh}>
-          {/* Buddy status in words as well as tone (1.4.1), from the policy every window reads. */}
-          {p && <StatusPill query={query} label={p.show ? 'On' : 'Off'} tone={p.show ? 'ok' : 'muted'} />}
+          {/* Buddy status as the switch the Buddy page has, by its label there, writing the key it
+              writes (#5897). The state stays said in words beside it (1.4.1), from the policy every
+              window reads; a change re-reads that policy, which is what the windows follow. */}
+          {p && <KVList query={query} rows={[
+            { k: 'Buddy status', control: true, vText: p.show ? 'On' : 'Off',
+              v: <span className="inline-flex items-center gap-2">
+                <span className="text-on-surface-low">{p.show ? 'On' : 'Off'}</span>
+                <Switch on={!!p.show} label="Buddy status"
+                  onToggle={(v) => mutate(() => api.patchConfig('buddy.show', v), 'settings:buddy:policy', 'settings:buddy')} />
+              </span> },
+          ]} />}
         </BentoCard>
       )
     },
   },
   {
-    id: 'guardrails', group: 'System', label: 'Guardrails', icon: ShieldAlert, size: 'sm',
+    id: 'guardrails', label: 'Guardrails', icon: ShieldAlert,
     description: 'Autonomy safety floor — incident kill switch, spend budgets, and outbound scanning.',
     useSearchText() { const { data: i } = useIncident(); return `guardrails autonomy safety incident kill switch budgets spend scan denylist ${i ? (i.active ? 'incident active suspended' : 'normal') : ''}` },
     render(query, go) {
       const { data: i, error: iErr, stale: iStale, status: iStatus, refresh: iRefresh } = useIncident()
       return (
         <BentoCard icon={ShieldAlert} title="Guardrails" query={query} onClick={() => go('guardrails')} loading={i === undefined} stale={iStale} failed={iStatus === 'error'} error={iErr} onRetry={iRefresh}>
-          {i && (i.active
-            ? <><StatusPill label="Incident mode — unattended work paused" tone="warn" />
-                {i.reason && <div data-type="caption" className="mt-1.5 truncate text-on-surface-low">{i.reason}</div>}</>
-            : <><StatusPill label="Normal operation" tone="ok" />
-                <div data-type="caption" className="mt-1.5 text-on-surface-low">Kill switch · budgets · outbound scan</div></>)}
+          {/* The kill switch, which a card turns only ON (#5897): pausing every unattended run is one
+              click from the overview, through the page's own writer, and resuming is the page's —
+              resuming widens what runs. */}
+          {i && <>
+            {i.active
+              ? <StatusPill label="Incident mode — unattended work paused" tone="warn" />
+              : <StatusPill label="Normal operation" tone="ok" />}
+            <KVList rows={[{ k: 'Pause unattended work', control: true,
+              v: <OneWaySwitch on={i.active} allow="on" label="Pause unattended work" reason="Resume unattended work from Security › Guardrails"
+                onToggle={() => mutate(() => api.incidentOn('Activated from Settings'), 'settings:incident')} /> }]} />
+            {i.active
+              ? i.reason && <div data-type="caption" className="mt-1.5 truncate text-on-surface-low">{i.reason}</div>
+              : <div data-type="caption" className="mt-1.5 text-on-surface-low">Kill switch · budgets · outbound scan</div>}
+          </>}
         </BentoCard>
       )
     },
   },
   {
-    id: 'external-access', group: 'System', label: 'External access', icon: Plug2, size: 'sm',
+    id: 'external-access', label: 'External access', icon: Plug2,
     description: 'Ways in from outside — inbound surfaces, their tokens, and per-client limits.',
     useSearchText() {
       const { data: e } = useExternalAccess()
@@ -1283,15 +1347,25 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
       // tokenless surface as live, which is the exact confusion the panel's per-row
       // "not serving" pill exists to clear up.
       const serving = e?.surfaces.filter((s) => s.enabled && s.token_configured) ?? []
+      const pill = !e?.enabled
+        ? <StatusPill label="No inbound access" tone="ok" />
+        : serving.length === 0
+          ? <StatusPill label="On, nothing serving" tone="warn" />
+          : <StatusPill label={`${serving.length} surface${serving.length === 1 ? '' : 's'} reachable`} tone="warn" />
       return (
         <BentoCard icon={Plug2} title="External access" query={query} onClick={() => go('external-access')} loading={e === undefined} stale={eStale} failed={eStatus === 'error'} error={eErr} onRetry={eRefresh}>
+          {/* The master switch under the state it sets, on a row of its own name, which a card turns only OFF (#5897): cutting
+              every way in is one click from here, and opening them again is the page's, which says
+              what opens. */}
+          {e && <>{pill}
+            <KVList rows={[{ k: 'Allow inbound access', control: true,
+              v: <OneWaySwitch on={!!e.enabled} allow="off" label="Allow inbound access" reason="Allow inbound access from Devices & Access › External access"
+                onToggle={() => mutate(() => api.patchConfig('external_access.enabled', false), 'settings:external-access')} /> }]} /></>}
           {e && (!e.enabled
-            ? <><StatusPill label="No inbound access" tone="ok" />
-                <div data-type="caption" className="mt-1.5 text-on-surface-low">Nothing outside can reach in</div></>
+            ? <div data-type="caption" className="mt-1.5 text-on-surface-low">Nothing outside can reach in</div>
             : serving.length === 0
-              ? <><StatusPill label="On, nothing serving" tone="warn" />
-                  <div data-type="caption" className="mt-1.5 text-on-surface-low">Each surface still needs its own token</div></>
-              : <><StatusPill label={`${serving.length} surface${serving.length === 1 ? '' : 's'} reachable`} tone="warn" />
+              ? <div data-type="caption" className="mt-1.5 text-on-surface-low">Each surface still needs its own token</div>
+              : <>
                   <div data-type="caption" className="mt-1.5 truncate text-on-surface-low">
                     {serving.map((s) => s.surface).join(' · ')}
                     {e.clients.length > 0 && ` · ${e.clients.length} client${e.clients.length === 1 ? '' : 's'}`}
@@ -1301,7 +1375,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'legibility', group: 'System', label: 'Legibility', icon: Compass, size: 'md',
+    id: 'legibility', label: 'Legibility', icon: Compass,
     description: 'How PersonalClaw describes its capabilities — always-on conventions, dashboard tips, project context files.',
     // "always-on conventions" is searchable here because the viewer lives INSIDE this subpage
     // rather than as its own tile; a surface nobody can search for is one nobody finds.
@@ -1324,7 +1398,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'tool-output', group: 'System', label: 'Tool output', icon: Scissors, size: 'sm',
+    id: 'tool-output', label: 'Tool output', icon: Scissors,
     description: 'TokenJuice shrinks large tool output before it reaches the model — with custom projection rules and a savings meter.',
     useSearchText() {
       const { data: r } = useProjectionRules()
@@ -1359,7 +1433,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'feedback', group: 'System', label: 'AI feedback', icon: ThumbsUp, size: 'sm',
+    id: 'feedback', label: 'AI feedback', icon: ThumbsUp,
     description: 'Per-source accuracy from your 👍/👎 on AI judgments — a source that keeps missing asks to be reviewed.',
     useSearchText() {
       const { data } = useFeedbackProducers()
@@ -1386,7 +1460,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
               ]} />
                 <div data-type="caption" className="mt-1.5 text-on-surface-low">Off — no 👍/👎 are shown on AI judgments</div></>
             : rows.length === 0
-            ? <div data-type="body-s" className="text-on-surface-low">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing.</div>
+            ? <div data-type="body-s" className="line-clamp-3 text-on-surface-low">👍/👎 on inbox triage, drafts, digests, and loop findings collect here per judgment source. A source that keeps missing asks to be reviewed; where that kind of source has a surfacing gate (today, skills) it also stops surfacing.</div>
             : <><BigStat value={rows.length} caption={rows.length === 1 ? 'judgment source' : 'judgment sources'} />
                 <div data-type="body-s" className="mt-1 text-on-surface-low">
                   {rated.length ? `${rated.length} rated` : 'collecting verdicts'}
@@ -1397,7 +1471,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'usage', group: 'System', label: 'Usage', icon: Coins, size: 'sm',
+    id: 'usage', label: 'Usage', icon: Coins,
     description: "Real cost + tokens spent across every turn — chat, subagents, loops, automations.",
     useSearchText() {
       const { data } = useUsageToday()
@@ -1419,7 +1493,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'archive', group: 'System', label: 'Archive', icon: Archive, size: 'sm',
+    id: 'archive', label: 'Archive', icon: Archive,
     description: 'Browse and inspect archived chat sessions.',
     useSearchText() { return 'archive archived chat sessions transcripts browse' },
     render(query, go) {
@@ -1432,7 +1506,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'portability', group: 'System', label: 'Import / Export', icon: FolderSync, size: 'sm',
+    id: 'portability', label: 'Import / Export', icon: FolderSync,
     description: 'Export a portable archive, or import from another instance.',
     useSearchText() { return 'import export portability backup migrate archive transfer instance' },
     render(query, go) {
@@ -1445,7 +1519,7 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
     },
   },
   {
-    id: 'durability', group: 'System', label: 'Backups', icon: HardDriveDownload, size: 'sm',
+    id: 'durability', label: 'Backups', icon: HardDriveDownload,
     description: 'Automatic snapshots, how long they are kept, and restore drills.',
     useSearchText() {
       const { data: s } = useDurability()
@@ -1473,13 +1547,19 @@ export const SETTINGS_WIDGETS: SettingsWidget[] = [
                     ? <StatusPill query={query} label={`The last ${failing} failed`} tone="warn" />
                     : s.status?.enabled ? 'Nightly + hourly, automatic' : 'Automatic backups are off'}
                 </div>
+                {/* `status.enabled` IS `durability.auto_backup` (`durability.service.enabled`), so the
+                    switch reads the read this tile already makes and writes the key the page writes. */}
+                {s.status && <div className="mt-2"><KVList query={query} rows={[
+                  { k: 'Automatic backups', control: true, v: <Switch on={!!s.status.enabled} label="Automatic backups"
+                    onToggle={(v) => mutate(() => api.patchConfig('durability.auto_backup', v), 'settings:durability-card', 'settings:durability')} /> },
+                ]} /></div>}
               </>)}
         </BentoCard>
       )
     },
   },
   {
-    id: 'updates', group: 'System', label: 'Updates', icon: DownloadCloud, size: 'sm',
+    id: 'updates', label: 'Updates', icon: DownloadCloud,
     description: 'Version, licences, changelog, and update controls.',
     useSearchText() { const { data: u } = useUpdates(); return `updates version licences licenses notices third-party open-source changelog upgrade pin ${u ? `${u.version ?? ''} ${updateVerdictLabel(u)} ${u.auto === 'staged' ? 'auto-update' : ''}` : ''}` },
     render(query, go) {

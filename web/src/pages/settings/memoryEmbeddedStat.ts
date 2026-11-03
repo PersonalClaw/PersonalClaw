@@ -24,7 +24,7 @@ export function memoryEmbeddedStat(stats: Pick<MemoryStats, 'embedded_count' | '
     return {
       value: stats.embedded_count,
       sub: 'no model bound',
-      title: 'No embedding model is bound, so memory search matches by keyword. The embeddings memories already hold are kept; choosing a model in Settings → Models re-indexes them.',
+      title: 'No embedding model is bound, so memory search matches by keyword. The embeddings memories already hold are kept; choosing a model in Settings → Models & Providers → Models re-indexes them.',
     }
   }
   return { value: stats.embedded_count, sub: stats.embedding_provider }

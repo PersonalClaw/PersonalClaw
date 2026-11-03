@@ -56,7 +56,7 @@ describe("the model pill's Auto names the model the latest turn ran on", () => {
     render(<AgentModelPill data={data as never} agent="Example coder" model="Auto" effort="" onSelect={vi.fn()} autoChain="Code & tools" />)
     fireEvent.click(screen.getByRole('button', { name: 'Agent and model: Example coder · Auto' }))
     expect(screen.queryByText('Your Code & tools chain')).toBeNull()
-    expect(screen.getByText('Use-case chain (Settings → Models)')).toBeTruthy()
+    expect(screen.getByText('Use-case chain (Settings → Models & Providers → Models)')).toBeTruthy()
   })
 })
 

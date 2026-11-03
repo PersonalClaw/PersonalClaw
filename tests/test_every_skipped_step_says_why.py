@@ -441,7 +441,7 @@ def test_investigating_the_item_reads_each_skipped_step_and_its_fix(monkeypatch,
     steps = [line for line in ctx.snapshot.splitlines() if line.startswith("Step ")]
     assert steps[0] == (
         "Step Diarization skipped: No Speaker diarization model is set up. "
-        "Fix: Choose a model for Speaker diarization in Settings → Models."
+        "Fix: Choose a model for Speaker diarization in Settings → Models & Providers → Models."
     ), steps
     assert any(
         line.startswith("Step Video classify skipped: No image model is set up.") for line in steps
@@ -465,7 +465,7 @@ def test_a_step_that_waits_on_several_names_one_way_to_fix_them(monkeypatch, tmp
         {
             "text": (
                 "Choose a model for Speech-to-text, Speaker diarization or Image · Modality "
-                "in Settings → Models"
+                "in Settings → Models & Providers → Models"
             ),
             "href": MODELS,
         }

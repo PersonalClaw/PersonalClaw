@@ -292,8 +292,8 @@ Brings up the gateway + a TLS web proxy with a persistent volume — details, ba
 and updates in the [container guide](docs/guides/containers.md).
 
 The dashboard opens at `http://localhost:10000`. Install a model-provider app from the
-Store, add your API key under **Settings → Providers**, and bind a chat model under
-**Settings → Models** — full walkthrough in [Getting started](docs/guides/getting-started.md).
+Store, add your API key under **Settings → Models & Providers → Providers**, and bind a chat model under
+**Settings → Models & Providers → Models** — full walkthrough in [Getting started](docs/guides/getting-started.md).
 No account yet? First-run setup can download a
 [small default model](docs/guides/getting-started.md#the-small-default-model) instead
 (138 MiB, once). It is enough to try PersonalClaw and not enough to rely on.

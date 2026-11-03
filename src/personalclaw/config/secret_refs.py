@@ -330,7 +330,7 @@ def _foreign_message(owner: SecretOwner, refs: tuple[tuple[str, str], ...], *, a
             "Settings → Secrets."
         )
     if owner.prefix.startswith(_instances_prefix(owner.app or "")):
-        where = "on this instance in Settings → Providers"
+        where = "on this instance in Settings → Models & Providers → Providers"
     elif owner.prefix.startswith(_MCP_OWNED_PREFIX):
         where = "on this server"
     else:

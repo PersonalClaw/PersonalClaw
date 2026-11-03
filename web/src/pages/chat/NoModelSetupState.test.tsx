@@ -14,7 +14,7 @@ import { NoModelSetupState, isNoModelSetupError, noModelChosenFor, MODELS_ROUTE 
 // The fresh-instance case the screenshot captured: no provider declares the capability.
 const NO_MODEL_SAID =
   "No model provider resolves for use case 'chat': no provider in config.json declares the " +
-  "capability this use case needs. Add a model provider in Settings → Providers, then bind 'chat' to it."
+  "capability this use case needs. Add a model provider in Settings → Models & Providers → Providers, then bind 'chat' to it."
 
 // A provider IS connected, but no model is chosen for it: an instance saved from the Add-instance
 // form with no Default Model (it writes `model: ""`), and nothing bound in Settings → Models. The
@@ -22,7 +22,7 @@ const NO_MODEL_SAID =
 // its reason is `no_model_chosen` (src/personalclaw/llm/registry.py).
 const NO_MODEL_CHOSEN_SAID =
   "No model provider resolves for use case 'chat': no model is chosen for “local”. " +
-  'Choose one of its models in Settings → Models.'
+  'Choose one of its models in Settings → Models & Providers → Models.'
 
 // The stale-pin variant: a model WAS chosen and its provider later went missing. A
 // different situation than first-touch setup — it must NOT be reframed as "connect one".
@@ -33,12 +33,12 @@ const NO_MODEL_CHOSEN_SAID =
 const STALE_PIN_SAID =
   "The model pinned for use case 'chat' ('Bedrock:global.anthropic.claude-opus-4-8') cannot be built: " +
   "no provider named 'Bedrock' is in config.json — the entry was renamed or removed, or its app was uninstalled. " +
-  "Re-add 'Bedrock' in Settings → Providers, or rebind 'chat' to an available model in Settings → Models."
+  "Re-add 'Bedrock' in Settings → Models & Providers → Providers, or rebind 'chat' to an available model in Settings → Models & Providers → Models."
 
 const MISSING_TYPE_FACTORY_SAID =
   "The model pinned for use case 'chat' ('Ghost Provider:ghost-7b') cannot be built: " +
   "provider 'Ghost Provider' declares type 'vllm', and no installed app registers that type. " +
-  "Install an app that provides 'vllm' in the App Store, or change 'Ghost Provider's type in Settings → Providers."
+  "Install an app that provides 'vllm' in the App Store, or change 'Ghost Provider's type in Settings → Models & Providers → Providers."
 
 describe('isNoModelSetupError', () => {
   it('matches the no-model-configured refusal', () => {
@@ -115,7 +115,7 @@ describe('NoModelSetupState', () => {
     const onSetup = vi.fn()
     render(<NoModelSetupState detail={NO_MODEL_CHOSEN_SAID} onSetup={onSetup} />)
     expect(screen.getByText('No model chosen for local')).toBeTruthy()
-    expect(screen.getByText('Choose which of its models to chat with in Settings → Models.')).toBeTruthy()
+    expect(screen.getByText('Choose which of its models to chat with in Settings → Models & Providers → Models.')).toBeTruthy()
     expect(screen.queryByText('No model connected yet')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Choose a model' }))
     expect(onSetup).toHaveBeenCalledTimes(1)

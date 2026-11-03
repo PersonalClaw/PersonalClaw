@@ -89,7 +89,7 @@ describe('the judge tier-recommendation table', () => {
     expect(screen.getByText('background')).toBeTruthy()
     expect(screen.getByText('Acme:small')).toBeTruthy()
     // The harness recommends; the panel points at the panel that binds.
-    expect(screen.getByRole('link', { name: /Settings → Models/ })).toBeTruthy()
+    expect(screen.getByRole('link', { name: /Settings → Models & Providers → Models/ })).toBeTruthy()
   })
 
   it('shows every inadequacy reason, not just the first', () => {

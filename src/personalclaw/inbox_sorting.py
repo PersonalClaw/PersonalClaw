@@ -72,7 +72,7 @@ _MACHINE_CONFIDENCES = frozenset(
 #: What a message reads when its sorting call failed, as the row says it.
 NOT_RENDERED = (
     "The sorting prompt could not be rendered, so nothing was sent. Check the prompt bound for "
-    "inbox sorting in Settings › Prompts."
+    "inbox sorting in Settings › Agent › Prompts."
 )
 UNREADABLE = "The background model answered, but its answer could not be read."
 LEFT_OUT = "The background model's answer left this message out."
@@ -98,7 +98,10 @@ def sorting_hold() -> str:
         from personalclaw.config.loader import AppConfig
 
         if not AppConfig.load().inbox.sort_messages:
-            return "Sorting is off in Settings › Inbox, so new messages stay unsorted."
+            return (
+                "Sorting is off in Settings › Notifications & Inbox › Inbox, so new messages "
+                "stay unsorted."
+            )
     except Exception:  # noqa: BLE001 — an unread switch is not an on switch
         logger.warning("inbox sorting: the configuration could not be read", exc_info=True)
         return "Sorting waits: the configuration could not be read."

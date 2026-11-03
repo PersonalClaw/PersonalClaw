@@ -411,7 +411,7 @@ describe('a provider is connected, but no model is chosen yet', () => {
     render(<DegradedChip />)
     ;(await screen.findByRole('button', { name: /choose a model/i })).click()
     const panel = await waitFor(() => screen.getByRole('dialog', { name: 'Degraded surfaces' }))
-    expect(panel.textContent).toContain('Choose a model in Settings → Models')
+    expect(panel.textContent).toContain('Choose a model in Settings → Models & Providers → Models')
     expect(panel.textContent).toContain('No model chosen for Chat')
     expect(panel.textContent).toContain('No model chosen for Embedding')
     expect(panel.textContent).not.toContain('Bind a model')

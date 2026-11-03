@@ -61,7 +61,7 @@ def test_personalclaw_token_says_what_it_is_and_how_long_it_lasts(monkeypatch, t
     assert "sign-in link" in err
     assert "Authorization: Bearer" in err, "a script needs to know it can send it as a header"
     assert "20 hours" in err
-    assert "Settings → Devices" in err, "where to see it and sign it out"
+    assert "Settings → Devices & Access → Devices" in err, "where to see it and sign it out"
 
 
 def test_a_long_token_says_its_link_must_still_be_opened_within_a_day(

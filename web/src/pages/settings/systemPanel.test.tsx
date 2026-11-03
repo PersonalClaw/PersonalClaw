@@ -40,7 +40,7 @@ const LOADED = {
 const calls: Record<string, number> = vi.hoisted(() => ({}))
 let statusRead: () => Promise<unknown> = () => Promise.resolve(STATUS)
 let systemRead: () => Promise<unknown> = () => Promise.resolve(SYSTEM)
-let doctor: () => Promise<unknown> = () => Promise.resolve({ ok: true, core_ok: true, worst: '', capabilities: {} })
+let doctor: () => Promise<unknown> = () => Promise.resolve({ ok: true, core_ok: true, worst: '', capabilities: {}, skipped_capabilities: [] })
 
 vi.mock('../../lib/api', async (orig) => {
   const real = await orig<typeof import('../../lib/api')>()
@@ -70,20 +70,26 @@ beforeEach(() => {
   for (const k of Object.keys(calls)) delete calls[k]
   statusRead = () => Promise.resolve(STATUS)
   systemRead = () => Promise.resolve(SYSTEM)
-  doctor = () => Promise.resolve({ ok: true, core_ok: true, worst: '', capabilities: {} })
+  doctor = () => Promise.resolve({ ok: true, core_ok: true, worst: '', capabilities: {}, skipped_capabilities: [] })
   sessionStorage.clear()
 })
 afterEach(cleanup)
 
+/** The System section as its page renders it. Since #5897 that page is Health, which also holds
+ *  Doctor and Diagnostics; their own reads are theirs to pin, so the panel is mounted alone here,
+ *  and where it sits is asserted from the registry below. */
 async function mountSystem() {
-  const { SettingsPage } = await import('./SettingsPage')
-  render(<SettingsPage sub="system" navigate={navigate} navEpoch={0} query={{}} setQuery={() => {}} />)
+  const { SystemPanel } = await import('./SystemPanel')
+  render(<SystemPanel navigate={navigate} />)
 }
 
-describe('Settings › System', () => {
-  it('is a section of its own, titled System', async () => {
-    await mountSystem()
-    expect(screen.getByRole('heading', { level: 1, name: 'System' })).toBeTruthy()
+describe('Settings › Health › System', () => {
+  // A section of Health since #5897, beside Doctor and Diagnostics: its old address opens it there.
+  it('is a section of Health, titled System', async () => {
+    const { pageOfSection } = await import('./settingsPages')
+    const { SECTIONS } = await import('./SettingsPage')
+    expect(pageOfSection('system')?.label).toBe('Health')
+    expect(SECTIONS.find((s) => s.id === 'system')?.label).toBe('System')
   })
 
   it('renders the live health strip, every metric with its word', async () => {
@@ -103,11 +109,11 @@ describe('Settings › System', () => {
   })
 
   it('keeps the Doctor rollup, and it opens Doctor', async () => {
-    doctor = () => Promise.resolve({ ok: false, core_ok: true, worst: 'model-providers', capabilities: {} })
+    doctor = () => Promise.resolve({ ok: false, core_ok: true, worst: 'model-providers', capabilities: {}, skipped_capabilities: [] })
     await mountSystem()
     const row = await screen.findByRole('button', { name: /Model providers degraded/ })
     row.click()
-    expect(navigate).toHaveBeenCalledWith('settings/doctor')
+    expect(navigate).toHaveBeenCalledWith('settings/health?section=doctor')
   })
 
   it('a status read that failed says so, with Retry, instead of loading forever', async () => {
@@ -128,7 +134,7 @@ describe('Settings › System', () => {
     expect(screen.getByText('uptime'), 'the status half still renders').toBeInTheDocument()
   })
 
-  it('sends what is holding memory to Settings › Models, its one home', async () => {
+  it('sends what is holding memory to Settings › Models & Providers › Models, its one home', async () => {
     await mountSystem()
     await waitFor(() => expect(screen.getByText('cpu')).toBeInTheDocument())
     // Settings › Models already lists the resident models with Unload and the pressure meter, under
@@ -136,7 +142,7 @@ describe('Settings › System', () => {
     expect(screen.queryByRole('heading', { name: 'On this machine' })).toBeNull()
     expect(screen.queryByRole('progressbar', { name: /system memory in use/i })).toBeNull()
     expect(calls.modelsLoaded ?? 0, 'nor is the loaded-models read made here').toBe(0)
-    screen.getByRole('button', { name: /Settings › Models/ }).click()
+    screen.getByRole('button', { name: /Settings › Models & Providers › Models/ }).click()
     expect(navigate).toHaveBeenCalledWith('settings/models')
   })
 
@@ -152,17 +158,19 @@ describe('Settings › System', () => {
   })
 })
 
-describe('Settings › System is reached and scanned', () => {
+describe('Settings › Health › System is reached and scanned', () => {
   const WEB = process.cwd()
 
-  it('has a card on the Settings hub, in the System group', () => {
+  it('has a part on the Settings hub, on Health\'s card in Security & System', () => {
     const src = readFileSync(join(WEB, 'src/pages/settings/settingsWidgets.tsx'), 'utf8')
-    expect(src).toMatch(/id: 'system', group: 'System', label: 'System'/)
+    expect(src).toMatch(/id: 'system', label: 'System'/)
+    const pages = readFileSync(join(WEB, 'src/pages/settings/settingsPages.ts'), 'utf8')
+    expect(pages).toMatch(/id: 'health', label: 'Health', group: 'Security & System'[^\n]*sections: \['system', 'doctor', 'diagnostics'\]/)
   })
 
-  it('is in the axe manifest', () => {
+  it('is in the axe manifest, on the page that holds it', () => {
     const src = readFileSync(join(WEB, 'e2e/routes.ts'), 'utf8')
     const block = src.match(/export const SETTINGS_PANELS = \[([\s\S]*?)\] as const/)
-    expect(block?.[1]).toMatch(/'system'/)
+    expect(block?.[1]).toMatch(/'health'/)
   })
 })

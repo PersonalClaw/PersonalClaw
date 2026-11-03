@@ -86,7 +86,7 @@ class OpenAISttProvider(SttProvider):
         if not api_key:
             raise SttError(
                 f"{self._provider_name} has no API key, so it can't transcribe. Add its key in "
-                "Settings → Providers."
+                "Settings → Models & Providers → Providers."
             )
 
         lang = language.split("-")[0] if language else None

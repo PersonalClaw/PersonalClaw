@@ -695,10 +695,14 @@ def _file_proposal(key: str, next_rung: str, record: str) -> bool:
             # "action.digest has earned runs on its own".
             title=f"{key} has earned \u201c{rung_label(next_rung)}\u201d",
             body=(
-                f"{record} You can promote it in Settings → Guardrails, or leave it where "
-                "it is. Nothing changes until you do."
+                f"{record} You can promote it in Settings → Security → Guardrails, or leave it "
+                "where it is. Nothing changes until you do."
             ),
-            refs={"action_type": key, "rung": next_rung, "surface": "settings/guardrails"},
+            refs={
+                "action_type": key,
+                "rung": next_rung,
+                "surface": "settings/security?section=guardrails",
+            },
             dedup_key=f"autonomy_promotion:{key}:{next_rung}",
         )
         return True
@@ -796,7 +800,7 @@ def _file_revocation_notice(keys: list[str], *, cause: str, evidence_id: str, so
             body=(
                 f"{cause} Revoked: {', '.join(keys)}. Evidence: {evidence_id}. "
                 "Nothing runs above its floor until you re-grant it in "
-                "Settings → Guardrails — revocation is automatic, re-granting never is."
+                "Settings → Security → Guardrails — revocation is automatic, re-granting never is."
             ),
             refs={"evidence_id": evidence_id, "trigger": source, "action_types": keys},
             dedup_key=f"autonomy_revocation:{evidence_id}",

@@ -18,7 +18,7 @@ import { App } from './App'
 // its failures there are assertion failures, not a missing import.
 
 const SENTENCE =
-  'This device was signed out today at 09:14 from Settings → Devices on another device. ' +
+  'This device was signed out today at 09:14 from Settings → Devices & Access → Devices on another device. ' +
   'To sign back in, run `personalclaw token` on the computer running PersonalClaw and open the link it prints here.'
 const SIGNED_OUT = {
   error: { code: 'session_signed_out', message: SENTENCE, detail: { reason: 'signed_out_elsewhere', at: 1 } },
@@ -75,7 +75,7 @@ describe('a signed-out tab shows why, in place of the app', () => {
     const NOT_SIGNED_IN =
       'This device isn’t signed in to PersonalClaw. To sign in, run `personalclaw token` on the ' +
       'computer running PersonalClaw and open the link it prints here, or pair this device from ' +
-      'Settings → Devices on a device that is signed in.'
+      'Settings → Devices & Access → Devices on a device that is signed in.'
     vi.stubGlobal('fetch', refusing({
       error: { code: 'session_required', message: NOT_SIGNED_IN, detail: { reason: 'not_signed_in', at: 1 } },
     }))

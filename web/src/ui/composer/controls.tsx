@@ -200,7 +200,7 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, se
     : undefined
   // Which chain Auto runs on, before the turn: an agent CLI brings its own model, so it has none.
   // Short enough for the menu's width, which cut a longer one off before the chain's name ended.
-  const autoHint = autoChain && !acp ? `Your ${autoChain} chain` : 'Use-case chain (Settings → Models)'
+  const autoHint = autoChain && !acp ? `Your ${autoChain} chain` : 'Use-case chain (Settings → Models & Providers → Models)'
 
   // ── The effort ──
   const levels = showEffort ? effortsFor(data, agent, model) : []

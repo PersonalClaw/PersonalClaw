@@ -53,7 +53,8 @@ def make_default_native_profile(profile_cls: type) -> Any:
     """
     return profile_cls(
         provider="native",
-        description="Built-in native agent. Inference governed by Settings → Models.",
+        description="Built-in native agent. Inference governed by Settings → Models & Providers "
+        "→ Models.",
         # Empty on purpose: the default agent's system prompt is whatever Settings →
         # Prompts binds for the turn's context (chat by default), rendered with the
         # user's settings. A value here would REPLACE that binding on every turn.

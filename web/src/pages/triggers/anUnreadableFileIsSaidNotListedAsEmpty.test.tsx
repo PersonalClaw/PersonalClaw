@@ -15,7 +15,7 @@ import { resetDataStore } from '../../lib/data'
 const SAID = '~/.personalclaw/triggers.json could not be read (it is not valid JSON: line 1, column 74). '
   + 'Until it can be, none of the automations in it is listed or runs, and none can be made, changed or '
   + 'deleted. A copy of it as it was is kept beside it as triggers.json.broken-20261004T090000Z.'
-const REMEDY = 'Repair the file, restore it from a snapshot under Settings → Durability, or remove it to start '
+const REMEDY = 'Repair the file, restore it from a snapshot under Settings → Backups & Data → Backups, or remove it to start '
   + 'over; the copy keeps what it held. Every automation in it is listed and runs again as soon as it can be read.'
 
 const { automationsFrom } = await vi.hoisted(() => import('../../test/automationsRead'))

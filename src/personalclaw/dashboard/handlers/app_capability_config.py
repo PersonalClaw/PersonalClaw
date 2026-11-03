@@ -59,7 +59,7 @@ def _target(request: web.Request) -> tuple[str, str, dict[str, Any]] | web.Respo
         return web.json_response(
             {
                 "error": f"{who} keeps this capability's settings on each instance. Add, edit, "
-                "test or remove its instances in Settings → Providers."
+                "test or remove its instances in Settings → Models & Providers → Providers."
             },
             status=409,
         )

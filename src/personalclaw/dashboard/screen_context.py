@@ -213,4 +213,6 @@ async def resolve_delivery(accepts_images: bool) -> tuple[str, str]:
             return DELIVERY_DESCRIBED, ""
     except Exception:  # noqa: BLE001 — a broken registry is "no vision", not a crash
         logger.debug("screen share: image-reader probe failed", exc_info=True)
-    return DELIVERY_NONE, "Bind a vision model in Settings → Models to share your screen."
+    return DELIVERY_NONE, (
+        "Bind a vision model in Settings → Models & Providers → Models to share your screen."
+    )

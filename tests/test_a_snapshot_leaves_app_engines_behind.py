@@ -34,7 +34,8 @@ from personalclaw.snapshot import restore_main, snapshot_main
 ENGINE = "pclaw-fixture-engine==1.0"
 SENTENCE = (
     "has no engine here: a snapshot leaves engines out, since each one is built for the machine "
-    "it runs on. Install it with Install engine, on the app's card in Settings → Providers."
+    "it runs on. Install it with Install engine, on the app's card in Settings → Models & "
+    "Providers → Providers."
 )
 
 

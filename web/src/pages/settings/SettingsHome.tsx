@@ -1,49 +1,48 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { SearchX } from 'lucide-react'
 import { SearchField } from '../../ui/SearchField'
 import { SETTINGS_WIDGETS, type SettingsWidget } from './settingsWidgets'
+import { columnsFor, packRows } from './packRows'
+import { SETTINGS_GROUPS, SETTINGS_PAGES, type SettingsPageDef } from './settingsPages'
+import { SETTINGS_TERMS } from './settingsTerms'
+import { BentoCard, BentoPartProvider } from './bento'
+import { TextLink } from '../../ui/TextLink'
 
-const COL_MIN = 320   // min column width before adding another column
-const COL_GAP = 12    // px gap between columns and between stacked cards
+const GAP = 12        // px between cards, across and down
+const GRID_MAX = 1200 // the grid's widest; past it, three columns of ~390 px stay centred
 
-/** Settings home — a balanced bento where each subpage is one widget surfacing its
- *  most essential info; clicking opens the subpage. A full-width search filters the
- *  cards (label + description + the data each card surfaces) and highlights matches.
- *  Replaces the old left-nav + 4-card overview.
+/** Settings home — one card per page (#5897), each surfacing the sections it holds and their quick
+ *  controls; clicking opens the page. A full-width search filters the cards (every section's label,
+ *  description, setting labels and the data its part surfaces) and highlights matches.
  *
- *  Layout: section blocks are packed into a width-derived number of fixed-width
- *  columns, shortest-column-first (largest blocks placed first) — so short sections
- *  tuck beneath tall ones and the columns end up near-equal height. Cards size to
- *  their own content, so nothing stretches when the page is wide. */
+ *  Layout (#5897): row bands. Each group is its heading and then its cards, in a grid whose column
+ *  count follows the space it has (`columnsFor`) and whose spans `packRows` picks so every row ends
+ *  at the right edge. It used to pack whole groups into columns, which left the columns over a
+ *  thousand pixels apart; a group now reads left to right, top to bottom, in its own source order,
+ *  which is also the order focus moves in. Cards in a row stretch to its tallest. */
 export function SettingsHome({ go }: { go: (id: string) => void }) {
   const [query, setQuery] = useState('')
   const q = query.trim()
 
-  // Group the widgets by category, preserving registry order.
-  const groups = useMemo(() => {
-    const order: string[] = []
-    const byGroup: Record<string, SettingsWidget[]> = {}
-    for (const w of SETTINGS_WIDGETS) {
-      if (!byGroup[w.group]) { byGroup[w.group] = []; order.push(w.group) }
-      byGroup[w.group].push(w)
-    }
-    return order.map((g) => ({ title: g, items: byGroup[g] }))
-  }, [])
+  // The pages by group, in the registry's order.
+  const groups = useMemo(() => SETTINGS_GROUPS.map((g) => ({ title: g, items: SETTINGS_PAGES.filter((p) => p.group === g) })), [])
 
-  // Each widget reports whether it matches the query (it owns the hook producing
-  // its search text) so we can show a global "no matches" state + hide empty groups.
+  // Each page reports whether it matches the query (its sections own the hooks producing their
+  // search text) so we can show a global "no matches" state + hide empty groups.
   const [matches, setMatches] = useState<Record<string, boolean>>({})
   const anyMatch = q === '' || Object.values(matches).some(Boolean)
   const reportMatch = useCallback((id: string, m: boolean) => {
     setMatches((prev) => (prev[id] === m ? prev : { ...prev, [id]: m }))
   }, [])
+  const gridRef = useRef<HTMLDivElement>(null)
+  const columns = useColumns(gridRef)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full px-2xl">
+        <div ref={gridRef} className="mx-auto w-full px-2xl" style={{ maxWidth: `calc(${GRID_MAX}px + 2 * var(--spacing-2xl))` }}>
           {/* Search across all settings + the data on every card. Pinned to the top
               of the scroll area (its own surface bg masks cards sliding under it),
               with a constant gap below so the first row never crowds it. */}
@@ -73,14 +72,10 @@ export function SettingsHome({ go }: { go: (id: string) => void }) {
           )}
 
           <div className="pb-2xl" style={anyMatch ? undefined : { display: 'none' }}>
-            <BalancedColumns
-              items={groups.map((g) => ({
-                key: g.title,
-                // Bigger blocks first → shortest-column packing balances best.
-                weight: g.items.length,
-                node: <Group title={g.title} items={g.items} query={q} go={go} onMatch={reportMatch} />,
-              }))}
-            />
+            {groups.map((g) => (
+              <Group key={g.title} title={g.title} items={g.items} query={q} go={go} onMatch={reportMatch}
+                matches={matches} columns={columns} />
+            ))}
           </div>
         </div>
       </div>
@@ -88,112 +83,129 @@ export function SettingsHome({ go }: { go: (id: string) => void }) {
   )
 }
 
-/** Packs blocks into N fixed-width columns, choosing the currently-shortest column
- *  for each (measured pixel heights). Placing the heaviest blocks first yields
- *  near-equal column heights — a true masonry, not greedy single-column fill. */
-function BalancedColumns({ items }: { items: { key: string; weight: number; node: React.ReactNode }[] }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const blockRefs = useRef<Map<string, HTMLDivElement>>(new Map())
-  const heights = useRef<Map<string, number>>(new Map())
-  const [cols, setCols] = useState(1)
-  const [layout, setLayout] = useState<string[][]>([])
-
-  // Column count tracks the container width.
+/** The column count for the grid inside `ref`, tracking its width. The ref sits on the page's own
+ *  content box (search and grid), which never hides, so a search that hides every card does not
+ *  read as a zero-width grid. */
+function useColumns(ref: React.RefObject<HTMLDivElement | null>): number {
+  const [columns, setColumns] = useState(1)
   useLayoutEffect(() => {
-    const el = containerRef.current
+    const el = ref.current
     if (!el) return
     const apply = () => {
-      const w = el.clientWidth
-      const n = Math.max(1, Math.min(items.length, Math.floor((w + COL_GAP) / (COL_MIN + COL_GAP))))
-      setCols((prev) => (prev === n ? prev : n))
+      const pad = parseFloat(getComputedStyle(el).paddingLeft || '0') + parseFloat(getComputedStyle(el).paddingRight || '0')
+      const n = columnsFor(el.clientWidth - pad)
+      setColumns((prev) => (prev === n ? prev : n))
     }
     apply()
     const ro = new ResizeObserver(apply)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [items.length])
-
-  // Pack order = heaviest first (stable: weight is the card count, not a live
-  // height, so blocks don't reshuffle as async data loads in).
-  const order = useMemo(
-    () => items.map((it) => it.key).sort((a, b) => {
-      const wa = items.find((x) => x.key === a)!.weight
-      const wb = items.find((x) => x.key === b)!.weight
-      return wb - wa
-    }),
-    [items],
-  )
-
-  // Re-pack after every commit: measure each block, place into the shortest column.
-  // Guarded so we only setState when the assignment actually changes (no loop).
-  useLayoutEffect(() => {
-    for (const [k, el] of blockRefs.current) heights.current.set(k, el.offsetHeight)
-    const colKeys: string[][] = Array.from({ length: cols }, () => [])
-    const colH = new Array(cols).fill(0)
-    for (const key of order) {
-      let m = 0
-      for (let i = 1; i < cols; i++) if (colH[i] < colH[m]) m = i
-      colKeys[m].push(key)
-      colH[m] += (heights.current.get(key) ?? 1) + COL_GAP
-    }
-    const same = layout.length === colKeys.length && colKeys.every((c, i) => {
-      const p = layout[i]; return p && p.length === c.length && c.every((k, j) => p[j] === k)
-    })
-    if (!same) setLayout(colKeys)
-  })
-
-  const byKey = (k: string) => items.find((it) => it.key === k)!
-  // Until the first measure resolves, render a single flow (also the cols===1 case).
-  const columns = layout.length === cols && cols > 0 ? layout : [order]
-
-  return (
-    <div ref={containerRef} className="flex items-start" style={{ gap: COL_GAP }}>
-      {columns.map((keys, ci) => (
-        <div key={ci} className="flex min-w-0 flex-1 flex-col" style={{ gap: COL_GAP }}>
-          {keys.map((k) => (
-            <div key={k} ref={(el) => { if (el) blockRefs.current.set(k, el); else blockRefs.current.delete(k) }}>
-              {byKey(k).node}
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  )
+  }, [ref])
+  return columns
 }
 
-/** One category block: a heading + its widgets stacked. Hidden when every widget is
- *  filtered out (so the masonry re-packs around it). */
-function Group({ title, items, query, go, onMatch }: {
-  title: string; items: SettingsWidget[]; query: string; go: (id: string) => void
-  onMatch: (id: string, matched: boolean) => void
+/** One group: its heading, then its pages' cards in a row-band grid. The spans are packed over the
+ *  cards a search leaves visible, so a filtered group still ends its rows even; hidden when none
+ *  match. */
+function Group({ title, items, query, go, onMatch, matches, columns }: {
+  title: string; items: SettingsPageDef[]; query: string; go: (id: string) => void
+  onMatch: (id: string, matched: boolean) => void; matches: Record<string, boolean>; columns: number
 }) {
-  const [visible, setVisible] = useState<Record<string, boolean>>({})
-  const anyVisible = query === '' || Object.values(visible).some(Boolean)
-  const report = useCallback((id: string, m: boolean) => {
-    setVisible((p) => (p[id] === m ? p : { ...p, [id]: m }))
-    onMatch(id, m)
-  }, [onMatch])
+  const headingId = useId()
+  // A card not yet reported counts as visible: it renders until its own cell says otherwise.
+  const visible = items.filter((p) => query === '' || matches[p.id] !== false)
+  const spans = packRows(visible.map((p) => p.span), columns)
+  const spanOf = new Map(visible.map((p, i) => [p.id, spans[i]]))
   return (
-    <section style={anyVisible ? undefined : { display: 'none' }}>
-      <Eyebrow as="h2" className="mb-2 px-1">{title}</Eyebrow>
-      <div className="flex flex-col" style={{ gap: COL_GAP }}>
-        {items.map((w) => <Cell key={w.id} widget={w} query={query} go={go} onMatch={report} />)}
+    <section aria-labelledby={headingId} className="mb-l" style={visible.length ? undefined : { display: 'none' }}>
+      <Eyebrow as="h2" id={headingId} className="mb-2 px-1">{title}</Eyebrow>
+      <div className="grid" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, gap: GAP }}>
+        {items.map((p) => <Cell key={p.id} page={p} query={query} go={go} onMatch={onMatch} span={spanOf.get(p.id) ?? 1} />)}
       </div>
     </section>
   )
 }
 
-/** A bento cell: computes the widget's search text (its own cached hook), decides
- *  whether it matches the query, reports up (effect), and renders it. The widget's
- *  `render()` calls its own hooks, so we ALWAYS render it (and hide a non-match via
- *  CSS) — returning null on a filter miss would change the hook count and crash. */
-function Cell({ widget, query, go, onMatch }: {
-  widget: SettingsWidget; query: string; go: (id: string) => void; onMatch: (id: string, matched: boolean) => void
+const WIDGETS = new Map(SETTINGS_WIDGETS.map((w) => [w.id, w]))
+const widgetOf = (id: string): SettingsWidget => {
+  const w = WIDGETS.get(id)
+  if (!w) throw new Error(`Settings section ${id} has no widget`)
+  return w
+}
+
+/** A page's cell: whether the page matches the query, reported up, and its card. A page matches by
+ *  its own name or through any section it holds; each section computes its own search text (its own
+ *  hook, in `SectionSearch`), so the hook count never changes with the query, and the card is ALWAYS
+ *  rendered (a non-match is hidden with CSS) for the same reason. */
+function Cell({ page, query, go, onMatch, span }: {
+  page: SettingsPageDef; query: string; go: (id: string) => void; onMatch: (id: string, matched: boolean) => void; span: number
+}) {
+  const [hits, setHits] = useState<Record<string, boolean>>({})
+  const report = useCallback((id: string, m: boolean) => setHits((p) => (p[id] === m ? p : { ...p, [id]: m })), [])
+  const own = query !== '' && page.label.toLowerCase().includes(query.toLowerCase())
+  const through = query === '' ? [] : page.sections.filter((id) => hits[id])
+  const matched = query === '' || own || through.length > 0
+  const reportRef = useRef(onMatch); reportRef.current = onMatch
+  useEffect(() => { reportRef.current(page.id, matched) }, [matched, page.id])
+  // A flex box so the card stretches to its row's height; `min-w-0` so a long value truncates
+  // inside its column rather than widening it.
+  return (
+    <div className="flex min-w-0" style={matched ? { gridColumn: `span ${span}` } : { display: 'none' }}>
+      {page.sections.map((id) => <SectionSearch key={id} widget={widgetOf(id)} query={query} onMatch={report} />)}
+      <PageCard page={page} span={span} query={query} go={go} foundIn={own ? [] : through} />
+    </div>
+  )
+}
+
+/** One section's part of its page's search: its label, description, the labels of the settings its
+ *  panel holds (`settingsTerms.ts`) and the data its part surfaces. Renders nothing. */
+function SectionSearch({ widget, query, onMatch }: {
+  widget: SettingsWidget; query: string; onMatch: (id: string, matched: boolean) => void
 }) {
   const text = widget.useSearchText()
-  const haystack = `${widget.label} ${widget.description} ${text}`.toLowerCase()
-  const matched = query === '' || haystack.includes(query.toLowerCase())
+  const haystack = `${widget.label} ${widget.description} ${(SETTINGS_TERMS[widget.id] ?? []).join(' ')} ${text}`.toLowerCase()
+  const matched = query !== '' && haystack.includes(query.toLowerCase())
   const reportRef = useRef(onMatch); reportRef.current = onMatch
   useEffect(() => { reportRef.current(widget.id, matched) }, [matched, widget.id])
-  return <div style={matched ? undefined : { display: 'none' }}>{widget.render(query, go)}</div>
+  return null
+}
+
+/** A page's card: its title (an `h3`), then the parts it shows, each its section's tile drawn as a
+ *  part (`BentoPartProvider`), side by side on a card two columns wide. Sections it does not show are
+ *  named at its foot as links, and so is each section a search found the page through. */
+function PageCard({ page, span, query, go, foundIn }: {
+  page: SettingsPageDef; span: number; query: string; go: (id: string) => void; foundIn: string[]
+}) {
+  const parts = page.parts ?? page.sections
+  const also = page.sections.filter((id) => !parts.includes(id))
+  const icon = (WIDGETS.get(page.id) ?? widgetOf(page.sections[0])).icon
+  // The part the card leads with goes untitled where the parts stack, since the card's own title
+  // sits over it; every part after it keeps its title. A card of several parts two columns wide
+  // titles them all, since they sit side by side. The lead part, not the part that shares the page's
+  // id: Models & Providers leads with Providers, and its Models part kept no title at one column.
+  const titled = (id: string) => parts.length > 1 && !(id === parts[0] && span < 2)
+  // Each opens its section on the page, in one click from here.
+  const links = (ids: string[]) => ids.map((id, i) => (
+    <span key={id}>
+      {i > 0 && ' · '}
+      <TextLink size="xs" ink="emphasis" className="pointer-events-auto" onClick={(e) => { e.stopPropagation(); go(id) }}>
+        {widgetOf(id).label}
+      </TextLink>
+    </span>
+  ))
+  const footer = (also.length > 0 || foundIn.length > 0) && (
+    <div className="flex flex-col gap-0.5">
+      {foundIn.length > 0 && <div>Found in {links(foundIn)}</div>}
+      {also.length > 0 && <div>Also here: {links(also)}</div>}
+    </div>
+  )
+  return (
+    <BentoCard icon={icon} title={page.label} query={query} onClick={() => go(page.id)} heading footer={footer || undefined}>
+      <div className={span >= 2 && parts.length > 1 ? 'grid grid-cols-2 gap-x-xl gap-y-l' : 'flex flex-col gap-l'}>
+        {parts.map((id) => (
+          <BentoPartProvider key={id} value={{ titled: titled(id) }}>{widgetOf(id).render(query, go)}</BentoPartProvider>
+        ))}
+      </div>
+    </BentoCard>
+  )
 }

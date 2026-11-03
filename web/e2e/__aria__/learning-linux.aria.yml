@@ -76,42 +76,42 @@
       - text: Lab vs field
       - paragraph:
         - text: The eval substrate is off, so no lab-vs-field table can run — turn on
-        - link "Evals enabled in Settings → Evaluations":
+        - link "Evals enabled in Settings → Evaluations & Feedback → Evaluations":
           - /url: "#/settings/evals"
         - text: .
     - region "Judge tiers":
       - text: Judge tiers
       - paragraph:
         - text: The eval substrate is off, so no judge benchmark can run — turn on
-        - link "Evals enabled in Settings → Evaluations":
+        - link "Evals enabled in Settings → Evaluations & Feedback → Evaluations":
           - /url: "#/settings/evals"
         - text: .
     - region "Template studies":
       - heading "Template studies" [level=#]
       - paragraph:
         - text: The eval substrate is off, so no study can run — turn on
-        - link "Evals enabled in Settings → Evaluations":
+        - link "Evals enabled in Settings → Evaluations & Feedback → Evaluations":
           - /url: "#/settings/evals"
         - text: .
     - region "Retrieval arms":
       - heading "Retrieval arms" [level=#]
       - paragraph:
         - text: The eval substrate is off, so no retrieval benchmark can run — turn on
-        - link "Evals enabled in Settings → Evaluations":
+        - link "Evals enabled in Settings → Evaluations & Feedback → Evaluations":
           - /url: "#/settings/evals"
         - text: .
     - region "Component ablation":
       - text: Component ablation
       - paragraph:
         - text: The eval substrate is off, so no ablation can run — turn on
-        - link "Evals enabled in Settings → Evaluations":
+        - link "Evals enabled in Settings → Evaluations & Feedback → Evaluations":
           - /url: "#/settings/evals"
         - text: .
     - region "Skill impact benchmark":
       - text: Skill impact benchmark
       - paragraph:
         - text: The eval substrate is off, so no benchmark can run — turn on
-        - link "Evals enabled in Settings → Evaluations":
+        - link "Evals enabled in Settings → Evaluations & Feedback → Evaluations":
           - /url: "#/settings/evals"
         - text: .
     - text: Proposals

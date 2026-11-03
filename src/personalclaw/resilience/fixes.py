@@ -397,7 +397,7 @@ def rebuild_memory_index(*, reembed: bool = True) -> str:
     if res["other_model"]:
         why = (
             "no embedding model answered, so they could not be re-embedded — bind one in "
-            "Settings → Models, which re-embeds every memory"
+            "Settings → Models & Providers → Models, which re-embeds every memory"
             if reembed
             else "a rebuild cannot index them; the Doctor's Fix re-embeds them"
         )
@@ -532,7 +532,8 @@ def _register_builtin_fixes() -> None:
         Fix(
             id=PRUNE_BINDINGS_FIX,
             title="Prune bindings to models that are gone",
-            impact="Removes from each use case in Settings → Models every model that cannot "
+            impact="Removes from each use case in Settings → Models & Providers → Models every "
+            "model that cannot "
             "run: one its local provider no longer lists (deleted or renamed), and one whose "
             "provider was removed. The other models keep their order. To use a removed model "
             "again, download it and choose it there.",

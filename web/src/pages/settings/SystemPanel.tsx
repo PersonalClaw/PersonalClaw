@@ -32,7 +32,7 @@ export function SystemPanel({ navigate }: { navigate?: RouteProps['navigate'] })
         </div>
         <p data-type="body-m" className="mt-m text-on-surface-low">
           Which local models are holding memory, with Unload and the memory meter, is in{' '}
-          <TextLink onClick={() => go('settings/models')}>Settings › Models</TextLink>.
+          <TextLink onClick={() => go('settings/models')}>Settings › Models & Providers › Models</TextLink>.
         </p>
       </Section>
     </div>

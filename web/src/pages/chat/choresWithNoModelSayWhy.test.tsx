@@ -11,9 +11,9 @@ import { runState } from '../../test/runState'
 // (`needs_model`). Each surface shows it where its answer would be, and the suggestions and
 // follow-ups show it as the way to Settings → Models.
 
-const SUGGESTIONS_NEED = 'Suggestions need a model: choose one in Settings → Models.'
-const FOLLOWUPS_NEED = 'Follow-ups need a model: choose one in Settings → Models.'
-const TITLES_NEED = 'Titles and tags need a model: choose one in Settings → Models.'
+const SUGGESTIONS_NEED = 'Suggestions need a model: choose one in Settings → Models & Providers → Models.'
+const FOLLOWUPS_NEED = 'Follow-ups need a model: choose one in Settings → Models & Providers → Models.'
+const TITLES_NEED = 'Titles and tags need a model: choose one in Settings → Models & Providers → Models.'
 
 const h = vi.hoisted(() => ({
   detail: {
@@ -108,7 +108,7 @@ function open(sub: string) {
 }
 
 describe('a new chat with no model chosen for the chores', () => {
-  it('keeps the standard suggestions and says why, as the way to Settings → Models', async () => {
+  it('keeps the standard suggestions and says why, as the way to Settings → Models & Providers → Models', async () => {
     open('')
     expect(await screen.findByRole('button', { name: 'Break a goal into tasks' })).toBeTruthy()
     const why = await screen.findByRole('link', { name: SUGGESTIONS_NEED })
@@ -144,7 +144,7 @@ describe('a reply with no model chosen for its follow-ups', () => {
 })
 
 describe('an untitled chat with no model chosen for its title', () => {
-  it('says why under the title, as the way to Settings → Models', async () => {
+  it('says why under the title, as the way to Settings → Models & Providers → Models', async () => {
     h.chatSessionDetail.mockResolvedValue({ ...h.detail, title: '', title_needs_model: TITLES_NEED })
     open('chat-7-x')
     expect(await screen.findByText('Untitled chat')).toBeTruthy()

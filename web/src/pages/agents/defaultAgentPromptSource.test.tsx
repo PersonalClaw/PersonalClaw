@@ -58,11 +58,11 @@ beforeEach(() => {
 })
 
 describe('the default agent says where its prompt comes from', () => {
-  it('with no prompt of its own, it points at the binding in Settings → Prompts', () => {
+  it('with no prompt of its own, it points at the binding in Settings → Agent → Prompts', () => {
     mount(agentNamed('PersonalClaw'), true)
     expect(screen.getByText(/None of its own/)).toBeTruthy()
-    const link = screen.getByRole('link', { name: 'Settings → Prompts' })
-    expect(link.getAttribute('href')).toBe('#/settings/prompts')
+    const link = screen.getByRole('link', { name: 'Settings → Agent → Prompts' })
+    expect(link.getAttribute('href')).toBe('#/settings/agent?section=prompts')
   })
 
   it('a prompt the user wrote into it is shown instead', () => {
@@ -79,7 +79,7 @@ describe('the default agent says where its prompt comes from', () => {
 
   it('its edit form says an empty prompt means the bound one, and a custom agent keeps its hint', () => {
     const { unmount } = render(<AgentForm draft={toDraft(agentNamed('PersonalClaw'))} onChange={vi.fn()} nameLocked />)
-    expect(screen.getByText(/Leave empty to answer with the prompt bound in Settings → Prompts/)).toBeTruthy()
+    expect(screen.getByText(/Leave empty to answer with the prompt bound in Settings → Agent → Prompts/)).toBeTruthy()
     unmount()
     render(<AgentForm draft={toDraft(agentNamed('scout'))} onChange={vi.fn()} nameLocked />)
     expect(screen.queryByText(/Leave empty to answer with the prompt bound/)).toBeNull()

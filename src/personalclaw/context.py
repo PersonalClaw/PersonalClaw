@@ -500,8 +500,8 @@ def _widgets_left_out_notice(window: Window) -> str:
         f"Inline-widget instructions were left out of this turn: the window {window.model_label} "
         f"is served with is not known yet, so this turn was budgeted for a conservative "
         f"{window.budget_tokens or 0:,} tokens, which cannot afford the 730 tokens they cost. "
-        f"Set the window it serves in its provider's settings (Settings → Providers) to get "
-        f"widgets back."
+        "Set the window it serves in its provider's settings (Settings → Models & Providers → "
+        "Providers) to get widgets back."
     )
 
 

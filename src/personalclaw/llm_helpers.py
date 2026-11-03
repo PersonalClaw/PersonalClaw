@@ -1637,7 +1637,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
         return (
             "This machine ran out of memory while the model was reading this conversation, so "
             "no reply was produced. Shorten the message or start a new chat — or bind a model "
-            "that does not run on this machine in Settings → Models."
+            "that does not run on this machine in Settings → Models & Providers → Models."
         )
     raw = str(exc or "").strip()
     if not raw:
@@ -1702,7 +1702,7 @@ def _known_failure_sentence(exc: object, *, room_member: str = "") -> str | None
                 "invalid_api_key",
             ),
             "The model provider rejected the API key (auth failed). Check the key in "
-            "Settings → Providers, or pick a different model.",
+            "Settings → Models & Providers → Providers, or pick a different model.",
         ),
         (
             (

@@ -98,7 +98,8 @@ def test_an_engine_that_does_not_fit_the_version_that_came_back_is_brought_up_to
     assert sidecar.SidecarInstall.for_app("clone-voice").installed is False
     assert said[-1] == (
         "⚠️  Clone Voice's engine here does not match the version the restore brought back. "
-        "Install engine, on the app's card in Settings → Providers, brings it up to date."
+        "Install engine, on the app's card in Settings → Models & Providers → Providers, brings "
+        "it up to date."
     )
     install, ran = _install_engine(monkeypatch, "clone-voice")
     assert ran == ["pip"], "the environment is kept; only the packages the version declares change"

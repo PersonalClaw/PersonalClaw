@@ -647,7 +647,7 @@ class TestHumanizeProviderError:
         out = humanize_provider_error(MemoryError(raw))
         assert "ran out of memory" in out
         assert "GiB" not in out and "27862" not in out
-        assert "Settings → Models" in out
+        assert "Settings → Models & Providers → Models" in out
         # A bare MemoryError() is the same failure with the same fix, not an unexplained one.
         assert humanize_provider_error(MemoryError()) == out
 
@@ -706,13 +706,13 @@ class TestHumanizeProviderErrorInARoom:
         assert humanize_provider_error(bound["memory"]) == (
             "This machine ran out of memory while the model was reading this conversation, so "
             "no reply was produced. Shorten the message or start a new chat — or bind a model "
-            "that does not run on this machine in Settings → Models."
+            "that does not run on this machine in Settings → Models & Providers → Models."
         )
         assert humanize_provider_error(bound["window"]) == (
             "Your message is too long for gemma3:1b: it can read about 8,192 tokens (roughly "
             "33,000 characters of text like this) at a time, and this message is 9,000 tokens "
             "(36,000 characters). Shorten it, or bind a model with a larger context window in "
-            "Settings → Models."
+            "Settings → Models & Providers → Models."
         )
 
     def test_a_surface_neutral_sentence_is_the_same_on_both_surfaces(self):

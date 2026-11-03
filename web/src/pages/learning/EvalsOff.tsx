@@ -68,7 +68,7 @@ export function EvalsOff({ what }: {
   return (
     <p className="text-on-surface-low text-[0.8125rem]">
       The eval substrate is off, so no {what} can run — turn on{' '}
-      <TextLink href="#/settings/evals" ink="emphasis" className="underline">Evals enabled in Settings → Evaluations</TextLink>.
+      <TextLink href="#/settings/evals" ink="emphasis" className="underline">Evals enabled in Settings → Evaluations & Feedback → Evaluations</TextLink>.
     </p>
   )
 }

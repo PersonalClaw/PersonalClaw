@@ -55,9 +55,9 @@ MODEL_ENTRY = "pcfixture-model"
 MODEL_REF = f"{MODEL_ENTRY}:pcfixture-small"
 
 #: What each surface says while no model is chosen for its chore.
-SUGGESTIONS_NEED = "Suggestions need a model: choose one in Settings → Models."
-FOLLOWUPS_NEED = "Follow-ups need a model: choose one in Settings → Models."
-TITLES_NEED = "Titles and tags need a model: choose one in Settings → Models."
+SUGGESTIONS_NEED = "Suggestions need a model: choose one in Settings → Models & Providers → Models."
+FOLLOWUPS_NEED = "Follow-ups need a model: choose one in Settings → Models & Providers → Models."
+TITLES_NEED = "Titles and tags need a model: choose one in Settings → Models & Providers → Models."
 
 #: What the bound model answers each chore with.
 TITLE_ANSWER = "Reading a file in Python\nTAGS: python"

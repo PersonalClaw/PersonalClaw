@@ -136,12 +136,12 @@ describe('classification: which failures are the provider refusing a real call',
     }
   })
 
-  it('routes each class to a REAL Settings subpage id', () => {
-    // All three ids must exist in SettingsPage's SUBPAGES — a bad sub-segment silently renders
-    // the bento home, which looks like a working link and answers nothing.
-    expect(settingsTargetFor(new ApiError('Incorrect API key provided', 500)).path).toBe('settings/providers')
-    expect(settingsTargetFor(new ApiError('upstream refused', 401)).path).toBe('settings/providers')
-    expect(settingsTargetFor(new ApiError('disk is full', 500)).path).toBe('settings/doctor')
+  it('routes each class to a REAL Settings page and section', () => {
+    // Each must be a page Settings holds, at a section it holds (#5897) — a bad sub-segment silently
+    // renders the bento home, which looks like a working link and answers nothing.
+    expect(settingsTargetFor(new ApiError('Incorrect API key provided', 500)).path).toBe('settings/models?section=providers')
+    expect(settingsTargetFor(new ApiError('upstream refused', 401)).path).toBe('settings/models?section=providers')
+    expect(settingsTargetFor(new ApiError('disk is full', 500)).path).toBe('settings/health?section=doctor')
     expect(settingsTargetFor(new ApiError('no chat model is bound', 500)).path).toBe('settings/models')
   })
 
@@ -169,7 +169,7 @@ describe('classification: which failures are the provider refusing a real call',
         findings: [{
           code: 'WF_PRE_MODEL_UNRESOLVED',
           message: "no model resolves for the 'orchestration' use case",
-          remediation: "select a model for orchestration in Settings → Models, or change the node's model_tier",
+          remediation: "select a model for orchestration in Settings → Models & Providers → Models, or change the node's model_tier",
           severity: 'error',
           kind: 'models',
         }],
@@ -190,7 +190,7 @@ describe('classification: which failures are the provider refusing a real call',
   it('uses the server\'s remediation verbatim, and names no credential', () => {
     const t = settingsTargetFor(PREFLIGHT_422())
     expect(t.path).toBe('settings/models')
-    expect(t.because).toBe("select a model for orchestration in Settings → Models, or change the node's model_tier")
+    expect(t.because).toBe("select a model for orchestration in Settings → Models & Providers → Models, or change the node's model_tier")
     // The specific sentence the defect produced, and the vocabulary it belongs to.
     expect(t.because).not.toMatch(/passed its test/)
     expect(t.because).not.toMatch(/key|plan|billing|quota/i)
@@ -211,7 +211,7 @@ describe('classification: which failures are the provider refusing a real call',
       preflight: { findings: [{ code: 'WF_PRE_BINARY_MISSING', message: "required binary 'git' is not on PATH", remediation: 'install git, or edit the workflow to not need it', severity: 'error', kind: 'binaries' }] },
     })
     const t = settingsTargetFor(e)
-    expect(t.path).toBe('settings/doctor')
+    expect(t.path).toBe('settings/health?section=doctor')
     expect(t.because).toBe('install git, or edit the workflow to not need it')
   })
 
@@ -243,7 +243,7 @@ describe('a real call refused after a passing Test', () => {
     const link = await screen.findByRole('button', { name: 'Open model provider settings' })
     fireEvent.click(link)
     // Through the flow exit, so it genuinely leaves onboarding instead of being bounced back.
-    expect(onExitTo).toHaveBeenCalledWith('settings/providers')
+    expect(onExitTo).toHaveBeenCalledWith('settings/models?section=providers')
   })
 
   it('names the passing-Test situation, so the user is not left doubting the Test', async () => {
@@ -308,7 +308,7 @@ describe('a FRESH INSTALL with no provider is not told to check a key it never h
         findings: [{
           code: 'WF_PRE_MODEL_UNRESOLVED',
           message: "no model resolves for the 'orchestration' use case",
-          remediation: "select a model for orchestration in Settings → Models, or change the node's model_tier",
+          remediation: "select a model for orchestration in Settings → Models & Providers → Models, or change the node's model_tier",
           severity: 'error',
           kind: 'models',
         }],
@@ -331,8 +331,8 @@ describe('a FRESH INSTALL with no provider is not told to check a key it never h
     createULoop.mockRejectedValue(NO_PROVIDER())
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
-    expect(await screen.findByText(/select a model for orchestration in Settings → Models/)).toBeTruthy()
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Settings → Models' }))
+    expect(await screen.findByText(/select a model for orchestration in Settings → Models & Providers → Models/)).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Settings → Models & Providers → Models' }))
     expect(onExitTo).toHaveBeenCalledWith('settings/models')
   })
 
@@ -357,8 +357,8 @@ describe('a non-provider failure is not blamed on the provider', () => {
     mount()
     fireEvent.click(screen.getByRole('button', { name: /Start it/ }))
     expect((await screen.findByRole('alert')).textContent).toContain('Task is too short')
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Settings → Doctor' }))
-    expect(onExitTo).toHaveBeenCalledWith('settings/doctor')
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Settings → Health → Doctor' }))
+    expect(onExitTo).toHaveBeenCalledWith('settings/health?section=doctor')
     expect(screen.queryByText(/passed its test and then refused/)).toBeNull()
   })
 })

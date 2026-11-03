@@ -155,7 +155,7 @@ and the address is never logged, since a sign-in page's carries its single-use `
   sees it, and a client registered before them lasts 90 days from its registration. A configured
   value that briefly cannot be read (a locked keychain) keeps the lifetime it had, a revoked token
   stays refused for as long as it is configured, and a registry that cannot be read refuses every
-  surface token rather than give each a fresh 90 days. Settings → Devices lists every integration
+  surface token rather than give each a fresh 90 days. Settings → Devices & Access → Devices lists every integration
   token with when it stops working, and revokes any of them at once; each start and end is a
   `session_signed_in` / `session_signed_out` row. A token that expired, was revoked or was
   replaced is told which, and when, under the same `unauthorized` code every other inbound refusal
@@ -301,7 +301,7 @@ page shows it, `store:webhook:<name>`); it carries no agent, tools or upstream. 
 on the automation's page, with `personalclaw inbound webhook create <automation-id>`, or through
 Settings' route (`POST /api/external-access/clients`), which refuses any other shape with a
 sentence. It is 64 random characters, shown once and kept only as a SHA-256 hash, and works at
-most 90 days. The automation's page and Settings → Devices list it and revoke it, and Settings →
+most 90 days. The automation's page and Settings → Devices & Access → Devices list it and revoke it, and Settings →
 External Access lists it, switches it off and revokes it. Deleting the automation revokes its
 sender tokens (`TriggerStore.delete`): one made again under the same id (an automation that
 never ran, a restore, an import) gets the same address, and a token made for the first must not
@@ -1545,7 +1545,7 @@ run every chat on one. With no model chosen the chore is skipped before anything
 (`chores.NoModelChosen`), and the surface it was for says so: the new-chat page and the dashboard
 under their suggestions, a reply where its follow-ups would be, and an untitled chat's header under
 its name (and in the answer to Regenerate title), each in the words "… need a model: choose one in
-Settings → Models.", leading there. The same rule picks the model a judge grades on (best-of-n, an
+Settings → Models & Providers → Models.", leading there. The same rule picks the model a judge grades on (best-of-n, an
 evaluation, a lesson's replay). A call used to fall back to "the first registered provider" when
 nothing was bound, and on a home whose only runtime was an agent CLI that started the CLI for every
 chore.
@@ -1725,7 +1725,7 @@ or hook and provider that ran it. A run that had nothing to do (an `ActionResult
 `skip`: the heartbeat queue was empty, the workflow was already running) writes no row; its run
 history records the no-op. An action that runs code is the exception (`ActionTypeSpec.runs_code`):
 a script that answers `skip` still ran, and its own answer never keeps it out of the log. The rung
-is the one Settings → Guardrails → Earned autonomy shows, because the panel asks the route the
+is the one Settings → Security → Guardrails → Earned autonomy shows, because the panel asks the route the
 seams use (`ladder._type_row`).
 
 **"Runs with undo" is claimed only with an undo behind it.** An action type can be undone when

@@ -377,11 +377,13 @@ def test_a_step_a_spend_cap_refused_is_not_told_to_change() -> None:
     refused = Failure(
         failure_class=FailureClass.BUDGET,
         cause_plain="Daily spend cap reached: $5.00 of $5.00 spent today",
-        remediation="raise or remove the cap in Settings → Guardrails, then Retry",
+        remediation="raise or remove the cap in Settings → Security → Guardrails, then Retry",
     )
     stop = ending_sentence.step_stop(refused)
     assert stop.cause == ending_sentence.SPEND_CAP, stop
-    assert "Settings › Guardrails" in stop.remedy and "needs no change" in stop.remedy, stop
+    assert (
+        "Settings › Security › Guardrails" in stop.remedy and "needs no change" in stop.remedy
+    ), stop
     assert "change the step" not in stop.remedy.lower(), stop
 
     broke = Failure(failure_class=FailureClass.INTERNAL, cause_plain="it broke")

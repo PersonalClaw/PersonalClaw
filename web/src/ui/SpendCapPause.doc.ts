@@ -34,7 +34,7 @@ const link: UiDoc = {
   name: 'SpendCapSettingsLink',
   keywords: ['spend', 'cap', 'budget', 'settings', 'guardrails', 'usage', 'link'],
   description:
-    'The link to the Settings page a spend ceiling\'s refusal is lifted on, in the words every cap surface uses ("Open Settings → Guardrails"). Renders nothing for a page it does not know.',
+    'The link to the Settings page a spend ceiling\'s refusal is lifted on, in the words every cap surface uses ("Open Settings → Security → Guardrails"). Renders nothing for a page it does not know.',
   props: [
     { name: 'settings', description: 'The route id of the Settings page (`guardrails`, `usage`), as the gateway names it (`BudgetExceededError.settings_page`).' },
     { name: 'size', description: 'Text size of the link: `xs` (default) beside a notice, `sm` in a panel\'s action row.' },

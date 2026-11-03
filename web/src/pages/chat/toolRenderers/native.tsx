@@ -119,7 +119,7 @@ function searchResultsOutput(seg: ToolSegment): ReactNode {
     <RawBlock label={`${arr.length} result${arr.length === 1 ? '' : 's'}`}>
       {notice && (
         <div role="note" data-type="caption" className="mb-s rounded-md bg-surface px-s py-xs text-on-surface-var">
-          {notice} Settings › Search shows why.
+          {notice} Settings › Models & Providers › Search shows why.
         </div>
       )}
       <div className="flex flex-col gap-1.5">

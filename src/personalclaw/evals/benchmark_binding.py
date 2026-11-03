@@ -58,7 +58,8 @@ CONFIG_FIELD = "evals.benchmark_model_ref"
 #: Nothing declared AND an empty resolution chain — the home has no model at all.
 NO_MODEL_AT_ALL = (
     f"no model is bound for {{use_case}} and {CONFIG_FIELD} is empty — bind one in "
-    "Settings → Models, or name one under Settings → Evaluations"
+    "Settings → Models & Providers → Models, or name one under Settings → Evaluations & Feedback "
+    "→ Evaluations"
 )
 
 #: 🪤 A DECLARED ref that did not resolve. The inner sentence is ``cell_provider``'s own
@@ -70,7 +71,8 @@ NO_MODEL_AT_ALL = (
 #: contain the value they got wrong. So the wrapper names the owner and both ways out.
 DECLARED_UNRESOLVED = (
     f"{CONFIG_FIELD} names {{ref!r}}, which did not resolve: {{detail}}; correct or clear "
-    "that ref under Settings → Evaluations (clearing it falls back to your default chat model)"
+    "that ref under Settings → Evaluations & Feedback → Evaluations (clearing it falls back to "
+    "your default chat model)"
 )
 
 
@@ -183,8 +185,8 @@ def resolve_benchmark_binding(
         ref=chain[0],
         detail=(
             f"no model in the {use_case} chain resolves to a providers[] entry in this home "
-            f"({'; '.join(why)}) — bind one in Settings → Models, or name one under "
-            f"{CONFIG_FIELD}"
+            f"({'; '.join(why)}) — bind one in Settings → Models & Providers → Models, or name one "
+            f"under {CONFIG_FIELD}"
         ),
     )
 

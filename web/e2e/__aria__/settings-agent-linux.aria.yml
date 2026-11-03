@@ -26,108 +26,520 @@
   - button "Choose a model"
   - button "Back to Settings"
   - button "Settings"
-  - text: Agent defaults
-  - heading "Agent defaults" [level=#]
-  - paragraph: The default agent for new chats and how agents execute — approval, subagents, and advanced safety knobs. New sessions inherit these unless overridden.
-  - heading "Default agent" [level=#]
-  - paragraph: "Which agent definition serves a new chat when none is chosen. Native agents and connected ACP-runtime agents are both selectable. Loops don't use it: a loop runs on what you pick under Runs on when you create it."
-  - text: Default agent Used for every new chat.
-  - status
-  - button "PersonalClaw"
-  - button "Clear selection"
-  - heading "Defaults" [level=#]
-  - paragraph: Baseline behavior for every session.
-  - text: "Approval mode Who approves a tool call that needs approval. A tool that only reads never asks, and an automation or a loop runs as its own Allow or Mode says. Every call that needs approval asks you: a chat on its card, and an agent no chat started (a trigger’s Invoke Agent agent, a subagent started outside a chat) in your Inbox."
-  - status
-  - 'button "Approval mode: Ask each time" [pressed]': Ask each time
-  - 'button "Approval mode: Trust reads"': Trust reads
-  - 'button "Approval mode: Auto"': Auto
-  - text: Reply style How every agent writes its replies, unless the chat or the agent chooses its own. Changes style only, never a fact, a caveat or a refusal.
-  - status
-  - 'button "Reply style: No style" [pressed]': No style
-  - 'button "Reply style: Plain"': Plain
-  - 'button "Reply style: Terse"': Terse
-  - 'button "Reply style: Conversational"': Conversational
-  - text: YOLO mode Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation.
-  - status
-  - switch "YOLO mode"
-  - text: "Approval wait How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. An approval a running subagent or workflow step asks for also ends with that work's own time limit; asking to start a subagent waits this long. A workflow's approval gates wait this long too, except in a run started unattended, where a gate gives up after # seconds and the run says so. An automation or a loop allowed to run on its own never waits: a call its grant does not cover is declined at once, since no one is there to ask."
-  - status
-  - spinbutton "Approval wait": "#"
-  - text: min
-  - heading "Your reply styles" [level=#]
-  - paragraph: "Styles of your own, offered beside the bundled ones in the composer, on an agent and here. Tone guidance only, up to # KB: a style that names tools, permissions, approvals or the sandbox, speaks of the prompt or the rules around it, or opens or closes a style section, is refused. Changes style only, never a fact, a caveat or a refusal."
-  - list
-  - button "New style"
-  - heading "Runners" [level=#]
-  - paragraph: External agent CLIs this install can drive. Nothing here runs one until you press its Check version, which runs only that CLI's version command — and only for a runner an installed agent app set up.
-  - list:
-    - listitem: "Claude Code acp:claude-code never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter unverified resolves via `npx -y @agentclientprotocol/claude-agent-acp`, which fetches at launch — an npx run cannot be pinned or checksum-verified"
-    - listitem: "Codex acp:codex never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter unverified resolves via `npx -y @agentclientprotocol/codex-acp`, which fetches at launch — an npx run cannot be pinned or checksum-verified"
-    - listitem: Gemini CLI acp:gemini-cli never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter no_adapter launches its own binary — no npm ACP adapter in the launch path
-    - listitem: Kiro CLI acp:kiro-cli never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter no_adapter launches its own binary — no npm ACP adapter in the launch path
-  - heading "Subagents" [level=#]
-  - paragraph: Limits for helper agents the main agent spawns.
-  - text: Max concurrent subagents # = auto-size from this host's CPU and memory.
-  - status
-  - spinbutton "Max concurrent subagents": "#"
-  - text: Max turns per subagent
-  - status
-  - spinbutton "Max turns per subagent": "#"
-  - text: Subagent timeout Counted from when a subagent starts running, not from when it was asked for.
-  - status
-  - spinbutton "Subagent timeout": "#"
-  - text: s Min free memory to spawn
-  - status
-  - spinbutton "Min free memory to spawn": "#"
-  - text: "GB Allowed working directories Folders besides the workspace where the agent's file tools read files without asking and change them under the same approval as the workspace's files (a room member as its own tier allows), and where a subagent may run. Empty: the workspace only."
-  - textbox "Add to allowed working directories":
-    - /placeholder: Add path…
-  - status
-  - heading "Advanced" [level=#]
-  - paragraph: Delegation, safety enforcement, and diagnostics.
-  - text: Orchestrator skill Enable agent delegation — loads the orchestrator skill with the agent roster.
-  - status
-  - switch "Orchestrator skill"
-  - text: Concurrent ACP sessions Run multiple ACP chats on ONE backend process (multiplexing) instead of one process per session. Only takes effect for backends that support session interleaving.
-  - status
-  - switch "Concurrent ACP sessions"
-  - text: "Unattended runs need a verified adapter Refuse an unattended spawn — a cron fire, a loop-cycle worker, a subagent, a heartbeat task, an inbox or side sweep, a channel delivery, or a trigger dispatch — onto a runner whose ACP adapter has no verified provenance: an npx fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. Interactive chat is never gated. See each runner's adapter state under Runners."
-  - status
-  - switch "Unattended runs need a verified adapter"
-  - text: Log level Backend logger level (overridden by --verbose).
-  - status
-  - 'button "Log level: Debug"': Debug
-  - 'button "Log level: Info"': Info
-  - 'button "Log level: Warning" [pressed]': Warning
-  - 'button "Log level: Error"': Error
-  - text: Soft-stop budget Seconds to wait for a cooperative cancel before hard-killing a session.
-  - status
-  - spinbutton "Soft-stop budget": "#"
-  - text: s Runner health check interval How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is checked automatically — use a runner's Check version.
-  - status
-  - spinbutton "Runner health check interval": "#"
-  - text: s Runner idle release How long a session may hold an agent runner without using it. Past this the hold is released and the runner reads as free under Runners — so a session that went quiet, or a gateway that was killed, cannot leave a runner looking permanently taken. The session itself is untouched.
-  - status
-  - spinbutton "Runner idle release": "#"
-  - text: s Durable worker sessions Run workers inside a tmux session on PersonalClaw’s own socket so their shell outlives the gateway. On restart the recovery sweep finds the still-alive worker and marks the run resumable instead of aborting it. This host has tmux, so it takes effect.
-  - status
-  - switch "Durable worker sessions"
-  - heading "Self-QA companion" [level=#]
-  - paragraph: "Watch a repository and QA each user-impacting commit as a user would — driving the real UI, then filing an Inbox item and a Task when a scenario fails. Off by default: it spends model calls and drives your browser unattended."
-  - text: Enable the companion Off means the commit watcher stays idle. A commit only gets a scenario when the change could actually be noticed by a user — test-only and docs-only commits are recorded as skips, with the reason, and cost nothing.
-  - status
-  - switch "Enable the companion"
-  - text: Watched repository Absolute path to the git repository whose new commits trigger a QA run. Empty leaves the watcher idle even when the companion is enabled.
-  - status
-  - textbox "Watched repository":
-    - /placeholder: /path/to/your/repo
-  - 'button "Save: Watched repository" [disabled]': Save
-  - text: Max scenarios per run Ceiling on scenarios generated from one push. Every commit still gets a verdict; this bounds how many browser sessions one push can start.
-  - status
-  - spinbutton "Max scenarios per run": "#"
-  - text: Propose fix branches On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review.
-  - status
-  - switch "Propose fix branches"
+  - text: Agent
+  - heading "Agent" [level=#]
+  - navigation "On this page":
+    - list:
+      - listitem:
+        - link "Agent defaults":
+          - /url: "#/settings/agent?section=agent"
+      - listitem:
+        - link "Prompts":
+          - /url: "#/settings/agent?section=prompts"
+      - listitem:
+        - link "Tool output":
+          - /url: "#/settings/agent?section=tool-output"
+      - listitem:
+        - link "Legibility":
+          - /url: "#/settings/agent?section=legibility"
+  - region "Agent defaults":
+    - heading "Agent defaults" [level=#]
+    - paragraph: The default agent for new chats and how agents execute — approval, subagents, and advanced safety knobs. New sessions inherit these unless overridden.
+    - heading "Default agent" [level=#]
+    - paragraph: "Which agent definition serves a new chat when none is chosen. Native agents and connected ACP-runtime agents are both selectable. Loops don't use it: a loop runs on what you pick under Runs on when you create it."
+    - text: Default agent Used for every new chat.
+    - status
+    - button "PersonalClaw"
+    - button "Clear selection"
+    - heading "Defaults" [level=#]
+    - paragraph: Baseline behavior for every session.
+    - text: "Approval mode Who approves a tool call that needs approval. A tool that only reads never asks, and an automation or a loop runs as its own Allow or Mode says. Every call that needs approval asks you: a chat on its card, and an agent no chat started (a trigger’s Invoke Agent agent, a subagent started outside a chat) in your Inbox."
+    - status
+    - 'button "Approval mode: Ask each time" [pressed]': Ask each time
+    - 'button "Approval mode: Trust reads"': Trust reads
+    - 'button "Approval mode: Auto"': Auto
+    - text: Reply style How every agent writes its replies, unless the chat or the agent chooses its own. Changes style only, never a fact, a caveat or a refusal.
+    - status
+    - 'button "Reply style: No style" [pressed]': No style
+    - 'button "Reply style: Plain"': Plain
+    - 'button "Reply style: Terse"': Terse
+    - 'button "Reply style: Conversational"': Conversational
+    - text: YOLO mode Skip every tool-approval confirmation — overrides approval mode, applies immediately, and stays on until turned off (no expiry, unlike the chat YOLO pill). Only inside a sandbox or for trusted automation.
+    - status
+    - switch "YOLO mode"
+    - text: "Approval wait How long a tool approval waits for your answer before it is denied — the Inbox then says what was denied. An approval a running subagent or workflow step asks for also ends with that work's own time limit; asking to start a subagent waits this long. A workflow's approval gates wait this long too, except in a run started unattended, where a gate gives up after # seconds and the run says so. An automation or a loop allowed to run on its own never waits: a call its grant does not cover is declined at once, since no one is there to ask."
+    - status
+    - spinbutton "Approval wait": "#"
+    - text: min
+    - heading "Your reply styles" [level=#]
+    - paragraph: "Styles of your own, offered beside the bundled ones in the composer, on an agent and here. Tone guidance only, up to # KB: a style that names tools, permissions, approvals or the sandbox, speaks of the prompt or the rules around it, or opens or closes a style section, is refused. Changes style only, never a fact, a caveat or a refusal."
+    - list
+    - button "New style"
+    - heading "Runners" [level=#]
+    - paragraph: External agent CLIs this install can drive. Nothing here runs one until you press its Check version, which runs only that CLI's version command — and only for a runner an installed agent app set up.
+    - list:
+      - listitem: "Claude Code acp:claude-code never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter unverified resolves via `npx -y @agentclientprotocol/claude-agent-acp`, which fetches at launch — an npx run cannot be pinned or checksum-verified"
+      - listitem: "Codex acp:codex never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter unverified resolves via `npx -y @agentclientprotocol/codex-acp`, which fetches at launch — an npx run cannot be pinned or checksum-verified"
+      - listitem: Gemini CLI acp:gemini-cli never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter no_adapter launches its own binary — no npm ACP adapter in the launch path
+      - listitem: Kiro CLI acp:kiro-cli never checked Not set up here — no installed agent app runs this CLI, so PersonalClaw never runs it. Capabilities unknown — no handshake recorded yet. adapter no_adapter launches its own binary — no npm ACP adapter in the launch path
+    - heading "Subagents" [level=#]
+    - paragraph: Limits for helper agents the main agent spawns.
+    - text: Max concurrent subagents # = auto-size from this host's CPU and memory.
+    - status
+    - spinbutton "Max concurrent subagents": "#"
+    - text: Max turns per subagent
+    - status
+    - spinbutton "Max turns per subagent": "#"
+    - text: Subagent timeout Counted from when a subagent starts running, not from when it was asked for.
+    - status
+    - spinbutton "Subagent timeout": "#"
+    - text: s Min free memory to spawn
+    - status
+    - spinbutton "Min free memory to spawn": "#"
+    - text: "GB Allowed working directories Folders besides the workspace where the agent's file tools read files without asking and change them under the same approval as the workspace's files (a room member as its own tier allows), and where a subagent may run. Empty: the workspace only."
+    - textbox "Add to allowed working directories":
+      - /placeholder: Add path…
+    - status
+    - heading "Advanced" [level=#]
+    - paragraph: Delegation, safety enforcement, and diagnostics.
+    - text: Orchestrator skill Enable agent delegation — loads the orchestrator skill with the agent roster.
+    - status
+    - switch "Orchestrator skill"
+    - text: Concurrent ACP sessions Run multiple ACP chats on ONE backend process (multiplexing) instead of one process per session. Only takes effect for backends that support session interleaving.
+    - status
+    - switch "Concurrent ACP sessions"
+    - text: "Unattended runs need a verified adapter Refuse an unattended spawn — a cron fire, a loop-cycle worker, a subagent, a heartbeat task, an inbox or side sweep, a channel delivery, or a trigger dispatch — onto a runner whose ACP adapter has no verified provenance: an npx fetch-at-launch, an adapter that changed since it was provisioned, or a runner with no catalog row. Interactive chat is never gated. See each runner's adapter state under Runners."
+    - status
+    - switch "Unattended runs need a verified adapter"
+    - text: Log level Backend logger level (overridden by --verbose).
+    - status
+    - 'button "Log level: Debug"': Debug
+    - 'button "Log level: Info"': Info
+    - 'button "Log level: Warning" [pressed]': Warning
+    - 'button "Log level: Error"': Error
+    - text: Soft-stop budget Seconds to wait for a cooperative cancel before hard-killing a session.
+    - status
+    - spinbutton "Soft-stop budget": "#"
+    - text: s Runner health check interval How long a runner's measured health stays current. Past this, its row under Runners is marked check overdue rather than presenting an old reading as the present state. Nothing is checked automatically — use a runner's Check version.
+    - status
+    - spinbutton "Runner health check interval": "#"
+    - text: s Runner idle release How long a session may hold an agent runner without using it. Past this the hold is released and the runner reads as free under Runners — so a session that went quiet, or a gateway that was killed, cannot leave a runner looking permanently taken. The session itself is untouched.
+    - status
+    - spinbutton "Runner idle release": "#"
+    - text: s Durable worker sessions Run workers inside a tmux session on PersonalClaw’s own socket so their shell outlives the gateway. On restart the recovery sweep finds the still-alive worker and marks the run resumable instead of aborting it. This host has tmux, so it takes effect.
+    - status
+    - switch "Durable worker sessions"
+    - heading "Self-QA companion" [level=#]
+    - paragraph: "Watch a repository and QA each user-impacting commit as a user would — driving the real UI, then filing an Inbox item and a Task when a scenario fails. Off by default: it spends model calls and drives your browser unattended."
+    - text: Enable the companion Off means the commit watcher stays idle. A commit only gets a scenario when the change could actually be noticed by a user — test-only and docs-only commits are recorded as skips, with the reason, and cost nothing.
+    - status
+    - switch "Enable the companion"
+    - text: Watched repository Absolute path to the git repository whose new commits trigger a QA run. Empty leaves the watcher idle even when the companion is enabled.
+    - status
+    - textbox "Watched repository":
+      - /placeholder: /path/to/your/repo
+    - 'button "Save: Watched repository" [disabled]': Save
+    - text: Max scenarios per run Ceiling on scenarios generated from one push. Every commit still gets a verdict; this bounds how many browser sessions one push can start.
+    - status
+    - spinbutton "Max scenarios per run": "#"
+    - text: Propose fix branches On a confirmed failure, open a pclaw/selfqa-<sha> branch carrying a proposed diff. Never merged and never pushed — the branch name lands in the Task for you to review.
+    - status
+    - switch "Propose fix branches"
+  - region "Prompts":
+    - heading "Prompts" [level=#]
+    - paragraph: Bind which prompt serves each runtime context. Edit the prompts themselves on the Prompts page; unset uses each context's bundled default.
+    - heading "Agent <theme> prompts" [level=#]
+    - paragraph: The default-agent <theme> prompt for a runtime context.
+    - text: Chat Interactive sessions — dashboard, messaging channels, personalclaw run
+    - combobox "Prompt for Chat":
+      - option "Default (<theme>-chat)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Background Unattended runs — automations, subagents, heartbeat, webhooks
+    - combobox "Prompt for Background":
+      - option "Default (<theme>-background)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - heading "Internal task prompts" [level=#]
+    - paragraph: One-shot LLM tasks the <theme> runs on your behalf.
+    - text: Title Generate a short conversation title from the recent transcript.
+    - combobox "Prompt for Title":
+      - option "Default (task-title)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Suggestions Generate contextual dashboard prompt suggestions from the user's recent context.
+    - combobox "Prompt for Suggestions":
+      - option "Default (task-suggestions)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Followups Suggest #-# short follow-up messages the user might send next, from the last chat exchange.
+    - combobox "Prompt for Followups":
+      - option "Default (task-followups)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Natural language → schedule Read a natural-language scheduling request as a #-field cron expression, or as the one time it names.
+    - combobox "Prompt for Natural language → schedule":
+      - option "Default (task-nl-to-cron)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Prompt optimizer <theme> prompt for the prompt optimizer — rewrites vague prompts into specific, scoped instructions.
+    - combobox "Prompt for Prompt optimizer":
+      - option "Default (task-prompt-optimizer)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Side chat <theme> envelope for a side-chat turn — read-only Q&A against a frozen conversation snapshot.
+    - combobox "Prompt for Side chat":
+      - option "Default (task-side-chat)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: History compression Compress a long chat transcript into a dense summary, preserving facts/decisions/code/errors.
+    - combobox "Prompt for History compression":
+      - option "Default (task-history-compression)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Memory consolidation Memory consolidation agent: extract history/semantic/episodic/lessons/persona/skills from a session. Envelope; the per-key instructions are composed at runtime."
+    - combobox "Prompt for Memory consolidation":
+      - option "Default (task-memory-consolidation)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Contradiction judge Judge whether two saved lessons directly contradict (following both is impossible).
+    - combobox "Prompt for Contradiction judge":
+      - option "Default (task-contradiction-judge)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Inbox classify Sort a batch of new inbox messages, each into needs_reply/fyi/noise + a confidence (JSON out).
+    - combobox "Prompt for Inbox classify":
+      - option "Default (task-inbox-classify)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Inbox draft Draft a reply to an inbox message in the user's voice (or SKIP if none needed).
+    - combobox "Prompt for Inbox draft":
+      - option "Default (task-inbox-draft)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Inbox digest Summarize recent channel messages into a short catch-up digest.
+    - combobox "Prompt for Inbox digest":
+      - option "Default (task-inbox-digest)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Triage classify The triage digest's cheap relevance gate: give each collected item a drop/surface/propose disposition against the user's own per-source filter rules."
+    - combobox "Prompt for Triage classify":
+      - option "Default (task-triage-classify)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Triage propose The triage digest's ONE strict-JSON proposal call: bind at most N tiered action proposals to the exact ordinals of the collect manifest."
+    - combobox "Prompt for Triage propose":
+      - option "Default (task-triage-propose)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Digest Recurring multi-source digest: gather the named sources over a window, correlate/dedup, narrate, and deliver to a channel/inbox/knowledge target. Fire it on a schedule via a run-prompt trigger."
+    - combobox "Prompt for Digest":
+      - option "Default (task-digest)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Navigation links Label a batch of numbered URLs with short human-readable titles ('<index>: <title>' per line)."
+    - combobox "Prompt for Navigation links":
+      - option "Default (task-nav-links)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Folder icon Pick a single emoji that represents a project folder name.
+    - combobox "Prompt for Folder icon":
+      - option "Default (task-folder-icon)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Channel title Channel thread auto-title: name the topic in #-# words, or reply SKIP if too vague."
+    - combobox "Prompt for Channel title":
+      - option "Default (task-channel-title)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Knowledge extraction Extract entities + relations + category + summary from a knowledge text chunk (JSON out).
+    - combobox "Prompt for Knowledge extraction":
+      - option "Default (task-knowledge-extraction)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Knowledge insights Extract structured insights (title/summary/key_points/topics/action_items) from content (JSON out).
+    - combobox "Prompt for Knowledge insights":
+      - option "Default (task-knowledge-insights)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Knowledge intent match Decide if a knowledge item is relevant to a user's NL intent and, if so, extract a takeaway + typed fields (JSON out).
+    - combobox "Prompt for Knowledge intent match":
+      - option "Default (task-knowledge-intent-match)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: Knowledge skill synthesis Turn an intent's goal + gathered outcomes into a reusable SKILL.md (DESCRIPTION/TRIGGERS/PROCEDURE delimited sections).
+    - combobox "Prompt for Knowledge skill synthesis":
+      - option "Default (task-knowledge-skill-synthesis)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - heading "Loop & orchestration prompts" [level=#]
+    - paragraph: Autonomous loop and orchestration prompts — classifiers, judges, planning briefs.
+    - text: "Grill flat Grill (flat shape): decompose a goal into distinct, first-principles sub-goals (JSON array out)."
+    - combobox "Prompt for Grill flat":
+      - option "Default (task-grill-flat)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Grill tree Grill (tree shape): produce phases of clarifying questions that scope the work (JSON object out)."
+    - combobox "Prompt for Grill tree":
+      - option "Default (task-grill-tree)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Grill assess Grill (assess): decide whether a goal is clear enough to decompose or needs clarifying questions (JSON object out)."
+    - combobox "Prompt for Grill assess":
+      - option "Default (task-grill-assess)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Orchestrator skill The always-loaded orchestrator SKILL.md: agent-delegation guidance + the installed specialist roster."
+    - combobox "Prompt for Orchestrator skill":
+      - option "Default (task-orchestrator-skill)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Parallel worker nudge Per-cycle trigger for a parallel loop task-worker: work only its task in its own checkout, mark it done, write a finding."
+    - combobox "Prompt for Parallel worker nudge":
+      - option "Default (task-parallel-worker-nudge)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Goal step brief Goal-loop planning: the brief for ONE stepwise-walkthrough step (intent/sub_goals/quorum/execution_plan), carrying prior approved artifacts + re-draft comments."
+    - combobox "Prompt for Goal step brief":
+      - option "Default (task-goal-step-brief)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Code design brief Code (SDLC) planning pass #: design the ordered step list for the target after investigating real context."
+    - combobox "Prompt for Code design brief":
+      - option "Default (task-code-design-brief)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Code step brief Code (SDLC) planning pass #: the brief for ONE step's artifact, carrying prior approved artifacts + re-draft comments + workspace."
+    - combobox "Prompt for Code step brief":
+      - option "Default (task-code-step-brief)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Design design brief Design-loop planning pass #: design the ordered design-phase step list, working through every reference input (URL/image/video/HTML/React/DESIGN.md)."
+    - combobox "Prompt for Design design brief":
+      - option "Default (task-design-design-brief)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Design step brief Design-loop planning pass #: the brief for ONE design-planning step's artifact, carrying prior approved artifacts + re-draft comments + workspace."
+    - combobox "Prompt for Design step brief":
+      - option "Default (task-design-step-brief)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Research step brief Research-loop planning: the research-specific artifact contract appended to the (goal-derived) step brief for the subtopics/output step kinds (empty for intent/execution_plan)."
+    - combobox "Prompt for Research step brief":
+      - option "Default (task-research-step-brief)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Goal classify Goal-loop intake classifier: read a goal + installed-capability catalog, return goal_type/rigor/execution/roster/sub_goals/deliverables/execution_plan (JSON out)."
+    - combobox "Prompt for Goal classify":
+      - option "Default (task-goal-classify)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Code classify Code (SDLC) intake classifier: read a software task + capability catalog, return entry_stage/project_kind/rigor/execution/stage_plan with per-stage tasks (JSON out)."
+    - combobox "Prompt for Code classify":
+      - option "Default (task-code-classify)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Cycle judge Open-ended cycle judge: a third-party assessor scores one loop cycle's done-ness/marginal-value/quality/regression (JSON out)."
+    - combobox "Prompt for Cycle judge":
+      - option "Default (task-cycle-judge)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Cycle judge (skeptic) Adversarial cycle judge: a second, skeptical assessor that tries to REFUTE a claimed completion/regression before the supervisor trusts it (JSON out, same shape as cycle_judge)."
+    - combobox "Prompt for Cycle judge (skeptic)":
+      - option "Default (task-cycle-judge-skeptic)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Subgoal judge Verifiable-goal sub-goal gate: after the automated check passes, confirm EVERY sub-goal is met from cycle evidence (PASS/FAIL out)."
+    - combobox "Prompt for Subgoal judge":
+      - option "Default (task-subgoal-judge)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "Design phases Design-loop phase planner: tailor the canonical design-<theme> phases (foundations/palette/typography/components/export) to a task (JSON out)."
+    - combobox "Prompt for Design phases":
+      - option "Default (task-design-phases)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - text: "SDLC stage gate Strict SDLC stage gate: a pass, fail or can't-tell verdict, with its reason, for each of a stage's exit criteria, on what the supervisor observed of the stage's work."
+    - combobox "Prompt for SDLC stage gate":
+      - option "Default (task-sdlc-stage-gate)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+    - heading "Evaluation prompts" [level=#]
+    - paragraph: Evaluation-harness prompts.
+    - text: "Eval judge LLM judge: score an assistant response #-# on a scenario's memory/context criteria (JSON out)."
+    - combobox "Prompt for Eval judge":
+      - option "Default (eval-judge)" [selected]
+      - option "<theme> Background"
+      - option "<theme> Chat"
+      - option "Task Orchestrator Skill"
+      - option "Task Prompt Optimizer"
+      - option "Task Side Chat"
+  - region "Tool output":
+    - heading "Tool output" [level=#]
+    - paragraph: Teach PersonalClaw how to keep the salient slice of a large tool output — so a verbose result costs a preview, not the whole context window, while the full raw stays recoverable on demand.
+    - heading "Custom rules" [level=#]
+    - paragraph: A rule maps a content marker (regex, matched against the start of the output) to a projection strategy. Use it for a tool whose big output the builtin sniffer treats as generic (a blunt head/tail cut) — e.g. a domain-specific log or dump. Rules are checked before the builtin sniff.
+    - text: No custom rules — the builtin projectors handle logs, diffs, JSON, test output, CSV, and code automatically, and a builtin rule pack recognises common command output (git, pytest, npm, docker…). Add a rule only for a tool whose large output isn't recognised.
+    - textbox "New rule name":
+      - /placeholder: new rule name
+    - combobox "Strategy for the new rule":
+      - option "Log — keep head + error/warning lines + tail" [selected]
+      - option "Test — keep failures + the summary line"
+      - option "Diff — keep changed hunks + a +N/−M stat"
+      - option "JSON — keep field schema + first/last items"
+      - option "CSV — keep the header + first/last rows"
+      - option "Code — keep signatures + docstrings + line map"
+    - textbox "Match regex for the new rule":
+      - /placeholder: match regex, e.g. ^\[MYAPP\]
+    - button "Add rule" [disabled]
+  - region "Legibility":
+    - heading "Legibility" [level=#]
+    - paragraph: "How PersonalClaw describes its own capabilities — to you on the dashboard, and to the external agents you point at your projects. Both are proposals: nothing here is ever enabled on your behalf."
+    - heading "Always-on skills" [level=#]
+    - paragraph: Skills injected into every session in full, before you type. Read from the same string the session itself receives, so this list cannot drift from the real prompt.
+    - paragraph: "No skill is always-on yet. Set “always: true in a skill's SKILL.md frontmatter” to inject one into every session; every other skill loads only when it’s relevant."
+    - heading "Project instructions" [level=#]
+    - paragraph: Documents a project-bound session inlines into every turn. The overview is current state and editable here; the ledgers are append-only history.
+    - combobox "Show project instructions for":
+      - option "Choose a project…" [selected]
+      - option "Personal"
+      - option "Repeatable"
+    - paragraph: Pick a project to see the instruction documents its sessions receive.
+    - heading "Discover" [level=#]
+    - paragraph: A curated tour of the parts of PersonalClaw you haven't tried yet, on the dashboard and the Discover hub.
+    - text: Discover tips Show the dashboard Discover section and the Discover hub — hand-picked tips that guide you to features like Chat, Tasks, Projects, Knowledge, and Automation, each a deep link to try it. A tip auto-hides once you've used that feature; dismiss hides one forever. Nothing is ever enabled on your behalf.
+    - status
+    - switch "Discover tips" [checked]
+    - heading "Context for external agents" [level=#]
+    - paragraph: Write your rules and scored context into project files that other AI tools read.
+    - text: Context files Let PClaw render a marker-fenced block into an opted-in project's CLAUDE.md / AGENTS.md / .cursorrules. Only content inside the PCLAW markers is managed; the rest of the file is never touched. Regeneration is manual per project.
+    - status
+    - switch "Context files"
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

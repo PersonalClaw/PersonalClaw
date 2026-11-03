@@ -476,7 +476,7 @@ def add_tile(view_id: str, ref: str, size: str = "m", added_by: str = "user") ->
     ref = ref.strip()
     if not tiles_enabled():
         raise ValueError(
-            "the composable home is off — turn on Settings → Ambient surfaces → "
+            "the composable home is off — turn on Settings → Automations → Ambient surfaces → "
             "Composable home to pin artifact tiles"
         )
     if not ref.startswith("artifact:"):

@@ -382,8 +382,8 @@ def named_model_problem(ref: str, *, use_case: str = "chat") -> tuple[str, str] 
     active = _active_chat_model_ids()
     if active and ref not in active:
         return (
-            "it is not one of the chat models set up in Settings → Models",
-            "add it in Settings → Models",
+            "it is not one of the chat models set up in Settings → Models & Providers → Models",
+            "add it in Settings → Models & Providers → Models",
         )
     qualified = _qualified_chat_ref(ref)
     parsed = qualified.split(":", 1) if ":" in qualified else None
@@ -806,7 +806,7 @@ def _inner_model(
             f"Native agent {name!r} resolved its inference model to "
             f"{type(model_provider).__name__}, which is not a ModelProvider "
             f"(no complete()). Bind the 'chat' use case to a model provider "
-            f"(Settings → Models), not an ACP agent runtime."
+            f"(Settings → Models & Providers → Models), not an ACP agent runtime."
         )
 
     # The id ``complete()`` is sent: the chosen ref without its "<provider>:" prefix (a
@@ -1308,7 +1308,7 @@ def _diagnose_unbuildable_ref(
     """
     from personalclaw.providers.use_cases import _known_provider_names
 
-    rebind = f"rebind {use_case!r} to an available model in Settings → Models"
+    rebind = f"rebind {use_case!r} to an available model in Settings → Models & Providers → Models"
     target_cap = _capability_enum(capability)
     if target_cap is None:
         return (
@@ -1342,13 +1342,14 @@ def _diagnose_unbuildable_ref(
             return (
                 f"no provider named {provider_name!r} is in config.json — the entry was "
                 f"renamed or removed, or its app was uninstalled",
-                f"re-add {provider_name!r} in Settings → Providers, or {rebind}",
+                f"re-add {provider_name!r} in Settings → Models & Providers → Providers, or "
+                f"{rebind}",
             )
         return (
             f"provider {provider_name!r} IS in config.json but is not registered in the "
             f"running gateway, so nothing can build it",
-            f"re-save {provider_name!r} in Settings → Providers to register it now, or "
-            f"restart the gateway to replay config.json",
+            f"re-save {provider_name!r} in Settings → Models & Providers → Providers to register "
+            "it now, or restart the gateway to replay config.json",
         )
 
     try:
@@ -1360,7 +1361,7 @@ def _diagnose_unbuildable_ref(
                 f"provider {provider_name!r} declares type {entry.type!r}, and no installed "
                 f"app registers that type",
                 f"install an app that provides {entry.type!r} in the App Store, or change "
-                f"the type of {provider_name!r} in Settings → Providers",
+                f"the type of {provider_name!r} in Settings → Models & Providers → Providers",
             )
         app_name, enabled = app
         if not enabled:
@@ -1841,7 +1842,7 @@ def resolve_provider_for_use_case(
 
     if _capability_enum(capability) is Capability.VISION:
         raise ProviderResolutionError(
-            "No image model is set up. Choose one in Settings → Models.",
+            "No image model is set up. Choose one in Settings → Models & Providers → Models.",
             AgentError(
                 code="ERR_MODEL_UNRESOLVED",
                 what=f"no model is set up to read images (use case {use_case!r})",
@@ -1850,8 +1851,8 @@ def resolve_provider_for_use_case(
                     "does not say which of its models reads them"
                 ),
                 fix=(
-                    "choose an image-understanding model in Settings → Models, or chat with a "
-                    "model that takes images"
+                    "choose an image-understanding model in Settings → Models & Providers → "
+                    "Models, or chat with a model that takes images"
                 ),
             ),
         )
@@ -1865,7 +1866,7 @@ def resolve_provider_for_use_case(
     unready = _first_unready_candidate(capability)
     raise ProviderResolutionError(
         f"No provider configured for use case {use_case!r}. "
-        f"Add a model provider in Settings → Providers.",
+        f"Add a model provider in Settings → Models & Providers → Providers.",
         AgentError(
             code="ERR_MODEL_UNRESOLVED",
             what=f"no model provider resolves for use case {use_case!r}",
@@ -1877,7 +1878,7 @@ def resolve_provider_for_use_case(
             fix=(
                 unready[1]
                 if unready
-                else f"add a model provider in Settings → Providers, then bind {use_case!r} to it"
+                else f"add a model provider in Settings → Models & Providers → Providers, then bind {use_case!r} to it"  # noqa: E501
             ),
         ),
     )

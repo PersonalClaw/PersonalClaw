@@ -777,7 +777,7 @@ chat, channel thread, loop worker, webhook, subagent).
    pill's Auto row names.
    One rule decides whether a chosen model can run
    (`providers/provider_bridge.named_model_problem`): it must be one of the
-   chat models set up in Settings → Models, and its provider must be able to
+   chat models set up in Settings → Models & Providers → Models, and its provider must be able to
    serve it. A choice that cannot run is kept, never rewritten; the turn runs on
    the chat binding and says so (`ModelSubstitution`: "Ran on X instead of
    Researcher's model Y: …") — live as an `activity_event` of kind
@@ -1015,7 +1015,7 @@ changed something.
 A subagent started to read or change things on a model that can't use tools
 could only claim it had: it ends failed before any call is made for it
 ("Couldn't do its task: “…” can't use tools, and it was started to work with
-them. Choose a model that uses tools for Orchestration in Settings → Models, or
+them. Choose a model that uses tools for Orchestration in Settings → Models & Providers → Models, or
 start it on one.", `subagent_tier.without_tools`), and one whose model refused
 the tools a call offered it ends the same way when its turn is over. Its
 workflow step fails with a fix about its model. A subagent of the `text` class

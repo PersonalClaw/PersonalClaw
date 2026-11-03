@@ -187,7 +187,8 @@ def connector_status() -> ConnectorStatus:
         return ConnectorStatus(
             connected=False,
             reason="the user-browser target is switched off",
-            fix="turn on Settings → Companion apps → Browser control, then re-run",
+            fix="turn on Settings → Devices & Access → Companion apps → Browser control, then "
+            "re-run",
         )
     with _lock:
         session = _session

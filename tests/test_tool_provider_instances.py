@@ -219,7 +219,7 @@ async def test_the_generic_instance_routes_refuse_a_model_app(tmp_path, _model_p
             payload = json.loads(await r.text())
             assert r.status == 400, (r.method, r.url, payload)
             assert payload["error"]["code"] == "model_instances_elsewhere", payload
-            assert "Settings → Providers" in payload["error"]["message"]
+            assert "Settings → Models & Providers → Providers" in payload["error"]["message"]
 
     assert not (
         tmp_path / "extensions" / "fake-multi-model"

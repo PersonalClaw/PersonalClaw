@@ -39,7 +39,7 @@ REPLY = "Fake reply."
 REFUSAL = (
     "WHAT: no model provider resolves for use case 'background'\n"
     f"WHY: no model is chosen for “{ENTRY}”\n"
-    "FIX: choose one of its models in Settings → Models"
+    "FIX: choose one of its models in Settings → Models & Providers → Models"
 )
 
 
@@ -288,7 +288,7 @@ async def test_a_chat_turn_on_an_instance_that_names_no_model_is_refused_before_
     assert error is not None, "the turn is refused before a runtime is built"
     assert error.what == "no model provider resolves for use case 'chat'"
     assert error.why == f"no model is chosen for “{ENTRY}”"
-    assert error.fix == "choose one of its models in Settings → Models"
+    assert error.fix == "choose one of its models in Settings → Models & Providers → Models"
 
 
 # ── an instance with a Default Model: it is the model every unbound call names ───────────────
@@ -355,7 +355,10 @@ async def test_an_ollama_provider_built_for_no_model_refuses_instead_of_picking_
     assert (
         completed
         == embedded
-        == ("refused: No model is chosen for this call. Choose one in Settings → Models.")
+        == (
+            "refused: No model is chosen for this call. Choose one in Settings → Models & "
+            "Providers → Models."
+        )
     )
     assert not [p for p, _ in fake.requests if p == "/api/tags"], "start() lists nothing to pick"
 
@@ -388,5 +391,6 @@ async def test_an_openai_wire_provider_built_for_no_model_refuses_instead_of_pic
 
     assert fake.models_named("/v1/chat/completions") == []
     assert (
-        completed == "refused: No model is chosen for this call. Choose one in Settings → Models."
+        completed == "refused: No model is chosen for this call. Choose one in Settings → Models "
+        "& Providers → Models."
     )
