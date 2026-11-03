@@ -25,6 +25,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A pinned artifact on Home opens that artifact. Each pin opened the Artifacts library instead, since its link carried the artifact in a query the page does not read.**
 - **The agent-and-model pill in the composer works from the keyboard on every row. It opens on the chat's agent, the arrow keys move through the agents, the models and the effort levels, Enter picks, and Tab closes it; with the agent search shown, the arrows go from the field to the rows. A keyboard could reach only its first row before.**
 - **A loop's page names the folder its worker writes in by the folder's name, with the whole path in its title, where it printed the whole path and with it your account's name. Its Outputs tab is in the address (`?tab=`), so a link or a reload opens the tab you were on, where the page always opened on the Deliverable.**
+- **An answered approval's notification says how it ended, as its Inbox row does: "Approved", "Denied", "Expired" or "Cancelled", and why when nobody answered. It kept reading "Approval needed … is waiting for your decision" in the bell and the Inbox's notifications after the approval was settled.**
 
 ## [0.3.5] — 2026-11-02
 

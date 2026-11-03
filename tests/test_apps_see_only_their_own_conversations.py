@@ -2023,6 +2023,7 @@ NOTIFICATION_EVENTS = [
     "notification_removed",
     "notification_ack",
     "notification_unack",
+    "notification_updated",
 ]
 
 
@@ -2127,6 +2128,25 @@ async def _a_removal_is_told_only_to_the_notes_raiser(home: Path, state, socks) 
     assert len(_of(socks["yours"], "notification_removed")) == 2
 
 
+async def _a_reworded_note_is_told_only_to_its_raiser(home: Path, state, socks) -> None:
+    """`notification_updated` carries a note's new title and body (a closed row's new words), so
+    it names one note, and only an app that may read that note hears it."""
+    ts = await _raise_notes(state)
+    notes = {n["ts"]: n for n in state._notification_log}
+    notes[ts["your bank"]]["inbox_item"] = "row-yours"
+    notes[ts["raised by the app"]]["inbox_item"] = "row-the-apps"
+    _forget(socks)
+    state.retext_item_notifications(
+        {"row-yours": ("your bank, settled", "heron-quince"), "row-the-apps": ("settled", "a")}
+    )
+    assert _of(socks[APP], "notification_updated") == [
+        {"ts": ts["raised by the app"], "title": "settled", "body": "a"}
+    ]
+    assert _frames(socks[OTHER]) == []
+    assert len(_of(socks["yours"], "notification_updated")) == 2
+    assert "heron-quince" not in json.dumps(_frames(socks[APP]))
+
+
 async def _a_frame_about_every_note_reaches_an_app_only_with_notes_in_it(
     home: Path, state, socks
 ) -> None:
@@ -2166,6 +2186,7 @@ NOTE_SOCKET_ROWS: dict[str, Any] = {
         _a_frame_naming_several_notes_is_cut_to_the_apps_own
     ),
     "a removal is told only to the note's raiser": _a_removal_is_told_only_to_the_notes_raiser,
+    "a reworded note is told only to its raiser": _a_reworded_note_is_told_only_to_its_raiser,
     "a frame about every note reaches an app only with notes in it": (
         _a_frame_about_every_note_reaches_an_app_only_with_notes_in_it
     ),

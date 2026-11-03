@@ -55,7 +55,8 @@ INBOX_ITEM_FRAMES: frozenset[str] = frozenset({"inbox_new_item", "inbox_item_upd
 CONVERSATION_LIST_FRAMES: dict[str, str] = {"sessions": "key"}
 
 #: Frames about the notifications in your log: the note itself (``notification``), and the frames
-#: that name notes by ``ts`` — one, a list, or ``"*"`` for every note. What reached you is yours,
+#: that name notes by ``ts`` — one, a list, or ``"*"`` for every note. ``notification_updated``
+#: names one note and carries its new words. What reached you is yours,
 #: so an app's socket gets such a frame cut to the notes the app may read
 #: (``DashboardState.notification_reaches``: one it raised, or one about a conversation it
 #: started), or not at all. Their type was the whole filter, so an app that declared
@@ -67,6 +68,7 @@ NOTIFICATION_FRAMES: frozenset[str] = frozenset(
         "notification_removed",
         "notification_ack",
         "notification_unack",
+        "notification_updated",
     }
 )
 
@@ -177,6 +179,7 @@ class DashboardWebSocketState:
     # DashboardState's: the notification log, and whether an app may read one of its notes.
     _notification_log: list[dict[str, Any]]
     notification_reaches: Callable[[str, dict[str, Any]], bool]
+    _write_notifications: Callable[[], None]
 
     def next_stream_seq(self) -> int:
         """Stamp the next streamed text chunk — the ``seq`` every ``chat_chunk`` carries.
@@ -445,6 +448,31 @@ class DashboardWebSocketState:
             and isinstance(row.get(field), str)
             and self.session_creating_app(row[field]) == app
         ]
+
+    def retext_item_notifications(self, texts: dict[str, tuple[str, str]]) -> list[str]:
+        """Give every notification that is a view of a row in *texts* (row id -> its new title and
+        body, masked as the note shows them) those words. Returns the ts of the notes it changed.
+
+        Called when a row closes with new words (`inbox._close_attention_items`: an approval's
+        "Approval needed" that is now "Approved"). The note copied the row's words once, when it
+        was raised, so an answered approval still asked in the bell. One rewrite of the log, and
+        one ``notification_updated`` frame per note: it names one note, so an app's socket hears
+        only a note it may read (:meth:`_own_notifications`).
+        """
+        changed = []
+        for note in self._notification_log:
+            words = texts.get(str(note.get("inbox_item") or ""))
+            if words is None or (note.get("title"), note.get("body")) == words:
+                continue
+            note["title"], note["body"] = words
+            changed.append(note)
+        if not changed:
+            return []
+        self._write_notifications()
+        for note in changed:
+            frame = {"ts": str(note.get("ts") or ""), "title": note["title"], "body": note["body"]}
+            self.broadcast_ws("notification_updated", frame)
+        return [str(note.get("ts") or "") for note in changed]
 
     def _own_notifications(self, app: str, event_type: str, data: object) -> object:
         """A notification frame's *data* cut to the notes *app* may read, or :data:`_UNHEARD`.

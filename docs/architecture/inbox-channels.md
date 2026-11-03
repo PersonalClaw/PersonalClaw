@@ -245,7 +245,10 @@ Home (and `#/mission-control`, which opens it) reads the Inbox on its frames rat
 **closes** (leaves `OPEN_STATUSES`), the bell: every notification that is a view of the row
 (`meta.inbox_item`, stamped by `emit_attention_item` and `notify_inbox_alert`) is marked read
 through `DashboardState.ack_item_notifications`, one rewrite and one `notification_ack` frame for
-the batch. Reading a row (PENDING → SEEN) is announced and leaves the bell alone. Every closer
+the batch. A row closed with new words (an approval's "Approval needed" that now reads "Approved")
+gives those notifications its new title and body too, through
+`DashboardState.retext_item_notifications`: one rewrite, and one `notification_updated` frame per
+note, which an app's socket hears only for a note it may read. Reading a row (PENDING → SEEN) is announced and leaves the bell alone. Every closer
 goes through it: the Inbox routes (PUT, dismiss-all, send, proposal apply, restore, seen),
 `resolve_attention_items` (approvals, workflow gates, loops, rooms), the inbox-op action
 provider, and the skill, learning and session-organize proposal resolvers. The link used to run
