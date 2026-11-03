@@ -144,3 +144,112 @@ def test_a_row_a_previous_process_left_open_reads_expired(world):  # noqa: F811
         "The “Review” step of a workflow run asked for your decision on subagent_run "
         "(risk: caution). It expired: the gateway restarted before anyone answered."
     ), lines
+
+
+# ── Its notification says so too ────────────────────────────────────────────────────────────────
+#
+# The bell's note copied the row's words once, when the approval was asked, and was only marked
+# read when the row closed: an answered approval's note still read "Approval needed … is waiting
+# for your decision" in the bell and in the Inbox's notifications. It takes the row's new words now,
+# with one `notification_updated` frame per note so every open bell re-reads it.
+
+
+def _note(w, approval_id: str) -> dict:
+    row = _row(w, approval_id)
+    (note,) = [n for n in w.state._notification_log if n.get("inbox_item") == row.id]
+    return note
+
+
+def _reworded(w, note: dict) -> list[dict]:
+    return [
+        d for kind, d in w.frames if kind == "notification_updated" and d.get("ts") == note["ts"]
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("approved", "title", "said"),
+    [(True, "Approved", "It was approved."), (False, "Denied", "It was denied.")],
+)
+async def test_an_answered_approvals_notification_reads_as_answered(
+    world, approved, title, said  # noqa: F811
+):
+    task = await _waiting(world, "spawn:ab0102")
+    asked = dict(_note(world, "spawn:ab0102"))
+    assert asked["title"] == "Approval needed: subagent_run", "the baseline: it asks"
+    assert WAITING in asked["body"]
+
+    assert world.state.resolve_approval("spawn:ab0102", approved, by=YOU) is True
+    await asyncio.wait_for(task, timeout=2)
+
+    note = _note(world, "spawn:ab0102")
+    assert note["title"] == f"{title}: subagent_run"
+    assert note["body"].splitlines()[0] == (
+        f"A subagent asked for your decision on subagent_run. {said}"
+    ), note["body"]
+    assert WAITING not in note["body"]
+    assert note.get("acked") is True, "still marked read as the row closes"
+    assert _reworded(world, note) == [
+        {"ts": note["ts"], "title": note["title"], "body": note["body"]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_unanswered_approvals_notification_says_it_expired_and_why(
+    world, monkeypatch  # noqa: F811
+):
+    monkeypatch.setattr(type(world.state), "approval_window_secs", lambda _self: 0.05)
+    assert await world.state.request_approval("spawn:ab0103", "subagent", "subagent_run") is False
+
+    note = _note(world, "spawn:ab0103")
+    assert note["title"] == "Expired: subagent_run"
+    assert (
+        note["body"].splitlines()[0].endswith("It expired: nobody answered within 0 seconds.")
+    ), note["body"]
+
+
+def test_a_note_a_previous_process_left_asking_is_reworded_and_kept(world):  # noqa: F811
+    emit_attention_item(
+        world.state,
+        source="system",
+        kind="agent_request",
+        item_kind=ItemKind.AGENT_REQUEST.value,
+        title="Approval needed: subagent_run",
+        body=f"The “Review” step of a workflow run {WAITING} on subagent_run (risk: caution).",
+        refs={"approval": "spawn:ab0105"},
+        dedup_key="approval:spawn:ab0105",
+    )
+
+    assert world.state.close_orphaned_approval_rows() == 1
+
+    note = _note(world, "spawn:ab0105")
+    assert note["title"] == "Expired: subagent_run"
+    assert WAITING not in note["body"]
+    # The log is written back, so a restart reads the settled words, not the ask.
+    from personalclaw.dashboard.state import _load_notifications
+
+    (kept,) = [n for n in _load_notifications() if n.get("ts") == note["ts"]]
+    assert kept["title"] == "Expired: subagent_run"
+
+
+def test_a_row_closed_without_new_words_leaves_its_note_as_it_was(world):  # noqa: F811
+    """The control: only a row given new words rewords its note."""
+    from personalclaw.inbox import resolve_attention_items
+
+    emit_attention_item(
+        world.state,
+        source="system",
+        kind="agent_request",
+        item_kind=ItemKind.AGENT_REQUEST.value,
+        title="A loop needs a hand",
+        body="Pick the next step.",
+        refs={"loop": "lp-7"},
+        dedup_key="loop:lp-7",
+    )
+    (row,) = [i for i in world.inbox.items.values() if i.refs.get("loop") == "lp-7"]
+    (note,) = [n for n in world.state._notification_log if n.get("inbox_item") == row.id]
+
+    assert resolve_attention_items(world.state, {"loop": "lp-7"}) == 1
+
+    assert (note["title"], note["body"]) == ("A loop needs a hand", "Pick the next step.")
+    assert [k for k, _ in world.frames if k == "notification_updated"] == []

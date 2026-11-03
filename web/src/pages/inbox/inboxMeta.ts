@@ -1,7 +1,7 @@
 import { Reply, Info, BellOff, CheckCircle2, Send, XCircle, Inbox as InboxIcon, AlertTriangle, ShieldQuestion, Eye, Filter, MessageSquare, AtSign, Mail, HelpCircle, Lightbulb, Newspaper, Settings2, StickyNote, UserCheck, TimerOff, CircleDashed, CircleAlert } from 'lucide-react'
 import { epochSeconds } from '../../lib/epoch'
 import { isOpenStatus } from '../../lib/attentionLanes'
-import { approvalDestination, placeOfRefs } from '../../app/approvalDestination'
+import { approvalDestination, INBOX_HREF, placeOfRefs } from '../../app/approvalDestination'
 import { notificationLink } from '../notifications/notificationMeta'
 import type { LucideIcon } from 'lucide-react'
 import type { InboxClassification, InboxConfidence, InboxItemStatus, InboxItemKind, InboxItem } from '../../lib/api'
@@ -200,7 +200,10 @@ export function refTarget(it: Pick<InboxItem, 'refs'>): string {
     return `triggers?open=${encodeURIComponent(refs.trigger)}`
   }
   if ((refs.approval || refs.auto_denied) && typeof refs.session === 'string' && refs.session) {
-    return approvalDestination(placeOfRefs(refs)).href.replace(/^#\//, '')
+    // Work no page answers is answered on this row, so it has no link: one would open the Inbox
+    // it is in. Not `chat/<session>` below either, a chat that does not exist.
+    const { href } = approvalDestination(placeOfRefs(refs))
+    return href === INBOX_HREF ? '' : href.replace(/^#\//, '')
   }
   if (refs.session) return `chat/${encodeURIComponent(refs.session)}`
   // A run opens at `workflows/runs/<id>`: `workflows/<id>` is no route of the Workflows section,

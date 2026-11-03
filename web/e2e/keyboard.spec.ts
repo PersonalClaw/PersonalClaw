@@ -12,12 +12,15 @@ import { gotoRoute, driveScriptedTurns } from './helpers'
 const MOD = 'ControlOrMeta'
 
 function approvalRow(over: Record<string, unknown> = {}) {
-  return {
+  const row: Record<string, unknown> = {
     id: 'e2e-ap-1', request_id: 'e2e-ap-1', source: 'trigger', tool: 'task_create',
     tool_input: '{"title": "Water the plants"}', tool_purpose: '', session: 'e2e-keys-chat', ts: 100,
     session_title: '', agent: '', risk: 'caution', grant_agent: '', source_label: 'trigger “Plants”',
     confirms: [], ...over,
   }
+  // Where it is answered, as the gateway reads it off a chat's session (`approval_place.place_of`),
+  // unless the row names its own: a row without one is work no page answers, which the Inbox answers.
+  return { work: `chat:${String(row.session)}`, step: '', room: '', ...row }
 }
 
 /** An approval row as `GET /api/waiting` serves it: its registry fields as its brief, answered at
@@ -136,6 +139,17 @@ test.describe('the keymap, in the built app', () => {
     await gotoRoute(page, 'dashboard')
     await page.keyboard.press(`${MOD}+Alt+A`)
     await expect(page).toHaveURL(/#\/chat\/e2e-first$/)
+  })
+
+  test('⌘⌥A takes an approval no page answers to the Inbox, which answers it', async ({ page }) => {
+    await page.route('**/api/inbox/open', (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }))
+    await stubApprovals(page, [
+      approvalRow({ id: 'e2e-ap-hook', request_id: 'e2e-ap-hook', session: 'hook:deploy', work: '', ts: 100 }),
+    ])
+    await gotoRoute(page, 'dashboard')
+    await page.keyboard.press(`${MOD}+Alt+A`)
+    await expect(page).toHaveURL(/#\/inbox$/)
   })
 
   test('⇧Esc marks every chat as read, once, and its mark clears', async ({ page }) => {

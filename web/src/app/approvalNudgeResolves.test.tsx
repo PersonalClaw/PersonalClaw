@@ -186,7 +186,7 @@ describe('the approval nudge for a workflow stage resolves to a surface that can
     // chat/subagent approval is answered on the chat page and its sentence already worked.
     const nudge = await nudgeFor({ session: 'main', work: 'chat:main', step: '', room: '' })
     expect(nudge.href).toBe('#/chat/main')
-    expect(nudge.message).toContain('open main to respond.')
+    expect(nudge.message).toContain('open the chat to respond.')
   })
 })
 
@@ -202,9 +202,38 @@ describe('the sentence and the link cannot name different places', () => {
       const dest = approvalDestination(place)
       expect(dest.href, place.session).toMatch(/^#\//)
       // The link must say where it goes; a bare "Open" is what the raw key was.
-      expect(dest.linkLabel.toLowerCase(), place.session).toMatch(/workflow run|chat/)
+      expect(dest.linkLabel.toLowerCase(), place.session).toMatch(/workflow run|chat|inbox/)
       expect(dest.label, place.session).not.toBe('')
     }
+  })
+
+  it('names a chat and a loop in words, never by their key', () => {
+    // "open main to respond", "open loop 7f3a… to respond": the sentence's `who` already names the
+    // chat or the loop (`source_label`), so the place it is answered in is "the chat", "the loop",
+    // as a room's is "the room". The link still goes to that one chat or loop.
+    const chat = approvalDestination({ session: 'dashboard:abc', work: 'chat:abc' })
+    expect([chat.label, chat.href]).toEqual(['the chat', '#/chat/abc'])
+    const loop = approvalDestination({ session: 'loop-7f3a-t-1a2b', work: 'loop:7f3a' })
+    expect([loop.label, loop.href]).toEqual(['the loop', '#/loops/7f3a'])
+  })
+
+  it.each(['hook:deploy', 'cron:nightly', 'app:acme:sync', 'subagent:3f9c'])(
+    'work no page answers (%s) is answered in the Inbox, and says so',
+    (session) => {
+      // `place_of` gives such a session no work: no chat, loop or run of it exists. It went down
+      // the chat branch, to `#/chat/<its key>`, a chat that does not exist, named by the key. Its
+      // Inbox row is where it is answered (`InboxDetail`), and Home's To triage lists it too.
+      expect(approvalDestination({ session, work: '' })).toEqual({
+        href: '#/inbox', label: 'the Inbox', linkLabel: 'Open the Inbox',
+      })
+    },
+  )
+
+  it("an approval no page answers is nudged to the Inbox, in the sentence and the link", async () => {
+    const nudge = await nudgeFor({ session: 'hook:deploy', work: '', step: '', room: '' })
+    expect(nudge.href).toBe('#/inbox')
+    expect(nudge.hrefLabel).toBe('Open the Inbox')
+    expect(nudge.message).toContain('open the Inbox to respond.')
   })
 
   it('an instance path with a dot survives the round trip into the run view', () => {

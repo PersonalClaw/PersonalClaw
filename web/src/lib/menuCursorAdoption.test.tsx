@@ -132,6 +132,9 @@ describe('the declaration-implies-implementation census', () => {
       // A chat plan's ways to approve (the split button's menu): each choice approves the plan, so
       // moving must never choose either.
       'ui/chat/ChatPlanGate.tsx',
+      // The composer's agent-and-model pill: a pick-one menu across its agent, model and effort
+      // groups, whose search field (over eight agents) keeps focus and hands the arrows to it.
+      'ui/composer/controls.tsx',
       'ui/motion/ContextMenu.tsx',
     ])
   })
@@ -163,7 +166,7 @@ describe('the declaration-implies-implementation census', () => {
   it('the pick-one popups open on their SELECTED option, not the top', () => {
     // APG: focus starts on the checked/selected item so the user hears what is set. The action
     // menus (ContextMenu, FileTree) correctly keep the default 0 — nothing there is "current".
-    for (const rel of ['ui/ProjectPicker.tsx', 'ui/HeaderActions.tsx', 'ui/Segmented.tsx', 'pages/chat/composer/ExecutionBoundary.tsx', 'pages/loop/LoopBoundary.tsx', 'pages/loop/LoopReportPill.tsx']) {
+    for (const rel of ['ui/ProjectPicker.tsx', 'ui/HeaderActions.tsx', 'ui/Segmented.tsx', 'pages/chat/composer/ExecutionBoundary.tsx', 'pages/loop/LoopBoundary.tsx', 'pages/loop/LoopReportPill.tsx', 'ui/composer/controls.tsx']) {
       expect(read(rel), `${rel} should seed the cursor from the value`).toMatch(/initialIndex:/)
     }
     for (const rel of ['ui/motion/ContextMenu.tsx', 'pages/files/browse/FileTree.tsx']) {

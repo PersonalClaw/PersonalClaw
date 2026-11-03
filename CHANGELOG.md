@@ -22,6 +22,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A toast waits while the pointer or the keyboard focus is on the toasts, and then goes on with the time it had left, so a toast's link or Dismiss can be reached without the toast leaving first.**
 - **A skill an app seeded that you changed is yours: disabling, updating or uninstalling the app keeps it, with your changes, and says so, and the app's own version is never seeded over it. A seeded skill you never changed still goes with its app.**
 - **An app update the gateway stopped in after its files were swapped is finished at the next start: the new version is recorded, a renamed capability's settings, secrets and switches move to its new id, and an id it dropped is kept as retired. An update that never went live is forgotten, and the version that was there stays.**
+- **A pinned artifact on Home opens that artifact. Each pin opened the Artifacts library instead, since its link carried the artifact in a query the page does not read.**
+- **The agent-and-model pill in the composer works from the keyboard on every row. It opens on the chat's agent, the arrow keys move through the agents, the models and the effort levels, Enter picks, and Tab closes it; with the agent search shown, the arrows go from the field to the rows. A keyboard could reach only its first row before.**
+- **A loop's page names the folder its worker writes in by the folder's name, with the whole path in its title, where it printed the whole path and with it your account's name. Its Outputs tab is in the address (`?tab=`), so a link or a reload opens the tab you were on, where the page always opened on the Deliverable.**
+- **An answered approval's notification says how it ended, as its Inbox row does: "Approved", "Denied", "Expired" or "Cancelled", and why when nobody answered. It kept reading "Approval needed … is waiting for your decision" in the bell and the Inbox's notifications after the approval was settled.**
+- **The note an approval raises while you are elsewhere says to open "the chat" or "the loop" that is asking, which it names, where it ended in the chat's key or the loop's id ("open main to respond").**
+- **An approval asked by work no page answers (a webhook's, a schedule's, an app's) sends you to the Inbox, where its row answers it: the note says "open the Inbox" and links there, and the row no longer links to a chat named by the work's key, which did not exist.**
 
 ## [0.3.5] — 2026-11-02
 

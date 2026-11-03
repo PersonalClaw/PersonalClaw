@@ -75,6 +75,10 @@ export function roomApprovalOf(place: ApprovalPlace, roomId: string): boolean {
   return roomId !== '' && (place.room ?? '') === roomId
 }
 
+/** Where work no page answers is answered: its Inbox row (`InboxDetail`), which Home's To triage
+ *  lists too. The row itself reads this to know it has no link to give. */
+export const INBOX_HREF = '#/inbox'
+
 export interface ApprovalDestination {
   /** The in-app hash route that ANSWERS this approval. */
   href: string
@@ -105,10 +109,11 @@ export function approvalDestination(place: ApprovalPlace): ApprovalDestination {
   }
   // A loop's worker or planner asks on the loop's own page (`LoopApprovals`): its key is no chat
   // anyone opened, and `#/loops/<id>` lands on whichever cockpit or planning walkthrough the loop
-  // is at (`LoopsSection`).
+  // is at (`LoopsSection`). Named "the loop": the sentence's own "from" names which one, and its
+  // id was no word a reader knows it by.
   const loopId = loopApprovalId(place)
   if (loopId) {
-    return { href: `#/loops/${loopId}`, label: `loop ${loopId}`, linkLabel: 'Open the loop' }
+    return { href: `#/loops/${loopId}`, label: 'the loop', linkLabel: 'Open the loop' }
   }
   // A room member asks in its room (`RoomApprovals`): its key is no chat anyone opened. The room is
   // named by the sentence's own "from" (`source_label`, the room's title), so the place is "the room".
@@ -119,13 +124,15 @@ export function approvalDestination(place: ApprovalPlace): ApprovalDestination {
       linkLabel: 'Open the room',
     }
   }
-  // A chat (including a subagent escalating to its parent), named by its own key; work no page
-  // answers keeps the session it was asked under. Encoded the way every other chat deep link in
-  // the app is.
-  const chat = idOf(place, 'chat') || (place.session ?? '')
-  return {
-    href: `#/chat/${encodeURIComponent(chat)}`,
-    label: chat,
-    linkLabel: 'Open the chat',
+  // A chat (including a subagent escalating to its parent), named "the chat" for the same reason:
+  // the sentence's "from" names it, and its key ("open main to respond") named nothing a reader
+  // calls it. Encoded the way every other chat deep link in the app is.
+  const chat = idOf(place, 'chat')
+  if (chat) {
+    return { href: `#/chat/${encodeURIComponent(chat)}`, label: 'the chat', linkLabel: 'Open the chat' }
   }
+  // Work no page answers (a webhook's, a schedule's, an app's, a helper no chat started): no chat,
+  // loop or run of it exists, so its session went to `#/chat/<key>`, a chat that does not exist,
+  // named by the key. It is answered on its Inbox row.
+  return { href: INBOX_HREF, label: 'the Inbox', linkLabel: 'Open the Inbox' }
 }

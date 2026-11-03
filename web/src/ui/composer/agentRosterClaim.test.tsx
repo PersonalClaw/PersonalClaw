@@ -66,7 +66,7 @@ describe('the agent picker never states an emptiness it could not read', () => {
     expect(screen.getByText(/Couldn’t load your agents/i)).toBeInTheDocument()
     expect(screen.queryByText('No agents available'), 'a failed read must not claim the setup is empty').toBeNull()
 
-    await userEvent.click(screen.getByRole('button', { name: /Try again/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /Try again/i }))
     expect(retry, 'the retry must be wired, or the honest message is a dead end').toHaveBeenCalledTimes(1)
   })
 

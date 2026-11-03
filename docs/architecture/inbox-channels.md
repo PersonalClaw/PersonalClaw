@@ -245,7 +245,10 @@ Home (and `#/mission-control`, which opens it) reads the Inbox on its frames rat
 **closes** (leaves `OPEN_STATUSES`), the bell: every notification that is a view of the row
 (`meta.inbox_item`, stamped by `emit_attention_item` and `notify_inbox_alert`) is marked read
 through `DashboardState.ack_item_notifications`, one rewrite and one `notification_ack` frame for
-the batch. Reading a row (PENDING → SEEN) is announced and leaves the bell alone. Every closer
+the batch. A row closed with new words (an approval's "Approval needed" that now reads "Approved")
+gives those notifications its new title and body too, through
+`DashboardState.retext_item_notifications`: one rewrite, and one `notification_updated` frame per
+note, which an app's socket hears only for a note it may read. Reading a row (PENDING → SEEN) is announced and leaves the bell alone. Every closer
 goes through it: the Inbox routes (PUT, dismiss-all, send, proposal apply, restore, seen),
 `resolve_attention_items` (approvals, workflow gates, loops, rooms), the inbox-op action
 provider, and the skill, learning and session-organize proposal resolvers. The link used to run
@@ -383,7 +386,10 @@ when nobody answered it carry the same three in their `refs`, under keys of thei
 closed on its `room`, which a member's approval row must not carry), and so does an agent's
 question's row. A row kept from before is read the same way when it is served
 (`inbox.redact_item`). Every surface links to an approval and claims it on a loop's, a run's or a
-room's page from them (`app/approvalDestination.ts`), so none reads a session key's shape.
+room's page from them (`app/approvalDestination.ts`), so none reads a session key's shape. Work
+no page answers is answered on its Inbox row: the nudge says "open the Inbox" and links there, and
+the row itself has no link, where both went to a chat named by the session's key, which did not
+exist.
 
 A room member's call asks the same way (`rooms.posture.registry_approver`, bound by the round):
 its `session` is the member's own key (`room:<room>:<member>`), its `source` is `room`, and its

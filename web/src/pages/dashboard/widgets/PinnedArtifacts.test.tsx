@@ -86,6 +86,31 @@ describe('a pin whose artifact is gone', () => {
   })
 })
 
+describe('opening a pin', () => {
+  // The row navigated to `artifacts?slug=<slug>`, and the Artifacts page reads its slug from the
+  // path only, so every pin opened the library instead of the artifact it names.
+  async function opened(slug: string, name: string): Promise<string> {
+    const navigate = vi.fn()
+    pins = [{ slug, pinned_at: '2026-08-11T02:00:00+00:00', run_id: 'r1' }]
+    artifacts = [art({ slug, name })]
+    render(<PinnedArtifacts {...route} navigate={navigate} />)
+    fireEvent.click(await screen.findByRole('button', { name }))
+    expect(navigate).toHaveBeenCalledTimes(1)
+    return navigate.mock.calls[0][0] as string
+  }
+
+  it("opens the artifact's own page", async () => {
+    expect(await opened('report', 'Weekly report')).toBe('artifacts/report')
+  })
+
+  it('carries a slug with reserved characters as one path segment', async () => {
+    const to = await opened('q3 notes/draft', 'Q3 notes')
+    expect(to).toBe('artifacts/q3%20notes%2Fdraft')
+    // The router decodes each segment, so the page's slug is the pin's.
+    expect(decodeURIComponent(to.split('/')[1])).toBe('q3 notes/draft')
+  })
+})
+
 describe('unpinning', () => {
   it('removes the row and writes through', async () => {
     render(<PinnedArtifacts {...route} />)

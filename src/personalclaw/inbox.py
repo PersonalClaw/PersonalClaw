@@ -1404,15 +1404,32 @@ def _close_attention_items(
             if item.status in OPEN_STATUSES
             and all(item.refs.get(key) == value for key, value in refs.items())
         ]
+        reworded: dict[str, tuple[str, str]] = {}
         for item in matching:
             if ended:
                 item.refs["ended"] = ended
-            if retext is not None:
-                item.message = retext(item.message)
-        return len(set_item_status(state, target, matching, status))
+            if retext is not None and (words := retext(item.message)) != item.message:
+                item.message = words
+                title, _, body = words.partition("\n\n")
+                reworded[item.id] = (redact_for_display(title), redact_for_display(body))
+        moved = set_item_status(state, target, matching, status)
+        _retext_views(state, {item.id: reworded[item.id] for item in moved if item.id in reworded})
+        return len(moved)
     except Exception:
         logger.debug("could not close the attention rows for %r", refs, exc_info=True)
         return 0
+
+
+def _retext_views(state: Any, texts: dict[str, tuple[str, str]]) -> None:
+    """Give the notifications that are views of the rows in *texts* their rows' new words, the way
+    :func:`set_item_status` marks them read: best-effort, since the rows have already moved."""
+    retext = getattr(state, "retext_item_notifications", None)
+    if not texts or not callable(retext):
+        return
+    try:
+        retext(texts)
+    except Exception:
+        logger.warning("could not reword the notifications of reworded rows", exc_info=True)
 
 
 def set_item_status(
