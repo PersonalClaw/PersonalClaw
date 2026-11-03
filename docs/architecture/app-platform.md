@@ -201,7 +201,7 @@ backend**.
   `dependencies.sidecarDependencies`: PEP 508 requirements (an option is an install error, and
   pip's options end with `--` before them), installed into that environment and never into
   `app-python`, and only when the owner presses **Install engine** on the app's card in
-  Settings → Providers or on its Configure page. The install is a job
+  Settings → Models & Providers → Providers or on its Configure page. The install is a job
   (`POST /api/models/sidecar/{app}/install`): the environment, then pip, each step skipped
   when already done, so a stopped install resumes. The environment is made with no pip of its
   own (`python -m venv --without-pip`), and the gateway's own pip installs the engine into it
@@ -285,7 +285,7 @@ code and registrations only. A start-up that fails, or is stopped before the gat
 signal handlers (a Ctrl-C during the update check), stops the backends and workers it already
 started (`gateway.run_gateway`), as the gateway's own stop does.
 
-**Settings → Providers** switches a provider by switching its app. A provider has no on/off of its
+**Settings → Models & Providers → Providers** switches a provider by switching its app. A provider has no on/off of its
 own: its switch sends the Apps page's own `POST /api/apps/{name}/disable` and `…/enable` (the web
 client's `setActivation`), so the app's code leaves the process and comes back from its files, the
 two pages never disagree about whether the app is on, and only the owner can switch an app's code
@@ -567,7 +567,7 @@ try {
     { basedOn: read.revision })
 } catch (e) {
   if (isStaleWrite(e)) {
-    // 409: the settings changed since this page read them (another tab, Settings → Providers,
+    // 409: the settings changed since this page read them (another tab, Settings → Models & Providers → Providers,
     // your own backend). Nothing was saved. Read again, re-apply the edit, save over the new
     // revision — or show the user both and let them choose.
   } else throw e
@@ -1032,7 +1032,7 @@ a name another holds:
    the registry reads its tool list: at enable, and on every read after, since a list is live.
 
 A registration that breaks the rule is refused whole: the provider leaves the surface and serves
-nothing, its Settings → Providers card is off with the sentence under it, the change that
+nothing, its Settings → Models & Providers → Providers card is off with the sentence under it, the change that
 registered it answers with that sentence, and the security log has an `outcome=refused` row. A
 provider name is checked the same way, when it registers. An app that registers its provider
 again (a re-enable, an update's new code) replaces its own, and its new list is the one read.

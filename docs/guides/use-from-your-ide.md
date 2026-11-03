@@ -98,7 +98,7 @@ personalclaw inbound token create mcp
 ```
 ✅ Created the mcp inbound token.
 🔑 stored as PERSONALCLAW_INBOUND_MCP_TOKEN in the credential store (keychain, else .env at 0600)
-⏱  It works for 90 days, until 26 December at 14:05; then create a new one. Settings → Devices lists it, and revokes it.
+⏱  It works for 90 days, until 26 December at 14:05; then create a new one. Settings → Devices & Access → Devices lists it, and revokes it.
 
 Copy it into your client now — it is not shown again:
 
@@ -332,7 +332,7 @@ This MCP token stopped working today at 14:05, 90 days after it was created. Cre
 ```
 
 To stop a token at once — it leaked, or you no longer use that client — revoke it in
-**Settings → Devices → Integrations**, or from the terminal:
+**Settings → Devices & Access → Devices → Integrations**, or from the terminal:
 
 ```bash
 personalclaw inbound token revoke mcp
@@ -347,7 +347,7 @@ A client that still sends it is told it was revoked, and when.
 | What you see | What it means |
 |---|---|
 | `{"error": {"code": "not_found", …}}` (404) | a switch is off — `external_access.enabled` **or** `external_access.mcp.enabled` — or the surface has no working token. Check both switches (the master one is easy to forget) and `personalclaw inbound token show mcp`. A fix takes effect on the next call, no restart. |
-| `{"error": "..."}` (503) | an incident is active (`~/.personalclaw/incident.json`). Every inbound surface is suspended while unattended work is paused; resume from Settings → Guardrails. |
+| `{"error": "..."}` (503) | an incident is active (`~/.personalclaw/incident.json`). Every inbound surface is suspended while unattended work is paused; resume from Settings → Security → Guardrails. |
 | `405 Method Not Allowed` on a `GET` | correct. The surface is POST-only; this is the serving-and-healthy signal. |
 | `{"error": "unauthorized"}` (401) | missing, malformed, or stale `Authorization: Bearer` header. Rotate and re-copy. |
 | `auth_origin_not_allowed` (403), "…takes requests only from programs on the machine PersonalClaw runs on; this one came from …" | you are reaching the gateway from off the machine. This is the 403 you will actually get, and it is not fixable by config — see [the hard limit](#the-one-hard-limit-same-machine-full-stop). |

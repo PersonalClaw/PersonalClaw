@@ -405,7 +405,7 @@ there, or because nothing else is bound — the chat screen says so.
   a file, it replied with a Python snippet for you to run, and nothing was written. So no
   loop is started on it, nor a workflow run whose steps work with tools, nor a subagent sent
   to read or change things: each is refused before it starts, naming the model and where to
-  choose one that uses tools, and Settings → Models does not bind it for Loops.
+  choose one that uses tools, and Settings → Models & Providers → Models does not bind it for Loops.
 - The context PersonalClaw builds. For other models, each turn is assembled into one
   prompt: the agent's instructions, your memory and preferences, the skills chosen for the
   turn, today's date, then your message. On a fresh home that came to about 20,000
@@ -456,7 +456,7 @@ that: in a process holding only the model, a full 4,096-token prompt peaked at 1
 resident and took 21 seconds, and an 8,192-token one peaked at 1.8 GB and took 62 seconds.
 
 **What is enforced:** the download never starts by itself. It is offered with its size
-(138 MiB) in onboarding, on the chat screen and in **Settings → Providers**, and runs only
+(138 MiB) in onboarding, on the chat screen and in **Settings → Models & Providers → Providers**, and runs only
 when you ask for it. It comes over https from a pinned revision on Hugging Face and is
 checked against the sha256 in the sign-off record before it is installed. The 150 MiB ceiling
 is enforced while the bytes arrive: a source that announces a bigger file is refused before
@@ -472,14 +472,14 @@ signed-off size before it loads it. Compare its sha256 with the record's first, 
 `PERSONALCLAW_HOME=<home> python scripts/fetch_bundled_model.py --check` from a checkout.
 
 **What this means for you:** use it to see chat working and to look around. For real work,
-bind a model under **Settings → Models**. A local [Ollama](https://ollama.com) needs no key
+bind a model under **Settings → Models & Providers → Models**. A local [Ollama](https://ollama.com) needs no key
 and keeps working offline; every other provider is an app in the Store
 ([Getting started §3](../guides/getting-started.md#3-configure-a-model-provider)). Whatever
 you bind wins, because this model answers only when nothing else does, and there is no
 config to clean up afterwards. To stop it answering at all, delete it under **Settings →
 Providers**, or turn off **Answer when nothing else is bound** in its settings there. That
 switch takes effect when you save it; it decides what answers when no chat model is chosen,
-so if onboarding made this your chat model, choose another in **Settings → Models** too.
+so if onboarding made this your chat model, choose another in **Settings → Models & Providers → Models** too.
 
 ## 6. Where a stored secret can still appear in plaintext
 
@@ -540,7 +540,7 @@ A secret still appears in plaintext in these places:
   knows, stays in `mcp.json` as written and travels with an export: it cannot be told from a
   package or project name that looks the same. So does anything in the command itself. Every page
   that shows a server masks all of these with one mask — the Tools page's edit form, the MCP Tool
-  Servers card in Settings → Providers, the import list and the question Allow asks — and the list
+  Servers card in Settings → Models & Providers → Providers, the import list and the question Allow asks — and the list
   of configured servers leaves them out; a save keeps a masked value as it was, or replaces it with
   what you type over the mask. Put such a token after a flag that names it, in an environment
   variable or in a header instead. On a machine whose store lacks a stored value (a restore onto

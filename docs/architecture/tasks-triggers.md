@@ -805,7 +805,7 @@ content, with no path, so nothing could put one back where it was, and every
 sync cycle uploaded all of them again. Carrying them with their paths would
 carry them into the other machine: app bundles, hook and cron scripts, and
 skills that run what they hold, arriving without this machine's owner's yes.
-Settings → Backups, `personalclaw backup export` and `personalclaw backup
+Settings → Backups & Data → Backups, `personalclaw backup export` and `personalclaw backup
 validate` say which to trust.
 
 **Configuration leaves the export when it changes.** The hourly export

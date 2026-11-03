@@ -153,7 +153,7 @@ directory on `sys.path`, and registers its contributions through a typed
 | Capability | Core seam | Contributed by |
 |---|---|---|
 | LLM providers | `llm/registry.py` (`registry.build`), `llm/catalog.py` | model apps (`apps/anthropic-models`, `apps/openai-models`, `apps/ollama-models`, …) |
-| Model bindings | `~/.personalclaw/active_models.json` per use case (chat, background, embedding, ingestion, stt, tts, …) | Settings → Models |
+| Model bindings | `~/.personalclaw/active_models.json` per use case (chat, background, embedding, ingestion, stt, tts, …) | Settings → Models & Providers → Models |
 | Channels | `channel_transports/` (inbound) + `channel_delivery.py` (outbound) | `apps/slack-channel` (reference implementation) |
 | Agents | `agents/native/` runtime + `acp/` (Agent Client Protocol) | ACP agent apps (`apps/claude-code-agent`, `apps/codex-agent`, …) |
 | Tools | `tool_providers/` registry + `mcp_client.py` for external MCP servers | tool apps, app-shipped MCP servers |
@@ -180,7 +180,7 @@ background work (knowledge processing, skill reviews, digests, chat chores) wait
 waiting, so it never holds the model for more than the call it is already making. The wait for a
 turn counts against the call's own limits: the guard's clock, else the provider's Request Timeout.
 A waited-for call whose chain has another model gives a busy local model the wait set under
-Settings → Models → Background (`background.busy_model_wait_secs`, 15 s unless changed, read as
+Settings → Models & Providers → Models → Background (`background.busy_model_wait_secs`, 15 s unless changed, read as
 each call asks for its turn), then that model answers in its place and the substitution says what
 the first waited behind ("it waited 15 s behind background work on this machine", or "it was busy
 with background work on this machine" when the wait is set to none), not that it was slow. A call

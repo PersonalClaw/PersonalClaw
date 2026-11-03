@@ -1,6 +1,6 @@
 # Buddy settings
 
-Every setting has a default, an effect, one home and a reader. Settings → Buddy shows all of them;
+Every setting has a default, an effect, one home and a reader. Settings → Appearance → Buddy shows all of them;
 the context menu and the tray reach the common ones ([#3901]).
 
 | Setting | Default | Effect | Home |
@@ -14,7 +14,7 @@ the context menu and the tray reach the common ones ([#3901]).
 | When I'm away | hide after the absence time | docked: hides after `absence`; floating: dozes; alerts still appear | owner knob |
 | Quiet hours | the existing quiet hours | in quiet hours alerts arrive as a quiet peek with no sound; nothing ambient shows | the existing notification settings |
 | Reduced motion | the system's setting | shown, not set: whether it is on, and where to change it in the system's accessibility settings | the system |
-| Notification posture | the existing notification settings | shown, not set: the mute, quiet hours and alert rules the buddy's alerts follow, with a link to Settings → Notifications | the existing notification settings |
+| Notification posture | the existing notification settings | shown, not set: the mute, quiet hours and alert rules the buddy's alerts follow, with a link to Settings → Notifications & Inbox → Notifications | the existing notification settings |
 
 ## Where each setting lives, and why
 
@@ -30,7 +30,7 @@ the context menu and the tray reach the common ones ([#3901]).
   storage and a second window reads them only when it opens, so the buddy work makes them update
   live across windows of the same app.
 - **Reduced motion** follows the system. The buddy has no switch of its own for it, so it adds no
-  config field and no policy entry; Settings → Buddy shows whether it is on and where to change it.
+  config field and no policy entry; Settings → Appearance → Buddy shows whether it is on and where to change it.
 - **The way out.** The context menu and the tray each offer turning Buddy status off.
 
 ## Later work

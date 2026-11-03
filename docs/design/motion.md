@@ -54,8 +54,8 @@ one-off literal at the call site.
 
 | Dial | Where the user finds it | What it scales | What it does NOT touch |
 |---|---|---|---|
-| `--bounciness` (0…1, default 1) | Settings → Design → Motion | the overshoot of every `physics` preset and every gesture spring, by interpolating damping; at 0 every preset is at least critically damped, so nothing overshoots | stiffness (a preset's identity), durations, `spring.*` |
-| `--expressiveness` (0…1, default 0.8) | Settings → Design → Motion | every expressive *magnitude* — hover lift, press depth, morph delta — through `expr()`; heavy effects switch off entirely below `exprHeavy()`'s threshold | which preset you picked |
+| `--bounciness` (0…1, default 1) | Settings → Appearance → Design → Motion | the overshoot of every `physics` preset and every gesture spring, by interpolating damping; at 0 every preset is at least critically damped, so nothing overshoots | stiffness (a preset's identity), durations, `spring.*` |
+| `--expressiveness` (0…1, default 0.8) | Settings → Appearance → Design → Motion | every expressive *magnitude* — hover lift, press depth, morph delta — through `expr()`; heavy effects switch off entirely below `exprHeavy()`'s threshold | which preset you picked |
 | `prefers-reduced-motion` | the user's OS | **overrides both.** Every preset collapses to `instant` | the user's ability to *do* anything (see §3) |
 
 `expr(max, floor)` scales a number, not a transition: `expr(3, 0.3)` is "3px of hover lift,

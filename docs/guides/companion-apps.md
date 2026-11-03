@@ -82,7 +82,7 @@ machine is here. That should be a decision, not a default.
 
 ### Turning it on
 
-**Settings → Companion apps → LAN discovery**, or:
+**Settings → Devices & Access → Companion apps → LAN discovery**, or:
 
 ```bash
 personalclaw config set companion.discovery_enabled true
@@ -132,7 +132,7 @@ Plus the service address, which is how any network service is reachable at all.
 readable by every device on the network, and cached by some of them. So the code that builds
 it works from a fixed list of four keys and cannot express a fifth; a test asserts that the
 serialized packet contains none of the gateway's credentials. The dashboard shows you the
-record verbatim under **Settings → Companion apps** — what you see there is what your network
+record verbatim under **Settings → Devices & Access → Companion apps** — what you see there is what your network
 receives.
 
 ---
@@ -400,7 +400,7 @@ Two things follow, and a wrapper author should not try to work around either:
   everyone else.
 - **Pairing is the opt-in.** There is no config flag to enable this and nothing to turn on. A
   session the owner deliberately paired is what vouches for the connection, which is also why
-  revoking that device from Settings → Devices closes it immediately and closes nothing else.
+  revoking that device from Settings → Devices & Access → Devices closes it immediately and closes nothing else.
 
 #### Known rough edge: a WebView over the tunnel needs `dashboard.url` too
 

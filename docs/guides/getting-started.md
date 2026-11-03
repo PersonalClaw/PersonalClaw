@@ -139,7 +139,7 @@ which prints a ready-to-open URL with a fresh credential.
 
 First-run onboarding in the dashboard asks for your name and walks you to
 provider setup. Until you finish or skip it, the dashboard's other pages wait for
-it, except the security controls: **Settings → Devices**, **Security**, **Sender
+it, except the security controls: **Settings → Devices & Access → Devices**, **Security**, **Sender
 trust**, **Guardrails** and **External access** open at any time, so you can sign a
 device out or turn on the incident kill switch in the middle of setup. Setup links
 to them as **Security controls**.
@@ -165,7 +165,7 @@ below.
 its chat model reads Ready, the same lane offers **"Also add a local model"**, with
 the Ollama it found and the same scan. **Add this model** adds it as one more
 provider and changes no binding, so chat keeps the model you picked. To chat with
-the local model too, or to fall back to it, add it to Chat in Settings → Models.
+the local model too, or to fall back to it, add it to Chat in Settings → Models & Providers → Models.
 
 **No account and no Ollama?** In step 3, **Essential apps**, the model lane opens with
 *No account? Start with a small offline model* and a **Download SmolLM2-135M-Instruct
@@ -188,7 +188,7 @@ runs on your CPU inside the gateway with no key and no network.
 It answers when it is your chat model (onboarding makes it one when you download it there)
 or when nothing else is set up, and the chat screen says when it is the one answering. Bind
 any other model in [§3](#3-configure-a-model-provider) and it stops being used, with
-nothing to undo. To remove it, delete it under **Settings → Providers**; to stop it
+nothing to undo. To remove it, delete it under **Settings → Models & Providers → Providers**; to stop it
 answering when nothing is bound, turn off **Answer when nothing else is bound** in its
 settings there (it takes effect when you save).
 
@@ -212,9 +212,9 @@ Model providers are installable apps — nothing is hardwired to a vendor.
    *OpenRouter*, or *OpenAI-Compatible* for any compatible endpoint). The app
    installs its own SDK dependency. A local Ollama needs no install: its
    provider, *Ollama*, ships with PersonalClaw.
-3. The provider appears under **Settings → Providers** — add your API key /
+3. The provider appears under **Settings → Models & Providers → Providers** — add your API key /
    endpoint there and hit **Test** to verify connectivity.
-4. Go to **Settings → Models** and bind a model to the **chat** use case
+4. Go to **Settings → Models & Providers → Models** and bind a model to the **chat** use case
    (bindings live in `~/.personalclaw/active_models.json`, not `config.json`).
    The same panel binds models for background work, embeddings, ingestion,
    speech, and more — they can all be different providers. Each model's **Test**
@@ -372,7 +372,7 @@ PersonalClaw than yours (a higher `minPersonalClawVersion`, or a core feature in
 saying what it needs. To hold the apps at your release as well, clone the apps repository at
 the tag that names your release (`personalclaw --version` says which), point
 `PERSONALCLAW_FIRST_PARTY_APPS_DIR` at the clone, and turn **Bundled app source** off
-(Settings → Apps → Store sources, or `apps.bundled_source_enabled`):
+(Settings → Apps & Packs → Apps → Store sources, or `apps.bundled_source_enabled`):
 
 ```bash
 tag="v$(personalclaw --version | cut -d' ' -f2)"
@@ -444,7 +444,7 @@ PersonalClaw *looks*, the other whether it *installs*.
 - **Only approvals, questions and errors interrupt you by default.** A loop's progress after
   each cycle waits for the daily digest, and every other notification waits in the bell as a
   Badge, listed and counted; neither reaches the Desktop, Push or Channel DM targets ticked on
-  its row. If you ticked one of those on such a row in Settings → Notifications → Per-kind
+  its row. If you ticked one of those on such a row in Settings → Notifications & Inbox → Notifications → Per-kind
   delivery and left its mode as it was, set the row to Notify to keep receiving it there. A row
   whose mode you set keeps it.
 
@@ -505,8 +505,8 @@ defaults flipped, and some routes refuse input they used to accept. Run
 - **The first start re-embeds your library once.** Knowledge items and memories that 0.1.3
   embedded do not record which embedding model wrote their vectors, and nothing else can
   tell one model's vector from another's, so the first start re-embeds them in the
-  background with the model bound in Settings → Models. Until an item is re-embedded,
-  search finds it by keyword. Settings → Models and the Knowledge page show the re-index
+  background with the model bound in Settings → Models & Providers → Models. Until an item is re-embedded,
+  search finds it by keyword. Settings → Models & Providers → Models and the Knowledge page show the re-index
   and its progress while it runs, and if PersonalClaw stops part way, the next start
   resumes where it stopped. No model bound means nothing is re-embedded until you choose
   one.
@@ -524,7 +524,7 @@ defaults flipped, and some routes refuse input they used to accept. Run
 - **Natural voice is now the Plain reply style.** On first start the gateway carries every
   stored natural-voice choice over, once: a chat or an agent that had it on uses **Plain**, a
   chat that had it off uses **Default**, and an edit you made to the natural-voice prompt in
-  Settings → Prompts becomes your edit of `reply-style-plain`. Nothing is left to do by hand,
+  Settings → Agent → Prompts becomes your edit of `reply-style-plain`. Nothing is left to do by hand,
   except for an agent definition that is a link to a file elsewhere: that file is left as it is,
   and the gateway's log names it.
   A script that called `PATCH /api/chat/sessions/{session}/natural-voice` or read the
@@ -533,7 +533,7 @@ defaults flipped, and some routes refuse input they used to accept. Run
 - **Slack asks you to pair once more.** Slack Channel no longer makes the first person to
   message the bot its owner, or keeps an owner id typed into its setup or set in the
   environment: it forgets such an owner when it next starts, and until you pair, the bot does
-  nothing anyone asks. Pair from Settings → Providers → Slack Channel → Configure →
+  nothing anyone asks. Pair from Settings → Models & Providers → Providers → Slack Channel → Configure →
   **Pair as owner** and send the bot the code in a direct message, as on Telegram, Discord and
   email.
 
@@ -580,12 +580,12 @@ defaults flipped, and some routes refuse input they used to accept. Run
 - **Backend code changes don't take effect** (source checkouts) — Python
   changes need a gateway restart (`personalclaw restart`); only frontend
   rebuilds are live.
-- **Model errors in chat** — check **Settings → Models** has a chat binding and
+- **Model errors in chat** — check **Settings → Models & Providers → Models** has a chat binding and
   that model's **Test** passes; `personalclaw doctor` reports the live
   binding and any missing optional dependency with the exact install command.
 - **Short, off-topic answers and no tool calls** — you are talking to the small
   default model, and the notice above the composer says so. Bind a real model under
-  **Settings → Models**.
+  **Settings → Models & Providers → Models**.
 - **A request answered 403 Forbidden** — the gateway log says each refusal in one line:
   the method, the path (never its query string), the reason and the caller's address
   (`personalclaw logs`). One caller's refusals for one reason within a minute are counted

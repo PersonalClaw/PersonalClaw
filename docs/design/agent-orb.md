@@ -108,7 +108,7 @@ differ by glyph as well as tone, so no two waiting or failed states are told apa
   it is on, the orb stands above the draft, `listening` while the microphone hears the owner and
   the turn's own phase the rest of the time (muted while a reply is spoken, transcribing, or
   between segments). In an empty chat it takes the place of the chat's orb, so one shows.
-- **Settings › Design, both sizes:** every phase at 20 and 64 px under its family, in the owner's own
+- **Settings › Appearance › Design, both sizes:** every phase at 20 and 64 px under its family, in the owner's own
   scheme, closed until asked for, since the active family moves. The visual suite photographs it.
 
 Removed with the orb: the guessed phase, the rotating phrases and the glow of

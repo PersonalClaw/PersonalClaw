@@ -16,7 +16,7 @@ mentions, and FTS rows — not just the item row. FTS values are kept in sync on
 update (delete-with-old-values, insert-with-new).
 
 Another home's library comes into this one row by row, whichever way it arrives: a
-merge restore, an archive import in merge mode (Settings → Import / Export) and a
+merge restore, an archive import in merge mode (Settings → Backups & Data → Import / Export) and a
 folder sync all run `snapshot._merge_sqlite_attach`, so the other copy's items, watched
 sources, collections and tags come in and this home's stay. A library numbers its
 tags itself, so another library's tag 1 is not this one's: tags come in by name, and
@@ -344,7 +344,7 @@ is named, with the artifact, in `gateway.log`.
 `knowledge/embedder.py` — `UnifiedEmbedder`, the one provider-agnostic
 embedding path: it wraps
 `embedding_providers/registry.py::get_active_embed_fn()`, which resolves the
-`embedding` use-case binding (Settings → Models). Nothing bound → embeddings
+`embedding` use-case binding (Settings → Models & Providers → Models). Nothing bound → embeddings
 are gracefully off (no crash; vector search simply doesn't participate) — but
 **gracefully off is not silently off**: an item ingested with nothing bound
 wrote no vector and no chunk, so it is recorded `unsearchable` rather than
@@ -364,7 +364,7 @@ model-call log only, as any failed model call is.
 
 Every vector records the model that wrote it — a chunk's and an item's alike
 (`embedding_model_id` / `embedding_provider`, `knowledge/embedding_fingerprint.py`) —
-so the re-index Settings → Models starts after an embedding change re-embeds only
+so the re-index Settings → Models & Providers → Models starts after an embedding change re-embeds only
 what the model bound now has not: it clears the other items' vectors first (so no
 search or dedup compares one with the new model's meanwhile), then embeds those
 and the ones never embedded (`KnowledgeStore.clear_stale_embeddings` +
@@ -375,7 +375,7 @@ start after that update re-embeds each once.
 It is the one re-index, and every surface reaches it the same way. The gateway's
 start runs it for what the bound model has not embedded: items, and the passages
 a stop left after the items (`_pending_reembed` counts both), each at the width the
-model writes. Settings → Models and the Knowledge page's embedding chip read the
+model writes. Settings → Models & Providers → Models and the Knowledge page's embedding chip read the
 running job (`GET /api/models/embedding/reindex`) and follow its progress through
 `web/src/lib/useEmbeddingReindex.ts`, and the chip's re-embed starts or joins it
 (`POST /api/models/embedding/reindex` answers the running job rather than a second).

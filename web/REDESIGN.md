@@ -69,7 +69,7 @@ new direction for a surface that `web/DESIGN.md` already covers.
    command palette.
 5. One agent and model selector per surface, as a single pill in the composer. It carries the
    reasoning effort only for a model that declares effort levels.
-6. System telemetry (CPU, memory, disk, network) lives in Settings › System, not on Home.
+6. System telemetry (CPU, memory, disk, network) lives in Settings › Health › System, not on Home.
 7. Coral only on the primary action, focus, selection and live agent activity, under ~10% of a
    screen. Everything else sits on neutral surfaces.
 8. The animated backdrop is off by default and lives only in the Claw Arcade identity. Elsewhere:

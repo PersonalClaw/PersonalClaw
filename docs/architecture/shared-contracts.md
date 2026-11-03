@@ -4016,7 +4016,7 @@ effort, never raising and never activating anything. An incident record's `note`
 - `GET /api/incident` gains `suppressed`, `activated_by` and `app` while active. `GET /api/incidents` →
   `{items, next_cursor}`, newest first, 20 a page, each with its newest note; `POST
   /api/incidents/{id}/note {note}` → `201` with the note line, `404 incident_not_found`, and writes
-  `incident.reviewed`. `/api/incidents` is owner only. Settings › Guardrails lists the past incidents, and
+  `incident.reviewed`. `/api/incidents` is owner only. Settings › Security › Guardrails lists the past incidents, and
   Resume's summary shows the counts with each dropped hook or event fire offered a Run now.
 
 | From | To | When | Writes |
@@ -4537,7 +4537,7 @@ Status: planned
   the price table's matcher, or `ProviderRegistry.register_type(..., trains_on_inputs=)`, under the named
   feature `model-training-facts`); otherwise `null`, never read as `false`.
 - The model routes (`GET /api/models/available`, `GET /api/models/chat`, each binding of `GET
-  /api/models/active`) carry `trains_on_inputs`; Settings › Models and the model picker show "May train on
+  /api/models/active`) carry `trains_on_inputs`; Settings › Models & Providers › Models and the model picker show "May train on
   what you send" on a `true` model, and the detail line says which of the four readings holds.
 - **Never chosen on its own.** `model_facts.may_choose_unbound(ref)` is false for a `true` model, so the
   router ranks it after every other and the walk for a use case bound to nothing passes over it; a model the owner

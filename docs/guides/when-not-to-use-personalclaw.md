@@ -236,7 +236,7 @@ credit without a ceiling until you set one, or you needed a *hard* limit rather 
 estimate.
 
 This one is easy to miss, because the feature exists. Three ceilings are real, wired, and
-have controls under **Settings → Guardrails**: `guardrails.budgets.max_tokens_per_run`,
+have controls under **Settings → Security → Guardrails**: `guardrails.budgets.max_tokens_per_run`,
 `max_tokens_per_day` and `max_dollars_per_day` (`src/personalclaw/config/safety.py`,
 `BudgetConfig`). A spent token ceiling pauses unattended runs into needs-input rather than
 overspending quietly, and a dollar ceiling refuses each call that costs money once there is no

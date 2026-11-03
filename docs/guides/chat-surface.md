@@ -285,7 +285,7 @@ brought up, where an ordinary chat's turn records each one with its message. Wha
 version recorded of an Incognito or Temporary chat's turns is removed when PersonalClaw starts. A
 chat that comes back before it was titled is called by its mode, never by its first message.
 
-What stays, as for any chat, and the chat's notice says so: **Settings → Audit log** records each
+What stays, as for any chat, and the chat's notice says so: **Settings → Security → Audit log** records each
 tool call it makes, and the approvals, questions and notes it raises reach your Inbox and
 notifications. The Audit log is the record of what your agent did, and an approval is your answer to
 what it asked, so neither leaves a chat out for its mode.
@@ -303,7 +303,7 @@ What also came from elsewhere stays: a lesson you taught in another chat too, a 
 attached to an ordinary chat (Files lists them), and the Knowledge entries, artifacts and skills you
 kept. You can remove any of those where it is listed: a lesson or a fact in **Library → Memory**.
 
-Each deletion leaves one entry in **Settings → Audit log** (`chat.deleted`), naming the chat and
+Each deletion leaves one entry in **Settings → Security → Audit log** (`chat.deleted`), naming the chat and
 never what it held. If the chat's history cannot be removed from disk, the page says so and the
 chat stays in the list; its entry then says `failure`.
 
@@ -376,8 +376,8 @@ suggestions**; with it off, nothing is generated at all rather than generated an
 
 They are skipped in **temporary** and **incognito** chats. They are written by a model, never by
 an agent CLI, even when your chats run on one. With no model chosen for them (nothing in
-**Settings → Models**, and no provider with a default model), nothing is asked, and the place
-under the reply says *"Follow-ups need a model: choose one in Settings → Models."*, which takes
+**Settings → Models & Providers → Models**, and no provider with a default model), nothing is asked, and the place
+under the reply says *"Follow-ups need a model: choose one in Settings → Models & Providers → Models."*, which takes
 you there. The suggestions on a new chat and on the dashboard say the same, and so does an
 untitled chat's header, under its name, for its title and tags.
 
@@ -443,16 +443,16 @@ model was given.
 When the model answering the chat takes images, it is shown the image itself. Whether it does
 is read from what the platform records: the provider's declaration that its connection carries
 images (Anthropic, Bedrock, OpenAI-compatible and Ollama connections do) *and* the model's own
-image-understanding capability as Settings → Models lists it. An image larger than 1568 px on
+image-understanding capability as Settings → Models & Providers → Models lists it. An image larger than 1568 px on
 its long edge is scaled down first.
 
 When it does not — a text-only model, or an agent CLI such as Claude Code, which runs its own
 connection — the image goes as text: what OCR and your image-understanding model read from it.
-That model is the one chosen for **Image · Modality** in Settings → Models; with none chosen,
+That model is the one chosen for **Image · Modality** in Settings → Models & Providers → Models; with none chosen,
 your chat model reads images itself when it takes them. The chip says **as text** before you send, with the
 reason ("gemma3:1b can't take images.") and what the model will get instead. If nothing is set
 up to read an image, it gets only the image's size and format, and the chip says **No image
-model is set up** with a link to Settings → Models. After sending, the chip on your message
+model is set up** with a link to Settings → Models & Providers → Models. After sending, the chip on your message
 keeps saying **sent as text**, and its preview shows exactly the text that was sent.
 
 ### When the menu entry is not there
@@ -531,7 +531,7 @@ step**, **With the background** or **Skip**. An
 answer is kept as a pinned preference, which you can change or forget under Memory; Skip is
 remembered, so the card doesn't return.
 
-**Editing a style.** Each bundled style's wording is a prompt in Settings → Prompts
+**Editing a style.** Each bundled style's wording is a prompt in Settings → Agent → Prompts
 (`reply-style-plain`, `reply-style-terse`, `reply-style-conversational`). Its text is sent as
 one bounded section, yours and an app's included, and the platform's safety rules are sent
 right after it on every styled turn, so no style can have the last word. A style whose text opens or closes a style section
@@ -624,7 +624,7 @@ page stays at `#/terminal`, and the command palette's **Terminal** row opens it.
 ## Which model answers a turn
 
 A turn runs on the model you pick in the composer's agent-and-model pill. Left on **Auto**, it runs on a
-chain from **Settings → Models**, chosen by the folder the chat works in:
+chain from **Settings → Models & Providers → Models**, chosen by the folder the chat works in:
 
 - **Code & tools**, for a chat working in a folder of its own: the working directory you set for
   it (**Change working folder…** in the Execution Boundary control), its project's folder, or its agent's. While Code &
@@ -640,7 +640,7 @@ with it: the shell starts in the new folder, and a file named by a relative path
 written there. The prompt opens on the folder the chat works in, and an empty path puts the chat
 back in the workspace. A side question asked beside the chat runs on the same chain as the chat.
 The chat's subagents use Orchestration, and its title, tags and follow-ups use Background, as
-Settings → Models says for each.
+Settings → Models & Providers → Models says for each.
 
 Each turn names the model that answered it. Its details chip says **on <model>**, and opened,
 **Answered by <model>, from your Code & tools chain** (or your Chat chain, or **picked for this
@@ -670,7 +670,7 @@ levels it declares. A chat on an agent CLI is held to its runtime's levels inste
 ## What gets recorded
 
 Six of these nine change something a security log should be able to show you. Each *action*
-leaves exactly one entry in **Settings → Audit log** — where a mechanic has two distinct
+leaves exactly one entry in **Settings → Security → Audit log** — where a mechanic has two distinct
 actions, it has two rows:
 
 | Action | Logged as |

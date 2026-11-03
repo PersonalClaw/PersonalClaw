@@ -31,11 +31,11 @@ through one function, `src/personalclaw/dashboard/token_auth.py::mint_session`, 
 | `app` | the one app-scoped token an app's page, its proxy and an agent's call to it share | `src/personalclaw/dashboard/token_auth.py::app_session_token` |
 | `login` | `POST /api/auth/login` (password) | `src/personalclaw/dashboard/handlers/auth.py::api_auth_login` |
 | `enroll` | a device code typed on the sign-in page | `src/personalclaw/dashboard/handlers/auth.py::api_auth_enroll_complete` |
-| `pair` | Settings → Devices → **Pair a device** | `src/personalclaw/dashboard/handlers/devices.py::api_devices_pair_complete` |
+| `pair` | Settings → Devices & Access → Devices → **Pair a device** | `src/personalclaw/dashboard/handlers/devices.py::api_devices_pair_complete` |
 
 The door names are constants beside `src/personalclaw/dashboard/session_store.py::ISSUER_LOGIN`,
 and the door decides which limit a session counts against
-(`src/personalclaw/dashboard/session_store.py::pool_of`), so Settings → Devices can say how each
+(`src/personalclaw/dashboard/session_store.py::pool_of`), so Settings → Devices & Access → Devices can say how each
 device signed in. A browser sign-in — startup link, password, device code, pairing — lasts
 `auth.session_ttl` (`src/personalclaw/dashboard/token_auth.py::browser_session_ttl`), and nothing
 lasts longer than 90 days (`src/personalclaw/auth/lifetimes.py::MAX_LIFETIME_SECS`): `mint_session`
@@ -221,7 +221,7 @@ does not decide whether the subject is allowed in. Those four are the gateway's 
 place, for the same reason §1.1 keeps one validator.
 
 **A door of its own.** The SSO sign-in mints through `mint_session` naming a new door (`sso`,
-beside `session_store.py::ISSUER_LOGIN`), so Settings → Devices says how the browser signed in and
+beside `session_store.py::ISSUER_LOGIN`), so Settings → Devices & Access → Devices says how the browser signed in and
 the session counts against the browser limit like a password sign-in does.
 
 **Routes.** `GET /api/auth/sso/start` and `GET /api/auth/sso/callback`, added to

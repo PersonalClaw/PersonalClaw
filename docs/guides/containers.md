@@ -344,7 +344,7 @@ docker compose -f deploy/compose/compose.yaml up -d --force-recreate personalcla
 
 Then install and enable the Slack channel app from **Store** in the dashboard, the same way
 as any other channel. Tokens come from <https://api.slack.com/apps> after creating a
-Socket-Mode app. Then pair yourself as its owner: **Settings → Providers → Slack Channel →
+Socket-Mode app. Then pair yourself as its owner: **Settings → Models & Providers → Providers → Slack Channel →
 Configure → Pair as owner** shows a code, and you send it to the bot in a direct message.
 Until you do, the bot answers nobody, and a direct message or a mention gets a note saying how
 to pair. An owner id set in the environment does not name Slack's owner: Slack keeps only the
