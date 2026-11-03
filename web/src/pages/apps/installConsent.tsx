@@ -1196,7 +1196,7 @@ function announce(r: AppInstallResult, target: InstallTarget, label: string) {
   // holds. Said here, where the install is confirmed, and kept on its card in Settings → Providers.
   for (const why of r.providerErrors ?? []) {
     window.dispatchEvent(new CustomEvent('ne:toast', {
-      detail: { level: 'error', message: why, href: '#/settings/providers', hrefLabel: 'Open Providers' },
+      detail: { level: 'error', message: why, href: '#/settings/models?section=providers', hrefLabel: 'Open Providers' },
     }))
   }
   sayKept(r.kept)

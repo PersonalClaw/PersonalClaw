@@ -229,7 +229,7 @@ function useAppActions(nav: (p: string) => void, reload: () => void) {
       // An app configured per instance has no app-level settings to open: its instances are
       // managed in Settings → Providers, and its Configure goes there instead.
       case 'configure':
-        if (app.configuredPerInstance) { nav('settings/providers'); return }
+        if (app.configuredPerInstance) { nav('settings/models?section=providers'); return }
         setConfigFor({ name: app.name, displayName: app.displayName, sidecar: app.sidecar }); return
       case 'update': setUpdateFor({ name: app.name, displayName: app.displayName, start: updateStart(app) }); return
       case 'uninstall': setRemoveFor({ name: app.name, displayName: app.displayName }); return
@@ -714,7 +714,7 @@ export function AppsSection({ query, setQuery, navigate }: Pick<RouteProps, 'que
     body: open ? (
       <AppDetailPanel app={open} onClose={() => setOpenName('')} onChanged={reload}
         onOpen={() => nav(`app/${encodeURIComponent(open.name)}`)}
-        onManageInstances={() => nav('settings/providers')} />
+        onManageInstances={() => nav('settings/models?section=providers')} />
     ) : (
       <StoreDetailPanel item={openStore!} onInstalled={noteInstalled} />
     ),

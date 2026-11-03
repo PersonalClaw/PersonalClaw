@@ -38,7 +38,7 @@ export function Eyebrow({
    *  semantic `h2`/`h3` — a section heading whose visual treatment is the
    *  caption-tier label (the heading OUTLINE keeps its level; only the
    *  rendering converges on the role). */
-  as?: 'div' | 'span' | 'p' | 'h2' | 'h3'
+  as?: 'div' | 'span' | 'p' | 'h2' | 'h3' | 'h4'
   /** Ink tone. `muted` (default) is the section-label grey; `info`/`primary`
    *  are for the semantic eyebrows (a queued nudge, an active marker). */
   tone?: keyof typeof TONE

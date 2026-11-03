@@ -5,6 +5,7 @@ import {
   FlaskConical, KeyRound, MessageCircle, Workflow, RefreshCcw, Gauge,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { useEffect, useRef } from 'react'
 import { TopBar } from '../../ui/TopBar'
 import { IconButton } from '../../ui/IconButton'
 import { ArrowLeft } from 'lucide-react'
@@ -49,6 +50,8 @@ import { GuardrailsPanel } from './GuardrailsPanel'
 import { DoctorPanel } from './DoctorPanel'
 import { AppsPanel } from './AppsPanel'
 import { SettingsHome } from './SettingsHome'
+import { SectionDepthProvider } from './settingsUI'
+import { pageById, pageOfSection, sectionAddress, type SettingsPageDef } from './settingsPages'
 import type { RouteProps } from '../../app/useQueryState'
 import { fvs } from '../../design/fontWeight'
 import { PageTitle } from '../../ui/PageTitle'
@@ -66,12 +69,13 @@ interface PanelCtx {
   setQuery: RouteProps['setQuery']
 }
 
-// Each subpage: id + label + icon (for the breadcrumb) + its panel renderer. The
-// home page (bento grid of widgets) is the default; a subpage opens on
-// #/settings/<id> with a Settings › <Label> breadcrumb header (no left-nav).
-interface SubPage { id: string; label: string; icon: LucideIcon; render: (ctx: PanelCtx) => React.ReactNode }
+// Each section: id + label + icon + its panel renderer. A section lives on the page that holds it
+// (`settingsPages.ts`, #5897): seventeen pages, each one card on the home grid, opening on
+// #/settings/<page> with a Settings › <Label> breadcrumb header (no left-nav). A section that was a
+// page of its own until then keeps its id, and its old address opens it on its page.
+export interface SettingsSection { id: string; label: string; icon: LucideIcon; render: (ctx: PanelCtx) => React.ReactNode }
 
-const SUBPAGES: SubPage[] = [
+export const SECTIONS: SettingsSection[] = [
   { id: 'account', label: 'Account', icon: User, render: () => <AccountPanel /> },
   { id: 'design', label: 'Design', icon: Palette, render: () => <DesignPanel /> },
   { id: 'chat', label: 'Chat', icon: MessageSquare, render: () => <ChatPanel /> },
@@ -142,11 +146,25 @@ const SUBPAGES: SubPage[] = [
   { id: 'updates', label: 'Updates', icon: DownloadCloud, render: () => <UpdatesPanel /> },
 ]
 
+/** A page's sections, in its order. While setup holds every other page, only the ones setup never
+ *  holds (`OPEN_DURING_SETUP`), so a page that holds one of them opens without the rest. */
+function sectionsOf(page: SettingsPageDef, duringSetup: boolean): SettingsSection[] {
+  return page.sections
+    .filter((id) => !duringSetup || OPEN_DURING_SETUP.includes(id))
+    .map((id) => SECTIONS.find((s) => s.id === id)!)
+}
+
+/** The icon a page goes by: its own section's, or its first section's. */
+function pageIcon(page: SettingsPageDef): LucideIcon {
+  return (SECTIONS.find((s) => s.id === page.id) ?? SECTIONS.find((s) => s.id === page.sections[0])!).icon
+}
+
 /** Settings — a multi-page navigation. The landing page is a bento grid of
- *  per-subpage widgets (SettingsHome) with one full-width search; clicking a card
- *  opens that subpage at #/settings/<id> with a Settings › <Label> breadcrumb. No
- *  left-nav: the home grid IS the navigation. A subpage's own nested state (tabs,
- *  expanded provider) rides `?query` so it's deep-linkable + refresh/Back-safe. */
+ *  per-page cards (SettingsHome) with one full-width search; clicking a card
+ *  opens that page at #/settings/<id> with a Settings › <Label> breadcrumb. No
+ *  left-nav: the home grid IS the navigation. A page's own nested state (tabs,
+ *  expanded provider) rides `?query` so it's deep-linkable + refresh/Back-safe, and
+ *  `?section=` opens a page that holds several sections at one of them. */
 export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = false }: RouteProps & {
   /** Opened while setup holds every other page (a first run not yet finished or skipped, or a
    *  re-run in progress), which the shell does only for the pages setup never holds
@@ -155,12 +173,17 @@ export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = fal
    *  this is how one of them reaches the next. */
   duringSetup?: boolean
 }) {
-  const go = (id: string) => navigate?.(id ? `settings/${id}` : 'settings')
+  // `go` takes a page id or a section id: a section opens on the page that holds it.
+  const go = (id: string) => navigate?.(id ? sectionAddress(id) : 'settings')
   const backToSetup = () => navigate?.('onboarding')
-  const current = sub ? SUBPAGES.find((s) => s.id === sub) : undefined
+  // A page by its id. A section's own id opens the page that holds it, at that section: the router
+  // turns a retired address into `?section=` before any page draws, but a caller that renders this
+  // page directly hands it the id as it was.
+  const page = sub ? (pageById(sub) ?? pageOfSection(sub)) : undefined
+  const focus = page && sub !== page.id ? sub : query?.section
 
   // Home (no valid sub, or bare #/settings): the bento grid.
-  if (!current) {
+  if (!page) {
     return (
       <div className="flex h-full flex-col">
         <TopBar left={<PageTitle>Settings</PageTitle>} />
@@ -169,7 +192,11 @@ export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = fal
     )
   }
 
-  // A subpage: breadcrumb header + the panel, spanning the pane.
+  const Icon = pageIcon(page)
+  const sections = sectionsOf(page, duringSetup)
+  const ctx: PanelCtx = { go, navigate, query, setQuery }
+
+  // A page: breadcrumb header + its sections, spanning the pane.
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -190,25 +217,81 @@ export function SettingsPage({ sub, navigate, query, setQuery, duringSetup = fal
               <ChevronRight size={16} className="shrink-0 text-on-surface-low/60" />
             </span>
             <span className="flex items-center gap-1.5 min-w-0 text-on-surface text-[1.0625rem]" style={fvs(470)}>
-              <current.icon size={16} className="shrink-0 text-on-surface-low" />
-              <span className="truncate">{current.label}</span>
+              <Icon size={16} className="shrink-0 text-on-surface-low" />
+              <span className="truncate">{page.label}</span>
             </span>
           </div>
         }
       />
       <div className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto px-2xl py-2xl">
-          {duringSetup && <SecurityControlsNav current={current.id} />}
-          {current.render({ go, navigate, query, setQuery })}
+          {duringSetup && <SecurityControlsNav current={page.id} />}
+          {sections.length === 1
+            ? sections[0].render(ctx)
+            : <FoldedPage page={page} sections={sections} focus={focus} ctx={ctx} listed={!duringSetup} />}
         </div>
       </div>
     </div>
   )
 }
 
-/** The pages setup never holds, named on each of them while setup holds the rest. In Settings' own
- *  order and under Settings' own labels, so they read as the pages they are; this page is named
- *  rather than linked, and marked as the one open. */
+/** The room left above a section's heading when a link scrolls to it, in px. */
+const SECTION_TOP_GAP = 24
+
+/** A page holding several sections: its title, a list of them, then each under its own heading.
+ *  The page draws the section headings (each panel's own title gives way to it, and its headings
+ *  move a level down: `SectionDepthProvider`), so the outline is h1 page, h2 section, h3 within.
+ *  `focus` is the section `?section=` names: scrolled to, and its heading focused, so a link to it
+ *  lands the keyboard where the eye goes. */
+function FoldedPage({ page, sections, focus, ctx, listed }: {
+  page: SettingsPageDef; sections: SettingsSection[]; focus?: string; ctx: PanelCtx
+  /** Whether to list the sections at the top. Not while setup holds the other pages: the Security
+   *  controls list above is the page's one navigation then, and names these sections already. */
+  listed: boolean
+}) {
+  const headings = useRef(new Map<string, HTMLHeadingElement>())
+  useEffect(() => {
+    const heading = focus ? headings.current.get(focus) : undefined
+    if (!heading) return
+    // The page's own scroll box, and only it: `scrollIntoView` scrolls every scrollable ancestor,
+    // and moved the shell itself up under the window, top bar and all.
+    const box = heading.closest('.overflow-y-auto')
+    if (box) box.scrollTop += heading.getBoundingClientRect().top - box.getBoundingClientRect().top - SECTION_TOP_GAP
+    heading.focus({ preventScroll: true })
+  }, [focus, page.id])
+  return (
+    <>
+      <h1 className={`${listed ? 'mb-s' : 'mb-2xl'} text-on-surface`} data-type="title-l">{page.label}</h1>
+      {listed && (
+        <nav aria-label="On this page" className="mb-2xl">
+          <ul className="flex flex-wrap gap-x-l gap-y-xs">
+            {sections.map((s) => (
+              <li key={s.id}>
+                <TextLink href={`#/settings/${page.id}?section=${s.id}`} size="sm" ink="emphasis">{s.label}</TextLink>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      )}
+      <SectionDepthProvider value={1}>
+        {sections.map((s) => (
+          <section key={s.id} aria-labelledby={`section-${s.id}`} className="mb-3xl">
+            {/* Focusable only from code (`tabIndex={-1}`), never a tab stop: focus lands here to put a
+                screen reader and the next Tab at the section, and the global ring marks it for a
+                keyboard user who followed a link here. */}
+            <h2 id={`section-${s.id}`} tabIndex={-1} ref={(el) => { if (el) headings.current.set(s.id, el); else headings.current.delete(s.id) }}
+              data-type="title-l" className="mb-xs rounded-sm text-on-surface">{s.label}</h2>
+            {s.render(ctx)}
+          </section>
+        ))}
+      </SectionDepthProvider>
+    </>
+  )
+}
+
+/** The sections setup never holds, named on each page that holds one while setup holds the rest. In
+ *  Settings' own order and under Settings' own labels, so they read as the places they are; the page
+ *  open is named rather than linked, and marked as the one open. */
 function SecurityControlsNav({ current }: { current: string }) {
   return (
     <nav aria-label="Security controls" className="mb-l">
@@ -216,11 +299,11 @@ function SecurityControlsNav({ current }: { current: string }) {
         Setup isn&rsquo;t finished. These pages never wait for it:
       </p>
       <ul className="mt-xs flex flex-wrap gap-x-l gap-y-xs">
-        {SUBPAGES.filter((s) => OPEN_DURING_SETUP.includes(s.id)).map((s) => (
+        {SECTIONS.filter((s) => OPEN_DURING_SETUP.includes(s.id)).map((s) => (
           <li key={s.id}>
-            {s.id === current
+            {pageOfSection(s.id)?.id === current
               ? <span data-type="body-s" aria-current="page" className="text-on-surface">{s.label}</span>
-              : <TextLink href={`#/settings/${s.id}`} size="sm" ink="emphasis">{s.label}</TextLink>}
+              : <TextLink href={`#/${sectionAddress(s.id)}`} size="sm" ink="emphasis">{s.label}</TextLink>}
           </li>
         ))}
       </ul>

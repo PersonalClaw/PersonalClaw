@@ -144,7 +144,7 @@ export function TriageDigestCard() {
                   `link-in-text-block` (serious) fires when it is distinguishable from the surrounding
                   prose by colour alone — measured on #/inbox in CI. The app's standalone links keep
                   `hover:underline` because that rule only applies to a link inside a text block. */}
-              <a href="#/settings/inbox" className={`text-primary-emphasis underline max-lg:inline-flex max-lg:items-center ${TOUCH_TARGET}`}>Settings → Inbox</a>.
+              <a href="#/settings/notifications?section=inbox" className={`text-primary-emphasis underline max-lg:inline-flex max-lg:items-center ${TOUCH_TARGET}`}>Settings → Inbox</a>.
             </p>
           </div>
         </div>
@@ -167,7 +167,7 @@ export function TriageDigestCard() {
               triage rules are kept — turning it back on picks up exactly where you left off.
             </p>
             <p data-type="body-s" className="mt-s">
-              <TextLink href="#/settings/inbox" ink="emphasis">Turn triage on in Settings → Inbox</TextLink>
+              <TextLink href="#/settings/notifications?section=inbox" ink="emphasis">Turn triage on in Settings → Inbox</TextLink>
             </p>
           </div>
         </div>

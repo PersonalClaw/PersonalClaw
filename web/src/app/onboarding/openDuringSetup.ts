@@ -1,3 +1,5 @@
+import { pageById, pageOfSection } from '../../pages/settings/settingsPages'
+
 /** The pages first-run setup never stands in front of.
  *
  *  A home whose setup is not done is pulled into the flow on every route (`App.tsx`'s guard),
@@ -7,7 +9,7 @@
  *  wait for setup to end. Held behind it, the terminal (`personalclaw logout`) was the only way to
  *  sign a device out of a fresh home, and nothing reachable could suspend unattended work.
  *
- *  Settings subpage ids:
+ *  Settings section ids (each a page of its own until #5897, and a section of a page now):
  *
  *   · `devices` — sign out one device, every other one, or an integration token;
  *   · `security` — replace the sign-in key, which signs every device out at once;
@@ -20,8 +22,18 @@
  *  become the whole app, with setup reduced to a screen nobody is shown. */
 export const OPEN_DURING_SETUP: readonly string[] = ['devices', 'security', 'guardrails', 'external-access', 'sender-trust']
 
-/** Whether `#/<route>/<sub>` is one of them. Exact on the subpage: a path below one is not a page
- *  Settings renders, so it is not one of these either. */
-export function opensDuringSetup(route: string, sub: string): boolean {
-  return route === 'settings' && OPEN_DURING_SETUP.includes(sub)
+/** Whether `#/<route>/<sub>?section=<section>` is one of them. Exact on the subpage: a path below one
+ *  is not a page Settings renders, so it is not one of these either.
+ *
+ *  Membership is a SECTION's, and a page holds several since #5897. An address that names a section
+ *  (`?section=`, or the section's own id as the router hands an old address before it is rewritten)
+ *  opens when that section is one of them, so `#/settings/security?section=audit` waits for setup
+ *  like the old `#/settings/audit` did. A page's own address opens when the page holds one of them,
+ *  and then shows only those (`SettingsPage`'s `duringSetup`). */
+export function opensDuringSetup(route: string, sub: string, section?: string): boolean {
+  if (route !== 'settings') return false
+  const page = pageById(sub) ?? pageOfSection(sub)
+  if (!page) return false
+  const named = page.id !== sub ? sub : section && page.sections.includes(section) ? section : undefined
+  return named ? OPEN_DURING_SETUP.includes(named) : page.sections.some((s) => OPEN_DURING_SETUP.includes(s))
 }

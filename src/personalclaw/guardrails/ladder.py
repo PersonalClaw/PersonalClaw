@@ -698,7 +698,11 @@ def _file_proposal(key: str, next_rung: str, record: str) -> bool:
                 f"{record} You can promote it in Settings → Guardrails, or leave it where "
                 "it is. Nothing changes until you do."
             ),
-            refs={"action_type": key, "rung": next_rung, "surface": "settings/guardrails"},
+            refs={
+                "action_type": key,
+                "rung": next_rung,
+                "surface": "settings/security?section=guardrails",
+            },
             dedup_key=f"autonomy_promotion:{key}:{next_rung}",
         )
         return True

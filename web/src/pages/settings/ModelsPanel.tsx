@@ -28,7 +28,7 @@ import { useStaleWriteGuard } from '../../lib/useStaleWriteGuard'
 import { useEmbeddingReindex } from '../../lib/useEmbeddingReindex'
 import { StaleWriteNotice } from '../../ui/StaleWriteNotice'
 import { confirm } from '../../ui/dialog'
-import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow } from './settingsUI'
+import { PanelHeader, Section, RowGroup, ToggleRow, NumberRow, useHeadingTag } from './settingsUI'
 import { notify } from '../../app/appSdk'
 import { FormSkeleton, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { fvs } from '../../design/fontWeight'
@@ -1350,6 +1350,7 @@ function UseCaseRow({ useCase, chain, allModels, localProviders, downloads, heal
  *  to write. The bounds are the PATCH allowlist's, so the control never offers a value the save path
  *  refuses. The gateway reads each one at its next call, so a change needs no restart. */
 function BackgroundLimits() {
+  const limitsHeading = useHeadingTag(3)
   const [cfg, setCfg] = useState<Record<string, unknown> | null>(null)
   const { data, error: loadErr, refresh } = useQuery('settings:background-limits', () =>
     api.personalclawConfig().then((c) => (c.background ?? {}) as Record<string, unknown>),
@@ -1376,7 +1377,7 @@ function BackgroundLimits() {
 
   return (
     <div className="flex flex-col gap-xs">
-      <Eyebrow as="h3">Limits</Eyebrow>
+      <Eyebrow as={limitsHeading}>Limits</Eyebrow>
       <p data-type="caption" className="text-on-surface-low">A change applies to the next call; nothing restarts.</p>
       <div className="rounded-lg bg-surface px-m">
         <NumberRow label="Time limit (seconds)" cfg={cfg} field="call_timeout_secs" min={30} max={3600} patch={patch}

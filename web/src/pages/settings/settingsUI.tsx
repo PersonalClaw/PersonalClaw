@@ -10,6 +10,7 @@ import { Toggle } from '../../ui/Toggle'
 import { confirm } from '../../ui/dialog'
 import { Surface } from '../../ui/Surface'
 import { FieldHintProvider, FieldLabelProvider, NumberField, Select, TextInput, useSyncedDraft } from '../../ui/forms'
+import { headingDepth, useHeadingTag, useInSection } from '../../ui/headingDepth'
 
 /** Shared settings-subpage primitives for consistent layout across panels. */
 
@@ -41,6 +42,13 @@ export function RowGroup({ children }: { children: ReactNode }) {
   return <Surface tone="container" radius="lg" className="px-l py-xs">{children}</Surface>
 }
 
+/** How deep a panel sits: 0 on a page of its own, 1 as one section of a page that holds several
+ *  (#5897). A folded page draws the section's heading itself (an `h2`, the section's name), so the
+ *  panel's own headings each move one level down (`useHeadingTag`) and its title gives way to that
+ *  one. The depth lives in `ui/headingDepth` because the shared empty and failure states read it too. */
+export const SectionDepthProvider = headingDepth.Provider
+export { useHeadingTag }
+
 /** A settings sub-route's page title, and therefore the TOP-LEVEL heading of that page — an `h1`.
  *  Measured before this: every `#/settings/*` route had **ZERO** `h1`s and its outline began at `h2`
  *  with nothing above it, while `#/settings` itself (`h1: Settings`) and every other destination
@@ -50,8 +58,12 @@ export function RowGroup({ children }: { children: ReactNode }) {
  *  OWN copy (`pages/inbox/InboxSettingsPanel.tsx`), which does not use this component — so no caller
  *  needs a lower level, and a prop for a hypothetical one would be speculative.
  *
+ *  As a section of a folded page (#5897) the title is the section heading the page already draws,
+ *  so only the hint is left here: two headings saying one name would be one too many.
+ *
  *  The tag changes; the size does not — `data-type="title-l"` drives that, so this is pixel-identical. */
 export function PanelHeader({ title, hint }: { title: string; hint?: string }) {
+  if (useInSection()) return hint ? <p data-type="body-s" className="mb-l text-on-surface-low">{hint}</p> : null
   return (
     <div className="mb-l">
       <h1 className="text-on-surface" data-type="title-l">{title}</h1>
@@ -91,11 +103,13 @@ export function Section({ title, hint, icon: Icon, iconTone = 'primary', right, 
   // `#/settings/guardrails` by 13.5%. So the extra markup appears ONLY when its slot is used —
   // no `right`, no wrapper; no `icon`, no flex on the heading — and those two panels went back to
   // 0%. A primitive gaining an option must be inert for everyone who does not pass it.
+  // One level deeper as a section of a folded page (#5897): `h3` under the page's section `h2`.
+  const Heading = useHeadingTag(2)
   const heading = title && (
-    <h2 data-type="title-m" className={`mb-s text-on-surface${Icon ? ' flex items-center gap-s' : ''}`} style={fvs(600)}>
+    <Heading data-type="title-m" className={`mb-s text-on-surface${Icon ? ' flex items-center gap-s' : ''}`} style={fvs(600)}>
       {Icon && <Icon size={16} className={`shrink-0 ${iconTone === 'muted' ? 'text-on-surface-low' : 'text-primary'}`} />}
       {title}
-    </h2>
+    </Heading>
   )
   // The hint stays raw (ratchet): it is a ReactNode slot, and DesignPanel passes a <strong>
   // that a role's inherited wght would flatten.

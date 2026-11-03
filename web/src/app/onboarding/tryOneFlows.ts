@@ -261,7 +261,7 @@ export function settingsTargetFor(e: unknown): SettingsTarget {
   }
   const other = backendFindings(e).find((f) => f.severity === 'error' && f.remediation)
   if (other) {
-    return { path: 'settings/doctor', label: 'Open Settings → Doctor', because: other.remediation }
+    return { path: 'settings/health?section=doctor', label: 'Open Settings → Doctor', because: other.remediation }
   }
 
   // 2. A machine-readable refusal status means a provider exists and said no.
@@ -278,14 +278,14 @@ export function settingsTargetFor(e: unknown): SettingsTarget {
   }
   if (isProviderFailure(message, status)) return PROVIDER_TARGET
   return {
-    path: 'settings/doctor',
+    path: 'settings/health?section=doctor',
     label: 'Open Settings → Doctor',
     because: 'Doctor checks the parts of your install this call depends on.',
   }
 }
 
 const PROVIDER_TARGET: SettingsTarget = {
-  path: 'settings/providers',
+  path: 'settings/models?section=providers',
   label: 'Open model provider settings',
   because: 'The provider passed its test and then refused this call — its key or plan is what to check.',
 }

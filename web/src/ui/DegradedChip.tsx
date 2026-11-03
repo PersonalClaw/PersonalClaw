@@ -215,7 +215,7 @@ export function DegradedChip({ className }: {
                   <div data-type="caption" className="mt-0.5 text-on-surface-var">{providerDown.detail}</div>
                 )}
                 <div className="mt-1">
-                  <TextLink href="#/settings/providers" icon={ArrowRight} iconPosition="trailing" size="xs"
+                  <TextLink href="#/settings/models?section=providers" icon={ArrowRight} iconPosition="trailing" size="xs"
                     onClick={() => { setOpen(false); triggerRef.current?.focus() }}>
                     {providerDown.rejected_credential ? 'Update its key in Settings → Providers' : 'Check it in Settings → Providers'}
                   </TextLink>

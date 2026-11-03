@@ -339,7 +339,12 @@ describe('a panel that owns its h1 does not skip a level', () => {
   it('the premises hold: PanelHeader is an h1 and Section is an h2', () => {
     const ui = readSource(join(process.cwd(), 'src/pages/settings/settingsUI.tsx'))
     expect(ui, 'PanelHeader must render the panel title as h1').toMatch(/<h1 className="text-on-surface"/)
-    expect(ui, 'Section must render its heading as h2').toMatch(/<h2 data-type="title-m" className=\{`mb-s text-on-surface/)
+    // An h2 on a page of its own: the tag is `useHeadingTag(2)`, which is one level deeper only
+    // inside a section of a folded page (#5897), where the page's own section heading is the h2.
+    expect(ui, 'Section must render its heading as h2').toMatch(/const Heading = useHeadingTag\(2\)[\s\S]*?<Heading data-type="title-m" className=\{`mb-s text-on-surface/)
+    const depth = readSource(join(process.cwd(), 'src/ui/headingDepth.ts'))
+    expect(depth, 'a heading is its written level outside a section').toMatch(/createContext\(0\)/)
+    expect(depth).toMatch(/return `h\$\{level \+ useContext\(HeadingDepth\)\}`/)
   })
 
   it('finds the population (not vacuously green)', () => {

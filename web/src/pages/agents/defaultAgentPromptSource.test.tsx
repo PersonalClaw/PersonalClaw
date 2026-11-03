@@ -62,7 +62,7 @@ describe('the default agent says where its prompt comes from', () => {
     mount(agentNamed('PersonalClaw'), true)
     expect(screen.getByText(/None of its own/)).toBeTruthy()
     const link = screen.getByRole('link', { name: 'Settings → Prompts' })
-    expect(link.getAttribute('href')).toBe('#/settings/prompts')
+    expect(link.getAttribute('href')).toBe('#/settings/agent?section=prompts')
   })
 
   it('a prompt the user wrote into it is shown instead', () => {

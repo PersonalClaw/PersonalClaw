@@ -19,15 +19,12 @@ import * as tiers from '../../e2e/routes'
 const VISITED_ROUTES = [
   'dashboard', 'chat', 'projects', 'knowledge', 'tasks', 'inbox', 'triggers', 'files', 'artifacts',
   'terminal', 'agents', 'tools', 'skills', 'learning', 'workflows', 'prompts', 'apps', 'settings',
-  'settings/account', 'settings/design', 'settings/chat', 'settings/providers', 'settings/models',
-  'settings/search', 'settings/prompts', 'settings/evals', 'settings/agent',
-  'settings/voice', 'settings/apps', 'settings/inbox', 'settings/documents', 'settings/notifications',
-  'settings/security', 'settings/secrets', 'settings/devices', 'settings/sender-trust',
-  'settings/guardrails', 'settings/external-access', 'settings/audit', 'settings/system',
-  'settings/doctor', 'settings/diagnostics', 'settings/tool-output', 'settings/feedback',
-  'settings/usage', 'settings/routing', 'settings/legibility', 'settings/workflows',
-  'settings/loops', 'settings/ambient', 'settings/companion', 'settings/sources', 'settings/packs',
-  'settings/archive', 'settings/portability', 'settings/durability', 'settings/updates',
+  // Settings' forty pages, at the seventeen addresses that hold them now (#5897): each page that
+  // became a section is visited, and scanned, on the page it moved to, as Memory was below.
+  'settings/design', 'settings/account', 'settings/chat', 'settings/notifications', 'settings/voice',
+  'settings/models', 'settings/agent', 'settings/evals', 'settings/automations', 'settings/apps',
+  'settings/usage', 'settings/security', 'settings/devices', 'settings/health', 'settings/secrets',
+  'settings/durability', 'settings/updates',
   'knowledge?view=graph', 'knowledge/item/not-a-real-item?read=1', 'mission-control',
   'notifications', 'discover', 'app/not-a-real-app', 'app/e2e-ui-fixture',
   // Settings › Memory, the same page at the address it moved to: Library's Memory tab (#3815).

@@ -150,7 +150,9 @@ afterEach(cleanup)
 describe('a home whose setup is not done reaches the controls that cut off access', () => {
   it('Settings › Devices opens, not setup', async () => {
     openAt('#/settings/devices')
-    expect(await pageHeading('Devices')).toBeTruthy()
+    // Devices is a section of Devices & Access since #5897, and the page opens on it.
+    expect(await pageHeading('Devices & Access')).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 2, name: 'Devices' })).toBeTruthy()
     expect(screen.queryByRole('heading', { name: /^Welcome to / }), 'setup stood in front of Devices').toBeNull()
     expect(screen.queryByText(/Setup comes first/)).toBeNull()
     expect(location.hash).toBe('#/settings/devices')
@@ -181,13 +183,35 @@ describe('a home whose setup is not done reaches the controls that cut off acces
   })
 
   it('External access and Sender trust open too', async () => {
+    // Their old addresses open their sections on Devices & Access (#5897), at the section.
     openAt('#/settings/external-access')
-    // The panel titles itself "External Access"; Settings lists it as "External access".
-    expect(await pageHeading(/^External access$/i)).toBeTruthy()
+    expect(await pageHeading('Devices & Access')).toBeTruthy()
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('External access'))
     cleanup()
     openAt('#/settings/sender-trust')
-    expect(await pageHeading('Sender trust')).toBeTruthy()
+    expect(await pageHeading('Devices & Access')).toBeTruthy()
+    await waitFor(() => expect(document.activeElement?.textContent).toBe('Sender trust'))
     expect(screen.queryByRole('heading', { name: /^Welcome to / })).toBeNull()
+  })
+
+  // 🔑 MEMBERSHIP IS A SECTION'S. A page that holds one of these opens, and shows only those: the
+  // sections beside them run on setup's answers like any other page, and wait for it the same way.
+  it('Security and Devices & Access open with only the sections that never wait', async () => {
+    openAt('#/settings/security')
+    expect(await pageHeading('Security')).toBeTruthy()
+    const onSecurity = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+    expect(onSecurity).toEqual(['Security', 'Guardrails'])
+    cleanup()
+    openAt('#/settings/devices')
+    expect(await pageHeading('Devices & Access')).toBeTruthy()
+    const onDevices = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
+    expect(onDevices).toEqual(['Devices', 'Sender trust', 'External access'])
+  })
+
+  it.each(['settings/audit', 'settings/security?section=audit', 'settings/companion'])('#/%s still waits for setup', async (route) => {
+    openAt(`#/${route}`)
+    expect(await setupHeading()).toBeTruthy()
+    expect(await screen.findByText(/Setup comes first/)).toBeTruthy()
   })
 })
 
@@ -219,7 +243,7 @@ describe('the pages that run on setup’s answers still wait for it', () => {
     openAt(`#/${route}`)
     expect(await setupHeading()).toBeTruthy()
     expect(await screen.findByText(/Setup comes first/)).toBeTruthy()
-    expect(screen.queryByRole('heading', { level: 1, name: 'Devices' })).toBeNull()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Devices & Access' })).toBeNull()
   })
 
   // What setup keeps is the address asked for, query and all, once the router has moved a retired
@@ -244,7 +268,7 @@ describe('the pages that run on setup’s answers still wait for it', () => {
     openAt('#/settings/providers')
     expect(await screen.findByText(/Setup comes first/)).toBeTruthy()
     location.hash = '#/settings/devices'
-    expect(await pageHeading('Devices')).toBeTruthy()
+    expect(await pageHeading('Devices & Access')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Back to setup' }))
     expect(await setupHeading()).toBeTruthy()
     expect(await screen.findByText(/Setup comes first/)).toBeTruthy()
@@ -261,7 +285,7 @@ describe('setup and the controls lead to each other', () => {
 
   it('from a control page the way back is setup, not the Settings home', async () => {
     openAt('#/settings/devices')
-    await pageHeading('Devices')
+    await pageHeading('Devices & Access')
     expect(screen.queryByRole('button', { name: 'Back to Settings' }), 'the Settings home waits for setup').toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Back to setup' }))
     expect(await setupHeading()).toBeTruthy()
@@ -271,11 +295,14 @@ describe('setup and the controls lead to each other', () => {
   it('each control page names the others, and nothing else', async () => {
     openAt('#/settings/devices')
     const nav = await screen.findByRole('navigation', { name: 'Security controls' })
-    // In Settings' own order, this page named rather than linked.
+    // In Settings' own order, the sections on this page named rather than linked, and each of the
+    // others by the address of its section.
     expect(within(nav).getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
-      '#/settings/security', '#/settings/sender-trust', '#/settings/guardrails', '#/settings/external-access',
+      '#/settings/security', '#/settings/security?section=guardrails',
     ])
-    expect(within(nav).getByText('Devices').getAttribute('aria-current')).toBe('page')
+    for (const here of ['Devices', 'Sender trust', 'External access']) {
+      expect(within(nav).getByText(here).getAttribute('aria-current'), here).toBe('page')
+    }
     // The rail is not drawn: every destination on it but these would only lead back to setup.
     expect(screen.getAllByRole('navigation'), 'the only navigation on the page is these pages').toEqual([nav])
   })
@@ -292,7 +319,7 @@ describe('a deliberate re-run holds the pages the same way, so it opens them the
     const door = await screen.findByRole('link', { name: 'Security controls' })
     expect(door.getAttribute('href')).toBe('#/settings/devices')
     location.hash = '#/settings/devices'
-    expect(await pageHeading('Devices')).toBeTruthy()
+    expect(await pageHeading('Devices & Access')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Back to Settings' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Back to setup' }))
     expect(await screen.findByRole('heading', { name: 'Setup, again' })).toBeTruthy()

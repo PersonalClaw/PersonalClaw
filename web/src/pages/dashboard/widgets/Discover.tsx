@@ -75,7 +75,7 @@ export function Discover({ navigate }: RouteProps) {
         // sets `text-on-surface` — so which ink won was decided by stylesheet ORDER, the hazard
         // `ui/Button`'s own `ghost-accent` note documents. The deck's "See all" footer below keeps
         // its `Button`: it belongs to the deck, not to a slot's sentence.
-        action={<SlotAction icon={Settings} onClick={() => navigate('settings/legibility')}>Open Settings</SlotAction>}
+        action={<SlotAction icon={Settings} onClick={() => navigate('settings/agent?section=legibility')}>Open Settings</SlotAction>}
       >
         Discover tips are off.
       </SlotEmptyState>

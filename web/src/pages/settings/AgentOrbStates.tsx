@@ -4,7 +4,7 @@ import { AgentOrb } from '../../ui/AgentOrb'
 import { Button } from '../../ui/Button'
 import { Eyebrow } from '../../ui/Eyebrow'
 import { WORK_PHASES, phaseFamily, phaseLabel, type PhaseFamily } from '../../lib/workPhase'
-import { Section } from './settingsUI'
+import { Section, useHeadingTag } from './settingsUI'
 
 // ── Settings → Design: the agent orb's states ───────────────────────────────────────────────────
 //
@@ -23,6 +23,7 @@ const FAMILIES: { family: PhaseFamily; title: string }[] = [
 ]
 
 export function AgentOrbStates() {
+  const familyHeading = useHeadingTag(3)
   const [open, setOpen] = useState(false)
   const id = useId()
   return (
@@ -37,7 +38,7 @@ export function AgentOrbStates() {
         <div data-orb-gallery className="flex flex-col gap-l bg-surface-container p-m rounded-lg">
           {FAMILIES.map(({ family, title }) => (
             <div key={family} role="group" aria-labelledby={`${id}-${family}`} data-orb-family={family}>
-              <Eyebrow as="h3" id={`${id}-${family}`} className="mb-s">{title}</Eyebrow>
+              <Eyebrow as={familyHeading} id={`${id}-${family}`} className="mb-s">{title}</Eyebrow>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-s">
                 {WORK_PHASES.filter((phase) => phaseFamily(phase) === family).map((phase) => (
                   <div key={phase} data-orb-state={phase} className="flex flex-col items-center gap-s rounded-lg bg-surface px-s py-m">

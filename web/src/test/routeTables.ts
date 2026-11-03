@@ -8,8 +8,9 @@ import { withoutComments } from './domCensus'
 // one derive it from the two tables the app itself routes by, read from source:
 //
 //   · `renderPage` in `app/App.tsx`, one `case '<route>': return <Page …/>` per top-level route;
-//   · `SUBPAGES` in `pages/settings/SettingsPage.tsx`, one `{ id: '<id>', …, render: … <Panel …/> }`
-//     per settings sub-page, routed as `settings/<id>`.
+//   · `SECTIONS` in `pages/settings/SettingsPage.tsx`, one `{ id: '<id>', …, render: … <Panel …/> }`
+//     per settings section, routed as `settings/<id>`: the section's own address, which opens it on
+//     the page that holds it (#5897).
 //
 // Each entry's component is followed to the module it comes from (a named import, or a
 // `lazy(() => import(…))`), and from there along the module's relative imports to everything the
@@ -71,7 +72,7 @@ function block(code: string, start: number): string {
   return code.slice(open)
 }
 
-/** Every entry of `renderPage` (in `app`) and of `SUBPAGES` (in `settings`), in table order. Each
+/** Every entry of `renderPage` (in `app`) and of `SECTIONS` (in `settings`), in table order. Each
  *  table must be found and read, or this throws: a census over a table it could not read would
  *  pass over nothing. */
 export function routeRoots(tree: Tree, src: string): RouteRoot[] {
@@ -92,10 +93,10 @@ export function routeRoots(tree: Tree, src: string): RouteRoot[] {
   for (const [, route, component] of cases) add(app, route, component)
 
   const settingsCode = withoutComments(tree.read(settings))
-  const sub = settingsCode.search(/\bconst\s+SUBPAGES\b[^=]*=\s*\[/)
-  if (sub < 0) throw new Error(`${settings}: no SUBPAGES`)
+  const sub = settingsCode.search(/\bconst\s+SECTIONS\b[^=]*=\s*\[/)
+  if (sub < 0) throw new Error(`${settings}: no SECTIONS`)
   const entries = [...block(settingsCode, settingsCode.indexOf('[', settingsCode.indexOf('=', sub))).matchAll(/\{\s*id:\s*'([^']+)'[^\n]*?render:[^\n]*?<(\w+)/g)]
-  if (!entries.length) throw new Error(`${settings}: SUBPAGES has no entries`)
+  if (!entries.length) throw new Error(`${settings}: SECTIONS has no entries`)
   for (const [, id, component] of entries) add(settings, `settings/${id}`, component)
   return out
 }

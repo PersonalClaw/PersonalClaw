@@ -42,7 +42,7 @@ describe('the chat provider half of the degraded chip', () => {
     expect(panel.textContent).toContain("Your chat model's provider, my-anthropic, isn't answering.")
     expect(panel.textContent).toContain('rejected the credential (HTTP 401)')
     const link = screen.getByRole('link', { name: /update its key in settings → providers/i })
-    expect(link.getAttribute('href')).toBe('#/settings/providers')
+    expect(link.getAttribute('href')).toBe('#/settings/models?section=providers')
   })
 
   it('stays silent for a connected, a still-checking, or an unmeasured chat provider', async () => {

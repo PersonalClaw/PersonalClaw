@@ -320,7 +320,7 @@ export function DailyBudgetSection({ budget }: { budget: UsageBudget }) {
         </span>
         {/* The cap is shown here and set in Guardrails: say where, so a refusal's "raise it" has a
             way there from the page that shows what was spent. */}
-        <TextLink href="#/settings/guardrails" icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis" className="self-start">
+        <TextLink href="#/settings/security?section=guardrails" icon={ArrowRight} iconPosition="trailing" size="xs" ink="emphasis" className="self-start">
           Change the cap in Settings → Guardrails
         </TextLink>
       </div>

@@ -170,7 +170,7 @@ export function SystemHealth({ navigate }: RouteProps) {
             loud; this is the same fact, one line long. Tone is `default`, not `danger` — we do not
             know that anything is wrong, only that we could not look. */}
         {!!doctorErr && !doctor && (
-          <RowAction tone="default" onClick={() => navigate('settings/doctor')}
+          <RowAction tone="default" onClick={() => navigate('settings/health?section=doctor')}
             title="The health probe could not be read — open Doctor to re-run it">
             <Stethoscope size={14} /> Health unknown
           </RowAction>
@@ -179,13 +179,13 @@ export function SystemHealth({ navigate }: RouteProps) {
             "Health unknown" — nothing is known to be wrong — and it opens the page that turns the
             Doctor back on. */}
         {doctorOff && !doctorErr && (
-          <RowAction tone="default" onClick={() => navigate('settings/doctor')}
+          <RowAction tone="default" onClick={() => navigate('settings/health?section=doctor')}
             title="The Doctor is switched off, so nothing is probing health — open it to turn it on">
             <Stethoscope size={14} /> Doctor off
           </RowAction>
         )}
         {doctor && !doctor.ok && (
-          <RowAction tone="danger" onClick={() => navigate('settings/doctor')}
+          <RowAction tone="danger" onClick={() => navigate('settings/health?section=doctor')}
             title={doctor.core_ok ? `${capLabel(doctor.worst)} degraded — open Doctor` : 'Gateway core failing — open Doctor'}>
             <Stethoscope size={14} /> {doctor.core_ok ? `${capLabel(doctor.worst)} degraded` : 'Core failing'}
           </RowAction>

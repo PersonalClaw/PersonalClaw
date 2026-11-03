@@ -190,7 +190,7 @@ export function NativeAgentDetail({ agent, isDefault, onSaved, onDeleted, onSetD
         <Section label="System prompt">
           <p className="text-on-surface-var text-[0.8125rem] leading-relaxed">
             None of its own — it answers with the prompt bound in{' '}
-            <TextLink href="#/settings/prompts" size="sm">Settings → Prompts</TextLink>
+            <TextLink href="#/settings/agent?section=prompts" size="sm">Settings → Prompts</TextLink>
             {' '}(Chat, or Background for unattended runs), using the names in Settings → Account. A prompt written here replaces that binding for this agent.
           </p>
         </Section>

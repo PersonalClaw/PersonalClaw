@@ -314,7 +314,7 @@ describe('the census of saves that replace what they read', () => {
           }
         }`,
       'pages/settings/SettingsPage.tsx': `import { DesignPanel } from "./DesignPanel"
-        const SUBPAGES: SubPage[] = [
+        const SECTIONS: SettingsSection[] = [
           { id: 'design', label: 'Design', icon: Palette, render: () => <DesignPanel /> },
         ]`,
       'pages/settings/DesignPanel.tsx': 'export function DesignPanel() { return null }',

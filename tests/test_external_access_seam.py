@@ -1192,6 +1192,9 @@ class TestOperatorSurface:
 
         root = Path(__file__).resolve().parents[1]
         page = (root / "web/src/pages/settings/SettingsPage.tsx").read_text()
+        pages = (root / "web/src/pages/settings/settingsPages.ts").read_text()
         routes = (root / "web/e2e/routes.ts").read_text()
         assert "id: 'external-access'" in page
-        assert "'external-access'" in routes
+        # A section of Devices & Access since #5897: the manifest scans that page, which renders it.
+        assert "sections: ['devices', 'sender-trust', 'external-access', 'companion']" in pages
+        assert "'devices'" in routes

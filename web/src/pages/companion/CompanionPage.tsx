@@ -293,7 +293,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
   let action: ReactNode = null
   if (data.backend === 'none') {
     line = 'Push is switched off for this gateway.'
-    action = <Button variant="secondary" size="sm" onClick={() => navigate('settings/companion')}>Settings</Button>
+    action = <Button variant="secondary" size="sm" onClick={() => navigate('settings/devices?section=companion')}>Settings</Button>
   } else if (data.backend === 'ntfy') {
     line = !data.ntfy_configured
       ? 'The backend is ntfy but no topic URL is configured.'
@@ -307,7 +307,7 @@ function PushRow({ navigate }: { navigate: RouteProps['navigate'] }) {
     const registered = data.relay_devices.includes(pushDeviceId())
     if (!data.relay_configured) {
       line = 'The backend is relay but no relay URL is configured.'
-      action = <Button variant="secondary" size="sm" onClick={() => navigate('settings/companion')}>Settings</Button>
+      action = <Button variant="secondary" size="sm" onClick={() => navigate('settings/devices?section=companion')}>Settings</Button>
     } else if (registered) {
       line = data.approval_targeted
         ? 'Push is on for this device.'

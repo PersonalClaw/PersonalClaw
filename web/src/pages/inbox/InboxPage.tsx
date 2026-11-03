@@ -654,7 +654,7 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
                 ? 'Messages, questions and notifications from your agents land here for triage — they post directly, so nothing needs connecting first. Add a filesystem or Slack source to collect from outside too.'
                 : 'Messages your agents and connected sources surface for triage land here. You’re all caught up.'}
             action={neverReceived && !narrowed && !pollConnected
-              ? { label: 'Add a message source', onClick: () => navigate('settings/inbox'), icon: SettingsIcon, className: TOUCH_TARGET }
+              ? { label: 'Add a message source', onClick: () => navigate('settings/notifications?section=inbox'), icon: SettingsIcon, className: TOUCH_TARGET }
               : undefined} />
         ) : (
           // Uncapped client-side — `filtered` is a pure filter over everything

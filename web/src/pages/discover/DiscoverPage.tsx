@@ -93,7 +93,7 @@ export function DiscoverPage({ navigate }: Pick<RouteProps, 'navigate'>) {
             icon={Compass}
             title="Discover is off"
             hint="Curated tips that guide you to the parts of PersonalClaw you haven't tried yet. Turn them back on in Settings › Legibility."
-            action={{ label: 'Open Settings', onClick: () => navigate('settings/legibility'), icon: Compass }}
+            action={{ label: 'Open Settings', onClick: () => navigate('settings/agent?section=legibility'), icon: Compass }}
           />
         ) : data.visible_count === 0 ? (
           // `visible_count: 0` has TWO causes and this branch used to congratulate the user

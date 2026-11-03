@@ -19,7 +19,7 @@ import { AgentOrbStates } from './AgentOrbStates'
 import { usePersonality } from '../../app/personality'
 import { DEFAULT_PERSONALITY } from '../../design/personalities'
 import { COLOR_GROUPS, BACKDROP_GROUPS, TYPOGRAPHY_GROUPS, LAYOUT_GROUPS, type Scheme } from '../../design/schemes'
-import { PanelHeader, Section } from './settingsUI'
+import { PanelHeader, Section, useHeadingTag } from './settingsUI'
 import { BUSY_REASON } from '../../ui/unavailable'
 
 /** Design subpage. Cleanly separated concerns:
@@ -28,6 +28,7 @@ import { BUSY_REASON } from '../../ui/unavailable'
  *   3. SHAPE — corner roundness.
  *  A scheme encapsulates ONLY colors; backdrop/motion/layout live outside it. */
 export function DesignPanel() {
+  const previewHeading = useHeadingTag(2)
   const { activeScheme, allSchemes, saveCustomScheme, deleteCustomScheme, themesLoading, resetAll } = useAppearance()
   // Scheme picks and "reset everything" go through the IDENTITY layer, not straight to
   // the appearance store: a personality is a whole identity (title, favicon, wordmark,
@@ -159,7 +160,7 @@ export function DesignPanel() {
 
       {/* ── live preview ── */}
       <section>
-        <Eyebrow as="h2" className="mb-s">Preview</Eyebrow>
+        <Eyebrow as={previewHeading} className="mb-s">Preview</Eyebrow>
         <Preview />
       </section>
 
@@ -288,6 +289,7 @@ function ColorEditor({ onSave, activeTheme }: {
   onSave: (label: string, emoji?: string) => Promise<string>
   activeTheme?: Scheme
 }) {
+  const groupHeading = useHeadingTag(3)
   const { currentColors, themeBase, readCustomScheme, updateCustomScheme, revertCustomScheme } = useAppearance()
   const [name, setName] = useState('')
   const [emoji, setEmoji] = useState('🎨')
@@ -364,7 +366,7 @@ function ColorEditor({ onSave, activeTheme }: {
           if (!tokens.length) return null
           return (
             <Surface key={group} tone="container" radius="lg" className="px-l py-m">
-              <Eyebrow as="h3" className="mb-1">{group}</Eyebrow>
+              <Eyebrow as={groupHeading} className="mb-1">{group}</Eyebrow>
               <div className="divide-y divide-outline-variant/30">
                 {tokens.map((t) => <ColorControl key={t.varName} token={t as ColorToken} />)}
               </div>

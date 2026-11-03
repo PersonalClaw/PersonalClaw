@@ -300,7 +300,8 @@ describe('every address the e2e manifest visits is catalogued', () => {
 
   it('🔑 every Settings page is an entry, with the release it shipped in', () => {
     const pages = manifest.SETTINGS_PANELS.map((id) => `settings/${id}`)
-    expect(pages.length, 'vacuity floor').toBeGreaterThanOrEqual(35)
+    // Seventeen since #5897: the pages that hold Settings' forty sections.
+    expect(pages.length, 'vacuity floor').toBeGreaterThanOrEqual(17)
     const byRoute = new Map(SHIPPED_ROUTES.map((e) => [e.route, e]))
     expect(pages.filter((p) => !byRoute.get(p)?.since), 'read its release from the tags').toEqual([])
   })

@@ -8,6 +8,7 @@ import { fadeEnter, spring } from '../design/motion'
 import { failedStatus, readableErrText, serverAnswered } from '../lib/errText'
 import { ApiError } from '../lib/api'
 import { PageTitle } from './PageTitle'
+import { useHeadingTag } from './headingDepth'
 import { Surface } from './Surface'
 
 /** Shared shell for the workspace/build list PAGES (design Tenet 2: list as a
@@ -61,11 +62,12 @@ export function LoadError({ what, error, onRetry }: {
   /** Re-runs the fetch. Omit only if the surface genuinely cannot retry. */
   onRetry?: () => void
 }) {
+  const Heading = useHeadingTag(2)
   return (
     <div role="alert" className="flex flex-col items-center gap-l py-2xl text-center">
       <AlertTriangle size={32} className="text-danger opacity-70" aria-hidden />
       <div>
-        <h2 data-type="headline-s" className="text-on-surface">Couldn't load your {what}</h2>
+        <Heading data-type="headline-s" className="text-on-surface">Couldn't load your {what}</Heading>
         <p data-type="body-m" className="mt-1 max-w-[420px] text-on-surface-low">
           {/* The fallback used to read "Your ${what} are safe", which is ungrammatical for the many
               singular nouns callers pass ("Your project are safe"). Nothing on this component reads
@@ -104,11 +106,12 @@ export function EmptyState({ icon: Icon, title, hint, action, footer }: {
   /** Under the action: what else the page offers while it is empty, such as a Discover tip. */
   footer?: ReactNode
 }) {
+  const Heading = useHeadingTag(2)
   return (
     <div className="flex flex-col items-center gap-l py-2xl text-center">
       {Icon ? <span className="inline-flex size-12 items-center justify-center rounded-xl" style={{ background: 'color-mix(in srgb, var(--color-primary) 14%, transparent)' }}><Icon size={26} className="text-primary" /></span> : <Spark size={36} />}
       <div>
-        <h2 data-type="headline-s" className="text-on-surface">{title}</h2>
+        <Heading data-type="headline-s" className="text-on-surface">{title}</Heading>
         {hint && <p data-type="body-m" className="mt-1 max-w-[420px] text-on-surface-low">{hint}</p>}
       </div>
       {action && (

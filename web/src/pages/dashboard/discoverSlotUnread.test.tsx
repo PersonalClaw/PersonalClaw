@@ -116,7 +116,7 @@ describe('the dashboard Discover slot distinguishes failed, unread and off', () 
     // Keyboard-reachable, and it goes where the setting actually lives.
     const cta = screen.getByRole('button', { name: /Open Settings/i })
     await userEvent.click(cta)
-    expect(navigate).toHaveBeenCalledWith('settings/legibility')
+    expect(navigate).toHaveBeenCalledWith('settings/agent?section=legibility')
     expect(screen.queryByText(FAILED)).toBeNull()
   })
 
@@ -153,7 +153,7 @@ describe('the split lives in the shared feed, and matches its already-correct si
     const page = read('pages/discover/DiscoverPage.tsx')
     for (const [what, src] of [['widget', widget], ['page', page]] as const) {
       expect(src, `${what} must route the off case to the legibility settings`).toMatch(
-        /navigate\('settings\/legibility'\)/,
+        /navigate\('settings\/agent\?section=legibility'\)/,
       )
     }
     // And the widget no longer conflates the three conditions in one condition.

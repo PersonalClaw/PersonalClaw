@@ -942,7 +942,7 @@ async def _resolve_doctor_finding(entity_id: str, state) -> InvestigateContext |
         id=entity_id,
         title=f"Doctor: {capability}",
         snapshot="\n".join(lines),
-        back_link="#/settings/doctor",
+        back_link="#/settings/health?section=doctor",
         opening_prompt=(
             "Everything here looks healthy — what does this check actually verify?"
             if healthy
@@ -985,7 +985,7 @@ def _resolve_crash_report(entity_id: str, state) -> InvestigateContext | None:
         id=entity_id,
         title=f"Crash: {exc.get('type') or crash.get('kind')}",
         snapshot="\n".join(lines),
-        back_link="#/settings/doctor",
+        back_link="#/settings/health?section=doctor",
         opening_prompt="What caused this crash, and is it likely to happen again?",
     )
 
