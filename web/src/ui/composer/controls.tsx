@@ -6,6 +6,7 @@ import { Popover, MenuRow } from '../Popover'
 import { Button } from '../Button'
 import { physics } from '../../design/motion'
 import { cx } from '../cx'
+import { menuCursorKeydown, useMenuCursor } from '../../lib/useMenuCursor'
 import type { ComposerData } from './types'
 import type { ApprovalMode, ModelItem, ReasoningEffort } from '../../lib/api'
 import type { AskBeforeSwitch, SwitchQuestion } from './dearerSwitch'
@@ -230,9 +231,9 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, se
       setNote('')
     }
   }
-  const effortBlock = (close: () => void) => levels.length > 0 && (
+  const effortBlock = (close: () => void, stop: () => number) => levels.length > 0 && (
     <div className="pl-l">
-      <button type="button" aria-expanded={effortOpen} onClick={() => setEffortOpen((v) => !v)}
+      <button type="button" role="menuitem" tabIndex={stop()} aria-expanded={effortOpen} onClick={() => setEffortOpen((v) => !v)}
         data-type="label-s"
         className="flex w-full items-center gap-s rounded-md px-m py-s text-left text-on-surface-var hover:bg-surface-high active:bg-surface-high transition-colors">
         <Gauge size={14} strokeWidth={2} className="shrink-0" />
@@ -242,7 +243,7 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, se
       {effortOpen && (
         <div role="group" aria-label="Effort">
           {rows.map((l) => (
-            <MenuRow key={l.value || 'default'} label={l.label} selected={l.value === effort}
+            <MenuRow key={l.value || 'default'} role="menuitemradio" tabIndex={stop()} label={l.label} selected={l.value === effort}
               onClick={() => { onSelect({ reasoning: l.value as ReasoningEffort }); setNote(''); close() }} />
           ))}
         </div>
@@ -282,80 +283,107 @@ export function AgentModelPill({ data, agent, model, effort, onSelect, parts, se
               onKeep={() => { asking.current++; setQuestion(null); close() }}
               onSwitch={() => { const q = question; if (!q.ask) return; q.ask.switched(); asking.current++; setQuestion(null); pick({ model: q.value }, q.label); close() }} />
           )
-          const modelRow = (key: string, rowLabel: string, value: string, hint: string, selected: boolean, item?: ModelItem) => (
-            <Fragment key={key}>
-              <MenuRow icon={<Cpu size={16} />} label={rowLabel} hint={hint} selected={selected}
-                onClick={() => chooseModel(value, rowLabel, item)} />
-              {selected && effortBlock(close)}
-            </Fragment>
-          )
           const anySelected = onAuto || (acp ? acpModels.includes(model) : (data?.models ?? []).some((m) => m.name === model))
+          // The rows in the order the menu draws them: what the cursor counts, and where it opens.
+          const agentNames = showAgent ? [...native.map((a) => a.name), ...discovered.flatMap(([, ds]) => ds.map((d) => d.name))] : []
+          const modelValues = showModel ? ['Auto', ...(acp ? acpModels : (data?.models ?? []).map((m) => m.name))] : []
+          const retryRow = showAgent && total === 0 && ready && !!agentsErr && !!retry
+          const effortRows = levels.length > 0 && (showAgent || showModel) ? 1 + (effortOpen ? rows.length : 0) : 0
+          const count = agentNames.length + (retryRow ? 1 : 0) + modelValues.length + effortRows
+          const startAt = Math.max(0, showAgent ? agentNames.indexOf(agent) : modelValues.indexOf(onAuto ? 'Auto' : model))
           return (
-            <div className="flex max-h-[420px] flex-col">
-              {showSearch && (
-                <div className="relative shrink-0 px-1 pb-1">
-                  <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
-                  <input id={searchId} autoComplete="off" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
-                    data-type="body-s"
-                    className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
-                </div>
-              )}
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                {showAgent && (
-                  <div role="group" aria-labelledby={showModel ? agentHeading : undefined}>
-                    {showModel && <div id={agentHeading} data-type="caption" className={heading}>Agent</div>}
-                    {native.map((a) => (
-                      <MenuRow key={a.name} label={a.name} selected={a.name === agent} onClick={() => { pick({ agent: a.name }, a.name); close() }} />
-                    ))}
-                    {discovered.map(([rt, agents]) => (
-                      <div key={rt}>
-                        <div data-type="caption" className={heading}>{rt}</div>
-                        {agents.map((d) => (
-                          <MenuRow key={d.id} label={d.name} hint={cleanAgentHint(d.description)} selected={d.name === agent} onClick={() => { pick({ agent: d.name }, d.name); close() }} />
-                        ))}
-                      </div>
-                    ))}
-                    {noMatches && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents match “{q.trim()}”</div>}
-                    {/* 🔑 THREE STATES, NOT ONE. `total === 0` used to print "No agents available" on all
-                        three, and two of them are false. `useComposerData` seeds every list to `[]` and
-                        readies via `Promise.allSettled`, so an unread roster and a REJECTED roster read are
-                        both `[]` — indistinguishable from a user who genuinely has no agents installed.
-                        "No agents available" is a statement about the user's own setup, the kind they
-                        believe, so on an unreachable gateway it sent them looking for a problem in their
-                        install. The order below is deliberate: not-yet-known, then could-not-be-read, then
-                        the one real emptiness. */}
-                    {total === 0 && (
-                      !ready
-                        ? <div data-type="body-s" className="px-m py-2 text-on-surface-low">Loading agents…</div>
-                        : agentsErr
-                          ? <div role="alert" className="px-m py-2">
-                              <p data-type="body-s" className="text-on-surface-low">Couldn’t load your agents — this is a load error, nothing is missing from your setup.</p>
-                              {retry && <Button variant="ghost-accent" size="xs" onClick={() => retry()} className="mt-1"><RotateCcw size={13} /> Try again</Button>}
-                            </div>
-                          : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents available</div>
-                    )}
-                    {!showModel && effortBlock(close)}
-                  </div>
-                )}
-                {showModel && (
-                  <div role="group" aria-labelledby={showAgent ? modelHeading : undefined} className={cx(showAgent && 'mt-xs border-t border-outline-variant/30')}>
-                    {showAgent && <div id={modelHeading} data-type="caption" className={heading}>Model</div>}
-                    {modelRow('auto', 'Auto', 'Auto', autoHint, onAuto)}
-                    {acp
-                      ? acpModels.length > 0
-                        ? acpModels.map((m) => modelRow(m, m, m, acp.runtime, m === model))
-                        : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No selectable models — this runtime uses its own default.</div>
-                      : (data?.models ?? []).map((m) => modelRow(m.name, m.model_name || m.name, m.name, m.provider, m.name === model, m))}
-                    {!anySelected && effortBlock(close)}
-                    {/* Precedence explainer: the pick sits one level
-                        above the use-case chain — it never replaces the chain, only fronts it. */}
-                    <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
-                      A picked model overrides this session's use-case chain; if it fails, the chain takes over.
+            // With the search field shown, focus starts in the field and the first arrow moves it to
+            // the rows; without it, focus opens on the chat's own agent (or model).
+            <MenuCursor count={count} initialIndex={startAt} autoFocus={!showSearch}>{({ ref, move, tabIndexFor }) => {
+              /** Each row's roving tab stop, handed out in the order the rows are drawn. */
+              let at = 0
+              const stop = () => tabIndexFor(at++)
+              const modelRow = (key: string, rowLabel: string, value: string, hint: string, selected: boolean, item?: ModelItem) => (
+                <Fragment key={key}>
+                  <MenuRow role="menuitemradio" tabIndex={stop()} icon={<Cpu size={16} />} label={rowLabel} hint={hint} selected={selected}
+                    onClick={() => chooseModel(value, rowLabel, item)} />
+                  {selected && effortBlock(close, stop)}
+                </Fragment>
+              )
+              return (
+                <div className="flex max-h-[420px] flex-col">
+                  {showSearch && (
+                    <div className="relative shrink-0 px-1 pb-1">
+                      <Search size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-low" />
+                      {/* The arrows go from the field to the rows; Home, End and Tab stay the field's. */}
+                      <input id={searchId} autoComplete="off" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents" autoFocus
+                        onKeyDown={(e) => { if (VERTICAL.includes(e.key)) menuCursorKeydown(e.nativeEvent, { move, dismiss: close }) }}
+                        data-type="body-s"
+                        className="h-8 w-full rounded-md bg-surface-high pl-8 pr-2 text-on-surface placeholder:text-on-surface-low outline-none focus:ring-2 focus:ring-inset focus:ring-primary" />
                     </div>
+                  )}
+                  <div ref={ref} role="menu" aria-label={dimension} className="min-h-0 flex-1 overflow-y-auto"
+                    onKeyDown={(e) => {
+                      // Shift+Tab from a row goes back to the search field above it, which is still this menu's.
+                      if (e.key === 'Tab' && e.shiftKey && showSearch) return
+                      menuCursorKeydown(e.nativeEvent, { move, dismiss: close })
+                    }}>
+                    {showAgent && (
+                      <div role="group" aria-labelledby={showModel ? agentHeading : undefined}>
+                        {showModel && <div id={agentHeading} data-type="caption" className={heading}>Agent</div>}
+                        {native.map((a) => (
+                          <MenuRow key={a.name} role="menuitemradio" tabIndex={stop()} label={a.name} selected={a.name === agent} onClick={() => { pick({ agent: a.name }, a.name); close() }} />
+                        ))}
+                        {discovered.map(([rt, agents]) => (
+                          <div key={rt}>
+                            <div data-type="caption" className={heading}>{rt}</div>
+                            {agents.map((d) => (
+                              <MenuRow key={d.id} role="menuitemradio" tabIndex={stop()} label={d.name} hint={cleanAgentHint(d.description)} selected={d.name === agent} onClick={() => { pick({ agent: d.name }, d.name); close() }} />
+                            ))}
+                          </div>
+                        ))}
+                        {noMatches && <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents match “{q.trim()}”</div>}
+                        {/* 🔑 THREE STATES, NOT ONE. `total === 0` used to print "No agents available" on all
+                            three, and two of them are false. `useComposerData` seeds every list to `[]` and
+                            readies via `Promise.allSettled`, so an unread roster and a REJECTED roster read are
+                            both `[]` — indistinguishable from a user who genuinely has no agents installed.
+                            "No agents available" is a statement about the user's own setup, the kind they
+                            believe, so on an unreachable gateway it sent them looking for a problem in their
+                            install. The order below is deliberate: not-yet-known, then could-not-be-read, then
+                            the one real emptiness. */}
+                        {total === 0 && (
+                          !ready
+                            ? <div data-type="body-s" className="px-m py-2 text-on-surface-low">Loading agents…</div>
+                            : agentsErr
+                              ? <>
+                                  <div role="alert" className="px-m py-2">
+                                    <p data-type="body-s" className="text-on-surface-low">Couldn’t load your agents — this is a load error, nothing is missing from your setup.</p>
+                                  </div>
+                                  {/* A row of the menu, so the arrows reach it: outside the alert, whose role
+                                      would come between the item and its menu. */}
+                                  {retry && <MenuRow role="menuitem" tabIndex={stop()} icon={<RotateCcw size={13} />} label="Try again" onClick={() => retry()} />}
+                                </>
+                              : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No agents available</div>
+                        )}
+                        {!showModel && effortBlock(close, stop)}
+                      </div>
+                    )}
+                    {showModel && (
+                      <div role="group" aria-labelledby={showAgent ? modelHeading : undefined} className={cx(showAgent && 'mt-xs border-t border-outline-variant/30')}>
+                        {showAgent && <div id={modelHeading} data-type="caption" className={heading}>Model</div>}
+                        {modelRow('auto', 'Auto', 'Auto', autoHint, onAuto)}
+                        {acp
+                          ? acpModels.length > 0
+                            ? acpModels.map((m) => modelRow(m, m, m, acp.runtime, m === model))
+                            : <div data-type="body-s" className="px-m py-2 text-on-surface-low">No selectable models — this runtime uses its own default.</div>
+                          : (data?.models ?? []).map((m) => modelRow(m.name, m.model_name || m.name, m.name, m.provider, m.name === model, m))}
+                        {!anySelected && effortBlock(close, stop)}
+                        {/* Precedence explainer: the pick sits one level
+                            above the use-case chain — it never replaces the chain, only fronts it. */}
+                        <div data-type="caption" className="border-t border-outline-variant/30 px-m py-2 text-on-surface-low">
+                          A picked model overrides this session's use-case chain; if it fails, the chain takes over.
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
+              )
+            }}</MenuCursor>
           )
         }}
       </Popover>
@@ -372,6 +400,20 @@ function OnClose({ open, onClose }: { open: boolean; onClose: () => void }) {
     was.current = open
   }, [open, onClose])
   return null
+}
+
+/** The keys the agent search field hands to the menu's cursor. */
+const VERTICAL = ['ArrowDown', 'ArrowUp']
+
+/** The shared cursor (`lib/useMenuCursor`) for a menu drawn in a render prop: the hook needs a
+ *  component that mounts and unmounts with the flyout, and the rows are the pill's own closures. */
+function MenuCursor({ count, initialIndex, autoFocus, children }: {
+  count: number; initialIndex: number; autoFocus: boolean
+  children: (cursor: { ref: React.RefObject<HTMLDivElement | null>; move: (delta: number) => void; tabIndexFor: (i: number) => number }) => ReactNode
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const { move, tabIndexFor } = useMenuCursor({ containerRef: ref, count, openKey: 'open', initialIndex, autoFocus })
+  return <>{children({ ref, move, tabIndexFor })}</>
 }
 
 /** The one question before a switch of model, in the menu's place until it is answered: Keep

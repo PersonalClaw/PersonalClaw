@@ -139,7 +139,7 @@ const pill = () => screen.getByRole('button', { name: /^Agent and model:/ })
 async function pickModel(label: string) {
   fireEvent.click(pill())
   await settle()
-  const row = screen.getAllByRole('button').find((b) => (b.textContent ?? '').startsWith(label))
+  const row = screen.getAllByRole('menuitemradio').find((b) => (b.textContent ?? '').startsWith(label))
   if (!row) throw new Error(`no ${label} row`)
   fireEvent.click(row)
   await settle()

@@ -23,6 +23,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **A skill an app seeded that you changed is yours: disabling, updating or uninstalling the app keeps it, with your changes, and says so, and the app's own version is never seeded over it. A seeded skill you never changed still goes with its app.**
 - **An app update the gateway stopped in after its files were swapped is finished at the next start: the new version is recorded, a renamed capability's settings, secrets and switches move to its new id, and an id it dropped is kept as retired. An update that never went live is forgotten, and the version that was there stays.**
 - **A pinned artifact on Home opens that artifact. Each pin opened the Artifacts library instead, since its link carried the artifact in a query the page does not read.**
+- **The agent-and-model pill in the composer works from the keyboard on every row. It opens on the chat's agent, the arrow keys move through the agents, the models and the effort levels, Enter picks, and Tab closes it; with the agent search shown, the arrows go from the field to the rows. A keyboard could reach only its first row before.**
 
 ## [0.3.5] — 2026-11-02
 

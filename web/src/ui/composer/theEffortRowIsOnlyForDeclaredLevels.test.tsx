@@ -51,11 +51,11 @@ function pill({ agent = 'researcher', model = 'Auto', effort = '' }: Pick = {}, 
   return onSelect
 }
 
-const effortRow = () => screen.queryByRole('button', { name: /^Effort: / })
+const effortRow = () => screen.queryByRole('menuitem', { name: /^Effort: / })
 /** The levels the effort row lists, opened. */
 function levels(): string[] {
   fireEvent.click(effortRow()!)
-  return within(screen.getByRole('group', { name: 'Effort' })).getAllByRole('button').map((b) => b.textContent ?? '')
+  return within(screen.getByRole('group', { name: 'Effort' })).getAllByRole('menuitemradio').map((b) => b.textContent ?? '')
 }
 
 describe('the effort row is there only for a model that declares levels', () => {
@@ -97,7 +97,7 @@ describe('the effort row is there only for a model that declares levels', () => 
   it('picking a level sets it for the chat', () => {
     const onSelect = pill({ model: 'Acme:deep' })
     fireEvent.click(effortRow()!)
-    fireEvent.click(within(screen.getByRole('group', { name: 'Effort' })).getByRole('button', { name: 'High' }))
+    fireEvent.click(within(screen.getByRole('group', { name: 'Effort' })).getByRole('menuitemradio', { name: 'High' }))
     expect(onSelect).toHaveBeenCalledWith({ reasoning: 'high' })
   })
 })
