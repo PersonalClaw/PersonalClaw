@@ -1,0 +1,6 @@
+{
+  "about": "The owner's record of red breadth runs a release may pass over. Only the owner edits this file, by hand.",
+  "exceptions": [
+    {"run_id": 41550519628, "commit": "4103896b74787e4820ff619cc68ba0b1e4a0b774", "why": "Network outage on 2026-11-02: macOS shard 3 passed all its tests, then its test-id upload failed (ENOTFOUND), so shard-union/1 read red. No test failed."}
+  ]
+}
