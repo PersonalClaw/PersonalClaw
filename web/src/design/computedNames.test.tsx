@@ -328,11 +328,13 @@ describe('a hyphenated aria prop on a kit component is a dropped name', () => {
   })
 
   it("the marketplace picker names itself", () => {
-    // 🪤 The first version of this assertion was `<select value={marketplace}[^>]*aria-label=…` and it
-    // FAILED on correct source — `[^>]*` stops at the `>` inside `onChange={(e) => …}`. The same trap
-    // this whole section is about, in the test written to catch it. Anchor on the attribute instead.
+    // It was a bare `<select>` beside the search, named by an `aria-label`. It is a section of the
+    // page header's filter now, titled Marketplace, whose choice the filter's own name reads out
+    // ("Show: All marketplaces"), so there is no unnamed control left to name.
     const src = readSource(join(process.cwd(), 'src/pages/skills/SkillsPage.tsx'))
-    expect(src).toMatch(/setMarketplace\(e\.target\.value\)\} aria-label="Marketplace"/)
+    expect(src).toMatch(/title: 'Marketplace'/)
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    expect(code, 'and no raw select is left to carry a dropped name').not.toMatch(/<select\b/)
   })
 })
 

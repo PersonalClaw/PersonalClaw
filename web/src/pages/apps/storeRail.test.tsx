@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { artGradient, artStops, artHash } from './appArt'
+import { findHeaderFilter, headerFilter } from '../../test/headerFilter'
 
 // ── The Store's persistent category/source rail, and the two things it is easy
 //    to ship broken ────────────────────────────────────────────────────────────────────
@@ -208,7 +209,7 @@ describe('the rail and the dropdown are one filter at two widths', () => {
   it('wide: the rail is present and the dropdown does NOT repeat its two dimensions', async () => {
     await mount(makeRouter('view=store'))
     expect(screen.getByRole('navigation', { name: 'Categories and sources' })).toBeTruthy()
-    await userEvent.click(screen.getByRole('button', { name: 'Filter & sort' }))
+    await userEvent.click(headerFilter())
     // 🪤 Scoped OUTSIDE the rail. `queryByText('Categories')` over the whole document finds
     // the RAIL's own heading and reads as "the dropdown has it too" — the absence has to be
     // measured somewhere the rail is not.
@@ -225,9 +226,9 @@ describe('the rail and the dropdown are one filter at two widths', () => {
     setNarrow()
     const { AppsSection } = await import('./AppsSection')
     render(<AppsSection query={{ view: 'store' }} setQuery={() => {}} navigate={() => {}} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Filter & sort' })).toBeTruthy())
+    await findHeaderFilter()
     expect(screen.queryByRole('navigation', { name: 'Categories and sources' }), 'no rail below the threshold').toBeNull()
-    await userEvent.click(screen.getByRole('button', { name: 'Filter & sort' }))
+    await userEvent.click(headerFilter())
     expect(screen.getByText('Categories'), 'the fallback carries the category dimension').toBeTruthy()
     expect(screen.getByText('Sources'), 'and the source dimension').toBeTruthy()
     // The SAME vocabulary, humanised the same way — one derivation feeding both.
@@ -239,8 +240,8 @@ describe('the rail and the dropdown are one filter at two widths', () => {
     const router = makeRouter('view=store')
     const { AppsSection } = await import('./AppsSection')
     render(<AppsSection query={router.query} setQuery={router.setQuery} navigate={() => {}} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Filter & sort' })).toBeTruthy())
-    await userEvent.click(screen.getByRole('button', { name: 'Filter & sort' }))
+    await findHeaderFilter()
+    await userEvent.click(headerFilter())
     await userEvent.click(screen.getByRole('button', { name: /^Utility/ }))
     expect(router.search(), 'the dropdown writes the same URL key the rail does').toMatch(/stag=utility/)
   })

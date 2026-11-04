@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { PromptItem } from '../../lib/api'
+import { findHeaderFilter, headerFilter } from '../../test/headerFilter'
 
 // ── The user's prompts were buried under the system's ───────────────────────────────────────────
 //
@@ -114,13 +115,13 @@ describe('the Prompts page: your tabs hold your prompts, the shipped ones have t
     const user = userEvent.setup()
     await mountList()
     await screen.findByRole('button', { name: 'q4-status-update' })
-    await user.click(screen.getByRole('button', { name: 'Filter & sort' }))
+    await user.click(headerFilter())
     expect(await screen.findByText('Sort by')).toBeTruthy()
     expect(screen.queryByText('All sources')).toBeNull()
     // Positive control: snippets still mix shipped and own, so their Source filter survives.
     await user.click(screen.getByRole('button', { name: 'Done' }))
     await user.click(screen.getByRole('radio', { name: /Snippets/ }))
-    await user.click(await screen.findByRole('button', { name: 'Filter & sort' }))
+    await user.click(await findHeaderFilter())
     expect(await screen.findByText('All sources')).toBeTruthy()
   })
 })

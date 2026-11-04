@@ -178,8 +178,10 @@ describe('no focus ring may carry an alpha', () => {
     // 🔻 66 → 65: Home's launcher composer left with the old Home, its ring with it.
     // 🔻 65 → 64, the same migration as the fields above: `pages/loops/LoopPlanReview.tsx`'s two rings
     // were on its title edit and its verify command, now `TextInput`s.
+    // 🔻 64 → 63: `pages/skills/SkillsPage.tsx`'s one ring was on the Browse view's marketplace
+    // `<select>`, which is a section of the page header's filter now.
     const uses = walk(SRC).filter((f) => /(focus|focus-visible|focus-within):ring-primary\b/.test(readSource(f)))
-    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(64)
+    expect(uses.length, 'the app must still install its own focus ring').toBeGreaterThanOrEqual(63)
   })
 
   it('is scoped to focus states, and only to them', () => {

@@ -111,12 +111,12 @@ function seed() {
  *  detail carries; `pick`, the name of the control that selects it) with the address that row
  *  selects, and a second row that stays in the list. */
 const TABS = [
-  { tab: 'Agents', address: 'agents', add: 'New agent', row: 'scout', pick: 'scout', open: 'native:scout', other: 'probe', noun: 'agents' },
-  { tab: 'Skills', address: 'skills', add: 'New skill', row: 'tidy-notes', pick: 'tidy-notes', open: 'tidy-notes', other: 'brief', noun: 'skills' },
-  { tab: 'Tools', address: 'tools', add: 'Add tool server', row: 'mcp/files/hello', pick: /^mcp\/files\/hello/, open: 'mcp/files/hello', other: 'read_file', noun: 'tools' },
-  { tab: 'Prompts', address: 'prompts', add: 'New prompt', row: 'greeting', pick: 'greeting', open: 'greeting', other: 'farewell', noun: 'prompts' },
-  { tab: 'Apps', address: 'apps', add: 'Install from URL', row: 'Notes', pick: 'Notes — details', open: 'notes', other: 'Clips', noun: 'apps' },
-  { tab: 'Store', address: 'apps?view=store', add: 'Install from URL', row: 'Weather', pick: 'Weather — details', open: 'weather', other: 'Maps', noun: 'apps' },
+  { tab: 'Agents', address: 'agents', add: 'New agent', header: ['New agent', 'More actions'], row: 'scout', pick: 'scout', open: 'native:scout', other: 'probe', noun: 'agents' },
+  { tab: 'Skills', address: 'skills', add: 'New skill', header: ['New skill'], row: 'tidy-notes', pick: 'tidy-notes', open: 'tidy-notes', other: 'brief', noun: 'skills' },
+  { tab: 'Tools', address: 'tools', add: 'Add tool server', header: ['Show: Any risk', 'Add tool server', 'More actions'], row: 'mcp/files/hello', pick: /^mcp\/files\/hello/, open: 'mcp/files/hello', other: 'read_file', noun: 'tools' },
+  { tab: 'Prompts', address: 'prompts', add: 'New prompt', header: ['Sorted by name', 'New prompt'], row: 'greeting', pick: 'greeting', open: 'greeting', other: 'farewell', noun: 'prompts' },
+  { tab: 'Apps', address: 'apps', add: 'Install from URL', header: ['Show: All apps · Sorted by name', 'Install from URL'], row: 'Notes', pick: 'Notes — details', open: 'notes', other: 'Clips', noun: 'apps' },
+  { tab: 'Store', address: 'apps?view=store', add: 'Install from URL', header: ['Show: All apps · Sorted by name', 'Install from URL', 'More actions'], row: 'Weather', pick: 'Weather — details', open: 'weather', other: 'Maps', noun: 'apps' },
 ] as const
 
 /** The address with the selection `open` added to it. */
@@ -246,13 +246,16 @@ function permissions(region: HTMLElement): Record<string, string> {
   return out
 }
 
-describe('the header holds the one action that adds to the tab', () => {
-  it.each(TABS)('$tab: $add, and nothing else', async ({ address, add }) => {
+describe('the header holds the tab’s controls, the one that adds last', () => {
+  // Its filter, named for what it shows; the action that adds; the `…` with the tab's other
+  // actions. The search and the view switch are a field and radios, not buttons.
+  it.each(TABS)('$tab: $header', async ({ address, add, header }) => {
     await open(address)
-    expect(headerActions()).toEqual([add])
+    expect(headerActions()).toEqual(header)
+    expect(headerActions().filter((n) => n !== 'More actions').at(-1)).toBe(add)
   })
 
-  it('what left the Agents header is in the list\'s More menu, and still acts', async () => {
+  it('the Agents header’s `…` holds Sync and Export, and they still act', async () => {
     await open('agents')
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     expect(screen.getByRole('button', { name: 'Sync agents' })).toBeTruthy()
@@ -261,13 +264,13 @@ describe('the header holds the one action that adds to the tab', () => {
     expect(location.hash).toBe('#/agents?export=1')
   })
 
-  it('what left the Tools header is in the list\'s More menu', async () => {
+  it('the Tools header’s `…` holds Re-probe', async () => {
     await open('tools')
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     expect(screen.getByRole('button', { name: 'Re-probe MCP servers' })).toBeTruthy()
   })
 
-  it('what left the Store header is in the list\'s More menu, and opens the sources', async () => {
+  it('the Store header’s `…` holds Manage Sources, and opens them', async () => {
     await open('apps?view=store')
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
     fireEvent.click(screen.getByRole('button', { name: 'Manage Sources' }))
@@ -284,11 +287,13 @@ describe('the header holds the one action that adds to the tab', () => {
     expect(location.hash).toBe('#/skills?mode=proposals')
   })
 
-  it('the Prompts view switch sits beside the title, out of the actions', async () => {
+  it('the Prompts view switch is in the header\'s actions, before the one that adds', async () => {
     await open('prompts')
     const views = within(pageHeader()).getByRole('radiogroup', { name: 'Prompts view' })
     expect(within(views).getAllByRole('radio').map((r) => r.textContent)).toEqual(['User', 'System', 'Bundled', 'Snippets'])
-    expect(views.closest('[data-header-left]'), 'beside the title, not in the actions cluster').toBeTruthy()
+    expect(views.closest('[data-header-left]'), 'in the actions cluster, not beside the title').toBeNull()
+    const add = within(pageHeader()).getByRole('button', { name: 'New prompt' })
+    expect(views.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING, 'New prompt comes after it').toBeTruthy()
   })
 })
 

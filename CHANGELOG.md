@@ -38,6 +38,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Switching an automation back on after a time it would have run passed while it was off waits for its next time, where that time ran late or went to the missed-run review as if PersonalClaw had been paused or asleep. A one-time automation whose time passed while it was off is not switched on with nothing to run: Resume asks for a new time.**
 - **An app page's call fails when its app token can't be minted, instead of going out on your sign-in alone with your whole reach, and its event socket waits for a token too. Every request the dashboard makes to its gateway now goes through one place, ready for a sign-in that needs more than the cookie: its event streams, sockets, uploads and the media, documents and downloads the browser loads itself.**
 - **A row of a header's … menu that cannot act right now stays in the menu, says why under its name, and leaves the menu open when chosen.**
+- **Capabilities' tabs hold their search, filter and view switch in the header, before the one that adds; Sync, Export, Re-probe and Manage Sources are in the header's … menu. The filter says what the list shows ("Show: Any risk", "Sorted by name"), and the bar under the header is gone.**
 
 ### Fixed
 

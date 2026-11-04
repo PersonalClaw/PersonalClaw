@@ -195,11 +195,12 @@ describe('LearningPage drops a decided row from the screen (#676)', () => {
     // A Refresh makes no claim about what changed — the user is asking for current server state,
     // and a capture pass may well have run since the page mounted. That is the whole difference.
     learningProposals.mockResolvedValue(inboxOf([row()]))
-    const { findByText, getByText } = render(<LearningPage navigate={() => {}} />)
+    const { findByText, getByRole } = render(<LearningPage navigate={() => {}} />)
     await findByText('summarize before filing')
     expect(learningStagingWeek).toHaveBeenCalledTimes(1)
 
-    await act(async () => { getByText('Refresh').click() })
+    // By its role: the header cluster's measuring probes hold aria-hidden copies of its controls.
+    await act(async () => { getByRole('button', { name: 'Refresh' }).click() })
     await waitFor(() => expect(learningStagingWeek).toHaveBeenCalledTimes(2))
   })
 })

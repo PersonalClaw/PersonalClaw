@@ -50,8 +50,6 @@ const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; wh
 /** The page-level controls not yet in the header, by file. Each page group's move empties its
  *  rows; it ends empty. */
 const BUDGET: Record<string, number> = {
-  'pages/agents/AgentsListPage.tsx': 1,
-  'pages/apps/AppsSection.tsx': 5,
   'pages/artifacts/ArtifactsSection.tsx': 3,
   'pages/chat/history/ChatHistoryPage.tsx': 3,
   'pages/code/CodeSection.tsx': 2,
@@ -62,10 +60,7 @@ const BUDGET: Record<string, number> = {
   'pages/loops/LoopsListPage.tsx': 2,
   'pages/notifications/NotificationsPage.tsx': 2,
   'pages/projects/ProjectsSection.tsx': 3,
-  'pages/prompts/PromptsListPage.tsx': 3,
-  'pages/skills/SkillsPage.tsx': 3,
   'pages/tasks/TasksListPage.tsx': 2,
-  'pages/tools/ToolsPage.tsx': 1,
   'pages/triggers/TriggersListPage.tsx': 3,
   'pages/workflows/WorkflowDefDetail.tsx': 1,
   'pages/workflows/WorkflowDefEditor.tsx': 1,

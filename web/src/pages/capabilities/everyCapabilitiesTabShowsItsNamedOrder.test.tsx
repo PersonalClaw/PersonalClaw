@@ -104,8 +104,12 @@ const cardOrder = () => [...document.querySelectorAll('p')]
   .filter((t) => t.startsWith('id:'))
   .map((t) => t.slice(3))
 
-/** The sort control's own words. */
-const sortControl = () => screen.getByRole('button', { name: 'Filter & sort' }).textContent ?? ''
+/** The sort control's own words: the header filter, whose label names the order the list shows. */
+const sortControl = () => {
+  const filter = screen.getAllByRole('button').find((b) => b.hasAttribute('data-header-filter'))
+  expect(filter, 'the header filter').toBeTruthy()
+  return filter!.getAttribute('aria-label') ?? ''
+}
 
 describe('Agents: by display name, A–Z, case-insensitive; equal names by id', () => {
   it('native agents and each runtime\'s agents', async () => {

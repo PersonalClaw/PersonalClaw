@@ -104,7 +104,6 @@
 {"file":"pages/settings/settingsUI.tsx","raw-button":2,"raw-input":1,"raw-dialog":0}
 {"file":"pages/skills/SkillInspector.tsx","raw-button":3,"raw-input":0,"raw-dialog":0}
 {"file":"pages/skills/SkillProposals.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
-{"file":"pages/skills/SkillsPage.tsx","raw-button":0,"raw-input":1,"raw-dialog":0}
 {"file":"pages/tasks/DagView.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
 {"file":"pages/tasks/TaskDetail.tsx","raw-button":4,"raw-input":0,"raw-dialog":0}
 {"file":"pages/tasks/TasksListPage.tsx","raw-button":4,"raw-input":0,"raw-dialog":0}

@@ -3,11 +3,11 @@ import { fvs } from '../../design/fontWeight'
 import { Sparkles, Search, Zap, Store, Download, Loader2, Plus, ShieldCheck, ShieldAlert, Lightbulb, GraduationCap, FilePen, RefreshCw } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { Button } from '../../ui/Button'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { ListControls } from '../../ui/ListControls'
-import { Segmented } from '../../ui/Segmented'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
+import { ListStatus } from '../../ui/ListControls'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
-import { useIsMobile } from '../../app/useIsMobile'
 import { Modal } from '../../ui/Modal'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
@@ -59,7 +59,8 @@ function ProposalsView({ toggle }: { toggle: React.ReactNode }) {
       header={
         <TopBar
           keepCornerPadding
-          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skill proposals</PageTitle>{toggle}</div>}
+          left={<PageTitle>Skill proposals</PageTitle>}
+          right={<HeaderActions>{toggle}</HeaderActions>}
         />
       }
     >
@@ -71,33 +72,15 @@ function ProposalsView({ toggle }: { toggle: React.ReactNode }) {
 }
 
 /** The Skills tab's three views: what is installed, the marketplace, and the proposals waiting for
- *  review, with how many wait. Each is the address it always was (`?mode=`), and the header keeps
- *  only New skill, so Proposals is a view here rather than a button beside it. */
+ *  review, with how many wait. Each is the address it always was (`?mode=`), and Proposals is a view
+ *  here rather than a button beside New skill. */
 function ModeToggle({ mode, proposals, onChange }: { mode: Mode; proposals: number; onChange: (m: Mode) => void }) {
-  // Left-slot nav Segmented: every option carries an icon, so it collapses to icon-only
-  // on mobile (matching the resolved header doctrine) rather than clipping "Installed"
-  // into the action cluster on a narrow header. The active segment stays highlighted.
-  const isMobile = useIsMobile()
-  // 🔑 `collapse="menu"` because WITHOUT IT THE STRIP IS CRUSHED, and `Segmented`'s own comment already
-  // said so: "Tabs are `shrink-0`. `size-8` / `px-m` set a tab's size but NOT its floor, so in a
-  // constrained slot the flex parent squeezed them … Overflow is the job of `collapse` ('scroll' /
-  // 'menu'), not of silently crushing every target: a strip that cannot fit should scroll or fold."
-  // This call site never passed the prop, so it kept crushing.
-  //
-  // Measured on this header (seeded `demo-home`), strip box vs its two 32px tabs:
-  //
-  //     1440px   strip 197×40   both tabs reachable          ← fits
-  //      390px   strip  41×40   "Browse" reachable 16×16     ← already under the 24px floor
-  //      320px   strip   8×40   "Browse" reachable  1×1      ← effectively gone
-  //
-  // The tabs are `shrink-0` and the strip's wrapper is `min-w-0`, so the strip absorbs the whole
-  // squeeze while its children keep their size and overflow it. `menu` is the designed last rung of
-  // the ladder (labelled → icon-only → folded pill) and `CollapsedSegmented`'s own docstring is
-  // written for exactly this case: a phone header's ~42px control rail, where the labelled pill's
-  // ~119px "still overflowed … and rendered as a clipped '☰ Li…'" but the icon-only pill fits.
+  // The header's one view switch (`HeaderSegmented`), in its action area with every other
+  // page-level control: it sheds with the cluster to icons, then folds to the pill of the active
+  // view (`collapse="menu"`), so it never clips on a phone header. As a bare strip beside the title
+  // it was crushed: 8×40 of container holding its 66px of tabs at 320px, the second tab 1×1.
   return (
-    <Segmented ariaLabel="Skills view" value={mode} onChange={(m) => onChange(m as Mode)} iconOnly={isMobile}
-      collapse="menu"
+    <HeaderSegmented ariaLabel="Skills view" value={mode} onChange={(m) => onChange(m as Mode)}
       options={[
         { key: 'installed', label: 'Installed', icon: Sparkles },
         { key: 'browse', label: 'Browse', icon: Store },
@@ -134,22 +117,22 @@ function Installed({ toggle, onBrowse, query, setQuery }: { toggle: React.ReactN
   return (
     <>
       <ListBesideDetail noun="skills"
-        controls={(items === undefined || items.length > 0)
-          ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search skills', label: 'Search skills' }}
-              results={{ count: (filtered ?? []).length, noun: 'skills', active: !!q.trim() }} />
-          : undefined}
         header={
           <TopBar
             keepCornerPadding
-            left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle>{toggle}</div>}
+            left={<PageTitle>Skills</PageTitle>}
             right={
               <HeaderActions>
+                {(items === undefined || items.length > 0) && (
+                  <HeaderSearch value={q} onChange={setQ} placeholder="Search skills" />
+                )}
+                {toggle}
                 {/* 🔑 `New skill` IS the primary here, and it is the canonical spelling. Every other list
                     destination writes its create action `variant="primary" priority="primary"` — `New
                     chat`, `New task`, `New trigger`, `New project` (×2), `New agent`, `New report`, `New
                     intent`, `Add knowledge`, `Install from URL`, `Start from template`. It is the one
-                    action the header holds (#3817): Proposals is a view on the switch beside the title,
-                    and Browse was always one. */}
+                    action the header holds (#3817): Proposals is a view on the switch beside it, and
+                    Browse was always one. */}
                 <HeaderControl icon={Plus} label="New skill" variant="primary" priority="primary" onClick={() => setCreating(true)} />
               </HeaderActions>
             }
@@ -161,6 +144,7 @@ function Installed({ toggle, onBrowse, query, setQuery }: { toggle: React.ReactN
           body: <SkillInspector skill={open} onDeleted={() => { setOpenKey(''); load() }} onSaved={load} />,
         }}
       >
+        <ListStatus results={{ count: (filtered ?? []).length, noun: 'skills', active: !!q.trim() }} />
         <div className="mx-auto px-l py-l">
           {/* The learning summary block. Above the list, INSIDE the content column so it
               shares the list's measure. Renders itself away when learning is off or nothing
@@ -271,8 +255,8 @@ function Browse({ toggle, query, setQuery }: { toggle: React.ReactNode } & Pick<
   const { data: marketplaces = [] } = useQuery<SkillMarketplace[]>(
     'skills:marketplaces',
     // 🔴 `!== 'native'` was here too, and `/api/skills/marketplaces` returns exactly
-    // {installed, native} on a stock install — so this narrowed to `[]`, the `<select>` below
-    // emitted zero `<option>`s, and the only scope left was the "All marketplaces" default. Paired
+    // {installed, native} on a stock install — so this narrowed to `[]`, the marketplace choice
+    // below offered none, and the only scope left was the "All marketplaces" default. Paired
     // with a server-side fan-out that dropped every installed hit, Browse had no reachable scope
     // that returned anything and every query rendered "No results — try a different search term or
     // marketplace" over a dropdown offering no other marketplace (#301). `installed` stays out on
@@ -331,23 +315,25 @@ function Browse({ toggle, query, setQuery }: { toggle: React.ReactNode } & Pick<
 
   return (
     <ListBesideDetail noun="results"
-      controls={
-        // 🪤 This list comes from a FETCH, not a client-side narrow, so `active` also waits for the
-        // fetch to settle: announcing while `loading` would report the previous query's count, and
-        // announcing on `results === null` (nothing searched yet) would say "No matching skills"
-        // about a search the user has not run.
-        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search the marketplace', label: 'Search marketplace' }}
-          results={{ count: results?.length ?? 0, noun: 'skills', active: !!q.trim() && !loading && results !== null }}>
-          <select value={marketplace} onChange={(e) => setMarketplace(e.target.value)} aria-label="Marketplace" className="h-10 rounded-pill bg-surface-high px-3 text-[0.8125rem] text-on-surface outline-none focus:ring-2 focus:ring-inset focus:ring-primary">
-            <option value="">{totalMatches ? `All marketplaces (${totalMatches})` : 'All marketplaces'}</option>
-            {marketplaces.map((m) => <option key={m.name} value={m.name}>{counts[m.name] ? `${m.name} (${counts[m.name]})` : m.name}</option>)}
-          </select>
-        </ListControls>
-      }
       header={
         <TopBar
           keepCornerPadding
-          left={<div className="flex min-w-0 items-center gap-m"><PageTitle className="shrink-0">Skills</PageTitle>{toggle}</div>}
+          left={<PageTitle>Skills</PageTitle>}
+          right={
+            <HeaderActions>
+              <HeaderSearch value={q} onChange={setQ} placeholder="Search the marketplace" label="Search marketplace" />
+              {/* Which marketplace the search reads: a choice set, so a section of the filter, whose
+                  label says which one is set. */}
+              <HeaderFilter sections={[{
+                title: 'Marketplace', value: marketplace, defaultKey: '', onChange: setMarketplace,
+                options: [
+                  { key: '', label: totalMatches ? `All marketplaces (${totalMatches})` : 'All marketplaces' },
+                  ...marketplaces.map((m) => ({ key: m.name, label: counts[m.name] ? `${m.name} (${counts[m.name]})` : m.name })),
+                ],
+              }]} />
+              {toggle}
+            </HeaderActions>
+          }
         />
       }
       detail={open && {
@@ -359,6 +345,11 @@ function Browse({ toggle, query, setQuery }: { toggle: React.ReactNode } & Pick<
         body: <MarketplaceDetail result={open} installed={installedIds.has(open.id) || !!open.installed} onInstalled={() => setInstalledIds((s) => new Set(s).add(open.id))} />,
       }}
     >
+      {/* 🪤 This list comes from a FETCH, not a client-side narrow, so `active` also waits for the
+          fetch to settle: announcing while `loading` would report the previous query's count, and
+          announcing on `results === null` (nothing searched yet) would say "No matching skills"
+          about a search the user has not run. */}
+      <ListStatus results={{ count: results?.length ?? 0, noun: 'skills', active: !!q.trim() && !loading && results !== null }} />
       <div className="mx-auto px-l py-l">
         {loading ? <div className="flex items-center gap-2 text-on-surface-low text-[0.8125rem]"><Loader2 size={15} className="animate-spin" /> Searching…</div>
           : searchErr ? <LoadError what="skill search results" error={searchErr} onRetry={search} />

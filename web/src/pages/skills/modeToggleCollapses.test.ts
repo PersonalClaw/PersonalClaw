@@ -56,26 +56,38 @@ function modeToggle(): string {
 }
 
 describe('the skills mode toggle folds instead of being crushed', () => {
+  // It is the header's view switch now, a `HeaderSegmented` in the header's cluster, which passes the
+  // collapse strategy and the icon-only density itself, so neither can be dropped at this call site.
+  const member = () => {
+    const src = stripComments(read('ui/HeaderActions.tsx'))
+    const at = src.indexOf('export function HeaderSegmented(')
+    expect(at, 'HeaderSegmented must still exist').toBeGreaterThan(-1)
+    return src.slice(at, src.indexOf('\nexport function ', at + 1))
+  }
+
   it('reads its subject (a rail over nothing asserts nothing)', () => {
     const fn = modeToggle()
     expect(fn.length, 'the slice is empty — every assertion below is vacuous').toBeGreaterThan(120)
-    expect(fn, 'it must still be a Segmented').toMatch(/<Segmented\b/)
+    expect(fn, 'it must be the header view switch').toMatch(/<HeaderSegmented\b/)
     expect(fn, 'with both options').toMatch(/'installed'[\s\S]*'browse'/)
   })
 
   it('passes a collapse strategy, so a constrained slot folds rather than squeezing', () => {
     expect(
-      modeToggle(),
+      member(),
       "without `collapse` the strip absorbs the whole squeeze: measured 8×40 of container holding 66px " +
         'of `shrink-0` tabs at 320px, with the second tab 1×1 reachable',
-    ).toMatch(/collapse=("menu"|"scroll"|\{'menu'\}|\{'scroll'\})/)
+    ).toMatch(/<Segmented\b[^>]*collapse="menu"/)
   })
 
   it('keeps icon-only density, which is what makes the folded pill fit a narrow header', () => {
     // `CollapsedSegmented`'s docstring is explicit: labelled the pill is ~119px and "still overflowed a
     // phone header's ~42px control rail"; icon-only it is ~32-40px. Dropping `iconOnly` would fold into
-    // something that does not fit, which looks like a fix and is not.
-    expect(modeToggle(), 'the folded pill must inherit icon-only density').toMatch(/iconOnly=\{isMobile\}/)
+    // something that does not fit, which looks like a fix and is not. The cluster sets it from its
+    // TEXT tier on, so a phone header always has it, for a switch whose options all carry icons.
+    expect(member(), 'the folded pill must inherit icon-only density').toMatch(/const iconOnly = canIcon && tier !== 'full'/)
+    expect(modeToggle(), 'every option carries its icon').toMatch(/'installed', label: 'Installed', icon:[\s\S]*'browse', label: 'Browse', icon:/)
+    expect(member()).toMatch(/<Segmented\b[^>]*iconOnly=\{iconOnly\}/)
   })
 
   it("the primitive's prescription survives — it is the reason this prop is here", () => {
