@@ -29,8 +29,8 @@ import uuid
 from dataclasses import dataclass, field
 
 # The driver comes from `sqlite_compat`, which resolves it ONCE for the whole
-# process, because on Linux/x86_64 the store connects through `pysqlite3` (a newer
-# bundled SQLite) whose exception classes are DISTINCT objects from the stdlib's.
+# process, because where the store connects through `pysqlite3` (taken where the stdlib's
+# SQLite lacks FTS5 or JSON1) its exception classes are DISTINCT objects from the stdlib's.
 # Importing plain `sqlite3` here made `except sqlite3.IntegrityError` silently never
 # match the error the connection actually raises, so the duplicate-edge path crashed
 # on CI while passing on macOS (no pysqlite3 → same class by accident). Re-deriving

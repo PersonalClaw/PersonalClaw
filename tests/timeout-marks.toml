@@ -798,3 +798,18 @@ reason = "11 pytest runs over a planted tree of 256 tests, each a fresh interpre
 site = "tests/rails/test_e2e_gateway_home_is_the_runs_tree.py::test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token"
 cap = 90
 reason = "boots a real gateway as the harness does, signs in, stops it and runs the harness's own clean-up in node: 22 s measured (2026-10-28), so about 4x that; its own waits (READY 45 s, stop 15 s, node 20 s) end within it"
+
+[[mark]]
+site = "tests/rails/test_no_route_the_shell_polls_opens_a_database_on_the_event_loop.py::test_no_route_the_shell_polls_opens_a_database_on_the_event_loop"
+cap = 50
+reason = "the whole-file census's walk of the package, following databases opened, built once for the module by whichever of its tests runs first (_package_opens); 7 s here, and the census's own walk 24 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_no_route_the_shell_polls_opens_a_database_on_the_event_loop.py::test_the_walk_sees_the_running_list_hand_its_stores_off"
+cap = 50
+reason = "the whole-file census's walk of the package, following databases opened, built once for the module by whichever of its tests runs first (_package_opens); 7 s here, and the census's own walk 24 s on CI at worst (a merge leg, 2026-10-24)"
+
+[[mark]]
+site = "tests/rails/test_no_route_the_shell_polls_opens_a_database_on_the_event_loop.py::test_the_shells_pollers_are_followed_to_their_handlers"
+cap = 50
+reason = "follows each poller to its handler through the whole-file census's walk of the package, built once for the module by whichever of its tests runs first (_package_opens); 7 s here, and the census's own walk 24 s on CI at worst (a merge leg, 2026-10-24)"
