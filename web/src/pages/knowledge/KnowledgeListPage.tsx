@@ -15,7 +15,8 @@ import { Toggle } from '../../ui/Toggle'
 import { TagManager } from './TagManager'
 import { ConflictPanel } from './ConflictPanel'
 import { SidePanel } from '../../ui/SidePanel'
-import { ListControls } from '../../ui/ListControls'
+import { ListStatus } from '../../ui/ListControls'
+import { HeaderSearch } from '../../ui/HeaderSearch'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { api, type KnowledgeIntent, type KnowledgeIntentRecord, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp, type ReindexJob } from '../../lib/api'
@@ -501,11 +502,6 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
   return (
     <WorkbenchLayout
       scroll={view !== 'graph'}
-      controls={view === 'library'
-        ? <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search knowledge', label: 'Search knowledge' }}
-            results={{ count: (items ?? []).length, noun: 'items', active: !!submitted }}
-            stale={itemsStale} />
-        : undefined}
       topBar={
         <TopBar
           keepCornerPadding
@@ -519,6 +515,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
           // label → icon → `…` menu and the 5-option strip collapses to a single pill.
           right={
             <HeaderActions>
+              {view === 'library' && <HeaderSearch value={q} onChange={setQ} placeholder="Search knowledge" />}
               <HeaderSegmented ariaLabel="Knowledge view" value={view} onChange={(v) => setView(v as View)}
                 options={[{ key: 'home', label: 'Home', icon: Home }, { key: 'library', label: 'All items', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }, { key: 'decisions', label: 'Decisions', icon: Gavel }]} />
               {view === 'library' && (items?.length ?? 0) > 0 && (
@@ -592,6 +589,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
         ) : null
       }
     >
+      {view === 'library' && <ListStatus results={{ count: (items ?? []).length, noun: 'items', active: !!submitted }} stale={itemsStale} />}
       {stats && (
         <div className="mx-auto w-full px-l pt-l">
           <div className="flex flex-wrap items-center gap-s">

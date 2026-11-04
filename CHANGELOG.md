@@ -41,6 +41,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Capabilities' tabs hold their search, filter and view switch in the header, before the one that adds; Sync, Export, Re-probe and Manage Sources are in the header's … menu. The filter says what the list shows ("Show: Any risk", "Sorted by name"), and the bar under the header is gone.**
 - **Automations, Loops, Tasks and Workflows hold their search, filter and view switch in the header, before New. A workflow's Steps / Versions / Run Ledger, its editor's Steps / JSON and a run's List / Graph are in the header with its actions.**
 - **The Inbox holds its search and filter in the header, with its kind and owner choices as sections of the filter, whose label says what the list shows ("Show: Open"). The notifications view's filter is in its header too.**
+- **Knowledge, Artifacts and Files hold their search, filter and view switch in the header. Artifacts' kind, source, collection and order are one filter that names the kind, and Files' root switch folds to one pill when the header is tight.**
 
 ### Fixed
 

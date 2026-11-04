@@ -3,11 +3,11 @@ import { ArrowLeft, FolderInput, MessagesSquare } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { HeaderActions } from '../../ui/HeaderActions'
 import { Loading, LoadError } from '../../ui/ListScaffold'
-import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
-import { Segmented } from '../../ui/forms'
 import { QuietButton } from '../../ui/QuietButton'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { api, type Artifact } from '../../lib/api'
 import { refreshKinds, useChatSocket, type WsMessage } from '../../lib/useChatSocket'
 import { useQueryParam, type RouteProps } from '../../app/useQueryState'
@@ -25,9 +25,9 @@ import { PageTitle } from '../../ui/PageTitle'
 
 const SOURCES = ['chat', 'cron', 'subagent', 'manual', 'import'] as const
 const SORTS = [
-  { key: 'updated', label: 'Recent' },
-  { key: 'name', label: 'Name' },
-  { key: 'kind', label: 'Kind' },
+  { key: 'updated', label: 'Recent', said: 'Recent first' },
+  { key: 'name', label: 'Name', said: 'By name' },
+  { key: 'kind', label: 'Kind', said: 'By kind' },
 ] as const
 
 /** Artifacts — the library surface.
@@ -121,12 +121,9 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
     return [...s].sort()
   }, [artifacts])
 
-  // The canonical "Filter & sort" pill (`ui/FilterMenu`), which eight other list surfaces already
-  // render. This page used to line up its own source dropdown + collection dropdown + a sort
-  // Segmented across the toolbar — the exact arrangement that primitive's doc says it replaced — so
-  // artifacts was the last surface without the active-count badge or the inline Clear. The kind strip
-  // stays a Segmented: it is this surface's primary axis and carries a deliberate `collapse="scroll"`
-  // treatment, and the inbox already ships the same "primary strip + one pill" pairing.
+  // The header filter (`ui/HeaderFilter`): every choice set of the library, the kind, the source,
+  // the collection and the order, as the sections of one menu, its label naming what is set. The
+  // kind leads, so the label reads "Show: All kinds", and the rest are named there once set.
   const filterSections = useMemo<FilterSectionDef[]>(() => {
     const bySource = new Map<string, number>()
     const byCollection = new Map<string, number>()
@@ -135,7 +132,10 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
       if (a.collection) byCollection.set(a.collection, (byCollection.get(a.collection) ?? 0) + 1)
     }
     const list: FilterSectionDef[] = [{
-      title: 'Source', value: src, defaultKey: '', onChange: setSrc,
+      title: 'Kind', value: kind, defaultKey: '', onChange: setKind,
+      options: [{ key: '', label: 'All kinds' }, ...ARTIFACT_KINDS.map((k) => ({ key: k.key, label: k.label }))],
+    }, {
+      title: 'Source', value: src, defaultKey: '', onChange: setSrc, quiet: true,
       options: [
         { key: '', label: 'Any source', count: artifacts.length },
         ...SOURCES.map((k) => ({ key: k, label: k[0].toUpperCase() + k.slice(1), count: bySource.get(k) })),
@@ -144,18 +144,19 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
     // Collections are user-created, so the section only exists once one does — same conditional the
     // old dropdown carried.
     if (collections.length > 0) list.push({
-      title: 'Collection', value: col, defaultKey: '', onChange: setCol,
+      title: 'Collection', value: col, defaultKey: '', onChange: setCol, quiet: true,
       options: [
         { key: '', label: 'All collections', count: artifacts.length },
         ...collections.map((c) => ({ key: c, label: c, count: byCollection.get(c) })),
       ],
     })
     list.push({
-      title: 'Sort by', value: sort, defaultKey: 'updated', onChange: setSort,
+      title: 'Sort by', value: sort, defaultKey: 'updated', onChange: setSort, quiet: true,
+      said: (k) => SORTS.find((o) => o.key === k)?.said ?? SORTS[0].said,
       options: SORTS.map((o) => ({ key: o.key, label: o.label })),
     })
     return list
-  }, [artifacts, collections, src, col, sort, setSrc, setCol, setSort])
+  }, [artifacts, collections, kind, src, col, sort, setKind, setSrc, setCol, setSort])
 
   // Exact filters + sort stay client-side over the server's q-matched rows. This gives the
   // URL one search meaning everywhere: name, description, tags, collection, or card body.
@@ -226,7 +227,15 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
             : <PageTitle className="shrink-0">Artifacts</PageTitle>}
           {slug && active && <span className="truncate text-on-surface" data-type="title-l">{active.name}</span>}
         </div>}
-        right={slug && active ? (
+        right={!slug ? (
+          // The library's controls: the search, the filter, then the deployed-app listing, which
+          // is not a filter and is absent when nothing is served.
+          <HeaderActions>
+            <HeaderSearch value={q} onChange={setQ} placeholder="Search artifacts" />
+            <HeaderFilter sections={filterSections} />
+            <DeployedAppsMenu onOpen={(s) => navigate(`artifacts/${s}`)} onChanged={load} />
+          </HeaderActions>
+        ) : active ? (
           <HeaderActions>
             {canFile && <>
               <QuietButton onClick={() => setIterate(iterate ? '' : ITERATE_PENDING)} ariaExpanded={iterateOpen}
@@ -271,41 +280,21 @@ export function ArtifactsSection({ sub, navigate, query: routeQuery, setQuery }:
         </div>
       ) : (
         <div className="mx-auto flex min-h-0 w-full flex-1 flex-col">
-          {/* toolbar — URL-backed filter state (shareable) */}
-          <div className="flex flex-wrap items-center gap-m border-b border-outline/40 px-l py-2.5">
-            <div className="w-64"><SearchField size="sm" value={q} onChange={setQ} placeholder="Search artifacts…" ariaLabel="Search artifacts" name="artifacts-search" /></div>
-            {/* `ARTIFACT_KINDS` is 16 kinds, so this strip renders 17 tabs at a measured 1152px —
-                nearly 3x the next-largest registry feeding a Segmented anywhere in the app (6). With
-                no collapse strategy the strip could not shrink and the row it sits in is
-                `overflow: hidden`, so the tail was simply CUT OFF and unreachable: 7 of 17 tabs off
-                screen at 834px (tablet), 12 of 17 at 390px — 'SVG' through 'Video' had no way to be
-                picked at all. `collapse="scroll"` is the primitive's own form of what the Files
-                root-tab strip hand-rolls for the same reason (a variable-count strip in a bounded
-                slot), and what the inbox strip already declares; the strip is untouched at any width
-                where it fits, so desktop is byte-identical. Keyboard reach is unaffected — the
-                roving-tabindex arrow nav scrolls each tab into view as it takes focus. */}
-            <Segmented ariaLabel="Artifact kind" value={kind} onChange={setKind} collapse="scroll"
-              options={[{ key: '', label: 'All kinds' }, ...ARTIFACT_KINDS.map((k) => ({ key: k.key, label: k.label }))]} />
-            <FilterMenu sections={filterSections} />
-            {/* The deployed-app listing — absent when nothing is served. Not a filter, so it
-                stays its own control, and keeps the right edge the sort strip used to hold. */}
-            <div className="ml-auto"><DeployedAppsMenu onOpen={(s) => navigate(`artifacts/${s}`)} onChanged={load} /></div>
-            {/* `narrowed` is this surface's own definition of "the user has filtered" — the grid
-                already uses it to tell an empty library from a filtered-to-nothing one, so the
-                announcement rides the same flag rather than inventing a second rule.
-                🪤 `&& !searchPending` rather than unmounting the tag while the query is in
-                flight: text search is now a REMOTE read, and an un-gated `active` would
-                announce the PREVIOUS query's count as though it answered this one. Gating
-                `active` is how the other two remote searches (Local/Ollama model managers)
-                do it, and it matters more than it looks — `ResultAnnouncement` renders its
-                live region unconditionally and only blanks the TEXT, so the region stays in
-                the DOM across the fetch. Unmounting it instead would re-insert an
-                aria-live node with its content already present, which screen readers do not
-                reliably announce; the count would land silently on exactly the path this
-                change adds. */}
-            <ResultAnnouncement count={filtered.length} noun="artifacts"
-              active={!!(q.trim() || kind || src || col) && !searchPending} />
-          </div>
+          {/* `narrowed` is this surface's own definition of "the user has filtered" — the grid
+              already uses it to tell an empty library from a filtered-to-nothing one, so the
+              announcement rides the same flag rather than inventing a second rule.
+              🪤 `&& !searchPending` rather than unmounting the tag while the query is in
+              flight: text search is now a REMOTE read, and an un-gated `active` would
+              announce the PREVIOUS query's count as though it answered this one. Gating
+              `active` is how the other two remote searches (Local/Ollama model managers)
+              do it, and it matters more than it looks — `ResultAnnouncement` renders its
+              live region unconditionally and only blanks the TEXT, so the region stays in
+              the DOM across the fetch. Unmounting it instead would re-insert an
+              aria-live node with its content already present, which screen readers do not
+              reliably announce; the count would land silently on exactly the path this
+              change adds. */}
+          <ResultAnnouncement count={filtered.length} noun="artifacts"
+            active={!!(q.trim() || kind || src || col) && !searchPending} />
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loadErr && artifacts.length === 0 && !currentSearch
               ? <LoadError what="artifacts" error={loadErr} onRetry={load} />

@@ -3,14 +3,14 @@ import {
   Box, Search, FilePlus2, FolderPlus, RefreshCw, GitBranch, Files as FilesIcon, X, Loader2, CornerDownRight, PanelRight,
 } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { SidePanel } from '../../ui/SidePanel'
 import { EmptyState, Loading, LoadError } from '../../ui/ListScaffold'
 import { Modal } from '../../ui/Modal'
 import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { PartialCount } from '../../ui/MoreRow'
-import { Segmented, TextInput } from '../../ui/forms'
+import { TextInput } from '../../ui/forms'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { Meter } from '../../ui/Meter'
@@ -325,18 +325,13 @@ export function FilesSection({ navigate, query: routeQuery, setQuery }: RoutePro
     <div className="flex h-full flex-col">
       <TopBar
         keepCornerPadding
-        // The root-tab strip is variable-count NAVIGATION (Workspace/Home/roots/
-        // Artifacts) — it lives in the LEFT slot (flex-1 min-w-0), which bounds its
-        // width so the overflow-x-auto actually engages and it self-scrolls instead of
-        // pushing the header wide. (In the right/shrink-0 slot it had no width bound
-        // and overflowed under a docked panel.) Tab-strip overflow is its own concern
-        // (plan) — separate from the action cluster, which holds only the toggle.
-        left={<div className="flex min-w-0 items-center gap-m">
-          <PageTitle className="shrink-0">Files</PageTitle>
-          {!rootsLoading && roots.length > 0 && <div className="min-w-0 overflow-x-auto"><Segmented ariaLabel="File root" value={tab} onChange={switchTab} options={tabOptions} /></div>}
-        </div>}
+        left={<PageTitle>Files</PageTitle>}
+        // The root switch (Workspace, Home, the roots, Artifacts) is the page's view switch, so it
+        // is the header's one `HeaderSegmented`. It is variable-count, and folds to one pill naming
+        // the root when the row is tight, rather than scrolling. The explorer's opener follows it.
         right={
           <HeaderActions>
+            {!rootsLoading && roots.length > 0 && <HeaderSegmented ariaLabel="File root" value={tab} onChange={switchTab} options={tabOptions} />}
             <HeaderControl icon={PanelRight}
               label={explorerOpen ? 'Hide explorer' : 'Show explorer'}
               active={explorerOpen} onClick={() => setExplorerOpen((v) => !v)} />
