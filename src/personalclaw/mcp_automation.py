@@ -47,6 +47,30 @@ def _store() -> Any:
     return TriggerStore(base_dir=config_dir())
 
 
+def _runs_of(trigger_id: str, n: int) -> list[dict[str, Any]]:
+    """The automation's recorded runs, newest first, up to *n*: the rows its History on the
+    Triggers page lists (`ScheduleRunStore`, rooted at the active home). An id the run store
+    refuses has none."""
+    from personalclaw.config.loader import config_dir
+    from personalclaw.schedule_history import ScheduleRunStore
+
+    try:
+        rows, _total = ScheduleRunStore(config_dir())._list_for_job_sync(trigger_id, 0, max(1, n))
+    except ValueError:
+        return []
+    return rows
+
+
+def _history(store: Any, args: dict[str, Any]) -> Any:
+    """`automation_history`: the automation's last *n* runs, from the run rows its History on the
+    Triggers page lists."""
+    from personalclaw.triggers import tools as T
+
+    trigger_id = str(args.get("id") or "")
+    n = int(args.get("n") or 10)
+    return T.history(store, trigger_id=trigger_id, n=n, schedule_runs=_runs_of(trigger_id, n))
+
+
 def _chat_channels() -> Any:
     """The chat channels a named one (`via`), or the one an id belongs to, is looked up in:
     ``None``, the registered ones, in the gateway, where the native runtime runs these tools;
@@ -591,7 +615,7 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
             yours=False,
         )
     elif name == "automation_history":
-        result = T.history(store, trigger_id=str(args.get("id") or ""), n=int(args.get("n") or 10))
+        result = _history(store, args)
     elif name == "automation_delete":
         result = T.delete(
             store, trigger_id=str(args.get("id") or ""), confirm=confirm_granted(args)
