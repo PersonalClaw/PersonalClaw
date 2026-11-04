@@ -37,7 +37,7 @@ const codeOf = (rel: string) => readSource(join(SRC, rel))
 
 const ARTIFACTS = 'pages/artifacts/ArtifactsSection.tsx'
 /** The pages drawing the header filter when every list page's filter moved into its header. */
-const ADOPTERS = 10
+const ADOPTERS = 13
 
 describe('the artifacts header holds one filter, every criterion a section of it', () => {
   it('imports the header filter and defines no shadow of it', () => {

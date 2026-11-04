@@ -5,14 +5,14 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { fadeEnter } from '../../design/motion'
 import { fvs } from '../../design/fontWeight'
-import { FolderKanban, LayoutDashboard, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, ChevronDown, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Square, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, Upload, KeyRound, type LucideIcon } from 'lucide-react'
+import { FolderKanban, Search, Plus, Loader2, Trash2, FolderOpen, Folder, FolderTree, File as FileIcon, X, ChevronRight, Pencil, Check, ListChecks, FileBox, Star, MessageSquare, Repeat, Target, Code2, Telescope, Palette, FileText, CircleDot, Circle, AlertTriangle, OctagonAlert, CircleStop, TriangleAlert, RefreshCw, Square, Download, BookMarked, Users, UserRound, Archive, ArchiveRestore, Upload, KeyRound, type LucideIcon } from 'lucide-react'
 import { statusMeta, TERMINAL } from '../tasks/taskMeta'
-import { Popover, MenuRow } from '../../ui/Popover'
 import { TopBar } from '../../ui/TopBar'
-import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl, HeaderMenu, HeaderSegmented } from '../../ui/HeaderActions'
 import { IconButton } from '../../ui/IconButton'
 import { SquareIconButton } from '../../ui/SquareIconButton'
-import { ListControls } from '../../ui/ListControls'
+import { ListStatus } from '../../ui/ListControls'
+import { HeaderSearch } from '../../ui/HeaderSearch'
 import { ListSkeleton, EmptyState, LoadError } from '../../ui/ListScaffold'
 import { cx } from '../../ui/cx'
 import { useThreads } from '../../lib/useThreads'
@@ -40,7 +40,7 @@ import { runLook } from '../workflows/workflowMeta'
 import { loopRoute } from '../../lib/loopKind'
 import { reportingWrite } from '../../app/reportingWrite'
 import { stopLoop } from '../loop/stopLoop'
-import { Segmented } from '../../ui/Segmented'
+import { TextLink } from '../../ui/TextLink'
 import { TaskList } from '../tasks/TasksSection'
 
 /** All tasks is a 44 px target at the compact widths (320 to 768 px), where it is a phone's way to
@@ -217,17 +217,18 @@ function ProjectListPage({ onOpen, onOpenRoute, onOpenLoops, onOpenTasks, query,
         // (measured 2026-09-25).
         // All tasks, every project's, from the page the sidebar's Projects row opens: the way to it
         // where no ⌘K is, a phone's (#3818). So on a phone it is a 44 px target (ALL_TASKS_TARGET).
-        right={<HeaderActions><HeaderSegmented ariaLabel="View" options={LIST_VIEWS} value={byProject ? 'chats' : 'projects'} onChange={(k) => setView(k === 'chats' ? 'chats' : '')} /><HeaderControl icon={ListChecks} label="All tasks" onClick={onOpenTasks} className={ALL_TASKS_TARGET} /><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
+        // The search leads the row, as on every page: the projects by name, or the chats by project.
+        right={<HeaderActions>{byProject
+          ? <HeaderSearch value={q} onChange={setQ} placeholder="Search chats" />
+          : !!projects?.length && <HeaderSearch value={q} onChange={setQ} placeholder="Search projects" />}<HeaderSegmented ariaLabel="View" options={LIST_VIEWS} value={byProject ? 'chats' : 'projects'} onChange={(k) => setView(k === 'chats' ? 'chats' : '')} /><HeaderControl icon={ListChecks} label="All tasks" onClick={onOpenTasks} className={ALL_TASKS_TARGET} /><HeaderControl icon={Repeat} label="Loops" onClick={onOpenLoops} /><HeaderControl icon={Upload} label="Import" onClick={() => importInput.current?.click()} hint="Import a project archive (.zip) exported from PersonalClaw" /><HeaderControl icon={Plus} label="New project" onClick={() => setCreating(true)} variant="primary" priority="primary" /></HeaderActions>} />
       {/* Raw: no primitive draws a file picker. Forwarded to by the header's Import control, which is the keyboard-reachable control. */}
       <input ref={importInput} type="file" accept=".zip,application/zip" className="hidden"
         onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void previewImport(file) }} />
 
       {byProject ? (
-        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search chats', label: 'Search chats' }}
-          results={{ count: chatsShown.reduce((n, g) => n + g.threads.length, 0), noun: 'chats', active: !!needle }} />
+        <ListStatus results={{ count: chatsShown.reduce((n, g) => n + g.threads.length, 0), noun: 'chats', active: !!needle }} />
       ) : !!projects?.length && (
-        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}
-          results={{ count: shown.length, noun: 'projects', active: !!needle }} />
+        <ListStatus results={{ count: shown.length, noun: 'projects', active: !!needle }} />
       )}
 
       {err && (
@@ -687,11 +688,6 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
-/** A project page's two views: its overview (the work board and task lists) and its Tasks. */
-const PROJECT_VIEWS = [
-  { key: 'overview', label: 'Overview', icon: LayoutDashboard },
-  { key: 'tasks', label: 'Tasks', icon: ListChecks },
-]
 /** The keys only the Tasks view reads, which the overview leaves behind. */
 const TASK_VIEW_KEYS = ['view', 'filter', 'q', 'sort', 'list', 'tag', 'open', 'edit'] as const
 
@@ -889,33 +885,49 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
       {!project.is_builtin && (
         <IconButton icon={Pencil} label="Rename" size={24} iconSize={13} onClick={() => { setNameDraft(project.name); setRenaming(true) }} className="shrink-0 -m-0.5" />
       )}
-      <span className="ml-xs shrink-0">
-        <Segmented ariaLabel="Project view" size="sm" collapse="menu" value={showsTasks ? 'tasks' : 'overview'}
-          onChange={chooseView} options={PROJECT_VIEWS} />
-      </span>
     </div>
   )
   // The Tasks view: the task list and board at the keys `#/tasks` reads, held to this project.
   if (showsTasks) {
+    // Where you are, as a breadcrumb: the project's name, back to its Overview, then Tasks. A
+    // project's Overview and Tasks are two pages of it, so the way between them is navigation, and
+    // the header's one view switch stays the task list's layout, as on All tasks.
+    // Where the row is tight, "› Tasks" gives up its width before the name does, so the name, the
+    // way back, is what stays (as the project's own title does); below 1024 px the folder glyph
+    // goes too, for the name's sake. Measured at 390 px with both kept: the name was 0 px wide.
+    const crumb = (
+      <div className="flex min-w-0 items-center gap-2">
+        <FolderKanban size={18} className="shrink-0 text-primary max-lg:hidden" />
+        <PageTitle className="flex min-w-0 items-baseline gap-xs">
+          {/* The spaces are for the heading's text ("Garden › Tasks"); the row's gap lays it out. */}
+          <TextLink onClick={() => chooseView('overview')} title={`${project.name}: its overview`} className="min-w-0 truncate">{project.name}</TextLink>{' '}
+          <span className="flex min-w-0 shrink-[100] items-baseline gap-xs overflow-hidden whitespace-nowrap">
+            <span aria-hidden className="text-on-surface-low">›</span>{' '}
+            <span className="truncate">Tasks</span>
+          </span>
+        </PageTitle>
+      </div>
+    )
     return (
       <TaskList navigate={navigate} query={query} setQuery={setQuery} navEpoch={navEpoch}
         inProject={{
           name: project.name,
-          title: titleNode,
+          title: crumb,
           actions: <HeaderControl icon={FolderKanban} label="All projects" onClick={onBack} />,
         }} />
     )
   }
+  // Every control the Overview has, in the header's cluster so they shed together, in the
+  // row's order: Archive (or Restore) first, then the default, Chat, Export and Tasks, the
+  // project's other page. All projects and New, the primary action, close the row (`Shell`).
   const headerActions = (
     <>
       {project.status === 'archived' ? (
-        <Button variant="tonal" size="xs" onClick={restoreProject} loading={statusBusy} loadingLabel="Restoring…">
-          <ArchiveRestore size={14} /> Restore
-        </Button>
+        <HeaderControl icon={ArchiveRestore} label={statusBusy ? 'Restoring…' : 'Restore'} variant="secondary"
+          disabled={statusBusy} onClick={restoreProject} />
       ) : (
-        <Button variant="ghost" size="xs" onClick={archiveProject} loading={statusBusy} loadingLabel="Archiving…">
-          <Archive size={14} /> Archive
-        </Button>
+        <HeaderControl icon={Archive} label={statusBusy ? 'Archiving…' : 'Archive'} priority="low"
+          disabled={statusBusy} onClick={archiveProject} />
       )}
       {/* 🔑 THE LABEL IS TRUE ON EVERY DEVICE NOW. It said "Default project" while the pointer
           lived in this browser's localStorage, so the same project read "Make default" in the next
@@ -923,31 +935,13 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
           title says what the setting governs — the create forms — and that it follows the user.
           An archived project is off every picker, so it cannot be where new work starts: the
           control stays reachable and says why rather than answering a click with a 409. */}
-      <Button variant={isDefault ? 'ghost-accent' : 'ghost'} size="xs" ariaPressed={isDefault}
+      <HeaderControl icon={Star} label={isDefault ? 'Default project' : 'Make default'} active={isDefault}
         onClick={() => { setDefaultProject(isDefault ? '' : id) }}
-        loading={defaultPending}
-        disabled={project.status === 'archived'}
+        disabled={project.status === 'archived' || defaultPending}
         disabledReason={project.status === 'archived' ? 'Restore this project to make it your default' : undefined}
         title={isDefault
           ? 'Your default project: new tasks and loops start here, on every device. Click to clear it.'
-          : 'Make this your default project: new tasks and loops start here, on every device.'}>
-        <Star size={14} style={isDefault ? { fill: 'var(--color-primary)' } : undefined} /> {isDefault ? 'Default project' : 'Make default'}
-      </Button>
-      <Popover align="right" width={220} placement="bottom"
-        trigger={(open, toggle) => (
-          <Button size="xs" onClick={toggle} ariaExpanded={open} title="Launch new work scoped under this project">
-            <Plus size={14} /> New <ChevronDown size={11} />
-          </Button>
-        )}>
-        {(close) => (
-          <div className="flex flex-col gap-0.5">
-            {NEW_KINDS.map((k) => (
-              <MenuRow key={k.label} icon={<k.icon size={16} />} label={k.label} hint={k.hint}
-                onClick={() => { launchKind(k.kind); close() }} />
-            ))}
-          </div>
-        )}
-      </Popover>
+          : 'Make this your default project: new tasks and loops start here, on every device.'} />
       <HeaderControl icon={MessageSquare} label="Chat" onClick={launchChat} />
       {/* Export this project as a manifest ZIP — the brief, context ledgers, templates, artifact
           metadata and run digests, each sha256'd. Credentials never travel; the archive names the
@@ -957,7 +951,13 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
       <HeaderControl icon={Download} label="Export" priority="low"
         hint="Download this project as a portable archive (no credentials)"
         onClick={() => downloadFrom(api.projectExportUrl(id))} />
+      {/* The project's other page, a secondary action that sheds to the `…` when the row is tight. */}
+      <HeaderControl icon={ListChecks} label="Tasks" title={`${project.name}'s tasks`} onClick={() => chooseView('tasks')} />
     </>
+  )
+  const newWork = (
+    <HeaderMenu icon={Plus} label="New" variant="primary" priority="primary" title="Launch new work scoped under this project"
+      items={NEW_KINDS.map((k) => ({ label: k.label, icon: k.icon, hint: k.hint, onSelect: () => launchKind(k.kind) }))} />
   )
   // The side panel: a task list's tasks, or a directory tree. Keyed so switching
   // targets remounts (resets scroll + lazy fetch). fillHeight — it docks below the
@@ -973,7 +973,7 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
     </SidePanel>
   )
   return (
-    <Shell onBack={onBack} title={project.name} titleNode={titleNode} actions={headerActions} scroll={false} panel={panelNode}>
+    <Shell onBack={onBack} title={project.name} titleNode={titleNode} actions={headerActions} primary={newWork} scroll={false} panel={panelNode}>
       <div className="flex h-full min-h-0 flex-col">
         {/* ── slim band: brief + workspace/context directory bar ── */}
         <div className="shrink-0 border-b border-outline-variant/30 px-l py-2.5 flex flex-col gap-2">
@@ -1458,9 +1458,13 @@ function BriefRow({ brief, onSave }: { brief: string; onSave: (b: string) => voi
   )
 }
 
-function Shell({ title, titleNode, onBack, actions, scroll = true, panel, children }: {
+function Shell({ title, titleNode, onBack, actions, primary, scroll = true, panel, children }: {
   title: string; titleNode?: React.ReactNode; onBack: () => void
-  actions?: React.ReactNode; scroll?: boolean
+  /** The page's header controls, in the cluster before All projects. */
+  actions?: React.ReactNode
+  /** The page's primary action, the cluster's last control, after All projects. */
+  primary?: React.ReactNode
+  scroll?: boolean
   /** Already-gated right-docked SidePanel (fillHeight) — docks below the TopBar and
    *  pushes only the content (never the header), like WorkbenchLayout. */
   panel?: React.ReactNode
@@ -1474,7 +1478,7 @@ function Shell({ title, titleNode, onBack, actions, scroll = true, panel, childr
         // project is the destination at that URL, so it carries the h1. `titleNode` (the rename editor)
         // keeps its own input — an editable title is not a heading.
         left={titleNode ?? <div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><PageTitle>{title}</PageTitle></div>}
-        right={<div className="flex items-center gap-1.5">{actions}<HeaderActions><HeaderControl icon={ListChecks} label="All projects" onClick={onBack} priority="primary" /></HeaderActions></div>} />
+        right={<HeaderActions>{actions}<HeaderControl icon={FolderKanban} label="All projects" onClick={onBack} priority="primary" />{primary}</HeaderActions>} />
       <div className="flex min-h-0 flex-1">
         {/* Detail hub fills height (scroll=false); list/loading states scroll. */}
         <div className={`min-w-0 flex-1 ${scroll ? 'overflow-y-auto' : 'overflow-hidden'}`}>{children}</div>

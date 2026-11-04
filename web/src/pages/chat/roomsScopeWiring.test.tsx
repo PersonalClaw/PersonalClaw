@@ -136,10 +136,10 @@ describe('🔴 the wiring that makes a room reachable at all', () => {
     // A fresh install with rooms ON has no rooms, and the tab is how the first one gets made. A
     // `roomCount > 0` gate would make the feature reachable only to someone who already used it.
     expect(historyView, 'the tab is gated on the read succeeding, not on the count')
-      .toMatch(/originCounts\.channel > 0 \|\| roomsAvailable\)/)
-    expect(historyView, 'and the whole control strip survives an empty chat list for the same reason')
-      .toMatch(/sessions\.length > 0 \|\| roomsAvailable\)/)
-    expect(historyView, 'the tab option itself').toMatch(/key: 'room', label: `Rooms\$\{roomCount/)
+      .toMatch(/originCounts\.channel > 0 \|\| roomsAvailable\b/)
+    expect(historyView, 'and the header filter survives an empty chat list for the same reason')
+      .toMatch(/sessions\.length > 0 \|\| roomsAvailable\b/)
+    expect(historyView, 'the tab option itself').toMatch(/key: 'room', label: 'Rooms', count: roomCount/)
   })
 
   it('and it does NOT appear while rooms are off — the list answering is not the feature being on', () => {

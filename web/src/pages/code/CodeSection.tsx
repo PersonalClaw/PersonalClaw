@@ -13,8 +13,10 @@ import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
-import { ListControls } from '../../ui/ListControls'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { ListStatus } from '../../ui/ListControls'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { confirmDelete } from '../../ui/dialog'
 import { WorkspacePicker } from './WorkspacePicker'
@@ -329,25 +331,29 @@ function CodeListPage({ onCreate, onOpen }: { onCreate: () => void; onOpen: (id:
     <div className="relative flex h-full flex-col overflow-hidden">
       <TopBar
         left={<div className="flex items-center gap-2"><Code2 size={18} className="text-primary" /><span data-type="title-l" className="text-on-surface">Code projects</span></div>}
-        right={<HeaderActions><HeaderControl icon={Plus} label="New project" onClick={onCreate} variant="primary" priority="primary" /></HeaderActions>} />
-      {/* Search + a lifecycle filter live on the page (pinned below the header). */}
+        // The search and the lifecycle filter, once there are projects, then New project last.
+        right={<HeaderActions>
+          {!!projects?.length && <HeaderSearch value={q} onChange={setQ} placeholder="Search projects" />}
+          {!!projects?.length && (
+            <HeaderFilter sections={[{
+              title: 'Show', value: filter, defaultKey: 'all',
+              onChange: (k) => setFilter(k as CodeFilter),
+              options: [
+                { key: 'all', label: 'All projects', count: projects!.length },
+                { key: 'active', label: 'Active', count: projects!.filter((p) => matchesFilter(p, 'active')).length },
+                { key: 'attention', label: 'Needs you', count: projects!.filter((p) => matchesFilter(p, 'attention')).length },
+                { key: 'done', label: 'Done', count: projects!.filter((p) => matchesFilter(p, 'done')).length },
+              ],
+            } satisfies FilterSectionDef]} />
+          )}
+          <HeaderControl icon={Plus} label="New project" onClick={onCreate} variant="primary" priority="primary" />
+        </HeaderActions>} />
       {!!projects?.length && (
-        // No loading guard here on purpose: this bar renders only inside `!!projects?.length`, so by
-        // the time the announcement exists the list has arrived and is non-empty. The sibling bars in
-        // `AppsSection` and `ToolsPage` DO need one, because they render during their skeleton.
-        <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search projects', label: 'Search projects' }}
-          results={{ count: shown.length, noun: 'projects', active: !!needle || filter !== 'all' }}>
-          <FilterMenu sections={[{
-            title: 'Show', value: filter, defaultKey: 'all',
-            onChange: (k) => setFilter(k as CodeFilter),
-            options: [
-              { key: 'all', label: 'All', count: projects!.length },
-              { key: 'active', label: 'Active', count: projects!.filter((p) => matchesFilter(p, 'active')).length },
-              { key: 'attention', label: 'Needs you', count: projects!.filter((p) => matchesFilter(p, 'attention')).length },
-              { key: 'done', label: 'Done', count: projects!.filter((p) => matchesFilter(p, 'done')).length },
-            ],
-          } satisfies FilterSectionDef]} />
-        </ListControls>
+        // No loading guard here on purpose: this announcement renders only inside
+        // `!!projects?.length`, so by the time it exists the list has arrived and is non-empty. The
+        // siblings in `AppsSection` and `ToolsPage` DO need one, because they render during their
+        // skeleton.
+        <ListStatus results={{ count: shown.length, noun: 'projects', active: !!needle || filter !== 'all' }} />
       )}
       {/* Inline error for a failed list-level action (delete / workspace-pick) —
           dismissible; replaces the old silent .catch(){}. */}

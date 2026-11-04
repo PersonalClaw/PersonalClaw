@@ -108,7 +108,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   inProject?: {
     /** The project's name, the scope its tasks carry. */
     name: string
-    /** The header's left side: the project's title and its view switch. */
+    /** The header's left side: where you are, the project's name (back to its Overview) and Tasks. */
     title: ReactNode
     /** Controls beside the page's own, at the header's right. */
     actions?: ReactNode

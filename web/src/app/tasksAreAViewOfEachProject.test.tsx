@@ -115,7 +115,9 @@ async function settle() {
 const heading = () => document.querySelector('main h1')?.textContent ?? ''
 const rail = () => document.querySelector('nav[data-tour="rail"]') as HTMLElement
 const railRows = () => within(rail()).getAllByRole('button').map((b) => b.getAttribute('aria-label') ?? '')
-const projectView = () => screen.queryByRole('radiogroup', { name: 'Project view' })
+/** The page header, where a project's Overview offers its Tasks. */
+const pageHeader = () => document.querySelector('main header') as HTMLElement
+const toTasks = () => within(pageHeader()).queryByRole('button', { name: 'Tasks' })
 const checked = (group: HTMLElement | null) => (group ? within(group).getAllByRole('radio').filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.textContent) : [])
 const shown = (title: string) => screen.queryAllByText(title).length > 0
 
@@ -126,23 +128,30 @@ describe('a project\'s tasks are a view of the project', () => {
     expect(railRows()).not.toContain('Tasks')
   })
 
-  it('a project\'s page switches between Overview and Tasks, and Tasks lists that project\'s tasks alone', async () => {
+  it('a project\'s Overview goes to its Tasks, which list that project\'s tasks alone, and the breadcrumb comes back', async () => {
     await open('projects/p-garden')
-    expect(checked(projectView())).toEqual(['Overview'])
+    expect(heading()).toBe('Garden')
     const entries = history.length
-    fireEvent.click(within(projectView()!).getByRole('radio', { name: 'Tasks' }))
+    fireEvent.click(toTasks()!)
     await settle()
     expect(location.hash).toBe('#/projects/p-garden?tab=tasks')
-    expect(history.length, 'a view of the page, so it replaces the entry').toBe(entries)
-    expect(heading()).toBe('Garden')
-    expect(checked(projectView())).toEqual(['Tasks'])
+    expect(history.length, 'a page of the project, so it replaces the entry').toBe(entries)
+    expect(heading(), 'where you are, as a breadcrumb').toBe('Garden › Tasks')
+    expect(toTasks(), 'the Tasks page offers no way to itself').toBeNull()
     expect(shown('Order the soil') && shown('Plant the beans')).toBe(true)
     expect(shown('Book the movers'), 'another project\'s task').toBe(false)
+    // The project's name in the breadcrumb is the way back to its Overview.
+    const h1 = document.querySelector('main h1') as HTMLElement
+    fireEvent.click(within(h1).getByRole('button', { name: 'Garden' }))
+    await settle()
+    expect(location.hash).toBe('#/projects/p-garden')
+    expect(heading()).toBe('Garden')
   })
 
   it('a reload, or a copied address, opens the project\'s board as it was', async () => {
     await open('projects/p-garden?tab=tasks&view=board')
-    expect(checked(projectView())).toEqual(['Tasks'])
+    expect(heading()).toBe('Garden › Tasks')
+    // The layout is the header's view switch, as on All tasks.
     expect(checked(screen.getByRole('radiogroup', { name: 'View' }))).toEqual(['Kanban board'])
     expect(shown('Order the soil')).toBe(true)
     expect(shown('Book the movers')).toBe(false)
@@ -209,7 +218,7 @@ describe('on a phone, where no ⌘K is, each moved page has an on-screen way in'
     expect(location.hash).toBe('#/tasks')
     expect(heading()).toBe('All tasks')
     await open('projects/p-garden')
-    expect(projectView(), 'the project\'s view switch').not.toBeNull()
+    expect(toTasks(), 'the way to the project\'s Tasks').not.toBeNull()
   })
 
   it('Notifications: the bell, which opens the Inbox on its notifications', async () => {

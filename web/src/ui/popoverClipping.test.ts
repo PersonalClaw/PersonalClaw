@@ -108,11 +108,10 @@ describe('a Popover inside a clipping container must portal', () => {
     expect(consumers.length, 'filter menu consumers').toBeGreaterThanOrEqual(9)
   })
 
-  it('the non-portal call sites are exactly the two we know about', () => {
-    // 🪤 NOT a clean bill of health. One of these was never opened by the sweep — `#/projects` has no
-    // rows in the dev home — so it is UNVERIFIED, not verified-good. The other (HeaderOverflow's `…`)
-    // only renders when the header is tight enough to overflow.
-    // This list exists so a THIRD non-portal Popover has to be argued for in review.
+  it('the non-portal call site is exactly the one we know about', () => {
+    // 🪤 NOT a clean bill of health. HeaderOverflow's `…` only renders when the header is tight
+    // enough to overflow.
+    // This list exists so a SECOND non-portal Popover has to be argued for in review.
     //
     // 🔑 `#/artifacts` LEFT this list by having its hand-rolled Popover deleted: its toolbar now
     // renders `ui/FilterMenu`, which portals (asserted above). The list got shorter because a call
@@ -120,9 +119,11 @@ describe('a Popover inside a clipping container must portal', () => {
     //
     // 🔑 `#/inbox` LEFT it by a fix: its Digest menu moved into the header's cluster, whose row
     // scrolls sideways and would clip it, so it portals now.
+    //
+    // 🔑 A project's Overview LEFT it the same way: its New menu, the one the sweep never opened, is
+    // the cluster's HeaderMenu, which portals.
     const nonPortal = sites.filter((x) => !x.portal).map((x) => x.rel).sort()
     expect(nonPortal).toEqual([
-      'pages/projects/ProjectsSection.tsx',
       'ui/HeaderActions.tsx',
     ])
   })

@@ -49,12 +49,7 @@ const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; wh
 
 /** The page-level controls not yet in the header, by file. Each page group's move empties its
  *  rows; it ends empty. */
-const BUDGET: Record<string, number> = {
-  'pages/chat/history/ChatHistoryPage.tsx': 3,
-  'pages/code/CodeSection.tsx': 2,
-  'pages/dashboard/Home.tsx': 1,
-  'pages/projects/ProjectsSection.tsx': 3,
-}
+const BUDGET: Record<string, number> = {}
 
 /** The page-level controls a page draws outside its header. */
 function outsideTheHeader(abs: string): number {

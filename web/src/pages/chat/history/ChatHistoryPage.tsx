@@ -5,15 +5,16 @@ import { AnimatePresence } from 'framer-motion'
 import { Edit3, Search, MessageCircle, MessageSquare, Trash2, Pin, Sparkles, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, Filter, Loader2, Target, Code2 as CodeIcon, GripVertical, Eye, Archive, ArchiveRestore, Download, Share2 } from 'lucide-react'
 import { IconButton } from '../../../ui/IconButton'
 import { SquareIconButton } from '../../../ui/SquareIconButton'
-import { SearchField } from '../../../ui/SearchField'
 import { TopBar } from '../../../ui/TopBar'
 import { SidePanel } from '../../../ui/SidePanel'
 import { Button } from '../../../ui/Button'
 import { Checkbox, FieldError } from '../../../ui/forms'
 import { Popover, MenuRow } from '../../../ui/Popover'
-import { Segmented } from '../../../ui/Segmented'
 import { ContextMenu, type ContextMenuItem } from '../../../ui/motion'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../../ui/HeaderActions'
+import { HeaderSearch } from '../../../ui/HeaderSearch'
+import { HeaderFilter } from '../../../ui/HeaderFilter'
+import { type FilterSectionDef } from '../../../ui/FilterMenu'
 import { sessionRowMeta } from '../sessionRowMeta'
 import { StartedByApp } from '../StartedByApp'
 import { FromChannel, channelOf } from '../FromChannel'
@@ -269,6 +270,37 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
     </ContextMenu>
   )
 
+  // The search and filter render whenever the list is loading OR non-empty, so the page paints
+  // fully (real controls, skeleton rows below) during load, and only the genuine empty state hides
+  // them. `|| roomsAvailable` is load-bearing: a fresh install with Agent Rooms turned on has ZERO
+  // chats, and without it the Scope, the way to the Rooms, was hidden by the chats' empty state.
+  const showControls = sessions === null || sessions.length > 0 || roomsAvailable
+  // The header filter's sections, its label reading "Show: Chats · Active".
+  //  · Scope, only once worker chats exist (otherwise the history is all-manual and the choice
+  //    would be noise). It defaults to the user's own chats; loop and code workers live behind
+  //    their choices. Rooms join the moment `/api/rooms` answers at all, which is the moment the
+  //    feature is on, including at zero rooms, because the choice is how the first one gets made.
+  //  · Active or Archived, for the session list: none of it applies to the Rooms scope.
+  const scoped = originCounts.loop > 0 || originCounts.code > 0 || originCounts.channel > 0 || roomsAvailable
+  const historySections: FilterSectionDef[] = [
+    ...(scoped ? [{
+      title: 'Scope', value: origin, defaultKey: 'manual', onChange: (v: string) => setOrigin(v as typeof origin),
+      options: [
+        { key: 'manual', label: 'Chats', count: originCounts.manual || undefined },
+        ...(originCounts.loop > 0 ? [{ key: 'loop', label: 'Loops', count: originCounts.loop }] : []),
+        ...(originCounts.code > 0 ? [{ key: 'code', label: 'Code', count: originCounts.code }] : []),
+        ...(originCounts.channel > 0 ? [{ key: 'channel', label: 'Channels', count: originCounts.channel }] : []),
+        ...(roomsAvailable ? [{ key: 'room', label: 'Rooms', count: roomCount || undefined }] : []),
+        { key: 'all', label: 'All chats' },
+      ],
+    }] : []),
+    ...(!roomsScope ? [{
+      title: 'Status', value: showArchived ? 'archived' : 'active', defaultKey: 'active',
+      onChange: (v: string) => { clearSelection(); setShowArchived(v === 'archived') },
+      options: [{ key: 'active', label: 'Active' }, { key: 'archived', label: 'Archived' }],
+    }] : []),
+  ]
+
   return (
     <div className="flex h-full flex-col">
       <TopBar
@@ -277,8 +309,17 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
         // Every header action here acts on the SESSION list — a view switcher for chat cards, a
         // re-tag job over chats, a chat folder, a new chat. In the Rooms scope they would be
         // controls for the list that is not on screen, so the scope carries its own action
-        // (`RoomsScope`'s "New room") and the header keeps only the title.
-        right={roomsScope ? undefined : <HeaderActions className="max-w-[60vw]">
+        // (`RoomsScope`'s "New room") and the header drops them.
+        //
+        // The search and the filter (the scope, and Active or Archived) lead the row, in the one
+        // order every header keeps. In the Rooms scope the filter stays, since its Scope is the way
+        // back to the chats, and the search goes with the session list it searched.
+        right={<HeaderActions className="max-w-[60vw]">
+          {showControls && !roomsScope && (
+            <HeaderSearch value={q} onChange={setQ} placeholder="Search titles and messages" label="Search chats" autoFocus />
+          )}
+          {showControls && historySections.length > 0 && <HeaderFilter sections={historySections} />}
+          {!roomsScope && <>
           <HeaderSegmented ariaLabel="View" value={view}
             options={[{ key: 'list', label: 'List view', icon: ListIcon }, { key: 'board', label: 'Board view (by tag)', icon: Columns3 }]}
             onChange={(v) => setView(v as 'list' | 'board')} />
@@ -296,51 +337,24 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
               menu on each card) — no dedicated management surface needed. */}
           <HeaderControl icon={FolderPlus} label="New folder" priority="low" onClick={createFolder} />
           <HeaderControl icon={Edit3} label="New chat" variant="primary" priority="primary" onClick={() => navigate('chat/new')} />
+          </>}
         </HeaderActions>} />
       {/* body row: the chat-history column + (optional) the right-docked
           "Manage folders & tags" rail, a flex sibling that PUSHES the column
           narrower (matches the Activity/Chat-history rails app-wide). */}
       <div className="flex min-h-0 flex-1">
-      {/* Shell: search + filter chips stay fixed (shrink-0); only the body scrolls
-          (list) or hosts a height-bounded board (board view) — the page itself
-          never overflows. */}
+      {/* Shell: the search's notices and the selection bar stay fixed (shrink-0); only the body
+          scrolls (list) or hosts a height-bounded board (board view) — the page itself never
+          overflows. */}
       <div className="flex min-w-0 flex-1 min-h-0 flex-col">
         <div className="mx-auto w-full px-l pt-l shrink-0">
-          {/* Render the search/filter chrome whenever the list is loading OR
-              non-empty — so the page paints fully (real controls + skeleton rows
-              below) during load, and only the genuine empty-state hides it. */}
-          {/* `|| roomsAvailable` is load-bearing: a fresh install with Agent Rooms turned on has
-              ZERO chats, and without this the whole control strip — including the Rooms tab — was
-              hidden by the chats empty state, so the only route to a room would have been to type
-              the URL. */}
-          {(sessions === null || sessions.length > 0 || roomsAvailable) && (<>
-            {/* Origin scope — only shown once worker chats exist (otherwise the
-                history is all-manual and the tabs would be noise). Defaults to the
-                user's own chats; loop/code workers live behind their tabs.
-                Rooms join it the moment `/api/rooms` answers at all, which is the
-                moment the feature is switched on — including at zero rooms, because
-                the tab is how the first one gets made. */}
-            {(originCounts.loop > 0 || originCounts.code > 0 || originCounts.channel > 0 || roomsAvailable) && (
-              <div className="mb-m">
-                <Segmented ariaLabel="Chat origin" value={origin} onChange={(v) => setOrigin(v as typeof origin)}
-                  options={[
-                    { key: 'manual', label: `Chat Sessions${originCounts.manual ? ` ${originCounts.manual}` : ''}` },
-                    ...(originCounts.loop > 0 ? [{ key: 'loop', label: `Loops ${originCounts.loop}` }] : []),
-                    ...(originCounts.code > 0 ? [{ key: 'code', label: `Code ${originCounts.code}` }] : []),
-                    ...(originCounts.channel > 0 ? [{ key: 'channel', label: `Channels ${originCounts.channel}` }] : []),
-                    ...(roomsAvailable ? [{ key: 'room', label: `Rooms${roomCount ? ` ${roomCount}` : ''}` }] : []),
-                    { key: 'all', label: 'All' },
-                  ]} />
-              </div>
-            )}
-            {/* Every control below narrows the SESSION list, so none of them applies to the Rooms
-                scope — leaving them mounted there would offer a search that filters nothing and a
-                tag row for a noun that has no tags. The scope swaps the body, so it swaps its
-                controls with it. */}
+          {showControls && (<>
+            {/* Everything below narrows the SESSION list, so none of it applies to the Rooms
+                scope — leaving it mounted there would announce a search that filters nothing and
+                a tag row for a noun that has no tags. The scope swaps the body, so it swaps these
+                with it. */}
             {!roomsScope && (<>
-            <div className="mb-m">
-              <SearchField value={q} onChange={setQ} placeholder="Search chats — title or anything said"
-                ariaLabel="Search chats" autoFocus />
+            <div>
               {/* 🪤 `origin !== 'all'` would be WRONG here: this surface OPENS on 'manual', so the
                   comparison is true before the user has done anything and the list would announce its
                   length at rest. Compared against its own default, like inbox's 'open' and loops'
@@ -378,19 +392,13 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
                 </InlineError>
               )}
             </div>
-            {/* Active / Archived. Archived chats keep their transcript AND stay
-                searchable — the copy says so, because an "archive" that people read as
-                "delete" is one they never use. */}
-            <div className="mb-m flex items-center gap-2">
-              <Segmented ariaLabel="Chat lifecycle" value={showArchived ? 'archived' : 'active'}
-                onChange={(v) => { clearSelection(); setShowArchived(v === 'archived') }}
-                options={[{ key: 'active', label: 'Active' }, { key: 'archived', label: 'Archived' }]} />
-              {showArchived && (
-                <span className="text-on-surface-low text-[0.75rem]">
-                  Archived chats stay searchable — restore any of them at any time.
-                </span>
-              )}
-            </div>
+            {/* Archived chats keep their transcript AND stay searchable — the copy says so,
+                because an "archive" that people read as "delete" is one they never use. */}
+            {showArchived && (
+              <p className="mb-m text-on-surface-low text-[0.75rem]">
+                Archived chats stay searchable — restore any of them at any time.
+              </p>
+            )}
             {/* Selection bar — appears only while something is selected, so the
                 default list stays uncluttered. */}
             {selecting && (
