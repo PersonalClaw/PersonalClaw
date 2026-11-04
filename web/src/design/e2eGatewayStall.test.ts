@@ -28,10 +28,12 @@ vi.mock('node:http', async (importOriginal) => {
 //
 // The harness lost its gateway mid-run five times with a gateway.log of 0 bytes: requests were
 // accepted and never answered, and nothing said where the gateway was. Now the first spec whose
-// shell guard finds it unanswering records the gateway's process state in the run's output folder
-// and sends it SIGUSR1, which the gateway's stall watch answers with every thread's stack in
-// gateway.log (`src/personalclaw/loop_watch.py`), and prints the record into the job's log. These
-// stand a small process in for the gateway: it counts the SIGUSR1s it is sent.
+// shell guard finds it unanswering records the gateway's process state, its port and the tail of its
+// gateway.log, where its stall watch writes every thread's stack (`src/personalclaw/loop_watch.py`),
+// in the run's output folder, and prints the record into the job's log. It sends the gateway
+// nothing: it once sent SIGUSR1 for faulthandler's dump of every thread, which crashed a gateway
+// whose other threads ran Python. These stand a small process in for the gateway: it counts the
+// SIGUSR1s it is sent, which must stay none.
 
 let scratch = ''
 const children: ChildProcess[] = []
@@ -92,7 +94,7 @@ async function aRunWithAGateway(): Promise<{ env: NodeJS.ProcessEnv; out: string
 const sent = (signals: string) => readFileSync(signals, 'utf8').split('\n').filter(Boolean).length
 
 describe.skipIf(process.platform === 'win32')('a spec that finds the gateway unanswering', () => {
-  it('records the gateway\'s process state, its port and its log\'s tail, and asks it for its stacks, once a run', async () => {
+  it('records the gateway\'s process state, its port and its log\'s tail, and sends it nothing, once a run', async () => {
     const run = await aRunWithAGateway()
     await askTheGatewayWhereItWaits(run.env)
     const record = readFileSync(join(run.out, STALL_RECORD), 'utf8')
@@ -100,17 +102,18 @@ describe.skipIf(process.platform === 'win32')('a spec that finds the gateway una
     expect(record, 'its process state, from ps').toMatch(new RegExp(`STAT[^\\n]*\\n\\s*${run.pid}\\s`))
     expect(record, 'whether it answers on its port').toMatch(/Its port: answers \/api\/healthz \(HTTP 200\) in \d+ ms\./)
     expect(record, 'the tail of its gateway.log').toContain('the line before\nthe last line it wrote')
-    const tail = record.slice(record.indexOf('after it was sent SIGUSR1:\n'))
+    const tail = record.slice(record.indexOf('of its gateway.log:\n'))
     expect(tail, 'only its last lines').not.toContain(`an early line ${TAIL_LINES - 1}\n`)
     expect(tail.trimEnd().split('\n').length - 1, 'no more than the line cap').toBeLessThanOrEqual(TAIL_LINES)
-    expect(sent(run.signals), 'it was asked for its stacks').toBe(1)
+    expect(record, 'the record says so').toContain('Nothing was sent to it')
+    expect(sent(run.signals), '🔴 red before: it was sent SIGUSR1').toBe(0)
     expect(probes, 'one probe, to loopback, on the recorded port, with a short timeout').toEqual([
       { host: '127.0.0.1', port: run.port, timeout: 2_000 },
     ])
 
     await askTheGatewayWhereItWaits(run.env)
     await new Promise((resolve) => setTimeout(resolve, 300))
-    expect(sent(run.signals), 'a later spec asks nothing more').toBe(1)
+    expect(sent(run.signals), 'nor by a later spec').toBe(0)
     expect(readFileSync(join(run.out, STALL_RECORD), 'utf8'), 'and leaves the first record').toBe(record)
   }, 15_000)
 
@@ -128,7 +131,8 @@ describe.skipIf(process.platform === 'win32')('a spec that finds the gateway una
     const record = readFileSync(join(run.out, STALL_RECORD), 'utf8')
     expect(record, 'its process state is stopped').toMatch(new RegExp(`\\n\\s*${run.pid}\\s+T`))
     expect(record).toContain('Its port: takes the connection, and sends no answer within 2 s.')
-    await expect.poll(() => sent(run.signals), { timeout: 5_000 }).toBe(1)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(sent(run.signals), 'nothing was sent, stopped or not').toBe(0)
   }, 15_000)
 
   it('never signals a gateway whose home is the default one or inside it, nor one on the install\'s port', async () => {
@@ -176,8 +180,8 @@ describe.skipIf(process.platform === 'win32')('a spec that finds the gateway una
   })
 
   it('never signals a process that is not the harness gateway now, and says so without naming it', async () => {
-    // The gateway died and its pid went to another process: the record still names the pid. A
-    // SIGUSR1 that process does not take would end it.
+    // The gateway died and its pid went to another process: the record still names the pid, and
+    // nothing of that process is probed or written.
     const run = await aRunWithAGateway()
     const other = join(scratch, 'other-signals')
     const plain = await aProcess(other, ['a-plain-process-of-someone-else'])
@@ -213,7 +217,7 @@ describe.skipIf(process.platform === 'win32')('a spec that finds the gateway una
     }
     const record = readFileSync(join(run.out, STALL_RECORD), 'utf8')
     expect(printed.join('\n'), 'the job\'s log gets the record').toContain(record)
-    const tail = record.slice(record.indexOf('after it was sent SIGUSR1:\n') + 'after it was sent SIGUSR1:\n'.length)
+    const tail = record.slice(record.indexOf('of its gateway.log:\n') + 'of its gateway.log:\n'.length)
     expect(tail).toContain('the last line')
     expect(Buffer.byteLength(tail), 'no more than the byte cap').toBeLessThanOrEqual(TAIL_BYTES + 1)
     expect(tail.split('\n').length, 'no more than the line cap').toBeLessThanOrEqual(TAIL_LINES + 2)

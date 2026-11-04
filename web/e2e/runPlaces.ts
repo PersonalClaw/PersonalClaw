@@ -373,8 +373,6 @@ function keepGatewayLog(home: string, outputDir: string): void {
  *  nothing more. */
 export const STALL_RECORD = 'gateway-unanswered.txt'
 
-/** How long the gateway is given to write its stacks before the log's tail is read. */
-const DUMP_WAIT_MS = 2_000
 /** How long the port check waits for the gateway's answer. */
 const ANSWER_WAIT_MS = 2_000
 /** How much of gateway.log the record keeps, and prints into the job's log, which is public: its last
@@ -391,12 +389,13 @@ export const TAIL_BYTES = 32_768
  *  - the gateway's process state (`ps`): a stopped process (`T`) answers no signal;
  *  - whether it answers on its port: a connection the kernel takes is not an answer, since a
  *    listening socket's backlog takes connections while the process does nothing with them;
- *  - the tail of its gateway.log (TAIL_LINES lines at most, of TAIL_BYTES bytes at most), read after
- *    the gateway is sent SIGUSR1, which its stall watch
- *    (`src/personalclaw/loop_watch.py`, armed by playwright.config.ts) answers with every thread's
- *    stack, written by faulthandler from the signal handler itself, so it is named whatever holds
- *    the gateway: its loop, its worker pool or the GIL. Those stacks hold files, lines and
- *    functions, never a value.
+ *  - the tail of its gateway.log (TAIL_LINES lines at most, of TAIL_BYTES bytes at most), where its
+ *    stall watch (`src/personalclaw/loop_watch.py`, armed by playwright.config.ts) writes every
+ *    thread's stack when its loop or its worker pool stops answering, or a stall holds the GIL.
+ *    Those stacks hold files, lines and functions, never a value.
+ *  Nothing is sent to the gateway. It was sent SIGUSR1 for faulthandler to write every thread's
+ *  stack from the signal handler, and that dump crashed a gateway whose other threads ran Python
+ *  (`tests/test_a_stalled_gateway_loop_names_its_frame.py`).
  *  It goes to stderr, which the job's log shows, and into the run's output folder, which CI
  *  uploads with the gateway.log a failed run keeps (`cleanUpRun`).
  *
@@ -404,10 +403,10 @@ export const TAIL_BYTES = 32_768
  *  only the gateway serving that home writes): a home at or under the default one
  *  (`~/.personalclaw`) is refused before anything is read (`harnessHome`), and so is a record of a
  *  gateway on the install's own port (`INSTALL_PORT`), or on no port at all, so the install's
- *  gateway is never the one probed or signalled. And it is signalled only while its command line
- *  still says it is the gateway on that port (`isTheGateway`): a pid the gateway left goes to
- *  another process, which a SIGUSR1 it does not take would end. Never throws: the spec's own
- *  failure is what the run reports. */
+ *  gateway is never the one probed. And it is read and probed only while its command line still
+ *  says it is the gateway on that port (`isTheGateway`): a pid the gateway left goes to another
+ *  process, and nothing of that process is written. Never throws: the spec's own failure is what
+ *  the run reports. */
 export async function askTheGatewayWhereItWaits(env: NodeJS.ProcessEnv = process.env): Promise<void> {
   try {
     await askWhereItWaits(env)
@@ -445,8 +444,8 @@ async function askWhereItWaits(env: NodeJS.ProcessEnv): Promise<void> {
     return
   }
   if (!isTheGateway(pid, port)) {
-    // The gateway died and its pid went to another process, which a SIGUSR1 it does not take would
-    // end: nothing is sent, nothing is probed, and nothing of that process is written.
+    // The gateway died and its pid went to another process: nothing is probed, and nothing of that
+    // process is written.
     const record = `${found}pid ${pid} isn't the harness gateway now; nothing was sent.\n`
     writeFileSync(path, record)
     console.error(`── the harness gateway was found unanswering (${STALL_RECORD}) ──\n${record}`)
@@ -456,16 +455,11 @@ async function askWhereItWaits(env: NodeJS.ProcessEnv): Promise<void> {
   const head = `${found}Its process state:\n${ps.stdout ?? ''}${ps.stderr ?? ''}`
   writeFileSync(path, head)
   const answers = await portCheck(port)
-  try {
-    process.kill(pid, 'SIGUSR1')
-  } catch {
-    /* gone: the record says what was there */
-  }
-  await new Promise((resolve) => setTimeout(resolve, DUMP_WAIT_MS))
   const tail = logTail(join(home, 'gateway.log'))
   const record =
     `${head}Its port: ${answers}.\n` +
-    `The last ${TAIL_LINES} lines of its gateway.log, ${DUMP_WAIT_MS / 1000} s after it was sent SIGUSR1:\n${tail}\n`
+    `Nothing was sent to it: its stall watch writes into gateway.log where its loop, its worker pool or the GIL is held.\n` +
+    `The last ${TAIL_LINES} lines of its gateway.log:\n${tail}\n`
   try {
     writeFileSync(path, record)
   } catch {
