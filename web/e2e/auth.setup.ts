@@ -1,7 +1,7 @@
 import { test as setup, expect } from '@playwright/test'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { SHELL_SELECTOR } from './helpers'
+import { SHELL_SELECTOR, askingTheGatewayOnFailure } from './helpers'
 
 // ── Auth seeding for the harness ────────────────────────────────────────────
 // The built SPA gates its first render on an authenticated identity/config
@@ -56,12 +56,12 @@ setup('authenticate', async ({ page, context }) => {
   // prevent. The NavRail only renders once the server reports a non-empty
   // user_name, which makes it the honest proof of "authenticated AND onboarded".
   await page.goto(`${BASE}/#/dashboard`)
-  await expect(
+  await askingTheGatewayOnFailure(expect(
     page.locator(SHELL_SELECTOR),
     `the app shell never mounted at ${BASE}. The gateway is unreachable, unauthenticated,\n` +
       `or not onboarded — every route would render the onboarding screen and axe would\n` +
       `report a clean tree for a surface no user ever sees.`,
-  ).toBeVisible({ timeout: 15_000 })
+  ).toBeVisible({ timeout: 15_000 }))
 
   await context.storageState({ path: OUT })
 })
