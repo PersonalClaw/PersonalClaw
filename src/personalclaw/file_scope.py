@@ -69,7 +69,8 @@ a repository (``.gitignore``, ``.gitattributes``), is as anywhere.
 
 Inside every place the checks the Files view makes still hold (``file_roots.Admission``):
 symlinks and ``..`` are resolved first, so a link or a climb out of a place reaches nothing it
-does not already reach; no credential location or secret file; and nothing in PersonalClaw's own
+does not already reach; no credential location or secret file, except a project's own secret file
+for a chat its owner allowed it for (``secret_file_grants``); and nothing in PersonalClaw's own
 home except through a place inside it (``file_roots.within``): a place that contains the home, a
 worker's ``~``, says nothing about a path in it, so what the skills library shares is all a session
 working there reads of the library. A path that starts with ``~/``
@@ -88,6 +89,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from personalclaw import secret_file_grants
 from personalclaw.home_paths import from_home
 
 logger = logging.getLogger(__name__)
@@ -371,7 +373,8 @@ class FileScope:
             raise OutOfScope(
                 f"path {raw!r} is inside PersonalClaw's own home, which this tool does not reach"
             )
-        if self._admission(change)(real) is None:
+        # A project's secret file opens for a chat its owner allowed it for (`secret_file_grants`).
+        if self._admission(change)(real) is None and not secret_file_grants.opens(real, change):
             raise OutOfScope(
                 f"path {raw!r} is a credential or secret file, which this tool does not reach"
             )

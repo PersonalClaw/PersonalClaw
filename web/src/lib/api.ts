@@ -6124,6 +6124,10 @@ export interface PendingApproval {
    *  `deletes`, `outside_workspace`, `sends`, `spends`, `undeclared`), worked out once where the
    *  approval was recorded. Decode it with `confirmsOf`: a row without it fails closed. */
   confirms?: unknown
+  /** What an ask for a project's secret file asks to do with it, `read` or `write`
+   *  (`secret_file_grants`), "" for every other call: only Allow for this session and Deny
+   *  answer it, and only here. Decode it with `secretFileOf`. */
+  secret_file?: string
   /** The store id of the trigger whose run asked (its action's agent), "" for anything else. */
   trigger?: string
   /** That trigger's name, "" when it has none or is gone. */

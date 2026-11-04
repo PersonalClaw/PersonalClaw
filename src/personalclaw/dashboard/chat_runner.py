@@ -17,6 +17,7 @@ from personalclaw import (
     memory_writes,
     pre_tool_hooks,
     run_bounds,
+    secret_file_grants,
     subagent_endings,
 )
 from personalclaw.acp import permission_authority as acp_permission_authority
@@ -3298,6 +3299,8 @@ async def run_chat(
         running_turn.set_steer_drains(state, session, session_key, _steerable)
         # Who answers the questions an agent CLI asks her on this turn (`chat_questions.arm`).
         chat_questions.arm(state, session, client, attended=not _unattended_turn)
+        # Whether a project secret file a file tool is refused is asked of you on this turn.
+        secret_file_grants.arm(client, unattended=_unattended_turn, app_chat=_app_chat)
 
         # `PreResponse`: declared, selectable in the hook UI, fired by nothing until
         # now. Fired BEFORE the stream is created — the last moment the catalog's description
@@ -4499,6 +4502,7 @@ async def run_chat(
                     named_files=tuple(getattr(event, "named_files", ()) or ()),
                 )
                 perm_meta["confirms"] = list(_confirms)
+                perm_meta.update(secret_file_grants.card_meta(event))
                 # Who asked for this turn, when it was not you: the card names them, offers your
                 # answer for this call alone, and every row of the ask says who it was
                 # (`approval_grants`, rule 4).
@@ -4586,6 +4590,7 @@ async def run_chat(
                         deny_effect=_deny_effect,
                         asked_for=_asked_for,
                         confirms=_confirms,
+                        secret_file=secret_file_grants.asked_of(event),
                     )
                     outcome = await asyncio.wait_for(fut, timeout=approval_window)
                 except asyncio.TimeoutError:

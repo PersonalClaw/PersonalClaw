@@ -264,7 +264,10 @@ export function ApprovalCard({
   // whatever a grant says, so no standing grant is offered for it: one would promise a "without
   // asking" it cannot keep.
   // So is a call someone else asked for: none of her standing grants would answer the next one.
-  const offered = answers === 'once'
+  // An ask for a project's secret file has two answers, Allow for this session and Deny
+  // (`secret_file_grants`): no scope is offered, and its Allow is the backend's plain approve.
+  const once = answers === 'once' || Boolean(seg.secretFile)
+  const offered = once
     ? [REMEMBER_SCOPES[0]]
     : offeredScopes(seg.risk, widened, Boolean(seg.reach || seg.askedFor))
   const chosen = offered.find((s) => s.key === scope) ?? offered[0]
@@ -295,7 +298,7 @@ export function ApprovalCard({
         {seg.denyEffect && <p data-type="caption" className="mt-xs text-on-surface-low">{seg.denyEffect}</p>}
       </>}
       scope={
-        answers === 'once' ? undefined : <div className="mt-2 flex flex-col gap-1">
+        once ? undefined : <div className="mt-2 flex flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
             <span data-type="caption" className="text-on-surface-low">Remember this choice</span>
             <Segmented size="sm" ariaLabel="Remember this choice"
@@ -329,12 +332,14 @@ export function ApprovalCard({
         // and Deny keeps the tinted danger edge it has always had. The accessible name
         // carries the scope, because "Allow" alone does not say how far the answer reaches.
         {
-          key: 'allow', icon: Check, label: 'Allow', approves: true,
+          key: 'allow', icon: Check, label: seg.secretFile ? 'Allow for this session' : 'Allow', approves: true,
           // The SAME promise string the visible line shows, not a second copy of it: a
           // truthful sentence beside an over-claiming accessible name is the same defect for
           // the user who only hears one of them (#541).
-          // With no picker (`once`) there is no scope to name: the call alone is answered.
-          name: answers === 'once' ? `Allow ${named}` : `Allow ${named} — ${chosenWords.label.toLowerCase()}: ${promise}`,
+          // With no picker (`once`) there is no scope to name: the call alone is answered, or for
+          // a secret file, this file for this chat until it ends.
+          name: seg.secretFile ? `Allow ${named} for this session`
+            : once ? `Allow ${named}` : `Allow ${named} — ${chosenWords.label.toLowerCase()}: ${promise}`,
           busy,
           onClick: () => onAct(seg.id, chosen.action),
         },
@@ -343,7 +348,7 @@ export function ApprovalCard({
           // Deny is single-shot whatever the scope says: no backend action persists a
           // refusal, so the name states that rather than letting the picker imply it. And when
           // a Deny ends the agent's turn, the name says so too, as the visible line does.
-          name: (answers === 'once' ? `Deny ${named}` : `Deny ${named} — nothing is remembered`)
+          name: (once ? `Deny ${named}` : `Deny ${named} — nothing is remembered`)
             + (seg.denyEffect ? `. ${seg.denyEffect}` : ''),
           busy,
           onClick: () => onAct(seg.id, 'rejected'),

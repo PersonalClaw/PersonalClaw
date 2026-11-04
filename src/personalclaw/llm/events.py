@@ -363,3 +363,8 @@ class AgentEvent:
     #: nothing, which every approval surface takes to be able to send or spend
     #: (``approval_confirms``). Last, so no field moves.
     consequences: tuple[str, ...] | None = None
+    #: On the native loop's PERMISSION_REQUEST for a project secret file a file tool was refused
+    #: (``secret_file_grants``): what the call asks to do with it, ``"read"`` or ``"write"``. Only
+    #: the owner's answer decides it, for the chat until it ends: no grant, mode or hook answers it
+    #: (``run_bounds.put_to_a_person``). ``""`` for every other request. Last, so no field moves.
+    secret_file: str = ""

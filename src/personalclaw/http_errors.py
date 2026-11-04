@@ -1125,6 +1125,11 @@ HTTP_ERROR_CODES: dict[str, str] = {
     "approval_grant_refused": (
         "The operator ceiling says every tool call asks, so this can't approve calls on its own."
     ),
+    # A 409: a standing grant aimed at an ask for a project secret file (`secret_file_grants`),
+    # which only Allow for this session or Deny answers. The ask stays pending.
+    "approval_secret_file": (
+        "A project's secret file opens only with Allow for this session, so nothing was changed."
+    ),
     # ── approving a chat's plan (dashboard/chat_plan.py — POST …/plan/approve, #3821) ──
     # `run_invalid` (400): `run` is neither "here" nor "fresh". `fresh_chat_owner_only` (403): an
     # app asked to run an approved plan in a fresh chat; only the owner starts one of her chats.

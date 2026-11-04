@@ -59,6 +59,19 @@ export function confirmsOf(raw: unknown, risk: unknown): string[] {
   return approvalRiskOf(risk) === 'safe' ? [] : ['undeclared']
 }
 
+/** What an ask for a project's secret file asks to do with it (`secret_file_grants`): `read` or
+ *  `write`, or `undefined` for any other ask, and for a word another build wrote, which is no ask
+ *  this build knows. Only Allow for this session and Deny answer such an ask. */
+export function secretFileOf(raw: unknown): 'read' | 'write' | undefined {
+  return raw === 'read' || raw === 'write' ? raw : undefined
+}
+
+/** :func:`secretFileOf` as the segment field it fills, for a spread: nothing for any other ask. */
+export function secretFileSeg(raw: unknown): Pick<ApprovalSegment, 'secretFile'> {
+  const op = secretFileOf(raw)
+  return op ? { secretFile: op } : {}
+}
+
 /** The risks a surface treats as "may be destructive" — `task_modes.MAY_DESTROY`: the card
  *  withholds its standing grants for them until the user unlocks them. A shell command the
  *  screen could not check can do anything the shell can. */

@@ -8,6 +8,12 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Added
+
+- **A project's secret file opens for a chat you allow. When the agent's `read_file` meets a project's `.env`, `secrets.json` or another secret file by its name, the chat asks you, and `write_file` and `edit_file` ask the same to change one. The card has two answers, Allow for this session and Deny: an Allow opens that file for that operation in that chat until the chat is deleted or PersonalClaw restarts, and its values still reach the agent masked. Trust, YOLO, an approval mode, a saved grant and a hook's pattern never answer it, a channel gets the link rather than a prompt, and an unattended turn or an app's conversation gets the refusal it got before. PersonalClaw's own credential store, a sign-in file in your home and the files in a credential folder are never offered, a search and a listing still leave secret files out, and the shell still refuses them. The security log records each Allow and each read or change it lets through, with the file's path and never what it holds.**
+
+- **For apps, the permission event has a new field: `personalclaw.sdk.channel.LLMEvent` carries `secret_file`, which is `""` on every event but the ask to open a project secret file, where it says `"read"` or `"write"`. Only your own chats on the dashboard make that ask, so a channel app's own conversations see `""`; nothing an app sends or answers changes.**
+
 ### Changed
 
 - **Stop stops only the turn you pressed it for, and a turn can be read by its message id. A Stop that reaches the gateway after its turn ended no longer stops the next one or empties its queue: it changes nothing, and the page says nothing failed. A soft Stop's answer names the queued messages it removed unsent, and sending one of them again runs nothing. A script, a channel or the page reads how one turn went at `GET /api/chat/sessions/{session}/turns/{message_id}`: queued, running with its run state, or settled with how it ended and its answer. An app reads only the turns of conversations it started.**

@@ -1,5 +1,5 @@
 import type { PendingApproval } from '../../lib/api'
-import { approvalRiskOf, blastRadiusOf, confirmsOf } from './approvalMeta'
+import { approvalRiskOf, blastRadiusOf, confirmsOf, secretFileSeg } from './approvalMeta'
 export { confirmsOf } from './approvalMeta'
 import type { ApprovalSegment, Segment } from './chatTypes'
 
@@ -14,7 +14,7 @@ export type ApprovalCardInput = Pick<
   PendingApproval,
   'id' | 'request_id' | 'tool' | 'tool_input' | 'tool_purpose' | 'risk' | 'blast_radius' | 'grant_agent'
   | 'session' | 'work' | 'step' | 'room' | 'source_label' | 'reach' | 'deny_effect' | 'asked_for'
-  | 'confirms'
+  | 'confirms' | 'secret_file'
 >
 
 /** A registry row (`GET /api/approvals`, the `approval` frame) as the card's segment, so every
@@ -33,6 +33,7 @@ export function approvalSegmentOf(a: ApprovalCardInput): ApprovalSegment {
     reach: a.reach || '',
     ...(a.deny_effect ? { denyEffect: a.deny_effect } : {}),
     ...(a.asked_for ? { askedFor: a.asked_for } : {}),
+    ...secretFileSeg(a.secret_file),
     confirms: confirmsOf(a.confirms, a.risk),
   }
 }

@@ -1549,7 +1549,7 @@ class NativeBuiltinToolProvider(ToolProvider):
                 said,
                 said,
                 [
-                    "This command touches a sensitive credential path. Use a non-credential path or a different approach."  # noqa: E501
+                    "This command touches a sensitive credential path. Use a non-credential path or a different approach. A project's own secret file, such as .env, opens only through read_file (to read it) or write_file and edit_file (to change it), which ask the user for it; the shell never opens one."  # noqa: E501
                 ],
             )
         # PersonalClaw's own stores are read through their own tools (`file_scope.store_named_in`).

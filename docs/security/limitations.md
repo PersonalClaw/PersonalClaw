@@ -864,8 +864,12 @@ Before the agent's shell runs a command, PersonalClaw reads it and refuses it
   GitLab, Google Cloud, AWS, Azure and macOS credential CLIs are refused. Their ordinary status,
   identity and account-listing commands still run.
 
-The agent's file tools and the dashboard refuse all of these files. The shell's screen is defence in
-depth, not a fence:
+The agent's file tools and the dashboard refuse all of these files, except a project's own secret
+file a chat was allowed (`secret_file_grants`): `read_file`, `write_file` and `edit_file` ask you for
+one, and only their asks open it, for that chat. The shell never does, an Allow or not: its screen
+reads a command's words, and could not tell the file you allowed from one beside it. An agent CLI's
+own file tools do not ask either: its hook has no ask of its own to raise, so they keep refusing
+secret files. The shell's screen is defence in depth, not a fence:
 
 - **A command that reads a whole folder holding one reaches it.** `grep -r … ~` or `tar c ~` names
   your home, not the file in it.

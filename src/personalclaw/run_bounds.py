@@ -545,9 +545,14 @@ def _event_reach(event: Any, session_key: str, cwd: str) -> Reach:
 
 def put_to_a_person(event: Any, *, session_key: str, cwd: str) -> bool:
     """Whether a call put to an approval gate (a permission request), run in the folder *cwd*,
-    must be answered by a person whatever grant stands: it reaches a host off the allowed hosts,
-    or one its command does not name, or it deletes one of the owner's protected folders, or a path
-    its command does not name (:mod:`personalclaw.protected_folders`). No grant answers it."""
+    must be answered by a person whatever grant stands: it asks for a project secret file
+    (``secret_file_grants``), it reaches a host off the allowed hosts, or one its command does not
+    name, or it deletes one of the owner's protected folders, or a path its command does not name
+    (:mod:`personalclaw.protected_folders`). No grant answers it."""
+    from personalclaw.secret_file_grants import asked_of
+
+    if asked_of(event):
+        return True
     return _event_reach(event, session_key, cwd).asks
 
 
@@ -574,7 +579,12 @@ def screen(hooks: Any, event: Any, session_key: str, cwd: str) -> tuple[Any, boo
 
 
 def event_note(event: Any, session_key: str, *, cwd: str) -> str:
-    """:func:`reach_note` for a permission request, run in the folder *cwd*."""
+    """:func:`reach_note` for a permission request, run in the folder *cwd*; for an ask for a
+    project secret file, the line saying only the owner's answer opens it."""
+    from personalclaw.secret_file_grants import ask_note, asked_of
+
+    if op := asked_of(event):
+        return ask_note(op)
     return reach_note(
         getattr(event, "risk_level", "") or "",
         str(getattr(event, "title", "") or ""),

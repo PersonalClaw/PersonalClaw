@@ -1440,7 +1440,8 @@
     {"annotation": "tuple[str, ...]", "default": "()", "kind": "positional_or_keyword", "name": "named_files"},
     {"annotation": "bool", "default": "False", "kind": "positional_or_keyword", "name": "hooks_asked"},
     {"annotation": "dict[str, Any] | None", "default": "None", "kind": "positional_or_keyword", "name": "reasoning"},
-    {"annotation": "tuple[str, ...] | None", "default": "None", "kind": "positional_or_keyword", "name": "consequences"}
+    {"annotation": "tuple[str, ...] | None", "default": "None", "kind": "positional_or_keyword", "name": "consequences"},
+    {"annotation": "str", "default": "''", "kind": "positional_or_keyword", "name": "secret_file"}
    ],
    "returns": "None"
   },
