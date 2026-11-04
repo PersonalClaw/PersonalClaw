@@ -35,6 +35,7 @@ const {
   stoppedSentence,
 } = require("./gatewayLost");
 const homeGateway = require("./homeGateway");
+const { makeAdoptedWatch } = require("./adoptedWatch");
 const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
 const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pushToBuddy, registerBuddyIpc, registerBuddySettingsIpc } = require("./buddyWindow");
@@ -140,6 +141,9 @@ let startFailure = null;
  * quitting leaves this one running.
  */
 let adoptedGateway = null;
+/** Set once the gateway the app used stopped, its own or one it found, until a new one is in use:
+ *  nothing that carries this home's credentials goes to the port it left (`credentialsWithheld`). */
+let gatewayGone = false;
 /** What the Gateways window's "This computer" row says (`connectDialog.describeLocal`): `starting`,
  *  `own`, `adopted`, `stopped` or `served`, with the sentence the last two carry. */
 let localState = { state: "starting", sentence: "" };
@@ -366,6 +370,7 @@ async function stopGateway({ graceMs = GATEWAY_GRACE_MS, killGraceMs } = {}) {
  */
 async function gatewayLost(exit) {
   startFailure = exit;
+  gatewayGone = true;
   setLocalState("stopped", stoppedSentence(exit));
   showNotConnected();
 }
@@ -422,6 +427,7 @@ async function reachHomeGateway({ waitMs = 0 } = {}) {
 async function adoptHomeGateway(found) {
   const followed = Boolean(localGatewayUrl);
   adoptedGateway = { pid: found.gateway.pid, port: found.gateway.port };
+  adoptedWatch.adopt(adoptedGateway);
   startFailure = null;
   if (followed) await followRestartedGateway(found.ready);
   else await adoptLocalGateway(found.ready);
@@ -453,6 +459,7 @@ async function bringUpLocalGateway() {
     await startGateway();
     startFailure = null;
     adoptedGateway = null;
+    adoptedWatch.drop();
     setLocalState("own");
     return true;
   } catch (err) {
@@ -474,39 +481,39 @@ async function bringUpLocalGateway() {
   }
 }
 
-/** Follow an adopted gateway through the doorbell's news: once its socket is lost, the home's runtime
- *  record is read every 2 s until the gateway is back where it was, has moved to a new port, or is
- *  gone. */
-let adoptedWatch = null;
-function watchAdoptedGateway(connection) {
-  if (!adoptedGateway) return;
-  if (connection === "up") {
-    if (adoptedWatch) {
-      // Back where it was. The session it signed in holds (the home's session store outlives a
-      // restart), but the capability registry and the local secret are new with each start.
-      clearTimeout(adoptedWatch);
-      adoptedWatch = null;
-      shellToken = null;
-      registerWithGateway().catch(() => {});
-    }
-    return;
-  }
-  if (adoptedWatch) return;
-  const look = async () => {
-    adoptedWatch = null;
-    if (!adoptedGateway || isQuitting) return;
-    const record = homeGateway.readRecord(PERSONALCLAW_HOME);
-    const recordLive = Boolean(record && homeGateway.pidIsAlive(record.pid));
-    if (recordLive && record.port !== adoptedGateway.port) {
-      // It restarted on another port: find it there, proof and all, and follow it.
-      const moved = await reachHomeGateway();
-      if (moved.ok) return adoptHomeGateway(moved);
-    } else if (!recordLive && !homeGateway.pidIsAlive(adoptedGateway.pid)) {
-      return adoptedGone();
-    }
-    adoptedWatch = setTimeout(look, 2000);
-  };
-  adoptedWatch = setTimeout(look, 2000);
+/**
+ * Follow an adopted gateway through the doorbell's news (`adoptedWatch.js`). Once its socket is lost,
+ * nothing that carries this home's credentials goes to its port until `homeGateway.reach` proves it
+ * there again; a socket that comes back up proves nothing. Proven where it was, the app registers
+ * again, since the capability registry and the local secret are new with each start; moved, it is
+ * found where it went; gone, the app says so.
+ */
+const adoptedWatch = makeAdoptedWatch({
+  home: PERSONALCLAW_HOME,
+  reach: (home) => homeGateway.reach(home),
+  readRecord: (home) => homeGateway.readRecord(home),
+  pidIsAlive: (pid) => homeGateway.pidIsAlive(pid),
+  follow: async () => {
+    const moved = await reachHomeGateway();
+    if (!moved.ok) return false;
+    await adoptHomeGateway(moved);
+    return true;
+  },
+  proven: ({ pid, port }) => {
+    adoptedGateway = { pid, port };
+    shellToken = null;
+    registerWithGateway().catch(() => {});
+    startPresenceRefresh();
+  },
+  gone: () => adoptedGone(),
+  log: (msg) => console.log(`desktop: ${msg}`),
+});
+
+/** Whether nothing that carries this home's credentials (the shell's session, the local secret, the
+ *  capability token) may go to `localGatewayUrl` now: while a gateway the app found is unproven since
+ *  the doorbell lost it, and once the gateway the app used stopped. */
+function credentialsWithheld() {
+  return gatewayGone || adoptedWatch.withheld;
 }
 
 /** The adopted gateway stopped and nothing took its place: the app says so and offers the Gateways
@@ -514,6 +521,7 @@ function watchAdoptedGateway(connection) {
 function adoptedGone() {
   const { port } = adoptedGateway;
   adoptedGateway = null;
+  gatewayGone = true;
   shellToken = null;
   stopPresenceRefresh();
   startFailure = { adoptedGone: true };
@@ -542,6 +550,7 @@ function originOf(url) {
 async function adoptLocalGateway(ready) {
   localGatewayUrl = ready.url;
   gatewayStarts += 1;
+  gatewayGone = false;
   try {
     return await localSignIn.adopt(ready);
   } catch (err) {
@@ -762,7 +771,7 @@ function readLocalSecret() {
  * PATCH (`PATCH /api/config/personalclaw`, the menu bar's Show Buddy). */
 function postGateway(pathname, body, headers = {}, { signedIn = true, method = "POST", timeoutMs = 5000 } = {}) {
   return new Promise((resolve) => {
-    if (!localGatewayUrl) return resolve(null);
+    if (!localGatewayUrl || credentialsWithheld()) return resolve(null);
     try {
       assertLoopbackTarget(localGatewayUrl, `${method} ${pathname}`);
     } catch (err) {
@@ -1408,7 +1417,7 @@ const trayPresence = makeTrayPresence({
  * any failure — a menu-bar refresh must never be able to throw into the app. */
 function getGateway(pathname) {
   return new Promise((resolve) => {
-    if (!localGatewayUrl) return resolve(null);
+    if (!localGatewayUrl || credentialsWithheld()) return resolve(null);
     let url;
     try {
       // The same re-assertion `postGateway` makes: this request carries the owner's session.
@@ -1510,6 +1519,7 @@ function openBuddyMenu() {
  */
 function socketGateway(url, gateway) {
   if (!localGatewayUrl || originOf(gateway) !== originOf(localGatewayUrl)) throw new Error("not the gateway this shell started");
+  if (credentialsWithheld()) throw new Error("this home's gateway is not proven to be there since it was lost");
   assertLoopbackTarget(localGatewayUrl, "WS /api/ws");
   return openGatewaySocket(url, gateway, () => localSignIn.authorization());
 }
@@ -1551,7 +1561,10 @@ const doorbell = makeDoorbell({
     trayPresence.setRestarting(state === "restarting");
     pushToBuddy(buddy?.window, "connection", state);
     // A gateway the app did not start prints it no ready line: its socket is how a restart or a stop is heard.
-    watchAdoptedGateway(state);
+    if (adoptedGateway) {
+      if (state === "up") adoptedWatch.up();
+      else adoptedWatch.lost();
+    }
   },
   pollMs: PRESENCE_REFRESH_MS,
   log: (msg) => console.warn(`desktop: ${msg}`),

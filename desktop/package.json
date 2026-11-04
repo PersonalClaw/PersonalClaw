@@ -72,6 +72,7 @@
       "gatewayLost.js",
       "localSignIn.js",
       "homeGateway.js",
+      "adoptedWatch.js",
       "gatewayUrl.js",
       "endpointRegistry.js",
       "shellStore.js",

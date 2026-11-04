@@ -246,11 +246,32 @@ describe("the app uses this home's running gateway, and never signals one it did
     }
   });
 
-  it("follows an adopted gateway's restarts and loss with timeouts, not an interval", () => {
-    const watch = fnBody("watchAdoptedGateway");
-    assert.match(watch, /setTimeout\(look, 2000\)/);
-    assert.match(watch, /return adoptedGone\(\)/);
-    assert.match(watch, /registerWithGateway\(\)/, "a restart's new registry is not registered with");
+  it("follows an adopted gateway through the doorbell, and registers again only once it is proven", () => {
+    // `adoptedWatch.js` decides; main.js routes the doorbell's news to it and does what it says.
+    const at = MAIN.indexOf("const adoptedWatch = makeAdoptedWatch({");
+    assert.ok(at > 0, "the adopted watch is gone — this rail is now blind");
+    const made = MAIN.slice(at, MAIN.indexOf("\n});\n", at));
+    assert.match(made, /reach: \(home\) => homeGateway\.reach\(home\)/);
+    assert.match(made, /proven: \(\{ pid, port \}\) => \{\n\s+adoptedGateway = \{ pid, port \};\n\s+shellToken = null;\n\s+registerWithGateway\(\)/, "a restart's new registry is not registered with, or not with the proof's pid");
+    assert.match(made, /gone: \(\) => adoptedGone\(\)/);
+    assert.match(MAIN, /if \(adoptedGateway\) \{\n\s+if \(state === "up"\) adoptedWatch\.up\(\);\n\s+else adoptedWatch\.lost\(\);/);
+    assert.doesNotMatch(MAIN, /function watchAdoptedGateway\(/, "a second follower of the doorbell's news");
+    assert.match(fnBody("adoptHomeGateway"), /adoptedWatch\.adopt\(adoptedGateway\);[\s\S]*followRestartedGateway/, "a gateway is followed before the watch knows it");
+  });
+
+  it("sends nothing that carries the home's credentials while they are withheld", () => {
+    // The shell's session, the local secret and the capability token all leave through these three
+    // doors; each asks first. Withheld from the doorbell's loss of an adopted gateway until a proof on
+    // its port, and from the stop of the gateway the app used until a new one is in use.
+    assert.match(fnBody("postGateway"), /if \(!localGatewayUrl \|\| credentialsWithheld\(\)\) return resolve\(null\);/);
+    assert.match(fnBody("getGateway"), /if \(!localGatewayUrl \|\| credentialsWithheld\(\)\) return resolve\(null\);/);
+    assert.match(fnBody("socketGateway"), /if \(credentialsWithheld\(\)\) throw/);
+    assert.match(fnBody("credentialsWithheld"), /return gatewayGone \|\| adoptedWatch\.withheld;/);
+    assert.match(fnBody("gatewayLost"), /gatewayGone = true;/);
+    assert.match(fnBody("adoptedGone"), /gatewayGone = true;/);
+    assert.match(fnBody("adoptLocalGateway"), /gatewayGone = false;/);
+    const sends = [...MAIN.matchAll(/X-Local-Secret|X-Shell-Token|localSignIn\.authorization\(\)/g)].length;
+    assert.equal(sends, 6, "a new door carries the home's credentials: give it the same ask");
   });
 });
 

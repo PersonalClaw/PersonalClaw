@@ -137,8 +137,10 @@ own, which could only be refused:
 - **The app never stops it or signals it.** Quitting PersonalClaw leaves it running. The Gateways
   window marks it **already running**, so you can tell it from one the app started.
 - **The app follows it.** When it restarts (Settings → Restart, or an update), the app finds it
-  again, on a new port if it moved. When it stops, the app says so, and the Gateways window offers
-  to start a gateway here or connect to another one.
+  again, on a new port if it moved. Until that gateway proves again that it serves this home, the
+  app sends nothing that carries the home's sign-in or its local secret to the port it was on, so
+  a program that took that port gets none of them. When it stops, the app says so, and the Gateways
+  window offers to start a gateway here or connect to another one.
 - **Desktop capabilities work there**, since it proved it serves this home: see below.
 
 A window signed in this way is asked to confirm it's you before it pairs a device or creates a
