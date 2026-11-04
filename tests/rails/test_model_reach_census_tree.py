@@ -67,7 +67,7 @@ BUILDS_MODELS = frozenset(
 #: text, from wherever its reading starts, and a screen they shared, described. Closed.
 READS_THEIR_INPUT: dict[str, tuple[str, ...]] = {
     "dashboard/attachment_extract.py": ("AttachmentExtractor._begin", "AttachmentExtractor.get"),
-    "dashboard/chat_runner.py": ("_describe_screen_frame",),
+    "dashboard/screen_frames.py": ("_describe_screen_frame",),
 }
 
 

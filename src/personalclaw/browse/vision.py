@@ -13,7 +13,7 @@ with a located CDP input event. Four properties are load-bearing:
 **It resolves ONLY through the existing vision capability.** :func:`available` and
 :func:`ground` go through the platform's image reader (``providers.image_input``) — the
 ``image_modality`` binding, else a chat model that takes images — the same seam
-``chat_runner._describe_screen_frame`` and the knowledge pipeline's vision nodes use. There is no
+``screen_frames._describe_screen_frame`` and the knowledge pipeline's vision nodes use. There is no
 new vendor string here, no new client, and no app-owned model socket: a user who has bound a
 vision model in Settings → Models, or who chats with one, has already configured this, and a user
 who has neither gets :data:`REASON_NO_VISION_MODEL`.

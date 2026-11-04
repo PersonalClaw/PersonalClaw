@@ -140,7 +140,7 @@ FENCED_NOT_SCREENED: dict[tuple[str, str], str] = {
         "a group channel message from someone other than the owner, as the turn it starts"
     ),
     ("dashboard/attachment_extract.py", "file_block"): "a file attached in a chat",
-    ("dashboard/chat_runner.py", "_apply_screen_frame"): "what a shared screen shows, described",
+    ("dashboard/screen_frames.py", "_apply_screen_frame"): "what a shared screen shows, described",
     ("dashboard/chat_runner.py", "_inject_investigate_context"): (
         "an Inbox item or an artifact the owner opens in a chat to look into"
     ),

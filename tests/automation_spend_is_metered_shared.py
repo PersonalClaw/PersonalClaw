@@ -64,7 +64,7 @@ RESOLVERS = frozenset(
 
 #: Direct resolutions that stay unmetered, keyed like INTERACTIVE, with the reason.
 UNMETERED_RESOLUTIONS: dict[tuple[str, str], str] = {
-    ("dashboard/chat_runner.py", "_describe_screen_frame"): (
+    ("dashboard/screen_frames.py", "_describe_screen_frame"): (
         "the reading of the screen a person shared into their own chat turn, for the turn they "
         "are waiting on, and unmetered like it"
     ),
