@@ -38,6 +38,15 @@ export interface DayRow {
   /** The Attention address that answers its ask, '' when it asks nothing. */
   attention: string
   asks: number
+  /** What failed today and when ('Failed at 16:12: …'), '' when nothing did. A row that waits on
+   *  you or works now can have failed earlier: its sentence says so, its mark shows it when it fell
+   *  in the window, and its line says when (`failedAt`) whether or not it did. */
+  failed: string
+  /** When it failed today ('09:10'), '' when nothing did. */
+  failedAt: string
+  /** How long ago its first ask was asked ('2 min', '1 h 10 min'), '' when it asks nothing or the ask
+   *  carries no time. Measured from the ask, never from its mark, which the window cuts. */
+  asked: string
   /** The latest work before the window today ('HH:MM'), '' when none. */
   before: string
   /** The next run after the window ('21:30', 'tomorrow 07:30'), '' when none. */
@@ -98,6 +107,31 @@ function startOfDay(ms: number): number {
   const d = new Date(ms)
   d.setHours(0, 0, 0, 0)
   return d.getTime()
+}
+
+/** How long ago, as words: '2 min', '1 h 10 min', '3 h', '2 days'. */
+export function ago(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000))
+  if (min < 60) return `${min} min`
+  const h = Math.floor(min / 60)
+  if (h < 24) return min % 60 ? `${h} h ${min % 60} min` : `${h} h`
+  const days = Math.floor(h / 24)
+  return days === 1 ? '1 day' : `${days} days`
+}
+
+/** The runs in the window, each trigger once at its first run, in that order, with its count and its
+ *  last run when it runs more than once: '18:25 Check mail, 48 runs to 22:20 · 19:00 Water the plants'. */
+function byTrigger(runs: { o: Occurrence; at: number }[], now: number): string {
+  const seen = new Map<string, { name: string; first: number; last: number; count: number }>()
+  for (const { o, at } of runs) {
+    const t = seen.get(o.trigger_id)
+    if (t) { t.count += 1; t.last = Math.max(t.last, at); t.first = Math.min(t.first, at) } else {
+      seen.set(o.trigger_id, { name: o.trigger_name, first: at, last: at, count: 1 })
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.first - b.first)
+    .map((t) => `${whenNext(t.first, now)} ${t.name}${t.count > 1 ? `, ${t.count} runs to ${whenNext(t.last, now)}` : ''}`)
+    .join(' · ')
 }
 
 /** When a run after the window is, as words: '23:15', 'tomorrow 07:30', 'Fri 09:00'. */
@@ -212,18 +246,18 @@ export function buildDay(input: DayInput): DayView {
   }
 
   // What failed today: a helper's end, a loop's end.
-  const failed = (key: string, at: number, why: string) => {
+  const noteFailure = (key: string, at: number, why: string) => {
     if (at < today || at > now) return
     const d = draft(key)
     if (!d.failure || at > d.failure.at) d.failure = { at, why }
     touch(d, at)
   }
   for (const h of input.helpers) {
-    if (h.done && h.error && typeof h.ended === 'number') failed(named(h.agent), h.ended * 1000, firstLine(h.error))
+    if (h.done && h.error && typeof h.ended === 'number') noteFailure(named(h.agent), h.ended * 1000, firstLine(h.error))
   }
   for (const l of input.loops) {
     if (l.status === 'failed' && typeof l.completed_at === 'number') {
-      failed(named(l.agent), l.completed_at * 1000, firstLine(l.error_message) || 'The loop failed')
+      noteFailure(named(l.agent), l.completed_at * 1000, firstLine(l.error_message) || 'The loop failed')
     }
   }
   for (const d of drafts.values()) {
@@ -251,25 +285,45 @@ export function buildDay(input: DayInput): DayView {
     const after = scheduled && nextAfter ? whenNext(nextAfter.at, now) : ''
     const before = d.before !== null ? clock(d.before) : ''
     const ask = d.asks[0]
+    const failed = d.failure ? `Failed at ${clock(d.failure.at)}: ${d.failure.why}` : ''
+    const run = ({ o, at }: { o: Occurrence; at: number }) => `${whenNext(at, now)} ${o.trigger_name}`
     let say: string
+    let saysBefore = false
     if (scheduled) {
-      const first = inWindow[0]
-      say = first ? `${clock(first.at)} ${first.o.trigger_name}` : after ? `Next ${after}` : ''
+      // The row names its next runs in order, so the track's marks can stay short and nothing sits
+      // at the track's edge: the first two in the window and how many more, or, when two or fewer
+      // fall in it, the one after the window too, which is then the next.
+      say = inWindow.length > 2
+        ? `${inWindow.slice(0, 2).map(run).join(' · ')} and ${inWindow.length - 2} more`
+        : [...inWindow, ...(nextAfter ? [nextAfter] : [])].map(run).join(' · ')
     } else if (ask) {
       say = d.asks.length > 1 ? `${ask.title} and ${d.asks.length - 1} more` : ask.title
     } else if (d.working) {
       say = d.working.title
-    } else if (d.failure) {
-      say = `Failed: ${d.failure.why}`
+    } else if (failed) {
+      say = failed
     } else {
       const last = d.marks.filter((m) => m.kind === 'done').reduce((t, m) => Math.max(t, m.end), d.before ?? 0)
       say = last ? `Last ran ${clock(last)}` : ''
+      saysBefore = d.before !== null && last === d.before
     }
     const name = scheduled ? 'Scheduled' : d.key
-    const parts = [`${name}, ${scheduled ? AGENT_NOT_NAMED : STATE_WORD[state]}: ${say || 'nothing to say'}.`]
+    // Spoken, the Scheduled row names every trigger in the window once, in the order of its first
+    // run, with how many runs and the last when it repeats: the track that draws them is hidden from
+    // a screen reader, and a trigger every 5 minutes is 48 runs in four hours.
+    const spoken = scheduled && inWindow.length > 2 ? byTrigger(inWindow, now) : say
+    const askedAt = ask?.origin === 'waiting' ? ms(ask.item.asked_at) : null
+    const asked = askedAt !== null ? ago(now - askedAt) : ''
+    const parts = [`${name}, ${scheduled ? AGENT_NOT_NAMED : STATE_WORD[state]}: ${spoken || 'nothing to say'}.`]
+    if (asked) parts.push(`Asked ${asked} ago.`)
+    if (failed && say !== failed) parts.push(`${failed}.`)
     if (d.tail) parts.push(`${d.tail}.`)
-    if (before && !say.includes(before)) parts.push(`Earlier today ${before}.`)
-    if (after && !say.includes(after)) parts.push(`Next ${after}.`)
+    if (before && !saysBefore) parts.push(`Earlier today ${before}.`)
+    // The run after the window is in the line when two or fewer fall in it, and said after them when
+    // more do, unless it only goes on with a trigger already named there with its runs and its last.
+    const goesOn = nextAfter !== undefined
+      && inWindow.filter(({ o }) => o.trigger_id === nextAfter.o.trigger_id).length > 1
+    if (nextAfter && after && inWindow.length > 2 && !goesOn) parts.push(`Then ${run(nextAfter)}.`)
     rows.push({
       key: d.key,
       name,
@@ -278,6 +332,9 @@ export function buildDay(input: DayInput): DayView {
       say,
       attention: ask ? `#/dashboard?view=attention&open=${encodeURIComponent(ask.key)}` : '',
       asks: d.asks.length,
+      failed,
+      failedAt: d.failure ? clock(d.failure.at) : '',
+      asked,
       before,
       after,
       link: d.link,
@@ -292,7 +349,8 @@ export function buildDay(input: DayInput): DayView {
     || b.latest - a.latest || a.name.localeCompare(b.name))
 
   const ranInWindow = rows.some((r) => r.marks.some((m) => m.kind !== 'scheduled' && m.kind !== 'tail'))
-  const ranToday = ranInWindow || rows.some((r) => r.before !== '')
+  // A failure today is something that ran today, so the band never says nothing did beside it.
+  const ranToday = ranInWindow || rows.some((r) => r.before !== '' || r.failed !== '')
   const folded = rows.length > MAX_ROWS
   return {
     now,

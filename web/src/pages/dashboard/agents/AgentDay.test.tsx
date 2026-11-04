@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { needsYou } from '../../../lib/needsYou'
 import type { AgentActivityEntity } from '../../../lib/useAgentActivity'
 import { waitingItem, waitingList } from '../../../test/waiting'
-import { AgentDayView } from './AgentDay'
+import { AgentDayView, nameRoom } from './AgentDay'
 import { buildDay, type DayInput } from './agentDayModel'
 
 // ── Home's "Your agents today", as a person meets it ─────────────────────────────────────────────
@@ -64,7 +64,7 @@ describe('a row', () => {
   it('links an ask to Attention and offers no way to answer it here', () => {
     show(evening())
 
-    const link = screen.getByRole('link', { name: 'Answer in Attention' })
+    const link = screen.getByRole('link', { name: /^Answer in Attention/ })
     expect(link).toHaveAttribute('href', expect.stringMatching(/^#\/dashboard\?view=attention&open=waiting%3Aapproval%3Aa1$/))
     expect(screen.queryByRole('button', { name: /approve|allow|deny|answer/i })).toBeNull()
   })
@@ -97,6 +97,186 @@ describe('a row', () => {
 
     expect(screen.getByText('Runs to cycle 8')).toBeInTheDocument()
     expect(document.body.textContent).not.toMatch(/about \d/)
+  })
+})
+
+describe('what you act on comes first', () => {
+  const failing = { helpers: [{ id: 'h1', task: 'cut the release', done: true, agent: 'Release helper',
+    started: at(16, 10) / 1000, ended: at(16, 12) / 1000, error: 'Couldn’t reach api.github.com' } as never] }
+
+  it('puts the rows that wait on you and the rows that failed on top, under a count of them', () => {
+    show(evening(failing))
+
+    expect(screen.getByText('1 ask waits on you · 1 failed today')).toBeInTheDocument()
+    const rows = within(screen.getByRole('list', { name: 'Your agents' })).getAllByRole('listitem')
+    expect(rows.map((r) => r.dataset.lifted ?? '')).toEqual(['waiting', 'failed', '', '', ''])
+    expect(rows[1]).toHaveAccessibleName(expect.stringMatching(/^Release helper, failed: Failed at \d\d:\d\d: Couldn’t reach/))
+  })
+
+  it('paints a lifted row on its state colour as a ground, never a side-stripe', () => {
+    show(evening(failing))
+
+    const [waiting, failed] = within(screen.getByRole('list', { name: 'Your agents' })).getAllByRole('listitem')
+    expect(waiting.style.background).toContain('--color-state-waiting')
+    for (const row of [waiting, failed]) {
+      expect(row.style.borderLeftWidth).toBe('')
+      expect([...row.classList].filter((c) => c.startsWith('border-l'))).toEqual([])
+    }
+    expect(failed.style.background).toContain('--color-state-blocked')
+  })
+
+  it('says how long ago an ask was asked', () => {
+    show(evening())
+
+    expect(screen.getByText('· asked 2 min ago')).toBeInTheDocument()
+  })
+
+  it('answers in Attention through a link drawn as a button, never a button that sets the address', () => {
+    show(evening())
+
+    const link = screen.getByRole('link', { name: /^Answer in Attention/ })
+    expect(link.tagName).toBe('A')
+    expect(link.className).toContain('rounded-pill')
+    expect(screen.queryByRole('button', { name: /Answer in Attention/ })).toBeNull()
+  })
+
+  it('names each link for the ask it opens, its visible words first', () => {
+    show(evening())
+
+    expect(screen.getByRole('link', { name: 'Answer in Attention: PersonalClaw’s ask' })).toHaveTextContent('Answer in Attention')
+  })
+
+  it('names the link for the first of a row’s asks when it holds two', () => {
+    const asks = needsYou(waitingList(
+      waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon', brief: { tool: 'write_file' }, asked_at: iso(at(18, 18)) }),
+      waitingItem({ kind: 'question', id: 'question:q2', work: 'chat:lisbon', asked_at: iso(at(18, 19)) }),
+    ), [], [])
+    show(evening({ asks }))
+
+    expect(screen.getByRole('link', { name: 'Answer in Attention: PersonalClaw’s first of 2 asks' })).toBeInTheDocument()
+  })
+
+  it('counts a row that failed today and waits on you now as failed, as its sentence says', () => {
+    const helper = { id: 'h1', task: 'early', done: true, agent: 'PersonalClaw',
+      started: at(16, 10) / 1000, ended: at(16, 12) / 1000, error: 'Couldn’t reach api.github.com' } as never
+    show(evening({ helpers: [helper] }))
+
+    expect(screen.getByText('1 ask waits on you · 1 failed today')).toBeInTheDocument()
+  })
+
+  it('draws a linked name’s focus ring inside it, and gives an unlinked name the same box', () => {
+    show(evening())
+
+    const tokens = (el: Element) => el.className.split(/\s+/)
+    const link = screen.getByRole('link', { name: 'PersonalClaw' })
+    expect(tokens(link)).toEqual(expect.arrayContaining(['focus-visible:-outline-offset-2', 'inline-flex', 'max-w-full', 'items-center', 'max-lg:flex']))
+    const plain = screen.getByText('Scheduled').parentElement as HTMLElement
+    expect(tokens(plain)).toEqual(expect.arrayContaining(['max-lg:flex', 'max-lg:items-center', 'max-lg:min-h-11']))
+  })
+
+  it('says when a row that works now failed earlier, before the hours drawn, after its line', () => {
+    const helper = { id: 'h1', task: 'early', done: true, agent: 'Researcher',
+      started: at(9, 0) / 1000, ended: at(9, 10) / 1000, error: 'boom' } as never
+    show(evening({ asks: [], helpers: [helper] }))
+
+    expect(screen.getByText('1 failed today')).toBeInTheDocument()
+    const row = screen.getByRole('listitem', { name: /^Researcher, working:/ })
+    expect(within(row).getByText('· failed at 09:10')).toBeInTheDocument()
+    expect(row).not.toHaveAttribute('data-lifted')
+  })
+
+  it('gives the link a 44 px target on a touch screen, as the band’s other controls have', () => {
+    show(evening())
+
+    const link = screen.getByRole('link', { name: /^Answer in Attention/ })
+    expect(link.className).toContain('max-lg:min-h-11')
+    // A linked name is a target too: its row opens there.
+    expect(screen.getByRole('link', { name: 'PersonalClaw' }).className).toContain('max-lg:min-h-11')
+  })
+
+  it('gives the more-asks line’s link a 44 px target on a touch screen', () => {
+    const asks = needsYou(waitingList(waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' })), [], [])
+    show(evening({ asks }))
+
+    expect(screen.getByRole('link', { name: 'Attention' }).className).toContain('max-lg:min-h-11')
+  })
+
+  it('keeps an ask’s age whole when its words are cut short', () => {
+    show(evening())
+
+    const age = screen.getByText('· asked 2 min ago')
+    expect(age.className.split(/\s+/)).toContain('shrink-0')
+    expect(age.className.split(/\s+/)).not.toContain('truncate')
+    // Its line clips at its edge, so a long age never draws under "Answer in Attention".
+    expect((age.parentElement as HTMLElement).className.split(/\s+/)).toContain('overflow-hidden')
+  })
+
+  it('counts an ask that is on no row, with no row lifted for it', () => {
+    const asks = needsYou(waitingList(waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' })), [], [])
+    show(evening({ asks }))
+
+    expect(screen.getByText('1 ask waits on you')).toBeInTheDocument()
+    expect(document.querySelector('[data-lifted]')).toBeNull()
+    // No row holds an ask, so it is not "1 more".
+    expect(screen.getByText(/^1 ask in/)).toBeInTheDocument()
+    expect(screen.queryByText(/more ask/)).toBeNull()
+  })
+
+  it('counts the asks as Attention does, the one on no row too', () => {
+    const asks = needsYou(waitingList(
+      waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon', brief: { tool: 'write_file' }, asked_at: iso(at(18, 18)) }),
+      waitingItem({ kind: 'question', id: 'question:x', work: 'chat:nobody-runs-this' }),
+    ), [], [])
+    show(evening({ asks }))
+
+    expect(screen.getByText('2 asks wait on you')).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-lifted]')).toHaveLength(1)
+    expect(screen.getByText(/1 more ask in/)).toBeInTheDocument()
+  })
+
+  it('shows only the filter’s rows under a filter, and still counts what Attention counts', () => {
+    show(evening(), { filter: 'working' })
+
+    expect(document.querySelector('[data-lifted]')).toBeNull()
+    expect(screen.getByText('1 ask waits on you')).toBeInTheDocument()
+  })
+
+  it('lifts nothing and counts nothing when nothing waits on you and nothing failed', () => {
+    show(evening({ asks: [] }))
+
+    expect(screen.getByRole('listitem', { name: /^PersonalClaw, working:/ })).toBeInTheDocument()
+    expect(screen.queryByText(/wait on you|waits on you|failed today/)).toBeNull()
+    expect(document.querySelector('[data-lifted]')).toBeNull()
+  })
+})
+
+describe('the scheduled names', () => {
+  // 14:20 to 22:20: an hour is 12.5% of the track.
+  const view = buildDay(evening())
+  const run = (hh: number, mm: number, label: string) => ({ kind: 'scheduled' as const, start: at(hh, mm), end: at(hh, mm), label })
+
+  it('share the gap when they face each other, so two names never draw over each other', () => {
+    const marks = [run(19, 0, 'Soon'), run(22, 0, 'Evening summary')]
+
+    expect(nameRoom(marks, 0, view)).toBe('calc(18.75% - 0.5rem)')
+    expect(nameRoom(marks, 1, view)).toBe('calc(18.75% - 0.5rem)')
+  })
+
+  it('never reach back past now', () => {
+    expect(nameRoom([run(22, 0, 'Evening summary')], 0, view)).toBe('calc(45.83% - 0.5rem)')
+  })
+
+  it('leave the track without an edge label: the row\'s words name the run after the window', () => {
+    show(evening({ scheduled: [
+      { trigger_id: 't1', trigger_name: 'Evening summary', at: at(21, 30) / 1000 },
+      { trigger_id: 't2', trigger_name: 'Morning triage', at: new Date(2026, 10, 4, 7, 30).getTime() / 1000 },
+    ] }))
+
+    const row = screen.getByRole('listitem', { name: /^Scheduled, agent not named: / })
+    expect(row.textContent).not.toContain('→')
+    const words = within(row).getByText(/Evening summary · tomorrow \d\d:\d\d Morning triage$/)
+    // On a phone the line wraps rather than cut off the run after the window.
+    expect(words.className).toContain('max-sm:whitespace-normal')
   })
 })
 
@@ -147,6 +327,7 @@ describe('the band', () => {
     show(evening({ day: { since: iso(at(14, 20)), until: iso(NOW), cut: 0, agents } }))
 
     const fold = screen.getByRole('button', { name: '8 idle' })
+    expect(fold.className).toContain('max-lg:min-h-11')
     await userEvent.setup().click(fold)
 
     expect(screen.queryByRole('button', { name: '8 idle' })).toBeNull()

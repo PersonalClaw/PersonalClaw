@@ -11,7 +11,7 @@
 import { readdirSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, ROUTES, THEMES, VIEW_ROUTES, axisShots } from './routes.ts'
+import { AGENTS_BAND_SHOTS, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, ROUTES, THEMES, VIEW_ROUTES, axisShots } from './routes.ts'
 
 /** The visual spec's goldens. */
 export const GOLDENS = path.join(path.dirname(fileURLToPath(import.meta.url)), '__screenshots__', 'visual.spec.ts')
@@ -26,8 +26,8 @@ export const GOLDENS = path.join(path.dirname(fileURLToPath(import.meta.url)), '
  *  adding a second environment, which #3943 retired. */
 export const CAPTURED_PLATFORMS = ['linux']
 
-/** `<id|route>-<theme>` for every route, and each of the agent orb's state shots, each
- *  reduced-motion shot and each axis shot by its key — the `arg` half of playwright's
+/** `<id|route>-<theme>` for every route, and each of the agent orb's state shots, each agents-band
+ *  shot, each reduced-motion shot and each axis shot by its key — the `arg` half of playwright's
  *  `snapshotPathTemplate`. */
 export function expectedKeys() {
   const keys = []
@@ -37,6 +37,7 @@ export function expectedKeys() {
     }
   }
   for (const { key } of ORB_STATE_SHOTS) keys.push(key)
+  for (const { key } of AGENTS_BAND_SHOTS) keys.push(key)
   for (const { key } of REDUCED_MOTION_SHOTS) keys.push(key)
   for (const { key } of axisShots()) keys.push(key)
   return keys

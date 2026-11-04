@@ -8,6 +8,7 @@ import type { WsMessage } from '../../../lib/useChatSocket'
 // once every 30 seconds, and a burst of rings makes one request.
 
 let reads = 0
+let needsLoading = false
 const socket: { message?: (m: WsMessage) => void; reconnect?: (() => void) | null } = {}
 
 vi.mock('../../../lib/api', async (importOriginal) => {
@@ -37,7 +38,7 @@ vi.mock('../../../lib/useAgentActivity', async (importOriginal) => ({
 }))
 vi.mock('../../../lib/useNeedsYou', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  useNeedsYou: () => ({ rows: [], error: null, loading: false }),
+  useNeedsYou: () => ({ rows: [], error: null, loading: needsLoading }),
 }))
 
 import { AgentDay, READ_GAP_MS } from './AgentDay'
@@ -45,8 +46,22 @@ import { AgentDay, READ_GAP_MS } from './AgentDay'
 const pass = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 const ring = (type: string) => act(() => { socket.message?.({ type } as WsMessage) })
 
-beforeEach(() => { vi.useFakeTimers(); reads = 0 })
+beforeEach(() => { vi.useFakeTimers(); reads = 0; needsLoading = false })
 afterEach(() => { cleanup(); vi.useRealTimers() })
+
+describe('the band says nothing', () => {
+  it('until Needs You has answered, so it never says nothing waits before it knows', async () => {
+    needsLoading = true
+    const { container, rerender } = render(<AgentDay />)
+    await pass(0)
+    expect(container.textContent).not.toMatch(/Nothing ran/)
+
+    needsLoading = false
+    rerender(<AgentDay />)
+    await pass(0)
+    expect(container.textContent).toMatch(/Nothing ran today\./)
+  })
+})
 
 describe('the band reads', () => {
   it('once when it is drawn, and its minute step only re-draws', async () => {

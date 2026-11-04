@@ -1,7 +1,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
-  ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, axisShots, type ReducedMotionOpen, type VisualAxis,
+  ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, AGENTS_BAND_SHOTS, REDUCED_MOTION_SHOTS, axisShots, type ReducedMotionOpen, type VisualAxis,
 } from './routes'
+import { answerTheBandsReads, band } from './agentsBandFixture'
 import {
   seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations, type SettleReport,
 } from './helpers'
@@ -214,6 +215,26 @@ for (const { key, theme, reducedMotion } of ORB_STATE_SHOTS) {
       const gallery = page.locator('[data-orb-gallery]')
       await expect(gallery.locator('[data-agent-orb]')).toHaveCount(30)
       await expect(gallery).toHaveScreenshot(`${key}.png`, { animations: 'disabled', maxDiffPixels: 0 })
+    })
+  })
+}
+
+// ── Home's agents band with work on it: the owner's pick, in both themes at 1440 and 390 ─────────
+// `routes.ts`'s AGENTS_BAND_SHOTS. Its reads are answered from one fixed evening, and the page's
+// clock is pinned to it, so the axis, the "asked N ago" and the failure's time draw the same every
+// run. A phone's height leaves the band clear of the fixed bottom bar. The titles carry no `(#/`:
+// these are not route scans, so `assert-no-route-skips.mjs` does not count them.
+for (const { key, theme, width, height } of AGENTS_BAND_SHOTS) {
+  test.describe(`visual: ${key}`, { tag: '@visual' }, () => {
+    test.describe.configure({ timeout: 300_000 })
+    test.use({ viewport: { width, height } })
+    test('what waits on you and what failed, lifted', async ({ page }) => {
+      await seedTheme(page, theme)
+      await answerTheBandsReads(page)
+      const settle = await gotoRoute(page, 'dashboard?view=overview', BUDGET)
+      expect(settle.exhausted, `the overview never reached rest: ${settle.exhausted.join(', ')}`).toEqual([])
+      await expect(band(page).getByText('2 asks wait on you · 1 failed today')).toBeVisible()
+      await expect(band(page)).toHaveScreenshot(`${key}.png`, { animations: 'disabled' })
     })
   })
 }

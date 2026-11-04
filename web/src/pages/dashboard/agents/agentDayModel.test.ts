@@ -3,7 +3,7 @@ import type { Loop, SpawnedAgent } from '../../../lib/api'
 import { needsYou } from '../../../lib/needsYou'
 import type { AgentActivityEntity } from '../../../lib/useAgentActivity'
 import { waitingItem, waitingList } from '../../../test/waiting'
-import { MAX_ROWS, buildDay, clock, type DayInput } from './agentDayModel'
+import { MAX_ROWS, ago, buildDay, clock, type DayInput } from './agentDayModel'
 
 // ── Home's "Your agents today": the band's rows, read off what the gateway already says ──────────
 //
@@ -79,6 +79,24 @@ describe('the rows', () => {
     expect(row.marks.map((m) => m.kind)).toContain('waiting')
     expect(row.attention).toBe(`#/dashboard?view=attention&open=${encodeURIComponent(asks[0].key)}`)
     expect(row.say).toContain('write_file')
+    expect(row.asked).toBe('2 min')
+    expect(row.sentence).toMatch(/ Asked 2 min ago\.$/)
+  })
+
+  it('says how long ago an ask was asked from the ask itself, not from its mark the window cuts', () => {
+    const asks = needsYou(waitingList(
+      waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon', asked_at: iso(at(13, 0)) }),
+    ), [], [])
+    const view = buildDay(input({ live: [live({ id: 'session:lisbon', work: 'chat:lisbon', agent: '', since: iso(at(12, 0)) })], asks }))
+
+    const [row] = view.rows
+    expect(row.marks.find((m) => m.kind === 'waiting')?.start).toBe(view.since)
+    expect(row.asked).toBe('5 h 20 min')
+  })
+
+  it('says how long ago in the words a person uses', () => {
+    expect([ago(20_000), ago(2 * 60_000), ago(60 * 60_000), ago(70 * 60_000), ago(26 * 3600_000), ago(50 * 3600_000)])
+      .toEqual(['1 min', '2 min', '1 h', '1 h 10 min', '1 day', '2 days'])
   })
 
   it('counts what waits on you exactly as Attention does, from the same rows', () => {
@@ -121,7 +139,32 @@ describe('the rows', () => {
     const [row] = view.rows
     expect(row.state).toBe('failed')
     expect(row.marks).toEqual([expect.objectContaining({ kind: 'failed', start: at(16, 12) })])
-    expect(row.say).toBe('Failed: Couldn’t reach api.github.com')
+    expect(row.say).toBe(`Failed at ${clock(at(16, 12))}: Couldn’t reach api.github.com`)
+    expect(row.asked).toBe('')
+  })
+
+  it('says in its sentence that a row which waits on you now failed earlier today', () => {
+    const asks = needsYou(waitingList(
+      waitingItem({ kind: 'approval', id: 'approval:a1', work: 'chat:lisbon', asked_at: iso(at(18, 18)) }),
+    ), [], [])
+    const helper: SpawnedAgent = { id: 'h1', task: 'cut the release', done: true, agent: 'PersonalClaw',
+      started: at(16, 10) / 1000, ended: at(16, 12) / 1000, error: 'Couldn’t reach api.github.com' }
+    const view = buildDay(input({ live: [live({ id: 'session:lisbon', work: 'chat:lisbon', agent: '' })], asks, helpers: [helper] }))
+
+    const [row] = view.rows
+    expect(row.state).toBe('waiting')
+    expect(row.marks.map((m) => m.kind)).toContain('failed')
+    expect(row.failed).toBe(`Failed at ${clock(at(16, 12))}: Couldn’t reach api.github.com`)
+    expect(row.sentence).toContain(`Failed at ${clock(at(16, 12))}: Couldn’t reach api.github.com.`)
+  })
+
+  it('never says nothing ran today beside a failure today', () => {
+    const helper: SpawnedAgent = { id: 'h1', task: 'early', done: true, agent: 'Release helper',
+      started: at(9, 0) / 1000, ended: at(9, 2) / 1000, error: 'boom' }
+    const view = buildDay(input({ helpers: [helper] }))
+
+    expect(view.rows.map((r) => r.state)).toEqual(['failed'])
+    expect(view.empty).toBe('window')
   })
 
   it('leaves out a helper that failed on an earlier day', () => {
@@ -146,6 +189,75 @@ describe('what comes next', () => {
     expect(row.sentence).toMatch(/^Scheduled, agent not named: /)
     expect(row.marks).toEqual([expect.objectContaining({ kind: 'scheduled', start: at(21, 30), label: 'Evening summary' })])
     expect(row.after).toBe(`tomorrow ${clock(at(7, 30, 4))}`)
+  })
+
+  it('names the first two runs in the window and how many more, and says the one after it comes then', () => {
+    const view = buildDay(input({
+      scheduled: [
+        { trigger_id: 't0', trigger_name: 'Water the plants', at: at(19, 0) / 1000 },
+        { trigger_id: 't1', trigger_name: 'Feed the cat', at: at(19, 30) / 1000 },
+        { trigger_id: 't2', trigger_name: 'Evening summary', at: at(21, 30) / 1000 },
+        { trigger_id: 't3', trigger_name: 'Morning triage', at: at(7, 30, 4) / 1000 },
+      ],
+    }))
+
+    const row = view.rows.find((r) => r.key === 'scheduled')!
+    expect(row.say).toBe(`${clock(at(19, 0))} Water the plants · ${clock(at(19, 30))} Feed the cat and 1 more`)
+    // Spoken, it names every trigger once: the track that draws them is hidden from a screen reader.
+    expect(row.sentence).toMatch(new RegExp(`^Scheduled, agent not named: ${clock(at(19, 0))} Water the plants · ${clock(at(19, 30))} Feed the cat · ${clock(at(21, 30))} Evening summary\\. `))
+    expect(row.sentence).toMatch(new RegExp(` Then tomorrow ${clock(at(7, 30, 4))} Morning triage\\.$`))
+  })
+
+  it('names a trigger that runs every 5 minutes once, with its runs and its last, never 48 times', () => {
+    const every5 = Array.from({ length: 200 }, (_, i) => ({ trigger_id: 'mail', trigger_name: 'Check mail', at: (at(18, 25) + i * 5 * 60_000) / 1000 }))
+    const view = buildDay(input({ scheduled: [...every5, { trigger_id: 'plants', trigger_name: 'Water the plants', at: at(19, 0) / 1000 }] }))
+
+    const row = view.rows.find((r) => r.key === 'scheduled')!
+    expect(row.sentence.match(/Check mail/g)).toHaveLength(1)
+    expect(row.sentence).toMatch(new RegExp(`^Scheduled, agent not named: ${clock(at(18, 25))} Check mail, 48 runs to ${clock(at(22, 20))} · ${clock(at(19, 0))} Water the plants\\.$`))
+    expect(row.sentence.length).toBeLessThan(200)
+  })
+
+  it('says the run after the window when it comes from a trigger that ran once in it', () => {
+    const view = buildDay(input({
+      scheduled: [
+        { trigger_id: 't0', trigger_name: 'Water the plants', at: at(19, 0) / 1000 },
+        { trigger_id: 't1', trigger_name: 'Feed the cat', at: at(19, 30) / 1000 },
+        { trigger_id: 't2', trigger_name: 'Evening summary', at: at(21, 30) / 1000 },
+        { trigger_id: 't0', trigger_name: 'Water the plants', at: at(19, 0, 4) / 1000 },
+      ],
+    }))
+
+    const row = view.rows.find((r) => r.key === 'scheduled')!
+    expect(row.sentence).toMatch(new RegExp(` Then tomorrow ${clock(at(19, 0, 4))} Water the plants\\.$`))
+  })
+
+  it('says the run after the window when more than two fall in it, whatever their names say', () => {
+    const next = `tomorrow ${clock(at(7, 30, 4))}`
+    const view = buildDay(input({
+      scheduled: [
+        { trigger_id: 't0', trigger_name: `Plan for ${next}`, at: at(19, 0) / 1000 },
+        { trigger_id: 't1', trigger_name: 'Feed the cat', at: at(19, 30) / 1000 },
+        { trigger_id: 't2', trigger_name: 'Evening summary', at: at(21, 30) / 1000 },
+        { trigger_id: 't3', trigger_name: 'Morning triage', at: at(7, 30, 4) / 1000 },
+      ],
+    }))
+
+    const row = view.rows.find((r) => r.key === 'scheduled')!
+    expect(row.sentence).toMatch(new RegExp(` Then ${next} Morning triage\\.$`))
+  })
+
+  it('names its next runs in its words, the one after the window too, so the track needs no edge label', () => {
+    const view = buildDay(input({
+      scheduled: [
+        { trigger_id: 't0', trigger_name: 'Water the plants', at: at(19, 45) / 1000 },
+        { trigger_id: 't1', trigger_name: 'Evening summary', at: at(21, 30) / 1000 },
+        { trigger_id: 't2', trigger_name: 'Morning triage', at: at(7, 30, 4) / 1000 },
+      ],
+    }))
+
+    const row = view.rows.find((r) => r.key === 'scheduled')!
+    expect(row.say).toBe(`${clock(at(19, 45))} Water the plants · ${clock(at(21, 30))} Evening summary · tomorrow ${clock(at(7, 30, 4))} Morning triage`)
   })
 
   it('leaves out a run the schedule says will not fire', () => {
@@ -225,6 +337,16 @@ describe('the window', () => {
     }))
 
     expect(view.rows[0]).toMatchObject({ before: clock(at(14, 0)), say: `Last ran ${clock(at(14, 0))}` })
+    expect(view.rows[0].sentence).not.toContain('Earlier today')
+  })
+
+  it('says the work earlier today when its line says something else, whatever its words hold', () => {
+    const view = buildDay(input({
+      day: { since: iso(at(14, 20)), until: iso(NOW), cut: 0, agents: [{ agent: 'Code reviewer', blocks: [], before: iso(at(14, 0)) }] },
+      live: [live({ id: 'loop:fix', kind: 'loop', work: 'loop:fix', agent: 'Code reviewer', title: `Review the ${clock(at(14, 0))} build` })],
+    }))
+
+    expect(view.rows[0].sentence).toContain(`Earlier today ${clock(at(14, 0))}.`)
   })
 })
 

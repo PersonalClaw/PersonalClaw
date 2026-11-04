@@ -287,6 +287,17 @@ export const ORB_STATE_SHOTS = THEMES.flatMap((theme) => [
   { key: `agent-orb-states-${theme}-reduced-motion`, theme, reducedMotion: 'reduce' as const },
 ])
 
+// ── Home's agents band with work on it — the owner's pick, held in goldens ──────────────────────
+// Home's route shot draws the band empty (the run's gateway has done nothing), so the look the owner
+// picked — what waits on you and what failed lifted on their state's ground under a count of them —
+// is shot on its own: the band alone, its reads answered from one fixed evening
+// (`agentsBandFixture.ts`), in both themes at 1440 and at a phone's 390. `visual-coverage.mjs` holds
+// each `key` to a committed golden.
+export const AGENTS_BAND_SHOTS = THEMES.flatMap((theme) => [
+  { key: `agents-band-${theme}`, theme, width: 1440, height: 900 },
+  { key: `agents-band-${theme}-390px`, theme, width: 390, height: 1600 },
+])
+
 // ── Reduced motion — the surfaces the motion audit stripped, under the preference ──────────────
 // `docs/design/motion.md` §10 takes the motion off the app's high-frequency actions, and §3 says what
 // reduced motion leaves of the rest: nothing that moves. `visual.spec.ts` photographs each surface the
