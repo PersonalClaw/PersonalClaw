@@ -29,6 +29,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Desktop capabilities attach only to a gateway proven to serve this app's home: the one the app started, or the one serving its home that proved it holds the home's local secret.**
 - **Home's Overview shows your agents' day where the Agent world's orbit was: a row for each agent on the four hours before now and the four after, three each on a phone. A row says what the agent did, what it is doing, what it asks you, with a link to answer it in Attention, what failed today and what the schedule runs next (on a row that says no agent is named for it), each with its state in words beside its mark, and it counts what waits on you as Attention does. The rows that wait on you and the rows that failed come first, on their state's colour under a count of them: an ask says how long ago it was asked, a failure says when, and "Answer in Attention" is a link drawn as a button. It reads again when work changes, at most once every 30 seconds. A loop with only a cycle budget says the cycle it runs to and never a time, and nothing on the band moves.**
 - **The Nix flake installs 0.3.6. It had stayed on 0.2.7, so a Nix install missed the seven releases since, 0.3.0 to 0.3.6, with every fix in them.**
+- **Home's View switch reads Overview, then Attention. Each address still opens on its own view: Home on Overview, Mission Control on Attention.**
 
 ### Fixed
 

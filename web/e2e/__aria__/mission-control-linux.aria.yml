@@ -27,8 +27,8 @@
   - heading "Good <time of day>, Alex" [level=#]
   - button "New chat"
   - radiogroup "View":
-    - radio "Attention" [checked]
     - radio "Overview"
+    - radio "Attention" [checked]
   - region "Home":
     - textbox "Start something":
       - /placeholder: "Start something: type it and press Enter for a new chat"

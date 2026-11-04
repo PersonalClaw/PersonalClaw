@@ -26,8 +26,8 @@
   - heading "Good <time of day>, Alex" [level=#]
   - button "New chat"
   - radiogroup "View":
-    - radio "Attention"
     - radio "Overview" [checked]
+    - radio "Attention"
   - heading "Tasks" [level=#]
   - paragraph: No tasks ready to work.
   - button "New task"
