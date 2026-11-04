@@ -50,6 +50,7 @@
         border: 1px solid #444746; background: #282a2c; color: #c4c7c5;
         border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer; font-weight: 600;
       }
+      li.row button { flex: 0 0 auto; white-space: nowrap; }
       button:hover:enabled { background: #333537; }
       button:disabled { opacity: .45; cursor: default; }
       button.primary { background: #ff6b5b; border-color: #ff6b5b; color: #3f1008; }
@@ -79,8 +80,9 @@
   <body>
     <h1>Gateways</h1>
     <p class="sub">
-      This app runs its own gateway on this computer by default. You can also connect it to a
-      gateway you have paired with — on your network, or through your own tunnel.
+      This app uses this computer's gateway: the one already serving your PersonalClaw home, or one
+      it starts. You can also connect it to another gateway — on this computer, on your network, or
+      through your own tunnel.
     </p>
 
     <div id="banners"></div>
@@ -124,7 +126,7 @@
       function renderRows(data) {
         const host = byId('rows');
         host.replaceChildren();
-        byId('empty').hidden = (data.rows || []).length > 0;
+        byId('empty').hidden = (data.rows || []).some((r) => r.kind !== 'local');
         for (const row of data.rows || []) {
           const li = el('li', row.active ? 'row active' : 'row');
           li.appendChild(el('span', 'dot ' + row.statusTone));
@@ -134,15 +136,27 @@
           name.appendChild(el('span', null, row.label));
           if (row.active) name.appendChild(el('span', 'badge on', 'active'));
           name.appendChild(el('span', 'badge', row.kind === 'local' ? 'this computer' : 'paired'));
+          if (row.localBadge) name.appendChild(el('span', 'badge', row.localBadge));
           meta.appendChild(name);
-          meta.appendChild(el('div', 'url', row.missingUrl ? 'no address recorded' : row.url));
+          meta.appendChild(el('div', 'url', row.missingUrl ? (row.kind === 'local' ? 'no gateway running' : 'no address recorded') : row.url));
           const status = row.version ? row.statusText + ' · v' + row.version : row.statusText;
           meta.appendChild(el('div', 'status', status));
           // The gateway's own sentence (a sign-out's why and how to sign back in), when it gave one.
           if (row.statusDetail) meta.appendChild(el('div', 'status detail', row.statusDetail));
           li.appendChild(meta);
 
-          if (!row.active) {
+          if (row.localAction) {
+            // No gateway serves this computer's row: start one here, or look for this home's again.
+            const act = el('button', 'primary', row.localAction.label);
+            act.addEventListener('click', async () => {
+              act.disabled = true;
+              act.textContent = 'Starting…';
+              const res = await window.pclawConnect.start();
+              if (!res || !res.ok) renderBanners([{ code: 'start_failed', message: (res && res.message) || 'No gateway could be started here.' }]);
+              load();
+            });
+            li.appendChild(act);
+          } else if (!row.active && row.switchable !== false) {
             const go = el('button', null, 'Switch');
             go.addEventListener('click', async () => {
               go.disabled = true;
@@ -236,6 +250,8 @@
         load();
       });
       document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.close(); });
+      // The main process says when this computer's gateway came up, stopped or was found.
+      window.pclawConnect.onChanged(() => load());
       load();
     </script>
   </body>

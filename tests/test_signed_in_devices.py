@@ -585,11 +585,16 @@ async def test_a_paired_desktop_app_is_told_where_it_pairs_again() -> None:
         assert "Pair a device" in message and "Gateway → Gateways…" in message, message
 
 
-async def _desktop_window(gw: Gateway, *, ttl: int = 3600) -> tuple[Device, str]:
+async def _desktop_window(
+    gw: Gateway, *, ttl: int = 3600, issuer: str = ss.ISSUER_READY
+) -> tuple[Device, str]:
     """The desktop app's own window: signed in with the session its gateway's ready line hands
-    out, carried as the session cookie the app sets. Returns the window and its device id."""
+    out (or, with ``issuer=ISSUER_TOKEN``, the one the app signs in for at this home's running
+    gateway, ``GET /api/token/local``), carried as the session cookie the app sets. Returns the
+    window and its device id."""
     window = gw.device(DESKTOP)
-    minted = token_auth.mint_session("local-startup", ttl, issuer=ss.ISSUER_READY)
+    user = "local-startup" if issuer == ss.ISSUER_READY else "local-app"
+    minted = token_auth.mint_session(user, ttl, issuer=issuer)
     window.http.cookie_jar.update_cookies({COOKIE: minted.token}, gw.server.make_url("/"))
     assert await window.signed_in(), "the window the app signed in is not signed in"
     return window, minted.session_id
@@ -611,6 +616,32 @@ async def test_the_desktop_apps_own_window_is_told_to_open_the_app_again() -> No
         message = error["message"]
         assert "To sign it back in, quit PersonalClaw and open it again." in message, message
         assert "personalclaw token" not in message, message
+
+
+@pytest.mark.asyncio
+async def test_the_desktop_app_on_a_gateway_it_found_is_told_to_open_the_app_again() -> None:
+    """The app signs itself in at this home's running gateway (``/api/token/local``) each time it
+    opens, and its window has no address bar either: the link a ``personalclaw token`` session is
+    told to open names a door it does not have. A browser holding the same kind of session is
+    still told the link."""
+    async with Gateway() as gw:
+        browser = gw.device(CHROME)
+        await gw.sign_in_with_link(browser)
+        window, device_id = await _desktop_window(gw, issuer=ss.ISSUER_TOKEN)
+        assert (await browser.post(f"/api/devices/{device_id}/revoke")).status == 200
+
+        message = (await _refusal(window))["message"]
+        assert "To sign it back in, quit PersonalClaw and open it again." in message, message
+        assert "personalclaw token" not in message, message
+
+        tab = gw.device(CHROME)
+        minted = token_auth.mint_session("local-app", 3600, issuer=ss.ISSUER_TOKEN)
+        tab.http.cookie_jar.update_cookies({COOKIE: minted.token}, gw.server.make_url("/"))
+        assert await tab.signed_in()
+        assert (await browser.post(f"/api/devices/{minted.session_id}/revoke")).status == 200
+        told = (await _refusal(tab))["message"]
+        assert "personalclaw token" in told, told
+        assert "quit PersonalClaw" not in told, told
 
 
 @pytest.mark.asyncio

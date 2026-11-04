@@ -175,7 +175,8 @@ function assertLoopbackTarget(url, what = "request") {
  * May the capability bridge (`preload.js`) be attached to a view loading `url`?
  *
  * Only on the origin of `localBaseUrl`, the gateway this app knows serves its home: the one it
- * spawned (its ready line). `main.js`'s `localGatewayUrl` has no other writer. The bridge
+ * spawned (its ready line), or one that proved it holds the home's local secret before the app
+ * used it (`homeGateway.reach`). `main.js`'s `localGatewayUrl` has no other writer. The bridge
  * reaches the microphone, global hotkeys, native notifications and the login item, and it is
  * registered with that gateway on the home's `.local_secret`. Any other origin gets no bridge,
  * loopback included: an address typed into the Gateways window is on this computer or not, and

@@ -120,6 +120,40 @@ If the app is signed out from another device (Settings → Devices & Access → 
 (`auth.session_ttl`, 30 days by default), the window says so. Quit PersonalClaw and open it again
 to sign it back in.
 
+## When a gateway already serves your home
+
+Only one gateway serves a PersonalClaw home. If one already serves the app's home when the app
+opens (one you started in a terminal, or a service), the app uses that one instead of starting its
+own, which could only be refused:
+
+- **It is found the way `personalclaw token` finds it.** The app reads where the home's gateway
+  said it listens, then asks it, on `127.0.0.1` and with no credential, which home it serves. It
+  goes on only once that gateway proves it holds the home's local secret. Another home's gateway,
+  a program that is not one, or an older gateway that cannot prove it, gets nothing more: the
+  **Gateway → Gateways…** window says which it was.
+- **It signs in as the CLI does**, with the home's local secret, for 30 days, as long as the app's
+  own sign-in lasts by default. The sign-in is held exactly as that one is: in memory, as the
+  windows' session cookie, never on disk or in an address. Quitting ends it.
+- **The app never stops it or signals it.** Quitting PersonalClaw leaves it running. The Gateways
+  window marks it **already running**, so you can tell it from one the app started.
+- **The app follows it.** When it restarts (Settings → Restart, or an update), the app finds it
+  again, on a new port if it moved. When it stops, the app says so, and the Gateways window offers
+  to start a gateway here or connect to another one.
+- **Desktop capabilities work there**, since it proved it serves this home: see below.
+
+A window signed in this way is asked to confirm it's you before it pairs a device or creates a
+token once its sign-in is more than ten minutes old, as a browser tab is. Quitting PersonalClaw and
+opening it again signs it in afresh.
+
+## When nothing serves your home
+
+If the app cannot start its gateway, or the one it used stops, the main window says it is not
+connected and the **Gateways** window opens on its own. Its **This computer** row says why (how the
+gateway exited and the last thing it said, or that the gateway it used has stopped) and offers
+**Start a Gateway Here**. Below it you can connect to another gateway, on this computer or
+elsewhere. If a gateway serves your home that the app cannot sign in to, the row says why and
+offers **Try Again** instead, since a second gateway on the home would only be refused.
+
 ## The window
 
 On macOS the window has no title bar of its own: the window controls (close, minimize, zoom) sit
@@ -246,8 +280,8 @@ open it, so it offers the link instead, and the link opens in your browser too.
 
 ## Connecting to a gateway you did not start
 
-By default the desktop app starts its own gateway on this computer and loads that. That has not
-changed, and nothing below happens unless you ask for it.
+By default the desktop app uses this computer's gateway: the one already serving your home, or
+one it starts and loads. Nothing below happens unless you ask for it.
 
 **Gateway → Gateways…** (⌘⇧G) opens the switcher. It lists every gateway you have paired with, marks
 the one you are looking at, and lets you add another — a PersonalClaw running on a different machine
@@ -296,19 +330,20 @@ one kind of network at once, the app will not connect, because it cannot tell yo
 about where you are going. And a name that resolves to `127.0.0.1` is treated as a network address,
 never as this computer — the next section is why that distinction is load-bearing.
 
-### Desktop capabilities are for the gateway this app started only
+### Desktop capabilities are for this home's gateway only
 
 The microphone, the global shortcut, native notifications, the login item and opening a sign-in page
 in your browser are exposed to the dashboard through a bridge the app attaches to the page. **That
-bridge is only ever attached to the gateway this app started.** Any other gateway gets a plain
-window: the panel in **Settings → Security → Desktop capabilities** reads "desktop app not
-connected", exactly as it does in a browser tab, push-to-talk does nothing there, and a remote tool
-server's sign-in offers its link rather than opening it.
+bridge is only ever attached to the gateway that serves this app's home:** the one the app started,
+or the one already serving the home once it proved it holds the home's local secret. Any other
+gateway gets a plain window: the panel in **Settings → Security → Desktop capabilities** reads
+"desktop app not connected", exactly as it does in a browser tab, push-to-talk does nothing there,
+and a remote tool server's sign-in offers its link rather than opening it.
 
 That is not a limitation waiting to be lifted. The bridge is authorised by a secret file in
-`~/.personalclaw`, which proves "I am running as you, on this machine" — a claim no other gateway can
-check and none should be asked to trust. So the shortcut and the microphone follow the local gateway,
-and switching to a paired one leaves them behind.
+`~/.personalclaw`, which proves "I am running as you, on this machine" — a claim only the home's own
+gateway can check. So the shortcut and the microphone follow this home's gateway, and switching to
+another one leaves them behind.
 
 ### When a paired gateway stops answering
 
@@ -355,6 +390,9 @@ clean stop and a half-finished write. A gateway that will not stop is escalated 
 few seconds, and if it still will not, the app says so in its log rather than pretending
 the quit was clean.
 
+A gateway the app did not start ([one already serving your home](#when-a-gateway-already-serves-your-home))
+is left running: quitting signs the app out of it, and nothing more.
+
 ## When the gateway stops on its own
 
 **Restart** stops the gateway and starts it again in place: it comes back on a new port, and the
@@ -363,17 +401,16 @@ A restart whose program can no longer be run is refused before anything stops, a
 so; the gateway keeps running as it is.
 
 Any other time the gateway stops while the app is open (it crashed, something ended it, or a
-restart could not start it again), the app says so: **PersonalClaw's gateway stopped**, with how it
-exited and the last thing it said, and two choices. **Start Again** starts a new gateway, and every
-window moves to it, signed in, the way it does after a restart. **Quit** quits the app. Dismissing
-the dialog starts it again too; a start that fails says so the same way.
+restart could not start it again), the app says so on the Gateways window's **This computer** row:
+**PersonalClaw's gateway stopped**, with how it exited and the last thing it said. **Start a
+Gateway Here** starts a new gateway, and every window moves to it, signed in, the way it does after
+a restart; a start that fails says so the same way.
 
 A gateway that cannot start when the app opens is the same news, said as soon as the start fails:
-**PersonalClaw's gateway did not start**, with how it exited and the last thing it said, and the
-same two choices. **Start Again** starts a new gateway; the window loads the dashboard once it
-answers. A gateway that started and never answered, within two minutes, is said the same way.
-When another gateway already serves the app's home (one started in a terminal, or a service), the
-last thing it said names that gateway, and a start is refused the same way until that one stops.
+**PersonalClaw's gateway did not start**, with how it exited and the last thing it said. A gateway
+that started and never answered, within two minutes, is said the same way. When another gateway
+started serving the app's home meanwhile, the app uses that one
+([above](#when-a-gateway-already-serves-your-home)).
 
 ## What the desktop app runs, and what needs the installed version
 

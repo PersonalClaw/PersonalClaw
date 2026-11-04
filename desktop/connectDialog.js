@@ -8,8 +8,14 @@
  * to survive, and the existing `renameCurrentTab` pattern in `main.js` (a `data:` URL with
  * hand-escaped interpolation) is exactly the shape not to copy for untrusted strings.
  *
- * The dialog's preload (`connectPreload.js`) exposes six invokes and nothing else. It carries no
- * capability surface: the switcher has no business reaching a microphone.
+ * The dialog's preload (`connectPreload.js`) exposes seven invokes and one event, `changed`, and
+ * nothing else. It carries no capability surface: the switcher has no business reaching a microphone.
+ *
+ * It is also where the app goes when nothing serves its windows: a start that failed or was
+ * refused, a gateway that stopped, a paired gateway that does not answer with nothing to fall back
+ * to. So it is never a sheet. A sheet holds the window it hangs from, and anything else that window
+ * shows as a sheet waits behind it: the Gateways window used to be one, and behind the start-failure
+ * sheet it never showed.
  */
 
 const path = require("path");
@@ -36,7 +42,46 @@ const CONNECT_CHANNELS = Object.freeze({
   switch: "pclaw:connect:switch",
   forget: "pclaw:connect:forget",
   refresh: "pclaw:connect:refresh",
+  start: "pclaw:connect:start",
+  /** Main → dialog: the list changed (the local gateway came up, stopped, or was found), so read it again. */
+  changed: "pclaw:connect:changed",
 });
+
+/** The "This computer" row's states, as `main.js` keeps them (`localState`). */
+const LOCAL_STATES = Object.freeze(["starting", "own", "adopted", "stopped", "served"]);
+
+/** The reserved row for this computer's gateway, for a registry that has none yet (a first start
+ *  that failed): the row is where a gateway is started here, so it is always there. */
+const LOCAL_ROW = Object.freeze({ id: LOCAL_ENDPOINT_ID, label: "This computer", base_url: "", kind: "local", device_session_ref: "" });
+
+/**
+ * The "This computer" row as this computer's gateway stands: what it says and what it offers.
+ *
+ * - `own`: the gateway this app started.
+ * - `adopted`: this home's gateway, which was running before the app looked; the app uses it and
+ *   never stops it.
+ * - `starting`: on its way up.
+ * - `stopped`: none runs, and the sentence says why. Start a gateway here.
+ * - `served`: a gateway serves this home that the app cannot sign in to, and the sentence says
+ *   which and why. Try again, which looks for it again: a second gateway on the home would only be
+ *   refused.
+ */
+function describeLocal(local = {}) {
+  const state = LOCAL_STATES.includes(local && local.state) ? local.state : "starting";
+  const sentence = local && typeof local.sentence === "string" ? local.sentence : "";
+  switch (state) {
+    case "own":
+      return { state, badge: "started by this app", detail: "", action: null };
+    case "adopted":
+      return { state, badge: "already running", detail: "Not started by this app. Quitting PersonalClaw leaves it running.", action: null };
+    case "stopped":
+      return { state, badge: "", statusText: "Not running", statusTone: "warn", detail: sentence, action: { id: "start", label: "Start a Gateway Here" } };
+    case "served":
+      return { state, badge: "", statusText: "Can't sign in to it", statusTone: "bad", detail: sentence, action: { id: "start", label: "Try Again" } };
+    default:
+      return { state: "starting", badge: "", statusText: "Starting…", statusTone: "idle", detail: "", action: null };
+  }
+}
 
 /**
  * One health state → what the row says, in words a person can act on.
@@ -81,11 +126,14 @@ function healthCopy(status) {
  * Pure, so `test/connectDialog.test.js` can assert what each state renders without an Electron
  * window. The renderer receives these objects and never re-derives any of it.
  */
-function describeRow(row, { activeId, health = {}, localBaseUrl = "" } = {}) {
+function describeRow(row, { activeId, health = {}, localBaseUrl = "", local } = {}) {
   const isLocal = row.id === LOCAL_ENDPOINT_ID || row.kind === "local";
   const url = isLocal ? localBaseUrl || row.base_url : row.base_url;
   const status = (health[row.id] && health[row.id].status) || HEALTH_UNKNOWN;
   const copy = healthCopy(status);
+  const here = isLocal && local ? describeLocal(local) : null;
+  // A local row with no gateway behind it (starting, stopped, served) says that, not a probe's word.
+  const running = !here || here.state === "own" || here.state === "adopted";
   return {
     id: row.id,
     label: row.label || url || row.id,
@@ -95,23 +143,34 @@ function describeRow(row, { activeId, health = {}, localBaseUrl = "" } = {}) {
     active: row.id === activeId,
     removable: !isLocal,
     status,
-    statusText: copy.text,
-    statusTone: copy.tone,
+    statusText: running ? copy.text : here.statusText,
+    statusTone: running ? copy.tone : here.statusTone,
     statusAction: copy.action,
     /** The gateway's own sentence for this row's state, when it gave one (a sign-out: why, when,
-     *  and how to sign back in). Untrusted text, already cleaned; rendered with `textContent`. */
-    statusDetail: (health[row.id] && health[row.id].message) || "",
-    version: (health[row.id] && health[row.id].version) || "",
+     *  and how to sign back in), or for the local row, why no gateway serves it. Untrusted text,
+     *  already cleaned; rendered with `textContent`. */
+    statusDetail: (here && here.detail) || (health[row.id] && health[row.id].message) || "",
+    version: running ? (health[row.id] && health[row.id].version) || "" : "",
     /** Present only when the row has no URL at all — distinct from an unreachable one. */
     missingUrl: !url,
+    /** The local row's own badge (`started by this app`, `already running`), or "". */
+    localBadge: here ? here.badge : "",
+    /** The local row's state (`describeLocal`), or "" for a paired row. */
+    localState: here ? here.state : "",
+    /** What the local row offers in place of Switch while no gateway serves it, or null. */
+    localAction: here ? here.action : null,
+    /** Whether Switch can open this row: a local row only while a gateway serves it. */
+    switchable: running,
   };
 }
 
 /** Row list → the payload `connect:list` answers with. */
-function describeList({ registry, activeId, health, localBaseUrl, warnings = [], storeStatus = "", storeSafe = true, readOnly = false }) {
+function describeList({ registry, activeId, health, localBaseUrl, local, warnings = [], storeStatus = "", storeSafe = true, readOnly = false }) {
+  const endpoints = registry.endpoints || [];
+  const rows = endpoints.some((row) => row.id === LOCAL_ENDPOINT_ID) ? endpoints : [LOCAL_ROW, ...endpoints];
   return {
     activeId: activeId || registry.active || "",
-    rows: (registry.endpoints || []).map((row) => describeRow(row, { activeId: activeId || registry.active, health, localBaseUrl })),
+    rows: rows.map((row) => describeRow(row, { activeId: activeId || registry.active, health, localBaseUrl, local })),
     warnings,
     storeStatus,
     storeSafe,
@@ -127,19 +186,20 @@ function describeList({ registry, activeId, health, localBaseUrl, warnings = [],
 function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {} }) {
   let win = null;
 
-  function open(parent) {
+  /** Open the window, or bring it forward. Never a sheet, and never anyone's child: see the top. */
+  function open() {
     if (win && !win.isDestroyed()) {
+      win.show();
       win.focus();
       return win;
     }
     win = new BrowserWindowCtor({
       width: 560,
-      height: 560,
+      height: 600,
       resizable: true,
       minimizable: false,
       useContentSize: true,
-      parent: parent || undefined,
-      modal: Boolean(parent),
+      modal: false,
       title: "Gateways",
       backgroundColor: "#0f0f0f",
       webPreferences: {
@@ -164,7 +224,12 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
     win = null;
   }
 
-  /** Register the six invokes. Each one is a thin adaptor over `handlers`, which `main.js` owns. */
+  /** Tell an open window its list changed, so it reads it again. */
+  function changed() {
+    if (win && !win.isDestroyed()) win.webContents.send(CONNECT_CHANNELS.changed);
+  }
+
+  /** Register the seven invokes. Each one is a thin adaptor over `handlers`, which `main.js` owns. */
   function registerIpc(ipc = ipcMain) {
     const wrap = (name, fn) => {
       ipc.handle(name, async (_event, arg) => {
@@ -185,9 +250,10 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
     wrap(CONNECT_CHANNELS.switch, (arg) => handlers.switchTo(String((arg && arg.id) || "")));
     wrap(CONNECT_CHANNELS.forget, (arg) => handlers.forget(String((arg && arg.id) || "")));
     wrap(CONNECT_CHANNELS.refresh, () => handlers.refresh());
+    wrap(CONNECT_CHANNELS.start, () => handlers.start());
   }
 
-  return { open, close, registerIpc, get window() { return win; } };
+  return { open, close, changed, registerIpc, get window() { return win; } };
 }
 
-module.exports = { CONNECT_CHANNELS, healthCopy, describeRow, describeList, makeConnectDialog };
+module.exports = { CONNECT_CHANNELS, LOCAL_STATES, describeLocal, healthCopy, describeRow, describeList, makeConnectDialog };

@@ -63,7 +63,8 @@ describe("the capability bridge is attached only by decision", () => {
   });
 
   it("gives the bridge only to the gateway proven to serve this home: every decision names `localGatewayUrl`", () => {
-    // `localGatewayUrl` has one writer: the spawned gateway's ready line. A decision made on the
+    // `localGatewayUrl` has two writers: the spawned gateway's ready line, and an attach that
+    // proved the gateway holds this home's secret (`homeGateway.reach`). A decision made on the
     // address alone is not one about this home: being on this computer proves nothing.
     const calls = [...MAIN.matchAll(/shouldAttachBridge\(([^()]*)\)/g)];
     assert.ok(calls.length >= 2, "the bridge decisions are gone — this rail is now blind");
@@ -198,6 +199,58 @@ describe("the spawn-local path is unchanged", () => {
     assert.match(body, /parseReadyLine\(line\)/);
     assert.match(body, /if \(settled\) \{\s*followRestartedGateway\(ready\)/, "a later ready line is dropped");
     assert.match(body, /adoptLocalGateway\(ready\)/, "the first ready line signs nothing in");
+  });
+});
+
+describe("the app uses this home's running gateway, and never signals one it did not start", () => {
+  const fnBody = (name) => {
+    const start = MAIN.indexOf(`function ${name}(`);
+    assert.ok(start > 0, `${name} is gone — this rail is now blind`);
+    return MAIN.slice(start, MAIN.indexOf("\n}\n", start));
+  };
+
+  it("looks for this home's running gateway before it starts its own", () => {
+    const up = fnBody("bringUpLocalGateway");
+    const reachAt = up.indexOf("await reachHomeGateway()");
+    const startAt = up.indexOf("await startGateway()");
+    assert.ok(reachAt > 0 && startAt > reachAt, "the app starts a gateway before it looks for the home's");
+    assert.match(up, /if \(found\.reason !== "none"\) \{[\s\S]*?return false;/, "a home something else serves is started on anyway");
+  });
+
+  it("uses the gateway a start lost the home to (exit HOME_SERVED_EXIT)", () => {
+    const up = fnBody("bringUpLocalGateway");
+    assert.match(up, /if \(exit\.code === HOME_SERVED_EXIT\) \{\s*const raced = await reachHomeGateway\(\{ waitMs: /);
+  });
+
+  it("holds an adopted gateway's session the way it holds a ready line's", () => {
+    const adopt = fnBody("adoptHomeGateway");
+    assert.match(adopt, /await followRestartedGateway\(found\.ready\)/);
+    assert.match(adopt, /await adoptLocalGateway\(found\.ready\)/);
+  });
+
+  it("stops, signals and kills only its own child", () => {
+    // The one stop takes `gatewayProcess`, the app's own child, and the exit handler's group kill
+    // takes `liveGatewayGroup`, which only `startGateway` sets. Neither ever holds an adopted pid.
+    assert.match(fnBody("stopGateway"), /const child = gatewayProcess;/);
+    const kills = [...MAIN.matchAll(/process\.kill\(([^)]*)\)/g)].map((m) => m[1]);
+    assert.deepStrictEqual(kills, ["-liveGatewayGroup, \"SIGKILL\""]);
+    for (const m of MAIN.matchAll(/liveGatewayGroup = ([^;]+);/g)) {
+      assert.ok(["child.pid ?? null", "null"].includes(m[1]), `liveGatewayGroup is set from ${m[1]}`);
+    }
+    for (const sink of ["process.kill(", "shutdownGateway(", "stopGateway("]) {
+      for (let at = MAIN.indexOf(sink); at !== -1; at = MAIN.indexOf(sink, at + sink.length)) {
+        const end = MAIN.indexOf("\n", at);
+        const line = MAIN.slice(MAIN.lastIndexOf("\n", at) + 1, end === -1 ? MAIN.length : end);
+        assert.doesNotMatch(line, /adopted/, `an adopted gateway reaches ${sink}: ${line.trim()}`);
+      }
+    }
+  });
+
+  it("follows an adopted gateway's restarts and loss with timeouts, not an interval", () => {
+    const watch = fnBody("watchAdoptedGateway");
+    assert.match(watch, /setTimeout\(look, 2000\)/);
+    assert.match(watch, /return adoptedGone\(\)/);
+    assert.match(watch, /registerWithGateway\(\)/, "a restart's new registry is not registered with");
   });
 });
 

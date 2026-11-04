@@ -1,9 +1,9 @@
 /**
  * Preload for the connect dialog.
  *
- * Six invokes and nothing else. Deliberately NOT `preload.js`: the switcher has no business
- * reaching the capability bridge, and the bridge has no business being reachable from a window
- * whose only job is picking a gateway. Two small surfaces beat one wide one.
+ * Seven invokes and one event, and nothing else. Deliberately NOT `preload.js`: the switcher has no
+ * business reaching the capability bridge, and the bridge has no business being reachable from a
+ * window whose only job is picking a gateway. Two small surfaces beat one wide one.
  */
 
 const { contextBridge, ipcRenderer } = require("electron");
@@ -24,4 +24,14 @@ contextBridge.exposeInMainWorld("pclawConnect", {
   forget: (id) => ipcRenderer.invoke(CONNECT_CHANNELS.forget, { id: str(id) }),
   /** Re-probe every row's health. Never presents a credential. */
   refresh: () => ipcRenderer.invoke(CONNECT_CHANNELS.refresh),
+  /** The "This computer" row's Start a gateway here, or Try again: this home's running gateway when
+   *  one serves it, else the app's own. Resolves `{ok}`, or `{ok: false, message}` saying why not. */
+  start: () => ipcRenderer.invoke(CONNECT_CHANNELS.start),
+  /** Hear when the list changed in the main process, to read it again. Returns an unsubscribe fn. */
+  onChanged: (cb) => {
+    if (typeof cb !== "function") return () => {};
+    const handler = () => cb();
+    ipcRenderer.on(CONNECT_CHANNELS.changed, handler);
+    return () => ipcRenderer.removeListener(CONNECT_CHANNELS.changed, handler);
+  },
 });

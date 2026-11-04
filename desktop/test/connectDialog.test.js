@@ -12,7 +12,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { CONNECT_CHANNELS, healthCopy, describeRow, describeList, makeConnectDialog } = require("../connectDialog");
+const { CONNECT_CHANNELS, LOCAL_STATES, describeLocal, healthCopy, describeRow, describeList, makeConnectDialog } = require("../connectDialog");
 const {
   LOCAL_ENDPOINT_ID,
   HEALTH_STATES,
@@ -99,16 +99,78 @@ describe("describeList", () => {
       readOnly: true,
     });
     assert.strictEqual(list.activeId, "ep_a");
-    assert.strictEqual(list.rows.length, 1);
+    assert.deepStrictEqual(list.rows.map((r) => r.id), [LOCAL_ENDPOINT_ID, "ep_a"], "this computer's row, then the paired one");
     assert.strictEqual(list.storeSafe, false);
     assert.strictEqual(list.readOnly, true);
     assert.strictEqual(list.warnings[0].code, "store_permissions");
   });
 
-  it("handles a registry with no rows at all", () => {
-    const list = describeList({ registry: { active: "", endpoints: [] } });
-    assert.deepStrictEqual(list.rows, []);
+  it("handles a registry with no rows at all, and still lists this computer: it is where a gateway is started", () => {
+    const list = describeList({ registry: { active: "", endpoints: [] }, local: { state: "stopped", sentence: "PersonalClaw's gateway did not start." } });
+    assert.strictEqual(list.rows.length, 1);
+    assert.strictEqual(list.rows[0].id, LOCAL_ENDPOINT_ID);
+    assert.strictEqual(list.rows[0].kind, "local");
+    assert.deepStrictEqual(list.rows[0].localAction, { id: "start", label: "Start a Gateway Here" });
     assert.strictEqual(list.activeId, "");
+  });
+
+  it("lists this computer's row once, where the registry keeps it", () => {
+    const local = row({ id: LOCAL_ENDPOINT_ID, kind: "local", label: "This computer", base_url: "http://localhost:1" });
+    const list = describeList({ registry: { active: "", endpoints: [row(), local] } });
+    assert.deepStrictEqual(list.rows.map((r) => r.id), ["ep_a", LOCAL_ENDPOINT_ID]);
+  });
+});
+
+describe("the \"This computer\" row, by how this computer's gateway stands", () => {
+  const localRow = row({ id: LOCAL_ENDPOINT_ID, kind: "local", label: "This computer", base_url: "http://127.0.0.1:10000" });
+  const at = (local, health = {}) => describeRow(localRow, { activeId: LOCAL_ENDPOINT_ID, localBaseUrl: "http://127.0.0.1:10000", health, local });
+
+  it("has a word and an offer for every state, and an unknown state reads as starting", () => {
+    for (const state of LOCAL_STATES) assert.equal(describeLocal({ state }).state, state);
+    assert.equal(describeLocal({ state: "something-new" }).state, "starting");
+    assert.equal(describeLocal(undefined).state, "starting");
+  });
+
+  it("says the app started it, or that it was already running and keeps running when the app quits", () => {
+    const own = at({ state: "own" }, { [LOCAL_ENDPOINT_ID]: { status: HEALTH_REACHABLE, version: "0.3.6" } });
+    assert.equal(own.localBadge, "started by this app");
+    assert.equal(own.statusText, "Reachable");
+    assert.equal(own.version, "0.3.6");
+    assert.equal(own.localAction, null);
+    const adopted = at({ state: "adopted" }, { [LOCAL_ENDPOINT_ID]: { status: HEALTH_REACHABLE, version: "0.3.7" } });
+    assert.equal(adopted.localBadge, "already running");
+    assert.match(adopted.statusDetail, /Not started by this app\. Quitting PersonalClaw leaves it running\./);
+    assert.equal(adopted.switchable, true);
+  });
+
+  it("offers Start a gateway here when none runs, with why, and nothing to switch to", () => {
+    const stopped = at({ state: "stopped", sentence: "PersonalClaw's gateway stopped. The gateway exited with code 1." }, { [LOCAL_ENDPOINT_ID]: { status: HEALTH_REACHABLE, version: "0.3.6" } });
+    assert.equal(stopped.statusText, "Not running", "a stale probe does not say a stopped gateway is reachable");
+    assert.equal(stopped.version, "");
+    assert.equal(stopped.statusDetail, "PersonalClaw's gateway stopped. The gateway exited with code 1.");
+    assert.deepEqual(stopped.localAction, { id: "start", label: "Start a Gateway Here" });
+    assert.equal(stopped.switchable, false);
+  });
+
+  it("offers Try again, never a second start, while a gateway the app cannot sign in to serves the home", () => {
+    const served = at({ state: "served", sentence: "Port 10000 … did not prove it holds this home's local secret …" });
+    assert.equal(served.statusText, "Can't sign in to it");
+    assert.deepEqual(served.localAction, { id: "start", label: "Try Again" });
+    assert.match(served.statusDetail, /did not prove/);
+  });
+
+  it("offers nothing while it starts", () => {
+    const starting = at({ state: "starting" });
+    assert.equal(starting.statusText, "Starting…");
+    assert.equal(starting.localAction, null);
+    assert.equal(starting.switchable, false);
+  });
+
+  it("leaves a paired row as it was", () => {
+    const paired = describeRow(row(), { activeId: "x", local: { state: "stopped", sentence: "s" } });
+    assert.equal(paired.localState, "");
+    assert.equal(paired.localAction, null);
+    assert.equal(paired.statusDetail, "");
   });
 });
 
@@ -124,10 +186,54 @@ describe("the IPC adaptor", () => {
     };
   }
 
-  it("registers exactly the six channels the preload exposes", () => {
+  it("registers exactly the seven invokes the preload exposes; `changed` is the main process's to send", () => {
     const ipc = fakeIpc();
     makeConnectDialog({ BrowserWindowCtor: class {}, ipcMain: ipc, handlers: {} }).registerIpc(ipc);
-    assert.deepStrictEqual(ipc.names().sort(), Object.values(CONNECT_CHANNELS).sort());
+    const invokes = Object.entries(CONNECT_CHANNELS).filter(([k]) => k !== "changed").map(([, v]) => v);
+    assert.equal(invokes.length, 7);
+    assert.deepStrictEqual(ipc.names().sort(), invokes.sort());
+  });
+
+  it("opens a window of its own, never a sheet on another: a sheet would queue behind the one already there", () => {
+    const made = [];
+    class Win {
+      constructor(options) {
+        this.options = options;
+        made.push(this);
+      }
+      setMenu() {}
+      loadFile() {}
+      on() {}
+      isDestroyed() {
+        return false;
+      }
+    }
+    const dialog = makeConnectDialog({ BrowserWindowCtor: Win, ipcMain: fakeIpc(), handlers: {} });
+    dialog.open({ any: "parent" });
+    assert.equal(made.length, 1);
+    assert.equal(made[0].options.modal, false);
+    assert.equal("parent" in made[0].options, false, "a parent makes it that window's child");
+  });
+
+  it("tells an open window its list changed", () => {
+    const sent = [];
+    class Win {
+      constructor() {
+        this.webContents = { send: (ch) => sent.push(ch) };
+      }
+      setMenu() {}
+      loadFile() {}
+      on() {}
+      isDestroyed() {
+        return false;
+      }
+    }
+    const dialog = makeConnectDialog({ BrowserWindowCtor: Win, ipcMain: fakeIpc(), handlers: {} });
+    dialog.changed();
+    assert.deepEqual(sent, [], "no window, nothing to tell");
+    dialog.open();
+    dialog.changed();
+    assert.deepEqual(sent, [CONNECT_CHANNELS.changed]);
   });
 
   it("coerces its arguments, so a renderer cannot hand a handler an object where an id belongs", async () => {
@@ -177,6 +283,12 @@ describe("the IPC adaptor", () => {
 
 describe("the dialog document", () => {
   const html = fs.readFileSync(path.join(__dirname, "..", "connectDialog.html"), "utf8");
+
+  it("offers the local row's action in place of Switch, through the start invoke, and reads the list again when told", () => {
+    assert.match(html, /if \(row\.localAction\) \{[\s\S]*?window\.pclawConnect\.start\(\)/);
+    assert.match(html, /else if \(!row\.active && row\.switchable !== false\)/, "Switch is offered for a row with nothing behind it");
+    assert.match(html, /window\.pclawConnect\.onChanged\(\(\) => load\(\)\)/);
+  });
 
   it("builds every row with textContent and never with innerHTML", () => {
     // A registry label or URL is exactly the string a tampered store controls, so the document must

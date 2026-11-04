@@ -71,6 +71,7 @@
       "gatewayEnv.js",
       "gatewayLost.js",
       "localSignIn.js",
+      "homeGateway.js",
       "gatewayUrl.js",
       "endpointRegistry.js",
       "shellStore.js",

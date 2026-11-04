@@ -143,11 +143,12 @@ describe("assertLoopbackTarget — the rail that keeps .local_secret on this mac
 });
 
 describe("shouldAttachBridge — only to the gateway proven to serve this app's home", () => {
-  // `localGatewayUrl` in main.js: the spawned gateway's ready line. Nothing else ever becomes it.
+  // `localGatewayUrl` in main.js: the spawned gateway's ready line, or a gateway of this home that
+  // proved it holds the home's secret (`homeGateway.reach`). Nothing else ever becomes it.
   const spawned = "http://localhost:51234";
   const adopted = "http://127.0.0.1:10000";
 
-  it("attaches for the app's own gateway, at whichever loopback address it has", () => {
+  it("attaches for the app's own gateway: the one it spawned, or one that proved it serves this home", () => {
     assert.strictEqual(shouldAttachBridge(spawned, spawned), true);
     assert.strictEqual(shouldAttachBridge(`${spawned}/#/chat`, spawned), true, "any route on that gateway");
     assert.strictEqual(shouldAttachBridge(adopted, adopted), true);

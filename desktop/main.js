@@ -1,4 +1,4 @@
-const { app, BaseWindow, BrowserWindow, WebContentsView, shell, dialog, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification, globalShortcut, webContents, session } = require("electron");
+const { app, BaseWindow, BrowserWindow, WebContentsView, shell, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification, globalShortcut, webContents, session } = require("electron");
 const fs = require("fs");
 const os = require("os");
 const { spawn, execFileSync } = require("child_process");
@@ -27,12 +27,14 @@ const { quitWithin } = require("./quitSequence");
 const { makeSystemBrowser, navigationGuard, registerSystemBrowserIpc, windowOpenHandler } = require("./systemBrowser");
 const { buildGatewayEnv } = require("./gatewayEnv");
 const {
-  START_AGAIN,
-  firstStartDialog,
-  gatewayLostDialog,
+  HOME_SERVED_EXIT,
+  adoptedGoneSentence,
   isUnasked,
   makeLastLine,
+  notStartedSentence,
+  stoppedSentence,
 } = require("./gatewayLost");
+const homeGateway = require("./homeGateway");
 const { makeLocalSignIn, movedUrl, parseReadyLine, signOutRequest } = require("./localSignIn");
 const { openShellStore } = require("./shellStore");
 const { ENABLED_KEY, buddyOutlivesClose, makeBuddyPresence, makeBuddyWindow, pushToBuddy, registerBuddyIpc, registerBuddySettingsIpc } = require("./buddyWindow");
@@ -131,6 +133,16 @@ let liveGatewayGroup = null;
 let isQuitting = false;
 /** How the latest start of the gateway failed (`startGateway`'s `err.exit`), until one succeeds. */
 let startFailure = null;
+/**
+ * The gateway this app uses and did not start, while it uses one: `{pid, port}` of this home's
+ * running gateway, once it proved it serves this home (`homeGateway.reach`). The app never signals,
+ * stops or restarts it: `stopGateway` acts on `gatewayProcess`, the app's own child, alone, and
+ * quitting leaves this one running.
+ */
+let adoptedGateway = null;
+/** What the Gateways window's "This computer" row says (`connectDialog.describeLocal`): `starting`,
+ *  `own`, `adopted`, `stopped` or `served`, with the sentence the last two carry. */
+let localState = { state: "starting", sentence: "" };
 
 /**
  * The gateway THIS shell spawned, resolved from its READY line once bound. Always loopback.
@@ -342,36 +354,172 @@ async function stopGateway({ graceMs = GATEWAY_GRACE_MS, killGraceMs } = {}) {
 }
 
 /**
- * The gateway stopped when nobody asked it to (`startGateway`'s exit handler): tell the owner what
- * happened, and start it again or quit, as she chooses. Started again, its first ready line moves
- * every window to its address, signed in, the way a restart does. A start that fails is the same
- * news again, with its own exit.
+ * The gateway this app started stopped when nobody asked it to (`startGateway`'s exit handler), so
+ * nothing serves the windows now. The main window says so, and the Gateways window opens with how
+ * it ended on its "This computer" row, where the owner starts a gateway here again or connects to
+ * another one. Started again, its first ready line moves every window to its address, signed in,
+ * the way a restart does (`startLocalHere`).
+ *
+ * This used to be a sheet with Start Again and Quit. A sheet holds its window, and the Gateways
+ * window is that window's child, so it queued behind the sheet and never showed: with a start that
+ * could only fail again, there was nothing to do but quit.
  */
 async function gatewayLost(exit) {
-  const options = gatewayLostDialog(exit);
-  let response;
+  startFailure = exit;
+  setLocalState("stopped", stoppedSentence(exit));
+  showNotConnected();
+}
+
+/**
+ * Nothing serves the app's windows: the main window says so, with no spinner, and the Gateways
+ * window opens. A window showing a paired gateway keeps it.
+ */
+function showNotConnected() {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    // A sheet on a window closed to the menu bar, or minimized, would never be seen.
+    if (!activeUrl || activeUrl === localGatewayUrl) {
+      mainWindow.webContents.loadFile(path.join(__dirname, "loading.html"), { query: { state: "offline" } });
+    }
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
-    ({ response } = await dialog.showMessageBox(mainWindow, options));
-  } else {
-    ({ response } = await dialog.showMessageBox(options));
   }
-  if (isQuitting) return;
-  if (response !== START_AGAIN) {
-    isQuitting = true;
-    app.quit();
-    return;
+  openConnectDialog();
+}
+
+/** What the Gateways window's "This computer" row says, told to the window if it is open. */
+function setLocalState(state, sentence = "") {
+  localState = { state, sentence };
+  connectDialog?.changed();
+}
+
+// ── This home's running gateway, when the app did not start it ──
+
+/**
+ * This home's running gateway, signed in: `{ok, gateway, ready}`, or `{ok: false, reason,
+ * sentence}` (`homeGateway.reach`'s reasons, or `sign_in`). With *waitMs*, a home that has no
+ * running gateway yet is asked again each second until then: a gateway that has just won the home
+ * from this app's start writes its runtime record only once it listens.
+ */
+async function reachHomeGateway({ waitMs = 0 } = {}) {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const found = await homeGateway.reach(PERSONALCLAW_HOME);
+    if (found.ok) {
+      const signed = await homeGateway.signIn(found.gateway, PERSONALCLAW_HOME);
+      if (!signed.ok) return { ok: false, reason: "sign_in", sentence: signed.sentence };
+      return { ok: true, gateway: found.gateway, ready: signed.ready };
+    }
+    if (found.reason !== "none" || Date.now() >= until) return found;
+    await new Promise((r) => setTimeout(r, 1000));
   }
-  // A start that timed out can still be running: never two gateways on one home.
-  if (gatewayProcess) await stopGateway();
+}
+
+/**
+ * Use *found*, this home's running gateway, as the app's own gateway: its session is held as a ready
+ * line's (`adoptLocalGateway`), every request to it goes to its proven 127.0.0.1 address, and the
+ * capability bridge attaches to it, as to the gateway the app starts. A gateway the app used before
+ * (one that stopped, or the app's own start) is followed there, the way a restart is.
+ */
+async function adoptHomeGateway(found) {
+  const followed = Boolean(localGatewayUrl);
+  adoptedGateway = { pid: found.gateway.pid, port: found.gateway.port };
+  startFailure = null;
+  if (followed) await followRestartedGateway(found.ready);
+  else await adoptLocalGateway(found.ready);
+  setLocalState("adopted");
+  console.log(`desktop: using this home's gateway on port ${found.gateway.port} (pid ${found.gateway.pid}), which this app did not start`);
+}
+
+/**
+ * Bring a gateway up for this home: the one already serving it, when one does, else the app's own.
+ * A start the home refuses because another gateway took it meanwhile (`HOME_SERVED_EXIT`) uses that
+ * one. Resolves whether one serves the windows now. Every failure lands on the Gateways window's
+ * "This computer" row, with its sentence.
+ */
+async function bringUpLocalGateway() {
+  setLocalState("starting");
+  sendStatus("Looking for this home's gateway…");
+  const found = await reachHomeGateway();
+  if (found.ok) {
+    await adoptHomeGateway(found);
+    return true;
+  }
+  if (found.reason !== "none") {
+    // Something serves this home that the app cannot sign in to: a start could only be refused.
+    startFailure = { served: true };
+    setLocalState("served", found.sentence);
+    return false;
+  }
   try {
     await startGateway();
+    startFailure = null;
+    adoptedGateway = null;
+    setLocalState("own");
+    return true;
   } catch (err) {
-    console.error("Gateway did not start again:", err.message);
-    await gatewayLost(err.exit || { startError: err.message });
+    const exit = err.exit || { startError: err.message };
+    if (exit.code === HOME_SERVED_EXIT) {
+      const raced = await reachHomeGateway({ waitMs: 20_000 });
+      if (raced.ok) {
+        await adoptHomeGateway(raced);
+        return true;
+      }
+      startFailure = { ...exit, served: true };
+      setLocalState("served", raced.sentence || exit.lastLine || "");
+      return false;
+    }
+    console.error("Gateway did not start:", err.message);
+    startFailure = exit;
+    setLocalState("stopped", notStartedSentence(exit));
+    return false;
   }
+}
+
+/** Follow an adopted gateway through the doorbell's news: once its socket is lost, the home's runtime
+ *  record is read every 2 s until the gateway is back where it was, has moved to a new port, or is
+ *  gone. */
+let adoptedWatch = null;
+function watchAdoptedGateway(connection) {
+  if (!adoptedGateway) return;
+  if (connection === "up") {
+    if (adoptedWatch) {
+      // Back where it was. The session it signed in holds (the home's session store outlives a
+      // restart), but the capability registry and the local secret are new with each start.
+      clearTimeout(adoptedWatch);
+      adoptedWatch = null;
+      shellToken = null;
+      registerWithGateway().catch(() => {});
+    }
+    return;
+  }
+  if (adoptedWatch) return;
+  const look = async () => {
+    adoptedWatch = null;
+    if (!adoptedGateway || isQuitting) return;
+    const record = homeGateway.readRecord(PERSONALCLAW_HOME);
+    const recordLive = Boolean(record && homeGateway.pidIsAlive(record.pid));
+    if (recordLive && record.port !== adoptedGateway.port) {
+      // It restarted on another port: find it there, proof and all, and follow it.
+      const moved = await reachHomeGateway();
+      if (moved.ok) return adoptHomeGateway(moved);
+    } else if (!recordLive && !homeGateway.pidIsAlive(adoptedGateway.pid)) {
+      return adoptedGone();
+    }
+    adoptedWatch = setTimeout(look, 2000);
+  };
+  adoptedWatch = setTimeout(look, 2000);
+}
+
+/** The adopted gateway stopped and nothing took its place: the app says so and offers the Gateways
+ *  window. It did not stop it and does not start it again. */
+function adoptedGone() {
+  const { port } = adoptedGateway;
+  adoptedGateway = null;
+  shellToken = null;
+  stopPresenceRefresh();
+  startFailure = { adoptedGone: true };
+  setLocalState("stopped", adoptedGoneSentence(port));
+  console.log(`desktop: the gateway on port ${port}, which this app did not start, stopped`);
+  showNotConnected();
 }
 
 // ── Signing the windows in ──
@@ -1019,7 +1167,7 @@ function setupWindowContents(win, { attachBridge = true } = {}) {
   view.webContents.on("did-fail-load", (_e, errorCode, errorDescription, failedUrl, isMainFrame) => {
     if (!isMainFrame) return;
     if (errorCode === -3) return; // ERR_ABORTED — a navigation we superseded ourselves
-    if (!activeUrl || activeUrl === localGatewayUrl) return; // spawn-local has its own retry dialog
+    if (!activeUrl || activeUrl === localGatewayUrl) return; // the app's own gateway is watched elsewhere
     console.warn(`load failed for ${failedUrl}: ${errorDescription} (${errorCode})`);
     scheduleReachProbe(win);
   });
@@ -1402,6 +1550,8 @@ const doorbell = makeDoorbell({
     // A restart the gateway announced is working, said as restarting, never offline (#3896).
     trayPresence.setRestarting(state === "restarting");
     pushToBuddy(buddy?.window, "connection", state);
+    // A gateway the app did not start prints it no ready line: its socket is how a restart or a stop is heard.
+    watchAdoptedGateway(state);
   },
   pollMs: PRESENCE_REFRESH_MS,
   log: (msg) => console.warn(`desktop: ${msg}`),
@@ -1421,7 +1571,7 @@ function stopPresenceRefresh() {
 /** Open (or focus) the connect dialog / switcher. */
 function openConnectDialog() {
   if (!connectDialog) return;
-  connectDialog.open(mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+  connectDialog.open();
 }
 
 /** Re-probe every row's health, credential-free. Never mutates the registry. */
@@ -1528,10 +1678,13 @@ async function navigateToEndpoint(win, url, { isLocal = false } = {}) {
     console.warn(`could not reach ${url}: ${err.message}`);
     // Fall back to the gateway this shell owns rather than leaving a blank window. Spawn-local is
     // the default connection model, and an unreachable paired gateway is exactly when that matters.
-    if (localGatewayUrl && url !== localGatewayUrl) {
+    if (localGatewayUrl && url !== localGatewayUrl && !startFailure) {
       openConnectDialog();
       return navigateToEndpoint(win, localGatewayUrl, { isLocal: true });
     }
+    // Nothing to fall back to: the window says so, and the Gateways window is where to go next.
+    wc.loadFile(path.join(__dirname, "loading.html"), { query: { state: "offline" } });
+    openConnectDialog();
     return false;
   }
 }
@@ -1572,7 +1725,7 @@ async function adoptInstanceName(wc, url) {
 /** The handler set the connect dialog drives. `main.js` owns them so the dialog module stays a
  *  view, and so every one of them goes through `connectMode`'s decisions rather than around them. */
 function connectHandlers() {
-  return {
+  const handlers = {
     list: async () => {
       const registry = loadRegistry(shellStore);
       return describeList({
@@ -1580,6 +1733,7 @@ function connectHandlers() {
         activeId: registry.active,
         health: endpointHealth,
         localBaseUrl: localGatewayUrl || "",
+        local: localState,
         warnings: startupWarnings,
         storeStatus: shellStore.status,
         storeSafe: Boolean(shellStore.permissions && shellStore.permissions.safe),
@@ -1630,17 +1784,29 @@ function connectHandlers() {
       await refreshHealth();
       return { ok: true };
     },
+    // "This computer" row's Start a gateway here and Try again: a gateway for this home, the one
+    // serving it when one does, else the app's own, and the main window on it.
+    start: async () => {
+      if (localState.state === "starting") return { ok: false, code: "starting", message: "A gateway for this home is already starting." };
+      if (!(await startLocalHere())) {
+        return { ok: false, code: localState.state, message: localState.sentence || "No gateway could be brought up for this home." };
+      }
+      return handlers.switchTo(LOCAL_ENDPOINT_ID);
+    },
   };
+  return handlers;
 }
 
 // ── Loading screen ──
 
 /**
- * Show the loading screen until the gateway this shell started answers, then the dashboard.
+ * Show the loading screen until the gateway this app uses answers, then the dashboard.
  *
- * A start that failed (`startFailure`) is said at once, not after the two-minute wait for an
- * answer nothing would give, and so is a gateway that started and never answered: how it ended,
- * the last thing it said, and Start Again, which starts a new gateway (`startAgain`), or Quit.
+ * With no gateway (a start that failed or was refused, or a home served by one the app cannot sign
+ * in to), or one that never answered, the window says it is not connected, at once and with no
+ * spinner, and the Gateways window opens, where the owner starts a gateway here or connects to
+ * another one (`showNotConnected`). That used to be a sheet with Start Again and Quit, and the
+ * Gateways window, a child of the same window, queued behind it.
  */
 async function showLoadingThenConnect(win) {
   const wc = win.webContents;
@@ -1648,54 +1814,39 @@ async function showLoadingThenConnect(win) {
   win.show();
 
   try {
-    // A start that failed leaves nothing to wait for, a Start Again after one that never
-    // answered included (the address is still that gateway's).
-    if (startFailure) throw new Error("the gateway did not start");
+    if (startFailure || !localGatewayUrl) throw new Error("no gateway serves this home");
     await waitForBackend(win);
     if (win.isDestroyed()) return;
     activeUrl = localGatewayUrl;
     wc.loadURL(localGatewayUrl);
   } catch {
     if (win.isDestroyed()) return;
-    const exit = startFailure || { unanswered: true };
-    const { response } = await dialog.showMessageBox(win, firstStartDialog(exit));
-    if (isQuitting) return;
-    if (response === START_AGAIN) {
-      await startAgain();
-      return showLoadingThenConnect(win);
+    if (!startFailure) {
+      startFailure = { unanswered: true };
+      setLocalState("stopped", notStartedSentence(startFailure));
     }
-    if (win === mainWindow) {
-      isQuitting = true;
-      app.quit();
-    } else {
-      win.destroy();
-    }
+    showNotConnected();
   }
 }
 
 /**
- * Start the gateway again after a start that failed or never answered, as the gateway-lost
- * dialog's Start Again does. A start that timed out can still be running, so it is stopped first:
- * never two gateways on one home. A start that fails again is kept in `startFailure` for the
- * dialog to say. The first ready line of a gateway the windows never had is taken the way the
- * app's own start takes it; one that replaced a running gateway is followed there by
- * `startGateway` itself, which registers the shell again.
+ * The Gateways window's Start a gateway here, and its Try again: a gateway for this home, the one
+ * already serving it when one does, else the app's own (`bringUpLocalGateway`). A start that timed
+ * out can still be running, so it is stopped first: never two gateways on one home. The first
+ * gateway the windows ever have is set up as the app's start sets one up; one that takes over from
+ * a gateway that stopped is followed there (`followRestartedGateway`), which registers again.
  */
-async function startAgain() {
+async function startLocalHere() {
   const hadGateway = Boolean(localGatewayUrl);
   if (gatewayProcess) await stopGateway();
-  try {
-    await startGateway();
-    startFailure = null;
-  } catch (err) {
-    console.error("Gateway did not start again:", err.message);
-    startFailure = err.exit || { startError: err.message };
-    return;
+  if (!(await bringUpLocalGateway())) return false;
+  if (!hadGateway) {
+    if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
+    await registerWithGateway();
+    startPresenceRefresh();
+    buddyPresence?.start();
   }
-  if (hadGateway) return;
-  if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
-  await registerWithGateway();
-  buddyPresence?.start();
+  return true;
 }
 
 // ── New Tab — opens another view onto the ACTIVE gateway ──
@@ -2034,18 +2185,16 @@ if (!app.requestSingleInstanceLock()) {
     syncLoginItemToTray();
     syncBuddyToTray();
     const win = createWindow();
+    // Never a blank window while this home's gateway is looked for or started.
+    win.webContents.loadFile(path.join(__dirname, "loading.html"));
     // The sidebar material follows the system's reduced-transparency setting in every window.
     windowChrome.watch(() => appWindows());
     // The Linux tray's stills follow the system's light or dark appearance.
     nativeTheme.on("updated", () => trayPresence.appearanceChanged());
 
-    try {
-      await startGateway();
-    } catch (err) {
-      console.error("Gateway did not start:", err.message);
-      // Said by the loading screen's dialog, which offers to start it again.
-      startFailure = err.exit || { startError: err.message };
-    }
+    // This home's running gateway when one serves it, else the app's own. One that cannot be
+    // brought up is said on the Gateways window's "This computer" row (`showLoadingThenConnect`).
+    await bringUpLocalGateway();
     // Needs localGatewayUrl from the READY line, so it follows the gateway start. A
     // failure here leaves the gateway reporting "not connected" — degraded but
     // honest — and never blocks the window.
