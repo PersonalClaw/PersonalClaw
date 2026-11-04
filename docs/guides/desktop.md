@@ -793,11 +793,16 @@ got this one. Replace the AppImage, or `sudo apt install ./personalclaw-desktop_
 over the installed package. Your data lives in `~/.personalclaw` and is untouched by either.
 
 There is **no in-app update yet**, and the app will not offer you one. Settings → Updates
-tells you when a newer release exists and then points here; it deliberately does not show
-the "Update" button that a pip or git install gets, because the shell owns this install:
-the backend inside the app is a frozen bundle with no interpreter to upgrade, so a new
-version is a new app. An auto-updater is planned — until it ships, the panel says what is
-actually true rather than promising an update that never arrives.
+tells you when a newer release exists and then points here, and so do the System status card's
+**Update** (which restarts nothing here, so it asks nothing first) and Home's **Update available**,
+with a link to the releases page. Settings deliberately does not show the "Update" button that a
+pip or git install gets, because the shell owns this install: the backend inside the app is a frozen bundle with no interpreter to upgrade,
+so a new version is a new app. An auto-updater is planned — until it ships, the panel says what
+is actually true rather than promising an update that never arrives.
+
+On a gateway the app did not start ([one already serving your home](#when-a-gateway-already-serves-your-home)),
+those controls are that gateway's: one installed with pip updates itself as it does in a browser,
+and the app follows it through the restart.
 
 ### What the update settings still do here
 

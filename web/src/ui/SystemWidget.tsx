@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Cpu, MemoryStick, HardDrive, Activity, Zap, Network, Boxes, ShieldCheck, Server, Bot, X, Loader2, RotateCw, DownloadCloud, AlertTriangle } from 'lucide-react'
-import { api, type SystemInfo, type AuthStatus, type SpawnedAgent } from '../lib/api'
+import { api, type SystemInfo, type AuthStatus, type SpawnedAgent, type UpdateApplyAnswer } from '../lib/api'
+import { RELEASES_PAGE_URL } from '../lib/repoDocs'
 import { useVisiblePoll } from '../lib/useVisiblePoll'
 import { spring, overlayEnter, fadeEnter } from '../design/motion'
 import { fvs } from '../design/fontWeight'
@@ -11,6 +12,7 @@ import { reportingWrite } from '../app/reportingWrite'
 import { WidgetBoundary } from '../app/ErrorBoundary'
 import { NO_READING, fixedReading, isReading, percentReading } from '../lib/readings'
 import { connectionWords, useGatewayConnection } from '../app/gatewayConnection'
+import { applyUpdate, updatedOutside, useInstallKind } from '../app/applyUpdate'
 
 /** Live system + auth health — the status line's connection, at the window's bottom left.
  *  - Collapsed (resting): the gateway connection, read from the shell's one reading of it
@@ -280,24 +282,52 @@ function RunningAgents({ open }: { open: boolean }) {
   )
 }
 
+/** What an update that restarts does, as its confirm asks it, by how this install is updated. */
+const UPDATE_ASK: Record<string, string> = {
+  git: 'Pull latest, rebuild, and restart the gateway?',
+  pip: 'Install the new version and restart the gateway?',
+}
+
 /** Gateway lifecycle controls — Restart (apply committed backend changes, no
- *  git pull) + Update & Restart (git pull + rebuild FE + restart, via the
- *  existing /api/update flow). Both are gated by a warn-if-active confirm that
- *  surfaces the count of running agents + live sessions a restart would
- *  interrupt. On confirm the request fires and the confirm UI resets — the
- *  shell-level UpdateProgressOverlay owns ALL progress feedback (both paths
- *  push `update_progress` events: restart-only gets the simplified view, a
- *  real update the 4-step stepper). No inline busy state here: it could never
- *  clear on success (the gateway re-execs and this component unmounts), so it
- *  read as permanently stuck. A pipeline-START failure (e.g. 409 dirty tree)
+ *  git pull) + the update (`/api/update`, through `applyUpdate`). Restart, and
+ *  an update that restarts, are gated by a warn-if-active confirm that surfaces
+ *  the count of running agents + live sessions a restart would interrupt, and
+ *  names what the update does on this install (`UPDATE_ASK`). On confirm the
+ *  request fires and the confirm UI resets — the shell-level
+ *  UpdateProgressOverlay owns ALL progress feedback (both paths push
+ *  `update_progress` events: restart-only gets the simplified view, a real
+ *  update the 4-step stepper). A pipeline-START failure (e.g. 409 dirty tree)
  *  never pushes any progress event, so the overlay can't surface it — that
- *  error is toasted at this call site instead. */
+ *  error is toasted instead.
+ *
+ *  A container or desktop install is not updated in place, so its button is
+ *  Update, with no restart to confirm: the route ANSWERS with how it is updated
+ *  (`status: 'instructions'`), and that answer is said here, with the releases
+ *  page for the desktop app, until Close. It used to offer Update & Restart,
+ *  ask "Pull latest, rebuild…", close itself and read nothing back: on the
+ *  desktop app the press did nothing at all. An answer of how to update that
+ *  arrives on another install (a kind not yet read) is said the same way. */
 function RestartControls({ onFired }: { onFired?: () => void }) {
   // pending = which action awaits confirm ('restart' | 'update')
   const [pending, setPending] = useState<'restart' | 'update' | null>(null)
   const [active, setActive] = useState<{ running_agents: number; sessions: number } | null>(null)
+  // The route's answer for an install it does not update in place, said until Close.
+  const [said, setSaid] = useState<UpdateApplyAnswer | null>(null)
+  const [asking, setAsking] = useState(false)
+  const kind = useInstallKind()
+  const outside = updatedOutside(kind)
 
+  const update = async () => {
+    setAsking(true)
+    const how = await applyUpdate()
+    setAsking(false)
+    // An update that started closes the popover — the overlay takes over from here (one progress
+    // surface, not a popover competing with it). How this install updates is said here instead.
+    if (how) setSaid(how)
+    else onFired?.()
+  }
   const ask = async (which: 'restart' | 'update') => {
+    if (which === 'update' && outside) return update()
     setPending(which)
     // Best-effort active-work probe for the warning; a failure just omits the count.
     try { setActive(await api.restartProbe()) } catch { setActive(null) }
@@ -306,31 +336,45 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
   const confirm = async () => {
     if (!pending) return
     const which = pending
-    // Reset the confirm UI + close the popover immediately — the overlay takes
-    // over from here (one progress surface, not a popover competing with it).
     setPending(null); setActive(null)
+    if (which === 'update') return update()
+    // A restart closes the popover at once — the overlay takes over from here.
     onFired?.()
     try {
-      if (which === 'update') await api.applyUpdate()
-      else await api.restartGateway()
+      await api.restartGateway()
     } catch (e) {
-      // A rejected START (409 dirty tree / no PROJECT_DIR / already-in-progress)
-      // pushes NO update_progress events — the overlay never opens. Surface the
-      // backend's error text so the user isn't left staring at nothing.
-      // (A dropped connection mid-restart rejects too, but by then the overlay
-      // is already showing "restarting", so a stray toast is harmless.)
+      // A rejected START pushes NO update_progress events — the overlay never opens. Surface the
+      // backend's error text so the user isn't left staring at nothing. (A dropped connection
+      // mid-restart rejects too, but by then the overlay is already showing "restarting", so a
+      // stray toast is harmless.)
       const msg = e instanceof Error && e.message ? e.message : 'Request failed'
-      window.dispatchEvent(new CustomEvent('ne:toast', {
-        detail: { level: 'error', message: which === 'update' ? `Update blocked: ${msg}` : `Restart failed: ${msg}` },
-      }))
+      window.dispatchEvent(new CustomEvent('ne:toast', { detail: { level: 'error', message: `Restart failed: ${msg}` } }))
     }
   }
 
   const n = (active?.running_agents ?? 0)
   const warn = n > 0
+  if (said) {
+    return (
+      <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
+        <div role="status" data-type="caption" className="flex flex-col items-start gap-1.5 text-on-surface-var">
+          <span>{said.detail || 'This install is updated outside the app.'}</span>
+          {said.kind === 'desktop' && (
+            <a href={RELEASES_PAGE_URL} target="_blank" rel="noreferrer noopener" className="text-primary underline">Open the releases page</a>
+          )}
+          <button type="button" onClick={() => setSaid(null)} data-type="caption"
+            className="rounded-lg px-2 py-1 text-on-surface-low hover:text-on-surface">Close</button>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
-      {!pending ? (
+      {asking ? (
+        <div role="status" data-type="caption" className="flex items-center gap-1.5 text-on-surface-low">
+          <Loader2 size={12} className="animate-spin" /> Asking the gateway…
+        </div>
+      ) : !pending ? (
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => ask('restart')} data-type="caption"
             className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
@@ -340,7 +384,7 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
           <button type="button" onClick={() => ask('update')} data-type="caption"
             className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
             style={{ borderRadius: 'var(--radius-md)' }}>
-            <DownloadCloud size={12} /> Update &amp; Restart
+            <DownloadCloud size={12} /> {outside ? 'Update' : <>Update &amp; Restart</>}
           </button>
         </div>
       ) : (
@@ -349,7 +393,7 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
             {warn && <AlertTriangle size={13} className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} />}
             <span>
               {pending === 'update'
-                ? 'Pull latest, rebuild, and restart the gateway?'
+                ? UPDATE_ASK[kind ?? ''] ?? 'Update PersonalClaw and restart the gateway?'
                 : 'Restart the gateway to apply changes?'}
               {warn && (
                 <> This interrupts <span style={fvs(650)}>
