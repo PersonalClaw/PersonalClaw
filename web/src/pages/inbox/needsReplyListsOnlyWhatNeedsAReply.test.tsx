@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { InboxPage } from './InboxPage'
 import { closeDialog, subscribeDialogs } from '../../ui/dialog/dialogStore'
 import type { InboxItem, InboxStatus } from '../../lib/api'
+import { findHeaderFilter } from '../../test/headerFilter'
 
 // ── "Needs reply" lists what needs her reply, and the page uses one word per filter ────────────
 //
@@ -64,9 +65,9 @@ function renderInbox(query: Record<string, string> = {}) {
   return render(<InboxPage query={query} setQuery={vi.fn()} navigate={() => {}} />)
 }
 
-/** The Filter & sort menu's option rows, as "<label><count>" (`ui/FilterRow`). */
+/** The header filter's option rows, as "<label><count>" (`ui/FilterRow`). */
 async function filterOptions(): Promise<string[]> {
-  fireEvent.click(screen.getByRole('button', { name: /filter & sort/i }))
+  fireEvent.click(await findHeaderFilter())
   return waitFor(() => {
     const texts = screen.getAllByRole('button').map((b) => b.textContent || '').filter((t) => /^(Open|Needs reply|All|Done)\d+$/.test(t))
     if (texts.length < 4) throw new Error(`the filter rows never rendered: ${texts}`)

@@ -6,10 +6,11 @@ import { Button } from '../../ui/Button'
 import { IconButton } from '../../ui/IconButton'
 import { InvestigateButton } from '../../ui/InvestigateButton'
 import { TOUCH_TARGET } from '../../ui/Toggle'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { SidePanel } from '../../ui/SidePanel'
-import { ListControls } from '../../ui/ListControls'
+import { ListStatus } from '../../ui/ListControls'
 import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { Markdown } from '../../ui/Markdown'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
@@ -181,6 +182,8 @@ export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: P
     ],
   }), [items, unread, kinds, filter, setFilter])
 
+  const showFilter = !!inboxFilters || items === undefined || items.length > 0
+
   return (
     <WorkbenchLayout
       topBar={
@@ -191,23 +194,18 @@ export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: P
           left={<PageTitle className="flex min-w-0 items-baseline gap-s"><span className="shrink-0">Inbox</span> {items && <span data-type="caption" className="min-w-0 truncate text-on-surface-low">
             {unread} unread · {items.length} notification{items.length === 1 ? '' : 's'}
           </span>}</PageTitle>}
-          right={items && items.length > 0 ? (
-            // Direct header actions (the header is otherwise empty now that the
-            // filter lives on the page); each collapses to an icon when tight.
+          right={showFilter || (items && items.length > 0) ? (
+            // The filter (shown on an empty feed too while the Inbox's filters are in it: the menu
+            // is the way back to the Inbox's items), then the feed's actions; each collapses to an
+            // icon when tight.
             <HeaderActions overflowClassName={TOUCH_TARGET}>
+              {showFilter && <HeaderFilter sections={inboxFilters ? [inboxFilters, { ...filterSection, quiet: true }] : [filterSection]} className={TOUCH_TARGET} />}
+              {items && items.length > 0 && <HeaderControl icon={Trash2} label="Clear all" danger priority="low" onClick={clearAll} className={TOUCH_TARGET} />}
               {unread > 0 && <HeaderControl icon={CheckCheck} label="Mark all read" priority="primary" onClick={ackAll} className={TOUCH_TARGET} />}
-              <HeaderControl icon={Trash2} label="Clear all" danger priority="low" onClick={clearAll} className={TOUCH_TARGET} />
             </HeaderActions>
           ) : undefined}
         />
       }
-      // Shown on an empty feed too while the Inbox's filters are in it: the menu is the way back
-      // to the Inbox's items.
-      controls={(inboxFilters || items === undefined || items.length > 0)
-        ? <ListControls results={{ count: (filtered ?? []).length, noun: 'notifications', active: filter !== 'all' }}>
-            <FilterMenu sections={inboxFilters ? [inboxFilters, filterSection] : [filterSection]} label="Show" className={TOUCH_TARGET} />
-          </ListControls>
-        : undefined}
       panel={open && (
         <SidePanel key={open.ts} fillHeight storeKey="notif-panel-w" icon={(() => { const km = noteMeta(open); return <km.icon size={18} style={{ color: km.tone }} /> })()} title={open.title} onClose={() => setOpenTs("")}>
           <div className="flex flex-col gap-l">
@@ -263,6 +261,7 @@ export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: P
         </SidePanel>
       )}
     >
+      {showFilter && <ListStatus results={{ count: (filtered ?? []).length, noun: 'notifications', active: filter !== 'all' }} />}
       <div className="mx-auto px-l py-l">
         {items === undefined && loadErr ? (
           // Before the skeleton branch, or a failed first read spins it forever.

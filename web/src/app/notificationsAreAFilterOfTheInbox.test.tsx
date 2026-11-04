@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import type { NotificationItem } from '../lib/api'
+import { headerFilter } from '../test/headerFilter'
 
 // ── Notifications are a filter of the Inbox (#3818) ──────────────────────────────────────────────
 //
@@ -113,7 +114,7 @@ function normal(address: string): string {
   return `${bare.slice(0, at)}?${new URLSearchParams(query).toString()}`
 }
 
-const openMenu = () => fireEvent.click(screen.getByRole('button', { name: 'Filter & sort' }))
+const openMenu = () => fireEvent.click(headerFilter())
 const option = (name: RegExp) => screen.findByRole('button', { name })
 /** The open menu's section under *title*, as the menu draws it: its caption, then its rows. */
 const section = async (title: string) =>

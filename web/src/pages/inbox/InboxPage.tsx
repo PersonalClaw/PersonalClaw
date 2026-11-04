@@ -6,8 +6,10 @@ import { WorkbenchLayout } from '../../ui/WorkbenchLayout'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { WindowedList } from '../../ui/WindowedList'
 import { SidePanel } from '../../ui/SidePanel'
-import { ListControls } from '../../ui/ListControls'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { ListStatus } from '../../ui/ListControls'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { Popover, MenuRow } from '../../ui/Popover'
 import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 import { TOUCH_TARGET } from '../../ui/Toggle'
@@ -19,7 +21,6 @@ import { api, type InboxItem, type InboxStatus } from '../../lib/api'
 import { ForeignBadge } from './ForeignContent'
 import { rowSubject } from '../../lib/rowSubject'
 import { previewText } from '../../lib/previewText'
-import { Segmented } from '../../ui/Segmented'
 import { verdictMeta, confMeta, statusMeta, kindMeta, channelLabel, relPast, isOpen, isSettled, isForeignItem, ITEM_KINDS, isChannelItem, isOpenWithVerdict, itemKindOf, refTarget, refLabel } from './inboxMeta'
 import { InboxDetail } from './InboxDetail'
 import { AttachmentCount } from './InboxAttachments'
@@ -356,7 +357,31 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
       ...((filterCount('filtered') ?? 0) > 0 ? [{ key: 'filtered', label: 'Filtered', count: filterCount('filtered') }] : []),
       NOTIFICATIONS_OPTION,
     ],
-  }]
+  },
+  // Kind, once MORE THAN ONE kind is present: on an inbox that only ever receives messages, a
+  // "Messages" choice is a control with nothing to choose. Counts are of OPEN items, so a choice
+  // says how much is waiting there.
+  ...(kindChips.length > 1 ? [{
+    title: 'Kind', value: kind || 'all', defaultKey: 'all', quiet: true,
+    onChange: (k: string) => setKind(k === 'all' ? '' : k),
+    options: [
+      { key: 'all', label: 'Every kind', icon: LayoutGrid },
+      ...kindChips.map((k) => ({ key: k.key, label: k.label, icon: k.icon, count: k.open })),
+    ],
+  }] : []),
+  // Owner, only for a genuinely shared inbox (more than one attributed owner present). "Everyone"
+  // is the shared view's default, "Mine" is `belongs_to` (so it keeps the unattributed rows an
+  // owner still owns), and each handle is an exact attribution.
+  ...(shared ? [{
+    title: 'Owner', value: ownerFilter || 'all', defaultKey: 'all', quiet: true,
+    onChange: (o: string) => setOwnerFilter(o === 'all' ? '' : o),
+    options: [
+      { key: 'all', label: 'Everyone', icon: Users },
+      { key: 'mine', label: 'Mine', icon: UserCheck, count: myOpenCount },
+      ...ownerChips.filter((o) => !o.isMe).map((o) => ({ key: o.username, label: o.username, icon: User, count: o.open })),
+    ],
+  }] : []),
+  ]
   return (
     <WorkbenchLayout
       topBar={
@@ -388,13 +413,18 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
               : <>{status.open_count} open · {status.total_count} total</>}
           </span>}</PageTitle>}
           right={
-            // The header has room now (search/filter live on the page), so surface
-            // the actions directly — the cluster collapses them (icon-only → …) if tight.
-            <div className="flex items-center gap-1">
+            // Every page-level control in the cluster, in its one order: the search, the filter
+            // (what the list shows, its kind and owner), the digest, the bulk and source actions,
+            // the settings panel's opener, and Capture a note last. The cluster collapses them
+            // (icon-only → …) when tight.
+            <HeaderActions overflowClassName={TOUCH_TARGET}>
+              {(items === undefined || items.length > 0) && <HeaderSearch value={q} onChange={setQ} placeholder="Search inbox" className={TOUCH_TARGET} />}
+              <HeaderFilter sections={filterSections} className={TOUCH_TARGET} />
               {/* Channel digest — only meaningful when channels are watched. Picks a
-                  channel, generates a catch-up summary that lands as a new item. */}
+                  channel, generates a catch-up summary that lands as a new item. `portal`: inside
+                  the cluster it sits in the row's horizontal scroller, which would clip its menu. */}
               {watched.length > 0 && (
-                <Popover placement="bottom" align="right" trigger={(open, toggle) => (
+                <Popover portal placement="bottom" align="right" trigger={(open, toggle) => (
                   <button onClick={toggle} disabled={busy}
                     data-type="body-s"
                     className="inline-flex items-center gap-1.5 rounded-pill h-9 px-m text-on-surface-var hover:bg-surface-high hover:text-on-surface transition-colors disabled:opacity-40"
@@ -415,37 +445,21 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
                   )}
                 </Popover>
               )}
-              <HeaderActions overflowClassName={TOUCH_TARGET}>
-                {/* Gated on `open_count`, the same set the sweep reaches. Gating on the old
-                    PENDING-only count made the only bulk control VANISH once every row had been
-                    read, while the queue was still full (issue 493). */}
-                {(status?.open_count ?? 0) > 0 && (
-                  <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} className={TOUCH_TARGET} />
-                )}
-                <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} className={TOUCH_TARGET} />
-                {/* `priority="primary"` so writing a note survives into the
-                    icon-only and overflow tiers — it is the one action on this page that
-                    CREATES something, and the cluster sheds `low` first. Placed after the
-                    destructive control and before the panel opener, per HeaderActions'
-                    ordering tenet. */}
-                <HeaderControl icon={StickyNote} label="Capture a note" priority="primary" onClick={() => setCaptureOpen(true)} className={TOUCH_TARGET} />
-                <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} className={TOUCH_TARGET} />
-              </HeaderActions>
-            </div>
+              {/* Gated on `open_count`, the same set the sweep reaches. Gating on the old
+                  PENDING-only count made the only bulk control VANISH once every row had been
+                  read, while the queue was still full (issue 493). */}
+              {(status?.open_count ?? 0) > 0 && (
+                <HeaderControl icon={CheckCheck} label="Dismiss all" danger priority="low" onClick={dismissAll} disabled={busy} className={TOUCH_TARGET} />
+              )}
+              <HeaderControl icon={RotateCcw} label="Restart sources" priority="low" onClick={restart} disabled={busy} className={TOUCH_TARGET} />
+              <HeaderControl icon={SettingsIcon} label="Inbox settings" active={settingsOpen} priority="low" onClick={() => setSettingsOpen(!settingsOpen)} className={TOUCH_TARGET} />
+              {/* `priority="primary"` so writing a note survives into the icon-only and overflow
+                  tiers: it is the one action on this page that CREATES something, and the cluster
+                  sheds `low` first. */}
+              <HeaderControl icon={StickyNote} label="Capture a note" priority="primary" onClick={() => setCaptureOpen(true)} className={TOUCH_TARGET} />
+            </HeaderActions>
           }
         />
-      }
-      controls={
-        <ListControls search={(items === undefined || items.length > 0)
-          ? { value: q, onChange: setQ, placeholder: 'Search inbox', label: 'Search inbox' }
-          : undefined}
-          // `active` compares against the DEFAULT filter, not 'all': inbox opens on 'open', so
-          // `filter !== 'all'` was true on mount and the list announced "39 items" before the user
-          // did anything. The announcement is for a query the USER made.
-          results={{ count: (filtered ?? []).length, noun: 'items', active: narrowed }}
-          stale={itemsStale}>
-          <FilterMenu sections={filterSections} label="Show" className={TOUCH_TARGET} />
-        </ListControls>
       }
       panel={
         <>
@@ -481,6 +495,10 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
         </>
       }
     >
+      {/* `active` compares against the DEFAULT filter, not 'all': inbox opens on 'open', so
+          `filter !== 'all'` was true on mount and the list announced "39 items" before the user
+          did anything. The announcement is for a query the USER made. */}
+      <ListStatus results={{ count: (filtered ?? []).length, noun: 'items', active: narrowed }} stale={itemsStale} />
       {/* The inbox body is one ENTRANCE GROUP: the source-health
           banner lands, then the queue — context first, then the work, rather than the
           two arriving in the same frame. This surface has exactly those two regions, and
@@ -537,58 +555,6 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
             It renders its own five states (never installed / off / not yet run / a digest / a
             failed read), so nothing here needs to know which one is showing. */}
         <TriageDigestCard />
-        {/* Kind chips. Only rendered once MORE THAN ONE kind is present: on an inbox that
-            only ever receives messages, a single "Messages" chip is a control with nothing
-            to choose. Uses the canonical Segmented so it matches every other pick-one in
-            the app rather than inventing a chip style here. */}
-        {kindChips.length > 1 && (
-          <div className="mb-m">
-            <Segmented
-              size="sm"
-              collapse="scroll"
-              ariaLabel="Filter by kind"
-              value={kind || 'all'}
-              onChange={(k) => setKind(k === 'all' ? '' : k)}
-              options={[
-                { key: 'all', label: 'All', icon: LayoutGrid },
-                ...kindChips.map((k) => ({
-                  key: k.key,
-                  label: k.open > 0 ? `${k.label} ${k.open}` : k.label,
-                  icon: k.icon,
-                  tone: k.tone,
-                  title: `${k.label} — ${k.open} open`,
-                })),
-              ]}
-            />
-          </div>
-        )}
-        {/* OWNER chips, rendered only for a genuinely shared inbox (more than one
-            attributed owner present). Three scopes, and the middle one is not an owner handle:
-            "Everyone" is the shared view's default, "Mine" is `belongs_to` (so it keeps the
-            unattributed rows an owner still owns), and each handle is an exact attribution.
-            Uses the same canonical `Segmented` as the kind chips rather than a second chip
-            style. */}
-        {shared && (
-          <div className="mb-m">
-            <Segmented
-              size="sm"
-              collapse="scroll"
-              ariaLabel="Filter by owner"
-              value={ownerFilter || 'all'}
-              onChange={(o) => setOwnerFilter(o === 'all' ? '' : o)}
-              options={[
-                { key: 'all', label: 'Everyone', icon: Users },
-                { key: 'mine', label: myOpenCount > 0 ? `Mine ${myOpenCount}` : 'Mine', icon: UserCheck, title: `Yours — ${myOpenCount} open` },
-                ...ownerChips.filter((o) => !o.isMe).map((o) => ({
-                  key: o.username,
-                  label: o.open > 0 ? `${o.username} ${o.open}` : o.username,
-                  icon: User,
-                  title: `${o.username} — ${o.open} open of ${o.total}`,
-                })),
-              ]}
-            />
-          </div>
-        )}
         {/* The Proposals LENS. Narrowing to `proposal` swaps the triage list for a
             surface built for deciding: each row shows what approving would DO (its apply
             case), batch-approve is offered only within one (provenance, kind) group, and an

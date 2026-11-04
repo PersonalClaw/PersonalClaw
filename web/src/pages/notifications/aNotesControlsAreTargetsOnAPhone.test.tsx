@@ -8,7 +8,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 // 320, 390, 412 and 768 px (#/inbox?filter=notifications and #/notifications, both themes):
 // - each note's Investigate in chat, Mark read or Mark unread, and Delete, drawn at 34 px;
 // - the header's Mark all read and Clear all, at 40;
-// - Filter & sort, at 40.
+// - the filter, at 40.
 // Each now carries the compact widths' 44 px floor (`TOUCH_TARGET`) from its call site, and keeps
 // its own size above them.
 //
@@ -28,6 +28,7 @@ vi.mock('../../lib/rungs', () => ({ useAutonomyLadder: () => ({ ladder: null, re
 const { NotificationsPage } = await import('./NotificationsPage')
 const { EmptyState } = await import('../../ui/ListScaffold')
 const { TOUCH_TARGET } = await import('../../ui/Toggle')
+const { headerFilter } = await import('../../test/headerFilter')
 
 const UNREAD = { ts: 1785890207, kind: 'error', title: 'Weekly backup failed', body: 'disk full', acked: false, mode: '', targets: [] }
 const READ = { ts: 1785890100, kind: 'info', title: 'Inbox digest sent', body: 'three items', acked: true, mode: '', targets: [] }
@@ -54,13 +55,15 @@ describe('the notifications view on a phone', () => {
     }
   })
 
-  it("so do the header's actions and Filter & sort", async () => {
+  it("so do the header's actions and its filter", async () => {
     render(<NotificationsPage query={{}} setQuery={() => {}} navigate={() => {}} />)
     await screen.findByText('Weekly backup failed')
-    for (const name of ['Mark all read', 'Clear all', 'Filter & sort']) {
+    for (const name of ['Mark all read', 'Clear all']) {
       const button = screen.getByRole('button', { name })
       expect(compactFloor(button), `${name}: ${button.className}`).toBe(true)
     }
+    const filter = headerFilter()
+    expect(compactFloor(filter), `the filter: ${filter.className}`).toBe(true)
   })
 
   it('an empty state gives its action the class it is handed', () => {

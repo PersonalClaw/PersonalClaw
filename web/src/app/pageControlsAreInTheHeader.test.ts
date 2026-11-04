@@ -55,9 +55,7 @@ const BUDGET: Record<string, number> = {
   'pages/code/CodeSection.tsx': 2,
   'pages/dashboard/Home.tsx': 1,
   'pages/files/FilesSection.tsx': 1,
-  'pages/inbox/InboxPage.tsx': 4,
   'pages/knowledge/KnowledgeListPage.tsx': 1,
-  'pages/notifications/NotificationsPage.tsx': 2,
   'pages/projects/ProjectsSection.tsx': 3,
 }
 

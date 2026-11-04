@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { findHeaderFilter } from '../../test/headerFilter'
 
 // ── A shared inbox shows every owner's items and counts only YOURS ────────────────────────────
 //
@@ -31,6 +32,9 @@ import { render, screen, waitFor } from '@testing-library/react'
 // 🪤 The owner CHIPS are deliberately gated on more than one attributed owner being present (the
 // dead-control rule the kind chips already follow), so the last test pins the solo case: one owner
 // means no owner controls and the original unscoped count, i.e. a solo install is untouched.
+
+/** The header filter's Owner section, its title and its choices. */
+const ownerSection = () => screen.getByText('Owner', { selector: 'span[data-type="caption"]' }).parentElement!.parentElement!
 
 const OWNER = 'keyur-golani'
 const FOREIGN = 'dana'
@@ -117,10 +121,11 @@ describe('the shared inbox surfaces every owner but counts only yours', () => {
   it('offers per-owner filtering, and "Mine" is a separate scope from an owner handle', async () => {
     mockApi()
     await renderInbox()
-    await waitFor(() => expect(screen.getByRole('radiogroup', { name: 'Filter by owner' })).toBeInTheDocument())
-    const chips = screen.getByRole('radiogroup', { name: 'Filter by owner' })
-    // Everyone (the shared default), Mine (belongs_to), and a chip per OTHER owner. There is
-    // deliberately no chip for the unattributed bucket: it is not a person, and Mine covers it.
+    fireEvent.click(await findHeaderFilter())
+    await waitFor(() => expect(ownerSection()).toBeInTheDocument())
+    const chips = ownerSection()
+    // Everyone (the shared default), Mine (belongs_to), and a choice per OTHER owner. There is
+    // deliberately no choice for the unattributed bucket: it is not a person, and Mine covers it.
     expect(chips.textContent).toContain('Everyone')
     expect(chips.textContent).toContain('Mine')
     expect(chips.textContent).toContain(FOREIGN)
@@ -157,8 +162,10 @@ describe('the shared inbox surfaces every owner but counts only yours', () => {
     })
     await renderInbox()
     await waitFor(() => expect(screen.getByText(/1 open · 1 total/)).toBeInTheDocument())
-    expect(screen.queryByRole('radiogroup', { name: 'Filter by owner' }),
-      'one owner is nothing to choose between').toBeNull()
+    fireEvent.click(await findHeaderFilter())
+    // The menu is open once its Show section is: its title, as the menu draws a section's.
+    await waitFor(() => expect(screen.getByText('Show', { selector: 'span[data-type="caption"]' })).toBeInTheDocument())
+    expect(screen.queryByText('Owner', { selector: 'span[data-type="caption"]' }), 'one owner is nothing to choose between').toBeNull()
     expect(screen.queryByText(/are yours/), 'no need to scope a queue that is entirely yours').toBeNull()
   })
 })

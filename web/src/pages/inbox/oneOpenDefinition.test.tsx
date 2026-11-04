@@ -7,6 +7,7 @@ import { OPEN_STATUSES, isOpen } from './inboxMeta'
 import { OPEN_STATUSES as LANE_OPEN_STATUSES, isOpenStatus, STATUS_OPEN } from '../../lib/attentionLanes'
 import { closeDialog, subscribeDialogs } from '../../ui/dialog/dialogStore'
 import type { InboxItem, InboxItemStatus, InboxStatus } from '../../lib/api'
+import { headerFilter } from '../../test/headerFilter'
 
 // ── ONE definition of "open", shown once (issue 493) ────────────────────────────────────────
 //
@@ -129,7 +130,7 @@ describe('the inbox header and its filters show the same number', () => {
   it('and the Open filter counts the same rows the header does', async () => {
     renderInbox()
     await waitFor(() => expect(screen.getByText(`${OPEN_TOTAL} open · ${ITEMS.length} total`)).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: /filter & sort/i }))
+    fireEvent.click(headerFilter())
     // Each option renders with its live count (`ui/FilterRow`, an aria-pressed button). The Open row
     // must read the same 5 the header does — the two numbers a user sees side by side, which is the
     // entire issue.
