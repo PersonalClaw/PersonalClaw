@@ -1,4 +1,5 @@
 import { fmtElapsed } from '../../lib/duration'
+import { isMessageId } from '../../lib/messageIds'
 import type { ChatTurn } from './chatTypes'
 
 // ── How long a turn worked ───────────────────────────────────────────────────────────────────────
@@ -20,8 +21,9 @@ import type { ChatTurn } from './chatTypes'
 //    regenerated answer, or a failed turn tried again, keeps the question's row and its old time,
 //    and from there it would count the hours between.
 //
-// A run is named by the row that started its turn, the name the gateway gives the running turn
-// (`run_state.turn.message_id`), so the gateway's times replace the stored ones for the same run.
+// A run is named by the message that started its turn (its id, or its row's time for a row written
+// before ids), the name the gateway gives the running turn (`run_state.turn.message_id`), so the
+// gateway's times replace the stored ones for the same run.
 
 /** One of the gateway's turns an answer shows: its name, when it started and ended (instants, absent
  *  where its rows carry no time), and how long the gateway measured it (`ms`, what it stored with the
@@ -62,8 +64,13 @@ export function rowRuns() {
   let run: TurnRun | undefined
   let on: ChatTurn | undefined
   return {
-    /** A row that starts a turn: the rows after it are its run's, named by its time. */
-    started(ts: string | undefined) { name = timed(ts) ? ts : undefined; run = undefined; on = undefined },
+    /** A row that starts a turn: the rows after it are its run's, named by its message's id, else
+     *  its time. */
+    started(ts: string | undefined, messageId?: string) {
+      name = isMessageId(messageId) ? messageId : timed(ts) ? ts : undefined
+      run = undefined
+      on = undefined
+    },
     /** A row the running turn wrote, which went into the answer `turn`; `ms` is the time the
      *  gateway stored for the turn, on the row it stored it with. */
     row(turn: ChatTurn, ts: string | undefined, ms?: number) {

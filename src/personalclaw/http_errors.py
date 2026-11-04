@@ -1549,6 +1549,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # 409: a disable or removal of a native app, which ships with PersonalClaw and is always on.
     "app_native": "That app is a native app: it ships with PersonalClaw and is always on.",
+    # 404: no turn in the chat started with, or took in, the message a turn document names
+    # (dashboard/chat_turns.py).
+    "turn_not_found": "No turn in this chat started with that message.",
 }
 
 

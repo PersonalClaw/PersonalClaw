@@ -21,7 +21,7 @@ import { type PasteBlock, shouldCollapsePaste, nextSeq, makePasteId, markerFor, 
 import type { TurnPaste } from '../PasteChip'
 import type { RoutingSuggestion } from '../RoutingChip'
 import { type HistMsg, userTurn, assistantTurn, hydrateTurns, turnText, withSent, runningTurnId } from '../chatTypes'
-import { newMessageId } from '../../../lib/messageIds'
+import { isMessageId, newMessageId } from '../../../lib/messageIds'
 import { readCachedDetail, writeCachedDetail, type ChatDetail, type ChatStream } from '../useChatStream'
 import { contextReport } from '../../../ui/composer/ContextDisclosure'
 import { repliesToSpeak } from '../useChatVoice'
@@ -84,6 +84,13 @@ export function withPrompt(list: RecalledPrompt[], entry: RecalledPrompt): Recal
   const last = list[list.length - 1]
   if (!last || last.text !== entry.text || JSON.stringify(last.pastes) !== JSON.stringify(entry.pastes)) list.push(entry)
   return list
+}
+
+/** A Stop's refusal because the turn it named had ended meanwhile (`409 turn_not_current`): nothing
+ *  was stopped and nothing failed, so it is not reported; any other failure goes on to be. */
+function endedMeanwhile(e: unknown): undefined {
+  if (hasApiCode(e, 'turn_not_current')) return undefined
+  throw e
 }
 
 export function useChatComposer({ sessionId, navigate, seed, initialProjectId, initialAgent, initialTaskMode = 'agent', pendingRouting, setRoutingSuggestion, setLiveRun, started, stream, followNewTurn, oweSpokenReply }: {
@@ -874,10 +881,14 @@ export function useChatComposer({ sessionId, navigate, seed, initialProjectId, i
     // the gateway confirms this press stopped the turn, and only if that turn is still the one on
     // screen: a stop that failed, or found the turn already over, is not a stopped turn, and the
     // turn's own terminal frame says how it did end.
+    // It names the turn it means, the running one as the gateway named it (`run_state.turn`), else as
+    // the transcript shows it: a turn that ended meanwhile answers `turn_not_current`, and nothing
+    // else is stopped and the queue is kept. That turn's own last frame says how it ended.
     const turn = turnSeqRef.current
+    const named = [stream.runningTurnRef.current?.id, runningTurnId(turns)].find(isMessageId)
     markStreaming(false)
     if (!s) return
-    const answer = await api.stopChat(s).catch(reportActionFailure('stop this turn'))
+    const answer = await api.stopChat(s, false, named).catch(endedMeanwhile).catch(reportActionFailure('stop this turn'))
     if (answer?.stopped && turnSeqRef.current === turn) sayTurnEnded('stopped')
   }
 

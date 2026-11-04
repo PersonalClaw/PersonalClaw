@@ -767,7 +767,7 @@ export function hydrateTurns(messages: HistMsg[], running = false): ChatTurn[] {
     let took: number | undefined
     // A row that starts one of the gateway's turns starts a run; a message she steered into a
     // running turn is part of that turn.
-    if (TURN_DISPATCH_ROLES.has(m.role) && m.meta?.steered !== true) runs.started(m.ts)
+    if (TURN_DISPATCH_ROLES.has(m.role) && m.meta?.steered !== true) runs.started(m.ts, m.meta?.message_id)
     if (m.role === 'user') {
       visible += 1
       const text = m.content.trim()

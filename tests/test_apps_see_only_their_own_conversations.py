@@ -176,6 +176,7 @@ SESSION_READS: list[tuple[str, str]] = [
     ("GET", "/api/chat/sessions/{session}/plan-session"),
     ("GET", "/api/chat/sessions/{session}/rewind"),
     ("GET", "/api/chat/sessions/{session}/organize"),
+    ("GET", "/api/chat/sessions/{session}/turns/{message_id}"),
     ("GET", "/api/sessions/{key}"),
     ("GET", "/api/sessions/{id}/agents"),
     ("GET", "/api/sessions/{id}/agents/{agent_id}"),
@@ -199,6 +200,7 @@ def _fill(template: str, conversation: str) -> str:
     out = template
     for field in ("{session}", "{key}", "{id}"):
         out = out.replace(field, conversation)
+    out = out.replace("{message_id}", "msg_01m66g21zm0000000000000000")
     return out.replace("{rid}", "r1").replace("{agent_id}", "a1").replace("{slug}", "s1")
 
 

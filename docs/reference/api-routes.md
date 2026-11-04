@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **955 registrations** over **774 distinct paths** — 948 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **956 registrations** over **775 distinct paths** — 949 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -24,7 +24,7 @@ The 132 families the surface divides into, largest first.
 
 | Family | Registrations | Distinct paths |
 |---|---|---|
-| `/api/chat` | 89 | 76 |
+| `/api/chat` | 90 | 77 |
 | `/api/knowledge` | 71 | 58 |
 | `/api/memory` | 52 | 44 |
 | `/api/workflows` | 50 | 45 |
@@ -159,7 +159,7 @@ The 132 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 948 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 949 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -384,6 +384,7 @@ The 948 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/chat/sessions/{session}/tags` | add tags to a session and remove tags from it. |
 | `PATCH` | `/api/chat/sessions/{session}/title` | rename a chat session. |
 | `GET` | `/api/chat/sessions/{session}/tool-result/{rid}` | the FULL raw output of |
+| `GET` | `/api/chat/sessions/{session}/turns/{message_id}` | how one turn went, by its message's id. |
 | `POST` | `/api/chat/sessions/{session}/undo` | roll back the last N conversation turns. |
 | `POST` | `/api/chat/sessions/{session}/workspace-dir` | set the working directory. |
 | `GET` | `/api/chat/switch-price` | what switching an open chat's model costs its next reply. |

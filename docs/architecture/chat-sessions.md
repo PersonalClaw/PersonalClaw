@@ -1368,6 +1368,45 @@ when it is first sent to, and kept beside the chat from then on, so a message
 withdrawn from the queue stays taken; a message still queued when the gateway
 restarts is lost with the queue, and a repeat of it after the restart runs as new.
 
+## A turn read by its message's id, and a Stop that names its turn
+
+A turn is named by the id of the message that started it: the chat's run state
+names the running turn so (`run_state.turn.message_id`, its row's time for a row
+written before ids), and the page names each turn's run by it too
+(`web/src/pages/chat/turnRuns.ts`). `GET /api/chat/sessions/{session}/turns/{message_id}`
+(`dashboard/chat_turns.py`) answers the turn document (shared contracts §3.9):
+`{session, message_id, state, outcome, reply, attempts, usage, error, run_state}`.
+A message still in the queue is `queued`. The running turn is `running`, with the
+chat's run state. A turn that ended is `settled`, with how it ended and its shown
+answer, read as the typed turn (`turn_rows.from_rows`), each result in it cut at
+its first 8,000 characters. A steer's id and a merged message's id answer the turn
+they ran in, under that turn's `message_id`. An id of another shape is `400
+invalid_message_id`, an unknown chat `404 session_not_found`, and an id nothing in
+the chat holds `404 turn_not_found`. An app reads only the turns of conversations it
+started, as it reads their detail (`ROUTE_AUTHZ`). When a turn ends, its start row
+records how (`meta.turn {outcome, settled_at}`, `chat_phase.ended`), which the
+chat's next save keeps, so a gateway that restarted reads the same outcome.
+
+`POST /api/chat/sessions/{session}/stop` takes `{message_id}`, the turn it means:
+the id of the message that started it, or of a steer or merged message that ran in
+it. The id resolves to that one turn, as its document does (`chat_turns.find`), and
+Stop acts on that turn only. Running, it is stopped, and the answer names it
+(`turn_message_id`) and every id it answers to (`message_ids`), so a Stop by a merged
+message's id says the whole turn stopped; a second Stop while its stop is under way
+answers `state: "stopping"` and asks for no second one. A turn that already finished,
+or a message still waiting in the queue, answers `409 turn_not_current {expected,
+actual, state, turn_message_id}` (`state` `settled` with its `outcome`, or `queued`),
+`actual` the running turn's id or `""`, and changes nothing: no turn is stopped, the
+queue is kept, no stop card is written and the chat's Trust stands. An id this chat
+does not hold is `404 turn_not_found`, which says nothing of any other chat. Who may
+stop is the chat's rule as before: naming a message never widens it. Without an id
+Stop stops whatever runs, as it always has. The answer is `{ok, stopped, trust,
+withdrawn}`, `withdrawn` the queued messages a soft stop removed unsent; a repeat of
+one is answered its receipt and runs nothing. The
+page's Stop names the running turn as the run state names it, else as the transcript
+shows it, and a `turn_not_current` answer is no failure it reports: that turn's own
+last frame says how it ended.
+
 ## The turn's typed model
 
 A chat is still stored as rows, and a turn now has a backend type as well

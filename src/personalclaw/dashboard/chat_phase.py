@@ -33,6 +33,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -342,8 +343,8 @@ async def _keep_saying(state: DashboardState, session: _ChatSession, turn: _Turn
 
 def begin(state: DashboardState, session: _ChatSession, message_id: str = "") -> None:
     """A turn was accepted on *session*: it is waiting to start, said at once, and said again until
-    it ends. *message_id* is the time of the row that started it; a turn with no row of its own is
-    named by an id minted for it."""
+    it ends. *message_id* is the id of the message that started it (its row's time for a row
+    written before ids); a turn with no row of its own is named by an id minted for it."""
     run = _run(session)
     _stop_saying(run)
     run.turn = _Turn(
@@ -389,10 +390,25 @@ def carry_on(state: DashboardState, session: _ChatSession, task: "asyncio.Task[A
 
 def ended(session: _ChatSession, outcome: str, *, declined: str = "") -> None:
     """Record how the chat's running turn ended (``terminal_outcome_for_turn``), for its last frame:
-    *declined* is the sentence it ends on when its agent stopped after the owner declined a step."""
+    *declined* is the sentence it ends on when its agent stopped after the owner declined a step.
+
+    The row that started it records it too (``meta.turn {outcome, settled_at}``), which its turn
+    document reads (``chat_turns``) and the chat's next save keeps."""
     turn = _run(session).turn
     if turn is not None:
         turn.outcome, turn.declined = outcome, declined
+        _record_ending(session, turn.message_id, outcome)
+
+
+def _record_ending(session: _ChatSession, message_id: str, outcome: str) -> None:
+    """Write *outcome* on the row *message_id* names. A row that is not a mapping is skipped: a
+    turn's end never fails over a row it cannot read."""
+    for row in reversed(session.messages):
+        meta = row.get("meta") if isinstance(row, Mapping) else None
+        if isinstance(meta, dict) and meta.get("message_id") == message_id:
+            meta["turn"] = {"outcome": outcome, "settled_at": utc_iso(_now())}
+            session._dirty = True
+            return
 
 
 def last_outcome(session: _ChatSession) -> str | None:

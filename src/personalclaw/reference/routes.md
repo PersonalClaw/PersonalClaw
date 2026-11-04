@@ -227,6 +227,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/chat/sessions/{session}/tags` — add tags to a session and remove tags from it.
 - `PATCH /api/chat/sessions/{session}/title` — rename a chat session.
 - `GET /api/chat/sessions/{session}/tool-result/{rid}` — the FULL raw output of
+- `GET /api/chat/sessions/{session}/turns/{message_id}` — how one turn went, by its message's id.
 - `POST /api/chat/sessions/{session}/undo` — roll back the last N conversation turns.
 - `POST /api/chat/sessions/{session}/workspace-dir` — set the working directory.
 - `GET /api/chat/switch-price` — what switching an open chat's model costs its next reply.

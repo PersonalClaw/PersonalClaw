@@ -470,6 +470,30 @@ def _note(
     held[message_id] = _Taken(str(noted.get("body_digest") or ""), receipt)
 
 
+def running_turn_ids(session: _ChatSession) -> tuple[str, ...]:
+    """The ids that name the running turn: its start message's first, then each message that ran in
+    it, its merged messages and the steers it took; ``()`` when no turn runs. A Stop or a read that
+    names any of them means this turn (shared contracts §3.9)."""
+    start = _running_start(session)
+    if start is None:
+        return ()
+    own = _id_of(start)
+    meta = start.get("meta")
+    merged = [
+        str(each.get(MESSAGE_ID) or "")
+        for each in ((meta.get(MERGED) if isinstance(meta, Mapping) else None) or ())
+        if isinstance(each, Mapping)
+    ]
+    steers = [
+        message_id
+        for message_id, held in _taken(session).items()
+        if isinstance(held, _Taken)
+        and held.receipt.disposition == STEERED_IN
+        and held.receipt.turn_message_id == own
+    ]
+    return tuple(i for i in (own, *merged, *steers) if i)
+
+
 def _running_start(session: _ChatSession) -> Mapping[str, Any] | None:
     """The row the running turn started with, or ``None`` when no turn runs."""
     if not session.running:

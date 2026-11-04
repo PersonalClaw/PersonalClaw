@@ -14,7 +14,7 @@ from typing import Any
 from aiohttp import web
 from aiohttp.client_exceptions import ClientConnectionResetError
 
-from personalclaw import approval_answer, approval_grants, session_keys
+from personalclaw import approval_answer, approval_grants, ids, session_keys
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.config.loader import (
@@ -23,7 +23,13 @@ from personalclaw.config.loader import (
     resolve_agent_bindings,
     resolve_session_workspace,
 )
-from personalclaw.dashboard import chat_intake, chat_phase, headless_run, running_turn
+from personalclaw.dashboard import (
+    chat_intake,
+    chat_phase,
+    chat_turns,
+    headless_run,
+    running_turn,
+)
 from personalclaw.dashboard.approval_state import (
     SESSION_APPROVAL_ACTIONS,
     _mark_permission_resolved,
@@ -72,7 +78,11 @@ from personalclaw.own_words import (
     pastes_of,
     typed_text,
 )
-from personalclaw.request_validation import bool_field, json_object_body
+from personalclaw.request_validation import (
+    RequestValidationError,
+    bool_field,
+    json_object_body,
+)
 
 # The `room:` session-key prefix, imported rather than spelled out: the filter below and the
 # key the room turn path mints must be the same string, and a literal here could drift from it.
@@ -1389,10 +1399,22 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     First press: soft cancel (cooperative). Second press (?force=true):
     hard kill. Inserts a stop_event message into the session transcript.
 
-    Answers ``{"ok": true, "stopped": <bool>, "trust": <bool>}``: whether THIS press stopped a
-    turn, and whether the chat's Trust still stands. ``stopped`` is ``false`` when nothing was
-    running, when a stop was already under way, and when the runtime had no turn in flight — a
-    client must not announce a stop then; the turn's own ``chat_done`` says how it ended.
+    The body may name the turn it means (``{"message_id"}``: the id of the message that started
+    it, or of a steer or merged message that ran in it), and the id resolves to that one turn
+    (``chat_turns.find``). A turn that already finished, or a message still waiting in the queue,
+    answers ``409 turn_not_current {expected, actual, state, turn_message_id, outcome?}`` and
+    changes nothing: no turn is stopped, the queue is kept, no stop card is written and the chat's
+    Trust stands. An id this chat does not hold is ``404 turn_not_found``. Without one it stops
+    whatever runs, as before.
+
+    Answers ``{"ok": true, "stopped": <bool>, "trust": <bool>, "withdrawn": [message_id]}``:
+    whether THIS press stopped a turn, whether the chat's Trust still stands, and the queued
+    messages a soft stop removed unsent (a repeat of one runs nothing). A Stop that named its turn
+    also gets ``turn_message_id`` and ``message_ids``, every id that turn answers to, and
+    ``state: "stopping"`` when that turn's stop was already under way. ``stopped`` is ``false``
+    when nothing was running, when a stop was already under way, and when the runtime had no turn
+    in flight — a client must not announce a stop then; the turn's own ``chat_done`` says how it
+    ended.
 
     A headless run's chat keeps no Trust past a stop: it is withdrawn first, before the runtime is
     asked to stop, so no call is approved on it while the turn winds down (``headless_run``).
@@ -1402,6 +1424,12 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
     session = state._sessions.get(name)
     if not session:
         return web.json_response({"error": "not found"}, status=404)
+    named = await _named_turn(request, session)
+    if isinstance(named, web.Response):
+        return named
+    # The turn the id named, and every id that answers to it: a Stop by a merged message's id
+    # stops its whole turn, and says so.
+    turn = {"turn_message_id": named.message_id, "message_ids": list(named.ids)} if named else {}
     headless_run.end_the_runs_trust(state, session, why="its turn was stopped")
     force = request.query.get("force", "").lower() == "true"
 
@@ -1426,16 +1454,39 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
             metadata={"session": name, "force": True},
         )
         return web.json_response(
-            {"ok": True, "stopped": forced in ("soft", "hard"), "trust": session._trust}
+            {
+                "ok": True,
+                "stopped": forced in ("soft", "hard"),
+                "trust": session._trust,
+                "withdrawn": [],
+                **turn,
+            }
         )
 
-    # Already stopping or not running — no-op
-    if session._stop_state != "idle" or not session.running:
+    # Already stopping or not running — no-op. A Stop that names a turn whose stop is under way,
+    # acknowledged or not, says so and asks for no second one.
+    asked = named is not None and session._stop_asked
+    if session._stop_state != "idle" or not session.running or asked:
         if not session.running:
             logger.info("Stop: session %s not running, ignoring", name)
-        return web.json_response({"ok": True, "stopped": False, "trust": session._trust})
+        stopping = (
+            {"state": "stopping"} if named and (asked or session._stop_state != "idle") else {}
+        )
+        return web.json_response(
+            {
+                "ok": True,
+                "stopped": False,
+                "trust": session._trust,
+                "withdrawn": [],
+                **turn,
+                **stopping,
+            }
+        )
 
-    # First press: soft stop
+    # First press: soft stop. The queue goes with it, each message named in the answer.
+    withdrawn = [
+        str(i[chat_intake.MESSAGE_ID]) for i in session._queue if i.get(chat_intake.MESSAGE_ID)
+    ]
     outcome = await stop_the_turn(state, session)
     await sel_log_async(
         sel().log_tool_invocation,
@@ -1449,8 +1500,65 @@ async def api_chat_session_stop(request: web.Request) -> web.Response:
         metadata={"session": name, "force": False},
     )
     return web.json_response(
-        {"ok": True, "stopped": outcome in ("soft", "hard"), "trust": session._trust}
+        {
+            "ok": True,
+            "stopped": outcome in ("soft", "hard"),
+            "trust": session._trust,
+            "withdrawn": withdrawn,
+            **turn,
+        }
     )
+
+
+async def _named_turn(
+    request: web.Request, session: _ChatSession
+) -> chat_turns.Found | web.Response | None:
+    """The running turn a Stop's body names (``message_id``: the id of the message that started it,
+    or of a steer or merged message that ran in it), ``None`` when it names none, or the refusal:
+    ``400 invalid_message_id``; ``404 turn_not_found`` for an id this chat does not hold, which
+    says nothing of any other chat; ``409 turn_not_current {expected, actual, state}`` for a turn
+    that already finished (``settled``, with its ``outcome``) or a message still waiting in the
+    queue (``queued``), with nothing stopped, cleared or written either way."""
+    try:
+        named = (await json_object_body(request)).get("message_id")
+    except RequestValidationError:
+        # A body that is no JSON object names no turn: such a Stop stops what runs, as one always
+        # did, whatever it carried (an older client's).
+        return None
+    if named is None:
+        return None
+    if not (isinstance(named, str) and ids.is_id("msg", named)):
+        return json_error(
+            "invalid_message_id",
+            message="A message id must be `msg_` followed by 26 letters and digits; nothing was "
+            "stopped.",
+            status=400,
+        )
+    found = chat_turns.find(session, named)
+    if found is None:
+        return chat_turns.not_found()
+    if found.state == "running":
+        return found
+    running = chat_intake.running_turn_ids(session)
+    extra = {
+        "expected": named,
+        "actual": running[0] if running else "",
+        "state": found.state,
+        "turn_message_id": found.message_id,
+    }
+    if found.state == "queued":
+        said = (
+            "That message is still waiting in the queue; its turn has not started, so nothing "
+            "was stopped."
+        )
+    else:
+        extra["outcome"] = str(found.document["outcome"])
+        said = (
+            "That turn was already stopped, so nothing was stopped again."
+            if extra["outcome"] == "stopped"
+            else "That turn has already finished, so nothing was stopped."
+        )
+    return json_error("turn_not_current", message=said, status=409, error_extra=extra)
 
 
 async def api_chat_screen_state(request: web.Request) -> web.Response:

@@ -5692,7 +5692,7 @@ class TestStopTurnSessionState:
         state = self._make_state(tmp_path, monkeypatch)
         session = state.get_or_create_session("s1")
         session.task = asyncio.ensure_future(asyncio.sleep(999))
-        session._queue.extend(["msg1", "msg2"])
+        session._queue.extend([{"id": "q1", "content": "msg1"}, {"id": "q2", "content": "msg2"}])
 
         # stop_turn clears queue internally; verify session._queue is cleared
         # by the time stop_turn is called (api_chat_session_stop sets state

@@ -200,7 +200,8 @@ describe('Stop', () => {
     const user = userEvent.setup()
     await aRunningTurn()
     await user.click(screen.getByRole('button', { name: 'Stop this turn' }))
-    expect(h.stopChat).toHaveBeenCalledWith('chat-7-x')
+    // Named by nothing here: the run state names its turn by a time, and the transcript by no id.
+    expect(h.stopChat).toHaveBeenCalledWith('chat-7-x', false, undefined)
     await waitFor(() => expect(lastTurnSaid()).toBe('Response stopped.'))
     expect(primaryAction()).toBe('Send message')
 
