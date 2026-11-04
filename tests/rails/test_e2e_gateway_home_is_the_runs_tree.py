@@ -386,6 +386,13 @@ import { cleanUpRun } from %(run_places)s
 cleanUpRun(JSON.parse(process.argv[1]), true)
 """
 
+#: Does what a spec does when it finds the run's gateway unanswering
+#: (``askTheGatewayWhereItWaits``), given the run's home and output folder: it prints to stderr.
+NODE_ASK = """
+import { askTheGatewayWhereItWaits } from %(run_places)s
+await askTheGatewayWhereItWaits({ PW_E2E_HOME: process.argv[1], PW_OUTPUT_DIR: process.argv[2] })
+"""
+
 #: What the loop watch writes at the head of every dump (``loop_watch``).
 STALL_MARK = "The event loop has not answered for"
 
@@ -417,9 +424,11 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
     """A failed run keeps its gateway's log beside its reports (``cleanUpRun``), which CI uploads
     as an artifact of a public repository. So a gateway started as the harness starts it, inside an
     environment holding every credential-shaped variable, signed in and asked for pages with the
-    session that gave it, and watched so tightly that the loop watch dumps every thread's stack many
-    times over, leaves a kept log with none of the planted values in it, and neither the READY
-    token nor the session's token in clear."""
+    session that gave it, watched so tightly that the loop watch dumps every thread's stack many
+    times over, and asked where it waits as a spec asks it (the signal for faulthandler's dump,
+    and a record printed into the job's log), leaves a kept log and a printed record with none of
+    the planted values in them, and neither the READY token nor the session's token in clear. The
+    gateway goes on answering after the signal."""
     h = _harness(tmp_path)
     places = h["places"]
     home = Path(places["home"])
@@ -462,6 +471,30 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
         for path in ("/api/dashboard/config", "/api/loops", "/api/themes"):
             assert _get(port, path, cookie=f"pc_token_{port}={session}").status == 200, path
         _get(port, "/api/dashboard/config", cookie=f"pc_token_{port}=not-{session}")
+        # And what the harness does when a spec finds the gateway unanswering
+        # (`askTheGatewayWhereItWaits`): it probes the gateway, sends it the signal its stall watch
+        # answers with faulthandler's dump of every thread, and prints the record, with its log's
+        # tail, into the job's log, which is as public as the kept log.
+        Path(places["outputDir"]).mkdir(parents=True, exist_ok=True)
+        ask = subprocess.run(
+            [
+                _node(),
+                "--input-type=module",
+                "-e",
+                NODE_ASK % {"run_places": json.dumps(str(RUN_PLACES))},
+                str(home),
+                places["outputDir"],
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=WEB,
+        )
+        assert ask.returncode == 0, ask.stderr
+        printed = ask.stderr
+        assert "the harness gateway was found unanswering" in printed, printed[-2000:]
+        assert "(most recent call first)" in printed, "the printed tail holds no dump to check"
+        assert _get(port, "/api/themes", cookie=f"pc_token_{port}={session}").status == 200
     finally:
         os.killpg(gateway.pid, signal.SIGTERM)
         try:
@@ -487,7 +520,11 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
     assert kept, "the failed run kept no gateway log"
     text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in kept)
     assert STALL_MARK in text, "the watch dumped no stack, so no dump was checked"
+    assert "(most recent call first)" in text, "the signal wrote no stack, so it was not checked"
     values = {f"the planted {name}": value for name, value in planted.items()}
     values.update({"the READY token": token, "the session's token": session})
     leaked = sorted(what for what, value in values.items() if value in text)
     assert leaked == [], f"the kept gateway log holds {leaked} in clear"
+    record = (Path(places["outputDir"]) / "gateway-unanswered.txt").read_text(encoding="utf-8")
+    shown = sorted(what for what, value in values.items() if value in printed + record)
+    assert shown == [], f"the record the job's log shows holds {shown} in clear"

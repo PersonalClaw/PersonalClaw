@@ -211,9 +211,12 @@ const GATEWAY_COMMAND = [
   // `tests/rails/test_e2e_gateway_home_is_the_runs_tree.py` holds every such folder to the run, and
   // holds the secrets read to none of the credentials it plants.
   // The gateway's event loop is watched (`src/personalclaw/loop_watch.py`): when it goes
-  // LOOP_STALL_SECONDS without answering, every thread's stack goes into gateway.log, which a failed
-  // run keeps in its output folder (`cleanUpRun`). A hung gateway once left only requests that got
-  // no response, and nothing to say where it stopped (#5638).
+  // LOOP_STALL_SECONDS without answering, or its worker pool runs no job for as long, or a stall
+  // holds the GIL, every thread's stack goes into gateway.log, which a failed run keeps in its output
+  // folder (`cleanUpRun`). The watch also answers SIGUSR1 with every thread's stack, which the first
+  // spec to find the gateway unanswering sends (`askTheGatewayWhereItWaits`, e2e/runPlaces.ts). A
+  // hung gateway once left only requests that got no response, and nothing to say where it stopped
+  // (#5638).
   `${gatewayEnvPrefix()} PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" PERSONALCLAW_LOOP_STALL_SECONDS=${LOOP_STALL_SECONDS} exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
 ].join('\n')
 

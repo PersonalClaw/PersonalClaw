@@ -87,6 +87,10 @@ const MAY_WRITE_SCRATCH: Record<string, string> = {
     'Makes browser-run homes, output folders and held ports in a scratch folder of its own, to ' +
     'prove two runs get two of each. Its real-config listing makes one empty run folder under ' +
     'the gitignored web/test-results/, and the test checks the run removed it again.',
+  'design/e2eGatewayStall.test.ts':
+    'Lays out a run\'s home and output folder, and a stand-in user home with a default home in it, ' +
+    'in a scratch folder of its own, beside a small process standing in for the gateway, to prove ' +
+    'the stall record is written once, capped, and never for the default home or the install\'s port.',
   'design/e2eHarnessHome.test.ts':
     'Lays out a stand-in user home, a symlink into it and a stand-in CLI script, to prove a spec ' +
     'refuses an unset or default gateway home before the CLI starts.',

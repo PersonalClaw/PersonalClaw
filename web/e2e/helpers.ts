@@ -2,6 +2,7 @@ import { type ConsoleMessage, type Page, expect } from '@playwright/test'
 import { FULL_SCREEN_ROUTES, type Theme } from './routes'
 import { STREAM_HEAL_WARNING } from '../src/pages/chat/streamStall'
 import { idleRunState } from '../src/lib/workPhase'
+import { askTheGatewayWhereItWaits } from './runPlaces'
 
 // ── Harness helpers ─────────────────────────────────────────────────────────
 
@@ -48,20 +49,32 @@ export const SHELL_SELECTOR = 'nav[data-tour="rail"]'
 export async function assertShellMounted(page: Page, route = ''): Promise<void> {
   const fullScreen = fullScreenOf(route)
   if (fullScreen) {
-    await expect(
+    await askingTheGatewayOnFailure(expect(
       page.locator(`[data-full-screen="${fullScreen}"]`),
       `#/${route} is a full-screen route, and its page (data-full-screen="${fullScreen}") is not\n` +
         `mounted: the shell shows it only once the owner is onboarded, so this is most likely the\n` +
         `ONBOARDING screen. See playwright.config.ts.`,
-    ).toBeVisible({ timeout: 10_000 })
+    ).toBeVisible({ timeout: 10_000 }))
     return
   }
-  await expect(
+  await askingTheGatewayOnFailure(expect(
     page.locator(SHELL_SELECTOR),
     `the app shell (${SHELL_SELECTOR}) is not mounted — this is the ONBOARDING screen, not\n` +
       `the route under test. The harness gateway is unreachable, unauthenticated or not\n` +
       `onboarded; any clean result measured here is meaningless. See playwright.config.ts.`,
-  ).toBeVisible({ timeout: 10_000 })
+  ).toBeVisible({ timeout: 10_000 }))
+}
+
+/** A shell guard's assertion, and when it fails, the run's harness gateway asked where it waits
+ *  (`askTheGatewayWhereItWaits`, once a run, said in the job's log) before the failure goes on: the
+ *  guard is where an unanswering gateway first shows (#5853). */
+export async function askingTheGatewayOnFailure(check: Promise<void>): Promise<void> {
+  try {
+    await check
+  } catch (failure) {
+    await askTheGatewayWhereItWaits()
+    throw failure
+  }
 }
 
 /** The full-screen route `route` is on (its first segment), or '' for a shell-bearing one. */

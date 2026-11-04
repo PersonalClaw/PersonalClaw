@@ -1,4 +1,6 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmdirSync, rmSync, statSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, closeSync, copyFileSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { get } from 'node:http'
 import { createServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -338,7 +340,8 @@ const GATEWAY_LOG = /^gateway\.log(\.\d+)?$/
  *  output folder if the run wrote nothing there. Output a spec wrote stays, for CI to upload. A
  *  worker, and a run whose home or output folder the caller named, removes nothing it was given.
  *  A run that `failed` first copies the gateway's log into its output folder, so CI uploads it with
- *  the reports: what the gateway said, and any stack `loop_watch` dumped when its loop stalled. */
+ *  the reports: what the gateway said, and any stack `loop_watch` dumped when its loop, its worker
+ *  pool or the GIL stalled, or when a spec asked for one (`askTheGatewayWhereItWaits`). */
 export function cleanUpRun(places: RunPlaces, failed = false): void {
   if (failed && places.home && places.outputDir) keepGatewayLog(places.home, places.outputDir)
   if (places.madeHome && places.home) rmSync(places.home, { recursive: true, force: true })
@@ -361,4 +364,160 @@ function keepGatewayLog(home: string, outputDir: string): void {
     if (logs.length) mkdirSync(outputDir, { recursive: true })
     for (const name of logs) copyFileSync(join(home, name), join(outputDir, name))
   } catch { /* a log that cannot be copied leaves the rest of the clean-up to run */ }
+}
+
+// ── A spec that finds the gateway unanswering asks it where it waits (#5853) ──────────────────────
+
+/** The file a run writes, in its output folder, the first time a spec finds the harness gateway
+ *  unanswering. Its being there is also the once-a-run mark, so the specs that fail after it ask
+ *  nothing more. */
+export const STALL_RECORD = 'gateway-unanswered.txt'
+
+/** How long the gateway is given to write its stacks before the log's tail is read. */
+const DUMP_WAIT_MS = 2_000
+/** How long the port check waits for the gateway's answer. */
+const ANSWER_WAIT_MS = 2_000
+/** How much of gateway.log the record keeps, and prints into the job's log, which is public: its last
+ *  TAIL_LINES lines, of its last TAIL_BYTES bytes. */
+export const TAIL_LINES = 200
+export const TAIL_BYTES = 32_768
+
+/** Ask the run's harness gateway where it waits, once a run, when a spec finds it unanswering
+ *  (`assertShellMounted`'s shell guard in helpers.ts, `auth.setup.ts`), and say what was found in the
+ *  job's log.
+ *
+ *  The harness lost its gateway mid-run again and again with a gateway.log of 0 bytes, the port
+ *  still bound and nothing accepting on it (#5853). So the record holds:
+ *  - the gateway's process state (`ps`): a stopped process (`T`) answers no signal;
+ *  - whether it answers on its port: a connection the kernel takes is not an answer, since a
+ *    listening socket's backlog takes connections while the process does nothing with them;
+ *  - the tail of its gateway.log (TAIL_LINES lines at most, of TAIL_BYTES bytes at most), read after
+ *    the gateway is sent SIGUSR1, which its stall watch
+ *    (`src/personalclaw/loop_watch.py`, armed by playwright.config.ts) answers with every thread's
+ *    stack, written by faulthandler from the signal handler itself, so it is named whatever holds
+ *    the gateway: its loop, its worker pool or the GIL. Those stacks hold files, lines and
+ *    functions, never a value.
+ *  It goes to stderr, which the job's log shows, and into the run's output folder, which CI
+ *  uploads with the gateway.log a failed run keeps (`cleanUpRun`).
+ *
+ *  The pid is only ever the one this run's own scratch home records (`gateway.runtime.json`, which
+ *  only the gateway serving that home writes): a home at or under the default one
+ *  (`~/.personalclaw`) is refused before anything is read (`harnessHome`), and so is a record of a
+ *  gateway on the install's own port (`INSTALL_PORT`), or on no port at all, so the install's
+ *  gateway is never the one probed or signalled. And it is signalled only while its command line
+ *  still says it is the gateway on that port (`isTheGateway`): a pid the gateway left goes to
+ *  another process, which a SIGUSR1 it does not take would end. Never throws: the spec's own
+ *  failure is what the run reports. */
+export async function askTheGatewayWhereItWaits(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  try {
+    await askWhereItWaits(env)
+  } catch {
+    /* never thrown on: the spec's own failure is what the run reports */
+  }
+}
+
+async function askWhereItWaits(env: NodeJS.ProcessEnv): Promise<void> {
+  const out = env.PW_OUTPUT_DIR
+  let home = ''
+  try {
+    home = harnessHome(env)
+  } catch {
+    return
+  }
+  if (!out) return
+  let pid = 0
+  let port = 0
+  try {
+    const record = JSON.parse(readFileSync(join(home, 'gateway.runtime.json'), 'utf8'))
+    pid = Number(record.pid)
+    port = Number(record.port)
+  } catch {
+    return
+  }
+  if (!Number.isInteger(pid) || pid <= 1) return
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || port === INSTALL_PORT) return
+  const path = join(out, STALL_RECORD)
+  const found = `${new Date().toISOString()}: a spec found the harness gateway (pid ${pid}, port ${port}) unanswering.\n`
+  try {
+    // 'wx': the first spec to fail writes it; every later one finds it there and asks nothing.
+    writeFileSync(path, found, { flag: 'wx' })
+  } catch {
+    return
+  }
+  if (!isTheGateway(pid, port)) {
+    // The gateway died and its pid went to another process, which a SIGUSR1 it does not take would
+    // end: nothing is sent, nothing is probed, and nothing of that process is written.
+    const record = `${found}pid ${pid} isn't the harness gateway now; nothing was sent.\n`
+    writeFileSync(path, record)
+    console.error(`── the harness gateway was found unanswering (${STALL_RECORD}) ──\n${record}`)
+    return
+  }
+  const ps = spawnSync('ps', ['-o', 'pid,stat,pcpu,rss,etime', '-p', String(pid)], { encoding: 'utf8' })
+  const head = `${found}Its process state:\n${ps.stdout ?? ''}${ps.stderr ?? ''}`
+  writeFileSync(path, head)
+  const answers = await portCheck(port)
+  try {
+    process.kill(pid, 'SIGUSR1')
+  } catch {
+    /* gone: the record says what was there */
+  }
+  await new Promise((resolve) => setTimeout(resolve, DUMP_WAIT_MS))
+  const tail = logTail(join(home, 'gateway.log'))
+  const record =
+    `${head}Its port: ${answers}.\n` +
+    `The last ${TAIL_LINES} lines of its gateway.log, ${DUMP_WAIT_MS / 1000} s after it was sent SIGUSR1:\n${tail}\n`
+  try {
+    writeFileSync(path, record)
+  } catch {
+    /* the job's log still has it */
+  }
+  console.error(`── the harness gateway was found unanswering (${STALL_RECORD}) ──\n${record}`)
+}
+
+/** Whether *pid* is still the harness gateway on *port*: its command line names `gateway` and
+ *  `--port <port>`, as GATEWAY_COMMAND starts it (the `gateway` subcommand, then its port). Read only to
+ *  decide, and never written anywhere. */
+function isTheGateway(pid: number, port: number): boolean {
+  const ps = spawnSync('ps', ['-ww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
+  const command = ps.status === 0 ? (ps.stdout ?? '') : ''
+  return /(^|\s)gateway(\s|$)/.test(command) && new RegExp(`(^|\\s)--port ${port}(\\s|$)`).test(command)
+}
+
+/** The last TAIL_LINES lines of the last TAIL_BYTES bytes of the log at *path*. */
+function logTail(path: string): string {
+  let fd = -1
+  try {
+    fd = openSync(path, 'r')
+    const size = fstatSync(fd).size
+    const length = Math.min(size, TAIL_BYTES)
+    const bytes = Buffer.alloc(length)
+    readSync(fd, bytes, 0, length, size - length)
+    return bytes.toString('utf8').split('\n').slice(-TAIL_LINES - 1).join('\n')
+  } catch {
+    return '(no gateway.log in its home)'
+  } finally {
+    if (fd >= 0) closeSync(fd)
+  }
+}
+
+/** Whether the gateway answers on its loopback port: a GET of /api/healthz, which needs no session,
+ *  within ANSWER_WAIT_MS; else whether it took the connection at all, or refused it. */
+function portCheck(port: number): Promise<string> {
+  const started = Date.now()
+  return new Promise((resolve) => {
+    let connected = false
+    const request = get({ host: '127.0.0.1', port, path: '/api/healthz', timeout: ANSWER_WAIT_MS }, (response) => {
+      response.resume()
+      resolve(`answers /api/healthz (HTTP ${response.statusCode}) in ${Date.now() - started} ms`)
+    })
+    request.once('socket', (socket) => socket.once('connect', () => { connected = true }))
+    request.once('timeout', () => {
+      resolve(connected
+        ? `takes the connection, and sends no answer within ${ANSWER_WAIT_MS / 1000} s`
+        : `takes no connection within ${ANSWER_WAIT_MS / 1000} s`)
+      request.destroy()
+    })
+    // After a timeout the request is destroyed, and the error that follows changes nothing.
+    request.once('error', (error: NodeJS.ErrnoException) => resolve(`refuses it (${error.code ?? error.message})`))
+  })
 }
