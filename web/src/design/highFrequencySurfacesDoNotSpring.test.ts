@@ -36,6 +36,8 @@ const HIGH_FREQUENCY: Record<string, string> = {
   'ui/Popover.tsx': 'the popover menu primitive and its rows',
   'ui/motion/ContextMenu.tsx': 'the right-click menu',
   'ui/FilterMenu.tsx': 'the filter menus and their count badge',
+  'ui/HeaderFilter.tsx': 'every page header’s filter and its set dot',
+  'ui/HeaderSearch.tsx': 'every page header’s search',
   'ui/FilterRow.tsx': 'a filter menu row',
   'ui/HeaderActions.tsx': 'the header overflow menu and its controls',
   'ui/ProjectPicker.tsx': 'the project menu',
@@ -55,7 +57,8 @@ const HIGH_FREQUENCY: Record<string, string> = {
 }
 
 /** Files that draw a menu or the palette surface themselves, so each must enter through
- *  `overlayEnter`. `FilterMenu` and the composer's pill menus open through `Popover`. */
+ *  `overlayEnter`. `FilterMenu`, the header's search and filter, and the composer's pill menus open
+ *  through `Popover`. */
 const DRAWS_A_MENU = [
   'app/CommandPalette.tsx',
   'ui/Popover.tsx',

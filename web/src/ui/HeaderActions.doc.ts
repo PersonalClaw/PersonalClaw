@@ -10,13 +10,14 @@ const docs: UiDoc[] = [
     description:
       'The one responsive header-controls cluster. Its children degrade together on a single 4-tier ladder (FULL: icon+label → TEXT: label only → ICON: icon only → OVERFLOW: a … menu) as horizontal space shrinks, measured via offscreen probes and a ResizeObserver. In OVERFLOW it keeps the highest-priority controls visible and pushes the rest into an auto-built … menu — no page hand-rolls a header overflow menu. It leaves the title slot what that slot cannot shed (every shrink-0 control and gap beside the title) plus a floor for the title itself, and when the band between the shell corners cannot hold that beside the narrowest the cluster can get (its never-overflow controls plus the …), it asks its TopBar to lay the row out below the corners across the full width.',
     props: [
-      { name: 'children', description: 'The header controls (HeaderControl / HeaderMenu / HeaderSegmented / HeaderModePill / Button), rendered left→right in DOM order.' },
+      { name: 'children', description: 'The header controls (HeaderSearch / HeaderFilter / HeaderControl / HeaderMenu / HeaderSegmented / HeaderModePill / Button), rendered left→right in DOM order.' },
       { name: 'className', description: 'Extra classes on the cluster container (tokens only).' },
       { name: 'overflowClassName', description: "Extra classes on the `…` trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) where the page's header controls carry it." },
     ],
     bestPractices: [
-      { guidance: true, description: 'ORDERING TENET: a control that opens a side panel (SidePanel/detail/inspector rail) is the RIGHTMOST child, always.' },
-      { guidance: true, description: 'ORDERING TENET: a destructive control (Delete) sits LEFTMOST of the right-edge group. Canonical shape: [Delete] … [other controls] … [open-side-panel].' },
+      { guidance: true, description: "Every page-level control lives in this cluster, so no page draws a controls bar under its header: the page search is a HeaderSearch, its main view switch its one HeaderSegmented, and every other choice set (scope, status, kind, owner, sort) a section of its HeaderFilter." },
+      { guidance: true, description: 'ORDERING TENET: search · filter and sort · the view switch · secondary actions · the primary action, rightmost; only the cluster\'s own … follows it.' },
+      { guidance: true, description: 'ORDERING TENET: among the secondary actions, a destructive control (Delete) sits leftmost and a control that opens a side panel (SidePanel/detail/inspector rail) rightmost.' },
       { guidance: true, description: "Keep the Delete and panel-opener controls priority='low' even though their positions are fixed — priority governs OVERFLOW shedding independently of visual order." },
       { guidance: false, description: 'Do not build a header overflow menu by hand — it falls out of the same child list automatically in the OVERFLOW tier, and a HeaderControl marked inOverflow is a row of it at every tier.' },
       { guidance: false, description: 'Do not put chips or other facts about the page beside the title: they cannot shrink, so they either overlap the cluster or starve the title. Put them in TopBar `below`, which wraps; put an action (copy link) in the cluster as a HeaderControl, which sheds into the … menu.' },
@@ -60,6 +61,8 @@ const docs: UiDoc[] = [
       { name: 'label', description: 'The control\'s name and the menu\'s.' },
       { name: 'items', description: 'The menu\'s rows: a label, an optional icon and hint, and what the row does.' },
       { name: 'priority', description: "OVERFLOW shedding order, as HeaderControl's." },
+      { name: 'variant', description: "The trigger's fill, as HeaderControl's: primary where the menu is the page's primary action." },
+      { name: 'title', description: 'The tooltip, when the control says more than its label. Defaults to the label.' },
     ],
     bestPractices: [
       { guidance: true, description: 'Use for a few actions of one kind that would otherwise each take a header slot.' },
@@ -69,7 +72,7 @@ const docs: UiDoc[] = [
   {
     name: 'HeaderSegmented',
     keywords: ['header', 'segmented', 'toggle', 'group', 'options', 'switch'],
-    description: 'A segmented multi-option toggle sized for the header cluster. Participates in the tier decision but never collapses into the … menu (it has no meaningful single-row form); in OVERFLOW it renders icon-only.',
+    description: "A segmented multi-option toggle sized for the header cluster: the page's main view switch. Participates in the tier decision but never collapses into the … menu (it has no meaningful single-row form). Being the row's widest member it gives up its labels first: icon-only from the TEXT tier on when every option has an icon; one without icons keeps its labels and folds to the pill of the active view.",
     props: [
       { name: 'options', description: 'The selectable segments.' },
       { name: 'value', description: 'The currently selected option value.' },
@@ -78,7 +81,7 @@ const docs: UiDoc[] = [
       { name: 'disabled', description: 'Disable the whole group.' },
     ],
     bestPractices: [
-      { guidance: true, description: 'Use for a small set of mutually-exclusive header modes where all options should stay visible.' },
+      { guidance: true, description: "Use for the page's main view switch: at most one per header. Every other choice set is a section of the page's HeaderFilter, whatever its size." },
     ],
     anatomy: ['segmented track', 'per-option buttons', 'sliding active indicator'],
   },

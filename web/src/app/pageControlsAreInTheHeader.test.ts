@@ -1,0 +1,136 @@
+// @module-tag tree-scan
+import { describe, expect, it } from 'vitest'
+import { join, relative } from 'node:path'
+import { filesUnder, readSource } from '../test/sourceTree'
+
+// ── Every page-level control is in the page header's action area ─────────────────────────────
+//
+// Some pages kept their view switch, filters, search and New in the header, and others put them in
+// a bar under it (`WorkbenchLayout`'s `controls` slot, filled with `ListControls`), beside the
+// title, or at the top of the body: the same kind of control in a different place on each page.
+// The rule: every page-level control lives in the header's action area (`TopBar.right`, a
+// `HeaderActions` cluster), right-aligned, in one order, search, filter and sort, the view switch,
+// secondary actions, the primary action last:
+//
+//  · the search that filters the page is a `HeaderSearch`;
+//  · the page's main view switch is its one `HeaderSegmented`;
+//  · every other choice set, scope, status, kind, owner, sort, is a section of its `HeaderFilter`,
+//    whose label says what is set;
+//  · a control that belongs to one section of a page (a pane, a dialog, a form's field) stays with
+//    that section: those are named below with why;
+//  · a link in the title (a breadcrumb, such as a project's name before "Tasks", back to its
+//    Overview) says where you are, in `TopBar.left`: navigation, not a page control, so not counted.
+//
+// So no page draws `ListControls` or a `FilterMenu`, and a page that owns a header draws no
+// `Segmented` or `SearchField` of its own beyond its sections'. Measured against a budget that
+// holds what had not moved yet and ratchets to nothing.
+
+const SRC = join(process.cwd(), 'src')
+const PAGES = join(SRC, 'pages')
+// Line comments first: a `//` line that mentions `/*` would otherwise open a block that swallows
+// code down to the next `*/`, and the count would miss what it held.
+const strip = (t: string) => t.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
+const pageFiles = () => filesUnder(PAGES, (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))
+const rel = (abs: string) => relative(SRC, abs)
+const count = (src: string, re: RegExp) => [...src.matchAll(re)].length
+
+/** A section's own controls in a page that owns a header: not page-level, so not counted. */
+const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; why: string }> = {
+  'pages/files/FilesSection.tsx': { search: 1, why: "the explorer pane's search of the file tree" },
+  'pages/tools/ToolsPage.tsx': { segmented: 3, why: "the add and edit server dialogs' type and transport fields" },
+  'pages/loop/LoopComposer.tsx': { segmented: 3, why: "the composer's own fields: granularity, project kind, loop kind" },
+  'pages/loops/DesignCockpitPage.tsx': { segmented: 1, why: "the design preview pane's colour scheme" },
+  'pages/loops/LoopPlanReview.tsx': { segmented: 1, why: "a plan field, the goal type" },
+  'pages/knowledge/SourceCreatePage.tsx': { segmented: 1, why: 'a form field, the enrichment for this source' },
+  'pages/prompts/PromptCreatePage.tsx': { segmented: 2, why: "a form field (the prompt kind) and the editor's right-rail pane" },
+  'pages/triggers/TriggerCreatePage.tsx': { segmented: 1, why: 'a form field, the trigger kind' },
+  'pages/learning/LearningPage.tsx': { segmented: 1, why: "the Proposals section's own kind filter, under its heading" },
+}
+
+/** The page-level controls not yet in the header, by file. Each page group's move empties its
+ *  rows; it ends empty. */
+const BUDGET: Record<string, number> = {
+  'pages/agents/AgentsListPage.tsx': 1,
+  'pages/apps/AppsSection.tsx': 5,
+  'pages/artifacts/ArtifactsSection.tsx': 3,
+  'pages/chat/history/ChatHistoryPage.tsx': 3,
+  'pages/code/CodeSection.tsx': 2,
+  'pages/dashboard/Home.tsx': 1,
+  'pages/files/FilesSection.tsx': 1,
+  'pages/inbox/InboxPage.tsx': 4,
+  'pages/knowledge/KnowledgeListPage.tsx': 1,
+  'pages/loops/LoopsListPage.tsx': 2,
+  'pages/notifications/NotificationsPage.tsx': 2,
+  'pages/projects/ProjectsSection.tsx': 3,
+  'pages/prompts/PromptsListPage.tsx': 3,
+  'pages/skills/SkillsPage.tsx': 3,
+  'pages/tasks/TasksListPage.tsx': 2,
+  'pages/tools/ToolsPage.tsx': 1,
+  'pages/triggers/TriggersListPage.tsx': 3,
+  'pages/workflows/WorkflowDefDetail.tsx': 1,
+  'pages/workflows/WorkflowDefEditor.tsx': 1,
+  'pages/workflows/WorkflowRunDetail.tsx': 1,
+  'pages/workflows/WorkflowsListPage.tsx': 1,
+}
+
+/** The page-level controls a page draws outside its header. */
+function outsideTheHeader(abs: string): number {
+  const src = strip(readSource(abs))
+  const bars = count(src, /<ListControls[\s>]/g) + count(src, /<FilterMenu[\s>]/g)
+  if (!/<TopBar[\s>]/.test(src)) return bars
+  const own = SECTION_CONTROLS[rel(abs)] ?? {}
+  const strips = Math.max(0, count(src, /<Segmented[\s>]/g) - (own.segmented ?? 0))
+  const searches = Math.max(0, count(src, /<SearchField[\s>]/g) - (own.search ?? 0))
+  return bars + strips + searches
+}
+
+describe('every page-level control is in the page header', () => {
+  it('no page draws one outside it, beyond its budget', () => {
+    const files = pageFiles()
+    expect(files.length, 'the pages must be readable').toBeGreaterThan(100)
+    const over = files
+      .map((f) => [rel(f), outsideTheHeader(f)] as const)
+      .filter(([f, n]) => n > (BUDGET[f] ?? 0))
+      .map(([f, n]) => `${f}: ${n} > ${BUDGET[f] ?? 0}`)
+    expect(over, 'put it in the header: a HeaderSearch, the one HeaderSegmented, or a HeaderFilter section').toEqual([])
+  })
+
+  it('and the budget carries no slack: a page that moved its controls takes its row out', () => {
+    const stale = Object.entries(BUDGET)
+      .map(([f, n]) => [f, n, outsideTheHeader(join(SRC, f))] as const)
+      .filter(([, n, now]) => now < n)
+      .map(([f, n, now]) => `${f}: budget ${n}, now ${now}`)
+    expect(stale).toEqual([])
+  })
+
+  it('each named section control is still where its reason says', () => {
+    for (const [f, own] of Object.entries(SECTION_CONTROLS)) {
+      const src = strip(readSource(join(SRC, f)))
+      expect(count(src, /<Segmented[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.segmented ?? 0)
+      expect(count(src, /<SearchField[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.search ?? 0)
+    }
+  })
+})
+
+describe('the header holds one view switch, and a filter that says what is set', () => {
+  const sources = () => [...pageFiles(), ...filesUnder(join(SRC, 'app'), (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n))]
+    .map((f) => [rel(f), strip(readSource(f))] as const)
+
+  it('no header cluster holds a second HeaderSegmented', () => {
+    const twice: string[] = []
+    for (const [f, src] of sources()) {
+      for (const m of src.matchAll(/<HeaderActions[\s>][\s\S]*?<\/HeaderActions>/g)) {
+        const n = count(m[0], /<HeaderSegmented[\s>]/g)
+        if (n > 1) twice.push(`${f}: ${n} view switches in one header`)
+      }
+    }
+    expect(twice, 'one HeaderSegmented, the main view; every other choice set is a HeaderFilter section').toEqual([])
+  })
+
+  it('no page writes a HeaderFilter label of its own', () => {
+    // The label is composed from the sections' chosen options (`headerFilterLabel`), so it always
+    // names what is set; a page can choose only the word before them (`prefix`).
+    const own = sources().filter(([, src]) => /<HeaderFilter\b[^>]*\slabel=/.test(src)).map(([f]) => f)
+    expect(own).toEqual([])
+  })
+})

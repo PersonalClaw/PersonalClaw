@@ -232,11 +232,12 @@ function code(abs: string): string {
   return readSource(abs).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 }
 
-/** The opening tag of every `<ListControls …>` in a file — balanced, so a `{{…}}` prop value with a
- *  `>` inside an arrow function does not end it early. */
+/** The opening tag of every list bar's announcement in a file — a `<ListControls …>`, or the
+ *  `<ListStatus …>` a page draws once its controls moved into its header — balanced, so a `{{…}}`
+ *  prop value with a `>` inside an arrow function does not end it early. */
 function controlsTags(src: string): string[] {
   const out: string[] = []
-  for (const m of src.matchAll(/<ListControls\b/g)) {
+  for (const m of src.matchAll(/<(?:ListControls|ListStatus)\b/g)) {
     let depth = 0
     for (let j = m.index!; j < src.length; j++) {
       const c = src[j]
@@ -474,7 +475,7 @@ describe('the hand-laid bars reach the same idiom', () => {
     // just a silent gap with a comment attached.
     const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
     const hasControl = (src: string) =>
-      /<SearchField\b/.test(src) || /<TextInput[^>]*ariaLabel="(?:Search|Filter)/.test(src)
+      /<(?:SearchField|HeaderSearch)\b/.test(src) || /<TextInput[^>]*ariaLabel="(?:Search|Filter)/.test(src)
 
     /** file → [why it does not need a status region, a pattern proving that reason] */
     const EXEMPT: Record<string, [string, RegExp]> = {
@@ -499,6 +500,9 @@ describe('the hand-laid bars reach the same idiom', () => {
       ],
       // The primitive itself.
       'ui/ListControls.tsx': ['this IS the primitive', /export function ResultAnnouncement\b/],
+      // The header's search: the page that draws it announces, through `ListStatus` beside its
+      // body, and is counted above as any page is.
+      'ui/HeaderSearch.tsx': ['a header member; its page announces', /export function HeaderSearch\b/],
     }
 
     const withControl = walk(SRC)
@@ -510,7 +514,7 @@ describe('the hand-laid bars reach the same idiom', () => {
 
     const silent = withControl
       .filter(({ rel, src }) =>
-        !src.includes('<ResultAnnouncement') && !src.includes('<ListControls') && !EXEMPT[rel])
+        !src.includes('<ResultAnnouncement') && !src.includes('<ListControls') && !src.includes('<ListStatus') && !EXEMPT[rel])
       .map((f) => f.rel)
     expect(silent, 'a control that narrows a list without announcing it tells a screen reader nothing')
       .toEqual([])

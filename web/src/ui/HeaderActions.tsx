@@ -29,12 +29,18 @@ import { TOP_BAR_BAND, useStackBelowCorners } from './TopBar'
  *  Because the cluster narrows as it sheds tiers, the TopBar's flexing `left` slot
  *  (the title) reclaims the freed width — satisfying "frees up space for the title".
  *
+ *  Every page-level control lives here, so no page draws a controls bar under its header: the
+ *  page's search is a `HeaderSearch`, its main view switch its one `HeaderSegmented`, and every
+ *  other choice set (scope, status, kind, owner, sort) a section of its `HeaderFilter`
+ *  (`app/pageControlsAreInTheHeader.test.ts`).
+ *
  *  ORDERING TENET (children render left→right in DOM order — order accordingly):
- *    • A control that OPENS A SIDE PANEL (a `<SidePanel>`/detail/inspector rail —
- *      e.g. "Details", "Activity", "More details") is the RIGHTMOST child, always.
- *    • A DESTRUCTIVE control (Delete) sits LEFTMOST of the right-edge group.
- *    • Everything else (primary actions, toggles, modals, nav) sits in between.
- *  So the canonical shape is:  [Delete] … [other controls] … [open-side-panel].
+ *    search · filter and sort · the view switch · secondary actions · the primary action.
+ *    • Among the secondary actions, a DESTRUCTIVE control (Delete) sits leftmost and a
+ *      control that OPENS A SIDE PANEL (a `<SidePanel>`/detail/inspector rail, e.g.
+ *      "Details", "Activity", "Inbox settings") rightmost.
+ *    • The primary action (New, Add, Install, Run) is the rightmost control; only the
+ *      cluster's own `…` follows it.
  *  `priority` (primary/default/low) governs OVERFLOW shedding independently of this
  *  visual order, so keep Delete/panel-opener `priority="low"` even though their
  *  positions are fixed by the tenet. */
@@ -68,6 +74,9 @@ interface OverflowRow { label: string; icon?: LucideIcon; hint?: string; danger?
 
 interface ClusterCtx {
   tier: Tier
+  /** True inside the cluster's offscreen measuring probes. A member that holds a live field (the
+   *  header search) draws a box of the same width there instead of a second input with the same id. */
+  probe?: boolean
   /** In OVERFLOW: the set of child ids that stay VISIBLE (icon-only); the rest are
    *  rendered by the container as menu rows. Empty/!overflow → all visible. */
   visibleIds: Set<number> | null
@@ -84,6 +93,11 @@ const nextId = () => ++_uid
 /** Read the cluster's current tier from inside a child (drives its own render). */
 export function useHeaderTier(): Tier {
   return useContext(Cluster)?.tier ?? 'full'
+}
+
+/** Whether this render is one of the cluster's offscreen measuring probes (see `ClusterCtx.probe`). */
+export function useHeaderProbe(): boolean {
+  return useContext(Cluster)?.probe === true
 }
 
 /** Register a child control with the cluster. Returns whether this child should
@@ -173,6 +187,39 @@ export function titleReserveFor(
   if (!hasContent) return 0
   const owed = Math.min(naturalWidth, minWidth + titleFloor(inner))
   return Math.max(Math.min(owed, inner - GAP_TO_TITLE - floor), Math.min(naturalWidth, minWidth))
+}
+
+/** The richest tier whose row fits in `avail`. A down-step fires as soon as the current tier no
+ *  longer fits; an up-step needs `hyst` of slack, so a row at the exact break width cannot flip
+ *  between two tiers on every resize.
+ *
+ *  Except a step up to a tier no wider than the cluster's `floor`. The overflow row is never
+ *  narrower than the floor, so such a tier gives the title nothing back by shedding, and nothing
+ *  can flip. Holding it to the slack latched the row: once the title yields to the floor, `avail`
+ *  is the floor exactly, so the slack can never come. Measured on All tasks at 390 px: a row that
+ *  went to overflow while the page loaded stayed there, its `…` holding New task alone, in the
+ *  same width New task itself takes. */
+export function pickTier(
+  { full, text, icon, avail, cur, dots, floor, hyst }: {
+    /** Each tier's natural width. */
+    full: number; text: number; icon: number
+    avail: number; cur: Tier
+    /** The width of a `…` drawn at every tier (a control that always lives in it), else 0. */
+    dots: number
+    /** The cluster's narrowest usable width (`clusterFloor`). */
+    floor: number
+    hyst: number
+  },
+): Tier {
+  const fits = (natural: number, target: Tier) => {
+    const up = TIER_ORDER.indexOf(target) < TIER_ORDER.indexOf(cur)
+    const margin = up && natural + dots > floor ? hyst : 0
+    return natural + margin + dots <= avail
+  }
+  if (fits(full, 'full')) return 'full'
+  if (fits(text, 'text')) return 'text'
+  if (fits(icon, 'icon')) return 'icon'
+  return 'overflow'
 }
 
 /** The narrowest the cluster can get and keep every control reachable: its never-overflow
@@ -361,20 +408,7 @@ export function HeaderActions({ children, className, overflowClassName }: {
       // shrinks so the cluster keeps usable width.
       const avail = header ? Math.max(0, inner - reserve - GAP_TO_TITLE) : outer.clientWidth
 
-      // Pick the richest tier that fits. Down-steps fire as soon as the current tier
-      // no longer fits; up-steps need HYST slack so we don't oscillate at the edge.
-      const fits = (natural: number, target: Tier) => {
-        const rank = TIER_ORDER.indexOf(target)
-        const curRank = TIER_ORDER.indexOf(cur)
-        const margin = rank < curRank ? HYST : 0 // stepping UP (richer) needs slack
-        return natural + margin + dots <= avail
-      }
-
-      let next: Tier
-      if (fits(wFull, 'full')) next = 'full'
-      else if (fits(wText, 'text')) next = 'text'
-      else if (fits(wIcon, 'icon')) next = 'icon'
-      else next = 'overflow'
+      const next = pickTier({ full: wFull, text: wText, icon: wIcon, avail, cur, dots, floor, hyst: HYST })
 
       if (next !== 'overflow') {
         if (next !== cur) setTier(next)
@@ -477,13 +511,13 @@ export function HeaderActions({ children, className, overflowClassName }: {
         {/* three offscreen probes — one per tier — measure the cluster's natural
             width at each density. Rendered via the same children so widths are real. */}
         <div ref={probeFull} aria-hidden className="pointer-events-none absolute right-0 top-0 opacity-0 -z-10 flex items-center gap-s whitespace-nowrap">
-          <Cluster.Provider value={{ tier: 'full', visibleIds: null, register: noop, unregister: noop }}>{children}</Cluster.Provider>
+          <Cluster.Provider value={{ tier: 'full', probe: true, visibleIds: null, register: noop, unregister: noop }}>{children}</Cluster.Provider>
         </div>
         <div ref={probeText} aria-hidden className="pointer-events-none absolute right-0 top-0 opacity-0 -z-10 flex items-center gap-s whitespace-nowrap">
-          <Cluster.Provider value={{ tier: 'text', visibleIds: null, register: noop, unregister: noop }}>{children}</Cluster.Provider>
+          <Cluster.Provider value={{ tier: 'text', probe: true, visibleIds: null, register: noop, unregister: noop }}>{children}</Cluster.Provider>
         </div>
         <div ref={probeIcon} aria-hidden className="pointer-events-none absolute right-0 top-0 opacity-0 -z-10 flex items-center gap-s whitespace-nowrap">
-          <Cluster.Provider value={{ tier: 'icon', visibleIds: null, register: noop, unregister: noop }}>{children}</Cluster.Provider>
+          <Cluster.Provider value={{ tier: 'icon', probe: true, visibleIds: null, register: noop, unregister: noop }}>{children}</Cluster.Provider>
         </div>
         {/* Live cluster = a scrolling rail for the CONTROLS + the `…` trigger as a
             SIBLING outside that rail. Keeping `…` out of the scroll context is what
@@ -547,8 +581,11 @@ function HeaderOverflow({ actions, className }: { actions: (OverflowRow & { id: 
               cannot open a second menu. */}
           {actions.flatMap((a) => (a.rows ?? [a]).map((r, i) => ({ ...r, key: `${a.id}:${i}` }))).map((a) => (
             <div key={a.key} className={a.danger ? '[&_button]:text-danger' : ''}>
+              {/* A row that cannot act stays, dimmed, says why under its name (the whole reason in
+                  its tooltip) and leaves the menu open when chosen, so its action is not lost. */}
               <MenuRow icon={a.icon ? <a.icon size={16} /> : undefined} label={a.label} hint={a.hint}
-                disabled={a.disabled} onClick={() => { a.onSelect?.(); close() }} />
+                nameIsLabel={a.disabled && !!a.hint} title={a.disabled ? a.hint : undefined}
+                disabled={a.disabled} onClick={() => { if (a.disabled) return; a.onSelect?.(); close() }} />
             </div>
           ))}
         </div>
@@ -674,11 +711,15 @@ export function HeaderControl({
  *  The menu is a `role="menu"` of `menuitem`s with the shared cursor: it opens with focus on its
  *  first row, the arrows move, Enter picks, and Escape or Tab closes it with focus back on the
  *  control. Portaled, so the page body cannot paint over it. */
-export function HeaderMenu({ icon: Icon, label, items, priority = 'default' }: {
+export function HeaderMenu({ icon: Icon, label, items, priority = 'default', variant = 'ghost', title }: {
   icon: LucideIcon
   label: string
   items: { label: string; icon?: LucideIcon; hint?: string; onSelect: () => void }[]
   priority?: Priority
+  /** As HeaderControl's: `primary` where the menu is the page's primary action (a project's New). */
+  variant?: Variant
+  /** The tooltip, when the control says more than its label. Defaults to the label. */
+  title?: string
 }) {
   const { visible, tier } = useHeaderChild({
     priority,
@@ -691,13 +732,13 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default' }: {
     <Popover portal placement="bottom" align="right" width={260}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="menu" aria-expanded={open}
-          title={label} aria-label={iconOnly ? label : undefined}
+          title={title ?? label} aria-label={iconOnly ? label : undefined}
           data-type="label-s"
           className={cx(
             'inline-flex items-center justify-center gap-1.5 rounded-pill select-none shrink-0',
             'transition-colors duration-(--duration-short)',
             iconOnly ? 'size-10' : 'h-10 px-l',
-            open ? variants.secondary : variants.ghost,
+            open && variant === 'ghost' ? variants.secondary : variants[variant],
           )}
           style={fvs(470)}>
           <Icon size={16} />
@@ -760,16 +801,22 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
   disabled?: boolean
 }) {
   // Register with the cluster: it's a primary, never-overflow child (always visible;
-  // collapses to icon-only rather than into the menu). canIcon=true (icons present).
+  // collapses to icon-only rather than into the menu), and it can go icon-only only when every
+  // option carries an icon: an option without one would be an empty tab.
+  const canIcon = options.every((o) => !!o.icon)
   const { tier } = useHeaderChild({
     priority: 'primary',
-    canIcon: true,
+    canIcon,
     neverOverflow: true,
     menu: { label: ariaLabel ?? 'Options' }, // unused (neverOverflow) but required by the type
   })
-  // Match HeaderControl: icon+label at FULL/TEXT, icon-only when tight (ICON/OVERFLOW).
+  // The view switch is the row's widest member, so it gives up its labels first: icon-only from
+  // the TEXT tier on, while the search narrows and the other controls keep theirs. Measured at
+  // 1440 on #/tasks: with its four labels it pushed the row with a search and a filter past the
+  // room beside the title, and the whole cluster fell to bare icons with 600 px to spare. A switch
+  // without icons keeps its labels and folds to the pill of the active view (`collapse="menu"`).
   // The active segment stays highlighted so the current value is always visible.
-  const iconOnly = tier === 'icon' || tier === 'overflow'
+  const iconOnly = canIcon && tier !== 'full'
   return <Segmented options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} disabled={disabled} iconOnly={iconOnly} collapse="menu" />
 }
 

@@ -64,6 +64,29 @@ export function ListControls({
   )
 }
 
+/** A list's status under the header, now that its controls are in the header: the stale notice
+ *  when the rows came from the cache past their freshness, and the announcement of what a search or
+ *  filter just did (`ResultAnnouncement`, sr-only). No control sits here: every page-level control
+ *  is in the page header's action area. It draws nothing visible while the rows are fresh. */
+export function ListStatus({ results, stale }: {
+  /** How many rows the current search/filter leaves, what to call them, and whether the user has
+   *  narrowed the list: `ListControls`' `results`, the same rules. */
+  results: { count: number; noun: string; active: boolean }
+  /** `useQuery`'s `stale`, passed straight through. */
+  stale?: boolean
+}) {
+  return (
+    <>
+      {stale && (
+        <div className="mx-auto flex w-full justify-end px-l pt-s">
+          <StaleNotice stale what={results.noun} />
+        </div>
+      )}
+      <ResultAnnouncement {...results} />
+    </>
+  )
+}
+
 /** The sr-only live region that says what a list filter just did — extracted from `ListControls`
  *  so a page whose controls bar is hand-laid can render the SAME idiom instead of a second one.
  *

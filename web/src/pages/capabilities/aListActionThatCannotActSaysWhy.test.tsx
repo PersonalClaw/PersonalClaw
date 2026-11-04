@@ -1,29 +1,34 @@
-/** A Capabilities list's More menu says why a row cannot act (#3817).
+/** A Capabilities tab's `…` menu says why a row cannot act (#3817).
  *
- *  The list's More menu holds what a tab's header no longer does: Sync agents, Export to Claude
- *  Code, Re-probe MCP servers, Manage Sources. While a sync or a re-probe runs, its row cannot run
- *  it again. That row stays in the menu, dimmed and announced as unavailable, and says why under its
- *  name, so a person who opens the menu mid-sync learns the action exists and when it comes back.
- *  Choosing it does nothing and leaves the menu open. A row that can act names itself alone.
+ *  The header's `…` holds a tab's secondary actions: Sync agents, Export to Claude Code, Re-probe
+ *  MCP servers, Manage Sources. While a sync or a re-probe runs, its row cannot run it again. That
+ *  row stays in the menu, dimmed and announced as unavailable, and says why under its name, so a
+ *  person who opens the menu mid-sync learns the action exists and when it comes back. Choosing it
+ *  does nothing and leaves the menu open. A row that can act names itself alone.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { RefreshCw, Upload } from 'lucide-react'
-import { ListMoreMenu } from './ListMoreMenu'
+import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
 
 afterEach(cleanup)
 
 const WHY = 'A sync is running; it can run again once it ends.'
 
 function openMenu(sync: () => void, exportAgents: () => void, running: boolean) {
-  render(<ListMoreMenu actions={[
-    { label: running ? 'Syncing…' : 'Sync agents', icon: RefreshCw, onSelect: sync, disabledReason: running ? WHY : undefined },
-    { label: 'Export to Claude Code', icon: Upload, onSelect: exportAgents },
-  ]} />)
+  render(
+    <header>
+      <HeaderActions>
+        <HeaderControl icon={RefreshCw} label={running ? 'Syncing…' : 'Sync agents'} inOverflow onClick={sync}
+          disabled={running} disabledReason={running ? WHY : undefined} />
+        <HeaderControl icon={Upload} label="Export to Claude Code" inOverflow onClick={exportAgents} />
+      </HeaderActions>
+    </header>,
+  )
   fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
 }
 
-describe('a More menu row that cannot act says why', () => {
+describe('a `…` menu row that cannot act says why', () => {
   it('stays in the menu, announced as unavailable, with its reason under its name', () => {
     openMenu(vi.fn(), vi.fn(), true)
     const row = screen.getByRole('button', { name: 'Syncing…' })

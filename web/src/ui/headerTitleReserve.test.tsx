@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, TITLE_MIN } from './HeaderActions'
+import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, pickTier, TITLE_MIN } from './HeaderActions'
 
 // ── An EMPTY title slot is owed nothing ──────────────────────────────────────
 //
@@ -173,5 +173,32 @@ describe('stackBelowCorners — when the band between the corners cannot hold th
     // "Tasks" is 51px: the title term is min(51, 8 + 48) = 51, not the full legible floor.
     expect(stackBelowCorners({ hasContent: true, minWidth: 8, naturalWidth: 51, band: 51 + 16 + 140, floor: 140 })).toBe(false)
     expect(TITLE_MIN).toBe(48)
+  })
+})
+
+describe('pickTier — a step up needs slack only where shedding could give the title width back', () => {
+  // `#/tasks` at 390 px: search 40, filter 40, the four views 142 and New task 40, with their gaps,
+  // make an icon row of 286, which is also the cluster's floor (the three never-overflow controls,
+  // 246, and the `…`, 44, come to 290). The title yields to that floor, so `avail` is 286.
+  const TASKS = { full: 620, text: 600, icon: 286, avail: 286, dots: 0, floor: 286, hyst: 8 }
+
+  it('leaves overflow for an icon row no wider than the floor, with no slack to spare', () => {
+    // It went to overflow while the page loaded, and stayed: its `…` held New task alone.
+    expect(pickTier({ ...TASKS, cur: 'overflow' })).toBe('icon')
+    expect(pickTier({ ...TASKS, cur: 'full' })).toBe('icon')
+  })
+
+  it('still holds a step up to a tier wider than the floor to the slack', () => {
+    // An icon row of 300 against a floor of 286: overflow is narrower, so the slack still applies.
+    expect(pickTier({ ...TASKS, icon: 300, avail: 304, cur: 'overflow' })).toBe('overflow')
+    expect(pickTier({ ...TASKS, icon: 300, avail: 308, cur: 'overflow' })).toBe('icon')
+    // And a step down never waits for it.
+    expect(pickTier({ ...TASKS, icon: 300, avail: 300, cur: 'full' })).toBe('icon')
+    expect(pickTier({ ...TASKS, full: 600, avail: 604, cur: 'icon' })).toBe('icon')
+  })
+
+  it('counts a `…` drawn at every tier in both the row and the floor', () => {
+    expect(pickTier({ ...TASKS, icon: 242, dots: 44, floor: 286, cur: 'overflow' })).toBe('icon')
+    expect(pickTier({ ...TASKS, icon: 243, dots: 44, floor: 286, cur: 'icon' })).toBe('overflow')
   })
 })

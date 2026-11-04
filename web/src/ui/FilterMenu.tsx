@@ -27,6 +27,12 @@ export interface FilterSectionDef {
   defaultKey: string
   options: FilterOption[]
   onChange: (key: string) => void
+  /** In a header filter's label (`HeaderFilter`): named only while set away from its default. For
+   *  a page with more choice sets than its label can read out, the ones whose default says nothing. */
+  quiet?: boolean
+  /** In a header filter's label: how this section's choice is said, from its key ("Sorted by
+   *  name"); the chosen option's own label otherwise. */
+  said?: (key: string) => string
 }
 
 /** The canonical header "Filter & sort" control: a single 40px pill that opens a
@@ -74,20 +80,26 @@ export function FilterMenu({ sections, label = 'Filter', align = 'right', classN
           )}
         </button>
       )}>
-      {(close) => (
-        <div className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto">
-          {sections.map((s) => (
-            <Section key={s.title} title={s.title}
-              onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
-              {s.options.map((o) => (
-                <Row key={o.key} option={o} selected={s.value === o.key} onClick={() => s.onChange(o.key)} />
-              ))}
-            </Section>
-          ))}
-          <Button variant="ghost" size="sm" onClick={close} className="mt-1 w-full">Done</Button>
-        </div>
-      )}
+      {(close) => <FilterSections sections={sections} close={close} />}
     </Popover>
+  )
+}
+
+/** The open menu's body: each section's choices, with its Clear, and Done. Shared by `FilterMenu`
+ *  and the header's `HeaderFilter`, so the two are one menu. */
+export function FilterSections({ sections, close }: { sections: FilterSectionDef[]; close: () => void }) {
+  return (
+    <div className="flex flex-col gap-3 max-h-[70vh] overflow-y-auto">
+      {sections.map((s) => (
+        <Section key={s.title} title={s.title}
+          onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
+          {s.options.map((o) => (
+            <Row key={o.key} option={o} selected={s.value === o.key} onClick={() => s.onChange(o.key)} />
+          ))}
+        </Section>
+      ))}
+      <Button variant="ghost" size="sm" onClick={close} className="mt-1 w-full">Done</Button>
+    </div>
   )
 }
 

@@ -92,9 +92,20 @@ describe('a Popover inside a clipping container must portal', () => {
     const s = sites.filter((x) => x.rel === 'ui/FilterMenu.tsx')
     expect(s.length).toBe(1)
     expect(s[0].portal).toBe(true)
-    // All eleven consumers inherit it; naming them keeps the blast radius in the diff.
-    const consumers = walk(SRC).filter((abs) => readSource(abs).includes('<FilterMenu'))
-    expect(consumers.length, 'FilterMenu consumers that moved with this change').toBeGreaterThanOrEqual(9)
+  })
+
+  it("and so do the header's search and filter, which took over its consumers", () => {
+    // Every page's filter moved into its header (`app/pageControlsAreInTheHeader.test.ts`), where
+    // the cluster's row is a horizontal scroller: a menu that did not portal would be cut to it.
+    for (const rel of ['ui/HeaderFilter.tsx', 'ui/HeaderSearch.tsx']) {
+      const s = sites.filter((x) => x.rel === rel)
+      expect(s.length, rel).toBe(1)
+      expect(s[0].portal, rel).toBe(true)
+    }
+    // Naming the consumers keeps the blast radius in the diff: the filter menus' pages, through
+    // either primitive.
+    const consumers = walk(SRC).filter((abs) => /<(FilterMenu|HeaderFilter)\b/.test(readSource(abs)))
+    expect(consumers.length, 'filter menu consumers').toBeGreaterThanOrEqual(9)
   })
 
   it('the non-portal call sites are exactly the three we know about', () => {
