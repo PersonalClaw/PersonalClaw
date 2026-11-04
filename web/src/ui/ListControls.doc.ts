@@ -1,13 +1,12 @@
 import type { UiDoc } from './uiDoc'
 
-// Doc object for ListControls — the on-PAGE list controls bar. The "controls
-// belong on the page, not in the header" tenet (once a source comment) is encoded
-// here as machine-readable bestPractices.
+// Doc object for ListControls — the list controls bar a page drew under its header, before every
+// page-level control moved into the header's action area.
 const doc: UiDoc = {
   name: 'ListControls',
   keywords: ['list', 'controls', 'search', 'filter', 'sort', 'toolbar', 'bar', 'segmented', 'page'],
   description:
-    'The canonical on-PAGE controls bar for a list section — a search box, an optional single-select filter strip, and optional extra controls (sort, chips), pinned just below the TopBar and spanning the pane. List controls live HERE, on the page, not in the header (the header keeps only structural view-switches + the primary action). Renders nothing when empty, so it can be passed unconditionally.',
+    "A list controls bar — a search box, an optional single-select filter strip, and optional extra controls (sort, chips) — that pages drew under their TopBar. No page draws it now: every page-level control lives in the header's action area (a HeaderSearch, the one HeaderSegmented, a HeaderFilter), and the list's status under the header is a ListStatus. Renders nothing when empty.",
   props: [
     { name: 'search', description: 'Optional search-box config ({ value, onChange, placeholder?, label?, autoFocus? }); omit for a filter-only bar. A stable input name is derived from the label/placeholder.' },
     { name: 'results', description: "How many rows the current search/filter leaves ({ count, noun, active }), announced politely in an sr-only role=status region. Typing in a list filter rewrites the page under the user, and NOTHING told a screen-reader user what happened — measured on six surfaces (knowledge, prompts, triggers, apps, skills, projects): filtering 26 rows to 25, or to a \"No matching items\" empty state, produced ZERO live regions every time. Renders \"25 items\" / \"1 item\" (singularised) / \"No matching items\", and stays silent while `active` is false so an idle list never announces its own length. Same pattern as FindBar's match counter." },
@@ -16,10 +15,8 @@ const doc: UiDoc = {
     { name: 'children', description: 'Extra controls (sort dropdown, filter chips) rendered after search + filter.' },
   ],
   bestPractices: [
-    { guidance: true, description: 'Pass `results` on any list with a search or filter — the count is the only signal a screen-reader user gets that their query changed the page. Derive `active` from the query (`!!q.trim()`), never hardcode it true, or the list announces its length on every mount.' },
-    { guidance: true, description: 'Put list search/filter/sort in ListControls, not in the TopBar — the header keeps only structural view-switches and the primary action.' },
-    { guidance: true, description: "Render via WorkbenchLayout's `controls` slot (or inline above a body) so the bar scroll-pins below the TopBar and centers to the content width like every other list page." },
-    { guidance: true, description: 'Use `filter` for a status/kind/scope narrowing strip; do not repurpose it as a view/mode switch (that belongs in the header).' },
+    { guidance: false, description: "Do not draw it on a page: put the search in a HeaderSearch and every choice set in the header's HeaderFilter, and announce the result count with a ListStatus (app/pageControlsAreInTheHeader.test.ts)." },
+    { guidance: true, description: 'Where `results` is passed, derive `active` from the query (`!!q.trim()`), never hardcode it true, or the list announces its length on every mount.' },
     { guidance: false, description: 'Do not hardcode colors or px in className — everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
   ],
   anatomy: ['bottom-bordered shrink-0 container', 'full-width row', 'SearchField (flex-1)', 'Segmented filter strip', 'extra children (sort / chips)'],

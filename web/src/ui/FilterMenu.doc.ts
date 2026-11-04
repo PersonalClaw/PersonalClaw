@@ -1,6 +1,6 @@
 import type { UiDoc } from './uiDoc'
 
-// Doc object for FilterMenu — the canonical "Filter & sort" header control.
+// Doc object for FilterMenu — the "Filter & sort" pill the list controls bars carried.
 // Authored: keywords, prose, per-prop descriptions, Do/Don't, anatomy. Prop
 // type/required are DERIVED from FilterMenu.tsx at build time.
 const doc: UiDoc = {
@@ -15,9 +15,8 @@ const doc: UiDoc = {
     { name: 'className', description: "Extra classes on the trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`) where a page's controls carry it." },
   ],
   bestPractices: [
-    { guidance: true, description: 'Reach for FilterMenu for all list criteria instead of scattering a filter Segmented, a sort <select>, and a scope dropdown across the header — one pill, one active-count badge, consistent everywhere.' },
+    { guidance: false, description: "Do not draw it on a page: a page's choice sets are the sections of its header's HeaderFilter, whose label says what is set (app/pageControlsAreInTheHeader.test.ts)." },
     { guidance: true, description: "Set each section's defaultKey to the option that means \"not filtering\" — that's what the active-count badge and the inline Clear measure against." },
-    { guidance: true, description: 'Model each criterion as its own section with its own onChange; the menu handles the selected-row tint, counts, and Clear per section.' },
     { guidance: true, description: "Use option.groupLabel to draw a sub-heading + divider within a section (e.g. presets vs projects); set option.count to show a tally and option.icon for a leading glyph." },
     { guidance: false, description: 'Do not hardcode colors or px — the active-tint color-mix and every surface route through design tokens (the token-lint ratchet fails the build otherwise).' },
   ],

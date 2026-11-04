@@ -47,8 +47,9 @@ const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; wh
   'pages/learning/LearningPage.tsx': { segmented: 1, why: "the Proposals section's own kind filter, under its heading" },
 }
 
-/** The page-level controls not yet in the header, by file. Each page group's move empties its
- *  rows; it ends empty. */
+/** The page-level controls not yet in the header, by file: a page drawing one outside its header
+ *  is held to this, so a row comes in only with a page that moves later. Empty, since every page's
+ *  controls moved. */
 const BUDGET: Record<string, number> = {}
 
 /** The page-level controls a page draws outside its header. */
@@ -86,6 +87,12 @@ describe('every page-level control is in the page header', () => {
       const src = strip(readSource(join(SRC, f)))
       expect(count(src, /<Segmented[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.segmented ?? 0)
       expect(count(src, /<SearchField[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.search ?? 0)
+    }
+  })
+
+  it('and the page layouts keep no slot for a bar under the header', () => {
+    for (const f of ['ui/WorkbenchLayout.tsx', 'pages/capabilities/ListBesideDetail.tsx']) {
+      expect(strip(readSource(join(SRC, f))), `${f}: a controls slot is a bar under the header`).not.toMatch(/\bcontrols\??:/)
     }
   })
 })
