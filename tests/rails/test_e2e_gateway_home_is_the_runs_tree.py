@@ -425,10 +425,10 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
     as an artifact of a public repository. So a gateway started as the harness starts it, inside an
     environment holding every credential-shaped variable, signed in and asked for pages with the
     session that gave it, watched so tightly that the loop watch dumps every thread's stack many
-    times over, and asked where it waits as a spec asks it (the signal for faulthandler's dump,
-    and a record printed into the job's log), leaves a kept log and a printed record with none of
-    the planted values in them, and neither the READY token nor the session's token in clear. The
-    gateway goes on answering after the signal."""
+    times over, and asked where it waits as a spec asks it (a record printed into the job's log),
+    leaves a kept log and a printed record with none of the planted values in them, and neither
+    the READY token nor the session's token in clear. The gateway goes on answering after the ask,
+    which sends it nothing."""
     h = _harness(tmp_path)
     places = h["places"]
     home = Path(places["home"])
@@ -472,9 +472,8 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
             assert _get(port, path, cookie=f"pc_token_{port}={session}").status == 200, path
         _get(port, "/api/dashboard/config", cookie=f"pc_token_{port}=not-{session}")
         # And what the harness does when a spec finds the gateway unanswering
-        # (`askTheGatewayWhereItWaits`): it probes the gateway, sends it the signal its stall watch
-        # answers with faulthandler's dump of every thread, and prints the record, with its log's
-        # tail, into the job's log, which is as public as the kept log.
+        # (`askTheGatewayWhereItWaits`): it probes the gateway, sends it nothing, and prints the
+        # record, with its log's tail, into the job's log, which is as public as the kept log.
         Path(places["outputDir"]).mkdir(parents=True, exist_ok=True)
         ask = subprocess.run(
             [
@@ -493,7 +492,11 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
         assert ask.returncode == 0, ask.stderr
         printed = ask.stderr
         assert "the harness gateway was found unanswering" in printed, printed[-2000:]
-        assert "(most recent call first)" in printed, "the printed tail holds no dump to check"
+        assert "Nothing was sent to it" in printed, printed[-2000:]
+        # The watch's own dump, as traceback formats a frame (a tail of 200 lines may hold no dump's
+        # first line: one dump of every thread runs longer than that).
+        assert re.search(r'File ".*", line \d+, in ', printed), "the printed tail holds no dump"
+        assert gateway.poll() is None, f"the gateway ended after the ask ({gateway.poll()})"
         assert _get(port, "/api/themes", cookie=f"pc_token_{port}={session}").status == 200
     finally:
         os.killpg(gateway.pid, signal.SIGTERM)
@@ -520,7 +523,6 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
     assert kept, "the failed run kept no gateway log"
     text = "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in kept)
     assert STALL_MARK in text, "the watch dumped no stack, so no dump was checked"
-    assert "(most recent call first)" in text, "the signal wrote no stack, so it was not checked"
     values = {f"the planted {name}": value for name, value in planted.items()}
     values.update({"the READY token": token, "the session's token": session})
     leaked = sorted(what for what, value in values.items() if value in text)
@@ -528,3 +530,96 @@ def test_a_failed_runs_kept_gateway_log_holds_no_credential_and_no_token(tmp_pat
     record = (Path(places["outputDir"]) / "gateway-unanswered.txt").read_text(encoding="utf-8")
     shown = sorted(what for what, value in values.items() if value in printed + record)
     assert shown == [], f"the record the job's log shows holds {shown} in clear"
+
+
+#: A gateway as busy as the rail's above, standing in for it so the ask can be checked against a
+#: process with threads that run Python the whole time: the stall watch armed as the harness arms
+#: it, four threads formatting every thread's stack as the watch does at a 10 ms limit, an HTTP
+#: server answering on the port, and the runtime record a gateway writes. Started as
+#: ``... gateway --port <port>``, so the ask takes it for the harness gateway.
+BUSY_GATEWAY = r"""
+import asyncio, http.server, json, logging, os, sys, threading, traceback
+
+home, port = sys.argv[1], int(sys.argv[4])
+logging.getLogger().addHandler(logging.FileHandler(os.path.join(home, "gateway.log")))
+from personalclaw import loop_watch
+
+
+def busy():
+    while True:
+        "".join("".join(traceback.format_stack(f)) for f in sys._current_frames().values())
+
+
+class Answer(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, *args):
+        pass
+
+
+async def main():
+    loop_watch.arm_from_env()
+    for _ in range(4):
+        threading.Thread(target=busy, daemon=True).start()
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Answer)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    with open(os.path.join(home, "gateway.runtime.json"), "w") as record:
+        json.dump({"pid": os.getpid(), "port": port}, record)
+    print("READY", flush=True)
+    await asyncio.sleep(120)
+
+
+asyncio.run(main())
+"""
+
+
+def test_a_busy_gateway_asked_where_it_waits_goes_on_answering(tmp_path):
+    """🔴 Red before: the ask sent SIGUSR1, which the stall watch answered with faulthandler's dump
+    of every thread, and that dump, taken while the gateway's other threads ran Python, crashed it
+    (CPython 3.12 within a few such dumps; the rail above's gateway, whose watch formats every
+    thread's stack every 10 ms, reset the next request on a pull request's run). The ask now sends
+    nothing: the gateway goes on answering, and nothing in its log was written by faulthandler."""
+    home = tmp_path / "home"
+    out = tmp_path / "out"
+    home.mkdir()
+    out.mkdir()
+    port = _free_port()
+    env = {**os.environ, "PERSONALCLAW_LOOP_STALL_SECONDS": "0.01", "PYTHONPATH": str(REPO / "src")}
+    env.pop("PERSONALCLAW_LOOP_STALL_WATCHDOG", None)
+    gateway = subprocess.Popen(
+        [sys.executable, "-c", BUSY_GATEWAY, str(home), "gateway", "--port", str(port)],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        assert gateway.stdout is not None and gateway.stdout.readline().strip() == "READY"
+        ask = subprocess.run(
+            [
+                _node(),
+                "--input-type=module",
+                "-e",
+                NODE_ASK % {"run_places": json.dumps(str(RUN_PLACES))},
+                str(home),
+                str(out),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=WEB,
+        )
+        # The ask has returned, so a dump it asked for has been written, or has crashed the gateway.
+        assert gateway.poll() is None, f"the busy gateway ended after the ask ({gateway.poll()})"
+        assert _get(port, "/api/healthz").status == 200
+        log = (home / "gateway.log").read_text(encoding="utf-8", errors="replace")
+        assert "(most recent call first)" not in log, "the ask had faulthandler dump every thread"
+        assert ask.returncode == 0, ask.stderr
+        assert "Nothing was sent to it" in ask.stderr, ask.stderr[-2000:]
+    finally:
+        os.killpg(gateway.pid, signal.SIGKILL)
+        gateway.wait()

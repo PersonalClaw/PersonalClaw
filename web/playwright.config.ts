@@ -213,11 +213,13 @@ const GATEWAY_COMMAND = [
   // The gateway's event loop is watched (`src/personalclaw/loop_watch.py`): when it goes
   // LOOP_STALL_SECONDS without answering, or its worker pool runs no job for as long, or a stall
   // holds the GIL, every thread's stack goes into gateway.log, which a failed run keeps in its output
-  // folder (`cleanUpRun`). The watch also answers SIGUSR1 with every thread's stack, which the first
-  // spec to find the gateway unanswering sends (`askTheGatewayWhereItWaits`, e2e/runPlaces.ts). A
-  // hung gateway once left only requests that got no response, and nothing to say where it stopped
-  // (#5638).
-  `${gatewayEnvPrefix()} PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" PERSONALCLAW_LOOP_STALL_SECONDS=${LOOP_STALL_SECONDS} exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
+  // folder (`cleanUpRun`). The GIL's half is faulthandler's watchdog, armed only where it is asked
+  // for by name (PERSONALCLAW_LOOP_STALL_WATCHDOG): its dump can crash a gateway whose other threads
+  // run Python, which costs here only a run that has already stalled. The first spec to find the
+  // gateway unanswering records what it sees (`askTheGatewayWhereItWaits`, e2e/runPlaces.ts) and
+  // sends it nothing. A hung gateway once left only requests that got no response, and nothing to
+  // say where it stopped (#5638).
+  `${gatewayEnvPrefix()} PERSONALCLAW_HOME="$D" PERSONALCLAW_WORKSPACE="$D/workspace" ${SCRIPTED.scriptEnvVar}="$S" PERSONALCLAW_LOOP_STALL_SECONDS=${LOOP_STALL_SECONDS} PERSONALCLAW_LOOP_STALL_WATCHDOG=1 exec "$PC" gateway --port ${GATEWAY_PORT} --no-open --json-ready`,
 ].join('\n')
 
 // ── One invocation, three ways to share the gateway ───────────────────────────────────────────

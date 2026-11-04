@@ -15,17 +15,20 @@ names the stalls the loop's answer cannot show:
   loop itself answers. So once the loop answers, the thread hands the pool a job that does nothing,
   and while the pool has not run it for :data:`STALL_ENV` seconds, the same dump is written, saying
   it is the pool, again each time the wait doubles.
-- The watch itself. A stall that holds the GIL (a C call that never releases it) stops this thread
-  too. So at every slice the thread re-arms :func:`faulthandler.dump_traceback_later`, whose
-  watchdog is a C thread that needs no GIL: it writes every thread's stack into the log file only
-  when this thread has been held for :data:`STALL_ENV` seconds.
+- The watch itself, where the browser harness asks for it by name (:data:`WATCHDOG_ENV`). A stall
+  that holds the GIL (a C call that never releases it) stops this thread too. So at every slice the
+  thread re-arms :func:`faulthandler.dump_traceback_later`, whose watchdog is a C thread that needs
+  no GIL: it writes every thread's stack into the log file only when this thread has been held for
+  :data:`STALL_ENV` seconds. Its dump names files, lines and functions, never a value. The watch
+  lets go of it when the loop closes.
 
-And whoever holds the gateway's pid can ask for every thread's stack, whatever holds the gateway:
-the watch registers :data:`DUMP_SIGNAL` with :mod:`faulthandler`, which writes them from the signal
-handler itself (``askTheGatewayWhereItWaits`` in ``web/e2e/runPlaces.ts`` sends it when the
-harness's shell guard finds the gateway unanswering). Both of faulthandler's dumps name files,
-lines and functions, never a value. The watch lets go of the signal and the watchdog when the loop
-closes.
+faulthandler reads every thread's frames with no lock while they run, so a dump taken while another
+thread runs Python can read a frame as it changes and crash the process with SIGSEGV (CPython 3.12
+did within a few dumps beside a busy thread, 3.13 within some hundreds). So the watchdog is never
+armed by the stall limit alone, only in the harness, where a gateway it crashes had already stalled
+and its run had already failed. And nothing here answers a signal with a dump: the watch once
+registered SIGUSR1 with faulthandler for the harness to ask with, and the ask crashed a gateway that
+was answering (``tests/test_a_stalled_gateway_loop_names_its_frame.py``).
 
 The dump is appended to the log file directly, formatted by the file handler's own formatter (the
 masking one), and not handed to the logger: a loop stuck inside logging holds a handler's lock, and
@@ -39,7 +42,6 @@ import asyncio
 import faulthandler
 import logging
 import os
-import signal
 import sys
 import threading
 import time
@@ -52,11 +54,12 @@ from personalclaw.security import MaskingFormatter
 #: or not a number above 0: nothing watches the loop.
 STALL_ENV = "PERSONALCLAW_LOOP_STALL_SECONDS"
 
+#: Set to ``1`` beside :data:`STALL_ENV`, also arm faulthandler's watchdog, which names a stall that
+#: holds the GIL. Only the browser harness sets it (the module docstring says why).
+WATCHDOG_ENV = "PERSONALCLAW_LOOP_STALL_WATCHDOG"
+
 #: How often the watch asks the loop to answer.
 ASK_EVERY = 1.0
-
-#: The signal that asks a watched gateway for every thread's stack; ``None`` where there is none.
-DUMP_SIGNAL: signal.Signals | None = getattr(signal, "SIGUSR1", None)
 
 #: The line a dump is written as where the log file's handler names no formatter of its own.
 _FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
@@ -81,12 +84,11 @@ def arm_from_env() -> threading.Thread | None:
             raw,
         )
         return None
-    sink = _faulthandler_sink()
-    if DUMP_SIGNAL is not None:
-        faulthandler.register(DUMP_SIGNAL, file=sink, all_threads=True)
-    # Armed here, on the loop's thread, so the watchdog runs from the start even when the loop
-    # holds the GIL before the watch's thread has run at all; the thread pushes it on from then.
-    faulthandler.dump_traceback_later(_watchdog_seconds(seconds), file=sink)
+    sink = _faulthandler_sink() if os.environ.get(WATCHDOG_ENV) == "1" else None
+    if sink is not None:
+        # Armed here, on the loop's thread, so the watchdog runs from the start even when the loop
+        # holds the GIL before the watch's thread has run at all; the thread pushes it on from then.
+        faulthandler.dump_traceback_later(_watchdog_seconds(seconds), file=sink)
     watch = threading.Thread(
         target=_watch,
         args=(asyncio.get_running_loop(), threading.get_ident(), seconds, sink),
@@ -98,7 +100,7 @@ def arm_from_env() -> threading.Thread | None:
 
 
 def _watch(
-    loop: asyncio.AbstractEventLoop, loop_thread: int, seconds: float, sink: IO[str]
+    loop: asyncio.AbstractEventLoop, loop_thread: int, seconds: float, sink: IO[str] | None
 ) -> None:
     try:
         while not loop.is_closed():
@@ -114,11 +116,10 @@ def _watch(
                 return
             time.sleep(ASK_EVERY)
     finally:
-        faulthandler.cancel_dump_traceback_later()
-        if DUMP_SIGNAL is not None:
-            faulthandler.unregister(DUMP_SIGNAL)
-        if sink is not sys.stderr:
-            sink.close()
+        if sink is not None:
+            faulthandler.cancel_dump_traceback_later()
+            if sink is not sys.stderr:
+                sink.close()
 
 
 def _watchdog_seconds(seconds: float) -> float:
@@ -152,7 +153,7 @@ def _wait(
     loop: asyncio.AbstractEventLoop,
     loop_thread: int,
     seconds: float,
-    sink: IO[str],
+    sink: IO[str] | None,
     asked: float,
 ) -> bool:
     """Wait for *done* (*what* answering), dumping every thread's stack each time the wait passes
@@ -160,9 +161,10 @@ def _wait(
     stalled, answered = _SAYS[what]
     limit = seconds
     # In slices, so a loop that closed with the question unanswered ends the watch, and so the
-    # watchdog is pushed on for as long as this thread runs.
+    # watchdog, where it is armed, is pushed on for as long as this thread runs.
     while True:
-        faulthandler.dump_traceback_later(_watchdog_seconds(seconds), file=sink)
+        if sink is not None:
+            faulthandler.dump_traceback_later(_watchdog_seconds(seconds), file=sink)
         if done.wait(min(ASK_EVERY, max(0.0, asked + limit - time.monotonic()))):
             break
         if loop.is_closed():

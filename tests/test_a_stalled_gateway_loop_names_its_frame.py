@@ -6,10 +6,12 @@ nothing said where the gateway's loop had stopped. The browser harness now arms 
 loop does not answer.
 
 The harness gateway has gone on losing runs that way since, with a gateway.log of 0 bytes: the
-watch never fired. So it now names the two stalls the loop's answer cannot show, a worker pool that
-runs no job and a stall that holds the GIL, and answers a signal with every thread's stack. These
-tests re-arm faulthandler's one watchdog timer, so pytest's own (``faulthandler_timeout``) is off
-for the rest of each.
+watch never fired. So it now names the two stalls the loop's answer cannot show: a worker pool that
+runs no job, and, where the harness asks for faulthandler's watchdog by name, a stall that holds
+the GIL. It answers no signal with a dump: faulthandler's dump of every thread, taken while another
+thread runs Python, crashed the gateway it was asked of. The tests that arm the watchdog re-arm
+faulthandler's one watchdog timer, so pytest's own (``faulthandler_timeout``) is off for the rest of
+each.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ import asyncio
 import ctypes
 import faulthandler
 import logging
-import os
 import signal
 import sys
 import threading
@@ -32,6 +33,8 @@ import pytest
 from personalclaw import cli_server, loop_watch
 
 _MARK = "The event loop has not answered for"
+#: The harness's opt-in for faulthandler's watchdog, as web/playwright.config.ts spells it.
+_WATCHDOG = "PERSONALCLAW_LOOP_STALL_WATCHDOG"
 
 
 @pytest.fixture
@@ -49,11 +52,19 @@ def log_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 
 def _run_watched(
-    seconds: str, monkeypatch: pytest.MonkeyPatch, body: Callable[[], Awaitable[None]]
+    seconds: str,
+    monkeypatch: pytest.MonkeyPatch,
+    body: Callable[[], Awaitable[None]],
+    *,
+    watchdog: bool = False,
 ) -> None:
-    """Run *body* on a loop of its own, watched with a *seconds* limit, and wait for the watch to
-    end with the loop."""
+    """Run *body* on a loop of its own, watched with a *seconds* limit (and faulthandler's watchdog
+    when *watchdog*, as the harness asks for it), and wait for the watch to end with the loop."""
     monkeypatch.setenv(loop_watch.STALL_ENV, seconds)
+    if watchdog:
+        monkeypatch.setenv(_WATCHDOG, "1")
+    else:
+        monkeypatch.delenv(_WATCHDOG, raising=False)
     watches: list[threading.Thread | None] = []
 
     async def main() -> None:
@@ -159,38 +170,37 @@ def _a_frame_that_holds_the_gil(seconds: float) -> None:
 def test_a_stall_that_holds_the_gil_is_named_by_the_watchs_own_watchdog(
     log_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A stall that holds the GIL stops the watch's thread too. faulthandler's watchdog is a C
-    thread that needs no GIL, re-armed by the watch at every slice, so it writes every thread's
-    stack only when the watch itself is held."""
+    """A stall that holds the GIL stops the watch's thread too. faulthandler's watchdog, where the
+    harness asks for it, is a C thread that needs no GIL, re-armed by the watch at every slice, so
+    it writes every thread's stack only when the watch itself is held."""
 
     async def body() -> None:
         _a_frame_that_holds_the_gil(1.5)
 
-    _run_watched("0.3", monkeypatch, body)
+    _run_watched("0.3", monkeypatch, body, watchdog=True)
     text = log_file.read_text(encoding="utf-8")
     assert "Timeout (" in text, "faulthandler's watchdog wrote no dump"
     assert "in _a_frame_that_holds_the_gil" in text
 
 
 @pytest.mark.skipif(not hasattr(signal, "SIGUSR1"), reason="no SIGUSR1 here")
-def test_the_dump_signal_writes_every_threads_stack_and_is_let_go_with_the_loop(
-    log_file: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("watchdog", [False, True])
+def test_a_watched_gateway_answers_no_signal_with_a_dump(
+    log_file: Path, monkeypatch: pytest.MonkeyPatch, watchdog: bool
 ) -> None:
-    """Whoever holds a watched gateway's pid (the harness, when its shell guard finds the gateway
-    unanswering) can ask for every thread's stack, whatever holds the gateway."""
-    dump = getattr(loop_watch, "DUMP_SIGNAL", None)
-    # Asked before anything is sent: a signal no handler takes would end this process.
-    assert dump == signal.SIGUSR1, "the watch names no signal that asks for every thread's stack"
+    """🔴 Red before: the watch registered SIGUSR1 with faulthandler, whose dump of every thread,
+    taken while another thread runs Python, can crash the process
+    (``test_e2e_gateway_home_is_the_runs_tree``'s busy gateway). Now no signal is taken while the
+    loop is watched, with the watchdog or without it."""
+    taken: list[tuple[bool, object]] = []
 
     async def body() -> None:
-        os.kill(os.getpid(), dump)
-        await asyncio.sleep(0.3)
+        # Asked, never sent: a signal no handler takes would end this process.
+        taken.append((faulthandler.unregister(signal.SIGUSR1), signal.getsignal(signal.SIGUSR1)))
 
-    _run_watched("5", monkeypatch, body)
-    text = log_file.read_text(encoding="utf-8")
-    assert "(most recent call first)" in text, "the signal wrote no stack"
-    assert " in body" in text, "the stack names the frame the loop was in"
-    assert faulthandler.unregister(dump) is False, "the signal outlived the loop"
+    _run_watched("5", monkeypatch, body, watchdog=watchdog)
+    assert taken == [(False, signal.SIG_DFL)], "the watched gateway took SIGUSR1 for a dump"
+    assert not hasattr(loop_watch, "DUMP_SIGNAL")
 
 
 _A_SECRET = "fake-value-no-dump-may-hold-0123456789"
@@ -212,8 +222,8 @@ def _a_frame_that_holds_the_gil_and_a_secret(seconds: float) -> None:
 def test_every_dump_names_frames_and_never_a_value(
     log_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The pool's dump, the watchdog's and the signal's name files, lines and functions only: a
-    value a frame holds (a request's data, a credential) is never written."""
+    """The pool's dump and the watchdog's name files, lines and functions only: a value a frame
+    holds (a request's data, a credential) is never written."""
 
     async def body() -> None:
         loop = asyncio.get_running_loop()
@@ -222,13 +232,11 @@ def test_every_dump_names_frames_and_never_a_value(
         busy = loop.run_in_executor(None, _a_worker_that_holds_a_secret, release)
         for _ in range(8):
             await asyncio.sleep(0.1)
-        if loop_watch.DUMP_SIGNAL is not None:
-            os.kill(os.getpid(), loop_watch.DUMP_SIGNAL)
         _a_frame_that_holds_the_gil_and_a_secret(1.0)
         release.set()
         await busy
 
-    _run_watched("0.3", monkeypatch, body)
+    _run_watched("0.3", monkeypatch, body, watchdog=True)
     text = log_file.read_text(encoding="utf-8")
     assert "in _a_worker_that_holds_a_secret" in text, "the pool's dump names the frame"
     assert "in _a_frame_that_holds_the_gil_and_a_secret" in text, "the watchdog's names it"
@@ -239,8 +247,8 @@ def test_every_dump_names_frames_and_never_a_value(
 def test_the_watch_lets_go_of_everything_when_the_loop_closes(
     log_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The signal goes back to no handler, the watchdog's timer is cancelled after its last arming,
-    and the file faulthandler writes is closed."""
+    """The watchdog's timer is cancelled after its last arming, the file faulthandler writes is
+    closed, and no signal was ever taken."""
     calls: list[str] = []
     sinks: list[object] = []
     real_arm, real_cancel = (
@@ -268,7 +276,7 @@ def test_the_watch_lets_go_of_everything_when_the_loop_closes(
     async def body() -> None:
         await asyncio.sleep(0.3)
 
-    _run_watched("5", monkeypatch, body)
+    _run_watched("5", monkeypatch, body, watchdog=True)
     assert "arm" in calls, "the watchdog was never armed"
     assert calls[-1] == "cancel", f"the watchdog was left armed: {calls[-3:]}"
     assert faulthandler.unregister(signal.SIGUSR1) is False, "the signal outlived the loop"
@@ -302,6 +310,71 @@ def test_an_unarmed_gateway_starts_no_watch(
     assert "loop-stall-watch" not in {t.name for t in threading.enumerate()} - before
     if hasattr(signal, "SIGUSR1"):
         assert signal.getsignal(signal.SIGUSR1) == signal.SIG_DFL, "an unarmed gateway took SIGUSR1"
+
+
+@pytest.mark.parametrize("value", [None, "", "0", "yes", "true"])
+def test_the_stall_limit_alone_arms_no_watchdog(
+    log_file: Path, monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    """🔴 Red before: the stall limit armed faulthandler's watchdog, whose dump of every thread can
+    crash a gateway whose other threads run Python. Only ``1``, the harness's opt-in by name, arms
+    it; the watch's own dumps run either way."""
+    if value is None:
+        monkeypatch.delenv(_WATCHDOG, raising=False)
+    else:
+        monkeypatch.setenv(_WATCHDOG, value)
+    called: list[str] = []
+    for name in ("dump_traceback_later", "cancel_dump_traceback_later", "register", "enable"):
+        monkeypatch.setattr(
+            loop_watch.faulthandler, name, lambda *a, _n=name, **k: called.append(_n)
+        )
+    monkeypatch.setenv(loop_watch.STALL_ENV, "0.3")
+
+    async def main() -> threading.Thread | None:
+        watch = loop_watch.arm_from_env()
+        await asyncio.sleep(0.6)
+        _a_frame_that_holds_the_loop(0.6)
+        return watch
+
+    watch = asyncio.run(main())
+    assert watch is not None
+    watch.join(timeout=5)
+    assert called == [], f"the stall limit alone called faulthandler: {called}"
+    assert _MARK in log_file.read_text(encoding="utf-8"), "the watch's own dump was not written"
+
+
+def test_the_harness_opt_in_arms_the_watchdog_and_changes_nothing_else(
+    log_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the harness's opt-in, the watchdog is armed at the watch's start and at every slice, and
+    cancelled when the loop closes; no signal is registered, and the watch's own dump is written as
+    without it."""
+    called: list[str] = []
+    for name in ("dump_traceback_later", "cancel_dump_traceback_later", "register", "enable"):
+        monkeypatch.setattr(
+            loop_watch.faulthandler, name, lambda *a, _n=name, **k: called.append(_n)
+        )
+
+    async def body() -> None:
+        _a_frame_that_holds_the_loop(0.6)
+        await asyncio.sleep(0.2)
+
+    _run_watched("0.3", monkeypatch, body, watchdog=True)
+    assert getattr(loop_watch, "WATCHDOG_ENV", None) == _WATCHDOG
+    assert called[0] == "dump_traceback_later" and called[-1] == "cancel_dump_traceback_later"
+    assert set(called) == {"dump_traceback_later", "cancel_dump_traceback_later"}, set(called)
+    assert _MARK in log_file.read_text(encoding="utf-8"), "the watch's own dump was not written"
+
+
+def test_the_harness_gateway_asks_for_the_watchdog_by_name() -> None:
+    """The browser harness starts its gateway with the stall limit and the watchdog's opt-in beside
+    it (``web/playwright.config.ts``): the one gateway the watchdog is armed in."""
+    config = (Path(__file__).resolve().parents[1] / "web" / "playwright.config.ts").read_text(
+        encoding="utf-8"
+    )
+    started = [line for line in config.splitlines() if f"{loop_watch.STALL_ENV}=" in line]
+    assert len(started) == 1, started
+    assert f"{_WATCHDOG}=1 " in started[0], started[0]
 
 
 @pytest.mark.parametrize("value", ["soon", "0", "-1", "nan"])

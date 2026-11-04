@@ -290,7 +290,10 @@ describe('the real config', () => {
     const config = readFileSync(join(WEB, 'playwright.config.ts'), 'utf8')
     const watch = readFileSync(join(WEB, '..', 'src', 'personalclaw', 'loop_watch.py'), 'utf8')
     expect(watch).toContain('STALL_ENV = "PERSONALCLAW_LOOP_STALL_SECONDS"')
-    expect(config).toContain('PERSONALCLAW_LOOP_STALL_SECONDS=${LOOP_STALL_SECONDS} exec "$PC" gateway')
+    expect(watch).toContain('WATCHDOG_ENV = "PERSONALCLAW_LOOP_STALL_WATCHDOG"')
+    expect(config).toContain(
+      'PERSONALCLAW_LOOP_STALL_SECONDS=${LOOP_STALL_SECONDS} PERSONALCLAW_LOOP_STALL_WATCHDOG=1 exec "$PC" gateway',
+    )
     expect(config).toMatch(/^const LOOP_STALL_SECONDS = \d+$/m)
   })
 })
