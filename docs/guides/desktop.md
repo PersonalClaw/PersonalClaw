@@ -296,11 +296,11 @@ one kind of network at once, the app will not connect, because it cannot tell yo
 about where you are going. And a name that resolves to `127.0.0.1` is treated as a network address,
 never as this computer — the next section is why that distinction is load-bearing.
 
-### Desktop capabilities are for the gateway on this computer only
+### Desktop capabilities are for the gateway this app started only
 
 The microphone, the global shortcut, native notifications, the login item and opening a sign-in page
 in your browser are exposed to the dashboard through a bridge the app attaches to the page. **That
-bridge is only ever attached to the gateway this app started.** A gateway on the network gets a plain
+bridge is only ever attached to the gateway this app started.** Any other gateway gets a plain
 window: the panel in **Settings → Security → Desktop capabilities** reads "desktop app not
 connected", exactly as it does in a browser tab, push-to-talk does nothing there, and a remote tool
 server's sign-in offers its link rather than opening it.

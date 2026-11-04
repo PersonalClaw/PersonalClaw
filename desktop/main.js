@@ -1504,7 +1504,7 @@ async function navigateToEndpoint(win, url, { isLocal = false } = {}) {
   if (!win || win.isDestroyed()) return false;
   cancelReachProbe();
   activeUrl = url;
-  const wantBridge = shouldAttachBridge(url);
+  const wantBridge = shouldAttachBridge(url, localGatewayUrl);
   if (win._pcBridgeAttached !== wantBridge) {
     setupWindowContents(win, { attachBridge: wantBridge });
     win._pcBounds();
@@ -1710,7 +1710,7 @@ async function openNewTab() {
 
   const isLocal = target === localGatewayUrl;
   const tabWin = makeWindow();
-  setupWindowContents(tabWin, { attachBridge: shouldAttachBridge(target) });
+  setupWindowContents(tabWin, { attachBridge: shouldAttachBridge(target, localGatewayUrl) });
   mainWindow.addTabbedWindow(tabWin);
 
   const wc = tabWin.webContents;

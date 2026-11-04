@@ -62,6 +62,16 @@ describe("the capability bridge is attached only by decision", () => {
     assert.strictEqual(/attachBridge:\s*true/.test(MAIN), false, "a call site hardcodes attachBridge: true");
   });
 
+  it("gives the bridge only to the gateway proven to serve this home: every decision names `localGatewayUrl`", () => {
+    // `localGatewayUrl` has one writer: the spawned gateway's ready line. A decision made on the
+    // address alone is not one about this home: being on this computer proves nothing.
+    const calls = [...MAIN.matchAll(/shouldAttachBridge\(([^()]*)\)/g)];
+    assert.ok(calls.length >= 2, "the bridge decisions are gone — this rail is now blind");
+    for (const m of calls) {
+      assert.match(m[1], /^[^,]+,\s*localGatewayUrl$/, `shouldAttachBridge(${m[1]}) decides without the app's own gateway`);
+    }
+  });
+
   it("does not expose the dialog's IPC through the capability preload, or vice versa", () => {
     // Two preloads, two surfaces. A switcher that could reach the microphone bridge, or a dashboard
     // page that could reach the switcher's `confirm`, would collapse them back into one.

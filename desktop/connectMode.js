@@ -174,15 +174,20 @@ function assertLoopbackTarget(url, what = "request") {
 /**
  * May the capability bridge (`preload.js`) be attached to a view loading `url`?
  *
- * Loopback only. The bridge reaches the microphone, global hotkeys, native notifications and the
- * login item; the gateway it is registered against had to prove same-machine access with
- * `.local_secret`. A remote gateway cannot make that claim, so the honest answer for its origin is
- * that the bridge is absent — which is exactly what `web/src/lib/desktopBridge.ts:123` already
- * handles (`window.pclawDesktop` missing → `null` → every capability reports unavailable).
+ * Only on the origin of `localBaseUrl`, the gateway this app knows serves its home: the one it
+ * spawned (its ready line). `main.js`'s `localGatewayUrl` has no other writer. The bridge
+ * reaches the microphone, global hotkeys, native notifications and the login item, and it is
+ * registered with that gateway on the home's `.local_secret`. Any other origin gets no bridge,
+ * loopback included: an address typed into the Gateways window is on this computer or not, and
+ * either way it proved nothing about this home. That is exactly what
+ * `web/src/lib/desktopBridge.ts:123` already handles (`window.pclawDesktop` missing → `null` →
+ * every capability reports unavailable).
  */
-function shouldAttachBridge(url) {
+function shouldAttachBridge(url, localBaseUrl) {
+  const own = parseGatewayUrl(String(localBaseUrl || ""));
+  if (!own.ok || own.trust !== TRUST_LOOPBACK) return false;
   const parsed = parseGatewayUrl(String(url || ""));
-  return Boolean(parsed.ok && parsed.trust === TRUST_LOOPBACK);
+  return Boolean(parsed.ok && parsed.trust === TRUST_LOOPBACK && parsed.origin === own.origin);
 }
 
 // ── confirmation records ───────────────────────────────────────────────────────────────────────
@@ -585,7 +590,7 @@ function switchTo(store, id, { currentFingerprint = "", localBaseUrl = "" } = {}
     if (!url) return { ok: false, reason: "local_gateway_not_running" };
     const next = setActive(reg, row.id);
     saveRegistry(store, next);
-    return { ok: true, registry: next, endpoint: row, navigateTo: url, attachBridge: shouldAttachBridge(url), needsConfirmation: false };
+    return { ok: true, registry: next, endpoint: row, navigateTo: url, attachBridge: shouldAttachBridge(url, localBaseUrl), needsConfirmation: false };
   }
 
   const parsed = parseGatewayUrl(row.base_url);
@@ -607,7 +612,7 @@ function switchTo(store, id, { currentFingerprint = "", localBaseUrl = "" } = {}
     registry: next,
     endpoint: row,
     navigateTo: parsed.origin,
-    attachBridge: shouldAttachBridge(parsed.origin),
+    attachBridge: shouldAttachBridge(parsed.origin, localBaseUrl),
     needsConfirmation: false,
   };
 }
