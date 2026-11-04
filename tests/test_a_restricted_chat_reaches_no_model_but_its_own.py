@@ -523,7 +523,7 @@ async def test_a_screen_the_person_shares_is_described_by_the_model_set_up_for_i
     """What the person hands an Incognito chat in a form its model cannot read is read by the
     model they set up for it, as in any chat; the chat's notice says so, and the allowance ends
     with the reading."""
-    from personalclaw.dashboard.chat_runner import _describe_screen_frame
+    from personalclaw.dashboard.screen_frames import _describe_screen_frame
     from personalclaw.usage_ledger import Attribution
 
     bindings["image_modality"] = [RELAY_REF]

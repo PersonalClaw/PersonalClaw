@@ -215,10 +215,15 @@ def declared_answer(event: object) -> str:
     """Who answers a call an agent CLI asks the host about, by what its tool declares, before any
     grant or person is consulted: :data:`DECLARED_READ` for a declared read, :data:`WORK_ASKS` for
     a call whose work asks the owner itself, ``""`` for every other call (it is asked, or a grant
-    approves it). The answer a native runtime gives the same call by never asking about it; each
-    gate asks it only past its refusals (task mode, deny-list, hooks, tool grants, a tier)."""
+    approves it) and for an ask for a project secret file, which only the owner answers
+    (``secret_file_grants``). The answer a native runtime gives the same call by never asking
+    about it; each gate asks it only past its refusals (task mode, deny-list, hooks, tool grants,
+    a tier)."""
+    from personalclaw.secret_file_grants import asked_of
     from personalclaw.task_modes import declared_level
 
+    if asked_of(event):
+        return ""  # a project secret file is asked of the owner, whatever its tool declares
     if declared_level(getattr(event, "risk_level", "") or "") == "safe":
         return DECLARED_READ
     return WORK_ASKS if getattr(event, "work_asks", False) is True else ""

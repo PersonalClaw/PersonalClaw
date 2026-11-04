@@ -87,7 +87,7 @@ describe('incognito copy matches the backend contract', () => {
     const read = (...p: string[]) => readFileSync(join(gateway, ...p), 'utf8')
     // An attachment's reading and a shared screen's description are the readings that take it.
     expect(read('dashboard', 'attachment_extract.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(2)
-    expect(read('dashboard', 'chat_runner.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(1)
+    expect(read('dashboard', 'screen_frames.py').match(/with memory_writes\.reading_their_input\(\):/g)?.length).toBe(1)
     // Dictation and read-aloud are the page's own requests, made as the dashboard and not as the
     // chat (and by no app's token), so no chat's scope reaches them: the work a request is for is
     // the one its sign-in proves, and your own pages' is none.

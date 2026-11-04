@@ -56,6 +56,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from personalclaw import secret_file_grants
 from personalclaw.chat_traces import (
     TEMPORARY,
     attached_files,
@@ -226,9 +227,10 @@ async def delete_chats(state: DashboardState, chats: Iterable[str], *, by: str) 
     and is neither deleted nor failed; one whose transcript could not be removed failed, and the
     rest of what it kept goes all the same.
 
-    For each chat, in order: it leaves the gateway's chats and its turn is stopped; what it keeps
-    on disk goes (:func:`purge_chat`), its transcript first, so a pass of memory still answering
-    for it keeps nothing it would write after (``HistoryConsolidator._was_deleted``); then what
+    For each chat, in order: it leaves the gateway's chats and its turn is stopped; what it was
+    allowed of a project's secret files ends (``secret_file_grants``); what it keeps on disk goes
+    (:func:`purge_chat`), its transcript first, so a pass of memory still answering for it keeps
+    nothing it would write after (``HistoryConsolidator._was_deleted``); then what
     memory filed under it goes from every memory (:func:`forget_what_memory_drew_from`), once for
     all of them; and its runtime is let go for good. One audit row per chat, naming it and who
     deleted it (*by*), never what it held.
@@ -271,6 +273,9 @@ async def delete_chats(state: DashboardState, chats: Iterable[str], *, by: str) 
             # again and waits for that, and a turn starting an agent's process may not leave.
             await cancel_and_wait([session.task], what=f"chat {name}", grace=2.0)
         spelled = {history_key, name, chat}
+        # What it was allowed of a project's secret files ends with it (`secret_file_grants`).
+        for key in _spellings(spelled):
+            secret_file_grants.end(key)
         kept = purge_chat(state, history_key, keys=spelled, attachments=files).transcript_kept
         keys |= spelled
         runtimes.append((history_key, kept))

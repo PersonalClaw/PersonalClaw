@@ -30,10 +30,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from personalclaw import cancellation, run_bounds, turn_streams
+from personalclaw import cancellation, run_bounds, secret_file_grants, turn_streams
 from personalclaw.acp.types import STOP_REASON_CANCELLED, STOP_REASON_STOPPED_BY_USER
 from personalclaw.agents.native import dispatch_plan
-from personalclaw.agents.native.approval import REJECT, ApprovalGate, deny_list_refusal, refusal_of
+from personalclaw.agents.native.approval import (
+    APPROVE,
+    REJECT,
+    ApprovalGate,
+    deny_list_refusal,
+    refusal_of,
+)
 from personalclaw.agents.native.attempt_audit import inference_attempt
 from personalclaw.agents.native.catalog_refresh import CatalogRefresh
 from personalclaw.agents.native.compaction import InProcessCompaction, compaction_summary
@@ -230,6 +236,9 @@ class NativeAgentRuntime(
         # start() and the approval gate fails fast (recoverable denial, no 300s
         # park) so the turn can't wedge waiting for input it will never get.
         self._unattended = bool(unattended)
+        # Whether a project secret file a file tool is refused is asked of the owner
+        # (:meth:`set_secret_file_asks`): off, so a host that does not ask gets the refusal.
+        self._secret_file_asks = False
         # Dry-run replay: observe-mode. Write-capable tools (any non-SAFE
         # risk level) are NOT executed — they return a synthetic "would have …"
         # observation so the run previews what WOULD happen with the current
@@ -1355,57 +1364,19 @@ class NativeAgentRuntime(
         # If the tool needs approval, _guard_and_invoke returns a sentinel and we
         # do the gated path here so we can yield the permission request.
         if result_str is _NEEDS_APPROVAL:
-            if self._unattended:
-                # Unattended run with no auto-approve policy: no human will ever
-                # answer, so don't surface a permission request and park on the
-                # gate for 300s before it times out to reject — fail fast with the
-                # same recoverable denial. (When the run carries an "auto"/"yolo"
-                # policy, _requires_approval already returned False and we never
-                # reach here.)
-                _, result_str = security.classify_denial(
-                    security.DENY_KIND_USER,
-                    "this tool needs approval but the run is unattended (no human to "
-                    "approve) — it was auto-declined",
-                    tool_name,
-                )
-                meta.update(_FAILED)
-                # Said to whoever consumes this stream, which can reach the Inbox.
-                meta[TOOL_META_AUTO_DENIED] = True
-            else:
-                # The id an answer names: the call's own, and for a call a model sent with none, one
-                # of its own, rather than the tool's name every such call of the tool would share.
-                request_id = call.tool_call_id or f"{tool_name}:{uuid.uuid4().hex[:12]}"
-                # Register the pending Future BEFORE surfacing the request, so an
-                # approve/reject that arrives the instant the UI sees the prompt
-                # (or synchronously, as in tests) is not lost to a race.
-                fut = self._approval.register(request_id)
-                yield AgentEvent(
-                    kind=EVENT_PERMISSION_REQUEST,
-                    request_id=request_id,
-                    tool_call_id=call.tool_call_id,
-                    title=tool_name,
-                    tool_input=args,
-                    # What this tool declares (the gate resolves effective risk from it, and
-                    # the dashboard's task-mode gate re-checks the call against it).
-                    risk_level=self.declared(tool_name).value,
-                    builds=tool_name in self._tool_builds,
-                    proposes=tool_name in self._tool_proposes,
-                    tells_owner=self._tells_owner(tool_name, args),
-                    annotations=self._annotations_of(tool_name),
-                    hooks_asked=self._hook_fire is not None,
-                    consequences=self._tool_consequences.get(tool_name),
-                )
-                decision = await self._approval.wait(request_id, fut)
-                if self._cancelled:
-                    result_str = "Error: cancelled"
-                    meta.update(_FAILED)
-                elif decision == REJECT:
-                    # Recoverable: WHY + adapt-don't-repeat guidance. A host's own refusal
-                    # (`refuse_tool`) is told as its reason, never as the user's decline.
-                    _, result_str = security.classify_denial(*refusal_of(decision), tool_name)
-                    meta.update(_FAILED)
-                else:
-                    result_str = await self._invoke(tool_name, args, meta_sink=meta)
+            answered: list[str] = []
+            async for ev in self._gated(prep, meta, answered):
+                yield ev
+            result_str = answered[0]
+        # A project secret file the call was refused, put to the owner (`secret_file_grants`).
+        if asked := meta.pop(secret_file_grants.ASKS_META_KEY, None):
+            reran: list[tuple[str, dict]] = []
+            async for ev in self._ask_for_secret_file(prep, asked, reran):
+                yield ev
+            if reran:
+                result_str, meta = reran[0]
+        if used := meta.pop(secret_file_grants.USED_META_KEY, None):
+            await secret_file_grants.log_use(self._session_key, tool_name, used)
 
         # Record the outcome and apply graduated breaker verdicts; a success clears this key's
         # streak. Whether it failed is the ONE bit the result carries to the tool card
@@ -1457,6 +1428,123 @@ class NativeAgentRuntime(
         )
         self._messages.append(self._tool_result_msg(call, result_str))
         self._stop_if_breaker_says()
+
+    async def _gated(
+        self, prep: "_PreparedCall", meta: dict, answered: list[str]
+    ) -> AsyncIterator[AgentEvent]:
+        """The gated path of a call :meth:`_guard_and_invoke` says needs approval: the permission
+        request, parked on the gate until ``approve_tool``/``reject_tool`` resolves it, and the
+        call's result appended to *answered* (invoked on an Approve, else the refusal)."""
+        from personalclaw import security
+
+        call, tool_name, args = prep.call, prep.tool_name, prep.args
+        if self._unattended:
+            # Unattended run with no auto-approve policy: no human will ever
+            # answer, so don't surface a permission request and park on the
+            # gate for 300s before it times out to reject — fail fast with the
+            # same recoverable denial. (When the run carries an "auto"/"yolo"
+            # policy, _requires_approval already returned False and we never
+            # reach here.)
+            _, result_str = security.classify_denial(
+                security.DENY_KIND_USER,
+                "this tool needs approval but the run is unattended (no human to "
+                "approve) — it was auto-declined",
+                tool_name,
+            )
+            meta.update(_FAILED)
+            # Said to whoever consumes this stream, which can reach the Inbox.
+            meta[TOOL_META_AUTO_DENIED] = True
+        else:
+            # The id an answer names: the call's own, and for a call a model sent with none, one
+            # of its own, rather than the tool's name every such call of the tool would share.
+            request_id = call.tool_call_id or f"{tool_name}:{uuid.uuid4().hex[:12]}"
+            # Register the pending Future BEFORE surfacing the request, so an
+            # approve/reject that arrives the instant the UI sees the prompt
+            # (or synchronously, as in tests) is not lost to a race.
+            fut = self._approval.register(request_id)
+            yield AgentEvent(
+                kind=EVENT_PERMISSION_REQUEST,
+                request_id=request_id,
+                tool_call_id=call.tool_call_id,
+                title=tool_name,
+                tool_input=args,
+                # What this tool declares (the gate resolves effective risk from it, and
+                # the dashboard's task-mode gate re-checks the call against it).
+                risk_level=self.declared(tool_name).value,
+                builds=tool_name in self._tool_builds,
+                proposes=tool_name in self._tool_proposes,
+                tells_owner=self._tells_owner(tool_name, args),
+                annotations=self._annotations_of(tool_name),
+                hooks_asked=self._hook_fire is not None,
+                consequences=self._tool_consequences.get(tool_name),
+            )
+            decision = await self._approval.wait(request_id, fut)
+            if self._cancelled:
+                result_str = "Error: cancelled"
+                meta.update(_FAILED)
+            elif decision == REJECT:
+                # Recoverable: WHY + adapt-don't-repeat guidance. A host's own refusal
+                # (`refuse_tool`) is told as its reason, never as the user's decline.
+                _, result_str = security.classify_denial(*refusal_of(decision), tool_name)
+                meta.update(_FAILED)
+            else:
+                result_str = await self._invoke(tool_name, args, meta_sink=meta)
+        answered.append(result_str)
+
+    async def _ask_for_secret_file(
+        self, prep: "_PreparedCall", asked: dict, reran: list[tuple[str, dict]]
+    ) -> AsyncIterator[AgentEvent]:
+        """Ask the owner for the project secret file *asked* names, which the call was refused
+        (``secret_file_grants``), and on an Allow run the call once more, into *reran*.
+
+        Asked only where this run's host asks it (:meth:`set_secret_file_asks`) and never on an
+        unattended run: anywhere else the refusal stands. Asked under an id of its own and never
+        decided by this run's approval policy (``_requires_approval``): an Allow lets this chat
+        reach that file for that operation until the chat ends, recorded first in the security log,
+        and Deny, no answer or a stopped turn keeps the refusal and grants nothing. The call runs
+        again through every check, its own approval among them, and is not asked about twice."""
+        if not self._secret_file_asks or self._unattended:
+            return
+        call, tool_name, args = prep.call, prep.tool_name, prep.args
+        request_id = f"{call.tool_call_id or tool_name}:secret-file:{uuid.uuid4().hex[:12]}"
+        fut = self._approval.register(request_id)
+        yield AgentEvent(
+            kind=EVENT_PERMISSION_REQUEST,
+            request_id=request_id,
+            tool_call_id=call.tool_call_id,
+            title=tool_name,
+            tool_input=args,
+            risk_level=self.declared(tool_name).value,
+            builds=tool_name in self._tool_builds,
+            proposes=tool_name in self._tool_proposes,
+            tells_owner=self._tells_owner(tool_name, args),
+            annotations=self._annotations_of(tool_name),
+            hooks_asked=self._hook_fire is not None,
+            consequences=self._tool_consequences.get(tool_name),
+            secret_file=asked["op"],
+        )
+        decision = await self._approval.wait(request_id, fut)
+        if (
+            self._cancelled
+            or decision != APPROVE
+            or not secret_file_grants.grantable(asked["path"])
+        ):
+            return
+        try:
+            await secret_file_grants.log_grant(self._session_key, asked)
+        except Exception:  # noqa: BLE001 - a grant the security log cannot record is not made
+            logger.warning("native: a secret file grant could not be recorded", exc_info=True)
+            return
+        secret_file_grants.allow(self._session_key, asked["path"], asked["op"])
+        meta: dict = {}
+        result_str = await self._guard_and_invoke(tool_name, args, meta=meta)
+        if result_str is _NEEDS_APPROVAL:
+            answered: list[str] = []
+            async for ev in self._gated(prep, meta, answered):
+                yield ev
+            result_str = answered[0]
+        meta.pop(secret_file_grants.ASKS_META_KEY, None)
+        reran.append((result_str, meta))
 
     def _stop_if_breaker_says(self) -> None:
         """End the turn when the breaker's run-wide rungs say so, once, keeping the sentence.
@@ -1604,7 +1692,9 @@ class NativeAgentRuntime(
         elif (prov := self._tool_index.get(tool_name)) is not None:
             why = "refused_by_tool"
             try:
-                with self._dispatch_scope():
+                # A pre-flight reaches no file: a grant it meets is used when the call runs.
+                scope = secret_file_grants.call(self._session_key, tool_name, meta, uses=False)
+                with self._dispatch_scope(), scope:
                     refused = await prov.preflight(tool_name, args)
             except Exception:  # noqa: BLE001 - a check that cannot be made refuses nothing
                 logger.warning("native: %s's pre-flight failed; asking", tool_name, exc_info=True)
@@ -1709,7 +1799,10 @@ class NativeAgentRuntime(
         # the query phrasing drifts. Cheap insurance against the cardinal failure.
         if self._tool_retriever is not None:
             self._tool_retriever.mark_used(tool_name)
-        with self._dispatch_scope():
+        with (
+            self._dispatch_scope(),
+            secret_file_grants.call(self._session_key, tool_name, meta_sink),
+        ):
             result = await prov.invoke(tool_name, args)
         return observed(result, meta_sink)
 
@@ -2079,6 +2172,13 @@ class NativeAgentRuntime(
     def set_approval_source(self, source: Callable[[], str]) -> None:
         """Read the approval policy from *source* at every decision (`_policy_now`)."""
         self._approval_source = source
+
+    def set_secret_file_asks(self, asks: bool) -> None:
+        """Whether this turn asks the owner for a project secret file a file tool was refused
+        (``secret_file_grants``): a chat runner turns it on in a chat of the owner's they are in,
+        and off on an unattended turn and in a conversation an app started, where the refusal
+        stands. Every other host leaves it off."""
+        self._secret_file_asks = bool(asks)
 
     def set_task_mode(self, mode: str) -> None:
         """Set the task mode (agent/ask/plan/build) enforced in _guard_and_invoke."""

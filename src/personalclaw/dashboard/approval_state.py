@@ -517,11 +517,17 @@ class DashboardApprovalState:
         protected folders, which no grant answers (``run_bounds``): its entry's ``reach`` says so,
         as its card does; and a call in work
         someone other than the owner asked for, which none of her switches answers
-        (``approval_grants``, rule 4): its entry's ``asked_for`` says so."""
+        (``approval_grants``, rule 4): its entry's ``asked_for`` says so; and an ask for a project
+        secret file, which only its own Allow answers (``secret_file``)."""
         if approval_id in self.__dict__.get("_answered_alone", set()):
             return True
         entry = self._pending_approvals.get(approval_id) or {}
-        return bool(entry.get("reach") or entry.get("asked_for"))
+        return bool(entry.get("reach") or entry.get("asked_for") or entry.get("secret_file"))
+
+    def secret_file_of(self, approval_id: str) -> str:
+        """What the pending approval *approval_id* asks to do with a project secret file,
+        ``"read"`` or ``"write"`` (``secret_file_grants``), ``""`` when it asks for none."""
+        return str((self._pending_approvals.get(approval_id) or {}).get("secret_file") or "")
 
     async def hold_session_approval(
         self,
@@ -540,6 +546,7 @@ class DashboardApprovalState:
         deny_effect: str = "",
         asked_for: str = "",
         confirms: Sequence[str] | None = None,
+        secret_file: str = "",
     ) -> None:
         """Publish the approval a chat's runner is about to wait on, under
         :func:`chat_approval_id`.
@@ -556,7 +563,9 @@ class DashboardApprovalState:
         (``turn_endings.deny_effect``), "" when it declines it. ``asked_for`` names who asked for
         the turn when the owner did not (``approval_grants.asked_for_line``). ``confirms`` is the
         second confirmation the runner worked out for the call (``approval_confirms``); a caller
-        that names none gets the one that fails closed, ``undeclared``.
+        that names none gets the one that fails closed, ``undeclared``. ``secret_file`` is what an
+        ask for a project secret file asks to do with it (``secret_file_grants``), ``""`` for any
+        other call: only Allow for this session or Deny answers it, and only in PersonalClaw.
         """
         entry = self._approval_entry(
             chat_approval_id(session.key, request_id),
@@ -577,6 +586,7 @@ class DashboardApprovalState:
             deny_effect=deny_effect,
             asked_for=asked_for,
             confirms=confirms,
+            secret_file=secret_file,
             asked_by=approval_answer.asker_of_chat(
                 f"{DASHBOARD_SESSION_PREFIX}{session.key}", created_by_app=session.created_by_app
             ).label,
@@ -604,6 +614,7 @@ class DashboardApprovalState:
         deny_effect: str = "",
         asked_for: str = "",
         confirms: Sequence[str] | None = None,
+        secret_file: str = "",
     ) -> dict[str, Any]:
         """The ONE shape a pending approval has, whatever raised it.
 
@@ -630,7 +641,10 @@ class DashboardApprovalState:
         by ending its turn), said on every card before it is pressed; "" when it declines it.
         ``asked_for`` says someone other than the owner asked for the work the call is made in,
         naming them (``approval_grants.asked_for_line``), and why none of her switches answers it;
-        "" for her own work. Its card answers this call alone.
+        "" for her own work. Its card answers this call alone. ``secret_file`` is what an ask for a
+        project secret file asks to do with it, ``"read"`` or ``"write"`` (``secret_file_grants``),
+        ``""`` for any other call: its card offers Allow for this session and Deny, and nothing
+        else answers it.
         """
         from personalclaw.approval_place import place_of
         from personalclaw.approval_source import approval_source_label, live_chat_name, whose_work
@@ -665,6 +679,7 @@ class DashboardApprovalState:
             # (`approval_confirms.CONFIRMS`), worked out once where the call was raised: every
             # surface asks for the same calls. Fails closed: a row nobody worked it out for asks.
             "confirms": [UNDECLARED] if confirms is None else list(confirms),
+            "secret_file": secret_file,
             "trigger": trigger,
             "trigger_name": named,
             "whose_work": whose,
@@ -1282,8 +1297,9 @@ class DashboardApprovalState:
         its arguments and purpose as this entry holds them for the dashboard's card, what the
         call can touch, and the answers it offers.
 
-        A call whose row names a second confirmation (``confirms``) is never put to a prompt: a
-        prompt answers on one press, which would skip the confirmation every other surface asks.
+        A call whose row names a second confirmation (``confirms``), or that asks for a project
+        secret file (``secret_file``), is never put to a prompt: a prompt answers on one press,
+        which would skip the confirmation every other surface asks.
         The owner gets the message with the link instead, on the same channels, and answers it
         where it asks once more (:meth:`_skips_its_confirm` refuses a press that arrives anyway)."""
         import secrets
@@ -1293,7 +1309,7 @@ class DashboardApprovalState:
         from personalclaw.approval_brief import APPROVAL_BRIEF_META_KEY, entry_approval_brief
         from personalclaw.config.credentials import owner_id_for
 
-        if entry.get("confirms"):
+        if entry.get("confirms") or entry.get("secret_file"):
             await self._approval_link_on_a_channel(approval_id, entry, providers)
             return
         prompts: dict[str, Any] = self.__dict__.setdefault("_channel_prompts", {})
@@ -1396,10 +1412,21 @@ class DashboardApprovalState:
         names (``confirms``): refused and logged, and the approval keeps waiting.
 
         A channel's prompt answers on one press and asks no confirmation, so a row that names one
-        is never put to it (:meth:`_approval_on_a_channel`). A press from a channel that arrives
-        anyway approves nothing. A Deny is no approval, and answers."""
+        is never put to it (:meth:`_approval_on_a_channel`), nor an ask for a project secret file
+        (``secret_file``), which only the card's Allow for this session answers. A press from a
+        channel that arrives anyway approves nothing. A Deny is no approval, and answers."""
         entry = self._pending_approvals.get(approval_id) or {}
-        if by.kind != approval_answer.CHANNEL or not entry.get("confirms"):
+        if by.kind != approval_answer.CHANNEL:
+            return False
+        if entry.get("secret_file"):
+            self._log.warning(
+                "approval %s: a press on %s would open a project secret file, which is answered "
+                "only in PersonalClaw; nothing was decided",
+                approval_id,
+                by.name or "a channel",
+            )
+            return True
+        if not entry.get("confirms"):
             return False
         self._log.warning(
             "approval %s: a press on %s would approve a call that asks once more (%s), which a "
@@ -1650,7 +1677,9 @@ class DashboardApprovalState:
         link = dashboard_link(f"#/companion?approval={approval_id}")
         text = f"PersonalClaw is waiting for your approval: {what}, from {entry['source_label']}"
         text += f", to {why}" if why else ""
-        if entry.get("confirms"):
+        if entry.get("secret_file"):
+            text += ". It asks to open a project's secret file, so it is answered in PersonalClaw"
+        elif entry.get("confirms"):
             text += ". It asks you once more before it runs, so it is answered in PersonalClaw"
         text += f". Answer it here: {link}" if link else ". Answer it in PersonalClaw."
         outcome = None

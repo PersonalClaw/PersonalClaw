@@ -3076,6 +3076,10 @@ async def api_chat_session_approve(request: web.Request) -> web.Response:
     # (`approval_grants`, rule 2). Refused before anything is decided, so the call is still asking
     # and "Allow once" still answers it.
     standing = _CARD_GRANTS.get(action, "")
+    # An ask for a project secret file is answered by Allow for this session or Deny, never by a
+    # standing grant (`secret_file_grants`).
+    if standing and state.secret_file_of(chat_approval_id(session.key, request_id)):
+        return json_error("approval_secret_file", status=409)
     if standing and not approval_grants.stands(
         standing, caller=f"dashboard:{session.key}", subject=f"scope={action}"
     ):

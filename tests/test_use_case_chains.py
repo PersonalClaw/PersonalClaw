@@ -762,7 +762,7 @@ class TestDirectConsumerAdvance:
         DISCRIMINATING in the other direction — it fails if this is ever unified."""
         from unittest.mock import patch
 
-        from personalclaw.dashboard import chat_runner
+        from personalclaw.dashboard import screen_frames
 
         monkeypatch.setattr(uc, "_known_provider_names", lambda: {"p1", "p2"})
         uc.save_active_models({"image_modality": ["p1:m1", "p2:m2"]})
@@ -777,7 +777,7 @@ class TestDirectConsumerAdvance:
             ),
             pytest.raises(RuntimeError, match="vision provider down"),
         ):
-            await chat_runner._describe_screen_frame(
+            await screen_frames._describe_screen_frame(
                 "data:image/png;base64,AA==", usage=Attribution(source="chat")
             )
         assert calls == [""]  # resolved once, with NO model_override — no chain walk

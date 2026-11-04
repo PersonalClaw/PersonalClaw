@@ -845,7 +845,8 @@ or `*.secret` file, nor any alias of one; no project secret file by its name, wh
 `.envrc`, a `secrets` data file such as `secrets.json` or `secrets.yaml` (a source module such as
 `secrets.py` still reads), `credentials*.json`, `service-account*.json`, `.npmrc`, `.pypirc`,
 `.netrc`; a template such as `.env.example` still reads), which the shell's screen refuses by the
-same rule; and no change to what git or the owner's shell runs as
+same rule, except a project's secret file a chat was allowed (below); and no change to what git or
+the owner's shell runs as
 her (`owner_only`: a repository's `.git/config` and `.git/hooks/`, its `.gitmodules`, her
 `~/.gitconfig`, her `~/.zshrc` and the rest above). A path that starts with `~/` names the
 owner's home, as the owner writes it, and meets every one of these checks as any absolute path
@@ -860,6 +861,26 @@ and every match is checked one by one, so a listing, a search or a map leaves ou
 could not open. `code_map` indexes the workspace, an allowed working directory or a folder inside
 one, never a knowledge source's folder, whose other files the tools do not read; its index skips
 the same files (`codegraph.CodeGraphIndex`).
+
+A project's own secret file opens for a chat the owner allows it for (`secret_file_grants`).
+`read_file` refused one asks to read it, and `write_file` and `edit_file` to change it, on the chat's
+card, with two answers: Allow for this session and Deny. Only a project secret file by its name and
+nothing more is offered: never PersonalClaw's credential store, a sign-in file where it is one
+(`~/.netrc`), a file at or inside a credential location, key material (`*.key`, `*.pem`,
+`*.secret`) or a file with a second name on the disk. Nothing that answers other calls on its own
+answers the ask: no approval mode, Trust, Trust reads, YOLO, standing grant, hook auto-approve
+pattern or agent's Always allow (`run_bounds.put_to_a_person`, `approval_grants.declared_answer`).
+A Trust or YOLO switch pressed while it waits leaves it asking, the chat's approve route refuses a
+standing grant for it (409 `approval_secret_file`), and a channel is sent the link to it rather
+than a prompt. It is asked only in a chat of the owner's they are in: an unattended turn and a
+conversation an app started get the refusal, and so do a subagent and an agent CLI, whose hosts ask
+nothing for it. An Allow is that file, that operation and that chat, kept in memory: deleting the
+chat ends it, and a restart ends every one. The call runs again through every check, its own
+approval included, so the operator's pre-tool hooks run a second time for that call. The security
+log records each Allow (`secret_file_granted`) and each call it lets through
+(`secret_file_grant_used`) with the file's real path and the operation, never its contents, and
+what the file holds reaches the model masked, as every tool result's values do. A search, a listing
+and a map still leave secret files out, and the shell still refuses them.
 
 A file the agent names in a chat opens where the owner reads the chat: the Files view's read
 surfaces (`/api/file-read`, `/api/file-raw`, `/api/file-watch`) also admit what the agent's file
