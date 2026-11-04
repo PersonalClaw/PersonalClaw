@@ -72,7 +72,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from personalclaw.triggers.provider import armable
 
@@ -112,6 +112,14 @@ MAX_SEEN_KEYS = 500
 _ERROR_CHARS = 200
 
 _SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+#: A watch's record that could not be read, by its path (`_Held`). Its watch says so once per
+#: distinct reason and backs off, doubling from one minute to half an hour, and tries again each
+#: time: a record that can be neither read nor saved over said so on every poll, forever.
+#: Process-local; a record read again clears it.
+_UNREADABLE: dict[str, _Held] = {}
+_UNREADABLE_FIRST_WAIT = 60.0
+_UNREADABLE_MAX_WAIT = 1800.0
 
 #: Anchor hrefs and RSS/Atom entry ids — the two shapes carrying a stable per-item identity without
 #: parsing a whole document. `auto` tries both. Deliberately NOT a general HTML parser: an
@@ -217,13 +225,30 @@ class CheckRecord:
         return cls(
             outcome=outcome,
             said=str(raw.get("said", "") or ""),
-            items=int(raw.get("items", 0) or 0),
+            items=_whole(raw.get("items")),
             url=str(raw.get("url", "") or ""),
-            at=float(raw.get("at", 0.0) or 0.0),
-            since=float(raw.get("since", 0.0) or 0.0),
-            count=int(raw.get("count", 0) or 0),
+            at=_number(raw.get("at")),
+            since=_number(raw.get("since")),
+            count=_whole(raw.get("count")),
             reported=raw.get("reported") is True,
         )
+
+
+def _whole(value: Any) -> int:
+    """A sidecar's count, or 0 for one that is not a number: a field of the wrong type reads as its
+    default, the way a missing one does, rather than stopping the poll."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _number(value: Any) -> float:
+    """A sidecar's time or amount, or 0.0 for one that is not a number (see :func:`_whole`)."""
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
 
 
 @dataclass
@@ -246,6 +271,10 @@ class WatchState:
     last_polled_at: float = 0.0
     last_status: int = 0
     check: CheckRecord = field(default_factory=CheckRecord)
+    #: Why the sidecar this state should have come from could not be read, when it could not (the
+    #: sentence `record_files.Unreadable` gives, naming the copy kept of it). Never saved: the next
+    #: save writes this fresh state over the damaged file.
+    unreadable: str = field(default="", compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -265,15 +294,27 @@ class WatchState:
             return cls()
         seen = raw.get("seen")
         return cls(
-            seeded=bool(raw.get("seeded", False)),
+            # `is True`: the text "false" is not seeded, as `bool("false")` would have it.
+            seeded=raw.get("seeded") is True,
             seen=[str(s) for s in seen if isinstance(s, str)] if isinstance(seen, list) else [],
             day=str(raw.get("day", "") or ""),
-            requests_today=int(raw.get("requests_today", 0) or 0),
-            headless_today=int(raw.get("headless_today", 0) or 0),
-            last_polled_at=float(raw.get("last_polled_at", 0.0) or 0.0),
-            last_status=int(raw.get("last_status", 0) or 0),
+            requests_today=_whole(raw.get("requests_today")),
+            headless_today=_whole(raw.get("headless_today")),
+            last_polled_at=_number(raw.get("last_polled_at")),
+            last_status=_whole(raw.get("last_status")),
             check=CheckRecord.from_dict(raw.get("check")),
         )
+
+
+class _Held(NamedTuple):
+    """A watch's record that could not be read, as `_UNREADABLE` keeps it: the reason, and whether
+    a fresh record could be saved over it; when it looks again, and the wait it took; and the check
+    that said so, which the page reads while the record cannot be (`last_check`)."""
+
+    why: str
+    look_at: float
+    wait: float
+    check: CheckRecord
 
 
 def _state_dir(base_dir: Path | str | None) -> Path:
@@ -291,20 +332,36 @@ def _state_path(trigger_id: str, base_dir: Path | str | None) -> Path:
 def load_state(trigger_id: str, *, base_dir: Path | str | None = None) -> WatchState:
     """This watch's state, or a fresh unseeded one. Never raises.
 
-    A corrupt sidecar reads as unseeded rather than as an error: the cost is one silent re-seed (no
-    fire), and the alternative — a poll loop that dies on a bad JSON file — would stop every OTHER
-    watch on the machine.
+    A sidecar that is there and cannot be read (no JSON, a byte that is not UTF-8, not an object,
+    or a file that cannot be opened) reads as a fresh unseeded state carrying why
+    (`WatchState.unreadable`), after `record_files` has kept a copy of it beside it and logged it:
+    its watch says so on its next check and starts over, at the cost of one re-seed (no fire), or
+    checks nothing until a fresh record can be saved over it (`_unreadable_check`). A field of the
+    wrong type reads as its default (`WatchState.from_dict`). The alternative, a poll that raises
+    on one bad file, stopped every OTHER watch on the machine.
     """
+    from personalclaw import record_files
+    from personalclaw.home_paths import from_home
+
     try:
-        return WatchState.from_dict(
-            json.loads(_state_path(trigger_id, base_dir).read_text(encoding="utf-8"))
+        document = record_files.read(_state_path(trigger_id, base_dir), dict)
+    except record_files.Unreadable as exc:
+        # The watch's own words, not the store's: `record_files` says nothing is written to the file
+        # and asks for a repair, while this watch writes a fresh record over it.
+        kept = (
+            f"a copy of it as it was is kept beside it as {exc.kept.name}"
+            if exc.kept is not None
+            else "no copy of it could be kept, since it could not be opened"
         )
-    except (OSError, json.JSONDecodeError):
-        return WatchState()
+        return WatchState(
+            unreadable=f"{from_home(exc.path)} could not be read ({exc.why}): {kept}."
+        )
+    return WatchState.from_dict(document) if document is not None else WatchState()
 
 
-def save_state(trigger_id: str, state: WatchState, *, base_dir: Path | str | None = None) -> None:
-    """Persist atomically. A failure is logged, never raised — see `load_state`."""
+def save_state(trigger_id: str, state: WatchState, *, base_dir: Path | str | None = None) -> bool:
+    """Persist atomically, and say whether it was. A failure is logged, never raised — see
+    `load_state`."""
     from personalclaw.atomic_write import atomic_write
 
     path = _state_path(trigger_id, base_dir)
@@ -313,6 +370,8 @@ def save_state(trigger_id: str, state: WatchState, *, base_dir: Path | str | Non
         atomic_write(path, json.dumps(state.to_dict(), indent=2, sort_keys=True) + "\n")
     except OSError:
         logger.debug("web_poll: could not persist watch state for %s", trigger_id, exc_info=True)
+        return False
+    return True
 
 
 def web_watch_triggers(store: Any) -> list[Any]:
@@ -664,6 +723,53 @@ def _checked(
     )
 
 
+def _unreadable_waits(record: str, now: float) -> bool:
+    """Whether a watch whose record could not be read waits to look again (`_UNREADABLE`)."""
+    held = _UNREADABLE.get(record)
+    return held is not None and now < held.look_at
+
+
+def _unreadable_said(record: str, why: str, check: CheckRecord, now: float) -> bool:
+    """Whether this check says the watch's record could not be read: the first time for *why*.
+    The same reason again says nothing new: it looks again later, each wait twice the last, up to
+    `_UNREADABLE_MAX_WAIT`, and the page keeps reading the check that first said it."""
+    held = _UNREADABLE.get(record)
+    if held is not None and held.why == why:
+        wait = min(held.wait * 2, _UNREADABLE_MAX_WAIT)
+        held.check.at, held.check.count = now, held.check.count + 1
+        _UNREADABLE[record] = held._replace(look_at=now + wait, wait=wait)
+        return False
+    wait = _UNREADABLE_FIRST_WAIT
+    _UNREADABLE[record] = _Held(why=why, look_at=now + wait, wait=wait, check=check)
+    return True
+
+
+def _unreadable_check(
+    trigger: Any, state: WatchState, record: str, *, url: str, now: float, base_dir: Any
+) -> PollOutcome:
+    """A check of a watch whose record could not be read (`WatchState.unreadable`): it starts over,
+    saving a fresh record over the damaged file, a copy of which is kept beside it. A record it
+    cannot save over either leaves it checking nothing until it can, and says that instead: it
+    tries again after each wait (`_unreadable_said`). Either is said once for its reason."""
+    failed = WatchCheck.FAILED.value
+    said = (
+        "Its record of what it has seen could not be read, so it starts over: its next check "
+        f"looks at the page afresh and fires on nothing it finds then. {state.unreadable}"
+    )
+    _record(state, failed, said, url=url, items=0, now=now)
+    saved = save_state(trigger.id, state, base_dir=base_dir)
+    if not saved:
+        said = state.check.said = (
+            "Its record of what it has seen could not be read, and a fresh one could not be saved "
+            "over it, so it checks nothing until one can be: it tries again in a minute, then less "
+            f"often, up to every half hour. {state.unreadable}"
+        )
+    why = f"{'saved' if saved else 'not saved'}: {state.unreadable}"
+    if not _unreadable_said(record, why, state.check, now):
+        return PollOutcome()
+    return PollOutcome(check=failed, said=said, started=True, owed=True)
+
+
 def poll_one(
     trigger: Any,
     *,
@@ -691,7 +797,13 @@ def poll_one(
     if not url:
         return PollOutcome()
 
+    record = str(_state_path(trigger.id, base_dir))
+    if _unreadable_waits(record, now):
+        return PollOutcome()
     state = load_state(trigger.id, base_dir=base_dir)
+    if state.unreadable:
+        return _unreadable_check(trigger, state, record, url=url, now=now, base_dir=base_dir)
+    _UNREADABLE.pop(record, None)
 
     interval = poll_interval_for(trigger)
     if state.last_polled_at and now - state.last_polled_at < interval:
@@ -1024,7 +1136,11 @@ def last_check(trigger: Any, *, base_dir: Path | str | None = None) -> dict[str,
 
     spec = trigger.spec if isinstance(trigger.spec, dict) else {}
     url = str(spec.get("url", "") or "").strip()
-    check = load_state(trigger.id, base_dir=base_dir).check
+    state = load_state(trigger.id, base_dir=base_dir)
+    held = _UNREADABLE.get(str(_state_path(trigger.id, base_dir)))
+    # A record that cannot be read holds no check: the page reads the one its watch said, while
+    # that lasts (`_unreadable_check`).
+    check = held.check if state.unreadable and held is not None else state.check
     if not check.outcome or check.url != url:
         return None
     return {
