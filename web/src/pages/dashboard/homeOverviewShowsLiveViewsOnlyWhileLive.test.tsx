@@ -6,10 +6,16 @@ import type { BrowseStatus, ComputerUseLiveView } from '../../lib/api'
 
 // ── Home's Overview shows its live views only while something is live ──────────────────────────
 //
-// The Overview drew a Desktop live view band on every install, all the time: an Armed/Off pill,
-// two toggles and an empty feed for a desktop nobody drove. It now shows only while the agent
-// drives the desktop: the gateway's `live` (an action or a walk within the last 30 s), read when
-// the Overview opens and again at each `computer_use` hint the gateway rings when an action lands.
+// The Overview drew a Desktop live view band and a Browse live view band on every install, all
+// the time: an Armed/Off pill, two toggles and an empty feed for a desktop nobody drove, an Idle
+// pill and a Stop button for a browser nobody browsed with. Each band now shows only while what it
+// shows is happening:
+//
+//  · Desktop live view while the agent drives the desktop: the gateway's `live` (an action or a
+//    walk within the last 30 s), read when the Overview opens and again at each `computer_use`
+//    hint the gateway rings when an action lands;
+//  · Browse live view while a browse takes steps: the status read's `live`, and each `browse_step`
+//    frame at once, for 30 s after the last one.
 //
 // The bands' neighbours are stubs: what is pinned is whether each band is drawn.
 
@@ -24,10 +30,12 @@ vi.mock('../../lib/api', async (orig) => ({
   },
 }))
 
-const sockets: Array<(m: WsMessage) => void> = []
+// One subscription per handler, as the real socket keeps: the hook runs on every render, and a list
+// would hand one frame to the same handler once per render.
+const sockets = new Set<(m: WsMessage) => void>()
 vi.mock('../../lib/useChatSocket', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
-  useChatSocket: (onMessage: (m: WsMessage) => void) => { sockets.push(onMessage) },
+  useChatSocket: (onMessage: (m: WsMessage) => void) => { sockets.add(onMessage) },
 }))
 // The real hook reads once on mount, then on an interval while the tab is visible; an interval in
 // jsdom is noise, so this stand-in keeps the mount read alone.
@@ -63,7 +71,7 @@ const deliver = (m: WsMessage) => act(() => { for (const on of sockets) on(m) })
 
 beforeEach(() => {
   resetDataStore(); sessionStorage.clear(); localStorage.clear()
-  sockets.length = 0
+  sockets.clear()
   liveView.mockResolvedValue(QUIET_DESKTOP)
   browseStatus.mockResolvedValue(IDLE_BROWSER)
 })
@@ -96,5 +104,37 @@ describe('the Desktop live view', () => {
     deliver({ type: 'refresh', data: { kinds: ['computer_use'] } } as WsMessage)
 
     expect(await screen.findByRole('heading', { name: 'Desktop live view' })).toBeTruthy()
+  })
+})
+
+describe('the Browse live view', () => {
+  it('🔴 is not drawn while no browse runs, nor its Stop', async () => {
+    render(<HomeOverview {...route} />)
+    await waitFor(() => expect(browseStatus).toHaveBeenCalled())
+
+    expect(heading('Browse live view')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Stop all browsing/ })).toBeNull()
+  })
+
+  it('shows while a browse takes steps, and its steps with it', async () => {
+    render(<HomeOverview {...route} />)
+    await waitFor(() => expect(browseStatus).toHaveBeenCalled())
+    expect(heading('Browse live view')).toBeNull()
+
+    deliver({
+      type: 'browse_step',
+      data: { run_id: 'run-1', step_n: 3, url: 'https://example.com/pricing', action: 'CLICK a1b2 (Pricing)', screenshot: '', note: '' },
+    } as WsMessage)
+
+    expect(await screen.findByRole('heading', { name: 'Browse live view' })).toBeTruthy()
+    expect(screen.getByText('https://example.com/pricing')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Stop/ })).toBeNull()
+  })
+
+  it('shows on a page opened mid-browse, from the status read', async () => {
+    browseStatus.mockResolvedValue({ ...IDLE_BROWSER, live: true })
+    render(<HomeOverview {...route} />)
+
+    expect(await screen.findByRole('heading', { name: 'Browse live view' })).toBeTruthy()
   })
 })

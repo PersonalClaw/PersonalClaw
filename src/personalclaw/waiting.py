@@ -583,7 +583,9 @@ def _browse_grants(grants: list[dict[str, Any]], now: float) -> list[dict[str, A
                 answer=_answer(
                     "POST", _path("/api/browse/grants", rid) + "/{answer}", ("approve", "reject")
                 ),
-                route="#/dashboard",
+                # Home's Attention, where it is answered: the dashboard's browse live view shows
+                # only while a browse takes steps, and a run parked on a grant takes none.
+                route="#/mission-control",
                 asked_at=asked,
                 expires_at=(asked + timeout) if asked and timeout > 0 else None,
                 now=now,

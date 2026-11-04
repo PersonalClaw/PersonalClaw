@@ -46,6 +46,7 @@ break a browse run.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -74,8 +75,30 @@ def _resolve_state(state: Any) -> Any:
         return None
 
 
+#: How recently a browse must have taken a step to be live now (:func:`is_live`). The dashboard
+#: shows its browse live view only while one is.
+LIVE_SECS = 30.0
+
+#: When the last browse step was relayed, on the monotonic clock; 0 before any.
+_last_step_at = 0.0
+
+
+def _now() -> float:
+    """The clock :func:`is_live` reads. A named seam so a test can move time without sleeping."""
+    return time.monotonic()
+
+
+def is_live() -> bool:
+    """Whether a browse is running now: a step was relayed within :data:`LIVE_SECS`. The
+    dashboard's browse live view is shown only while it is; ``GET /api/browse/status`` says it."""
+    return _last_step_at > 0.0 and _now() - _last_step_at <= LIVE_SECS
+
+
 def broadcast_browse_step(payload: dict[str, Any], *, state: Any = None) -> None:
-    """Relay one browse step to the live mirror. Best-effort; never raises into the loop."""
+    """Relay one browse step to the live mirror, and note that a browse is live
+    (:func:`is_live`). Best-effort; never raises into the loop."""
+    global _last_step_at
+    _last_step_at = _now()
     st = _resolve_state(state)
     if st is None:
         return
@@ -145,6 +168,8 @@ def surface_auth_expired(url: str, *, state: Any = None) -> None:
 
 
 __all__ = [
+    "LIVE_SECS",
+    "is_live",
     "WS_BROWSE_STEP",
     "WS_BROWSE_KILL",
     "WS_BROWSE_AUTH_EXPIRED",

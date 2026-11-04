@@ -124,12 +124,13 @@ describe('dashboard slot-empty states teach a mechanism or offer a step', () => 
   const empties = all.filter((s) => !isReadError(s.text))
 
   it('the scan actually found the family (vacuity floor)', () => {
-    // 10 element sites measured (the branches are mutually exclusive). A floor rather than an
+    // 9 element sites measured (the branches are mutually exclusive). A floor rather than an
     // equality so a sibling PR adding a slot does not red this; the ratchet below is what holds the
     // line. The live views' slots went when they came to show only while something is live: a band
-    // drawn only then has nothing empty to say.
-    expect(all.length).toBeGreaterThanOrEqual(10)
-    expect(empties.length).toBeGreaterThanOrEqual(7)
+    // drawn only then has nothing empty to say. The Agent world's two went with it, for your agents'
+    // day's one.
+    expect(all.length).toBeGreaterThanOrEqual(9)
+    expect(empties.length).toBeGreaterThanOrEqual(6)
     expect(errors.length).toBeGreaterThanOrEqual(3)
     // Every slot must be classifiable, or the split above is hiding one.
     expect(all.every((s) => s.text.length > 0)).toBe(true)

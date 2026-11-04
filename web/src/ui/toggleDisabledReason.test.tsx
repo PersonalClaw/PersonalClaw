@@ -139,7 +139,7 @@ describe('the triage, pinned per site', () => {
     }
   })
 
-  it('the census is reproducible — 30 disabled Toggle sites, not vacuously zero', () => {
+  it('the census is reproducible — 31 disabled Toggle sites, not vacuously zero', () => {
     // If this count drops, a site was converted or deleted; if it climbs, a new one arrived
     // un-triaged. Either way it should be a deliberate line in a PR, not a silent drift.
     const walk = (d: string): string[] => filesUnder(d, (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))
@@ -199,7 +199,12 @@ describe('the triage, pinned per site', () => {
     // 🔺 29 → 30 (#3901): Settings → Buddy's "Hide from screen sharing and screenshots" is held
     // until the desktop app says what this computer holds: the PRECONDITION class, so it names
     // what unlocks it. Reasoned 11 → 12.
-    expect(sites.length).toBe(30)
-    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'twelve carry a reason; eighteen stay native').toBe(12)
+    // 🔺 30 → 31: Settings → Security → Guardrails gained "Unattended browsing", the switch that
+    // stops all unattended browsing, moved from Home's Browse live view. It is disabled while its
+    // own write is in flight and until its first read answers, the same shape as Incident mode
+    // beside it (`disabled={busy || !state}`), which stays native: a reason would only say "loading"
+    // for the instant before the read lands. Reasoned count holds at 12.
+    expect(sites.length).toBe(31)
+    expect(sites.filter((m) => /disabledReason/.test(m[0])).length, 'twelve carry a reason; nineteen stay native').toBe(12)
   })
 })

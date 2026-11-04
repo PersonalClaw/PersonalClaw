@@ -31,6 +31,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The Nix flake installs 0.3.6. It had stayed on 0.2.7, so a Nix install missed the seven releases since, 0.3.0 to 0.3.6, with every fix in them.**
 - **Home's View switch reads Overview, then Attention. Each address still opens on its own view: Home on Overview, Mission Control on Attention.**
 - **Home's Desktop live view shows only while an agent drives this computer, and draws the window it walked and its cursor together. The gateway says when the desktop is in use, an action or a walked window within the last 30 seconds (`live` on `GET /api/computer-use/live-view`), and tells open pages when a drive starts. The band's two switches are gone with the preference they kept, and whether desktop control is armed, with the apps it may drive, is in Settings › Security › Desktop control.**
+- **Home's Browse live view shows only while a browse runs, and shows its steps alone. `GET /api/browse/status` says when a browse took a step within the last 30 seconds (`live`). The switch that stops all unattended browsing, and the sites whose saved sign-in expired, are in Settings › Security › Guardrails › Unattended browsing, where letting browsing run again is asked first. A browser grant is answered in Attention, and its card there names the sites the task asks for.**
 
 ### Fixed
 

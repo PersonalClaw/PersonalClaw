@@ -6,7 +6,7 @@ import { TasksWidget } from './widgets/TasksWidget'
 import { Discover } from './widgets/Discover'
 import { PinnedArtifacts } from './widgets/PinnedArtifacts'
 import { DesktopLiveView, useDesktopLive } from './widgets/DesktopLiveView'
-import { BrowseMirror } from './widgets/BrowseMirror'
+import { BrowseMirror, useBrowseLive } from './widgets/BrowseMirror'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
 import type { RouteProps } from '../../app/useQueryState'
@@ -16,11 +16,13 @@ import type { RouteProps } from '../../app/useQueryState'
  *  completed took what this page's To triage, Active work and launcher held, the toolbar's needs-you
  *  badge took its count pills, and its suggestions belong to the stack's empty state. What is left
  *  here is what a person comes to look at rather than to answer: your agents' day, the desktop and
- *  browser live views, tasks, Discover, pinned artifacts and recent activity.
+ *  browser live views (while the agent drives the desktop, or a browse runs, and only then), tasks,
+ *  Discover, pinned artifacts and recent activity.
  *
  *  Boundary-less bands under hairline section labels: content owns the space, chrome doesn't. */
 export function HomeOverview(route: RouteProps) {
   const desktop = useDesktopLive()
+  const browse = useBrowseLive()
   return (
     <DashboardLiveProvider>
       {/* The column is the Overview's ENTRANCE GROUP: its bands arrive together rather than as
@@ -72,14 +74,16 @@ export function HomeOverview(route: RouteProps) {
           </EntranceRegion>
         )}
 
-        {/* Browse live view: watch an unattended browse step by step, stop it in one click, and see
-            a persistent banner when a saved session expires. A grant it asks for is answered in
-            Needs You, beside every other ask. */}
-        <EntranceRegion className="min-w-0">
-          <Section label="Browse live view" icon={Globe}>
-            <BrowseMirror />
-          </Section>
-        </EntranceRegion>
+        {/* Browse live view: watch an unattended browse step by step while it runs, and only then.
+            A grant it asks for is answered in Attention, beside every other ask; the switch that
+            stops all unattended browsing is in Settings › Security › Guardrails. */}
+        {browse.live && (
+          <EntranceRegion className="min-w-0">
+            <Section label="Browse live view" icon={Globe}>
+              <BrowseMirror steps={browse.steps} />
+            </Section>
+          </EntranceRegion>
+        )}
 
         <EntranceRegion className="min-w-0">
           <Section label="Recent activity" icon={History}>

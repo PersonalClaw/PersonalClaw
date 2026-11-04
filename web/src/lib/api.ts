@@ -5189,6 +5189,9 @@ export interface BrowsePendingGrant {
   timeout: number
 }
 export interface BrowseStatus {
+  /** A browse took a step within the last 30 s (`browse/mirror.is_live`): Home shows its browse
+   *  live view only while one did. */
+  live?: boolean
   kill: BrowseKillState
   expired: BrowseExpiredSite[]
   grants: BrowsePendingGrant[]
