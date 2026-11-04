@@ -412,6 +412,7 @@ def test_the_route_serves_the_view_model():
             assert resp.status == 200
             body = await resp.json()
             assert set(body) == {
+                "live",
                 "enabled",
                 "allowed_apps",
                 "ttl_secs",

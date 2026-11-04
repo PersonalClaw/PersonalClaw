@@ -5,7 +5,7 @@ import { Section } from './Section'
 import { TasksWidget } from './widgets/TasksWidget'
 import { Discover } from './widgets/Discover'
 import { PinnedArtifacts } from './widgets/PinnedArtifacts'
-import { DesktopLiveView } from './widgets/DesktopLiveView'
+import { DesktopLiveView, useDesktopLive } from './widgets/DesktopLiveView'
 import { BrowseMirror } from './widgets/BrowseMirror'
 import { ScheduleWidget } from './widgets/ScheduleWidget'
 import { EntranceGroup, EntranceRegion } from '../../ui/motion'
@@ -20,6 +20,7 @@ import type { RouteProps } from '../../app/useQueryState'
  *
  *  Boundary-less bands under hairline section labels: content owns the space, chrome doesn't. */
 export function HomeOverview(route: RouteProps) {
+  const desktop = useDesktopLive()
   return (
     <DashboardLiveProvider>
       {/* The column is the Overview's ENTRANCE GROUP: its bands arrive together rather than as
@@ -60,14 +61,16 @@ export function HomeOverview(route: RouteProps) {
           </Section>
         </EntranceRegion>
 
-        {/* Desktop live view: what the agent is doing on this desktop, the attempt feed, plus the
-            optional live-view mirror and cursor-motion overlay. Observation only; the toggles change
-            what this page draws, never what the agent can do. */}
-        <EntranceRegion className="min-w-0">
-          <Section label="Desktop live view" icon={Monitor}>
-            <DesktopLiveView />
-          </Section>
-        </EntranceRegion>
+        {/* Desktop live view: what the agent is doing on this desktop, while it is doing it — the
+            walked window, the fake cursor and the attempt feed. Observation only. Not drawn at all
+            while nothing drives the desktop: the gateway says when it does (`useDesktopLive`). */}
+        {desktop.live && desktop.view && (
+          <EntranceRegion className="min-w-0">
+            <Section label="Desktop live view" icon={Monitor}>
+              <DesktopLiveView view={desktop.view} />
+            </Section>
+          </EntranceRegion>
+        )}
 
         {/* Browse live view: watch an unattended browse step by step, stop it in one click, and see
             a persistent banner when a saved session expires. A grant it asks for is answered in

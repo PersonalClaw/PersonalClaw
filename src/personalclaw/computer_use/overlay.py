@@ -177,10 +177,37 @@ def observe_action(
                 label=_label_of(element),
             )
         )
+        announce_activity()
     except Exception:
         # Fail OPEN, loudly enough to fix: the overlay is observation, and a broken
         # observation must cost the view a point, never the operator a drive.
         logger.warning("computer_use overlay observation dropped (tool=%r)", tool, exc_info=True)
+
+
+#: The least time between two :func:`announce_activity` hints: a drive acts several times a
+#: second, and one hint brings every open dashboard's view in, which then reads it while it lasts.
+_ANNOUNCE_EVERY_SECS = 2.0
+_announced_at = 0.0
+
+
+def announce_activity() -> None:
+    """Tell open dashboards the agent is using the desktop (a ``computer_use`` refresh hint), at
+    most once every :data:`_ANNOUNCE_EVERY_SECS`: the dashboard's desktop live view is shown only
+    while it is in use (``render.is_live``), and it learns that it is from this. Best-effort, a
+    no-op with no gateway, and never raises: it is observation, like the trail."""
+    global _announced_at
+    now = time.monotonic()
+    if now - _announced_at < _ANNOUNCE_EVERY_SECS:
+        return
+    _announced_at = now
+    try:
+        from personalclaw.inbox_providers.native_source import get_dashboard_state
+
+        state = get_dashboard_state()
+        if state is not None:
+            state.push_refresh("computer_use")
+    except Exception:
+        logger.debug("computer_use: the live-view hint was not sent", exc_info=True)
 
 
 def motion_trail(limit: int = MAX_TRAIL) -> list[dict[str, Any]]:

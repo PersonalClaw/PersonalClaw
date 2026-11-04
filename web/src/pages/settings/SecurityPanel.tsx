@@ -18,6 +18,7 @@ import {
   desktopBridge, getLoginItem, requestDesktopCapability, setLoginItem,
 } from '../../lib/desktopBridge'
 import { Button } from '../../ui/Button'
+import { StatusPill } from '../../ui/StatusPill'
 import { SquareIconButton } from '../../ui/SquareIconButton'
 import { Toggle } from '../../ui/Toggle'
 import { invalidateKeys, useQuery } from '../../lib/data'
@@ -103,7 +104,44 @@ export function SecurityPanel() {
       <EgressPolicyEditor />
       <OutsideHomeEditor />
       <DesktopCapabilitiesPanel />
+      <DesktopControlSection />
     </div>
+  )
+}
+
+/** Settings → Security → Desktop control: whether an agent may drive this computer's apps, and
+ *  which. A FACT, never a switch: desktop control is armed only by a document the owner writes by
+ *  hand (`computer_use/enable_state`), because every in-band path to it is reachable by the thing
+ *  it restrains. Home's Desktop live view, which shows only while the agent drives the desktop,
+ *  carried this posture until it moved here, beside the other desktop permissions. */
+export function DesktopControlSection() {
+  // `async`, so a call that throws as it is made is a failed read, never a thrown render.
+  const { data, error } = useQuery('computer-use:live-view', async () => api.computerUseLiveView(), { persist: false })
+  const hint = 'Whether an agent may drive apps on this computer, and which. Only a file you write yourself in PersonalClaw\'s home (governance/computer_use.enable.json) switches it on, naming the apps; nothing in PersonalClaw can, so no agent can.'
+  if (!data && error) {
+    return (
+      <Section title="Desktop control" hint={hint}>
+        <FieldError>Couldn&rsquo;t read whether desktop control is on.</FieldError>
+      </Section>
+    )
+  }
+  if (!data) return null
+  const apps = data.allowed_apps ?? []
+  return (
+    <Section title="Desktop control" hint={hint}>
+      <RowGroup>
+        <Row label="Agents may drive this computer">
+          <StatusPill tone={data.enabled ? 'ok' : 'neutral'}>{data.enabled ? 'Armed' : 'Off'}</StatusPill>
+        </Row>
+        {data.enabled && (
+          <Row label="Apps it may drive">
+            <span data-type="body-s" className="text-on-surface-var">
+              {apps.length === 0 ? 'None: no app is named, so none is driven' : apps.join(', ')}
+            </span>
+          </Row>
+        )}
+      </RowGroup>
+    </Section>
   )
 }
 

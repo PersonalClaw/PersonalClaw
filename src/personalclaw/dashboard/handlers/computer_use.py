@@ -181,6 +181,7 @@ async def api_computer_use_live_view(request: web.Request) -> web.Response:
     view = render.live_view()
     return web.json_response(
         {
+            "live": view["live"],
             "enabled": view["enabled"],
             "allowed_apps": view["allowed_apps"],
             "ttl_secs": view["ttl_secs"],

@@ -92,6 +92,11 @@ async function mount(opts: { denied?: Over | 'reject'; stats?: 'reject' } = {}) 
         sandbox: { nofile: 4096, max_pids: 0, max_rss_mb: 0, cgroup_scopes: false, env_passthrough: [] },
       }),
       patchConfig: () => Promise.resolve({}),
+      // The desktop-control section renders inside this SAME panel, reading the live view for
+      // whether control is on and the apps it may drive. Off is the right default here.
+      computerUseLiveView: () => Promise.resolve({
+        live: false, enabled: false, allowed_apps: [], ttl_secs: 30, snapshots: [], trail: [], feed: [],
+      }),
     },
   }))
   const { SecurityPanel } = await import('./SecurityPanel')

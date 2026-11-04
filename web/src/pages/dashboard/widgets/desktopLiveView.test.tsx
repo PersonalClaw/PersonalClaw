@@ -1,44 +1,23 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useEffect, useState } from 'react'
+import { describe, expect, it } from 'vitest'
+import { render, screen } from '@testing-library/react'
 import { DesktopLiveView } from './DesktopLiveView'
 import type { ComputerUseLiveView } from '../../../lib/api'
 
-// ── The dashboard's "Desktop live view" band ─
+// ── The dashboard's "Desktop live view" band, while the desktop is live ──
 //
-// The human-facing half of desktop computer use. What is pinned here, and why:
+// The band is drawn only while the agent drives the desktop (`homeOverviewShowsLiveViewsOnlyWhileLive`
+// pins that), so what it draws is the drive: the walked window and the fake cursor together, with
+// no switch for either, and the attempt feed. What is pinned here, and why:
 //
-//  · a FAILED fetch must not render as a quiet desktop — "the agent is doing nothing" over a
-//    dead endpoint is a confident false statement about the operator's machine (the exact
-//    shape the Discover slot and the old Home memory band each shipped once).
-//  · both views are OPTIONAL and OFF until toggled — the widget's default render is the feed
-//    alone, and each stage layer appears only behind its own named switch.
-//  · the fake cursor renders FROM SERVED DATA ONLY: the widget draws `trail` points the
-//    gateway already recorded; there is no code path from a toggle to any capability. (The
-//    tool-surface census itself lives server-side in tests/test_computer_use_live_view.py.)
+//  · both layers draw at once: the two toggles that chose between them are gone, and with them
+//    the per-browser preference they kept;
+//  · the fake cursor renders FROM SERVED DATA ONLY, and says out loud that it is a fake;
+//  · the feed shows refused attempts beside approved ones — a live view that hid refusals would
+//    under-report the agent;
+//  · the posture (Armed/Off, the apps it may drive) is not here: it is said in Settings › Security.
 
-const liveView = vi.fn()
-
-vi.mock('../../../lib/api', () => ({
-  api: { computerUseLiveView: () => liveView() },
-}))
-vi.mock('../../../lib/data', () => ({
-  useQuery: (_k: string, fn: () => Promise<unknown>) => {
-    const [data, setData] = useState<unknown>(null)
-    const [error, setError] = useState<unknown>(null)
-    useEffect(() => { fn().then(setData).catch(setError) }, [])
-    return { data, error, refresh: () => {} }
-  },
-}))
-// The gated poll is exercised implicitly (it fires `refresh` on an interval); an interval in
-// jsdom is noise, so the hook is inert here and its gating is documented at the source.
-vi.mock('../../../lib/useVisiblePoll', () => ({ useVisiblePoll: () => {} }))
-
-const QUIET: ComputerUseLiveView = {
-  enabled: false, allowed_apps: [], ttl_secs: 30, snapshots: [], trail: [], feed: [],
-}
-
-const BUSY: ComputerUseLiveView = {
+const LIVE: ComputerUseLiveView = {
+  live: true,
   enabled: true,
   allowed_apps: ['TextEdit'],
   ttl_secs: 30,
@@ -56,67 +35,36 @@ const BUSY: ComputerUseLiveView = {
   ],
 }
 
-describe('the dashboard Desktop live view band', () => {
-  beforeEach(() => {
-    localStorage.clear()
-    liveView.mockResolvedValue(BUSY)
+describe('the dashboard Desktop live view band, while live', () => {
+  it('draws the walked window and the fake cursor together, with no switch for either', () => {
+    render(<DesktopLiveView view={LIVE} />)
+
+    const stage = screen.getByRole('img', { name: /live view of textedit — fake cursor over subject/i })
+    // The mirror is the walked tree: the element's own title, as a wireframe box label.
+    expect(stage.textContent).toContain('Save')
+    expect(screen.getByText(/the cursor drawn here is a fake/i)).toBeTruthy()
+    expect(screen.queryByRole('switch')).toBeNull()
   })
 
-  it('renders the posture and the attempt feed, refused rows included', async () => {
-    render(<DesktopLiveView />)
-    await waitFor(() => expect(screen.getByText('Armed')).toBeTruthy())
-    // Both verdicts surface — a live view that hid refusals would under-report the agent.
+  it('lists every attempt, refused ones included', () => {
+    render(<DesktopLiveView view={LIVE} />)
+
     expect(screen.getByText('approved')).toBeTruthy()
     expect(screen.getByText('denied')).toBeTruthy()
     expect(screen.getByText('computer_click')).toBeTruthy()
     expect(screen.getByText('Terminal')).toBeTruthy()
   })
 
-  it('a failed fetch says it could not read, instead of claiming a quiet desktop', async () => {
-    liveView.mockRejectedValue(new Error('boom'))
-    render(<DesktopLiveView />)
-    await waitFor(() => expect(screen.getByText(/couldn’t read the desktop live view/i)).toBeTruthy())
-    expect(screen.queryByText(/no desktop activity/i)).toBeNull()
+  it('says nothing of the posture, which Settings › Security says', () => {
+    render(<DesktopLiveView view={LIVE} />)
+
+    expect(screen.queryByText('Armed')).toBeNull()
+    expect(screen.queryByText(/may drive/i)).toBeNull()
   })
 
-  it('a disarmed, quiet machine teaches the mechanism instead of stating a bare fact', async () => {
-    liveView.mockResolvedValue(QUIET)
-    render(<DesktopLiveView />)
-    await waitFor(() => expect(screen.getByText('Off')).toBeTruthy())
-    expect(screen.getByText(/desktop computer use is off\./i)).toBeTruthy()
-    expect(screen.getByText(/an out-of-band step no agent can take/i)).toBeTruthy()
-  })
+  it('a drive with no window walked yet draws its cursor trail alone', () => {
+    render(<DesktopLiveView view={{ ...LIVE, snapshots: [] }} />)
 
-  it('both views are optional: no stage renders until its named switch is on', async () => {
-    render(<DesktopLiveView />)
-    await waitFor(() => expect(screen.getByText('Armed')).toBeTruthy())
-    expect(screen.queryByRole('img')).toBeNull()
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Live view' }))
-    const mirror = await waitFor(() => screen.getByRole('img', { name: /live view of textedit/i }))
-    // The mirror is the walked tree: the element's own title, as a wireframe box label.
-    expect(mirror.textContent).toContain('Save')
-    // The overlay is still off — no fake cursor in the accessible name yet.
-    expect(screen.queryByRole('img', { name: /fake cursor/i })).toBeNull()
-  })
-
-  it('the cursor overlay draws the FAKE cursor and says out loud that it is one', async () => {
-    render(<DesktopLiveView />)
-    await waitFor(() => expect(screen.getByText('Armed')).toBeTruthy())
-    fireEvent.click(screen.getByRole('switch', { name: 'Cursor overlay' }))
-    await waitFor(() =>
-      expect(screen.getByRole('img', { name: /fake cursor over subject/i })).toBeTruthy(),
-    )
-    // The one sentence that keeps the overlay honest for a watching human: this cursor is
-    // drawn only here — it is not their pointer and never appears on their screen.
-    expect(screen.getByText(/the cursor drawn here is a fake/i)).toBeTruthy()
-  })
-
-  it('a view toggled on with nothing to draw says so rather than rendering a void', async () => {
-    liveView.mockResolvedValue({ ...QUIET, enabled: true })
-    render(<DesktopLiveView />)
-    await waitFor(() => expect(screen.getByText('Armed')).toBeTruthy())
-    fireEvent.click(screen.getByRole('switch', { name: 'Live view' }))
-    await waitFor(() => expect(screen.getByText(/nothing to draw yet/i)).toBeTruthy())
+    expect(screen.getByRole('img', { name: /cursor motion trail — fake cursor over subject/i })).toBeTruthy()
   })
 })
