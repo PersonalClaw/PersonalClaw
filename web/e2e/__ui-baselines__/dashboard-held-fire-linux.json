@@ -6,7 +6,6 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
         "button[role=radio] \"Attention\"",
         "button[role=radio] \"Overview\""
       ],
@@ -15,7 +14,6 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
         "button[role=radio] \"Attention\"",
         "button[role=radio] \"Overview\""
       ],
@@ -24,7 +22,6 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
         "button[role=radio] \"Attention\"",
         "button[role=radio] \"Overview\""
       ],
@@ -33,7 +30,6 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
         "button[role=radio] \"Attention\"",
         "button[role=radio] \"Overview\""
       ]
@@ -52,7 +48,6 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
         "button[role=radio] \"Attention\"",
         "button[role=radio] \"Overview\""
       ],
@@ -61,7 +56,6 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
         "button[role=radio] \"Attention\"",
         "button[role=radio] \"Overview\""
       ],
@@ -70,7 +64,6 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
         "button[role=radio] \"Attention\"",
         "button[role=radio] \"Overview\""
       ],
@@ -79,7 +72,6 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
         "button[role=radio] \"Attention\"",
         "button[role=radio] \"Overview\""
       ]

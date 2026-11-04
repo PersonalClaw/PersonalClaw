@@ -45,7 +45,6 @@
   - heading "Pinned artifacts" [level=#]
   - paragraph: No pinned artifacts. Pin one from its page to keep it here.
   - heading "Recent activity" [level=#]
-  - paragraph: Nothing ran recently — every recent fire was held by a gate.
-  - button "Show # suppressed by a gate"
+  - paragraph: Nothing ran recently.
 - contentinfo "Status":
   - button "<theme> status — Gateway connected"

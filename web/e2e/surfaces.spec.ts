@@ -542,7 +542,7 @@ for (const theme of THEMES) {
       })
     }
 
-    // The dashboard's schedule card in its "every recent fire was held by a gate" state. The run's
+    // The dashboard's schedule card in its "Nothing ran recently." state, every recent fire held. The run's
     // home is seeded with every system trigger switched off (`e2e/fixtures/home/`), so the plain
     // `#/dashboard` row above always shows the card empty; this row answers the card's one read
     // with a single held fire, so the held state is checked too, in a state that does not move.
@@ -569,7 +569,7 @@ for (const theme of THEMES) {
       })
       // Recent activity is a band of Home's Overview view.
       await gotoRoute(page, 'dashboard?view=overview')
-      await expect(page.getByText('every recent fire was held by a gate'), 'the stub reached the card').toBeVisible()
+      await expect(page.getByText('Nothing ran recently.', { exact: true }), 'the stub reached the card').toBeVisible()
       await checkSurface(
         page,
         info,

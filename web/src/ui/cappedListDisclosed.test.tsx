@@ -238,15 +238,13 @@ describe('every list whose label states a total discloses its cap', () => {
     expect(readdirSync(widgets).length, 'the widget directory must be readable').toBeGreaterThan(4)
   })
 
-  it('the SCHEDULE widget applied a standard it already held', () => {
-    // Worth its own assertion because it is the strongest evidence the cap was a defect and not a
-    // choice: this file already discloses the rows its archive fold hides, and its comment insists the
-    // count come from the SERVER's full-window tally so "the label must not shrink to the fold" —
-    // while a silent six-row truncation sat beside it. Both must stay.
+  it('the SCHEDULE widget discloses its cap over what ran', () => {
+    // The widget shows only what ran (held fires are Automations' history, not Home's), and its
+    // six-row cap is said. The residue is measured against what it shows, never against every row
+    // the history read returned, held ones included.
     const src = strip(readSource(join(SRC, 'pages/dashboard/widgets/ScheduleWidget.tsx')))
-    expect(src, 'the fold disclosure it already had').toMatch(/\$\{scheduleSuppressed\} suppressed by a gate/)
-    expect(src, 'and the cap disclosure it was missing').toMatch(/<MoreRow total=\{visible\.length\}/)
-    expect(src, 'the residue is measured against what the fold shows').not.toMatch(
+    expect(src, 'the cap disclosure').toMatch(/<MoreRow total=\{visible\.length\}/)
+    expect(src, 'the residue is measured against what it shows').not.toMatch(
       /<MoreRow total=\{schedule\.length\}/,
     )
   })
