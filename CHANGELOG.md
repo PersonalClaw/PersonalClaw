@@ -8,6 +8,10 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ## [Unreleased]
 
+### Fixed
+
+- **On Linux, the Docker image included, the gateway could stop answering for good when the loop list opened the workflow store while a background read closed it: from then on it took every request and answered none. It now uses Python's own SQLite wherever that has full-text search and JSON, which every build of PersonalClaw's does, and the loop list reads its stores without holding up the gateway's other requests.**
+
 ## [0.3.6] — 2026-11-03
 
 Settings opens on seventeen cards in three groups, one for each of its pages, where it had forty pages: each page holds the settings that belong together, a card carries the switches people change most, search finds a setting by its own name, and every old link opens its section. An open page says when PersonalClaw's interface was updated and offers Reload, and a toast waits while you are on it. Turning off or removing a native app is refused with why, a skill an app seeded that you changed outlives the app, and an app update a stop cut short is finished at the next start. A pin on Home opens its artifact, the composer's agent-and-model menu works from the keyboard, and a loop's page names its work folder without your account's name and keeps its tab in the address. An answered approval's notification says how it ended, and an approval's note names the chat or the loop that asks, or the Inbox for work no page answers. In the sidebar, the Group by control sits in the search row, a chat's state is a dot that glows while it runs or waits on you, and the icon and name stay in its centre.

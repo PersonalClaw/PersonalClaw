@@ -647,15 +647,23 @@ async def api_loop_list(request: web.Request) -> web.Response:
     Mission Control's Working lane, the nav badge — kept reading the loops table alone, so a running
     General loop was "No loops yet" everywhere except Agent world. One route answering for both is
     what keeps those surfaces from each having to learn a second source.
+
+    Both are read off the event loop: the shell asks for this from every page, and the loops
+    table, a ledger file per loop and the run store, which it opens and closes, are disk reads
+    that would hold every other request meanwhile.
     """
     from personalclaw.workflows import loop_view
 
     project_id = request.query.get("project_id", "").strip()
     kind = request.query.get("kind", "").strip().lower()
-    rows = store.list_redacted(project_id=project_id, kind=kind)
-    rows += loop_view.list_loop_views(project_id=project_id, kind=kind)
-    rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
-    return web.json_response({"loops": rows})
+
+    def off_the_loop() -> list[dict[str, Any]]:
+        rows = store.list_redacted(project_id=project_id, kind=kind)
+        rows += loop_view.list_loop_views(project_id=project_id, kind=kind)
+        rows.sort(key=lambda r: float(r.get("created_at") or 0.0), reverse=True)
+        return rows
+
+    return web.json_response({"loops": await asyncio.to_thread(off_the_loop)})
 
 
 def _run_backed(cid: str) -> Any:

@@ -15,32 +15,136 @@ for the last one, checkpoints the WAL and deletes it under the other copy's live
 connection. The store's next commit then fails, or goes where no new connection
 reads it.
 
-``pysqlite3`` (the ``pysqlite3-binary`` wheel) ships a newer SQLite than some
-platforms' bundled stdlib build — notably one WITH FTS5 + JSON1 — which the
-knowledge/memory search paths need. Preferring it when present, falling back to
-the stdlib otherwise, is the platform-portability the plan is about; the probe
-below reports what actually resolved so the doctor can show it.
+The stores need a SQLite of at least :data:`_MIN_SQLITE` with FTS5 and JSON1 in it, and a
+driver that loads extensions (the vector index's). The driver is the stdlib's wherever it has all
+of that, asked once, at import, of an in-memory connection; every Python the product ships or is
+tested on does (python-build-standalone's, which uv installs for CI and the desktop build, and
+Debian's, which the Docker image's Python links). There ``pysqlite3`` is not imported at all.
+Only where the stdlib's lacks one of them is ``pysqlite3`` (the ``pysqlite3-binary`` wheel, which
+bundles a newer SQLite with all of it) taken, when it is installed; the probe below reports what
+resolved so the doctor can show it.
+
+``pysqlite3`` closes a database holding the interpreter lock: its ``Connection.close`` calls
+``sqlite3_close_v2`` without releasing it, where the stdlib's releases it around both the open and
+the close. The browser harness's gateway, on ``pysqlite3`` then (it was preferred wherever it was
+installed, which on Linux x86_64 is always), stopped answering for good with its event loop's
+thread inside the driver's ``connect`` of the workflow run store and a worker thread inside its
+``close`` of the same database, every other thread waiting for the interpreter. So where
+``pysqlite3`` is the driver, every open through it holds :data:`_OPEN_CLOSE`, and so does every
+close of a connection it made: one the program asks for, a shared connection's, and the one the
+driver makes when a connection nobody closed is let go. The two never run side by side
+(``tests/test_a_pysqlite3_close_never_runs_beside_an_open.py``).
 """
 
 from __future__ import annotations
 
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, Callable
+from types import ModuleType
+from typing import TYPE_CHECKING, Any, Callable
 
 from personalclaw.atomic_write import make_private_database
 
-try:  # the newer bundled build (FTS5 + JSON1) when the wheel is installed
+if TYPE_CHECKING:
+    # What a type checker reads, as before the stdlib's became the driver: the names unchecked
+    # (the fallback's wheel ships no types, and either driver's are the DB-API's).
     import pysqlite3 as sqlite3  # type: ignore[import-not-found]
+else:
+    import sqlite3
 
-    _DRIVER = "pysqlite3"
-except ImportError:  # the platform's stdlib build
-    import sqlite3  # type: ignore[no-redef]
+#: The oldest SQLite the stores run on: 3.38.0, the first with ``sqlite3_vtab_in``, which the
+#: vector index's extension (sqlite-vec's ``vec0``, built against a newer SQLite) calls as it plans
+#: a query. The newest of what the stores' own SQL uses is ``ALTER TABLE … DROP COLUMN`` (3.35.0),
+#: which the knowledge store's migration does without where it is missing, then the upsert
+#: (``ON CONFLICT … DO UPDATE``, 3.24.0).
+_MIN_SQLITE = (3, 38, 0)
 
-    _DRIVER = "sqlite3"
+#: What a SQLite build is asked to answer whether it has FTS5 and JSON1, on an in-memory
+#: connection, so nothing is written anywhere.
+_FTS5_PROBE = "CREATE VIRTUAL TABLE _probe_fts USING fts5(x)"
+_JSON1_PROBE = "SELECT json_extract('{\"a\":1}', '$.a')"
+
+#: Held around every open and every close while the driver is ``pysqlite3`` (the module
+#: docstring says why). The stdlib's driver needs none, and never takes it.
+_OPEN_CLOSE = threading.RLock()
+
+
+def _runs(conn: Any, sql: str, error: type[BaseException]) -> bool:
+    try:
+        conn.execute(sql)
+        return True
+    except error:
+        return False
+
+
+def _serves_the_stores(driver: Any) -> bool:
+    """Whether *driver* has what the stores use: a SQLite of at least :data:`_MIN_SQLITE`, with
+    FTS5 and JSON1 in it (asked of an in-memory connection), and the loading of extensions. Never
+    raises: a build that cannot open a connection has none of it."""
+    if tuple(getattr(driver, "sqlite_version_info", ()))[:3] < _MIN_SQLITE:
+        return False
+    if not hasattr(driver.Connection, "enable_load_extension"):
+        return False
+    try:
+        conn = driver.connect(":memory:")
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        return _runs(conn, _FTS5_PROBE, driver.Error) and _runs(conn, _JSON1_PROBE, driver.Error)
+    finally:
+        conn.close()
+
+
+@lru_cache(maxsize=None)
+def _closing_under_the_lock(factory: type[Any]) -> type[Any]:
+    """*factory*, a ``pysqlite3`` connection class, as a class whose connections close holding
+    :data:`_OPEN_CLOSE`: on ``close``, and when one nobody closed is let go, which the driver
+    would otherwise close itself, holding the interpreter lock and no other."""
+
+    def close(self: Any) -> None:
+        # A shared connection's own lock first, the order its statements take the two in when
+        # one of them opens a database.
+        with getattr(self, "_serial", nullcontext()), _OPEN_CLOSE:
+            factory.close(self)
+
+    def __del__(self: Any) -> None:
+        try:
+            close(self)
+        except Exception:  # noqa: BLE001 — another thread's connection: the driver closes it
+            pass
+
+    return type(factory.__name__, (factory,), {"close": close, "__del__": __del__})
+
+
+def _opens_and_closes_one_at_a_time(driver: ModuleType) -> ModuleType:
+    """*driver* (``pysqlite3``) as a module of its own names whose ``connect`` holds
+    :data:`_OPEN_CLOSE` while the driver opens, and makes connections that close holding it,
+    whichever factory the caller names."""
+    module = ModuleType(driver.__name__, driver.__doc__)
+    module.__dict__.update({k: v for k, v in vars(driver).items() if not k.startswith("__")})
+    driver_connect = driver.connect
+
+    def connect(database: Any, *args: Any, **kwargs: Any) -> Any:
+        kwargs["factory"] = _closing_under_the_lock(kwargs.get("factory", driver.Connection))
+        with _OPEN_CLOSE:
+            return driver_connect(database, *args, **kwargs)
+
+    module.__dict__["connect"] = connect
+    return module
+
+
+_DRIVER = "sqlite3"
+if not TYPE_CHECKING and not _serves_the_stores(sqlite3):
+    try:
+        import pysqlite3 as _pysqlite3
+    except ImportError:  # no wheel: the stdlib's, without what it lacks (``probe`` says what)
+        pass
+    else:
+        sqlite3 = _opens_and_closes_one_at_a_time(_pysqlite3)
+        _DRIVER = "pysqlite3"
 
 __all__ = [
     "sqlite3",
@@ -105,8 +209,8 @@ def probe() -> SqliteCapabilities:
     try:
         conn = sqlite3.connect(":memory:")
         try:
-            fts5 = _has_module(conn, "CREATE VIRTUAL TABLE _probe_fts USING fts5(x)")
-            json1 = _has_module(conn, "SELECT json_extract('{\"a\":1}', '$.a')")
+            fts5 = _has_module(conn, _FTS5_PROBE)
+            json1 = _has_module(conn, _JSON1_PROBE)
         finally:
             conn.close()
     except sqlite3.Error:
