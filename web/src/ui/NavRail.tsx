@@ -224,8 +224,10 @@ export function NavRail({
     <nav data-tour="rail" className="flex h-full flex-col overflow-y-auto overflow-x-hidden"
       style={{ width: overlay ? OVERLAY_W : w, background: material && !overlay ? 'transparent' : 'var(--color-rail)' }}>
       <div data-rail-top className="flex shrink-0 flex-col gap-1 px-m pt-l pb-xs">
-        {/* header — logo (the collapse toggle lives in the main area, not here) */}
-        <div className={cx('flex items-center pb-m', !home && (showFull ? 'px-s' : 'justify-center'))}>
+        {/* header — the icon and name, in the centre of the rail at every width it is dragged to,
+            and the icon alone, centred, when it is collapsed. The collapse toggle lives in the main
+            area, outside the rail, so nothing here pulls them off centre. */}
+        <div className={cx('flex items-center justify-center pb-m', !home && showFull && 'px-s')}>
           {home ? (
             // Home's link (#5880): the icon and name open it. The accessible name starts with the
             // visible wordmark, so a voice command naming what is on screen reaches it (WCAG 2.5.3);
@@ -233,7 +235,7 @@ export function NavRail({
             <button type="button" onClick={() => onSelect(home.id)}
               aria-label={showFull ? `${wordmarkLabel}, ${home.label}` : home.label} title={home.label}
               aria-current={home.id === activeId ? 'page' : undefined}
-              className={cx(rowCls('text-on-surface hover:bg-surface-low/60'), showFull ? 'px-s' : 'justify-center')}
+              className={cx(rowCls('text-on-surface hover:bg-surface-low/60'), 'justify-center')}
               style={{ minHeight: 32 }}>
               {/* The wordmark tracks the active PERSONALITY's label (default: PersonalClaw). */}
               {showFull ? <Wordmark label={wordmarkLabel} /> : <Spark size={22} />}

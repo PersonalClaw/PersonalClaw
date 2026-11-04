@@ -7,8 +7,8 @@ import { ThreadRail } from './ThreadRail'
 //
 // 🔴 Red before: it was "Threads", with New thread and Search threads, a word the rest of PersonalClaw
 // does not use for what Chat history lists, grouped by project, with no way to group by the folders
-// and tags Chat history keeps. Now it is Chat history: New chat, Search chats, a Group by control on
-// its heading (Folders or Tags), and a goal loop or code session says its kind on its row.
+// and tags Chat history keeps. Now it is Chat history: New chat, Search chats with a Group by control
+// at the end of its row (Folders or Tags), and a goal loop or code session says its kind on its row.
 
 const t = (key: string, over: Partial<Thread> = {}): Thread => ({
   key, kind: 'chat', id: key, title: `Title ${key}`, projectId: '', route: `chat/${key}`,
@@ -68,7 +68,7 @@ describe('Chat history in the sidebar', () => {
     expect(screen.getByRole('button', { name: 'Title chat:a' })).toBeInTheDocument()
   })
 
-  it('the heading\'s Group by control switches between folders and tags', () => {
+  it('the Group by control switches between folders and tags', () => {
     const onGroupBy = vi.fn()
     rail({ onGroupBy })
     const control = screen.getByRole('button', { name: 'Group by: Folders' })
@@ -81,11 +81,11 @@ describe('Chat history in the sidebar', () => {
     expect(screen.getByRole('button', { name: 'Group by: Tags' })).toBeInTheDocument()
   })
 
-  it('the heading and its control stay pinned with New chat and the search', () => {
+  it('the Group by control stays pinned with New chat and the search', () => {
     rail()
     const bar = screen.getByRole('button', { name: /^New chat/ }).parentElement!
     expect(getComputedStyle(bar).position).toBe('sticky')
     expect(bar.contains(screen.getByRole('button', { name: 'Group by: Folders' }))).toBe(true)
-    expect(bar.textContent).toContain('Chat history')
+    expect(bar.contains(screen.getByRole('searchbox', { name: 'Search chats' }))).toBe(true)
   })
 })

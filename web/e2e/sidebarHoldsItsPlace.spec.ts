@@ -150,9 +150,12 @@ test.describe('a long name', () => {
     const folder = page.locator(RAIL).getByRole('button', { name: `${LONG_FOLDER}, 3 chats` })
     const folderResting = await measure(folder)
     expect(folderResting.cut, "the folder's name is cut short on screen").toBe(true)
+    // The search row's Group by control comes after the search, and the folder after it.
     await page.locator(RAIL).getByRole('searchbox', { name: 'Search chats' }).focus()
     await page.keyboard.press('Tab')
-    await expect(folder, 'Tab from the search reaches the folder').toBeFocused()
+    await expect(page.locator(RAIL).getByRole('button', { name: /^Group by: / }), 'Tab from the search reaches Group by').toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(folder, 'and the next Tab reaches the folder').toBeFocused()
     const folderFocused = await measure(folder)
     expect(folderFocused.cut, "the folder's whole name shows while its row has focus").toBe(false)
     expect(folderFocused.height).toBeGreaterThan(folderResting.height)

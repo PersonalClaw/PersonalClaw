@@ -1,16 +1,15 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronRight, Code2, Edit3, Repeat, type LucideIcon } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Code2, Edit3, Folder, Repeat, Tag, type LucideIcon } from 'lucide-react'
 import type { Thread, ThreadKind, ThreadPip } from '../lib/useThreads'
 import type { GroupBy, HistoryGroup } from '../app/chatHistoryGroups'
 import type { PhaseFamily } from '../lib/workPhase'
 import { bindingLabel } from '../app/keymap'
 import { withWeight } from '../design/fontWeight'
+import { prefersReducedMotion } from '../design/motion'
 import { Button } from './Button'
-import { Eyebrow } from './Eyebrow'
 import { MenuRow, Popover } from './Popover'
 import { ResultAnnouncement } from './ListControls'
 import { SearchField } from './SearchField'
-import { StateMark } from './StateMark'
 import { WindowedList } from './WindowedList'
 import { cx } from './cx'
 import { RING_REACH } from './NavRail'
@@ -37,6 +36,8 @@ const KIND_MARK: Partial<Record<ThreadKind, { word: string; icon: LucideIcon }>>
 
 /** The two ways the chat history groups, as the Group by control names them. */
 const GROUP_BY_WORD: Record<GroupBy, string> = { folder: 'Folders', tag: 'Tags' }
+/** The Group by control's face: the grouping it shows, as the field's row has room for. */
+const GROUP_BY_ICON: Record<GroupBy, LucideIcon> = { folder: Folder, tag: Tag }
 
 /** Each pip's state family (the shared state tokens the orb and the buddy read) and its words. A
  *  project's page lists its chats with the same marks (`pages/projects/ProjectThreads.tsx`). */
@@ -89,7 +90,7 @@ function reveal(el: HTMLElement) {
 /** A row's label and mark, raised over its selected fill. */
 const ROW_LABEL_Z = 10
 
-/** The pinned bar: the heading with its Group by control, New chat and the search, stuck to the
+/** The pinned bar: New chat, and the search with its Group by control, stuck to the
  *  top of the rail's scroll area (the chat history, between the sidebar's two blocks: `NavRail`)
  *  while the rows scroll under it, on the rail's own solid surface and above the rows' labels, so no
  *  row shows through it.
@@ -140,11 +141,11 @@ export function shownThreads(sections: readonly RailSection[]): Thread[] {
   return sections.flatMap((s) => (s.open ? s.threads : []))
 }
 
-/** The sidebar's chat history (#5877): its heading with the Group by control, New chat and a search
- *  at the top, then each folder (or tag) a disclosure group and each chat, goal loop or code session
- *  a dense row that opens it.
+/** The sidebar's chat history (#5877): New chat and a search with the Group by control at the end
+ *  of its row, at the top, then each folder (or tag) a disclosure group and each chat, goal loop or
+ *  code session a dense row that opens it.
  *
- *  The heading, New chat and the search sit above every group whatever the read says, one bar that
+ *  New chat and the search row sit above every group whatever the read says, one bar that
  *  stays at the top of the chat history while the rows scroll under it. The Group by control
  *  switches between the owner's folders and tags (`groupBy`, `onGroupBy`). The search filters the
  *  rows by name as the owner types, over what the rail has read (`railSections`), and nothing
@@ -180,7 +181,7 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
    *  gives it back as it was typed. Unset, the rail keeps its own. */
   search?: string
   onSearch?: (query: string) => void
-  /** How the groups are made, which the heading's Group by control says and changes. */
+  /** How the groups are made, which the search row's Group by control says and changes. */
   groupBy?: GroupBy
   /** Called with the grouping the owner picks. Unset, the control is not drawn. */
   onGroupBy?: (by: GroupBy) => void
@@ -239,25 +240,26 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
 
   const matches = sections.reduce((n, sec) => n + sec.threads.length, 0)
   const noMatch = `No chats match “${query.trim()}”`
-  const headingId = `${base}-heading`
   return (
-    <div ref={rootRef} role="group" aria-labelledby={headingId} className="flex flex-col">
+    // Named, not labelled by a heading on screen: the list's rows say what it holds, and a label row
+    // above them cost the sidebar a row's height for the word a screen reader still hears here.
+    <div ref={rootRef} role="group" aria-label="Chat history" className="flex flex-col">
       <div ref={barRef} className="flex flex-col" style={PINNED_BAR}>
-        <div className="flex items-center gap-xs pl-s pt-s">
-          <Eyebrow id={headingId} className="min-w-0 flex-1 truncate">Chat history</Eyebrow>
-          {onGroupBy && <GroupByControl value={groupBy} onChange={onGroupBy} />}
-        </div>
         <button
           type="button" onClick={onNewThread} title={`New chat (${bindingLabel('new-chat')})`}
           data-type="body-m"
-          className="flex w-full items-center gap-s rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
+          className="mt-s flex w-full items-center gap-s rounded-pill px-s py-1 text-left text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface"
           style={withWeight({ minHeight: 32 }, 400)}>
           <Edit3 size={16} strokeWidth={2} aria-hidden className="shrink-0" />
           <span className="min-w-0 flex-1 truncate">New chat</span>
         </button>
-        <div className="py-1">
-          <SearchField size="sm" surface="container" value={query} onChange={changeQuery}
-            placeholder="Search chats" ariaLabel="Search chats" name="chat-search" />
+        {/* The search, and at its end how the list is grouped: after the field in tab order. */}
+        <div className="flex items-center gap-xs py-1">
+          <div className="min-w-0 flex-1">
+            <SearchField size="sm" surface="container" value={query} onChange={changeQuery}
+              placeholder="Search" ariaLabel="Search chats" name="chat-search" />
+          </div>
+          {onGroupBy && <GroupByControl value={groupBy} onChange={onGroupBy} />}
         </div>
       </div>
       <ResultAnnouncement count={matches} noun="chats" active={searching && status !== 'loading'} empty={noMatch} />
@@ -332,19 +334,20 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
   )
 }
 
-/** The Group by control on the chat history's heading: which of the two groupings shows, and the
- *  menu that picks the other. Named by its value ("Group by: Folders"), so the heading row costs no
- *  height of its own. */
+/** The Group by control at the end of the search row: which of the two groupings shows, and the
+ *  menu that picks the other. Named by its value ("Group by: Folders"), and the field's height. Its
+ *  face is the grouping's icon, not its word: beside the word the field kept too little room to say
+ *  what it is for. */
 function GroupByControl({ value, onChange }: { value: GroupBy; onChange: (by: GroupBy) => void }) {
+  const Icon = GROUP_BY_ICON[value]
   return (
     <Popover align="right" placement="bottom" width={168} portal
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-expanded={open} aria-label={`Group by: ${GROUP_BY_WORD[value]}`}
-          title="Group the chat history by your folders or your tags"
-          data-type="caption"
-          className="inline-flex shrink-0 items-center gap-1 rounded-pill px-s py-0.5 text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-low/60 hover:text-on-surface">
-          {GROUP_BY_WORD[value]}
-          <ChevronDown size={14} strokeWidth={2} aria-hidden />
+          title={`Grouped by ${GROUP_BY_WORD[value].toLowerCase()}: group the chat history by your folders or your tags`}
+          className="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-surface-container px-1.5 text-on-surface-var transition-colors duration-(--duration-short) hover:bg-surface-high hover:text-on-surface">
+          <Icon size={16} strokeWidth={2} aria-hidden />
+          <ChevronDown size={12} strokeWidth={2} aria-hidden />
         </button>
       )}>
       {(close) => (['folder', 'tag'] as const).map((by) => (
@@ -381,11 +384,40 @@ function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boo
         <KindIcon size={14} strokeWidth={2} aria-hidden className="relative shrink-0 text-on-surface-low" style={{ zIndex: ROW_LABEL_Z }} />
       )}
       <span className="relative min-w-0 flex-1 truncate group-focus-visible:whitespace-normal group-focus-visible:break-words" style={{ zIndex: ROW_LABEL_Z }}>{thread.title}</span>
-      {pip && (
-        <span data-type="caption" className="relative shrink-0" style={{ zIndex: ROW_LABEL_Z }}>
-          <StateMark family={pip.family}>{pip.word}</StateMark>
-        </span>
-      )}
+      {pip && <StateDot family={pip.family} word={pip.word} />}
     </button>
+  )
+}
+
+/** A row's dot colour, by its state's family: green while it runs (`--color-ok`), orange while it
+ *  waits on you, grey when it finished unread and red when it failed. The rail's own reading of the
+ *  states, the owner's: the orb, the buddy and the project page keep the shared state tokens, where
+ *  running is the brand colour. */
+const DOT_TONE: Record<PhaseFamily, string> = {
+  active: 'var(--color-ok)',
+  waiting: 'var(--color-state-waiting)',
+  quiet: 'var(--color-state-quiet)',
+  blocked: 'var(--color-state-blocked)',
+}
+/** The states where something is happening, whose dot glows. */
+const GLOWS: ReadonlySet<PhaseFamily> = new Set(['active', 'waiting'])
+
+/** A row's state as a dot in its colour (DOT_TONE), with the shared running glow (`.status-pulse`)
+ *  in the same colour while its work runs or waits on you; unread and failed are steady dots. The
+ *  words are the dot's tooltip and part of the row's name, so the colour is never the only cue; the
+ *  row itself spends no width on them. Under reduced motion each glow is a still ring around its dot,
+ *  in its own colour, so the two still read apart from the steady dots. Bordered in its own colour,
+ *  as a state mark is, so forced colours still draw it. */
+function StateDot({ family, word }: { family: PhaseFamily; word: string }) {
+  const tone = DOT_TONE[family]
+  const lively = GLOWS.has(family)
+  const glow = lively && !prefersReducedMotion()
+  return (
+    <span data-state-family={family} data-state-dot={glow ? 'glowing' : 'still'} title={word.charAt(0).toUpperCase() + word.slice(1)}
+      className="relative inline-flex size-2 shrink-0" style={{ zIndex: ROW_LABEL_Z }}>
+      {glow && <span aria-hidden className="status-pulse absolute inset-0 rounded-pill" style={{ background: tone }} />}
+      {lively && !glow && <span aria-hidden data-still-glow className="absolute rounded-pill border" style={{ inset: -3, borderColor: tone, opacity: 0.6 }} />}
+      <span aria-hidden className="relative size-2 rounded-pill border" style={{ background: tone, borderColor: tone }} />
+    </span>
   )
 }
