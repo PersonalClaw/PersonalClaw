@@ -3,6 +3,7 @@ import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-li
 import { useState } from 'react'
 import { TasksListPage } from './TasksListPage'
 import { resetDataStore } from '../../lib/data'
+import { headerFilter } from '../../test/headerFilter'
 
 // ── Clear can express "cleared" (#476) ──────────────────────────────────────────────────────────
 //
@@ -94,7 +95,7 @@ describe('the Tasks scope filter can be cleared', () => {
     render(<Harness />)
     await waitFor(() => expect(screen.getByText('No tasks match this scope.')).toBeTruthy())
 
-    fireEvent.click(screen.getByLabelText('Filter & sort'))
+    fireEvent.click(headerFilter())
     fireEvent.click(clearFor('Scope'))
 
     // Both tasks come back…
@@ -110,7 +111,7 @@ describe('the Tasks scope filter can be cleared', () => {
     localStorage.setItem('tasks-scope', '__goals__')
     render(<Harness />)
     await waitFor(() => expect(screen.getByText('No tasks match this scope.')).toBeTruthy())
-    fireEvent.click(screen.getByLabelText('Filter & sort'))
+    fireEvent.click(headerFilter())
     fireEvent.click(clearFor('Scope'))
     await waitFor(() => expect(screen.getByText('Deliver Ramirez wedding gallery')).toBeTruthy())
 
@@ -127,7 +128,7 @@ describe('the Tasks scope filter can be cleared', () => {
     render(<Harness />)
     await waitFor(() => expect(screen.getByText('Deliver Ramirez wedding gallery')).toBeTruthy())
 
-    fireEvent.click(screen.getByLabelText('Filter & sort'))
+    fireEvent.click(headerFilter())
     fireEvent.click(within(screen.getByText('Scope').parentElement!.parentElement as HTMLElement).getByText('Goals'))
 
     await waitFor(() => expect(localStorage.getItem('tasks-scope')).toBe('__goals__'))

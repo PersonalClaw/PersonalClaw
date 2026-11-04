@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, EyeOff, Lightbulb, ShieldCheck } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { PageTitle } from '../../ui/PageTitle'
-import { HeaderActions } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderSegmented } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
-import { Segmented } from '../../ui/Segmented'
 import { Loading, LoadError } from '../../ui/ListScaffold'
 import { ChipInput, Checkbox, Field, FieldError, Select, TextArea, TextInput } from '../../ui/forms'
 import { Toggle } from '../../ui/Toggle'
@@ -263,6 +262,12 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
         </div>}
         right={doc ? (
           <HeaderActions>
+            <HeaderSegmented
+              ariaLabel="Editor view"
+              value={tab}
+              onChange={(k) => switchTab(k as Tab)}
+              options={[{ key: 'steps', label: 'Steps' }, { key: 'json', label: 'JSON' }]}
+            />
             <QuietButton
               onClick={() => { void submit(false) }}
               title="Check it the way Save does, without saving anything"
@@ -310,13 +315,6 @@ export function WorkflowDefEditor({ name, fromVersion, onCancel, onSaved }: {
                 <Outcome issues={issues} errors={errors} advice={advice} unplaced={placed.unplaced} topError={topError} />
               </div>
             )}
-
-            <Segmented
-              ariaLabel="Editor view"
-              value={tab}
-              onChange={(k) => switchTab(k as Tab)}
-              options={[{ key: 'steps', label: 'Steps' }, { key: 'json', label: 'JSON' }]}
-            />
 
             {tab === 'json' ? (
               <div className="flex flex-col gap-s">

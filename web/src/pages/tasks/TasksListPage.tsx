@@ -5,13 +5,14 @@ import { TopBar } from '../../ui/TopBar'
 import { fvs } from '../../design/fontWeight'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { TOUCH_TARGET } from '../../ui/Toggle'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { EmptyState, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PartialNotice } from '../../ui/PartialNotice'
 import { Button } from '../../ui/Button'
 import { InlineError } from '../../ui/InlineError'
 import { Meter } from '../../ui/Meter'
-import { SearchField } from '../../ui/SearchField'
 import { ResultAnnouncement } from '../../ui/ListControls'
 import { TextLink } from '../../ui/TextLink'
 import { confirm, confirmDelete } from '../../ui/dialog'
@@ -45,7 +46,7 @@ const VIEW_KEY = 'tasks-view'
 // (`ready` = unblocked and actionable, spanning open + in_progress), so they
 // keep their own labels.
 const FILTERS = [
-  { key: 'all', label: 'All' },
+  { key: 'all', label: 'Any status' },
   { key: 'ready', label: 'Ready' },
   ...['open', 'in_progress', 'blocked', 'done'].map((k) => ({ key: k, label: statusMeta(k).label })),
 ]
@@ -55,6 +56,8 @@ const SORTS = [
   { key: 'due', label: 'Due date' },
   { key: 'priority', label: 'Priority' },
 ]
+/** An order as the header filter's label says it, beside the scope and status it reads. */
+const SORT_SAID: Record<string, string> = { recent: 'Recently updated first', due: 'By due date', priority: 'By priority' }
 // Scope filter — narrows the list to a slice of work, applied across every view
 // (incl. board + DAG). Sentinels group tasks by origin; any other value is a
 // specific Tasks Project name. Goal Loop tasks land under the "Goal Loops"
@@ -385,8 +388,10 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         ...projOptions.map((p, i) => ({ key: p.name, label: p.name, icon: FolderKanban, count: byProject.get(p.name), groupLabel: i === 0 ? 'Projects' : undefined })),
       ],
     }]
+    // In the header filter's label, the scope always and the rest once set ("Show: All tasks ·
+    // Ready"); in a project, which has no scope, the status always.
     if (showStatus) sections.push({
-      title: 'Status', value: filter, defaultKey: 'all', onChange: setFilter,
+      title: 'Status', value: filter, defaultKey: 'all', onChange: setFilter, quiet: !inAProject,
       options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: statusCount(f.key) })),
     })
     // Tag — the axis that existed end to end on the server and had no way in. Offered
@@ -394,7 +399,7 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     // narrows which work is on screen, which is exactly what scope does there too.
     // Busiest tag first, then alphabetical, so a real vocabulary stays navigable.
     if (tagCounts.size > 0) sections.push({
-      title: 'Tag', value: tagFilter, defaultKey: TAG_ANY, onChange: setTag,
+      title: 'Tag', value: tagFilter, defaultKey: TAG_ANY, onChange: setTag, quiet: true,
       options: [
         { key: TAG_ANY, label: 'Any tag', icon: Tags, count: tasks?.length },
         ...[...tagCounts.entries()]
@@ -407,14 +412,15 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
     // would be a control that can only ever be a no-op.
     const foreign = owner ? (tasks ?? []).filter((t) => !isMine(t, owner)).length : 0
     if (owner && foreign > 0) sections.push({
-      title: 'Assigned', value: assigned, defaultKey: ASSIGNED_EVERYONE, onChange: setAssigned,
+      title: 'Assigned', value: assigned, defaultKey: ASSIGNED_EVERYONE, onChange: setAssigned, quiet: true,
       options: [
         { key: ASSIGNED_EVERYONE, label: 'Everyone', icon: Users, count: tasks?.length },
         { key: ASSIGNED_MINE, label: 'Mine', icon: UserRound, count: (tasks?.length ?? 0) - foreign },
       ],
     })
     if (showSort) sections.push({
-      title: 'Sort by', value: sortBy, defaultKey: 'recent', onChange: setSortBy,
+      title: 'Sort by', value: sortBy, defaultKey: 'recent', onChange: setSortBy, quiet: true,
+      said: (k) => SORT_SAID[k] ?? SORT_SAID.recent,
       options: SORTS.map((s) => ({ key: s.key, label: s.label })),
     })
     return sections
@@ -531,40 +537,21 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
           keepCornerPadding
           left={inProject ? inProject.title : <PageTitle>All tasks</PageTitle>}
           right={
-            // Header keeps only structural controls — the view switcher + the primary
-            // action, in the 4-tier cluster so they degrade together (view icon+label →
-            // icon-only; New task → icon-only → …) instead of clipping on narrow/mobile.
-            // Search / filter / sort live on the page (below). In a project the header also holds
-            // All projects, and below 1024 px the shell's 44 px corners leave it too little room,
-            // so it folds into the `…`, which is a 44 px target there.
+            // Every page-level control, in the 4-tier cluster so they degrade together: the search
+            // (not on board or DAG, which present every row), the scope, status, tag and sort
+            // filter, the view switch, All projects in a project, and New task last. Below 1024 px
+            // the shell's 44 px corners leave the row little room, so what folds goes into the
+            // `…`, which is a 44 px target there.
             <HeaderActions overflowClassName={TOUCH_TARGET}>
+              {!FULL_WIDTH.includes(view) && <HeaderSearch value={query} onChange={setQuery} placeholder="Search tasks" />}
+              {filterSections.length > 0 && <HeaderFilter sections={filterSections} />}
               <HeaderSegmented ariaLabel="View" value={view} onChange={(v) => setView(v as ViewMode)}
                 options={[{ key: 'list', label: 'List view', icon: List }, { key: 'cards', label: 'Cards view', icon: LayoutGrid }, { key: 'board', label: 'Kanban board', icon: Columns3 }, { key: 'dag', label: 'Dependency graph', icon: GitFork }]} />
-              <HeaderControl icon={Plus} label="New task" variant="primary" priority="primary" onClick={onCreate} />
               {inProject?.actions}
+              <HeaderControl icon={Plus} label="New task" variant="primary" priority="primary" onClick={onCreate} />
             </HeaderActions>
           }
         />
-      }
-      controls={
-        // On-page controls: search (hidden on board/DAG, which present all rows) +
-        // the scope/status/sort filter popover.
-        <div className="shrink-0 border-b border-outline-variant/30">
-          <div className="mx-auto flex w-full items-center gap-s px-l py-m">
-            {!FULL_WIDTH.includes(view) && (
-              <div className="min-w-[12rem] flex-1">
-                <SearchField value={query} onChange={setQuery} placeholder="Search tasks" ariaLabel="Search tasks" />
-              </div>
-            )}
-            <FilterMenu sections={filterSections} />
-            {/* Typing here rewrites the list under the user, and nothing said so. Same idiom the
-                `ListControls` adopters render — this page lays its own bar out, so it renders the
-                extracted piece rather than a second copy of it. `active` is the SEARCH being
-                non-empty, not `filter !== 'all'`: the status filter's own default is a preset, and a
-                flag that is true at rest would announce a count to a user who has done nothing. */}
-            <ResultAnnouncement count={filtered?.length ?? 0} noun="tasks" active={query.trim().length > 0} />
-          </div>
-        </div>
       }
       panel={open && (
         <SidePanel key={open.id} fillHeight storeKey="task-panel-w" icon={(() => { const I = statusMeta(open.status).icon; return <I size={18} style={{ color: statusMeta(open.status).tone }} /> })()} title={open.title} onClose={() => setOpenId(null)}>
@@ -572,6 +559,11 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
         </SidePanel>
       )}
     >
+      {/* Typing in the search rewrites the list under the user, so the count is announced.
+          `active` is the SEARCH being non-empty, not `filter !== 'all'`: the status filter's own
+          default is a preset, and a flag that is true at rest would announce a count to a user who
+          has done nothing. */}
+      <ResultAnnouncement count={filtered?.length ?? 0} noun="tasks" active={query.trim().length > 0} />
       {/* Board is a fixed-height shell (manages its own column scroll); other
           views scroll the whole content column. */}
       {view === 'board' ? (

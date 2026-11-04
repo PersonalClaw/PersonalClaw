@@ -55,8 +55,12 @@ async function mount(api: Record<string, unknown>) {
   return r
 }
 
+/** The Run action: the button that says Run alone, not the "Run Ledger" view, and not an aria-hidden
+ *  copy in the header cluster's measuring probes. */
 const runButton = (r: ReturnType<typeof render>) =>
-  [...r.container.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('Run'))!
+  [...r.container.querySelectorAll('button')]
+    .filter((b) => !b.closest('[aria-hidden="true"]'))
+    .find((b) => (b.textContent ?? '').trim() === 'Run')!
 
 async function click(el: Element) {
   await act(async () => { fireEvent.click(el); await new Promise((res) => setTimeout(res, 0)) })

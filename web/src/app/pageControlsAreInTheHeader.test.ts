@@ -57,15 +57,8 @@ const BUDGET: Record<string, number> = {
   'pages/files/FilesSection.tsx': 1,
   'pages/inbox/InboxPage.tsx': 4,
   'pages/knowledge/KnowledgeListPage.tsx': 1,
-  'pages/loops/LoopsListPage.tsx': 2,
   'pages/notifications/NotificationsPage.tsx': 2,
   'pages/projects/ProjectsSection.tsx': 3,
-  'pages/tasks/TasksListPage.tsx': 2,
-  'pages/triggers/TriggersListPage.tsx': 3,
-  'pages/workflows/WorkflowDefDetail.tsx': 1,
-  'pages/workflows/WorkflowDefEditor.tsx': 1,
-  'pages/workflows/WorkflowRunDetail.tsx': 1,
-  'pages/workflows/WorkflowsListPage.tsx': 1,
 }
 
 /** The page-level controls a page draws outside its header. */

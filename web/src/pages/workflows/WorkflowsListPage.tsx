@@ -3,7 +3,8 @@ import { Play, Search, Sparkles, Trash2, Workflow } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { EmptyState, ListRow, Loading, LoadError } from '../../ui/ListScaffold'
 import { WindowedList } from '../../ui/WindowedList'
-import { ListControls } from '../../ui/ListControls'
+import { ListStatus } from '../../ui/ListControls'
+import { HeaderSearch } from '../../ui/HeaderSearch'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { QuietButton } from '../../ui/QuietButton'
 import { Button } from '../../ui/Button'
@@ -263,18 +264,17 @@ export function WorkflowsListPage({ navigate, query: routeQuery, setQuery }: Rou
             <span data-type="caption" className="shrink-0 text-warning">{needingInput} waiting on you</span>
           )}
         </div>}
-        // The header keeps only the structural view-switch + the primary action; search moved to
-        // the page's ListControls bar, which is `ListControls`' documented rule and what the other
-        // 12 list pages do. Crammed in here the search input was visibly TRUNCATED at 1440px
-        // ("Search runs and defini…") because it competed with the tab strip for header width.
+        // Every page-level control in the header, in its one order: the search, the view switch, the
+        // primary action last. The search sheds with the row (a narrower field, then a button that
+        // opens it), so it no longer competes with the view switch for the header's width.
         right={<HeaderActions>
+          <HeaderSearch value={q} onChange={setQ} placeholder="Search runs and definitions" label="Search workflows" />
           <HeaderSegmented options={TABS} value={tab} onChange={setTab} ariaLabel="Workflows view" />
           <HeaderControl icon={Sparkles} label="Start from template" variant="primary" priority="primary"
             onClick={startFromTemplate} hint="Describe what you want to do; we'll pick the template" />
         </HeaderActions>}
       />
-      <ListControls search={{ value: q, onChange: setQ, placeholder: 'Search runs and definitions', label: 'Search workflows' }}
-        results={{ count: tab === 'defs' ? filteredDefs.length : filteredRuns.length, noun: tab === 'defs' ? 'definitions' : 'runs', active: !!q.trim() }}
+      <ListStatus results={{ count: tab === 'defs' ? filteredDefs.length : filteredRuns.length, noun: tab === 'defs' ? 'definitions' : 'runs', active: !!q.trim() }}
         stale={stale} />
       <div className="min-h-0 flex-1 overflow-y-auto p-l">
         {loading ? <Loading what="workflows" /> : tab === 'defs' ? (

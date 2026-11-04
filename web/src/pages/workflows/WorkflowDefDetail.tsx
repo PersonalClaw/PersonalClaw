@@ -5,8 +5,7 @@ import { Loading, LoadError, InlineLoadError } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { TextLink } from '../../ui/TextLink'
 import { Button } from '../../ui/Button'
-import { HeaderActions } from '../../ui/HeaderActions'
-import { Segmented } from '../../ui/Segmented'
+import { HeaderActions, HeaderSegmented } from '../../ui/HeaderActions'
 import { Toggle } from '../../ui/Toggle'
 import {
   buildArgs,
@@ -280,6 +279,17 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
         </div>}
         right={def ? (
           <HeaderActions>
+            {/* The definition's view switch is the page's, so it sits in the header with its actions. */}
+            <HeaderSegmented
+              ariaLabel="Definition view"
+              value={tab}
+              onChange={(k) => setTab(k as 'steps' | 'versions' | 'ledger')}
+              options={[
+                { key: 'steps', label: 'Steps' },
+                { key: 'versions', label: 'Versions' },
+                { key: 'ledger', label: 'Run Ledger' },
+              ]}
+            />
             {/* 🪤 Same shape OutboxPanel had: `refine` opens with `if (refining) return`, so a second
                 click through the whole refine round-trip was a silent no-op while the button stayed
                 lit — and it sits beside a `Button` that DOES carry `loading`+`disabled`, so the two
@@ -322,17 +332,6 @@ export function WorkflowDefDetail({ name, onBack, onStarted, onEdit }: {
         ) : (
           <div className="mx-auto flex flex-col gap-l">
             {def.description && <p data-type="body-s" className="text-on-surface">{def.description}</p>}
-
-            <Segmented
-              ariaLabel="Definition view"
-              value={tab}
-              onChange={(k) => setTab(k as 'steps' | 'versions' | 'ledger')}
-              options={[
-                { key: 'steps', label: 'Steps' },
-                { key: 'versions', label: 'Versions' },
-                { key: 'ledger', label: 'Run Ledger' },
-              ]}
-            />
 
             {tab === 'steps' && (
               <>

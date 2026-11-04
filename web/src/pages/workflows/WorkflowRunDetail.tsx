@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, ChevronDown, ChevronRight, FolderGit2, GitBranch, MessageSquarePlus, MessageSquareCode, Package, Pause, Pencil, Play, RotateCcw, ScanSearch, Scale, SkipForward, X, XCircle } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
-import { Segmented } from '../../ui/Segmented'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { Loading } from '../../ui/ListScaffold'
 import { QuietButton } from '../../ui/QuietButton'
 import { SidePanel } from '../../ui/SidePanel'
@@ -535,6 +534,20 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
         // The five panel toggles go into the menu first; the lifecycle actions stay.
         right={run ? (
           <HeaderActions>
+            {/* The run's view switch, first in the row as every page's is. Hidden when there is
+                nothing to show: a List/Graph switch over an empty run offers two ways to look at
+                nothing. */}
+            {nodes.length > 0 && (
+              <HeaderSegmented
+                ariaLabel="Run view"
+                value={view}
+                onChange={(v) => setView(v as 'list' | 'graph')}
+                options={[
+                  { key: 'list', label: 'List' },
+                  { key: 'graph', label: 'Graph' },
+                ]}
+              />
+            )}
             {/* Workspace on BOTH sides of the terminal split, unlike Steer/Pause/Fork: reviewing
                 what a run changed is the one thing a user wants equally mid-run (is it touching
                 what I expected) and after (do I take this work). */}
@@ -709,22 +722,6 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 initial={overlayOf(run)}
                 onSaved={() => refetch()}
               />
-            )}
-
-            {/* The mode toggle sits ABOVE the nodes and is hidden when there is nothing to show —
-                a List/Graph switch over an empty run offers two ways to look at nothing. */}
-            {nodes.length > 0 && (
-              <div className="flex items-center gap-xs">
-                <Segmented
-                  ariaLabel="Run view"
-                  value={view}
-                  onChange={(v) => setView(v as 'list' | 'graph')}
-                  options={[
-                    { key: 'list', label: 'List' },
-                    { key: 'graph', label: 'Graph' },
-                  ]}
-                />
-              </div>
             )}
 
             {view === 'graph' && dag.nodes.length > 0 ? (

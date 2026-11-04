@@ -112,8 +112,13 @@ async function mountEditor(name = 'paper-ingest', fromVersion?: number) {
   return { r, saved }
 }
 
-const button = (r: ReturnType<typeof render>, text: string) =>
-  [...r.container.querySelectorAll('button')].find((b) => (b.textContent ?? '').trim() === text || (b.textContent ?? '').includes(text))
+/** The button that says *text*: the one that says it alone first, then one that says it among
+ *  more ("Run Ledger" is a view, "Run" the action). The header cluster's measuring probes are
+ *  aria-hidden copies of its controls, so they are left out. */
+const button = (r: ReturnType<typeof render>, text: string) => {
+  const shown = [...r.container.querySelectorAll('button')].filter((b) => !b.closest('[aria-hidden="true"]'))
+  return shown.find((b) => (b.textContent ?? '').trim() === text) ?? shown.find((b) => (b.textContent ?? '').includes(text))
+}
 
 async function click(el: Element | undefined | null) {
   expect(el, 'the control exists').toBeTruthy()

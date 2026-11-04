@@ -3,15 +3,16 @@ import { fvs } from '../../design/fontWeight'
 import { Plus, Zap, Clock, Pencil, CalendarDays, Users, ShieldOff, Send } from 'lucide-react'
 import { TopBar } from '../../ui/TopBar'
 import { ListBesideDetail, type CapabilityDetail } from '../capabilities/ListBesideDetail'
-import { HeaderActions, HeaderControl } from '../../ui/HeaderActions'
+import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
+import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
 import { EmptyState, ListRow, ListSkeleton, LoadError } from '../../ui/ListScaffold'
 import { PresetEmptyState } from '../../ui/PresetEmptyState'
 import { Button } from '../../ui/Button'
 import { TRIGGER_PRESETS } from './triggerPresets'
-import { ListControls } from '../../ui/ListControls'
-import { Segmented } from '../../ui/Segmented'
+import { ListStatus } from '../../ui/ListControls'
 import { WeekGridView } from './WeekGridView'
-import { FilterMenu, type FilterSectionDef } from '../../ui/FilterMenu'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { useQueryParam, useEditFlag, type RouteProps } from '../../app/useQueryState'
 import { useQuery, invalidateKeys } from '../../lib/data'
@@ -46,7 +47,7 @@ const NONE_UNREADABLE: TriggerSourceUnreadable[] = []
 // `lifecycle` reads "Lifecycle events" (the plural of the canonical "Lifecycle event" kind, parallel
 // to "Data events"), not the singular "Lifecycle" that broke the row's own convention.
 const FILTERS: Array<{ key: string; label: string }> = [
-  { key: 'all', label: 'All' },
+  { key: 'all', label: 'All triggers' },
   { key: 'schedule', label: 'Schedules' },
   { key: 'lifecycle', label: 'Lifecycle events' },
   { key: 'event', label: 'Data events' },
@@ -189,6 +190,8 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
   // different facts"). The catches are gone; a rejection now reaches the hook's `error`. This flag is
   // true only when NOTHING has composed yet, so a good cached list is not hidden by a failed refresh.
   const loadFailed = triggers === null && !!listErr
+  // The list's controls show while it loads or holds anything to narrow.
+  const anyTrigger = triggers === null || counts.all > 0
 
   // The list laid out in the route's order, under its groups' headings.
   const groups = useMemo(() => placeRows(triggers ?? []), [triggers])
@@ -223,43 +226,39 @@ export function TriggersListPage({ onCreate, query, setQuery }: {
           keepCornerPadding
           left={<PageTitle>Automations</PageTitle>}
           right={
-            /* `() => onCreate()`, NOT `onCreate` — the blank path must pass NO preset id.
-               `HeaderControl.onClick` is typed `() => void`, and a `(presetId?: string) => void`
-               is assignable to it, so tsc accepts the bare reference while React still hands the
-               handler its click event. That event landed in `presetId` and rode into the URL:
-               clicking this button produced
-               `#/triggers/new?kind=schedule&preset=%5Bobject%20Object%5D`. The preset lookup is
-               tolerant, so no field was corrupted — the damage was to the URL this page's own
-               contract says is shareable and reload-survivable. */
-            <HeaderActions><HeaderControl icon={Plus} label="New trigger" variant="primary" priority="primary" onClick={() => onCreate()} /></HeaderActions>
+            <HeaderActions>
+              {/* Search and the type filter belong to the LIST. The week grid plots every enabled
+                  clock trigger by construction, so a search over it would be a control that changes
+                  nothing, worse than an absent one. */}
+              {view === 'list' && anyTrigger && <HeaderSearch value={q} onChange={setQ} placeholder="Search triggers" />}
+              {view === 'list' && anyTrigger && (
+                <HeaderFilter sections={[{
+                  title: 'Type',
+                  value: filter,
+                  defaultKey: 'all',
+                  onChange: setFilter,
+                  options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key as keyof typeof counts] })),
+                } satisfies FilterSectionDef]} />
+              )}
+              {anyTrigger && (
+                <HeaderSegmented ariaLabel="Triggers view" value={view} onChange={setView}
+                  options={[{ key: 'list', label: 'List', icon: Zap }, { key: 'week', label: 'Week', icon: CalendarDays }]} />
+              )}
+              {/* `() => onCreate()`, NOT `onCreate`: the blank path must pass NO preset id.
+                  `HeaderControl.onClick` is typed `() => void`, and a `(presetId?: string) => void`
+                  is assignable to it, so tsc accepts the bare reference while React still hands the
+                  handler its click event. That event landed in `presetId` and rode into the URL:
+                  clicking this button produced
+                  `#/triggers/new?kind=schedule&preset=%5Bobject%20Object%5D`. The preset lookup is
+                  tolerant, so no field was corrupted; the damage was to the URL this page's own
+                  contract says is shareable and reload-survivable. */}
+              <HeaderControl icon={Plus} label="New trigger" variant="primary" priority="primary" onClick={() => onCreate()} />
+            </HeaderActions>
           }
         />
       }
-      controls={(triggers === null || counts.all > 0)
-        ? <ListControls
-            results={{ count: (triggers ?? []).length, noun: 'triggers', active: !!q.trim() || filter !== 'all' }}
-            // Search and the type filter belong to the LIST. The week grid plots every enabled clock
-            // trigger by construction, so a search box over it would be a control that changes
-            // nothing — worse than an absent one.
-            search={view === 'list' ? { value: q, onChange: setQ, placeholder: 'Search triggers', label: 'Search triggers' } : undefined}
-          >
-            <Segmented
-              ariaLabel="Triggers view"
-              size="sm"
-              value={view}
-              onChange={setView}
-              options={[{ key: 'list', label: 'List', icon: Zap }, { key: 'week', label: 'Week', icon: CalendarDays }]}
-            />
-            {view === 'list' && <FilterMenu sections={[{
-              title: 'Type',
-              value: filter,
-              defaultKey: 'all',
-              onChange: setFilter,
-              options: FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key as keyof typeof counts] })),
-            } satisfies FilterSectionDef]} />}
-          </ListControls>
-        : undefined}
     >
+      {anyTrigger && <ListStatus results={{ count: (triggers ?? []).length, noun: 'triggers', active: !!q.trim() || filter !== 'all' }} />}
       {view === 'week' ? (
         <>
           {(review.length > 0 || reviewErr != null || restoreHolds.length > 0 || unreadable.length > 0) && (
