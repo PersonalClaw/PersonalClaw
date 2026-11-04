@@ -12,7 +12,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { CONNECT_CHANNELS, LOCAL_STATES, describeLocal, describeChooser, healthCopy, describeRow, describeList, makeConnectDialog } = require("../connectDialog");
+const { CONNECT_CHANNELS, LOCAL_STATES, RELEASES_PAGE_URL, describeLocal, describeChooser, healthCopy, describeRow, describeList, makeConnectDialog } = require("../connectDialog");
 const {
   LOCAL_ENDPOINT_ID,
   HEALTH_STATES,
@@ -178,6 +178,14 @@ describe("the \"This computer\" row, by how this computer's gateway stands", () 
     assert.equal(at({ state: "own", autoUse: true }).localOption, null, "the app's own gateway is never 'used without asking'");
   });
 
+  it("offers the newer app, never a start, when a newer PersonalClaw has served the home: a start would be refused again", () => {
+    const older = at({ state: "older", sentence: "This home was last used by PersonalClaw 0.3.7, and this app's gateway is older …" });
+    assert.equal(older.statusText, "Older than this home");
+    assert.deepEqual(older.localAction, { id: "releases", label: "Open the Releases Page" });
+    assert.equal(older.switchable, false);
+    assert.match(older.statusDetail, /last used by PersonalClaw 0\.3\.7/);
+  });
+
   it("offers nothing while it starts", () => {
     const starting = at({ state: "starting" });
     assert.equal(starting.statusText, "Starting…");
@@ -207,6 +215,17 @@ describe("the chooser, while nothing serves the windows", () => {
     }
   });
 
+  it("offers the newer app and no Try Again for a home a newer PersonalClaw served", () => {
+    const older = describeChooser({ state: "older", sentence: "This home was last used by PersonalClaw 0.3.7 …" });
+    assert.equal(older.releases, true);
+    assert.equal(older.retry, false, "a start that can only be refused again is offered");
+    assert.equal(older.use, false);
+    for (const state of ["found", "stopped", "served"]) {
+      assert.equal(describeChooser({ state }).retry, true);
+      assert.equal(describeChooser({ state }).releases, false);
+    }
+  });
+
   it("holds its offers while a start runs, and has nothing to choose once a gateway serves", () => {
     assert.equal(describeChooser({ state: "starting" }).busy, true);
     assert.equal(describeChooser({ state: "starting" }).use, false);
@@ -232,11 +251,11 @@ describe("the IPC adaptor", () => {
     };
   }
 
-  it("registers exactly the ten invokes the preload exposes; `changed` is the main process's to send", () => {
+  it("registers exactly the eleven invokes the preload exposes; `changed` is the main process's to send", () => {
     const ipc = fakeIpc();
     makeConnectDialog({ BrowserWindowCtor: class {}, ipcMain: ipc, handlers: {} }).registerIpc(ipc);
     const invokes = Object.entries(CONNECT_CHANNELS).filter(([k]) => k !== "changed").map(([, v]) => v);
-    assert.equal(invokes.length, 10);
+    assert.equal(invokes.length, 11);
     assert.deepStrictEqual(ipc.names().sort(), invokes.sort());
     const preload = fs.readFileSync(path.join(__dirname, "..", "connectPreload.js"), "utf8");
     for (const key of Object.keys(CONNECT_CHANNELS)) assert.match(preload, new RegExp(`CONNECT_CHANNELS\\.${key}\\b`), `the preload does not expose ${key}`);
@@ -252,6 +271,19 @@ describe("the IPC adaptor", () => {
     await ipc.call(CONNECT_CHANNELS.autoUse, { on: 1 });
     await ipc.call(CONNECT_CHANNELS.autoUse, undefined);
     assert.deepStrictEqual(seen, [["use", { remember: false }], ["use", { remember: true }], ["autoUse", { on: false }], ["autoUse", { on: false }]]);
+  });
+
+  it("opens the releases page with nothing the renderer sent: the address is the main process's own", async () => {
+    const ipc = fakeIpc();
+    const seen = [];
+    const handlers = { releases: (...args) => (seen.push(args), { ok: true }) };
+    makeConnectDialog({ BrowserWindowCtor: class {}, ipcMain: ipc, handlers }).registerIpc(ipc);
+    assert.deepEqual(await ipc.call(CONNECT_CHANNELS.releases, { url: "https://elsewhere.invalid/" }), { ok: true });
+    assert.deepEqual(seen, [[]]);
+    assert.equal(RELEASES_PAGE_URL, "https://github.com/PersonalClaw/PersonalClaw/releases");
+    // The page the dashboard's Update & Restart links to on this install, so the two never part.
+    const repoDocs = fs.readFileSync(path.join(__dirname, "..", "..", "web", "src", "lib", "repoDocs.ts"), "utf8");
+    assert.ok(repoDocs.includes(`RELEASES_PAGE_URL = '${RELEASES_PAGE_URL}'`), "repoDocs.ts's RELEASES_PAGE_URL is not the desktop app's");
   });
 
   it("opens a window of its own, never a sheet on another: a sheet would queue behind the one already there", () => {
@@ -390,6 +422,11 @@ describe("the dialog document", () => {
     assert.match(html, /window\.pclawConnect\.onChanged\(\(\) => load\(\)\)/);
   });
 
+  it("offers the releases page for a home a newer PersonalClaw served, through its own invoke, naming no address", () => {
+    assert.match(html, /row\.localAction && row\.localAction\.id === 'releases'\) \{[\s\S]*?window\.pclawConnect\.releases\(\)\)/);
+    assert.equal(/github\.com/.test(html), false, "the document names an address of its own");
+  });
+
   it("builds every row with textContent and never with innerHTML", () => {
     // A registry label or URL is exactly the string a tampered store controls, so the document must
     // have no HTML-string sink at all.
@@ -437,6 +474,13 @@ describe("the chooser document", () => {
     assert.match(html, /window\.pclawConnect\.use\(byId\('remember'\)\.checked\)/);
     // The box's row is a flex row: without this, its display rule shows it while it is hidden.
     assert.match(html, /\[hidden\] \{ display: none !important; \}/);
+  });
+
+  it("offers the releases page through its invoke, in place of Try Again, only when the chooser says so", () => {
+    assert.match(html, /byId\('releases'\)\.hidden = !chooser\.releases;/);
+    assert.match(html, /byId\('retry'\)\.hidden = !chooser\.retry;/);
+    assert.match(html, /window\.pclawConnect\.releases\(\)/);
+    assert.match(html, /<button id="releases" hidden>/);
   });
 
   it("offers Add a Gateway and Try Again through their invokes, and closes once a gateway serves", () => {

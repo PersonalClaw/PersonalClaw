@@ -170,6 +170,15 @@ The Gateways window's **This computer** row says the same, and offers **Start a 
 **Use It** for a running gateway the app found. If a gateway serves your home that the app cannot
 sign in to, the row says why and offers **Try Again** instead.
 
+If your home was last used by a newer PersonalClaw than the app's own gateway (an app kept from an
+older release, say), that gateway is refused the home: an older version could lose what the newer
+one saved. The chooser and the row name the version that used it and offer **Open the Releases
+Page** for the newer app, never **Try Again**, which would be refused again.
+
+When the app and a pip install share a home, whichever is newer sets the floor. Opening a newer
+app while your own gateway is stopped moves the home forward, and your older gateway then asks to
+be updated.
+
 ## The window
 
 On macOS the window has no title bar of its own: the window controls (close, minimize, zoom) sit
@@ -838,7 +847,13 @@ governs what the app *tells* you:
   [releases page](https://github.com/PersonalClaw/PersonalClaw/releases) and install it over
   this one, then set `updates.pin` to that version so the panel stops nagging. Run
   `personalclaw snapshot` first: pre-1.0 releases carry no data migrations in either
-  direction. (The one-click **Roll back to v&lt;previous&gt;** button is a git/pip
+  direction. Your home then remembers the newer release, and the older app's gateway is refused
+  it until the rollback is said to be meant, once, by a start of its own: quit the app, run the
+  `personalclaw-backend` in the app's `resources/backend-dist/personalclaw-backend/` folder from a
+  terminal as `PERSONALCLAW_ROLL_BACK_FROM=<the newer version> <that program> gateway` (on macOS,
+  `/Applications/PersonalClaw.app/Contents/Resources/backend-dist/personalclaw-backend/personalclaw-backend`),
+  stop it with Ctrl-C once it serves, and open the app. The app never passes that variable on to
+  its own gateway. (The one-click **Roll back to v&lt;previous&gt;** button is a git/pip
   affordance — there is nothing for it to install here.)
 - **Apply updates** (`updates.auto`) — not offered on this kind: the shell owns the install,
   and nothing in it can replace a running app bundle, so `staged` notifies exactly as `off`

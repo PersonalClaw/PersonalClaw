@@ -5,12 +5,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
+  HOME_NEWER_EXIT,
   HOME_SERVED_EXIT,
   LAST_LINE_MAX,
   adoptedGoneSentence,
   isUnasked,
   makeLastLine,
   notStartedSentence,
+  olderSentence,
   stoppedSentence,
 } = require("../gatewayLost");
 
@@ -124,6 +126,23 @@ describe("HOME_SERVED_EXIT", () => {
   });
 });
 
+describe("a home a newer PersonalClaw served (HOME_NEWER_EXIT)", () => {
+  it("is gateway_base's exit status for it, its own", () => {
+    // `tests/test_desktop_home_gateway_parity.py` holds this to `gateway_base.HOME_NEWER_EXIT`.
+    assert.equal(HOME_NEWER_EXIT, 4);
+    assert.notEqual(HOME_NEWER_EXIT, HOME_SERVED_EXIT);
+  });
+
+  it("says which version served the home, that this app's is older, and what the owner can do here", () => {
+    const said = olderSentence("0.3.7");
+    assert.match(said, /^This home was last used by PersonalClaw 0\.3\.7, and this app's gateway is older, so it won't start on it/);
+    assert.match(said, /could lose what the newer one saved/);
+    assert.match(said, /releases page, or connect to another gateway\.$/);
+    assert.doesNotMatch(said, /PERSONALCLAW_ROLL_BACK_FROM|start a gateway here/i, "it offers what the app does not do");
+    assert.match(olderSentence(""), /^This home was last used by a newer PersonalClaw/);
+  });
+});
+
 /**
  * The loading screen is `main.js` code, which no test launches, so its wiring is read as a FILE,
  * with a floor that proves each pattern is still there to read (the `connectSeam.test.js` rule).
@@ -163,6 +182,13 @@ describe("a gateway that did not start, or stopped, lands on the Gateways window
   it("starts a gateway here only after stopping one that may still be starting", () => {
     // Never two gateways on one home: a start that timed out can still be running.
     comesBefore(body("startLocalHere"), "await stopGateway()", "await bringUpLocalGateway()");
+  });
+
+  it("says a start refused for a newer home on the row, with no start to offer: one would be refused again", () => {
+    const up = body("bringUpLocalGateway");
+    assert.match(up, /if \(exit\.code === HOME_NEWER_EXIT\) \{\s*startFailure = \{ \.\.\.exit, older: true \};\s*setOlder\(\);\s*return false;/);
+    assert.match(body("gatewayLost"), /if \(exit\.code === HOME_NEWER_EXIT\) setOlder\(\);/, "a restart's new image refused the home says it too");
+    assert.match(MAIN, /setLocalState\("older", olderSentence\(homeGateway\.newestThatServed\(PERSONALCLAW_HOME\)\)\)/);
   });
 
   it("keeps a failed start's exit for the row to say", () => {

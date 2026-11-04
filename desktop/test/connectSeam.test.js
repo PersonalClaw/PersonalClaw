@@ -308,6 +308,10 @@ describe("the app starts its own gateway first, uses this home's running one onl
     const sends = [...MAIN.matchAll(/X-Local-Secret|X-Shell-Token|localSignIn\.authorization\(\)/g)].length;
     assert.equal(sends, 6, "a new door carries the home's credentials: give it the same ask");
   });
+
+  it("opens the releases page for a home a newer PersonalClaw served at its one fixed address, with nothing the dialog sent", () => {
+    assert.match(MAIN, /releases: \(\) => systemBrowser\.open\(RELEASES_PAGE_URL\),/);
+  });
 });
 
 describe("a start that timed out is the app's own gateway, never another one (main.js's functions, run under stand-ins)", () => {
@@ -326,12 +330,14 @@ describe("a start that timed out is the app's own gateway, never another one (ma
     const box = {
       console: { log() {}, warn() {}, error() {} },
       HOME_SERVED_EXIT: 3,
+      HOME_NEWER_EXIT: 4,
       gatewayProcess: child,
       startFailure: null,
       adoptedGateway: null,
       localState: { state: "", sentence: "" },
       adoptedWatch: { drop() {} },
       sendStatus() {},
+      setOlder: () => did.push("older"),
       setLocalState: (state, sentence = "") => {
         box.localState = { state, sentence };
         did.push(state);

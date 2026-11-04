@@ -43,6 +43,14 @@ const RUNTIME_FILE = "gateway.runtime.json";
 /** The home's local secret, which its gateway writes each time it starts. */
 const SECRET_FILE = ".local_secret";
 
+/** The newest PersonalClaw that has served the home, as each start's claim keeps it
+ *  (`gateway_base.VERSION_FILE`). */
+const VERSION_FILE = "gateway.version.json";
+
+/** What a version a stamp names may hold, the characters PEP 440 spells one with: anything else is
+ *  no version to put in a sentence. */
+const VERSION_SHAPE = /^v?[0-9][0-9A-Za-z.+!-]{0,63}$/;
+
 /** What a gateway's proof is made over, besides the nonce and the port (`home_gateway.PROOF_CONTEXT`). */
 const PROOF_CONTEXT = "personalclaw-gateway-proof";
 
@@ -135,6 +143,17 @@ function readRecord(home) {
 function readSecret(home) {
   try {
     return fs.readFileSync(path.join(home, SECRET_FILE), "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+/** The newest PersonalClaw that has served *home*, as its stamp says, or `""` when it has none, it
+ *  cannot be read, or what it names is no version. */
+function newestThatServed(home) {
+  try {
+    const newest = JSON.parse(fs.readFileSync(path.join(home, VERSION_FILE), "utf8")).newest;
+    return typeof newest === "string" && VERSION_SHAPE.test(newest) ? newest : "";
   } catch {
     return "";
   }
@@ -304,11 +323,13 @@ module.exports = {
   RUNTIME_FILE,
   SECRET_FILE,
   SIGN_IN_TTL,
+  VERSION_FILE,
   gatewayProof,
   homeId,
   homeIdOf,
   isNonce,
   newNonce,
+  newestThatServed,
   pidIsAlive,
   reach,
   readRecord,

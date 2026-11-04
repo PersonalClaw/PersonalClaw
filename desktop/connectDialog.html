@@ -145,7 +145,12 @@
           if (row.statusDetail) meta.appendChild(el('div', 'status detail', row.statusDetail));
           li.appendChild(meta);
 
-          if (row.localAction) {
+          if (row.localAction && row.localAction.id === 'releases') {
+            // A newer PersonalClaw served this home: the newer app, from the releases page.
+            const act = el('button', 'primary', row.localAction.label);
+            act.addEventListener('click', () => window.pclawConnect.releases());
+            li.appendChild(act);
+          } else if (row.localAction) {
             // No gateway serves this computer's row: start one here, try again, or use this home's
             // running gateway, which the app did not start.
             const using = row.localAction.id === 'use';
