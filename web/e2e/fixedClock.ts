@@ -29,4 +29,8 @@ export const FIXED_CLOCK: Record<string, string> = {
   // The week strip names the seven days that end today, so the goldens made on a Saturday read
   // Sun to Sat and a refresh a day later Mon to Sun (run 40150040941, eight Learning shots).
   learning: '2026-11-02T12:00:00Z',
+  // Home's agents band draws the hours around the browser's now and names each one, and "now" with
+  // it: under the real clock its axis moved with every run (the Refresh visual baselines run on
+  // the band's branch shot 13:44 in one picture and 13:46 in the next).
+  dashboard: '2026-11-02T12:00:00Z',
 }

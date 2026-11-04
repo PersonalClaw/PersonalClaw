@@ -277,7 +277,8 @@ describe('no destination skips a heading level', () => {
 })
 
 describe('the dashboard does not skip a heading level', () => {
-  const files = ['pages/dashboard/DashboardPage.tsx', 'pages/dashboard/PinnedTiles.tsx']
+  // `Section` is the dashboard's section header, in a file of its own since Home's agents band holds one.
+  const files = ['pages/dashboard/Section.tsx', 'pages/dashboard/PinnedTiles.tsx']
 
   it.each(files)('%s renders its section header as h2', (rel) => {
     const src = readSource(join(SRC, rel))
@@ -288,8 +289,9 @@ describe('the dashboard does not skip a heading level', () => {
   it('finds the shared Section component (not vacuously green)', () => {
     // If `Section` is ever renamed or inlined, this assertion is what notices before the
     // heading level silently drifts back.
-    const src = readSource(join(SRC, 'pages/dashboard/DashboardPage.tsx'))
-    expect(src).toMatch(/function Section\(/)
+    expect(readSource(join(SRC, 'pages/dashboard/Section.tsx'))).toMatch(/function Section\(/)
+    expect(readSource(join(SRC, 'pages/dashboard/DashboardPage.tsx')), 'the dashboard renders through it')
+      .toMatch(/import \{ Section \} from '\.\/Section'/)
   })
 })
 

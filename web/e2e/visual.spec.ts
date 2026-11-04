@@ -333,6 +333,27 @@ test.describe('visual: each pin holds', { tag: '@visual' }, () => {
     expect(days).toEqual([6, 5, 4, 3, 2, 1, 0].map(before))
   })
 
+  test("Home draws only the times its fixed clock gives", async ({ page }) => {
+    await assertPristineFlywheel(page)
+    await seedTheme(page, 'light')
+    await loadPinned(page, 'dashboard')
+    await expect(page.getByRole('heading', { name: 'Your agents today' })).toBeVisible()
+    // The agents band names "now" and each hour of its window, four either side of now at most:
+    // every time on the page is one of those at the fixed instant, in the browser's own format.
+    const { shown, given } = await page.evaluate((fixed) => {
+      const at = Date.parse(fixed)
+      const hour = 3_600_000
+      const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+      const tick = new Date(at - 4 * hour)
+      tick.setMinutes(0, 0, 0)
+      const given = [clock(at)]
+      for (let t = tick.getTime(); t <= at + 4 * hour; t += hour) given.push(clock(t))
+      return { shown: document.body.innerText.match(/\b\d{2}:\d{2}\b/g) ?? [], given }
+    }, FIXED_CLOCK.dashboard)
+    expect(shown.length, 'the band draws its hours').toBeGreaterThan(0)
+    expect(shown.filter((t) => !given.includes(t)), 'a time no fixture gave').toEqual([])
+  })
+
   test("Settings' tiles read the fixed count and reading, not the run's", async ({ page }) => {
     await assertPristineFlywheel(page)
     await seedTheme(page, 'light')

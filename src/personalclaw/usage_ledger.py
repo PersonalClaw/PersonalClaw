@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import AsyncIterator, Callable
+import os
+from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -486,6 +487,71 @@ def rollup(
         _fold(agg, row)
     out = [{group_by: k, **v} for k, v in groups.items()]
     out.sort(key=lambda r: (-r["cost_usd"], str(r[group_by])))
+    return out
+
+
+#: How far out of time order two rows may be written: calls that end together are recorded in
+#: whichever order they finish, so a read from the end stops only past this before its window.
+_ORDER_SLACK_SECS = 600
+#: The block a read from the file's end takes at a time.
+_TAIL_BLOCK = 1 << 16
+
+
+def _rows_from_end(p: Path) -> Iterator[dict]:
+    """*p*'s rows, newest first, read from the file's end a block at a time (tolerant, as
+    :func:`_iter_rows`: a corrupt line is skipped)."""
+    with open(p, "rb") as f:
+        pos = f.seek(0, os.SEEK_END)
+        carried = b""
+        while pos > 0:
+            step = min(_TAIL_BLOCK, pos)
+            pos -= step
+            f.seek(pos)
+            lines = (f.read(step) + carried).split(b"\n")
+            carried = lines[0]  # the start of a line that began in the block before
+            for raw in reversed(lines[1:]):
+                if (row := _row_of(raw)) is not None:
+                    yield row
+        if (row := _row_of(carried)) is not None:
+            yield row
+
+
+def _row_of(raw: bytes) -> dict | None:
+    if not raw.strip():
+        return None
+    try:
+        row = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return row if isinstance(row, dict) else None
+
+
+def calls(*, since: str = "", until: str = "") -> list[dict]:
+    """Every row in ``[since, until)``, one model call each, in the order they were written: what
+    an agent's day is folded from (:mod:`personalclaw.agent_day`).
+
+    A row is written as its call ends, so the file is in time order: with a *since*, it is read
+    from its end and stops at the first row more than :data:`_ORDER_SLACK_SECS` before it, so the
+    band's read of the last hours never parses the weeks before them."""
+    from datetime import datetime, timedelta
+
+    try:
+        floor = (datetime.fromisoformat(since) - timedelta(seconds=_ORDER_SLACK_SECS)).isoformat()
+    except ValueError:
+        return [row for row in _iter_rows() if _in_window(str(row.get("ts", "")), since, until)]
+    p = _path()
+    out: list[dict] = []
+    try:
+        if p.is_file():
+            for row in _rows_from_end(p):
+                ts = str(row.get("ts", ""))
+                if ts and ts < floor:
+                    break
+                if _in_window(ts, since, until):
+                    out.append(row)
+    except OSError:
+        logger.debug("usage ledger read failed", exc_info=True)
+    out.reverse()
     return out
 
 

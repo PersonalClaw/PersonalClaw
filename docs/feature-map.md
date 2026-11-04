@@ -12,7 +12,7 @@ file and the app differ.
 | Route | Opens | In the sidebar | Palette | Linked from |
 |---|---|---|---|---|
 | `#/dashboard` | Home | Home | Home | `app/CommandPalette.tsx`, `app/onboarding/exitTo.ts`, `app/onboarding/steps.ts`, `lib/api.ts` and 8 more |
-| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 15 more |
+| `#/chat` | Chat | Chat | Chat | `app/approvalDestination.ts`, `app/threadRail.tsx`, `lib/api.ts`, `lib/epoch.ts` and 16 more |
 | `#/projects` | Projects | Projects | Projects | `pages/chat/header/ChatHeader.tsx`, `pages/code/CodeSection.tsx`, `pages/loops/LoopsSection.tsx`, `pages/tasks/TasksSection.tsx` |
 | `#/library` | Library | Library | Library | none |
 | `#/knowledge` | Knowledge | Library, its Knowledge tab | Knowledge | `lib/rowSubject.ts`, `pages/discover/DiscoverPage.tsx`, `pages/loop/LoopComposer.tsx`, `pages/schedule/ScheduleDetail.tsx` and 5 more |
@@ -25,7 +25,7 @@ file and the app differ.
 | `#/artifacts` | Artifacts | Library, its Artifacts tab | Artifacts | `pages/chat/history/useChatHistory.ts`, `pages/chat/transcript/TurnArtifacts.tsx`, `pages/dashboard/PinnedTiles.tsx`, `pages/dashboard/widgets/PinnedArtifacts.tsx` and 7 more |
 | `#/terminal` | Terminal | not in the sidebar | Terminal | none |
 | `#/capabilities` | Capabilities | Platform › Capabilities | Capabilities | none |
-| `#/agents` | Agents | Capabilities, its Agents tab | Agents | `pages/chat/RoomMembersPanel.tsx`, `pages/settings/PacksPanel.tsx` |
+| `#/agents` | Agents | Capabilities, its Agents tab | Agents | `pages/chat/RoomMembersPanel.tsx`, `pages/dashboard/agents/AgentDay.tsx`, `pages/settings/PacksPanel.tsx` |
 | `#/tools` | Tools | Capabilities, its Tools tab | Add a tool server (Action); Tools | `pages/chat/composer/ChatComposer.tsx`, `pages/chat/composer/useChatComposer.ts`, `pages/chat/inspector/sections.tsx` |
 | `#/skills` | Skills | Capabilities, its Skills tab | Skills | `pages/agents/AgentForm.tsx`, `pages/chat/chatTypes.ts`, `pages/dashboard/Home.tsx`, `pages/inbox/InboxDetail.tsx` and 1 more |
 | `#/learning` | Learning | Capabilities, its Learning tab | Learning | `pages/settings/EvalsPanel.tsx`, `pages/settings/SettingsPage.tsx`, `pages/settings/settingsWidgets.tsx` |

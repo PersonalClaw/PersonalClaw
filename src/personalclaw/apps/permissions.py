@@ -1431,6 +1431,8 @@ ROUTE_AUTHZ: dict[str, OwnerOnly | AppMay] = {
     ),
     "DELETE /api/agents/{name}": OwnerOnly(_REMOVES_AGENTS),
     "DELETE /api/agents/detail/{name}": OwnerOnly(_REMOVES_AGENTS),
+    # Names every chat's sessions and when each worked; an app's running list shows it only its own.
+    "GET /api/agents/day": OwnerOnly("when each of your agents worked today, in every chat"),
     "POST /api/agents/routing/dismiss": AppMay("dismisses a routing suggestion"),
     "POST /api/agents/routing/unmute": AppMay("brings routing suggestions back"),
     # ── agent definitions ──

@@ -39,8 +39,8 @@ The 132 families the surface divides into, largest first.
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
 | `/api/sessions` | 15 | 12 |
+| `/api/agents` | 14 | 10 |
 | `/api/projects` | 14 | 10 |
-| `/api/agents` | 13 | 9 |
 | `/api/dashboard` | 13 | 8 |
 | `/api/packs` | 13 | 13 |
 | `/api/tasks` | 13 | 9 |
@@ -187,6 +187,7 @@ The 949 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/agent/config` | read or write the installed agent config. |
 | `GET` | `/api/agents` | list all PersonalClaw agent definitions. |
 | `POST` | `/api/agents` | create a new PersonalClaw agent. |
+| `GET` | `/api/agents/day` | each agent's blocks of work in ``[since, until)``. |
 | `DELETE` | `/api/agents/detail/{name}` | view, delete, or update agent config. |
 | `GET` | `/api/agents/detail/{name}` | view, delete, or update agent config. |
 | `PATCH` | `/api/agents/detail/{name}` | view, delete, or update agent config. |

@@ -42,6 +42,7 @@ export const SPEC_ISOLATION: Readonly<Record<string, SpecIsolation>> = {
     why: 'reads the chat route; its scripted turns add chat sessions, which no other spec counts',
   },
   'appSurface.spec.ts': { mode: 'shared', why: 'reads the fixture app the boot installs' },
+  'agentsBand.spec.ts': { mode: 'shared', why: 'answers the agents band\'s reads in the page itself, so it writes nothing and reads nothing another spec counts' },
   'buddyPlayground.spec.ts': { mode: 'shared', why: 'plays the buddy playground, which reads nothing from the gateway and writes nothing' },
   'chat.spec.ts': {
     mode: 'shared',

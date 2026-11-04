@@ -55,6 +55,41 @@ def _register_pages(app: web.Application) -> None:
     app.router.add_get("/login", _auth_h.login_page)
 
 
+def _register_agent_routes(app: web.Application) -> None:
+    """The agents' routes: the runtimes, each definition and its CRUD, what each did in a window of
+    time, export, and routing. Each literal path is registered before ``/api/agents/{name}``, which
+    would capture it as an agent's name."""
+    app.router.add_get("/api/agents/installed", handlers.api_agents_installed)
+    app.router.add_get("/api/slash-commands", handlers.api_slash_commands)
+    app.router.add_get("/api/agents/detail/{name}", handlers.api_agent_detail)
+    app.router.add_patch("/api/agents/detail/{name}", handlers.api_agent_detail)
+    app.router.add_delete("/api/agents/detail/{name}", handlers.api_agent_detail)
+    # PersonalClaw Agent CRUD
+    app.router.add_get("/api/agents", handlers.api_personalclaw_agents)
+    app.router.add_post("/api/agents", handlers.api_personalclaw_agents_create)
+    app.router.add_post("/api/agents/sync", handlers.api_personalclaw_agents_sync)
+    # What each agent did in a window of time, folded from the usage ledger (Home's agents band).
+    from personalclaw.dashboard.handlers.agent_day import register_agent_day_routes
+
+    register_agent_day_routes(app)
+    from personalclaw.dashboard.handlers.agent_export import api_agents_export
+
+    app.router.add_post("/api/agents/export", api_agents_export)
+    # Agent routing suppression endpoints — registered BEFORE the
+    # /api/agents/{name} CRUD routes so "routing" is never captured as an agent name.
+    from personalclaw.dashboard.handlers.routing import (
+        api_routing_dismiss,
+        api_routing_status,
+        api_routing_unmute,
+    )
+
+    app.router.add_get("/api/agents/routing/status", api_routing_status)
+    app.router.add_post("/api/agents/routing/dismiss", api_routing_dismiss)
+    app.router.add_post("/api/agents/routing/unmute", api_routing_unmute)
+    app.router.add_put("/api/agents/{name}", handlers.api_personalclaw_agent_update)
+    app.router.add_delete("/api/agents/{name}", handlers.api_personalclaw_agent_delete)
+
+
 def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> None:
     """Register the dashboard's page and API routes on *app*, in the order they match.
 
@@ -795,32 +830,7 @@ def register_dashboard_routes(app: web.Application, *, pages: bool = True) -> No
     app.router.add_post("/api/chat/sessions/{session}/side/open", chat.api_side_open)
     app.router.add_post("/api/chat/sessions/{session}/side/turn", chat.api_side_turn)
     app.router.add_post("/api/chat/sessions/{session}/side/close", chat.api_side_close)
-    # Agents
-    app.router.add_get("/api/agents/installed", handlers.api_agents_installed)
-    app.router.add_get("/api/slash-commands", handlers.api_slash_commands)
-    app.router.add_get("/api/agents/detail/{name}", handlers.api_agent_detail)
-    app.router.add_patch("/api/agents/detail/{name}", handlers.api_agent_detail)
-    app.router.add_delete("/api/agents/detail/{name}", handlers.api_agent_detail)
-    # PersonalClaw Agent CRUD
-    app.router.add_get("/api/agents", handlers.api_personalclaw_agents)
-    app.router.add_post("/api/agents", handlers.api_personalclaw_agents_create)
-    app.router.add_post("/api/agents/sync", handlers.api_personalclaw_agents_sync)
-    from personalclaw.dashboard.handlers.agent_export import api_agents_export
-
-    app.router.add_post("/api/agents/export", api_agents_export)
-    # Agent routing suppression endpoints — registered BEFORE the
-    # /api/agents/{name} CRUD routes so "routing" is never captured as an agent name.
-    from personalclaw.dashboard.handlers.routing import (
-        api_routing_dismiss,
-        api_routing_status,
-        api_routing_unmute,
-    )
-
-    app.router.add_get("/api/agents/routing/status", api_routing_status)
-    app.router.add_post("/api/agents/routing/dismiss", api_routing_dismiss)
-    app.router.add_post("/api/agents/routing/unmute", api_routing_unmute)
-    app.router.add_put("/api/agents/{name}", handlers.api_personalclaw_agent_update)
-    app.router.add_delete("/api/agents/{name}", handlers.api_personalclaw_agent_delete)
+    _register_agent_routes(app)
     # Agent marketplace — local filesystem + extensible registry
     from personalclaw.dashboard.handlers.agent_marketplace import (
         api_agent_marketplace_activate,

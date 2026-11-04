@@ -1,16 +1,18 @@
 # AgentActivityFeed: the agent-worlds read contract
 
 An **agent world** is an ambient scene of what your agents are doing right now — a
-thing you glance at, not a list you read. PersonalClaw ships one first-party world
-("Orbit", on the dashboard) and intends for apps to contribute others.
+thing you glance at, not a list you read. PersonalClaw ships no world of its own: apps may
+contribute them through this contract (the note at the end). Its first-party reader is Home's
+"Your agents today" band, which takes live state from this feed and sets it beside what each
+agent did, what waits on you and what is due (`web/src/pages/dashboard/agents/`).
 
 The platform's contribution is **this contract, not the scene**. A world is handed one
 typed value and renders it. It opens no socket, calls no endpoint, and knows nothing
 about the work that runs beyond what is written here.
 
 - Contract + hook: `web/src/lib/useAgentActivity.ts`
-- First-party world: `web/src/pages/dashboard/world/` (`AgentWorld.tsx` paints,
-  `worldScene.ts` is the pure scene model)
+- First-party reader: `web/src/pages/dashboard/agents/` (`AgentDay.tsx` draws,
+  `agentDayModel.ts` is the pure model)
 
 ## The shape
 
@@ -30,6 +32,9 @@ AgentActivityEntity = {
   title: string          // never empty — falls back to the kind's noun
   progress?: number      // 0..1, ABSENT when unknown (see below)
   refs: { link: string; session?: string; parent?: string }
+  work?: string          // the gateway's name for the work ('chat:x', 'loop:x', …), to join what waits on you
+  agent?: string         // the agent doing it, '' for the default agent (the usage ledger's spelling)
+  since?: string         // ISO, when the running work began; ABSENT when the source does not say
 }
 ```
 
@@ -143,34 +148,18 @@ A world **receives** `AgentActivityFeed` and renders it. It must not:
 - consume any other data hook (`useDashboardLive`, `useCachedData`, …);
 - take host-specific props — a world is handed a contract, not wired to a page.
 
-`web/src/pages/dashboard/world/agentWorldRender.test.ts*` enforces all of this
-structurally against the first-party world's source, because a behavioural test cannot
-see a fetch in a branch it did not reach.
+No world ships in this repository, so nothing here enforces this yet: the app seam that
+loads one (the note below) is where it is enforced, structurally against the module's
+source, because a behavioural test cannot see a fetch in a branch it did not reach.
 
-### Motion
+### Motion and accessibility
 
-- **Smooth state interpolation.** An entity whose state changes MOVES to its new ring
-  and crossfades its tone; it never teleports. The ease is a critically-damped
-  approach, so a 144 Hz display and a 30 Hz one settle in the same wall-clock time.
-- **`prefers-reduced-motion: reduce` is a STATIC LAYOUT** — not a slower animation.
-  Orbit schedules **no animation frame at all** and paints one settled frame with
-  `pulse` and `speed` at zero, at the same positions and tones the animated scene rests
-  at (reduced motion must not cost information). Audited with a positive control that
-  the animated path *does* schedule frames.
-- **Rendering tier.** Orbit is a high-craft **canvas 2D** scene (layered additive glow,
-  per-node tone crossfade, eased orbits) — the "high-craft canvas" half of a
-  "WebGL/shader-grade OR high-craft canvas" choice. A `webgl` tier was drafted and
-  removed rather than shipped untested: a shader pipeline cannot be exercised in jsdom,
-  so it would have been a declared tier with an unverified runtime — a black rectangle
-  for anyone whose shader compile failed. With no drawing context at all (headless, or
-  canvas blocked by an extension) the world degrades to a DOM list of the same scene,
-  never a blank box.
-
-### Accessibility
-
-A moving dot field is invisible to assistive tech. The canvas is `role="img"` named by
-`sceneSummary()`, and the same sentence is rendered **visibly** beneath it, so nobody
-depends on seeing the animation to know what is running.
+- **`prefers-reduced-motion: reduce` is a static layout**, not a slower animation: no
+  animation frame at all, and the same positions and tones the moving scene rests at, so
+  reduced motion costs no information.
+- **A drawn scene says the same in text.** A moving field is invisible to assistive tech,
+  so a world that draws names itself with the facts it draws and repeats them visibly, so
+  nobody depends on seeing it move to know what is running.
 
 ## Coordination note — app-contributed worlds
 

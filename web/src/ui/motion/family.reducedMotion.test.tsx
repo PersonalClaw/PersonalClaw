@@ -163,8 +163,7 @@ describe('the shared spring collapses, and collapses CLEANLY', () => {
 describe('coverage floor: the registry cannot fall behind the family', () => {
   // The scan is scoped to the motion family itself — `ui/motion/*` plus the top level of
   // `ui/`. Surfaces elsewhere that also call the accessor (`pages/knowledge/ReadingView`,
-  // `pages/dashboard/world/AgentWorld`, `pages/settings/PersonalityPicker`,
-  // `ui/personality/TerminalStrip`) are deliberately OUT of this rail's scope and carry their
+  // `pages/settings/PersonalityPicker`, `ui/personality/TerminalStrip`) are deliberately OUT of this rail's scope and carry their
   // own; stated here so the boundary is a decision on the record rather than a silent gap.
   const UI = join(process.cwd(), 'src/ui')
   const DIRS = [
