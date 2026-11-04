@@ -82,6 +82,30 @@ export interface SystemBrowserResult {
 /** Where the buddy's window sits on this machine. */
 export interface BuddyPlace { mode: 'docked' | 'floating'; displayId?: number }
 
+/** Where the desktop app's own update stands (`desktop/appUpdate.js`). `how` is how this copy is
+ *  updated: in place (`mac`, `appimage`), from the releases page (`page`: a package, a copy that
+ *  cannot be replaced here), or from its checkout (`dev`). `available` is the release on offer and
+ *  whether this copy can install it here; `sentence` says why not, or what failed; `last` is how
+ *  the update the copy before this one started ended, said by this start. */
+export interface AppUpdateState {
+  current: string
+  how: 'mac' | 'appimage' | 'page' | 'dev'
+  phase: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'verifying' | 'restarting' | 'failed'
+  available: { version: string; installable: boolean } | null
+  /** When the last check answered, in ms since the epoch; 0 before the first. */
+  checkedAt: number
+  progress: { received: number; total: number } | null
+  sentence: string
+  last: { from: string; to: string; ok: boolean; sentence: string } | null
+  releasesPage: string
+  /** Whether the restart an update makes stops this home's gateway: true while it is the app's own. */
+  restartsGateway: boolean
+}
+
+/** The app's answer to an update pressed for: `ok` once it is under way (its progress is the
+ *  state's), else the sentence that says why it did not start. */
+export interface AppUpdateStart { ok: boolean; sentence?: string }
+
 export interface DesktopBridge {
   onStatus?: (cb: (msg: string) => void) => () => void
   /** Push-to-talk. Note what is NOT here: no `start()`. The shell cannot open
@@ -130,6 +154,15 @@ export interface DesktopBridge {
   /** This machine's buddy rows in Settings (#3901): where the buddy's window sits and whether it
    *  is kept out of screen capture. In the shell's store, not the gateway's config; absent in a
    *  shell from before them, so Settings shows these rows only when it is here. */
+  /** The app's own update: Settings › Updates › This app and the System popover's row. Absent in
+   *  a browser tab, on a paired gateway's page (which carries no bridge), and in a shell from
+   *  before it. `install` takes the version the confirm named; the app starts only that one. */
+  appUpdate?: {
+    status: () => Promise<AppUpdateState>
+    check: () => Promise<AppUpdateState>
+    install: (version: string) => Promise<AppUpdateStart>
+    on: (cb: (state: AppUpdateState) => void) => () => void
+  }
   buddy?: {
     getPlace: () => Promise<BuddyPlace>
     /** Back to the dock; resolves where it is now. */
@@ -280,6 +313,12 @@ export async function setLoginItem(enabled: boolean): Promise<LoginItemResult | 
       reason: e instanceof Error ? e.message : 'The desktop app did not answer',
     }
   }
+}
+
+/** Whether this page can ask the desktop app about its own update: in its windows on this
+ *  computer's gateway only. */
+export function hasAppUpdate(): boolean {
+  return !!desktopBridge()?.appUpdate
 }
 
 /** Whether the shell can open a page in the system browser and say if it did. Asked before

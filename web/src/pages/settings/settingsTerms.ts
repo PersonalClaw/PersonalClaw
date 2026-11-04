@@ -102,7 +102,7 @@ export const SETTINGS_TERMS: Readonly<Record<string, readonly string[]>> = {
     'Automatic backups', 'Monthly restore drill', 'How long copies are kept', 'Daily snapshots',
     'Weekly snapshots', 'Monthly snapshots', 'Archive', 'Sync', 'Sync this instance', 'Transport',
     'Pull no more often than', 'Encrypt shards', 'Conflicts to review'],
-  updates: ['Version', 'Licences', 'Open-source packages', 'Fonts', 'Release line', 'Channel', 'Version pin',
-    'Roll back', 'Automatic updates', 'Automatic update checks', 'Check every', 'Apply updates',
+  updates: ['Version', 'This app', 'Licences', 'Open-source packages', 'Fonts', 'Release line', 'Channel',
+    'Version pin', 'Roll back', 'Automatic updates', 'Automatic update checks', 'Check every', 'Apply updates',
     'Release notes', 'Changelog'],
 }

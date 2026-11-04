@@ -117,66 +117,70 @@ def test_the_shipped_bundle_carries_the_env_builder() -> None:
     assert "gatewayEnv.js" in pkg["build"]["files"]
 
 
-# ── the consuming side: no surface may promise an updater the shell lacks ─────
+# ── the consuming side: every surface says the updater the shell has ─────────
 
 
 def _has_electron_updater() -> bool:
-    """Whether the shell actually ships an auto-updater (the other half)."""
+    """Whether the shell depends on electron-updater (it does not: its updater is its own)."""
     pkg = json.loads(_source("package.json"))
     deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
     return "electron-updater" in deps
 
 
-def test_no_surface_promises_self_update_while_the_updater_is_unbuilt() -> None:
-    """Three surfaces tell a desktop user how to update. None may overstate the shell.
-
-    All three said the app "updates itself" — copy written for the electron-updater,
-    which is not in ``desktop/package.json`` and is not called anywhere in the shell. Under
-    #2673's install-kind fix that copy became reachable for the first time, so it had to
-    become true rather than merely newly visible.
-
-    WHEN THE DESKTOP UPDATER LANDS this test reds, and that is its second job: restoring the
-    self-update wording is then correct, and the same commit should relax this rail. A
-    premise-checked claim, not a permanent ban.
-    """
-    if _has_electron_updater():
-        raise AssertionError(
-            "desktop/package.json now depends on electron-updater — the shell can self-update. "
-            "Restore the self-update wording in the three desktop surfaces (updates.py detail, "
-            "UpdatesPanel.tsx, cli_server._update_desktop) and relax this rail in the same "
-            "commit."
-        )
-
-    surfaces = (
-        "src/personalclaw/dashboard/handlers/updates.py",
-        "web/src/pages/settings/UpdatesPanel.tsx",
-        "src/personalclaw/cli_server.py",
+def _ships_its_own_updater() -> bool:
+    """Whether the packaged shell carries its updater and starts it: ``appUpdate.js`` in
+    ``build.files`` and required by ``main.js``, with Check for Updates… in its menu."""
+    pkg = json.loads(_source("package.json"))
+    main = _source("main.js")
+    return (
+        "appUpdate.js" in pkg["build"]["files"]
+        and 'require("./appUpdate")' in main
+        and 'label: "Check for Updates…"' in main
     )
-    for relative in surfaces:
-        text = (REPO_ROOT / relative).read_text(encoding="utf-8")
-        # Only the user-facing strings matter; the comments in these files explain the history
-        # and legitimately quote the retired wording. Strip nothing — instead require that any
-        # surviving "updates itself" sits on a comment line.
-        for lineno, line in enumerate(text.splitlines(), start=1):
-            if "updates itself" not in line:
-                continue
-            stripped = line.strip()
-            assert stripped.startswith(("#", "//", "*", "/*")), (
-                f"{relative}:{lineno} tells a desktop user the app updates itself, but the "
-                "shell ships no updater"
-            )
 
-    # And the honest answer must actually be there, in all three. The panel links the address
-    # the web keeps once (`lib/repoDocs.RELEASES_PAGE_URL`), which the popover and Home link too.
+
+def test_every_surface_says_the_app_updates_when_asked_and_names_the_releases_page() -> None:
+    """Four surfaces tell a desktop user how to update. Each says what the shell does.
+
+    They once said the app "updates itself", copy written for an electron-updater that the
+    shell never had (#2673): a user told the app self-updated simply never updated. The rail
+    then held them to the re-download, until the updater landed. It has: ``desktop/appUpdate.js``
+    checks on launch and once a day, and installs only when its owner presses for it, from
+    Check for Updates… in the app's menu or Settings › Updates › This app. So each surface names
+    that way, and the releases page beside it, which is where every copy the app cannot replace
+    (a package, a copy run from its disk image) and every failure is sent.
+
+    The gateway's answer and the CLI's are read where the app is not (a browser tab,
+    ``personalclaw update``), so they name the app's menu; the done screen's sentence and the
+    panel name This app.
+    """
+    assert _ships_its_own_updater(), (
+        "the shell no longer ships its updater (appUpdate.js in build.files, required by "
+        "main.js, Check for Updates… in its menu): say the re-download again on every surface"
+    )
+    assert (
+        not _has_electron_updater()
+    ), "desktop/package.json depends on electron-updater: one updater, not two (appUpdate.js)"
+
     releases = "github.com/PersonalClaw/PersonalClaw/releases"
+    # The web keeps the address once (`lib/repoDocs.RELEASES_PAGE_URL`); a page links that.
     shared = (REPO_ROOT / "web/src/lib/repoDocs.ts").read_text(encoding="utf-8")
+    assert releases in shared, "lib/repoDocs no longer holds the releases page's address"
+    surfaces = {
+        "src/personalclaw/dashboard/handlers/updates.py": ("Check for Updates…", "releases page"),
+        "src/personalclaw/cli_server.py": ("Check for Updates…", releases),
+        "web/src/lib/updateRoute.ts": ("Settings › Updates › This app", ""),
+        "web/src/pages/settings/UpdatesPanel.tsx": ("This app updates itself", "RELEASES_PAGE_URL"),
+    }
+    for relative, (asked, page) in surfaces.items():
+        text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        assert asked in text, f"{relative} does not name how the app is asked to update"
+        if page:
+            assert page in text, f"{relative} does not name the releases page"
+    # Nothing installs without a press, so no surface may say it does.
     for relative in surfaces:
         text = (REPO_ROOT / relative).read_text(encoding="utf-8")
-        if relative.endswith("updates.py"):
-            assert "releases page" in text, f"{relative} does not name the releases page"
-        elif relative.endswith(".tsx"):
-            assert (
-                "RELEASES_PAGE_URL" in text and releases in shared
-            ), f"{relative} does not link the releases page"
-        else:
-            assert releases in text, f"{relative} does not link the releases page"
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            said = re.search(r"(?<!for )\bupdates (itself )?(on its own|automatically)", line)
+            if said and "never" not in line:
+                raise AssertionError(f"{relative}:{lineno} says the desktop app updates on its own")

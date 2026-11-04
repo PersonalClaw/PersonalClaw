@@ -706,19 +706,20 @@ async def api_update_apply(request: web.Request) -> web.Response:
                 # release resolved for a container. `instructions` are empty then too, and
                 # whenever that release is no move from the one running.
                 "image_tag": status.get("image_tag", ""),
-                # The desktop wording says what the shell ACTUALLY does today. It shipped
-                # claiming "the app updates itself", which described the electron-updater
-                # half — still unbuilt: `desktop/package.json` carries no
-                # electron-updater dependency and nothing in the shell checks for a release
-                # (#2673). A user told the app self-updates simply never updates. The CLI's
-                # own desktop branch (`cli_server._update_desktop`) has always named the
-                # re-download; this is the same answer in the panel.
+                # The desktop wording says what the shell does: it updates itself when its
+                # owner asks it to (Check for Updates… in its menu, Settings › Updates ›
+                # This app; `desktop/appUpdate.js`), and never on its own, with the releases
+                # page beside it for every copy it cannot replace. This answer is read where
+                # the app is not (a browser tab, the CLI's update), so it names the app's menu
+                # rather than a press here. Before that updater it named only the
+                # re-download (#2673): a user told the app self-updated simply never updated.
                 "detail": (
                     "This is a container install — update by pulling the new "
                     "image and recreating."
                     if kind == "container"
-                    else "This is a desktop install — install the new version from the "
-                    "PersonalClaw releases page, then reopen the app."
+                    else "This is a desktop install — the PersonalClaw app updates it: "
+                    "choose Check for Updates… in its menu. Or install the new version from "
+                    "the PersonalClaw releases page."
                 ),
             }
         )

@@ -1,7 +1,7 @@
 const { app, BaseWindow, BrowserWindow, WebContentsView, shell, Tray, Menu, nativeImage, nativeTheme, ipcMain, systemPreferences, Notification, globalShortcut, webContents, session } = require("electron");
 const fs = require("fs");
 const os = require("os");
-const { spawn, execFileSync } = require("child_process");
+const { spawn, execFile, execFileSync } = require("child_process");
 const path = require("path");
 const http = require("http");
 const { findPersonalclawBin } = require("./find-bin");
@@ -2215,6 +2215,91 @@ const sendGoCommand = makeGoCommandSender({
   gatewayUrl: () => activeUrl || localGatewayUrl,
 });
 
+// ── The app's own update ──
+
+// Required here, below the lines the docs cite by number (`test/connectSeam.test.js`).
+const { makeAppUpdater, readUpdatePolicy, registerAppUpdateIpc } = require("./appUpdate");
+
+/** The app's own update (`appUpdate.js`): made once the shell's store is open, started once the
+ *  window and its gateway are up. */
+let appUpdater = null;
+
+/** Run one program and resolve what it printed: the checks and the copy an update makes on macOS. */
+function runProgram(cmd, args) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  });
+}
+
+function makeThisAppsUpdater() {
+  return makeAppUpdater({
+    current: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    appImage: process.env.APPIMAGE || "",
+    // The pin, unless the home is served by a gateway the app found running: its own install pins it.
+    policy: () => readUpdatePolicy({ home: PERSONALCLAW_HOME, ownGateway: !["adopted", "served"].includes(localState.state) }),
+    workDir: os.tmpdir(),
+    run: runProgram,
+    quit: () => app.quit(),
+    // Asked as the quit's last step, once the new copy is in place: the start that follows is on it.
+    relaunch: (program) =>
+      app.relaunch({ execPath: program, args: process.argv.slice(1).filter((a) => !/^personalclaw:/i.test(a)) }),
+    trash: (p) => shell.trashItem(p),
+    request: require("https").request,
+    store: shellStore,
+    ownsGateway: () => localState.state === "own",
+    log: (msg) => console.log(`desktop: ${msg}`),
+    onState: (state) => pushToBridged(BaseWindow.getAllWindows(), IPC_CHANNELS.appUpdateState, state),
+  });
+}
+
+/** Once the window and this home's gateway are up: say how an update the last copy started ended
+ *  (Settings › Updates opens on one that failed), keep the daily check, and move the copy an update
+ *  replaced to the Trash, which waits until the new one has its gateway. */
+function startAppUpdater() {
+  if (!appUpdater) return;
+  const last = appUpdater.start();
+  if (last && !last.ok) deepLinkInbox.receive("personalclaw://settings/updates");
+  if (localState.state === "own" || localState.state === "adopted") appUpdater.trashPrevious();
+}
+
+/** The app menu's Check for Updates…: check now, and show the answer in Settings › Updates. */
+function checkForAppUpdates() {
+  appUpdater?.check({ asked: true });
+  deepLinkInbox.receive("personalclaw://settings/updates");
+}
+
+/** The app's menu. On macOS it is the system's, with Check for Updates… under About. */
+function appMenuTemplate() {
+  if (process.platform !== "darwin") return [{ role: "appMenu" }];
+  return [
+    {
+      label: app.name,
+      submenu: [
+        { role: "about" },
+        { label: "Check for Updates…", click: () => checkForAppUpdates() },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    },
+  ];
+}
+
+/** Elsewhere, Check for Updates… is under Help. */
+function helpMenuTemplate() {
+  if (process.platform === "darwin") return [];
+  return [{ label: "Help", submenu: [{ label: "Check for Updates…", click: () => checkForAppUpdates() }] }];
+}
+
 // ── App lifecycle ──
 
 // Single-instance: a second launch focuses the existing window instead of
@@ -2245,7 +2330,7 @@ if (!app.requestSingleInstanceLock()) {
       log: (msg) => console.warn(`desktop: ${msg}`),
     });
     const appMenu = Menu.buildFromTemplate([
-      { role: "appMenu" },
+      ...appMenuTemplate(),
       { role: "editMenu" },
       {
         label: "Tab",
@@ -2267,6 +2352,7 @@ if (!app.requestSingleInstanceLock()) {
       },
       goMenuTemplate(sendGoCommand),
       { role: "windowMenu" },
+      ...helpMenuTemplate(),
     ]);
     Menu.setApplicationMenu(appMenu);
 
@@ -2297,12 +2383,22 @@ if (!app.requestSingleInstanceLock()) {
       isAppWindow: (sender) => BaseWindow.getAllWindows().some((w) => w._pcBridgeAttached === true && w.webContents === sender),
       log: (msg) => console.warn(`desktop: ${msg}`),
     });
+    // The app's own update, for the same windows only: Settings › Updates › This app and the
+    // System popover's row.
+    registerAppUpdateIpc({
+      ipcMain,
+      channels: IPC_CHANNELS,
+      updater: () => appUpdater,
+      isAppWindow: (sender) => BaseWindow.getAllWindows().some((w) => w._pcBridgeAttached === true && w.webContents === sender),
+      log: (msg) => console.warn(`desktop: ${msg}`),
+    });
 
     // The shell's own storage scope. Opened before any window so the startup decision below
     // has the registry, and non-fatal by construction: a corrupt or unreadable store degrades to
     // spawn-local with a warning rather than taking the app down with it.
     shellStore = openShellStore({ home: PERSONALCLAW_HOME, log: (msg) => console.warn(`desktop: ${msg}`) });
     makeHide(shellStore);
+    appUpdater = makeThisAppsUpdater();
     // A locked screen or sleep is away at once; unlocking or waking reads the idle time again.
     const { powerMonitor } = require("electron");
     for (const e of ["lock-screen", "suspend"]) powerMonitor.on(e, () => absence.lock());
@@ -2364,6 +2460,7 @@ if (!app.requestSingleInstanceLock()) {
     // Health is probed AFTER the window is up: it is switcher decoration, not a gate on booting.
     refreshHealth().catch(() => {});
     startBuddy();
+    startAppUpdater();
 
     app.on("activate", () => {
       if (!mainWindow?.isVisible()) mainWindow?.show();
@@ -2401,6 +2498,7 @@ app.on("before-quit", (event) => {
   stopPresenceRefresh();
   absence.stop();
   buddyHide?.stop();
+  appUpdater?.stop();
   // A pending reachability re-check would otherwise fire during teardown and call `loadURL` on a
   // window that is being destroyed.
   cancelReachProbe();
@@ -2432,6 +2530,9 @@ app.on("before-quit", (event) => {
     .catch((err) => console.warn(`gateway shutdown failed: ${err.message}`))
     .finally(() => {
       trayPresence.destroy();
+      // Everything the app ran has stopped, so a new copy an update staged takes this one's place
+      // now, and the app is asked to start again (`appUpdate.js`).
+      appUpdater?.swapIfStaged();
       shutdownComplete = true;
       app.quit();
     });

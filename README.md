@@ -170,7 +170,7 @@ means a design boundary we expect to still hold at 1.0**, not a backlog item:
 | need accounts for more than one person | **never** | single-user by construction — *"no hub in core, ever"* |
 | want a native phone app | **no** | the phone is the dashboard installed as a PWA, not a store app |
 | need a native Windows install | **no** | WSL2 or Docker Desktop only; a native port was audited and found no-go |
-| want a signed, auto-updating desktop app | **no** | each release's macOS dmgs (Apple silicon and Intel) and x86-64 Linux AppImage/deb carry no publisher's signature (the dmgs are ad-hoc signed, not notarized), and there is no update channel |
+| want a signed, auto-updating desktop app | **no** | each release's macOS dmgs (Apple silicon and Intel) and x86-64 Linux AppImage/deb carry no publisher's signature (the dmgs are ad-hoc signed, not notarized), and the app updates itself only when you press for it, checking a download against the digest its release publishes rather than a publisher's key |
 | want it to live in a chat app other than Slack, Telegram, Discord or email | **no** | those four are channel apps in the Store; any other is a channel app you would build |
 | expect web search to work out of the box | **no** | no search provider ships bundled — it is a seam you fill |
 | plan to install apps you do not trust | **no** | the platform *vets* what you install; it does not confine it after |
@@ -327,7 +327,8 @@ its own, and it can be switched off — see [Privacy](#privacy). Per-platform de
 > **Run modes:** local process · Docker Compose · systemd/launchd service. (An Electron
 > desktop shell is experimental: every release attaches a macOS dmg for Apple silicon and one
 > for Intel, ad-hoc signed and not notarized, and an x86-64 Linux AppImage and deb, unsigned,
-> built by CI. It has no auto-update channel.)
+> built by CI. It updates itself when you ask it to, never on its own: see
+> [Updating](docs/guides/desktop.md#updating).)
 
 **Platform support.** Every row names what proves it — `CI:<job>` is a workflow job,
 `checklist:<section>` is a documented manual walkthrough, `community` is user-reported
@@ -359,15 +360,17 @@ with each library's own setting, and keeps their caches in PersonalClaw's home.
 **One outbound call you should know about.** PersonalClaw asks GitHub whether a newer release
 exists, on its own: when it starts, then every 12 hours by default while the dashboard is open
 (`updates.check_interval_hours`, `config/loader.py`), identifying itself with a
-`personalclaw-update-check` User-Agent. On a source checkout the same check also runs `git fetch`
+`personalclaw-update-check` User-Agent. The desktop app asks the same for itself, a minute after
+it starts and then once a day, with the same User-Agent, and downloads a new version only when you
+press for it. On a source checkout the same check also runs `git fetch`
 against the checkout's own `origin`. It sends no usage data, but it is a network request, so
 GitHub sees your IP, as it would for any HTTP call.
 
 **You can turn that check off.** Set `updates.check_enabled` to `false` in your config (or turn
 off **Automatic update checks** in Settings → Updates) and the update check makes **zero**
 calls to GitHub on its own: no check at start, none on the schedule, none when a page shows the update
-status, and no staged install. **Check now**, **Update** and `personalclaw update` still reach
-GitHub, each only when you start it. While the check is on, `updates.check_interval_hours`
+status, no staged install, and none from the desktop app. **Check now**, **Check for Updates…**,
+**Update** and `personalclaw update` still reach GitHub, each only when you start it. While the check is on, `updates.check_interval_hours`
 (1–168) tunes how often it runs. `updates.auto` is a separate, orthogonal control — it gates
 whether an available update is *applied*, not whether the check happens: `off` (the default)
 only notifies, while

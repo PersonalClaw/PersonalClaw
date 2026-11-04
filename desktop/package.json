@@ -87,6 +87,7 @@
       "buddy",
       "windowPushes.js",
       "buddyPolicy.js",
+      "appUpdate.js",
       "connectDialog.html",
       "gatewayChooser.html",
       "preload.js",

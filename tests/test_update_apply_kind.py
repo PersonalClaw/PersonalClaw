@@ -77,8 +77,10 @@ async def test_desktop_returns_instructions(monkeypatch) -> None:
     assert resp.status == 200
     assert body["kind"] == "desktop"
     assert body["status"] == "instructions"
-    # The detail must name where the new version comes from. It shipped saying "the app
-    # updates itself", which is the unbuilt electron-updater half of #2673.
+    # The detail must name how the new version comes: the app's menu (`desktop/appUpdate.js`),
+    # and the releases page. It shipped saying "the app updates itself", the unbuilt
+    # electron-updater half of #2673, and it never says the app updates on its own.
+    assert "Check for Updates…" in body["detail"]
     assert "releases page" in body["detail"]
     assert "updates itself" not in body["detail"]
 

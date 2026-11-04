@@ -13,6 +13,8 @@ import { WidgetBoundary } from '../app/ErrorBoundary'
 import { NO_READING, fixedReading, isReading, percentReading } from '../lib/readings'
 import { connectionWords, useGatewayConnection } from '../app/gatewayConnection'
 import { applyUpdate, updatedOutside, useInstallKind } from '../app/applyUpdate'
+import { useAppUpdate } from '../app/appUpdate'
+import { AppUpdateControls, appUpdateOnOffer } from '../app/AppUpdateControls'
 
 /** Live system + auth health — the status line's connection, at the window's bottom left.
  *  - Collapsed (resting): the gateway connection, read from the shell's one reading of it
@@ -117,6 +119,7 @@ export function SystemWidget({ className }: {
               <RunningAgents open={open} />
             </WidgetBoundary>
 
+            <AppUpdateRow />
             <RestartControls onFired={() => setOpen(false)} />
 
             {auth && (
@@ -278,6 +281,20 @@ function RunningAgents({ open }: { open: boolean }) {
         <button type="button" onClick={clear} disabled={busy === '__clear'} data-type="caption"
           className="mt-1.5 text-on-surface-low hover:text-on-surface disabled:opacity-50">Clear {doneCount} finished</button>
       )}
+    </div>
+  )
+}
+
+/** The desktop app's own update, as a row of its own: only while a new version is on offer or an
+ *  update runs, and only in the app's windows on this computer's gateway (`AppUpdateControls`). The
+ *  gateway's Update below stays the gateway's, on the app's own gateway too: it says how that
+ *  install is updated, and does not update the app. */
+function AppUpdateRow() {
+  const update = useAppUpdate()
+  if (!update || !appUpdateOnOffer(update.state)) return null
+  return (
+    <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
+      <AppUpdateControls update={update} place="popover" />
     </div>
   )
 }
