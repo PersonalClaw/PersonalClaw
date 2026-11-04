@@ -14,6 +14,7 @@ import { NO_READING, fixedReading, isReading, percentReading } from '../lib/read
 import { connectionWords, useGatewayConnection } from '../app/gatewayConnection'
 import { applyUpdate, updatedOutside, useInstallKind } from '../app/applyUpdate'
 import { useAppUpdate } from '../app/appUpdate'
+import { desktopBridge } from '../lib/desktopBridge'
 import { AppUpdateControls, appUpdateOnOffer } from '../app/AppUpdateControls'
 
 /** Live system + auth health — the status line's connection, at the window's bottom left.
@@ -333,6 +334,9 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
   const [asking, setAsking] = useState(false)
   const kind = useInstallKind()
   const outside = updatedOutside(kind)
+  // In the app, the app's own row has an Update beside this one (`AppUpdateRow`): this one is named
+  // the gateway's, its label staying Update. Read once: the bridge doesn't come or go.
+  const [inTheApp] = useState(() => Boolean(desktopBridge()?.appUpdate))
 
   const update = async () => {
     setAsking(true)
@@ -399,6 +403,7 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
             <RotateCw size={12} /> Restart
           </button>
           <button type="button" onClick={() => ask('update')} data-type="caption"
+            aria-label={outside && inTheApp ? 'Update the gateway' : undefined}
             className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
             style={{ borderRadius: 'var(--radius-md)' }}>
             <DownloadCloud size={12} /> {outside ? 'Update' : <>Update &amp; Restart</>}

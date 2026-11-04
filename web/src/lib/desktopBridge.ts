@@ -90,19 +90,24 @@ export interface BuddyPlace { mode: 'docked' | 'floating'; displayId?: number }
 export interface AppUpdateState {
   current: string
   how: 'mac' | 'appimage' | 'page' | 'dev'
-  phase: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'verifying' | 'restarting' | 'failed'
+  phase: 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'verifying' | 'ready' | 'placing' | 'restarting' | 'failed'
   available: { version: string; installable: boolean } | null
   /** When the last check answered, in ms since the epoch; 0 before the first. */
   checkedAt: number
   progress: { received: number; total: number } | null
   sentence: string
   last: { from: string; to: string; ok: boolean; sentence: string } | null
+  /** The version downloaded and checked in the update's private folder, waiting for Restart to
+   *  finish; null (or absent, from a shell before the two steps) otherwise. */
+  ready?: { version: string } | null
+  /** A ready copy the home's update settings no longer allowed, and why, until the next Update. */
+  dropped?: { version: string; sentence: string } | null
   releasesPage: string
   /** Whether the restart an update makes stops this home's gateway: true while it is the app's own. */
   restartsGateway: boolean
 }
 
-/** The app's answer to an update pressed for: `ok` once it is under way (its progress is the
+/** The app's answer to Update or Restart to finish: `ok` once it is under way (its progress is the
  *  state's), else the sentence that says why it did not start. */
 export interface AppUpdateStart { ok: boolean; sentence?: string }
 
@@ -151,18 +156,22 @@ export interface DesktopBridge {
   systemBrowser?: {
     open: (url: string) => Promise<SystemBrowserResult>
   }
-  /** This machine's buddy rows in Settings (#3901): where the buddy's window sits and whether it
-   *  is kept out of screen capture. In the shell's store, not the gateway's config; absent in a
-   *  shell from before them, so Settings shows these rows only when it is here. */
   /** The app's own update: Settings › Updates › This app and the System popover's row. Absent in
    *  a browser tab, on a paired gateway's page (which carries no bridge), and in a shell from
-   *  before it. `install` takes the version the confirm named; the app starts only that one. */
+   *  before it. `download` takes the version Update named, and `finish` the version the confirm
+   *  named; the app goes on only with the one on offer, or the one ready. */
   appUpdate?: {
     status: () => Promise<AppUpdateState>
     check: () => Promise<AppUpdateState>
-    install: (version: string) => Promise<AppUpdateStart>
+    /** Update: download and check *version* in a private folder. Nothing beside the app changes. */
+    download: (version: string) => Promise<AppUpdateStart>
+    /** Restart to finish the update to *version*, the one ready. */
+    finish: (version: string) => Promise<AppUpdateStart>
     on: (cb: (state: AppUpdateState) => void) => () => void
   }
+  /** This machine's buddy rows in Settings (#3901): where the buddy's window sits and whether it
+   *  is kept out of screen capture. In the shell's store, not the gateway's config; absent in a
+   *  shell from before them, so Settings shows these rows only when it is here. */
   buddy?: {
     getPlace: () => Promise<BuddyPlace>
     /** Back to the dock; resolves where it is now. */

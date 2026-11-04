@@ -2224,10 +2224,13 @@ const { makeAppUpdater, readUpdatePolicy, registerAppUpdateIpc } = require("./ap
  *  window and its gateway are up. */
 let appUpdater = null;
 
-/** Run one program and resolve what it printed: the checks and the copy an update makes on macOS. */
-function runProgram(cmd, args) {
+/** Run one program and resolve what it printed (its stderr with `{stream: "stderr"}`, where
+ *  `codesign -d` writes): the checks and the copy an update makes on macOS. */
+function runProgram(cmd, args, { stream = "stdout" } = {}) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    execFile(cmd, args, { timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) =>
+      err ? reject(err) : resolve(stream === "stderr" ? stderr : stdout)
+    );
   });
 }
 
@@ -2241,7 +2244,9 @@ function makeThisAppsUpdater() {
     appImage: process.env.APPIMAGE || "",
     // The pin, unless the home is served by a gateway the app found running: its own install pins it.
     policy: () => readUpdatePolicy({ home: PERSONALCLAW_HOME, ownGateway: !["adopted", "served"].includes(localState.state) }),
-    workDir: os.tmpdir(),
+    // The app's own folder, which the system's temp cleaning never empties under a waiting update
+    // and no other account can make: the updater keeps it 0700.
+    workDir: path.join(app.getPath("userData"), "app-update"),
     run: runProgram,
     quit: () => app.quit(),
     // Asked as the quit's last step, once the new copy is in place: the start that follows is on it.
@@ -2531,7 +2536,9 @@ app.on("before-quit", (event) => {
     .finally(() => {
       trayPresence.destroy();
       // Everything the app ran has stopped, so a new copy an update staged takes this one's place
-      // now, and the app is asked to start again (`appUpdate.js`).
+      // now, and the app is asked to start again (`appUpdate.js`). A download still under way is let
+      // go, its disk image detached.
+      appUpdater?.abandon();
       appUpdater?.swapIfStaged();
       shutdownComplete = true;
       app.quit();

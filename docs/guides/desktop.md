@@ -816,25 +816,48 @@ tested backend paths today: [WSL2 or Docker Desktop](platforms.md#windows-via-ws
 **The app updates itself when you ask it to.** It looks for a new release a minute after it
 starts and then once a day, and says so in two places: **Settings › Updates › This app**, and a
 row in the System status card while a new version is on offer. **PersonalClaw › Check for
-Updates…** (on Linux, **Help › Check for Updates…**) looks now and opens This app. Nothing is
-downloaded until you press **Update & Restart** and confirm; the confirm says whether your gateway
-restarts with the app, and how many running agents that interrupts.
+Updates…** (on Linux, **Help › Check for Updates…**) looks now and opens This app. It takes two
+presses. **Update** downloads and checks the new version in the background, and changes nothing
+beside the app; when it is ready, This app and the row say **Restart to Finish the Update**. That
+press, once you confirm, installs it; the confirm says whether your gateway restarts with the app,
+and how many running agents that interrupts. Nothing is downloaded before the first press, and
+nothing in Applications changes before the second.
 
-What the press does:
+What **Update** does:
 
 1. The app reads the release list from GitHub and takes that release's copy for this computer
    and nothing else: on macOS exactly `PersonalClaw-<version>-<arch>.dmg`, from an AppImage
    exactly `PersonalClaw-<version>.AppImage`. The download goes to GitHub's release hosts only,
-   with no credential, and is checked against the size and `sha256` digest GitHub publishes for
-   that file; a copy that differs is not used.
+   with no credential, into a private folder of its own in the app's own data folder (readable by
+   your account only, and never emptied by the system's temp cleaning), and is checked against
+   the size and `sha256` digest GitHub publishes for that file; a copy that differs is not used.
 2. On macOS the disk image is attached read-only, and the app in it must be `PersonalClaw.app`
    with this app's bundle id (`io.personalclaw.app`), the release's version, an intact seal
-   (`codesign --verify --deep --strict`) and this Mac's architecture. It is copied beside the
-   running app as `.PersonalClaw-<version>.app.incoming`, still sealed.
-3. The app quits as it always does (it signs out and stops its gateway), and only then does the
-   new copy take the old one's place: the old one moves to `.PersonalClaw-<old>.app.previous`
-   beside it, the new one to `PersonalClaw.app`. The app starts again, on the new copy.
-4. Once the new copy and its gateway are up, the old copy goes to the Trash. Until then it is kept:
+   (`codesign --verify --deep --strict`) and this Mac's architecture. It is copied out of the
+   image into that private folder, still sealed, and waits there. Quitting without finishing
+   removes it, a download still under way included; a folder a quit left behind is removed at
+   the next start, unless a disk image in it can't be detached; that folder is left, and the log
+   says so.
+3. While it waits, the home's update settings still hold: a pin or a channel set after Update that
+   no longer allows that version drops it, at the next check (Check now reads them again, and
+   asks GitHub only once they no longer allow it) or at Restart to Finish the Update.
+
+What **Restart to Finish the Update** does:
+
+4. The checked copy is used only while it is still the one that was checked: its folder the same
+   one, your account's and readable by you only. It is copied beside the running app as
+   `.PersonalClaw-<version>.app.incoming` and checked again there: the bundle id, the version,
+   this Mac's architecture, and exactly the build the disk image held (its CDHash); an AppImage
+   must still match the release's digest. A copy that is gone by then is no failure: the app
+   says so and offers Update again. The CDHash holds the copy to that build while it waits and
+   against other accounts on this Mac; it is no guard against a program running as you, which
+   could change the image as it downloads (an account that is already compromised is outside
+   the scope of [SECURITY.md](../../SECURITY.md)). Then the app quits as it always does (it
+   signs out and stops its gateway), and only then does the new copy take the old one's place:
+   the old one moves to
+   `.PersonalClaw-<old>.app.previous` beside it, the new one to `PersonalClaw.app`. The app starts
+   again, on the new copy.
+5. Once the new copy and its gateway are up, the old copy goes to the Trash. Until then it is kept:
    if the new one doesn't start, move it to the Trash and rename the old one back (it is hidden;
    in Terminal, `mv /Applications/.PersonalClaw-<old>.app.previous /Applications/PersonalClaw.app`).
 
@@ -853,8 +876,9 @@ Your data lives in `~/.personalclaw` and is untouched by any of it.
 - the `.deb`: install the new package over it, `sudo apt install ./personalclaw-desktop_<new>_amd64.deb`;
 - a development run (`npm start`), which updates from its checkout.
 
-macOS may ask once whether PersonalClaw may change apps (System Settings › Privacy & Security ›
-App Management): allow it, or decline and install from the releases page. A permission macOS
+When you press **Restart to Finish the Update**, macOS may ask once whether PersonalClaw may change
+apps (System Settings › Privacy & Security › App Management): allow it, or decline and install from
+the releases page. **Update** alone never asks: it writes nothing in Applications. A permission macOS
 gave the old copy (the microphone, notifications) can be asked for again by the new one, as after
 installing it by hand: the app isn't notarized, so macOS ties those to each build.
 

@@ -183,7 +183,7 @@ describe('the update pointer says what this install does', () => {
   it.each([
     ['container', /updated from the host/],
     ['pip', /pressing Update installs it/],
-    ['desktop', /installs it when you press Update & Restart/],
+    ['desktop', /Update downloads it, and Restart to Finish the Update installs it/],
   ])('a %s install is told how an update reaches it, and is offered no switch', async (kind, how) => {
     onboarding.mockResolvedValue({
       needs_model: true, has_model_provider: false, has_chat_binding: false,

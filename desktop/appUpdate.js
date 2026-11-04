@@ -2,7 +2,11 @@
 
 /**
  * The desktop app's own update: a check when it starts and then once a day, and an update only
- * when the owner presses for it. Nothing is downloaded or installed before that press.
+ * when the owner presses for it, in two steps. **Update** downloads and checks the release in a
+ * private folder of its own, in the background, and writes nothing beside the app; once it is
+ * ready, the app says **Restart to finish the update**. Only that press puts the new copy beside
+ * the app (in `/Applications`, where it is installed) and restarts on it. Nothing is downloaded
+ * before the first press, and nothing beside the app changes before the second.
  *
  * The check reads the repository's release list over TLS, follows no redirect, and picks the
  * release this copy should move to: the newest full release newer than it, or the newest with
@@ -17,9 +21,24 @@
  * folder of its own and is hashed as it streams, and a byte count or digest that differs uses
  * nothing. On macOS the disk image is attached read-only; the app inside must be `PersonalClaw.app`
  * with this app's bundle id and the release's version, its seal intact (`codesign --verify --deep
- * --strict`) and this Mac's architecture in it. It is copied beside the running app, sealed still.
+ * --strict`) and this Mac's architecture in it. It is copied out of the image into the private
+ * folder, sealed still and with the CDHash of the app the image held, and waits there, ready
+ * (`prepareMac`); the AppImage waits as it came. The image is hashed again on disk once it is
+ * attached, so a file swapped for it after the download is not used. The private folder is the
+ * app's own (in its data folder, 0700), which nothing empties while the copy waits, and it lasts
+ * only until Restart to finish or the quit: one an update left behind is removed at the next
+ * start, unless a disk image in it can't be detached; that folder is left, and the log says so.
+ * The CDHash holds the copy to that build across the wait and against other accounts. It is no
+ * guard against a process running as the owner, which could change the image as it downloads:
+ * that is an already-compromised account, outside SECURITY.md's scope.
  *
- * Then the app quits as it always does: it signs out and stops its gateway. Only once that is done
+ * Restart to finish uses the ready copy only if it is still the one that was checked: its folder
+ * the same one, this account's and 0700, and the copy in it. It copies it beside the running app,
+ * under a hidden name, and checks it again there: the bundle id, version and architecture, and
+ * exactly the build the image held (`placeMac`, by its CDHash), or the release's digest
+ * (`placeAppImage`). A ready copy that is gone is downloaded again by Update. The home's update
+ * settings are read again too: one they no longer allow is dropped, at the next check or at the
+ * press. Then the app quits as it always does: it signs out and stops its gateway. Only once that is done
  * does the new copy take the app's place (`swapNow`), by two renames: the running app moves to a
  * hidden name beside it, the new copy to the app's own path; a second rename that fails undoes the
  * first. The app then starts again, on the new copy, which moves the old one to the Trash once it
@@ -229,6 +248,10 @@ function sentenceFor(why, detail = {}) {
       return "The disk image didn't hold the expected app, so nothing was used. Install it from the releases page.";
     case "put_in_place":
       return "The new version couldn't be put in place. This copy is unchanged; install it from the releases page.";
+    case "ready_gone":
+      return `The downloaded copy of PersonalClaw ${detail.version} is gone. Press Update to download it again.`;
+    case "ready_not_allowed":
+      return `Your update settings no longer allow PersonalClaw ${detail.version}, so it wasn't installed.`;
     case "stranded":
       return `The new version couldn't be put in place, and this copy couldn't be moved back: it is at ${detail.path}. Rename it to PersonalClaw.app.`;
     case "unreadable_config":
@@ -357,9 +380,10 @@ function fetchReleases({ request = require("https").request, userAgent }) {
 /**
  * Download *asset* into *file* (created new, 0600), hashing it as it streams. Resolves once the
  * byte count and the sha256 are both the release's; rejects, with the partial file removed, when
- * either differs, the download stalls, or anything but GitHub's release hosts is asked for it.
+ * either differs, the download stalls, *cancelled()* says it is called off, or anything but
+ * GitHub's release hosts is asked for it.
  */
-function downloadAsset(asset, file, { request = require("https").request, userAgent, onProgress = () => {} }) {
+function downloadAsset(asset, file, { request = require("https").request, userAgent, onProgress = () => {}, cancelled = () => false }) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const fail = (why) => {
@@ -384,6 +408,13 @@ function downloadAsset(asset, file, { request = require("https").request, userAg
       const hash = crypto.createHash("sha256");
       let bytes = 0;
       res.on("data", (chunk) => {
+        // Called off (the app is quitting): the partial file goes with the failure.
+        if (cancelled()) {
+          res.destroy();
+          out.destroy();
+          fail(new UpdateFailure("download"));
+          return;
+        }
         bytes += chunk.length;
         if (bytes > asset.size) {
           res.destroy();
@@ -413,7 +444,7 @@ function downloadAsset(asset, file, { request = require("https").request, userAg
   });
 }
 
-// ── Putting the new copy beside this one ──
+// ── The ready copy, and putting it beside this one ──
 
 /** The hidden names beside the app: the new copy while it waits, the old one once it is replaced. */
 const incomingName = (version, ext) => `.${APP_NAME}-${version}.${ext}.incoming`;
@@ -429,36 +460,61 @@ function freePrevious(place, version, ext) {
   throw new UpdateFailure("put_in_place");
 }
 
+/** A CDHash as `codesign` prints it: the SHA-1 or truncated SHA-256 of the code directory. */
+const CDHASH = /^CDHash=([0-9a-f]{40}|[0-9a-f]{64})$/m;
+
 /**
- * Check the app inside *dmg* and copy it beside *bundle*: resolves the copy's path. *run* runs one
- * program and resolves its stdout, or rejects. The image is attached read-only, without a Finder
- * window, at a mount point of its own, and detached again however the check ends.
+ * Whether *app* (a bundle) is this app at *version* for *arch*: its bundle id and version, its
+ * architecture, and its seal intact (`codesign --verify --deep --strict`); with *cdhash*, exactly
+ * that signed build (`-R '=cdhash H"…"'`). A seal check that fails rejects.
  */
-async function stageMac({ dmg, bundle, version, arch, run, workDir }) {
+async function isThisApp(app, { version, arch, run, cdhash = "" }) {
+  const plist = path.join(app, "Contents", "Info.plist");
+  const id = String(await run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", plist])).trim();
+  const shipped = String(await run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", plist])).trim();
+  if (id !== BUNDLE_ID || !sameVersion(shipped, version)) return false;
+  const exactly = cdhash ? ["-R", `=cdhash H"${cdhash}"`] : [];
+  await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", ...exactly, app]);
+  const archs = String(await run("/usr/bin/lipo", ["-archs", path.join(app, "Contents", "MacOS", APP_NAME)])).trim().split(/\s+/);
+  return archs.includes(arch === "x64" ? "x86_64" : arch);
+}
+
+/**
+ * Check the app inside *dmg* and copy it out into *workDir*, the update's private folder: resolves
+ * `{path, cdhash}`, the ready copy and the CDHash of the app the image held, which the copy is held
+ * to from then on. Nothing beside the app is touched. *run* runs one program and resolves its
+ * stdout (its stderr with `{stream: "stderr"}`), or rejects. The image is attached read-only,
+ * without a Finder window, at a mount point of its own, and detached again however the check ends.
+ */
+async function prepareMac({ dmg, version, arch, run, workDir, sha256 = "", size = 0 }) {
   const mount = fs.mkdtempSync(path.join(workDir, "mount-"));
   try {
     await run("/usr/bin/hdiutil", ["attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mount, dmg]);
   } catch {
     throw new UpdateFailure("contents");
   }
-  const incoming = path.join(path.dirname(bundle), incomingName(version, "app"));
+  // Not named `.app`: LaunchServices registers a bundle by that name wherever it sees one, and a
+  // copy of this app's bundle id in the private folder could then open a link or `open -b` in the
+  // owner's place until Restart to finish. The incoming copy beside the app is named so too.
+  const ready = path.join(workDir, `${APP_NAME}.app.ready`);
   try {
+    // The image as it is on disk now, once attached, is the release's: a file swapped for it after
+    // the download, whose bytes were hashed as they streamed, is not used.
+    const onDisk = await hashFile(dmg);
+    if (!sha256 || onDisk.sha256 !== sha256 || onDisk.size !== size) throw new UpdateFailure("mismatch");
     const apps = fs.readdirSync(mount).filter((n) => n.endsWith(".app"));
     if (apps.length !== 1 || apps[0] !== `${APP_NAME}.app`) throw new UpdateFailure("contents");
     const fresh = path.join(mount, `${APP_NAME}.app`);
-    const plist = path.join(fresh, "Contents", "Info.plist");
-    const id = String(await run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", plist])).trim();
-    const shipped = String(await run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", plist])).trim();
-    if (id !== BUNDLE_ID || !sameVersion(shipped, version)) throw new UpdateFailure("contents");
-    await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", fresh]);
-    const archs = String(await run("/usr/bin/lipo", ["-archs", path.join(fresh, "Contents", "MacOS", APP_NAME)])).trim().split(/\s+/);
-    if (!archs.includes(arch === "x64" ? "x86_64" : arch)) throw new UpdateFailure("contents");
-    fs.rmSync(incoming, { recursive: true, force: true });
-    await run("/usr/bin/ditto", [fresh, incoming]);
-    await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", incoming]);
-    return incoming;
+    if (!(await isThisApp(fresh, { version, arch, run }))) throw new UpdateFailure("contents");
+    const shown = CDHASH.exec(String(await run("/usr/bin/codesign", ["-d", "-vvv", fresh], { stream: "stderr" })));
+    if (!shown) throw new UpdateFailure("contents");
+    const cdhash = shown[1];
+    fs.rmSync(ready, { recursive: true, force: true });
+    await run("/usr/bin/ditto", [fresh, ready]);
+    await run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R", `=cdhash H"${cdhash}"`, ready]);
+    return { path: ready, cdhash };
   } catch (err) {
-    fs.rmSync(incoming, { recursive: true, force: true });
+    fs.rmSync(ready, { recursive: true, force: true });
     throw err instanceof UpdateFailure ? err : new UpdateFailure("contents");
   } finally {
     await run("/usr/bin/hdiutil", ["detach", mount, "-quiet"]).catch(() => run("/usr/bin/hdiutil", ["detach", mount, "-force", "-quiet"]).catch(() => {}));
@@ -466,18 +522,66 @@ async function stageMac({ dmg, bundle, version, arch, run, workDir }) {
     try {
       fs.rmdirSync(mount);
     } catch {
-      // Still attached, or already gone: the folder's own temporary parent is removed later.
+      // Still attached, or already gone: the private folder is removed with it later.
     }
   }
 }
 
-/** Copy the downloaded AppImage beside *file*, executable: resolves the copy's path. */
-function stageAppImage({ downloaded, file, version }) {
+/**
+ * Restart to finish, on macOS: copy the ready copy beside *bundle*, under its hidden incoming name,
+ * and check it there as the image's app was checked, held to exactly that build (*cdhash*):
+ * resolves that copy's path. A copy that cannot be made, or is not that build, is removed and fails
+ * as `put_in_place`, leaving the app as it was.
+ */
+async function placeMac({ ready, bundle, version, arch, cdhash, run }) {
+  const incoming = path.join(path.dirname(bundle), incomingName(version, "app"));
+  try {
+    if (!cdhash) throw new UpdateFailure("put_in_place");
+    fs.rmSync(incoming, { recursive: true, force: true });
+    // Made first: a link that appears at the name in between fails here, not inside the copy.
+    fs.mkdirSync(incoming);
+    await run("/usr/bin/ditto", [ready, incoming]);
+    if (!(await isThisApp(incoming, { version, arch, run, cdhash }))) throw new UpdateFailure("put_in_place");
+    return incoming;
+  } catch {
+    try {
+      fs.rmSync(incoming, { recursive: true, force: true });
+    } catch {
+      // Left beside the app; the next start of either copy moves it to the Trash.
+    }
+    throw new UpdateFailure("put_in_place");
+  }
+}
+
+/** The sha256 of *file* and its size, read as a stream: `{sha256, size}`. */
+function hashFile(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    let size = 0;
+    fs.createReadStream(file)
+      .on("data", (chunk) => {
+        size += chunk.length;
+        hash.update(chunk);
+      })
+      .on("error", reject)
+      .on("end", () => resolve({ sha256: hash.digest("hex"), size }));
+  });
+}
+
+/** Restart to finish, from an AppImage: copy the ready download beside *file*, executable, and hash
+ *  the copy there: resolves the copy's path when its bytes are the release's (*sha256*, *size*). A
+ *  copy that cannot be made, or differs, is removed and fails as `put_in_place`. */
+async function placeAppImage({ ready, file, version, sha256, size, uid = -1 }) {
   const incoming = path.join(path.dirname(file), incomingName(version, "AppImage"));
   try {
     fs.rmSync(incoming, { force: true });
-    fs.copyFileSync(downloaded, incoming);
+    // Made new: a file or a link that appears at the name in between fails the copy.
+    fs.copyFileSync(ready, incoming, fs.constants.COPYFILE_EXCL);
+    const st = fs.lstatSync(incoming);
+    if (!st.isFile() || st.nlink !== 1 || (uid >= 0 && st.uid !== uid)) throw new UpdateFailure("put_in_place");
     fs.chmodSync(incoming, 0o755);
+    const made = await hashFile(incoming);
+    if (!sha256 || made.sha256 !== sha256 || made.size !== size) throw new UpdateFailure("put_in_place");
     return incoming;
   } catch {
     fs.rmSync(incoming, { force: true });
@@ -567,6 +671,9 @@ function makeAppUpdater({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   access,
+  isMountPoint = (p) => fs.lstatSync(p).dev !== fs.lstatSync(path.dirname(p)).dev,
+  getuid = () => (typeof process.getuid === "function" ? process.getuid() : -1),
+  runSync = (cmd, args) => require("child_process").execFileSync(cmd, args, { stdio: "ignore", timeout: 10_000 }),
 }) {
   const where = whereItRuns({ platform, isPackaged, execPath, appImage, access });
   // The gateway's check's own User-Agent (`self_update.fetch_releases`): it names the product and
@@ -582,11 +689,24 @@ function makeAppUpdater({
     sentence: "",
     /** How the last update this app started ended, said once by the start after it. */
     last: null,
+    /** The version downloaded and checked, waiting for Restart to finish: `{version}`, or null. */
+    ready: null,
+    /** A ready copy the home's settings no longer allowed, and why: `{version, sentence}`, until the
+     *  next Update. */
+    dropped: null,
     releasesPage: RELEASES_PAGE_URL,
   };
+  /** The ready copy in the update's private folder, and what it is held to at Restart to finish:
+   *  `{dir, folder: {dev, ino}, path, version, release, cdhash, sha256, size}`, or null. */
+  let readyCopy = null;
   let staged = null;
   let timer = null;
   let busy = false;
+  /** Set by the quit's first step: a download that ends after it keeps nothing. */
+  let stopping = false;
+  /** The private folder of the download under way, which the start's sweep leaves alone. */
+  let activeDir = null;
+  const uid = getuid();
   /** What is said while nothing failed: why this copy updates from the releases page, if it does. */
   const standing = where.how === "page" || where.how === "dev" ? sentenceFor(where.why, where) : "";
 
@@ -605,8 +725,123 @@ function makeAppUpdater({
     }
   };
 
+  /** Remove the private folder of a ready copy that was not used. */
+  const discardReady = () => {
+    if (!readyCopy) return;
+    const { dir } = readyCopy;
+    readyCopy = null;
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      log(`the app update's folder ${dir} could not be removed: ${err && err.message}`);
+    }
+  };
+
+  /** Whether *rules*, the home's update settings read now, still allow the ready copy's release:
+   *  its pin and channel, as the check that offered it applied them. Settings that can't be read don't. */
+  const readyAllowed = (rules) =>
+    !rules.unreadable && Boolean(chooseRelease([readyCopy.release], { current, channel: rules.channel, pin: rules.pin }).release);
+
+  /** Drop a ready copy *rules* no longer allow, and keep why in the state until the next Update:
+   *  the check that follows says what they do allow. Resolves the sentence. */
+  const dropDisallowed = (rules) => {
+    const { version } = readyCopy;
+    const sentence = rules.unreadable ? sentenceFor("unreadable_config", { file: rules.unreadable }) : sentenceFor("ready_not_allowed", { version });
+    log(`the app update to ${version} was dropped: the home's update settings no longer allow it`);
+    discardReady();
+    set({ phase: "idle", ready: null, available: null, sentence: "", dropped: { version, sentence } });
+    return sentence;
+  };
+
+  /**
+   * Whether the ready copy is still the one that was checked: `ok`; `gone` when its folder or the
+   * copy is not there; `changed` when its folder is another one, not this account's or not 0700,
+   * or the copy is a link or not this account's, or the AppImage's size differs.
+   */
+  const readyState = (ready) => {
+    let folder;
+    let copy;
+    try {
+      folder = fs.lstatSync(ready.dir);
+      copy = fs.lstatSync(ready.path);
+    } catch (err) {
+      return err && err.code === "ENOENT" ? "gone" : "changed";
+    }
+    const own = (st) => uid < 0 || st.uid === uid;
+    const sameFolder = folder.isDirectory() && folder.dev === ready.folder.dev && folder.ino === ready.folder.ino && (folder.mode & 0o777) === 0o700 && own(folder);
+    const sameCopy = !copy.isSymbolicLink() && own(copy) && (where.how === "mac" ? copy.isDirectory() : copy.isFile() && copy.size === ready.size);
+    return sameFolder && sameCopy ? "ok" : "changed";
+  };
+
+  /** The folders an update left in *workDir*, from a quit mid-download, say: each image still
+   *  attached in one is detached first, and a folder whose image won't detach is left as it is,
+   *  since nothing is ever removed from inside an attached image. */
+  async function sweepStale() {
+    let names = [];
+    try {
+      // The app's own folder, as it was made: a link, or a folder not this account's, is not swept.
+      const own = fs.lstatSync(workDir);
+      if (!own.isDirectory() || (uid >= 0 && own.uid !== uid)) {
+        log(`${workDir} is not this app's own folder, so it is not swept`);
+        return;
+      }
+      names = fs.readdirSync(workDir).filter((n) => n.startsWith("app-update-"));
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const dir = path.join(workDir, name);
+      if (dir === activeDir || (readyCopy && readyCopy.dir === dir)) continue;
+      try {
+        if (!fs.lstatSync(dir).isDirectory()) continue;
+      } catch {
+        continue;
+      }
+      let attached = false;
+      let inside = [];
+      try {
+        inside = fs.readdirSync(dir).filter((n) => n.startsWith("mount-"));
+      } catch {
+        inside = [];
+      }
+      for (const child of inside) {
+        const mount = path.join(dir, child);
+        let mounted = false;
+        try {
+          mounted = isMountPoint(mount);
+        } catch {
+          mounted = false;
+        }
+        if (!mounted) continue;
+        try {
+          if (platform !== "darwin") throw new Error("no detach here");
+          await run("/usr/bin/hdiutil", ["detach", mount, "-force", "-quiet"]);
+        } catch {
+          attached = true;
+        }
+      }
+      if (attached) {
+        log(`a disk image an update left attached in ${dir} could not be detached; the folder is left`);
+        continue;
+      }
+      try {
+        await fs.promises.rm(dir, { recursive: true, force: true });
+        log(`removed ${dir}, which an update left`);
+      } catch (err) {
+        log(`could not remove ${dir}, which an update left: ${err && err.message}`);
+      }
+    }
+  }
+
   async function check({ asked = false } = {}) {
     if (busy) return view();
+    if (readyCopy) {
+      // A ready update keeps its offer while the home's settings still allow it, read again now
+      // with nothing asked of GitHub: Restart to finish is the way on, not another download.
+      const now = policy();
+      if (readyAllowed(now)) return view();
+      dropDisallowed(now);
+    }
     const rules = policy();
     // Nothing is asked of GitHub while the home's settings are unknown: the check says why instead.
     if (rules.unreadable) {
@@ -616,6 +851,8 @@ function makeAppUpdater({
     set({ phase: "checking", sentence: "" });
     try {
       const releases = await fetchReleases({ request, userAgent });
+      // An update that started while the list was read keeps its own state.
+      if (busy || readyCopy) return view();
       const chosen = chooseRelease(releases, { current, channel: rules.channel, pin: rules.pin });
       if (!chosen.release) {
         const quiet = chosen.why === "current";
@@ -636,24 +873,33 @@ function makeAppUpdater({
         sentence: standing || (asset && !asset.ok ? sentenceFor(asset.why) : ""),
       });
     } catch (err) {
+      if (busy || readyCopy) return view();
       return set({ phase: "failed", checkedAt: now(), sentence: err instanceof UpdateFailure ? err.message : sentenceFor("unreachable") });
     }
   }
 
-  /** Start the update to *version*, the one on offer, and answer at once: `{ok}` once it is under
-   *  way, else `{ok: false, sentence}`. Its progress and how it ends are the state's. Once the new
-   *  copy is ready beside this one, the app quits as it always does (`quit`). */
-  function install(version) {
+  /** Update: download and check *version*, the one on offer, in a private folder of its own, and
+   *  answer at once: `{ok}` once it is under way, else `{ok: false, sentence}`. Its progress and how
+   *  it ends are the state's: `ready`, with nothing beside the app changed, or `failed`. */
+  function download(version) {
+    if (stopping) return { ok: false, sentence: "The app is quitting." };
     if (busy) return { ok: false, sentence: "An update is already under way." };
+    if (readyCopy) return { ok: false, sentence: `PersonalClaw ${readyCopy.version} is ready. Restart to finish the update.` };
     if (!state.available || !sameVersion(state.available.version, version)) return { ok: false, sentence: "That version is not the one on offer. Check again." };
     if (!state.available.installable) return { ok: false, sentence: state.sentence || sentenceFor(where.why, where) };
     busy = true;
     (async () => {
-      const dir = fs.mkdtempSync(path.join(workDir, "app-update-"));
-      fs.chmodSync(dir, 0o700);
+      let dir = null;
       try {
-        set({ phase: "downloading", sentence: "", last: null, progress: { received: 0, total: 0 } });
+        set({ phase: "downloading", sentence: "", last: null, dropped: null, progress: { received: 0, total: 0 } });
+        fs.mkdirSync(workDir, { recursive: true, mode: 0o700 });
+        fs.chmodSync(workDir, 0o700);
+        dir = fs.mkdtempSync(path.join(workDir, "app-update-"));
+        fs.chmodSync(dir, 0o700);
+        activeDir = dir;
+        const made = fs.lstatSync(dir);
         const releases = await fetchReleases({ request, userAgent });
+        if (stopping) return;
         const release = (Array.isArray(releases) ? releases : []).find((r) => r && !r.draft && sameVersion(r.tag_name, version));
         if (!release) throw new UpdateFailure("unreachable");
         const picked = chooseAsset(release, { platform, arch });
@@ -663,30 +909,154 @@ function makeAppUpdater({
           request,
           userAgent,
           onProgress: (progress) => set({ progress }),
+          cancelled: () => stopping,
         });
+        // The app is quitting: no image is attached, and nothing is kept.
+        if (stopping) return;
         set({ phase: "verifying", progress: null });
+        let ready = file;
+        let cdhash = "";
         if (where.how === "mac") {
-          const incoming = await stageMac({ dmg: file, bundle: where.bundle, version: asset.version, arch, run, workDir: dir });
-          staged = { current: where.bundle, incoming, ext: "app", to: asset.version };
+          ({ path: ready, cdhash } = await prepareMac({ dmg: file, version: asset.version, arch, run, workDir: dir, sha256: asset.sha256, size: asset.size }));
+          // The image is no use once its app is out of it and checked.
+          fs.rmSync(file, { force: true });
         } else {
-          const incoming = stageAppImage({ downloaded: file, file: where.file, version: asset.version });
-          staged = { current: where.file, incoming, ext: "AppImage", to: asset.version };
+          fs.chmodSync(file, 0o755);
         }
-        remember({ from: current, to: asset.version });
-        set({ phase: "restarting", sentence: `PersonalClaw ${asset.version} is ready. The app restarts now.` });
-        log(`the app update to ${asset.version} is staged at ${staged.incoming}; it takes this copy's place as the app quits`);
-        quit();
+        if (stopping) return;
+        readyCopy = {
+          dir,
+          folder: { dev: made.dev, ino: made.ino },
+          path: ready,
+          version: asset.version,
+          release: { tag_name: release.tag_name, prerelease: Boolean(release.prerelease), draft: false },
+          cdhash,
+          sha256: asset.sha256,
+          size: asset.size,
+        };
+        set({ phase: "ready", ready: { version: asset.version }, sentence: `PersonalClaw ${asset.version} is downloaded and checked. Restart to finish the update.` });
+        log(`the app update to ${asset.version} is ready in ${dir}; nothing beside the app changes until Restart to finish`);
       } catch (err) {
-        staged = null;
         log(`the app update to ${version} stopped: ${err && err.message}`);
         set({ phase: "failed", progress: null, sentence: err instanceof UpdateFailure ? err.message : sentenceFor("") });
       } finally {
-        fs.rm(dir, { recursive: true, force: true }, () => {});
+        if (dir && !readyCopy) {
+          // During the quit the folder goes at once: the process may not live to finish an rm.
+          if (stopping) {
+            try {
+              fs.rmSync(dir, { recursive: true, force: true });
+            } catch (err) {
+              log(`the app update's folder ${dir} could not be removed: ${err && err.message}`);
+            }
+          } else {
+            fs.rm(dir, { recursive: true, force: true }, () => {});
+          }
+        }
+        activeDir = null;
+        busy = false;
+      }
+    })();
+    return { ok: true };
+  }
+
+  /** Restart to finish the update to *version*, the one ready: put the ready copy beside this one,
+   *  under a hidden name, then quit as the app always does, whose last step is the swap
+   *  (`swapIfStaged`). Answers at once: `{ok}` once it is under way, else `{ok: false, sentence}`. A
+   *  copy that cannot be put beside the app leaves the app as it was, and says so. */
+  function finish(version) {
+    if (stopping) return { ok: false, sentence: "The app is quitting." };
+    if (busy) return { ok: false, sentence: "An update is already under way." };
+    if (!readyCopy || !sameVersion(readyCopy.version, version)) return { ok: false, sentence: "That version is not the one ready. Check again." };
+    // Settings changed since Update: a pin or channel that no longer allows the ready copy drops it,
+    // and the check that follows says what they allow, if automatic checks are on.
+    const rules = policy();
+    if (!readyAllowed(rules)) {
+      const sentence = dropDisallowed(rules);
+      check({ asked: false }).catch(() => {});
+      return { ok: false, sentence };
+    }
+    // A ready copy that is gone is no failure of the update: Update downloads it again.
+    if (readyState(readyCopy) === "gone") {
+      const sentence = sentenceFor("ready_gone", { version: readyCopy.version });
+      discardReady();
+      set({ phase: "available", ready: null, progress: null, sentence });
+      return { ok: false, sentence };
+    }
+    busy = true;
+    const ready = readyCopy;
+    (async () => {
+      try {
+        set({ phase: "placing", sentence: `Putting PersonalClaw ${ready.version} in place…` });
+        if (readyState(ready) !== "ok") throw new UpdateFailure("put_in_place");
+        const incoming =
+          where.how === "mac"
+            ? await placeMac({ ready: ready.path, bundle: where.bundle, version: ready.version, arch, cdhash: ready.cdhash, run })
+            : await placeAppImage({ ready: ready.path, file: where.file, version: ready.version, sha256: ready.sha256, size: ready.size, uid });
+        // The app began to quit while the copy was put beside it: nothing is staged, and the copy goes.
+        if (stopping) {
+          fs.rmSync(incoming, { recursive: true, force: true });
+          log(`the app is quitting: the update to ${ready.version} is not put in place`);
+          return;
+        }
+        staged =
+          where.how === "mac"
+            ? { current: where.bundle, incoming, ext: "app", to: ready.version }
+            : { current: where.file, incoming, ext: "AppImage", to: ready.version };
+        discardReady();
+        remember({ from: current, to: ready.version });
+        set({ phase: "restarting", ready: null, sentence: `PersonalClaw ${ready.version} is in place. The app restarts now.` });
+        log(`the app update to ${ready.version} is staged at ${staged.incoming}; it takes this copy's place as the app quits`);
+        quit();
+      } catch (err) {
+        staged = null;
+        discardReady();
+        log(`the app update to ${ready.version} could not be put in place: ${err && err.message}`);
+        set({ phase: "failed", ready: null, progress: null, sentence: err instanceof UpdateFailure ? err.message : sentenceFor("put_in_place") });
+      } finally {
         // A staged copy holds the updater until the quit: nothing else starts while the app restarts.
         if (!staged) busy = false;
       }
     })();
     return { ok: true };
+  }
+
+  /** The quit's last step, beside `swapIfStaged`: a download still under way is let go, its image
+   *  detached at once (`-force`) and its folder removed. A folder whose image won't detach is left
+   *  for the next start's sweep, which tries again. Never throws. */
+  function abandon() {
+    const dir = activeDir;
+    if (!dir) return;
+    activeDir = null;
+    let attached = false;
+    try {
+      for (const child of fs.readdirSync(dir).filter((n) => n.startsWith("mount-"))) {
+        const mount = path.join(dir, child);
+        let mounted = false;
+        try {
+          mounted = isMountPoint(mount);
+        } catch {
+          mounted = false;
+        }
+        if (!mounted) continue;
+        try {
+          if (platform !== "darwin") throw new Error("no detach here");
+          runSync("/usr/bin/hdiutil", ["detach", mount, "-force", "-quiet"]);
+        } catch {
+          attached = true;
+        }
+      }
+    } catch {
+      // Gone already.
+    }
+    if (attached) {
+      log(`a disk image of the update could not be detached in ${dir}; the next start tries again`);
+      return;
+    }
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch (err) {
+      log(`the app update's folder ${dir} could not be removed: ${err && err.message}`);
+    }
   }
 
   /** The quit's last step: put a staged copy in place, then ask for the start again: on the new
@@ -779,16 +1149,23 @@ function makeAppUpdater({
     start() {
       const last = readAttempt();
       if (last) set({ last });
+      sweepStale().catch((err) => log(`the folders an update left could not be swept: ${err && err.message}`));
       if (where.how !== "dev") schedule(FIRST_CHECK_AFTER_MS);
       return last;
     },
+    /** The quit's first step: no more checks, a ready copy nobody restarted on is removed, and a
+     *  download still under way keeps nothing when it ends. */
     stop() {
+      stopping = true;
       if (timer) clearTimer(timer);
       timer = null;
+      discardReady();
     },
     check,
-    install,
+    download,
+    finish,
     swapIfStaged,
+    abandon,
     trashPrevious,
     status: view,
   };
@@ -796,8 +1173,9 @@ function makeAppUpdater({
 
 /**
  * The bridge's half of the app's update: what the app's own windows may ask, and nothing more. A
- * page that is not one of the app's bridged windows is refused (*isAppWindow*). `install` takes the
- * version the page's confirm named, and starts only when it is the one on offer.
+ * page that is not one of the app's bridged windows is refused (*isAppWindow*). `download` takes the
+ * version the page's Update named, and starts only when it is the one on offer; `finish` takes the
+ * version the page's confirm named, and goes on only when it is the one ready.
  */
 function registerAppUpdateIpc({ ipcMain, channels, updater, isAppWindow, log = () => {} }) {
   const answer = (channel, act) => {
@@ -813,7 +1191,9 @@ function registerAppUpdateIpc({ ipcMain, channels, updater, isAppWindow, log = (
   };
   answer(channels.appUpdateStatus, (u) => u.status());
   answer(channels.appUpdateCheck, (u) => u.check({ asked: true }));
-  answer(channels.appUpdateInstall, (u, version) => u.install(typeof version === "string" ? version.slice(0, 64) : ""));
+  const named = (version) => (typeof version === "string" ? version.slice(0, 64) : "");
+  answer(channels.appUpdateDownload, (u, version) => u.download(named(version)));
+  answer(channels.appUpdateFinish, (u, version) => u.finish(named(version)));
 }
 
 module.exports = {
@@ -841,14 +1221,15 @@ module.exports = {
   leftBeside,
   makeAppUpdater,
   parseVersion,
+  placeAppImage,
+  placeMac,
+  prepareMac,
   previousName,
   programIn,
   readUpdatePolicy,
   registerAppUpdateIpc,
   sameVersion,
   sentenceFor,
-  stageAppImage,
-  stageMac,
   swapNow,
   whereItRuns,
 };

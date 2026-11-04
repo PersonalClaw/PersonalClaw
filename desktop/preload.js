@@ -51,7 +51,8 @@ const IPC_CHANNELS = {
   systemBrowserOpen: `${IPC_PREFIX}system-browser-open`,
   appUpdateStatus: `${IPC_PREFIX}app-update-status`,
   appUpdateCheck: `${IPC_PREFIX}app-update-check`,
-  appUpdateInstall: `${IPC_PREFIX}app-update-install`,
+  appUpdateDownload: `${IPC_PREFIX}app-update-download`,
+  appUpdateFinish: `${IPC_PREFIX}app-update-finish`,
   appUpdateState: `${IPC_PREFIX}app-update-state`,
   buddyGetPlace: `${IPC_PREFIX}buddy-get-place`,
   buddyResetPlace: `${IPC_PREFIX}buddy-reset-place`,
@@ -227,14 +228,16 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
   },
 
   /** The app's own update (`appUpdate.js`). `status()` and `check()` resolve what it stands at:
-   * `{current, how, phase, available, checkedAt, progress, sentence, last, releasesPage,
-   * restartsGateway}`. `install()` starts the update to the version the page's confirm named, and
-   * resolves `{ok, sentence?}` at once; its progress arrives on `on()`. Nothing downloads before
-   * `install()`. */
+   * `{current, how, phase, available, checkedAt, progress, sentence, last, ready, releasesPage,
+   * restartsGateway}`. `download()` downloads and checks the version the page's Update named, in a
+   * private folder, and `finish()` is Restart to finish for the version ready; each resolves `{ok,
+   * sentence?}` at once, and the progress arrives on `on()`. Nothing downloads before `download()`,
+   * and nothing beside the app changes before `finish()`. */
   appUpdate: {
     status: () => ipcRenderer.invoke(IPC_CHANNELS.appUpdateStatus),
     check: () => ipcRenderer.invoke(IPC_CHANNELS.appUpdateCheck),
-    install: (version) => ipcRenderer.invoke(IPC_CHANNELS.appUpdateInstall, String(version ?? "")),
+    download: (version) => ipcRenderer.invoke(IPC_CHANNELS.appUpdateDownload, String(version ?? "")),
+    finish: (version) => ipcRenderer.invoke(IPC_CHANNELS.appUpdateFinish, String(version ?? "")),
     /** Subscribe to the update's state as it moves on. Returns an unsubscribe fn. */
     on: (cb) => {
       if (typeof cb !== "function") return () => {};

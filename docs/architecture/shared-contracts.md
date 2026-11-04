@@ -4112,11 +4112,19 @@ Status: planned
   `uv` the owner allowed (the `installers` book, §17.1; `update.installer_allowed`).
 - **The desktop app's own update.** The shell checks the release list a minute after it starts and
   once a day, follows `updates.channel` (and `updates.pin` while it runs its own gateway), and downloads
-  nothing until its owner presses Update & Restart (Settings › Updates › This app, Check for Updates…).
-  It takes exactly the release's copy for this computer, from GitHub's release hosts, checked against
-  the size and `sha256` digest GitHub publishes for it as it streams; on macOS the app inside the image
-  must carry this app's bundle id, the release's version, an intact seal and this Mac's architecture.
-  The new copy takes the old one's place only after the app has quit and stopped its gateway, and the
+  nothing until its owner presses Update (Settings › Updates › This app, Check for Updates…). Update
+  takes exactly the release's copy for this computer, from GitHub's release hosts, checked against the
+  size and `sha256` digest GitHub publishes for it as it streams, into a private folder of its own; on
+  macOS the app inside the image must carry this app's bundle id, the release's version, an intact seal
+  and this Mac's architecture. The private folder is the app's own (in its data folder, 0700), and a
+  quit, mid-download too, leaves nothing there that the next start does not remove, unless a disk image
+  in it can't be detached; that folder is left, and the log says so. Nothing beside the
+  app changes until the owner presses Restart to Finish the Update, and that press uses the copy only
+  while it is the one that was checked (the same folder, the owner's, 0700) and while `updates.pin` and
+  `updates.channel`, read again, still allow it; a check while it waits reads them again too. Only then
+  is the checked copy put beside the app, checked there against exactly the build the image held (its
+  CDHash), or the release's digest for an AppImage, and it takes the old one's place only
+  after the app has quit and stopped its gateway, and the
   old copy is kept until the new one and its gateway are up (`desktop/appUpdate.js`). Every copy it
   cannot replace, and every failure, is sent to the releases page. The shell has no audit writer of its
   own, so it records no `sel()` row: it logs each step, and the next start says how the update ended.

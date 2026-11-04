@@ -7,8 +7,10 @@ export interface AppUpdate {
   state: AppUpdateState | null
   /** Check now, whatever the automatic checks are set to. */
   check: () => Promise<void>
-  /** Start the update to *version*, the one the confirm named. */
-  install: (version: string) => Promise<AppUpdateStart>
+  /** Update: download and check *version*, the one on offer, in the background. */
+  download: (version: string) => Promise<AppUpdateStart>
+  /** Restart to finish the update to *version*, the one ready, once the confirm named it. */
+  finish: (version: string) => Promise<AppUpdateStart>
 }
 
 const NO_ANSWER = 'The app did not answer. Try again, or install from the releases page.'
@@ -31,9 +33,13 @@ export function useAppUpdate(): AppUpdate | null {
     if (!bridge) return
     try { setState(await bridge.check()) } catch { /* the state it pushes says what happened */ }
   }, [bridge])
-  const install = useCallback(async (version: string): Promise<AppUpdateStart> => {
+  const download = useCallback(async (version: string): Promise<AppUpdateStart> => {
     if (!bridge) return { ok: false, sentence: NO_ANSWER }
-    try { return await bridge.install(version) } catch { return { ok: false, sentence: NO_ANSWER } }
+    try { return await bridge.download(version) } catch { return { ok: false, sentence: NO_ANSWER } }
   }, [bridge])
-  return bridge ? { state, check, install } : null
+  const finish = useCallback(async (version: string): Promise<AppUpdateStart> => {
+    if (!bridge) return { ok: false, sentence: NO_ANSWER }
+    try { return await bridge.finish(version) } catch { return { ok: false, sentence: NO_ANSWER } }
+  }, [bridge])
+  return bridge ? { state, check, download, finish } : null
 }

@@ -31,7 +31,8 @@ const {
   parseVersion,
   readUpdatePolicy,
   registerAppUpdateIpc,
-  stageMac,
+  placeMac,
+  prepareMac,
   swapNow,
   whereItRuns,
 } = require("../appUpdate");
@@ -236,6 +237,27 @@ describe("downloadAsset: GitHub's release hosts only, and only the bytes the rel
     assert.equal(seen.length, 6, "more than five redirects were followed");
   });
 
+  it("stops a download that is called off, and leaves no partial file", async () => {
+    const dir = tmp();
+    const body = Buffer.alloc(64 * 1024, 7);
+    const asset = { url: "https://github.com/PersonalClaw/PersonalClaw/releases/download/v0.3.8/PersonalClaw-0.3.8.AppImage", size: body.length * 2, sha256: crypto.createHash("sha256").update(Buffer.concat([body, body])).digest("hex") };
+    let chunks = 0;
+    const request = (url, options, cb) => {
+      const handlers = {};
+      const req = { setTimeout: () => req, on: (ev, fn) => ((handlers[ev] = fn), req), destroy: () => {}, end: () => setImmediate(() => {
+        const res = Readable.from([body, body]);
+        res.statusCode = 200;
+        res.headers = {};
+        cb(res);
+      }) };
+      return req;
+    };
+    const file = path.join(dir, "PersonalClaw-0.3.8.AppImage");
+    await assert.rejects(() => downloadAsset(asset, file, { request, userAgent: USER_AGENT, onProgress: () => (chunks += 1), cancelled: () => chunks >= 1 }), (err) => err.why === "download");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(fs.existsSync(file), false, "the partial file was left");
+  });
+
   it("uses nothing whose bytes differ from the release's, and leaves no partial file", async () => {
     for (const served of [Buffer.from("the 0.3.8 cop!"), Buffer.from("the 0.3.8 copy and then some")]) {
       const file = path.join(tmp(), "f.dmg");
@@ -246,13 +268,20 @@ describe("downloadAsset: GitHub's release hosts only, and only the bytes the rel
   });
 });
 
-/** A fake of the programs the update runs on macOS, and what each was asked. */
-function fakeMacTools({ id = BUNDLE_ID, version = "0.3.8", archs = "x86_64 arm64", apps = ["PersonalClaw.app"], codesign = () => {} } = {}) {
+/** The CDHash the fake codesign gives a bundle: its executable's bytes, hashed, so a copy whose
+ *  build changed has another one. */
+const cdhashOf = (app) => crypto.createHash("sha1").update(fs.readFileSync(path.join(app, "Contents", "MacOS", "PersonalClaw"))).digest("hex");
+
+/** A fake of the programs the update runs on macOS, and what each was asked. Its codesign writes
+ *  what `-d -vvv` shows to stderr only, as codesign does, and holds `-R '=cdhash H"…"'` to the
+ *  bundle's CDHash. */
+function fakeMacTools({ id = BUNDLE_ID, version = "0.3.8", archs = "x86_64 arm64", apps = ["PersonalClaw.app"], codesign = () => {}, ditto = () => {}, shows = (app) => `CDHash=${cdhashOf(app)}`, attach = async () => {}, detach = () => {} } = {}) {
   const calls = [];
-  const run = async (cmd, args) => {
+  const run = async (cmd, args, opts = {}) => {
     calls.push([path.basename(cmd), ...args]);
     const tool = path.basename(cmd);
     if (tool === "hdiutil" && args[0] === "attach") {
+      await attach();
       const mount = args[args.indexOf("-mountpoint") + 1];
       for (const name of apps) {
         fs.mkdirSync(path.join(mount, name, "Contents", "MacOS"), { recursive: true });
@@ -262,13 +291,25 @@ function fakeMacTools({ id = BUNDLE_ID, version = "0.3.8", archs = "x86_64 arm64
       return "";
     }
     if (tool === "hdiutil" && args[0] === "detach") {
+      detach(args[1]);
       for (const name of fs.readdirSync(args[1])) fs.rmSync(path.join(args[1], name), { recursive: true, force: true });
       return "";
     }
     if (tool === "PlistBuddy") return args[1].includes("CFBundleIdentifier") ? `${id}\n` : `${version}\n`;
-    if (tool === "codesign") return codesign(args[args.length - 1]) || "";
+    if (tool === "codesign" && args[0] === "-d") {
+      const app = args[args.length - 1];
+      return opts.stream === "stderr" ? `Executable=${app}/Contents/MacOS/PersonalClaw\n${shows(app)}\n` : "";
+    }
+    if (tool === "codesign") {
+      const app = args[args.length - 1];
+      codesign(app);
+      const r = args.indexOf("-R");
+      if (r >= 0 && args[r + 1] !== `=cdhash H"${cdhashOf(app)}"`) throw new Error("test-requirement: code failed to satisfy specified code requirement(s)");
+      return "";
+    }
     if (tool === "lipo") return `${archs}\n`;
     if (tool === "ditto") {
+      ditto(args[0], args[1]);
       fs.cpSync(args[0], args[1], { recursive: true });
       return "";
     }
@@ -288,20 +329,33 @@ function installed() {
   fs.mkdirSync(work);
   const dmg = path.join(work, "PersonalClaw-0.3.8-arm64.dmg");
   fs.writeFileSync(dmg, "image");
-  return { root, folder, bundle, work, dmg, execPath: path.join(bundle, "Contents", "MacOS", "PersonalClaw") };
+  const image = { sha256: crypto.createHash("sha256").update("image").digest("hex"), size: "image".length };
+  return { root, folder, bundle, work, dmg, image, execPath: path.join(bundle, "Contents", "MacOS", "PersonalClaw") };
 }
 
-describe("stageMac: the app inside the image, checked, copied beside this one", () => {
-  it("attaches the image read-only and without a window, checks the app, and copies it beside this one", async () => {
+describe("prepareMac: the app inside the image, checked, copied into the update's own folder", () => {
+  it("attaches the image read-only and without a window, checks the app, and copies it out, touching nothing beside this one", async () => {
     const at = installed();
     const { run, calls } = fakeMacTools();
-    const incoming = await stageMac({ dmg: at.dmg, bundle: at.bundle, version: "0.3.8", arch: "arm64", run, workDir: at.work });
-    assert.equal(incoming, path.join(at.folder, ".PersonalClaw-0.3.8.app.incoming"));
-    assert.equal(fs.readFileSync(path.join(incoming, "Contents", "MacOS", "PersonalClaw"), "utf8"), "binary 0.3.8");
+    const { path: ready, cdhash } = await prepareMac({ dmg: at.dmg, version: "0.3.8", arch: "arm64", run, workDir: at.work, ...at.image });
+    assert.equal(ready, path.join(at.work, "PersonalClaw.app.ready"));
+    assert.equal(cdhash, cdhashOf(ready), "the CDHash kept is the build the image held");
+    assert.ok(!ready.endsWith(".app"), "a ready copy named .app is registered with LaunchServices, and a link can open it");
+    assert.equal(fs.readFileSync(path.join(ready, "Contents", "MacOS", "PersonalClaw"), "utf8"), "binary 0.3.8");
     const attach = calls.find((c) => c[0] === "hdiutil" && c[1] === "attach");
     for (const flag of ["-readonly", "-nobrowse", "-noautoopen"]) assert.ok(attach.includes(flag), flag);
-    assert.equal(calls.filter((c) => c[0] === "codesign").length, 2, "the seal is checked in the image and again in the copy");
+    // The seal is checked in the image, then again on the copy in the private folder, held there to
+    // the build the image held.
+    const seals = calls.filter((c) => c[0] === "codesign" && c[1] === "--verify");
+    assert.equal(seals.length, 2);
+    assert.match(path.basename(path.dirname(seals[0][seals[0].length - 1])), /^mount-/, "the first seal check is not on the image's app");
+    assert.deepEqual(seals[1].slice(-3), ["-R", `=cdhash H"${cdhash}"`, ready], "the copy in the private folder is not checked, or not held to the image's build");
+    // The CDHash is read from the image's app, before the copy is made.
+    const shown = calls.findIndex((c) => c[0] === "codesign" && c[1] === "-d");
+    assert.match(path.basename(path.dirname(calls[shown][calls[shown].length - 1])), /^mount-/, "the CDHash is not the image's app's");
+    assert.ok(shown < calls.findIndex((c) => c[0] === "ditto"), "the CDHash is read after the copy");
     assert.ok(calls.some((c) => c[0] === "hdiutil" && c[1] === "detach"));
+    assert.deepEqual(fs.readdirSync(at.folder), ["PersonalClaw.app"], "something was written beside the app");
     assert.equal(fs.readFileSync(at.execPath, "utf8"), "binary 0.3.7", "the running app was touched");
   });
 
@@ -313,13 +367,69 @@ describe("stageMac: the app inside the image, checked, copied beside this one", 
       { apps: ["PersonalClaw.app", "Helper.app"] },
       { apps: ["Other.app"] },
       { codesign: () => { throw new Error("invalid signature"); } },
+      { shows: () => "" },
     ];
     for (const tools of cases) {
       const at = installed();
       const { run, calls } = fakeMacTools(tools);
-      await assert.rejects(() => stageMac({ dmg: at.dmg, bundle: at.bundle, version: "0.3.8", arch: "arm64", run, workDir: at.work }), (err) => err.why === "contents", JSON.stringify(tools));
-      assert.equal(fs.existsSync(path.join(at.folder, ".PersonalClaw-0.3.8.app.incoming")), false, JSON.stringify(tools));
+      await assert.rejects(() => prepareMac({ dmg: at.dmg, version: "0.3.8", arch: "arm64", run, workDir: at.work, ...at.image }), (err) => err.why === "contents", JSON.stringify(tools));
+      assert.equal(fs.existsSync(path.join(at.work, "PersonalClaw.app.ready")), false, JSON.stringify(tools));
+      assert.deepEqual(fs.readdirSync(at.folder), ["PersonalClaw.app"], JSON.stringify(tools));
       assert.ok(calls.some((c) => c[0] === "hdiutil" && c[1] === "detach"), "the image stays attached");
+    }
+  });
+});
+
+describe("prepareMac: the image on disk, once attached, is the release's", () => {
+  it("uses nothing from an image whose file differs from the one downloaded, and detaches it", async () => {
+    const at = installed();
+    const { run, calls } = fakeMacTools({ attach: async () => fs.writeFileSync(at.dmg, "another") });
+    await assert.rejects(() => prepareMac({ dmg: at.dmg, version: "0.3.8", arch: "arm64", run, workDir: at.work, ...at.image }), (err) => err.why === "mismatch");
+    assert.equal(fs.existsSync(path.join(at.work, "PersonalClaw.app.ready")), false);
+    assert.ok(calls.some((c) => c[0] === "hdiutil" && c[1] === "detach"), "the image stays attached");
+    assert.equal(calls.some((c) => c[0] === "ditto"), false, "a copy was made from an image that isn't the release's");
+  });
+});
+
+describe("placeMac: Restart to finish puts the ready copy beside this one", () => {
+  /** A ready copy of 0.3.8 in the work folder, and the CDHash the download kept for it. */
+  const readyCopy = (at) => {
+    const ready = path.join(at.work, "PersonalClaw.app.ready");
+    fs.mkdirSync(path.join(ready, "Contents", "MacOS"), { recursive: true });
+    fs.writeFileSync(path.join(ready, "Contents", "Info.plist"), "plist");
+    fs.writeFileSync(path.join(ready, "Contents", "MacOS", "PersonalClaw"), "binary 0.3.8");
+    return { ready, cdhash: cdhashOf(ready) };
+  };
+
+  it("copies it beside the app under its hidden name and checks it there as the image's app was, held to its build", async () => {
+    const at = installed();
+    const { ready, cdhash } = readyCopy(at);
+    const { run, calls } = fakeMacTools();
+    const incoming = await placeMac({ ready, bundle: at.bundle, version: "0.3.8", arch: "arm64", cdhash, run });
+    assert.equal(incoming, path.join(at.folder, ".PersonalClaw-0.3.8.app.incoming"));
+    assert.equal(fs.readFileSync(path.join(incoming, "Contents", "MacOS", "PersonalClaw"), "utf8"), "binary 0.3.8");
+    assert.deepEqual(calls.filter((c) => c[0] === "codesign").map((c) => c.slice(-3)), [["-R", `=cdhash H"${cdhash}"`, incoming]]);
+    assert.ok(calls.some((c) => c[0] === "PlistBuddy" && c[c.length - 1].startsWith(incoming)), "the bundle id and version are not read on the copy");
+    assert.ok(calls.some((c) => c[0] === "lipo" && c[2].startsWith(incoming)), "the architecture is not read on the copy");
+    assert.equal(fs.readFileSync(at.execPath, "utf8"), "binary 0.3.7");
+  });
+
+  it("removes a copy it could not make, or that is not the build that was checked, and fails as put_in_place", async () => {
+    const cases = [
+      { tools: { ditto: () => { throw new Error("EPERM"); } } },
+      { tools: { codesign: () => { throw new Error("invalid signature"); } } },
+      { tools: { id: "io.example.other" } },
+      { tools: { version: "0.3.7" } },
+      { tools: { archs: "x86_64" } },
+      { cdhash: "0".repeat(40), why: "another build than the one the image held" },
+      { cdhash: "", why: "no build to hold it to" },
+    ];
+    for (const { tools = {}, cdhash, why } of cases) {
+      const at = installed();
+      const made = readyCopy(at);
+      const { run } = fakeMacTools(tools);
+      await assert.rejects(() => placeMac({ ready: made.ready, bundle: at.bundle, version: "0.3.8", arch: "arm64", cdhash: cdhash ?? made.cdhash, run }), (err) => err.why === "put_in_place", why || JSON.stringify(tools));
+      assert.deepEqual(fs.readdirSync(at.folder), ["PersonalClaw.app"], why || JSON.stringify(tools));
     }
   });
 });
@@ -391,7 +501,7 @@ describe("readUpdatePolicy: the home's updates settings, read each time, failing
   });
 });
 
-describe("makeAppUpdater: a check on launch and daily; an update only on a press", () => {
+describe("makeAppUpdater: a check on launch and daily; an update only on a press, in two steps", () => {
   /** A shell store in memory, as `shellStore.js` keeps it: strings by key. */
   const memoryStore = (seed = {}) => {
     const data = { ...seed };
@@ -402,17 +512,37 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
       removeItem: (k) => { delete data[k]; },
     };
   };
-  function updater({ list = [release("v0.3.8")], policy = { channel: "stable", pin: "", checkEnabled: true }, tools, current = "0.3.7", at = installed(), store = memoryStore(), ownsGateway } = {}) {
+  function updater({ list = [release("v0.3.8")], policy = { channel: "stable", pin: "", checkEnabled: true }, tools, current = "0.3.7", at = installed(), store = memoryStore(), ownsGateway, isMountPoint, listHold = () => null, listStatus = () => 200, getuid, runSync, onState: alsoOnState = () => {} } = {}) {
     const timers = [];
     const states = [];
     const relaunched = [];
     const quits = [];
     const trashed = [];
+    const logs = [];
     const body = Buffer.from("the v0.3.8 copy");
+    // The release list's *n*th answer: with *listStatus(n)*, once *listHold(n)* (a promise, or null) settles.
+    let listed = 0;
+    let asking = 0;
     const { request, seen } = fakeRequest((url) =>
-      url === RELEASES_API ? { status: 200, body: JSON.stringify(list) } : url.startsWith("https://github.com/") ? { status: 302, headers: { location: "https://objects.githubusercontent.com/x" } } : { status: 200, body },
+      url === RELEASES_API ? { status: listStatus(asking), body: JSON.stringify(list) } : url.startsWith("https://github.com/") ? { status: 302, headers: { location: "https://objects.githubusercontent.com/x" } } : { status: 200, body },
     );
     const mac = tools || fakeMacTools();
+    const slowly = (url, options, cb) => {
+      if (String(url) !== RELEASES_API) return request(url, options, cb);
+      const n = listed++;
+      const hold = listHold(n);
+      return request(url, options, (res) => (hold ? hold.then(() => cb(res)) : cb(res)));
+    };
+    // The status is chosen as the answer is made, which fakeRequest does as the request ends.
+    const asked = (url, options, cb) => {
+      const req = slowly(url, options, cb);
+      const end = req.end;
+      req.end = () => {
+        if (String(url) === RELEASES_API) asking = listed - 1;
+        end();
+      };
+      return req;
+    };
     const made = makeAppUpdater({
       current,
       platform: "darwin",
@@ -428,19 +558,41 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
         trashed.push(p);
         fs.renameSync(p, path.join(at.root, `trashed-${path.basename(p)}`));
       },
-      request,
+      request: asked,
       store,
       ownsGateway,
-      onState: (s) => states.push(s),
+      ...(isMountPoint ? { isMountPoint } : {}),
+      ...(getuid ? { getuid } : {}),
+      ...(runSync ? { runSync } : {}),
+      onState: (s) => {
+        states.push(s);
+        alsoOnState(s);
+      },
+      log: (line) => logs.push(String(line)),
       setTimer: (fn, ms) => (timers.push({ fn, ms }), timers.length),
       clearTimer: () => {},
     });
-    return { ...made, at, timers, states, relaunched, quits, trashed, seen, mac, store };
+    return { ...made, at, timers, states, relaunched, quits, trashed, seen, mac, store, logs };
   }
   const settle = (u) => new Promise((resolve) => {
-    const wait = () => (["restarting", "failed"].includes(u.status().phase) ? resolve() : setTimeout(wait, 5));
+    const wait = () => (["ready", "restarting", "failed"].includes(u.status().phase) ? resolve() : setTimeout(wait, 5));
     wait();
   });
+  /** Wait for *cond*, for at most two seconds. */
+  const until = async (cond) => {
+    for (let i = 0; i < 400 && !cond(); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(cond(), "waited two seconds for it");
+  };
+  /** The update's private folders under the work dir. */
+  const privateFolders = (u) => fs.readdirSync(u.at.work).filter((n) => n.startsWith("app-update-"));
+  /** Update, then Restart to finish, each to its end. */
+  const updateAndFinish = async (u) => {
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await settle(u);
+    u.finish("0.3.8");
+    await settle(u);
+  };
 
   it("checks a minute after it starts and then once a day, and only reads the release list", async () => {
     const u = updater();
@@ -490,19 +642,51 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     assert.equal(u.status().restartsGateway, false);
   });
 
-  it("updates only on a press, to the version on offer, and quits; the quit's last step swaps, then asks for the start", async () => {
+  it("downloads and checks only on Update, to the version on offer, in a private folder, and writes nothing beside the app", async () => {
     const u = updater();
     await u.check({ asked: true });
-    assert.deepEqual(u.install("0.3.9"), { ok: false, sentence: "That version is not the one on offer. Check again." });
-    assert.deepEqual(u.install("0.3.8"), { ok: true });
+    assert.deepEqual(u.download("0.3.9"), { ok: false, sentence: "That version is not the one on offer. Check again." });
+    assert.deepEqual(u.finish("0.3.8"), { ok: false, sentence: "That version is not the one ready. Check again." }, "Restart to finish before anything is ready");
+    assert.deepEqual(u.download("0.3.8"), { ok: true });
+    assert.deepEqual(u.download("0.3.8"), { ok: false, sentence: "An update is already under way." });
+    await settle(u);
+    assert.equal(u.status().phase, "ready", u.status().sentence);
+    assert.deepEqual(u.status().ready, { version: "0.3.8" });
+    assert.equal(u.status().sentence, "PersonalClaw 0.3.8 is downloaded and checked. Restart to finish the update.");
+    assert.ok(u.states.some((s) => s.phase === "downloading") && u.states.some((s) => s.phase === "verifying"));
+    assert.deepEqual(fs.readdirSync(u.at.folder), ["PersonalClaw.app"], "something was written beside the app before Restart to finish");
+    assert.equal(fs.readFileSync(u.at.execPath, "utf8"), "binary 0.3.7");
+    assert.deepEqual([u.quits, u.relaunched], [[], []]);
+    assert.equal(ATTEMPT_KEY in u.store.data, false);
+    const [folder] = privateFolders(u);
+    assert.equal(fs.statSync(path.join(u.at.work, folder)).mode & 0o777, 0o700);
+    assert.deepEqual(fs.readdirSync(path.join(u.at.work, folder)), ["PersonalClaw.app.ready"], "the image was kept beside the ready copy");
+    // While it waits, a check keeps the offer, and Update says Restart to finish is the way on.
+    const listed = u.seen.length;
+    await u.check({ asked: true });
+    assert.equal(u.status().phase, "ready");
+    assert.equal(u.seen.length, listed, "a ready update asked GitHub again");
+    assert.match(u.download("0.3.8").sentence, /is ready\. Restart to finish the update\./);
+  });
+
+  it("puts the ready copy beside the app only on Restart to finish, then quits; the quit's last step swaps, then asks for the start", async () => {
+    const u = updater();
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await settle(u);
+    assert.deepEqual(u.finish("0.3.9"), { ok: false, sentence: "That version is not the one ready. Check again." });
+    assert.deepEqual(u.finish("0.3.8"), { ok: true });
     await settle(u);
     assert.equal(u.status().phase, "restarting", u.status().sentence);
+    assert.ok(u.states.some((s) => s.phase === "placing"));
     assert.equal(u.quits.length, 1);
     assert.deepEqual(u.relaunched, [], "a start was asked for before the swap said which copy to start");
-    assert.ok(u.states.some((s) => s.phase === "downloading") && u.states.some((s) => s.phase === "verifying"));
+    assert.ok(fs.existsSync(path.join(u.at.folder, ".PersonalClaw-0.3.8.app.incoming")));
+    assert.deepEqual(privateFolders(u), [], "the private folder outlived the placing");
     assert.equal(fs.readFileSync(u.at.execPath, "utf8"), "binary 0.3.7", "the copy was replaced before the quit");
     assert.deepEqual(JSON.parse(u.store.data[ATTEMPT_KEY]), { from: "0.3.7", to: "0.3.8" });
-    assert.deepEqual(u.install("0.3.8"), { ok: false, sentence: "An update is already under way." });
+    assert.deepEqual(u.finish("0.3.8"), { ok: false, sentence: "An update is already under way." });
+    assert.deepEqual(u.download("0.3.8"), { ok: false, sentence: "An update is already under way." });
 
     // The quit's last step.
     assert.equal(u.swapIfStaged(), true);
@@ -520,11 +704,451 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     assert.deepEqual(updater({ current: "0.3.8", at: u.at, store: u.store }).start(), null);
   });
 
-  it("starts this copy again when the new one cannot take its place, and that start says so", async () => {
+  it("says a copy that cannot be put beside the app at Restart to finish, and leaves the app as it was", async () => {
+    const u = updater({ tools: fakeMacTools({ ditto: (from, to) => { if (to.endsWith(".incoming")) throw new Error("EPERM"); } }) });
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await settle(u);
+    assert.equal(u.status().phase, "ready");
+    u.finish("0.3.8");
+    await settle(u);
+    assert.equal(u.status().phase, "failed");
+    assert.equal(u.status().sentence, "The new version couldn't be put in place. This copy is unchanged; install it from the releases page.");
+    assert.deepEqual([u.quits, u.relaunched], [[], []]);
+    assert.deepEqual(fs.readdirSync(u.at.folder), ["PersonalClaw.app"]);
+    assert.deepEqual(privateFolders(u), []);
+    assert.equal(ATTEMPT_KEY in u.store.data, false);
+    assert.equal(u.swapIfStaged(), false);
+  });
+
+  it("does the same two steps from an AppImage: the download waits in its folder, executable, until Restart to finish", async () => {
+    const root = tmp();
+    const file = path.join(root, "PersonalClaw-0.3.7.AppImage");
+    fs.writeFileSync(file, "old");
+    const work = path.join(root, "work");
+    fs.mkdirSync(work);
+    const body = Buffer.from("the v0.3.8 copy");
+    const { request } = fakeRequest((url) =>
+      url === RELEASES_API ? { status: 200, body: JSON.stringify([release("v0.3.8")]) } : url.startsWith("https://github.com/") ? { status: 302, headers: { location: "https://objects.githubusercontent.com/x" } } : { status: 200, body },
+    );
+    const quits = [];
+    const u = makeAppUpdater({
+      current: "0.3.7", platform: "linux", arch: "x64", isPackaged: true, execPath: "/tmp/.mount_x/personalclaw", appImage: file,
+      policy: () => ({ channel: "stable", pin: "", checkEnabled: true }), workDir: work, run: async () => assert.fail("no program runs for an AppImage"),
+      quit: () => quits.push(1), relaunch: () => {}, trash: () => {}, request, setTimer: () => 0, clearTimer: () => {},
+    });
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await settle(u);
+    assert.equal(u.status().phase, "ready", u.status().sentence);
+    assert.deepEqual(fs.readdirSync(root).sort(), ["PersonalClaw-0.3.7.AppImage", "work"], "something was written beside the AppImage");
+    const [folder] = fs.readdirSync(work);
+    const ready = path.join(work, folder, "PersonalClaw-0.3.8.AppImage");
+    assert.equal(fs.statSync(ready).mode & 0o777, 0o755);
+    u.finish("0.3.8");
+    await settle(u);
+    assert.equal(u.status().phase, "restarting", u.status().sentence);
+    const incoming = path.join(root, ".PersonalClaw-0.3.8.AppImage.incoming");
+    assert.equal(fs.readFileSync(incoming, "utf8"), "the v0.3.8 copy");
+    assert.equal(fs.statSync(incoming).mode & 0o777, 0o755);
+    assert.equal(quits.length, 1);
+    assert.deepEqual(fs.readdirSync(work), []);
+  });
+
+  it("drops a ready update the home's settings no longer allow, at the next check and at Restart to finish", async () => {
+    // A pin set after Update: the next check drops the copy, asking GitHub only once it is gone,
+    // and says what the pin allows.
+    const pinned = { channel: "stable", pin: "", checkEnabled: true };
+    const both = [release("v0.3.8"), release("v0.3.7")];
+    const u = updater({ list: both, policy: pinned });
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await settle(u);
+    pinned.pin = "0.3.7";
+    await u.check({ asked: false });
+    assert.equal(u.status().ready, null);
+    assert.equal(u.status().phase, "current");
+    assert.deepEqual(u.status().dropped, { version: "0.3.8", sentence: "Your update settings no longer allow PersonalClaw 0.3.8, so it wasn't installed." }, "a copy the check dropped is not said");
+    assert.deepEqual(privateFolders(u), []);
+    assert.equal(u.finish("0.3.8").ok, false);
+    // Said until the next Update, which clears it.
+    pinned.pin = "";
+    await u.check({ asked: true });
+    assert.ok(u.status().dropped, "a later check forgot why the copy was dropped");
+    u.download("0.3.8");
+    assert.equal(u.status().dropped, null);
+    await settle(u);
+
+    // The same pin at the press: nothing is put in place.
+    const atPress = { channel: "stable", pin: "", checkEnabled: true };
+    const v = updater({ list: both, policy: atPress });
+    await v.check({ asked: true });
+    v.download("0.3.8");
+    await settle(v);
+    atPress.pin = "0.3.7";
+    assert.deepEqual(v.finish("0.3.8"), { ok: false, sentence: "Your update settings no longer allow PersonalClaw 0.3.8, so it wasn't installed." });
+    assert.deepEqual(v.status().dropped, { version: "0.3.8", sentence: "Your update settings no longer allow PersonalClaw 0.3.8, so it wasn't installed." });
+    assert.deepEqual([v.quits, v.relaunched], [[], []]);
+    assert.deepEqual(fs.readdirSync(v.at.folder), ["PersonalClaw.app"]);
+    assert.deepEqual(privateFolders(v), []);
+    await until(() => v.status().phase === "current");
+
+    // A candidate ready on beta, after the switch to stable; and settings that can't be read.
+    const beta = { channel: "beta", pin: "", checkEnabled: true };
+    const w = updater({ list: [release("v0.3.8-rc.1", { prerelease: true, body: Buffer.from("the v0.3.8 copy") })], policy: beta, tools: fakeMacTools({ version: "0.3.8rc1" }) });
+    await w.check({ asked: true });
+    w.download("0.3.8-rc.1");
+    await settle(w);
+    assert.equal(w.status().phase, "ready", w.status().sentence);
+    beta.channel = "stable";
+    await w.check({ asked: true });
+    assert.equal(w.status().ready, null);
+    assert.deepEqual(privateFolders(w), []);
+    const broken = { channel: "stable", pin: "", checkEnabled: true };
+    const x = updater({ policy: broken });
+    await x.check({ asked: true });
+    x.download("0.3.8");
+    await settle(x);
+    broken.unreadable = "/home/config.json";
+    await x.check({ asked: true });
+    assert.equal(x.status().ready, null);
+    assert.match(x.status().sentence, /couldn't read \/home\/config\.json/);
+    assert.match(x.status().dropped.sentence, /couldn't read \/home\/config\.json/);
+
+    // With automatic checks off, the press's refusal asks GitHub nothing after it.
+    const quiet = { channel: "stable", pin: "", checkEnabled: true };
+    const y = updater({ list: both, policy: quiet });
+    await y.check({ asked: true });
+    y.download("0.3.8");
+    await settle(y);
+    Object.assign(quiet, { pin: "0.3.7", checkEnabled: false });
+    const before = y.seen.length;
+    assert.equal(y.finish("0.3.8").ok, false);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(y.seen.length, before, "the follow-up check asked GitHub with automatic checks off");
+    assert.ok(y.status().dropped);
+  });
+
+  it("uses the ready copy at Restart to finish only while it is still the one that was checked", async () => {
+    const readyOne = async () => {
+      const u = updater();
+      await u.check({ asked: true });
+      u.download("0.3.8");
+      await settle(u);
+      const dir = path.join(u.at.work, privateFolders(u)[0]);
+      return { u, dir, copy: path.join(dir, "PersonalClaw.app.ready") };
+    };
+    // Gone: no failure of the update. Update downloads it again.
+    const gone = await readyOne();
+    fs.rmSync(gone.dir, { recursive: true, force: true });
+    assert.deepEqual(gone.u.finish("0.3.8"), { ok: false, sentence: "The downloaded copy of PersonalClaw 0.3.8 is gone. Press Update to download it again." });
+    assert.equal(gone.u.status().phase, "available");
+    assert.deepEqual(gone.u.status().available, { version: "0.3.8", installable: true });
+    assert.deepEqual(gone.u.download("0.3.8"), { ok: true });
+    await settle(gone.u);
+    assert.equal(gone.u.status().phase, "ready");
+
+    // Changed: another folder in its place, its folder opened to others, a link in place of the
+    // copy, or a copy whose build is not the one the image held.
+    const changes = {
+      "another folder": ({ dir }) => {
+        fs.renameSync(dir, `${dir}-moved`);
+        fs.mkdirSync(dir, { mode: 0o700 });
+        fs.cpSync(`${dir}-moved`, dir, { recursive: true });
+      },
+      "its folder opened to others": ({ dir }) => fs.chmodSync(dir, 0o755),
+      "a link": ({ dir, copy }) => {
+        const real = path.join(path.dirname(dir), "elsewhere.app");
+        fs.renameSync(copy, real);
+        fs.symlinkSync(real, copy);
+      },
+      "another build": ({ copy }) => fs.writeFileSync(path.join(copy, "Contents", "MacOS", "PersonalClaw"), "binary 0.3.8, changed"),
+    };
+    // Its folder not this account's: the account is the one the updater was made for.
+    {
+      const u = updater({ getuid: () => (typeof process.getuid === "function" ? process.getuid() + 1 : 4242) });
+      await u.check({ asked: true });
+      u.download("0.3.8");
+      await settle(u);
+      assert.equal(u.status().phase, "ready");
+      assert.deepEqual(u.finish("0.3.8"), { ok: true });
+      await settle(u);
+      assert.equal(u.status().phase, "failed", "not this account's");
+      assert.deepEqual(fs.readdirSync(u.at.folder), ["PersonalClaw.app"], "not this account's");
+    }
+    for (const [what, change] of Object.entries(changes)) {
+      const r = await readyOne();
+      change(r);
+      assert.deepEqual(r.u.finish("0.3.8"), { ok: true }, what);
+      await settle(r.u);
+      assert.equal(r.u.status().phase, "failed", what);
+      assert.equal(r.u.status().sentence, "The new version couldn't be put in place. This copy is unchanged; install it from the releases page.", what);
+      assert.deepEqual([r.u.quits, r.u.relaunched], [[], []], what);
+      assert.deepEqual(fs.readdirSync(r.u.at.folder), ["PersonalClaw.app"], what);
+      assert.equal(r.u.swapIfStaged(), false, what);
+    }
+  });
+
+  it("holds an AppImage's ready copy to the release's digest and size at Restart to finish", async () => {
+    for (const [what, replace] of [["the same size", "THE V0.3.8 COPY"], ["another size", "a longer copy than the release's"]]) {
+      const root = tmp();
+      const file = path.join(root, "PersonalClaw-0.3.7.AppImage");
+      fs.writeFileSync(file, "old");
+      const work = path.join(root, "work");
+      const { request } = fakeRequest((url) =>
+        url === RELEASES_API ? { status: 200, body: JSON.stringify([release("v0.3.8", { body: Buffer.from("the v0.3.8 copy") })]) } : url.startsWith("https://github.com/") ? { status: 302, headers: { location: "https://objects.githubusercontent.com/x" } } : { status: 200, body: Buffer.from("the v0.3.8 copy") },
+      );
+      const quits = [];
+      const u = makeAppUpdater({
+        current: "0.3.7", platform: "linux", arch: "x64", isPackaged: true, execPath: "/tmp/.mount_x/personalclaw", appImage: file,
+        policy: () => ({ channel: "stable", pin: "", checkEnabled: true }), workDir: work, run: async () => assert.fail("no program runs for an AppImage"),
+        quit: () => quits.push(1), relaunch: () => {}, trash: () => {}, request, setTimer: () => 0, clearTimer: () => {},
+      });
+      await u.check({ asked: true });
+      u.download("0.3.8");
+      await settle(u);
+      const [folder] = fs.readdirSync(work);
+      fs.writeFileSync(path.join(work, folder, "PersonalClaw-0.3.8.AppImage"), replace);
+      u.finish("0.3.8");
+      await settle(u);
+      assert.equal(u.status().phase, "failed", what);
+      assert.deepEqual(quits, [], what);
+      assert.deepEqual(fs.readdirSync(root).sort(), ["PersonalClaw-0.3.7.AppImage", "work"], `${what}: a copy was left beside the AppImage`);
+    }
+  });
+
+  /** An AppImage install of 0.3.7 with 0.3.8 on offer: the updater, the file, its folder, quits. */
+  const appImage = () => {
+    const root = tmp();
+    const file = path.join(root, "PersonalClaw-0.3.7.AppImage");
+    fs.writeFileSync(file, "old");
+    const work = path.join(root, "work");
+    const { request } = fakeRequest((url) =>
+      url === RELEASES_API ? { status: 200, body: JSON.stringify([release("v0.3.8", { body: Buffer.from("the v0.3.8 copy") })]) } : url.startsWith("https://github.com/") ? { status: 302, headers: { location: "https://objects.githubusercontent.com/x" } } : { status: 200, body: Buffer.from("the v0.3.8 copy") },
+    );
+    const quits = [];
+    const u = makeAppUpdater({
+      current: "0.3.7", platform: "linux", arch: "x64", isPackaged: true, execPath: "/tmp/.mount_x/personalclaw", appImage: file,
+      policy: () => ({ channel: "stable", pin: "", checkEnabled: true }), workDir: work, run: async () => assert.fail("no program runs for an AppImage"),
+      quit: () => quits.push(1), relaunch: () => {}, trash: () => {}, request, setTimer: () => 0, clearTimer: () => {},
+    });
+    return { u, root, file, work, quits };
+  };
+
+  it("hashes the AppImage's copy beside it, not the download it was made from", async () => {
+    const a = appImage();
+    await a.u.check({ asked: true });
+    a.u.download("0.3.8");
+    await settle(a.u);
+    const read = [];
+    const real = fs.createReadStream;
+    fs.createReadStream = (f, ...rest) => (read.push(String(f)), real(f, ...rest));
+    try {
+      a.u.finish("0.3.8");
+      await settle(a.u);
+    } finally {
+      fs.createReadStream = real;
+    }
+    assert.equal(a.u.status().phase, "restarting", a.u.status().sentence);
+    assert.deepEqual(read, [path.join(a.root, ".PersonalClaw-0.3.8.AppImage.incoming")]);
+  });
+
+  it("puts nothing in place when the app quits while Restart to finish copies it, and does not quit for it", async () => {
+    const a = appImage();
+    await a.u.check({ asked: true });
+    a.u.download("0.3.8");
+    await settle(a.u);
+    assert.deepEqual(a.u.finish("0.3.8"), { ok: true });
+    a.u.stop();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.deepEqual(a.quits, [], "the quit the app is in was asked for again");
+    assert.equal(a.u.swapIfStaged(), false, "a copy was staged during the quit");
+    assert.deepEqual(fs.readdirSync(a.root).sort(), ["PersonalClaw-0.3.7.AppImage", "work"], "the copy was left beside the AppImage");
+    assert.deepEqual(a.u.finish("0.3.8"), { ok: false, sentence: "The app is quitting." });
+  });
+
+  it("lets a download still under way go at the quit's last step: its image detached at once, its folder removed", async () => {
+    for (const detaches of [true, false]) {
+      let open;
+      const gate = new Promise((r) => (open = r));
+      const detached = [];
+      const u = updater({
+        tools: fakeMacTools({ attach: () => gate }),
+        isMountPoint: (p) => /mount-[^/]*$/.test(p),
+        runSync: (cmd, args) => {
+          detached.push(args[1]);
+          if (!detaches) throw new Error("resource busy");
+        },
+      });
+      await u.check({ asked: true });
+      u.download("0.3.8");
+      await until(() => u.status().phase === "verifying");
+      const [folder] = privateFolders(u);
+      u.abandon();
+      assert.equal(detached.length, 1, "the image was not detached");
+      assert.match(detached[0], /mount-/);
+      assert.equal(fs.existsSync(path.join(u.at.work, folder)), !detaches, detaches ? "the folder outlived the quit" : "a folder whose image won't detach was removed");
+      open();
+    }
+  });
+
+  it("keeps nothing from a download the quit overtook, and attaches no image once the quit began", async () => {
+    // The quit while the image's app is checked: when the check ends, its folder goes, image detached.
+    let open;
+    const gate = new Promise((r) => (open = r));
+    const u = updater({ tools: fakeMacTools({ attach: () => gate }) });
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await until(() => u.status().phase === "verifying");
+    u.stop();
+    open();
+    await until(() => privateFolders(u).length === 0);
+    assert.notEqual(u.status().phase, "ready");
+    assert.equal(u.finish("0.3.8").ok, false);
+    assert.ok(u.mac.calls.some((c) => c[0] === "hdiutil" && c[1] === "detach"), "the image stayed attached");
+
+    // The quit while it downloads: no image is attached at all, and no new Update starts.
+    const v = updater();
+    await v.check({ asked: true });
+    v.download("0.3.8");
+    v.stop();
+    assert.deepEqual(v.download("0.3.8"), { ok: false, sentence: "The app is quitting." });
+    await until(() => privateFolders(v).length === 0);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(v.mac.calls.filter((c) => c[0] === "hdiutil"), []);
+    assert.notEqual(v.status().phase, "ready");
+  });
+
+  it("attaches no image when the quit begins as the download's last bytes arrive", async () => {
+    // Each chunk asks whether the app is quitting before it is written, so a quit that begins on the last
+    // one finds the download finished: only the check after the download keeps the image unattached.
+    let u = null;
+    u = updater({
+      onState: (s) => {
+        if (u && s.progress && s.progress.total > 0 && s.progress.received === s.progress.total) u.stop();
+      },
+    });
+    await u.check({ asked: true });
+    u.download("0.3.8");
+    await until(() => privateFolders(u).length === 0);
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(u.mac.calls.filter((c) => c[0] === "hdiutil"), [], "an image was attached after the quit began");
+    assert.notEqual(u.status().phase, "ready");
+  });
+
+  it("removes the folders an update left at the next start, detaching an image still attached first", async () => {
+    const at = installed();
+    const left = path.join(at.work, "app-update-left");
+    const withImage = path.join(at.work, "app-update-image");
+    const stuck = path.join(at.work, "app-update-stuck");
+    const other = path.join(at.work, "not-an-update");
+    for (const d of [left, path.join(withImage, "mount-a"), path.join(stuck, "mount-b"), other]) fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(left, "PersonalClaw-0.3.8-arm64.dmg"), "partial");
+    fs.writeFileSync(path.join(withImage, "mount-a", "file"), "inside the image");
+    fs.writeFileSync(path.join(stuck, "mount-b", "file"), "inside an image that won't detach");
+    const detached = [];
+    const tools = fakeMacTools({ detach: (m) => { detached.push(m); if (m.endsWith("mount-b")) throw new Error("resource busy"); } });
+    const u = updater({ at, tools, isMountPoint: (p) => /mount-[ab]$/.test(p) && fs.readdirSync(p).length > 0 });
+    u.start();
+    await until(() => !fs.existsSync(left) && !fs.existsSync(withImage));
+    // The sweep removes folders one at a time, so wait for its word on the stuck one before reading what it left.
+    await until(() => u.logs.some((line) => line.includes(stuck) && line.includes("could not be detached")));
+    assert.deepEqual(detached.sort(), [path.join(stuck, "mount-b"), path.join(withImage, "mount-a")].sort());
+    assert.ok(fs.existsSync(path.join(stuck, "mount-b", "file")), "a folder whose image won't detach was emptied");
+    assert.ok(fs.existsSync(other), "a folder that is not an update's was removed");
+  });
+
+  it("sweeps no link and no folder not its own, and keeps what is under way and what is ready", async () => {
+    // A link among the folders, to a folder elsewhere that holds an image: neither followed nor detached.
+    {
+      const at = installed();
+      const elsewhere = path.join(at.root, "elsewhere");
+      fs.mkdirSync(path.join(elsewhere, "mount-z"), { recursive: true });
+      fs.writeFileSync(path.join(elsewhere, "mount-z", "file"), "someone else's");
+      fs.symlinkSync(elsewhere, path.join(at.work, "app-update-link"));
+      const tools = fakeMacTools();
+      const u = updater({ at, tools, isMountPoint: (p) => /mount-z$/.test(p) });
+      u.start();
+      await new Promise((r) => setTimeout(r, 30));
+      assert.deepEqual(tools.calls.filter((c) => c[0] === "hdiutil"), [], "an image was detached through a link");
+      assert.ok(fs.existsSync(path.join(elsewhere, "mount-z", "file")));
+    }
+    // The work folder itself a link: nothing in it is swept.
+    {
+      const at = installed();
+      const real = path.join(at.root, "real-work");
+      fs.mkdirSync(path.join(real, "app-update-x"), { recursive: true });
+      fs.writeFileSync(path.join(real, "app-update-x", "file"), "kept");
+      const linked = path.join(at.root, "linked-work");
+      fs.symlinkSync(real, linked);
+      const u = updater({ at: { ...at, work: linked } });
+      u.start();
+      await new Promise((r) => setTimeout(r, 30));
+      assert.ok(fs.existsSync(path.join(real, "app-update-x", "file")), "a linked work folder was swept");
+    }
+    // A plain folder under the default mount test: removed, with no detach.
+    {
+      const at = installed();
+      fs.mkdirSync(path.join(at.work, "app-update-plain", "mount-y"), { recursive: true });
+      const tools = fakeMacTools();
+      const u = updater({ at, tools });
+      u.start();
+      await until(() => !fs.existsSync(path.join(at.work, "app-update-plain")));
+      assert.deepEqual(tools.calls.filter((c) => c[0] === "hdiutil"), []);
+    }
+    // A download under way, and a ready copy: both kept.
+    {
+      let open;
+      const gate = new Promise((r) => (open = r));
+      const u = updater({ tools: fakeMacTools({ attach: () => gate }) });
+      await u.check({ asked: true });
+      u.download("0.3.8");
+      await until(() => u.status().phase === "verifying");
+      u.start();
+      await new Promise((r) => setTimeout(r, 30));
+      assert.equal(privateFolders(u).length, 1, "the sweep removed the download under way");
+      open();
+      await settle(u);
+      assert.equal(u.status().phase, "ready");
+      u.start();
+      await new Promise((r) => setTimeout(r, 30));
+      assert.equal(privateFolders(u).length, 1, "the sweep removed the ready copy");
+      assert.deepEqual(u.finish("0.3.8"), { ok: true });
+    }
+  });
+
+  it("keeps an update's state when a check that began before it answers after it, or fails after it", async () => {
+    for (const status of [200, 500]) {
+      let answer;
+      const held = new Promise((r) => (answer = r));
+      const u = updater({ listHold: (n) => (n === 1 ? held : null), listStatus: (n) => (n === 1 ? status : 200) });
+      await u.check({ asked: true });
+      const late = u.check({ asked: true });
+      assert.deepEqual(u.download("0.3.8"), { ok: true });
+      await settle(u);
+      assert.equal(u.status().phase, "ready");
+      answer();
+      await late;
+      assert.equal(u.status().phase, "ready", `the late check's ${status} replaced the ready update`);
+      assert.deepEqual(u.status().ready, { version: "0.3.8" });
+    }
+  });
+
+  it("removes a ready copy nobody restarted on when the app quits", async () => {
     const u = updater();
     await u.check({ asked: true });
-    u.install("0.3.8");
+    u.download("0.3.8");
     await settle(u);
+    assert.equal(privateFolders(u).length, 1);
+    u.stop();
+    assert.deepEqual(privateFolders(u), []);
+    assert.equal(u.swapIfStaged(), false);
+    assert.deepEqual(fs.readdirSync(u.at.folder), ["PersonalClaw.app"]);
+  });
+
+  it("starts this copy again when the new one cannot take its place, and that start says so", async () => {
+    const u = updater();
+    await updateAndFinish(u);
     const realRename = fs.renameSync;
     fs.renameSync = () => {
       throw Object.assign(new Error("EPERM"), { code: "EPERM" });
@@ -545,9 +1169,7 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
 
   it("starts the old copy where it was left when it cannot be put back, and says where", async () => {
     const u = updater();
-    await u.check({ asked: true });
-    u.install("0.3.8");
-    await settle(u);
+    await updateAndFinish(u);
     const realRename = fs.renameSync;
     let renames = 0;
     fs.renameSync = (from, to) => {
@@ -581,10 +1203,10 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     assert.ok(fs.existsSync(other));
   });
 
-  it("says a failed update in one sentence, leaves this copy as it was, and stages nothing", async () => {
+  it("says a failed update in one sentence, leaves this copy as it was, and keeps and stages nothing", async () => {
     const u = updater({ tools: fakeMacTools({ id: "io.example.other" }) });
     await u.check({ asked: true });
-    u.install("0.3.8");
+    u.download("0.3.8");
     await settle(u);
     assert.equal(u.status().phase, "failed");
     assert.match(u.status().sentence, /didn't hold the expected app, so nothing was used/);
@@ -592,7 +1214,10 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     assert.equal(ATTEMPT_KEY in u.store.data, false);
     assert.equal(u.swapIfStaged(), false);
     assert.equal(fs.readFileSync(u.at.execPath, "utf8"), "binary 0.3.7");
-    assert.equal(u.install("0.3.9").sentence, "That version is not the one on offer. Check again.", "a failed update holds the updater");
+    await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual(privateFolders(u), [], "a failed download left its folder");
+    assert.equal(u.finish("0.3.8").ok, false, "a failed download is ready to finish");
+    assert.equal(u.download("0.3.9").sentence, "That version is not the one on offer. Check again.", "a failed update holds the updater");
   });
 
   it("offers the releases page, not a press, where this copy cannot be replaced", async () => {
@@ -607,37 +1232,43 @@ describe("makeAppUpdater: a check on launch and daily; an update only on a press
     await u.check({ asked: true });
     assert.deepEqual(u.status().available, { version: "0.3.8", installable: false });
     assert.match(u.status().sentence, /This account can't replace PersonalClaw/);
-    assert.equal(u.install("0.3.8").ok, false);
+    assert.equal(u.download("0.3.8").ok, false);
   });
 });
 
 describe("registerAppUpdateIpc: the app's own windows ask, and nothing else", () => {
-  const channels = { appUpdateStatus: "s", appUpdateCheck: "c", appUpdateInstall: "i" };
+  const channels = { appUpdateStatus: "s", appUpdateCheck: "c", appUpdateDownload: "d", appUpdateFinish: "f" };
   function wired(isAppWindow) {
     const handlers = new Map();
     const asked = [];
-    const updater = { status: () => "state", check: (o) => (asked.push(["check", o]), "checked"), install: (v) => (asked.push(["install", v]), { ok: true }) };
+    const updater = {
+      status: () => "state",
+      check: (o) => (asked.push(["check", o]), "checked"),
+      download: (v) => (asked.push(["download", v]), { ok: true }),
+      finish: (v) => (asked.push(["finish", v]), { ok: true }),
+    };
     registerAppUpdateIpc({ ipcMain: { handle: (ch, fn) => handlers.set(ch, fn) }, channels, updater: () => updater, isAppWindow });
     return { handlers, asked };
   }
 
-  it("answers the app's bridged windows, with the version their confirm named", async () => {
+  it("answers the app's bridged windows, with the version their Update and confirm named", async () => {
     const { handlers, asked } = wired(() => true);
-    assert.deepEqual([...handlers.keys()].sort(), ["c", "i", "s"]);
+    assert.deepEqual([...handlers.keys()].sort(), ["c", "d", "f", "s"]);
     assert.equal(await handlers.get("s")({ sender: {} }), "state");
     assert.equal(await handlers.get("c")({ sender: {} }), "checked");
-    await handlers.get("i")({ sender: {} }, "0.3.8");
-    await handlers.get("i")({ sender: {} }, { version: "0.3.8" });
-    assert.deepEqual(asked, [["check", { asked: true }], ["install", "0.3.8"], ["install", ""]]);
+    await handlers.get("d")({ sender: {} }, "0.3.8");
+    await handlers.get("d")({ sender: {} }, { version: "0.3.8" });
+    await handlers.get("f")({ sender: {} }, "0.3.8");
+    await handlers.get("f")({ sender: {} }, ["0.3.8"]);
+    assert.deepEqual(asked, [["check", { asked: true }], ["download", "0.3.8"], ["download", ""], ["finish", "0.3.8"], ["finish", ""]]);
   });
 
   it("refuses a page that is not one of the app's windows", () => {
     const { handlers, asked } = wired(() => false);
-    for (const ch of ["s", "c", "i"]) assert.throws(() => handlers.get(ch)({ sender: {} }, "0.3.8"), /not one of the app's windows/);
+    for (const ch of ["s", "c", "d", "f"]) assert.throws(() => handlers.get(ch)({ sender: {} }, "0.3.8"), /not one of the app's windows/);
     assert.deepEqual(asked, []);
   });
 });
-
 
 describe("main.js: the update is asked for in the app menu, and the swap is the quit's last step", () => {
   const MAIN = fs.readFileSync(path.join(__dirname, "..", "main.js"), "utf8");
@@ -662,6 +1293,7 @@ describe("main.js: the update is asked for in the app menu, and the swap is the 
     assert.ok(quit.indexOf("stop: (budget) => stopGateway(budget)") < quit.indexOf(".finally("), "the gateway's stop is not before the swap");
     assert.ok(finale.indexOf("appUpdater?.swapIfStaged();") > 0, "the quit's last step does not swap");
     assert.ok(finale.indexOf("appUpdater?.swapIfStaged();") < finale.indexOf("shutdownComplete = true;"), "the swap is not before the quit lets go");
+    assert.ok(finale.indexOf("appUpdater?.abandon();") > 0 && finale.indexOf("appUpdater?.abandon();") < finale.indexOf("appUpdater?.swapIfStaged();"), "a download still under way outlives the quit");
     assert.match(quit, /appUpdater\?\.stop\(\);/, "the daily check outlives the quit");
   });
 
@@ -670,6 +1302,14 @@ describe("main.js: the update is asked for in the app menu, and the swap is the 
     assert.match(body("makeThisAppsUpdater"), /relaunch: \(program\) =>\n\s+app\.relaunch\(\{ execPath: program,/);
     const ipc = MAIN.slice(MAIN.indexOf("registerAppUpdateIpc({"), MAIN.indexOf("});", MAIN.indexOf("registerAppUpdateIpc({")));
     assert.match(ipc, /isAppWindow: \(sender\) => BaseWindow\.getAllWindows\(\)\.some\(\(w\) => w\._pcBridgeAttached === true && w\.webContents === sender\)/);
+  });
+
+  it("keeps the ready copy in the app's own folder, not the system's temp folder, and reads codesign's display from stderr", () => {
+    // The temp folder is emptied of files left unread for days, and on Linux any account can make a
+    // folder in /tmp under a name that was freed.
+    assert.match(body("makeThisAppsUpdater"), /workDir: path\.join\(app\.getPath\("userData"\), "app-update"\),/);
+    assert.doesNotMatch(body("makeThisAppsUpdater"), /tmpdir/);
+    assert.match(body("runProgram"), /resolve\(stream === "stderr" \? stderr : stdout\)/);
   });
 
   it("follows the pin only while the home's gateway is not one the app found running, and trashes the old copy once the new one has its gateway", () => {

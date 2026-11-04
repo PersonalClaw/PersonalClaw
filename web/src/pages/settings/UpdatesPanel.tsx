@@ -453,11 +453,12 @@ export function UpdatesPanel() {
       </Section>
 
       {/* The desktop app on this computer, which updates itself: on launch and once a day it looks
-          for a release on this home's line (and its pin, while it runs its own gateway), and it
-          downloads nothing until Update & Restart is pressed (the app's own updater). Only in the
+          for a release on this home's line (and its pin, while it runs its own gateway). It downloads
+          nothing until Update is pressed, and puts nothing in place until Restart to Finish the Update
+          (the app's own updater). Only in the
           app's own windows: a browser tab or a paired gateway's page has no app to ask. */}
       {appUpdate && (
-        <Section title="This app" hint="The PersonalClaw app on this computer. It looks for a new version when it starts and once a day, on the release line below, and downloads nothing until you press Update & Restart.">
+        <Section title="This app" hint="The PersonalClaw app on this computer. It looks for a new version when it starts and once a day, on the release line below, downloads nothing until you press Update, and changes nothing until you press Restart to Finish the Update.">
           <div className="rounded-lg bg-surface-container px-4 py-3">
             <AppUpdateControls update={appUpdate} place="settings" />
           </div>
