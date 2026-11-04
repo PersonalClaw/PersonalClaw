@@ -1960,8 +1960,8 @@ async def api_triggers_resume_restored(request: web.Request) -> web.Response:
     A replace restore switches off each automation that ran on its own where its snapshot was taken
     (`triggers.restore_hold`), and the Triggers page says why. This switches each back on the way
     its own switch would (`tools.set_paused`), and answers ``{resumed: [{id, name}], still_held:
-    [{id, name, reason}]}``: one that refuses — it no longer parses, or its action needs your yes,
-    which its own switch asks for — stays held, with why. One automation's switch resumes it alone.
+    [{id, name, reason}]}``: one that refuses (it no longer parses, its action needs the yes its
+    switch asks for, or its one time has passed) stays held, with why. One switch resumes one.
     """
     from personalclaw.triggers import restore_hold
 

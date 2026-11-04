@@ -374,7 +374,63 @@ def needs_arming(trigger: Any) -> bool:
     )
 
 
-def next_fire_after_edit(before: Any, after: Any) -> str | None:
+def _passed(trigger: Any, now: float) -> bool:
+    """Whether *trigger*'s stored next fire is a time that has already gone by."""
+    from personalclaw.triggers.service import to_epoch
+
+    stored = to_epoch(str(getattr(trigger, "next_fire_at", "") or ""))
+    return 0 < stored <= now
+
+
+def switched_on(before: Any, after: Any) -> bool:
+    """Whether the edit from *before* to *after* switches the trigger from off to on."""
+    return not getattr(before, "enabled", False) and bool(getattr(after, "enabled", False))
+
+
+def one_time_passed(trigger: Any, *, now: float = 0.0) -> float:
+    """The time of a one-time trigger (`kind: at`) that has gone by, as a UTC epoch, else 0.0: a
+    one-shot switched on after it has no next fire (`next_fire` answers 0.0), so switching it on
+    would leave it on with nothing it will ever fire."""
+    spec = trigger.spec if isinstance(getattr(trigger, "spec", None), dict) else {}
+    if str(spec.get("kind") or "").strip().lower() != "at":
+        return 0.0
+    at = _positive(spec.get("at"))
+    return at if 0 < at <= (now or time.time()) else 0.0
+
+
+def switch_on_refusal(before: Any, after: Any, *, now: float = 0.0) -> float:
+    """The time of a one-time trigger an edit from *before* to *after* switches on after that time
+    went by, as a UTC epoch, else 0.0. Every writer that switches a trigger on asks this first and
+    leaves it off when it answers (`tools.set_paused`, `tools.update`, and a report's save, which
+    switches the automation that mirrors it: `report_schedules.to_trigger`): switched on, it would
+    sit on with nothing it will ever fire, then run late at the next tick's re-arm, or go to the
+    missed-run review as if it had been missed."""
+    if not switched_on(before, after):
+        return 0.0
+    return one_time_passed(after, now=now)
+
+
+def left_off_words(trigger: Any, at: float) -> str:
+    """What every writer the switch-on rule refuses says: the one time *at* has passed, named in
+    the trigger's own clock, and a new time switches it on."""
+    return (
+        f"{trigger.id} ({trigger.name}) was left off: its one time, {local_time(trigger, at)}, "
+        "has passed. Give it a new time to switch it on."
+    )
+
+
+def local_time(trigger: Any, epoch: float) -> str:
+    """*epoch* as the trigger's own clock reads it, ``2026-11-04 09:00 UTC``: in its timezone, or in
+    UTC when that zone cannot be read."""
+    try:
+        tz = _trigger_tz(trigger)
+    except Exception:  # noqa: BLE001 - an unreadable zone names the time in UTC instead
+        tz = timezone.utc
+    when = datetime.fromtimestamp(epoch, tz=tz)
+    return f"{when.strftime('%Y-%m-%d %H:%M')} {when.tzname() or ''}".rstrip()
+
+
+def next_fire_after_edit(before: Any, after: Any, *, now: float = 0.0) -> str | None:
     """The ``next_fire_at`` an edited trigger carries, or None to keep the one it has.
 
     ONE rule for every writer that edits or switches a trigger — `tools.update` and
@@ -394,10 +450,17 @@ def next_fire_after_edit(before: Any, after: Any) -> str | None:
     * A trigger a restore held (`Trigger.restore_hold`), switched on, is armed from now whatever
       instant it carries: that one is the snapshot's, or one a start armed while it was held, and
       the time it waited for its Resume is not a fire it missed.
+    * A trigger switched from off to on whose stored instant went by while it was off is armed from
+      now, to its next slot: the owner skipped that time by switching it off, so it is not a fire
+      it missed, to run late or to review as if PersonalClaw had been paused or asleep. Its stored
+      instant still ahead, it keeps it, like every live schedule.
     * Anything else keeps the instant it has.
     """
+    now = now or time.time()
     if getattr(before, "restore_hold", "") and getattr(after, "enabled", False):
         return arm(after)
+    if switched_on(before, after) and _passed(after, now):
+        return arm(after, now=now)
     before_spec = getattr(before, "spec", None)
     after_spec = getattr(after, "spec", None)
     if getattr(after, "kind", "") != getattr(before, "kind", "") or cadence_fingerprint(

@@ -764,7 +764,9 @@ restore names how many it paused and why; at the terminal, a restore of this
 home's own snapshot asks whether to resume them now. Resume all on the Triggers
 page (`POST /api/triggers/restore-hold/resume`) and each one's own switch take
 them on, armed from now (`arm.next_fire_after_edit`), so the time one waited is
-not a missed run. Switching one off by hand ends its hold too, making it the
+not a missed run. A one-time automation whose time has passed stays off, held, and
+says so (`arm.switch_on_refusal`): switched on, it would have nothing to fire.
+Switching one off by hand ends its hold too, making it the
 owner's own pause. A system automation whose switch is a setting (the
 remediation engine, the identity report, the Self-QA watch, the morning triage)
 is switched from that setting on every start, and keeps the hold through it
@@ -1062,7 +1064,14 @@ at its stored `next_fire_at`, so one rule (`arm.next_fire_after_edit`) decides
 it after every edit and switch: a change to when it runs (its cadence, zone, skip
 dates, or a one-shot's time) re-arms it from the new schedule, and a trigger
 left on with no next fire is armed; a rename or a cosmetic save keeps its
-instant. `tools.update` and `tools.set_paused` apply it, and the Automations page,
+instant. A trigger switched from off to on whose stored instant went by while it
+was off is armed from now, to its next slot: a time skipped while it was off is
+not a missed run. A one-time trigger whose time has passed is not switched on at
+all: every writer that switches one on asks `arm.switch_on_refusal` first and
+leaves it off, naming its time. A report's save switches the automation that
+mirrors it, so the mirror asks it too (`report_schedules.to_trigger`), and a
+Reports page save that switches it on is refused in the same words with nothing
+kept. `tools.update` and `tools.set_paused` apply it, and the Automations page,
 the chat's `automation_update` / `automation_resume` and the CLI all go through
 them, so a time changed in chat fires at the new time, as one changed on the
 page does.

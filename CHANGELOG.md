@@ -34,6 +34,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Home's Browse live view shows only while a browse runs, and shows its steps alone. `GET /api/browse/status` says when a browse took a step within the last 30 seconds (`live`). The switch that stops all unattended browsing, and the sites whose saved sign-in expired, are in Settings › Security › Guardrails › Unattended browsing, where letting browsing run again is asked first. A browser grant is answered in Attention, and its card there names the sites the task asks for.**
 - **Recent activity says "Nothing ran recently." when every recent fire was held, with no caveat and no fold of the held fires: they stay listed in Automations' history.**
 - **A chat's title in the sidebar starts at the sidebar's own left edge, as New chat and the group headers do, with no indent before it, so the narrow sidebar shows more of each title. Its search field reads "Search" whole at the sidebar's narrowest: an empty search field keeps no room at its end for the clear button it does not show.**
+- **Switching an automation back on after a time it would have run passed while it was off waits for its next time, where that time ran late or went to the missed-run review as if PersonalClaw had been paused or asleep. A one-time automation whose time passed while it was off is not switched on with nothing to run: Resume asks for a new time.**
 
 ### Fixed
 

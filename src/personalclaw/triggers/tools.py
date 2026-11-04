@@ -1518,12 +1518,13 @@ def update(
         setattr(trigger, key, value)
     # A report's automation mirrors the report's schedule (`knowledge.report_schedules`): an edit
     # the report cannot hold is refused before anything is saved, and the rest is written into the
-    # report once the row is (`adopt`, below), so the two never say different things.
+    # report once the row is (`adopt`, below), so the two never say different things. So is one
+    # that switches on a one-time automation whose time has passed (`_edit_refusal`).
     from personalclaw.knowledge import report_schedules
 
-    refused = report_schedules.edit_refusal(before, trigger)
-    if refused:
-        return AutomationToolResult(False, f"Error: {refused}")
+    refused = _edit_refusal(before, trigger)
+    if refused is not None:
+        return refused
     if "enabled" in applied:
         # A switch the patch sets is a decision, as `set_paused`'s is: it ends a restore's hold.
         trigger.restore_hold = ""
@@ -1618,7 +1619,10 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
     and leave the state `autopaused`, so the automation never fired again while this said
     "Resumed".
     """
+    import dataclasses
+
     from personalclaw.triggers import grants
+    from personalclaw.triggers.arm import switch_on_refusal
     from personalclaw.triggers.autopause import resume_state
     from personalclaw.triggers.legacy_import import needs_review
 
@@ -1639,6 +1643,9 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
         resumed, refusal = resume_state(resumed)
         if refusal:
             return AutomationToolResult(False, f"Error: {refusal[:1].upper()}{refusal[1:]}.")
+        # The switch-on rule every writer asks (`arm.switch_on_refusal`), as `update` does.
+        if gone := switch_on_refusal(row.trigger, dataclasses.replace(row.trigger, enabled=True)):
+            return _one_time_passed_refusal(row.trigger, gone)
     saved = store.set_enabled(trigger_id, not paused)
     if saved is not None and saved.enabled == paused:
         # The app serving it answered with the switch where it was (`TriggerStore.set_enabled`).
@@ -1689,6 +1696,30 @@ def set_paused(store: Any, *, trigger_id: str, paused: bool) -> AutomationToolRe
         f"{'Paused' if paused else 'Resumed'} {saved.id} ({saved.name}).",
         {"trigger": shown_row(saved.to_dict())},
     )
+
+
+def _edit_refusal(before: Any, after: Any) -> AutomationToolResult | None:
+    """Why `update` saves nothing of an edit from *before* to *after*, or None: the report its
+    automation mirrors cannot hold it (`knowledge.report_schedules.edit_refusal`), or it switches on
+    a one-time automation whose time has passed, the switch-on rule every writer asks
+    (`arm.switch_on_refusal`), which `set_paused` asks too."""
+    from personalclaw.knowledge import report_schedules
+    from personalclaw.triggers.arm import switch_on_refusal
+
+    refused = report_schedules.edit_refusal(before, after)
+    if refused:
+        return AutomationToolResult(False, f"Error: {refused}")
+    if gone := switch_on_refusal(before, after):
+        return _one_time_passed_refusal(before, gone)
+    return None
+
+
+def _one_time_passed_refusal(trigger: Any, at: float) -> AutomationToolResult:
+    """Why a one-time automation whose time went by while it was off is left off: switched on, it
+    would have nothing it will ever fire."""
+    from personalclaw.triggers.arm import left_off_words
+
+    return AutomationToolResult(False, f"Error: {left_off_words(trigger, at)}")
 
 
 def _awaiting_review_refusal(trigger: Any) -> AutomationToolResult:
