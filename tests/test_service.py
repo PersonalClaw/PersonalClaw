@@ -115,6 +115,9 @@ class TestLinuxUnitRendering:
             unit = svc_linux.render_unit()
         assert "ExecStart=/home/u/.local/bin/personalclaw gateway" in unit
         assert "Restart=on-failure" in unit
+        # A start the home refused (exit 3: another gateway serves it; exit 4: a newer
+        # PersonalClaw has) is not retried: the next start would be refused the same way.
+        assert "RestartPreventExitStatus=3 4" in unit
         assert "RestartSec=10" in unit
         # System-level unit must run as the invoking user with the user's
         # actual primary group (which on some distributions is a shared group

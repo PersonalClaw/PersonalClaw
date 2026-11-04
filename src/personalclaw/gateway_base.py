@@ -58,6 +58,11 @@ home whose claim another process holds ends there, before it seeds, binds, publi
 local secret, and names the gateway that serves the home. The record says where a gateway listens;
 the claim says whether one serves the home at all, so a record whose process is gone, or whose
 lock nobody holds, stops no start.
+
+The claim also holds the home to the newest PersonalClaw that has served it (:data:`VERSION_FILE`).
+An older version reads the newer one's files and writes them back in its own older shapes, so it
+could lose what the newer one saved: its start ends at the claim too, naming both versions, unless
+it is told the rollback is meant (:data:`ROLL_BACK_ENV`).
 """
 
 from __future__ import annotations
@@ -93,6 +98,24 @@ LOCK_FILE = "gateway.lock"
 #: its own, so what started it (the desktop, a service manager, ``personalclaw run``, a script) can
 #: tell it from a start that failed (1) and from a command line that could not be read (2).
 HOME_SERVED_EXIT = 3
+
+#: The newest PersonalClaw that has served this home, kept by the claim (:func:`claim_home`):
+#: ``{"newest": "<version>", "at": <epoch seconds>}``, and ``"rolled_back_from"`` once a start
+#: rolled the home back on purpose. Carried by a snapshot and a replace restore, since it describes
+#: the data that comes back with it, and never by a sync or a merge.
+VERSION_FILE = "gateway.version.json"
+
+#: The exit status of a start refused because a newer PersonalClaw has served its home: a status of
+#: its own, so what started it (the desktop, a service manager, a script) can tell it from a home
+#: another gateway serves (:data:`HOME_SERVED_EXIT`) and from a start that failed (1).
+HOME_NEWER_EXIT = 4
+
+#: A rollback meant: set to the newest version that has served the home, it lets the one start it
+#: is set for claim the home with an older version, and the claim lowers :data:`VERSION_FILE` to
+#: that version. Read only at the claim, and only when it names exactly that newest version, so
+#: one set for an earlier rollback allows no other. The claim takes it out of the process's
+#: environment and its launch environment as it reads it, so no child and no restart carries it on.
+ROLL_BACK_ENV = "PERSONALCLAW_ROLL_BACK_FROM"
 
 
 class GatewayBaseUnresolved(RuntimeError):
@@ -246,6 +269,25 @@ class HomeAlreadyServed(RuntimeError):
         )
 
 
+class HomeServedByNewer(RuntimeError):
+    """A newer PersonalClaw than this one has served this home, so this one may not start on it.
+
+    ``str()`` is what the refused start prints: both versions, why, and the two ways on: the newer
+    version, or a rollback meant, after a snapshot.
+    """
+
+    def __init__(self, home: Path, running: str, newest: str) -> None:
+        self.home = home
+        self.running = running
+        self.newest = newest
+        super().__init__(
+            f"PersonalClaw {running} did not start: this home was last used by PersonalClaw "
+            f"{newest}, and an older version could lose what the newer one saved. Update to "
+            f"{newest} or newer here. To roll back on purpose, take a snapshot first "
+            f"(`personalclaw snapshot`), then start once with `{ROLL_BACK_ENV}={newest}`."
+        )
+
+
 class HomeNotClaimed(RuntimeError):
     """This home's claim could not be taken for a reason other than another process holding it.
 
@@ -261,6 +303,8 @@ class HomeClaim:
 
     home: Path
     lock: Path
+    #: The version this start rolled the home back from (:data:`ROLL_BACK_ENV`), else ``""``.
+    rolled_back_from: str = ""
 
 
 #: The claims this process holds, by home, each with the open lock file that IS the claim. Never
@@ -279,9 +323,13 @@ def claim_home() -> HomeClaim:
     image (``restart_request.start``, an ``os.execve``) loses it at the exec and claims again as it
     starts. Asked again for a home this process holds, it returns that claim.
 
+    With the lock held it holds the home to the newest version that has served it
+    (:func:`_hold_the_version`), and lets the lock go again when that refuses this version.
+
     Raises :class:`HomeAlreadyServed` when another process holds the claim, naming the gateway that
-    serves the home (:func:`_serving`), and :class:`HomeNotClaimed` when the home cannot be made or
-    its lock cannot be opened or taken for any other reason.
+    serves the home (:func:`_serving`), :class:`HomeServedByNewer` when a newer version has served
+    it, and :class:`HomeNotClaimed` when the home cannot be made, its lock cannot be opened or taken
+    for any other reason, or the version it keeps cannot be read or written.
     """
     from personalclaw.config.loader import config_dir
     from personalclaw.durability.home_paths import LinkInTheWay, open_lock
@@ -309,9 +357,107 @@ def claim_home() -> HomeClaim:
     except OSError as exc:
         handle.close()
         raise HomeNotClaimed(_not_claimed(home, lock, exc)) from exc
-    claim = HomeClaim(home=home, lock=lock)
+    try:
+        rolled_back_from = _hold_the_version(home)
+    except BaseException:
+        handle.close()
+        raise
+    claim = HomeClaim(home=home, lock=lock, rolled_back_from=rolled_back_from)
     _held[home] = (claim, handle)
     return claim
+
+
+def _hold_the_version(home: Path) -> str:
+    """Hold *home*, whose lock this process holds, to the newest version that has served it: the
+    version that served it last when that is newer than this one, else this one.
+
+    No stamp yet (a new home, or one only versions before the stamp served) and an older stamp are
+    raised to this version, an equal one is left as it is, and a newer one refuses this start
+    (:class:`HomeServedByNewer`), unless :data:`ROLL_BACK_ENV` names exactly that newer version:
+    then the stamp is lowered to this one, with the version it came down from, which is returned
+    (``""`` otherwise). The variable is taken out of the environment whatever it says
+    (:func:`personalclaw.env.forget_launch_variable`). A stamp that cannot be read or written, a
+    link in its place included, and a version of this install that cannot be read fail closed
+    (:class:`HomeNotClaimed`), as a lock that cannot be taken does.
+    """
+    import time
+
+    from personalclaw import __version__, versions
+    from personalclaw.durability.home_paths import LinkInTheWay, home_path
+    from personalclaw.env import forget_launch_variable
+
+    meant = forget_launch_variable(ROLL_BACK_ENV)
+    running = versions.parse_version(__version__)
+    if running is None:
+        raise HomeNotClaimed(
+            f"PersonalClaw did not start: its own version ({__version__!r}) cannot be read, so it "
+            f"cannot tell whether a newer PersonalClaw has served {home}."
+        )
+    try:
+        path = home_path(home, VERSION_FILE)
+        newest = _stamped(path)
+    except (LinkInTheWay, OSError, ValueError) as exc:
+        raise HomeNotClaimed(_unread_version(home, exc)) from exc
+    stamped = versions.parse_version(newest) if newest else None
+    if stamped is not None and stamped > running:
+        if not versions.same_version(meant, newest):
+            raise HomeServedByNewer(home, __version__, newest)
+        _stamp(
+            home, path, {"newest": __version__, "at": int(time.time()), "rolled_back_from": newest}
+        )
+        return newest
+    if stamped is None or running > stamped:
+        _stamp(home, path, {"newest": __version__, "at": int(time.time())})
+    return ""
+
+
+def _stamped(path: Path) -> str:
+    """The newest version *path* says has served its home, ``""`` when there is no stamp yet.
+    ``ValueError`` when it holds anything else: no JSON object, or no version it can order."""
+    from personalclaw import versions
+
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    try:
+        record = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"it is not JSON ({exc.msg})") from exc
+    newest = record.get("newest") if isinstance(record, dict) else None
+    if not isinstance(newest, str) or versions.parse_version(newest) is None:
+        raise ValueError("it names no version")
+    return newest
+
+
+def _stamp(home: Path, path: Path, record: dict[str, object]) -> None:
+    """Write *record* at *path*, the version stamp, whole and private (``atomic_write``: 0600, in
+    one rename, flushed to disk), or fail closed."""
+    from personalclaw.atomic_write import atomic_write
+
+    try:
+        atomic_write(path, json.dumps(record, indent=2) + "\n", fsync=True)
+    except OSError as exc:
+        raise HomeNotClaimed(_unread_version(home, exc)) from exc
+
+
+def _unread_version(home: Path, exc: BaseException) -> str:
+    """What a start says when the version stamp of *home* cannot be read or written, *exc* being
+    why."""
+    from personalclaw.durability.home_paths import LinkInTheWay
+
+    if isinstance(exc, LinkInTheWay):
+        why = exc.why
+    elif isinstance(exc, OSError) and exc.strerror:
+        why = exc.strerror
+    else:
+        why = str(exc)
+    path = home / VERSION_FILE
+    return (
+        f"PersonalClaw did not start: {path} could not be used ({why}). It says which PersonalClaw "
+        f"last used this home, so the home is not served without it. If no newer PersonalClaw has "
+        f"used this home, move {path} aside and start again."
+    )
 
 
 def _not_claimed(home: Path, lock: Path, exc: BaseException) -> str:
@@ -328,6 +474,62 @@ def _not_claimed(home: Path, lock: Path, exc: BaseException) -> str:
         f"PersonalClaw did not start: {lock} could not be locked ({why}). That lock is what keeps "
         f"a second gateway off {home}, so the home is not served without it."
     )
+
+
+def rollback_into(version: str) -> str:
+    """The newest PersonalClaw that has served this home when *version* is older than it, else
+    ``""``: what a restart into *version*, which the owner asked for (an update to a pin older than
+    the release running), names in :data:`ROLL_BACK_ENV` (``restart_request.request_restart``), and
+    what ``personalclaw update`` tells the owner to name. A stamp that cannot be read answers
+    ``""``: the new image's claim then says why it cannot start."""
+    from personalclaw import versions
+    from personalclaw.config.loader import config_dir
+    from personalclaw.durability.home_paths import LinkInTheWay, home_path
+
+    target = versions.parse_version(version)
+    if target is None:
+        return ""
+    try:
+        newest = _stamped(home_path(config_dir(), VERSION_FILE))
+    except (LinkInTheWay, OSError, ValueError):
+        return ""
+    stamped = versions.parse_version(newest) if newest else None
+    return newest if stamped is not None and target < stamped else ""
+
+
+def roll_back_for_a_service(meant: str) -> str:
+    """Lower this home's stamp to this install's version, for a restart a service manager starts:
+    launchd and systemd start the gateway with an environment of their own, which carries no
+    :data:`ROLL_BACK_ENV`, so ``personalclaw restart`` applies it before the restart, as the claim
+    would. Returns the version the home came down from, ``""`` when the stamp is not newer than
+    this install (nothing to roll back). Raises :class:`HomeServedByNewer` when *meant* names
+    another version than the stamp's, and :class:`HomeNotClaimed` when the stamp cannot be read
+    or written, or this install's version cannot be read."""
+    import time
+
+    from personalclaw import __version__, versions
+    from personalclaw.config.loader import config_dir
+    from personalclaw.durability.home_paths import LinkInTheWay, home_path
+
+    home = config_dir()
+    running = versions.parse_version(__version__)
+    if running is None:
+        raise HomeNotClaimed(
+            f"PersonalClaw's own version ({__version__!r}) cannot be read, so it cannot roll "
+            f"{home} back."
+        )
+    try:
+        path = home_path(home, VERSION_FILE)
+        newest = _stamped(path)
+    except (LinkInTheWay, OSError, ValueError) as exc:
+        raise HomeNotClaimed(_unread_version(home, exc)) from exc
+    stamped = versions.parse_version(newest) if newest else None
+    if stamped is None or not stamped > running:
+        return ""
+    if not versions.same_version(meant, newest):
+        raise HomeServedByNewer(home, __version__, newest)
+    _stamp(home, path, {"newest": __version__, "at": int(time.time()), "rolled_back_from": newest})
+    return newest
 
 
 def _serving() -> tuple[int, int]:

@@ -59,6 +59,7 @@ _ONE_MACHINES = {
         ],
     },
     "digest_channels": {"version": 1, "channels": {"slack": {"channel": "D1", "run_id": "r-1"}}},
+    "gateway_version": {"newest": "0.3.7", "at": 1},
 }
 
 

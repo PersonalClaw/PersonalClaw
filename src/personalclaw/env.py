@@ -183,6 +183,19 @@ def launch_env() -> dict[str, str]:
     return dict(_startup)  # type: ignore[call-overload]
 
 
+def forget_launch_variable(name: str) -> str:
+    """Take *name* out of this process's environment and the environment it was launched with,
+    and return the value it had (``""`` when it had none): a one-time instruction to the command
+    it was started for (``gateway_base.ROLL_BACK_ENV``), which no child it starts and no restart
+    (:func:`launch_env`) may carry on."""
+    value = os.environ.pop(name, None)
+    if _startup is not _NOT_RECORDED:
+        launched = _startup.pop(name, None)  # type: ignore[attr-defined]
+        if value is None:
+            value = launched
+    return value or ""
+
+
 def _started_with(name: str) -> str | None:
     """*name* as the process was launched with it, or ``None`` when it was launched without."""
     if _startup is _NOT_RECORDED:

@@ -77,12 +77,35 @@ is the home's, the parenthesis reads `(it is still starting)`. The record a stop
 gateway left stops no start. A home whose lock cannot be taken (a link at `gateway.lock`, something
 there that is not a file, a disk that cannot lock files) is not served: the start says why.
 
+**An older PersonalClaw is refused a home a newer one used.** The claim also keeps the newest
+version that has served the home, in `gateway.version.json` (raised by each newer start, left alone
+by an equal one), since an older version could lose what the newer one saved: it reads the newer
+one's files and writes them back in its own older shapes. A start of an older version ends at the
+claim as a served home's does, writing nothing, and says so:
+
+```
+PersonalClaw 0.3.6 did not start: this home was last used by PersonalClaw 0.3.7, and an older version could lose what the newer one saved. Update to 0.3.7 or newer here. To roll back on purpose, take a snapshot first (`personalclaw snapshot`), then start once with `PERSONALCLAW_ROLL_BACK_FROM=0.3.7`.
+```
+
+`PERSONALCLAW_ROLL_BACK_FROM` is that one start's word that the rollback is meant. It must name
+exactly the version the home last had, so one left set from an earlier rollback allows no other;
+the start then lowers the stamp to its own version and takes the variable out of its environment,
+so nothing it starts and no restart of it carries it on. Settings → Updates' **Roll back** sets it
+for the restart it makes, `personalclaw update` says it when it installs an older release, and
+`personalclaw restart` applies it itself for a home a service serves, since the service manager
+starts the gateway with an environment of its own. A home whose stamp cannot be read, or has a
+link in its place, is not served either: the start names the file and says to move it aside if no
+newer PersonalClaw has used the home. Versions are ordered as they ship, so `0.3.7.dev1` and
+`0.3.7rc1` are older than `0.3.7`. The Linux service's unit does not restart a start its home
+refused (`RestartPreventExitStatus=3 4`); macOS's launchd has no such setting, and retries it.
+
 | Exit | Meaning |
 |---|---|
 | `0` | It stopped because it was asked to. |
 | `1` | It could not start, or stopped on an error: its port was taken, its home's lock could not be taken, governance could not be established, a restart could not start its new image. |
 | `2` | The command line is wrong or names what it may not use: `--port abc`, `--approval yolo` on the default home, a `--seed` fixture that does not exist or a target that is not empty. |
 | `3` | Another gateway already serves this home. Nothing in the home was changed. |
+| `4` | A newer PersonalClaw has used this home. Nothing in the home was changed. |
 
 | Flag | Effect |
 |---|---|

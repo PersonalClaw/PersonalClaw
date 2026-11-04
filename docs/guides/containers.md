@@ -295,6 +295,12 @@ PERSONALCLAW_IMAGE_TAG=0.2.0 docker compose -f deploy/compose/compose.yaml up -d
 For the one container, `docker exec personalclaw personalclaw snapshot` and
 `docker exec personalclaw personalclaw update --to 0.2.0`, then the update above on `:0.2.0`.
 
+The volume remembers the newest PersonalClaw that has served it, and an older image's gateway is
+refused it until you say the rollback is meant, which `personalclaw update` reminds you of: start
+the recreated container once with `PERSONALCLAW_ROLL_BACK_FROM` set to the release you leave
+(`-e PERSONALCLAW_ROLL_BACK_FROM=0.2.1` on the `docker run`, or under the service's `environment:`
+in the compose file), then take it out again.
+
 The pin is what makes it a rollback rather than a one-off pull: without it, the next check
 resolves the channel's newest release and offers to take you straight back. While the pin
 names an older release than the image you run, Settings → Updates says so — **Pinned to

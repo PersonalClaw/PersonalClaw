@@ -421,6 +421,7 @@ def _restart(port: int | None) -> None:
     """
     service = service_controller.this_homes_service()
     if service is not None:
+        _roll_back_for_the_service()
         was_running = service_controller.is_service_active()
         if not was_running and gateway_base.live_gateway() is not None:
             _stop(port)  # returns only once it has exited; exits 1 when it cannot stop it
@@ -461,6 +462,40 @@ def _restart(port: int | None) -> None:
         _spawn_detached_gateway(running.port)
     else:
         _spawn_detached_gateway(port if port is not None else _bind_port())
+
+
+def _roll_back_for_the_service() -> None:
+    """A rollback meant (``gateway_base.ROLL_BACK_ENV`` set for this command) on a home a service
+    serves: the service manager starts the gateway with an environment of its own, which cannot
+    carry the variable, so the home's version stamp is lowered here, before the restart, exactly as
+    the new gateway's claim would lower it (``gateway_base.roll_back_for_a_service``). A value that
+    names another version, or a stamp that cannot be used, ends the restart with why."""
+    meant = os.environ.get(gateway_base.ROLL_BACK_ENV, "")
+    if not meant:
+        return
+    try:
+        came_from = gateway_base.roll_back_for_a_service(meant)
+    except gateway_base.HomeServedByNewer as newer:
+        print(
+            f"❌ {gateway_base.ROLL_BACK_ENV}={meant} does not name {newer.newest}, the "
+            "PersonalClaw this home was last used by, so it was not rolled back and nothing was "
+            f"restarted. To roll it back to {newer.running}: "
+            f"`{gateway_base.ROLL_BACK_ENV}={newer.newest} personalclaw restart`",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except gateway_base.HomeNotClaimed as refused:
+        print(f"❌ {refused}", file=sys.stderr)
+        sys.exit(1)
+    if came_from:
+        sel().log_api_access(
+            caller="cli",
+            operation="home_rolled_back",
+            outcome="allowed",
+            source="cli",
+            resources=f"from={came_from} to={__version__} via=service",
+        )
+        print(f"  ↩ Rolled this home back from {came_from}, as {gateway_base.ROLL_BACK_ENV} asked.")
 
 
 # Every InstallKind `_update` maps to a branch. The dispatch is exhaustive over
@@ -629,7 +664,7 @@ def _finish_git_update(git_dir: str, target: str) -> None:
     print("\n✅ PersonalClaw updated!")
     print(f"\n{DATA_WARNING}\n")
     _refresh_agent_config(self_update.package_root(git_dir))
-    print("\n  ↻ Restart the gateway to run the new code: personalclaw restart")
+    print(_restart_line(target))
 
 
 async def _update_until_ctrl_c(git_dir: str, target: str) -> str:
@@ -671,6 +706,21 @@ async def _update_until_ctrl_c(git_dir: str, target: str) -> str:
     finally:
         if answering:
             loop.remove_signal_handler(signal.SIGINT)
+
+
+def _restart_line(target: str) -> str:
+    """The last line of an update to *target*: restart the gateway to run it, and, when *target*
+    is older than the newest PersonalClaw that has served this home, say the rollback is meant, as
+    the new gateway's claim asks (``gateway_base.ROLL_BACK_ENV``): a restart without it is refused.
+    """
+    newest = gateway_base.rollback_into(target)
+    if not newest:
+        return "\n  ↻ Restart the gateway to run the new code: personalclaw restart"
+    return (
+        f"\n  ↻ Restart the gateway to run the new code. This home was last used by {newest}, "
+        f"newer than {target}, so say the rollback is meant (take a snapshot first): "
+        f"`{gateway_base.ROLL_BACK_ENV}={newest} personalclaw restart`"
+    )
 
 
 def _update_pip() -> None:
@@ -721,7 +771,7 @@ def _update_pip() -> None:
     print("\n✅ PersonalClaw updated!")
     print(f"\n{DATA_WARNING}\n")
     _refresh_agent_config("")
-    print("\n  ↻ Restart the gateway to run the new code: personalclaw restart")
+    print(_restart_line(target))
 
 
 def _update_container() -> None:
@@ -776,6 +826,14 @@ def _update_container() -> None:
     print("  Run these on the host:\n")
     for cmd in container_host.update_commands(image_tag):
         print(f"      {cmd}")
+    newest = gateway_base.rollback_into(target)
+    if newest:
+        print(
+            f"\n  ↩ This home was last used by {newest}, newer than {target}, so the new "
+            "container's gateway will not start on it until you say the rollback is meant: start "
+            f"it once with `{gateway_base.ROLL_BACK_ENV}={newest}` in its environment (take a "
+            "snapshot first)."
+        )
     print("\n  See docs/guides/containers.md. Your data lives in the mounted volume")
     print("  and survives the recreate; `personalclaw snapshot` first if you want a copy.")
 

@@ -363,6 +363,12 @@ personalclaw snapshot
 personalclaw update --to 0.1.3
 ```
 
+A home remembers the newest PersonalClaw that has served it, and refuses an older one, so the
+first start of the older release says the rollback is meant: **Roll back** in Settings → Updates
+does that for the restart it makes, and `personalclaw update --to` ends with the restart that does
+(`PERSONALCLAW_ROLL_BACK_FROM=0.2.0 personalclaw restart`, naming the release you leave). See
+[the CLI reference](../reference/cli.md#personalclaw-gateway).
+
 **Store apps are not pinned with PersonalClaw.** The Store's first-party apps install from the
 default branch of the [PersonalClawApps](https://github.com/PersonalClaw/PersonalClawApps)
 repository whatever release the gateway runs, and an app's update comes from there too:

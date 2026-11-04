@@ -790,7 +790,7 @@ class TestAutoApplyUpdate:
                 await orch._auto_apply_update()
 
         checkout.assert_called_once_with("/tmp/proj", "v99.0.0")
-        reexec.assert_awaited_once_with(ds, auth_mode="")
+        reexec.assert_awaited_once_with(ds, auth_mode="", roll_back_from="")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1265,7 +1265,7 @@ class TestAutoApplyUpdateGitPath:
 
         fetch_tags.assert_called_once()
         checkout.assert_called_once_with("/tmp/proj", "v99.0.0")
-        reexec.assert_awaited_once_with(ds, auth_mode="")
+        reexec.assert_awaited_once_with(ds, auth_mode="", roll_back_from="")
 
     @pytest.mark.asyncio
     async def test_release_channel_already_on_tag_returns_early(self):
@@ -2140,7 +2140,7 @@ class TestAutoApplyUpdateVenvPath:
         ds.push_update_progress.assert_any_call("installing", "Installing package…")
         ds.push_update_progress.assert_any_call("building", "Building frontend…")
         ds.push_update_progress.assert_any_call("restarting", "Restarting server…")
-        reexec.assert_awaited_once_with(ds, auth_mode="")
+        reexec.assert_awaited_once_with(ds, auth_mode="", roll_back_from="")
 
     @pytest.mark.asyncio
     async def test_pip_failure_aborts_before_restart(self, environment_made_by):

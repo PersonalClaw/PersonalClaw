@@ -1646,20 +1646,42 @@ def _gateway_log_handler(log_file: Path) -> RotatingFileHandler:
 def _claim_the_home() -> None:
     """Claim this home for the gateway this command starts (``gateway_base.claim_home``), or end
     the start here with the reason on stderr and nothing written into the home: another gateway
-    serves it (exit ``gateway_base.HOME_SERVED_EXIT``, the sentence naming that gateway), or its
-    lock cannot be taken (exit 1). Neither writes into the home: no audit row, which belongs in
-    the log of the gateway serving the home, and no record of a refused start, which would say
-    that a home being served is not."""
-    from personalclaw import gateway_base
+    serves it (exit ``gateway_base.HOME_SERVED_EXIT``, the sentence naming that gateway), a newer
+    PersonalClaw has served it (exit ``gateway_base.HOME_NEWER_EXIT``, the sentence naming both
+    versions), or its lock or its version stamp cannot be used (exit 1). None of them writes into
+    the home: no audit row, which belongs in the log of the gateway serving the home, and no record
+    of a refused start, which would say that a home being served is not.
+
+    A claim that rolled the home back on purpose (``gateway_base.ROLL_BACK_ENV``) says so on stderr
+    and in the security log, as the start of the gateway that now serves the home."""
+    from personalclaw import __version__, gateway_base
 
     try:
-        gateway_base.claim_home()
+        claim = gateway_base.claim_home()
     except gateway_base.HomeAlreadyServed as served:
         print(served, file=sys.stderr)
         sys.exit(gateway_base.HOME_SERVED_EXIT)
+    except gateway_base.HomeServedByNewer as newer:
+        print(newer, file=sys.stderr)
+        sys.exit(gateway_base.HOME_NEWER_EXIT)
     except gateway_base.HomeNotClaimed as refused:
         print(refused, file=sys.stderr)
         sys.exit(1)
+    if claim.rolled_back_from:
+        print(
+            f"PersonalClaw {__version__} rolled {claim.home} back from {claim.rolled_back_from}, "
+            f"as {gateway_base.ROLL_BACK_ENV} asked.",
+            file=sys.stderr,
+        )
+        from personalclaw.sel import sel
+
+        sel().log_api_access(
+            caller="cli",
+            operation="home_rolled_back",
+            outcome="allowed",
+            source="cli",
+            resources=f"from={claim.rolled_back_from} to={__version__}",
+        )
 
 
 def _read_the_env_files() -> None:

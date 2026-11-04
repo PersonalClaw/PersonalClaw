@@ -45,10 +45,16 @@ COUNTERS: dict[str, tuple[dict, dict]] = {
 #: ``test_an_archive_brings_no_integration_client_in``.
 CREDENTIALS = frozenset({"inbound_clients", "inbound_tokens"})
 
+#: Left out of a merge for a third: the newest PersonalClaw that has served this home
+#: (``gateway.version.json``) says which version wrote this home's files, and an archive's says
+#: which version wrote its own. Driven by
+#: ``test_a_merge_and_an_import_leave_the_version_stamp_out``.
+VERSION_STAMP = frozenset({"gateway_version"})
+
 
 def test_every_counter_is_left_out_of_a_merge():
     left_out = {e.id for e in inv.INVENTORY if not e.merged_in and e.kind == inv.KIND_JSON_FILE}
-    assert left_out == set(COUNTERS) | CREDENTIALS
+    assert left_out == set(COUNTERS) | CREDENTIALS | VERSION_STAMP
 
 
 def _archive_and_home(tmp_path: Path, *, here: bool) -> tuple[Path, Path]:
@@ -108,6 +114,42 @@ def test_an_import_leaves_them_as_they_are(tmp_path, monkeypatch):
     apply_import_zip(archive, mode="merge")
     for entry_id in COUNTERS:
         assert (home / inv.by_id(entry_id).path).read_bytes() == before[entry_id], entry_id
+
+
+@pytest.mark.parametrize("here", [True, False], ids=["this home has its own", "it has none"])
+def test_a_merge_and_an_import_leave_the_version_stamp_out(tmp_path, monkeypatch, here):
+    """An archive a newer PersonalClaw stamped would refuse this install a home whose own files that
+    version never wrote, so neither a merge restore nor an import takes its stamp in."""
+    from personalclaw.portability import apply_import_zip
+    from personalclaw.snapshot import _do_merge
+
+    stamp = inv.by_id("gateway_version").path
+    snap, home = _archive_and_home(tmp_path, here=here)
+    theirs = json.dumps({"newest": "9.9.9", "at": 1})
+    (snap / stamp).write_text(theirs, encoding="utf-8")
+    mine = json.dumps({"newest": "0.3.7", "at": 1})
+    if here:
+        (home / stamp).write_text(mine, encoding="utf-8")
+
+    def left_as_it_was(how: str) -> None:
+        if here:
+            assert (home / stamp).read_text(
+                encoding="utf-8"
+            ) == mine, f"{how} took the archive's in"
+        else:
+            assert not (home / stamp).exists(), f"{how} copied the archive's in"
+
+    _do_merge(snap, home, None)
+    left_as_it_was("a merge restore")
+    archive = tmp_path / "export.zip"
+    root = "personalclaw-export-20260901T000000Z"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(f"{root}/MANIFEST.json", json.dumps({"version": 2, "contents": {}}))
+        zf.writestr(f"{root}/{stamp}", theirs)
+    monkeypatch.setenv("PERSONALCLAW_HOME", str(home))
+    monkeypatch.setattr("personalclaw.portability.config_dir", lambda: home)
+    apply_import_zip(archive, mode="merge")
+    left_as_it_was("an import")
 
 
 def test_another_machines_spend_never_counts_against_the_caps_here(tmp_path, monkeypatch):

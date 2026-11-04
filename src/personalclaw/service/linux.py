@@ -23,6 +23,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from personalclaw.env import NO_OPEN
+from personalclaw.gateway_base import HOME_NEWER_EXIT, HOME_SERVED_EXIT
 from personalclaw.security import mask_child_output
 from personalclaw.service.common import (
     SERVICE_NAME,
@@ -98,6 +99,9 @@ def render_unit(carried: Mapping[str, str] | None = None) -> str:
         f"WorkingDirectory={home}\n"
         f"ExecStart={bin_path} gateway {NO_OPEN}\n"
         "Restart=on-failure\n"
+        # A start its home refused (another gateway serves it, or a newer PersonalClaw has) is
+        # refused again however often it is retried: it waits for the owner instead.
+        f"RestartPreventExitStatus={HOME_SERVED_EXIT} {HOME_NEWER_EXIT}\n"
         "RestartSec=10\n"
         "TimeoutStopSec=20\n"
         f"{env_lines}"

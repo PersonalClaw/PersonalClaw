@@ -276,7 +276,9 @@ class TestUpdateEndpoints:
 
         reexec_called: list[bool] = []
 
-        async def fake_reexec(state, *, auth_mode=""):  # type: ignore[no-untyped-def]
+        async def fake_reexec(  # type: ignore[no-untyped-def]
+            state, *, auth_mode="", roll_back_from=""
+        ):
             # accepts the auth_mode kwarg the handler now threads through
             reexec_called.append(True)
 
@@ -406,7 +408,9 @@ class TestUpdateApplyPipeline:
 
         reexec_calls: list[dict] = []
 
-        async def fake_reexec(state, *, auth_mode=""):  # type: ignore[no-untyped-def]
+        async def fake_reexec(  # type: ignore[no-untyped-def]
+            state, *, auth_mode="", roll_back_from=""
+        ):
             reexec_calls.append({"auth_mode": auth_mode})
 
         monkeypatch.setattr(upd, "_graceful_reexec", fake_reexec)
@@ -660,7 +664,9 @@ class TestUpdateApplyPipeline:
 
         reexec_calls: list[dict] = []
 
-        async def fake_reexec(state, *, auth_mode=""):  # type: ignore[no-untyped-def]
+        async def fake_reexec(  # type: ignore[no-untyped-def]
+            state, *, auth_mode="", roll_back_from=""
+        ):
             reexec_calls.append({"auth_mode": auth_mode})
 
         monkeypatch.setattr(upd, "_graceful_reexec", fake_reexec)
