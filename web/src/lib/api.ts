@@ -5328,6 +5328,8 @@ export interface UpdateCancelled {
 export interface NotificationSettings {
   mute_all: boolean; quiet_hours_enabled: boolean; quiet_hours_start: string; quiet_hours_end: string
   min_severity: string
+  /** Read only: the timezone the quiet-hours window is read in, by its IANA name. Never saved. */
+  quiet_hours_zone?: string
 }
 // Per-(source, kind) delivery rules. `mode` is what happens when a
 // notification of this kind passes the global gate above; `conditions` ESCALATE a quieter
@@ -10916,7 +10918,7 @@ export const api = {
   restartGateway: () => post<{ ok?: boolean; status?: string; error?: string }>('/api/system/restart'),
 
   // settings entities
-  notificationSettings: () => get<{ settings: NotificationSettings }>('/api/notifications/settings').then((d) => d.settings),
+  notificationSettings: () => get<{ settings: NotificationSettings; quiet_hours_zone?: string }>('/api/notifications/settings').then((d) => ({ ...d.settings, quiet_hours_zone: d.quiet_hours_zone })),
   saveNotificationSettings: (s: Partial<NotificationSettings>) => put<{ settings: NotificationSettings }>('/api/notifications/settings', s),
   // The full effective matrix: one row per REGISTERED kind, so a kind nobody has
   // customized still appears with its default rather than being invisible until edited.

@@ -15,7 +15,7 @@ function mockApi() {
       ...(await orig<{ api: Record<string, unknown> }>()).api,
       notificationSettings: async () => ({
         mute_all: false, min_severity: 'info', quiet_hours_enabled: true,
-        quiet_hours_start: '23:00', quiet_hours_end: '06:00',
+        quiet_hours_start: '23:00', quiet_hours_end: '06:00', quiet_hours_zone: 'Europe/Lisbon',
       }),
       notificationRules: async () => ({ rules: [], digest: { schedule: '0 8 * * *' }, targets: ['dashboard'] }),
       personalclawConfig: async () => ({ agent: { approval_channel: '' } }),
@@ -38,7 +38,7 @@ describe('the quiet-hours window', () => {
     expect([start.type, start.value, end.type, end.value]).toEqual(['time', '23:00', 'time', '06:00'])
     for (const field of [start, end]) {
       const described = document.getElementById(field.getAttribute('aria-describedby') ?? '')
-      expect(described?.textContent).toBe('Start and end (24-hour, server time).')
+      expect(described?.textContent).toBe('Start and end (24-hour, in Europe/Lisbon).')
     }
   })
 })

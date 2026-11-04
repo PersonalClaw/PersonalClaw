@@ -14,7 +14,7 @@ Endpoints:
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
@@ -22,6 +22,9 @@ from personalclaw import record_files
 from personalclaw.atomic_write import atomic_write
 from personalclaw.config import loader as config_loader
 from personalclaw.http_errors import json_error
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 def config_dir() -> Path:
@@ -333,40 +336,60 @@ def _in_quiet_window(start: str, end: str, now_minutes: int) -> bool:
     return now_minutes >= s or now_minutes < e
 
 
+def _in_configured_zone(moment: "object | None" = None) -> "datetime":
+    """*moment*, or now, as the configured timezone's wall clock reads it (`timezones.resolve_zone`,
+    falling back as it does). A naive *moment* is this machine's local time."""
+    from datetime import datetime, timezone
+
+    from personalclaw.timezones import UnknownTimeZone, resolve_zone
+
+    try:
+        zone = resolve_zone()
+    except UnknownTimeZone:
+        zone = None
+    if not isinstance(moment, datetime):
+        moment = datetime.now(timezone.utc)
+    return moment.astimezone(zone)
+
+
 def quiet_hours_now(*, now: "object | None" = None, settings: dict | None = None) -> bool:
     """Whether the quiet-hours window is in force right now — the ONE answer to "not now?".
 
     :func:`notification_posture` reads it to answer ``quiet`` or ``hush`` for a note inside the
     window. ``settings`` lets the gate pass the document it already read.
+
+    The window is read at the wall time of *now* (or of this moment) in the configured timezone
+    (`timezones.resolve_zone`), the zone every timed trigger runs in, not on the process's own
+    clock: a gateway in a container on UTC holds its owner's 22:00 to 07:00 as the owner's. A naive
+    *now* is this machine's local time, as `datetime.now()` and `datetime.fromtimestamp()` give it.
     """
     from datetime import datetime
 
     s = settings if settings is not None else load_notifications_settings()
     if not s.get("quiet_hours_enabled"):
         return False
-    dt = now if isinstance(now, datetime) else datetime.now()
+    dt = _in_configured_zone(now if isinstance(now, datetime) else None)
     return _in_quiet_window(
         s.get("quiet_hours_start", ""), s.get("quiet_hours_end", ""), dt.hour * 60 + dt.minute
     )
 
 
 def quiet_window_moments(settings: dict) -> "tuple[object, object] | None":
-    """A moment inside the quiet-hours window and one outside it, today on local time, or None
-    when quiet hours are off or the window never matches (unparsable, or start == end).
+    """A moment inside the quiet-hours window and one outside it, today in the configured
+    timezone, or None when quiet hours are off or the window never matches (unparsable, or
+    start == end).
 
     For a surface that says what becomes of a notice inside the window and outside it by asking
     :func:`notification_posture` at each, rather than restating the window rule: the start is
     inside (the window is ``[start, end)``) and the end is the first minute outside.
     """
-    from datetime import datetime
-
     if not settings.get("quiet_hours_enabled"):
         return None
     start = _parse_hhmm(settings.get("quiet_hours_start", ""))
     end = _parse_hhmm(settings.get("quiet_hours_end", ""))
     if start is None or end is None or start == end:
         return None
-    today = datetime.now().replace(second=0, microsecond=0)
+    today = _in_configured_zone().replace(second=0, microsecond=0)
     return (
         today.replace(hour=start // 60, minute=start % 60),
         today.replace(hour=end // 60, minute=end % 60),
@@ -380,8 +403,8 @@ def notification_posture(kind: str, *, now: "object | None" = None) -> str:
       * ``mute_all`` — pause every notification regardless of severity. Always ``drop``.
       * ``min_severity`` — deliver only kinds at or above the threshold
         (info < warning < error; unknown kinds rank as info). Below it ⇒ ``drop``.
-      * quiet hours — nothing below *error* pings inside the window (24-hour, server-local
-        time; the window may wrap midnight). A kind that has to be answered (see
+      * quiet hours — nothing below *error* pings inside the window (24-hour, in the configured
+        timezone; the window may wrap midnight). A kind that has to be answered (see
         :func:`_must_be_answered`) returns ``quiet``, and every other kind ``hush``: `notify()`
         then asks the kind's rule, and a rule that already delivers quietly (the digest, a badge)
         still delivers, while a ping is suppressed. Neither is ``drop``: quiet hours mean "not
@@ -471,9 +494,25 @@ async def handle_inbox_settings_put(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "settings": current})
 
 
+def quiet_hours_zone_name() -> str:
+    """The timezone quiet hours are read in, by its IANA name: the configured one, as the timed
+    automations', falling back as :func:`_in_configured_zone` does."""
+    from personalclaw.timezones import UTC_NAME, UnknownTimeZone, resolve_zone_name
+
+    try:
+        return resolve_zone_name()[0]
+    except (UnknownTimeZone, Exception):  # noqa: BLE001 - a zone that cannot be read is named UTC
+        return UTC_NAME
+
+
 async def handle_notifications_settings_get(request: web.Request) -> web.Response:
-    """GET /api/notifications/settings"""
-    return web.json_response({"settings": load_notifications_settings()})
+    """GET /api/notifications/settings: the settings, and the zone quiet hours are read in.
+
+    ``quiet_hours_zone`` is the timezone the quiet-hours window is read in, read only, so Settings
+    names it beside the window."""
+    return web.json_response(
+        {"settings": load_notifications_settings(), "quiet_hours_zone": quiet_hours_zone_name()}
+    )
 
 
 async def handle_notifications_settings_put(request: web.Request) -> web.Response:

@@ -642,7 +642,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `POST /api/notifications/clear` — clear all notifications.
 - `GET /api/notifications/rules` — the effective per-(source, kind) rule matrix.
 - `PUT /api/notifications/rules` — replace rules for the keys named in the body.
-- `GET /api/notifications/settings` — _(no summary)_
+- `GET /api/notifications/settings` — the settings, and the zone quiet hours are read in.
 - `PUT /api/notifications/settings` — _(no summary)_
 - `POST /api/notifications/trust` — the owner's Allow or Deny on an unknown-sender notification.
 - `POST /api/notifications/unack` — mark a single notification as unread.

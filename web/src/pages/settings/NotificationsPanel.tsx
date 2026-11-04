@@ -85,8 +85,9 @@ export function NotificationsPanel() {
         <Row label="Enable quiet hours">
           <Toggle on={s.quiet_hours_enabled} onChange={(v) => patch({ quiet_hours_enabled: v })} label="Enable quiet hours" />
         </Row>
+        {/* The window is read in the configured timezone, the timed automations' one, named here. */}
         {s.quiet_hours_enabled && (
-          <Row label="Window" hint="Start and end (24-hour, server time).">
+          <Row label="Window" hint={`Start and end (24-hour, in ${s.quiet_hours_zone || 'the configured timezone'}).`}>
             <div className="flex items-center gap-2">
               <TimeInput ariaLabel="Quiet hours window start" value={s.quiet_hours_start} onChange={(v) => patch({ quiet_hours_start: v })} />
               <span data-type="body-s" className="text-on-surface-low">to</span>
