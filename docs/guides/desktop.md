@@ -122,9 +122,13 @@ to sign it back in.
 
 ## When a gateway already serves your home
 
-Only one gateway serves a PersonalClaw home. If one already serves the app's home when the app
-opens (one you started in a terminal, or a service), the app uses that one instead of starting its
-own, which could only be refused:
+The app starts its own gateway when it opens. Only one gateway serves a PersonalClaw home, so if
+one already serves the app's home (one you started in a terminal, or a service), that start is
+refused, and the app looks for the running one. It offers it in the
+[chooser](#when-nothing-serves-your-home) as **Use the Gateway Already Running**, and signs in to it
+only when you press that. Tick **Use it automatically next time**, and the next time the app's own
+start is refused, it uses that gateway without asking; that box is off until you tick it, and
+**Ask Each Time** on the Gateways window's **This computer** row turns it off again. Either way:
 
 - **It is found the way `personalclaw token` finds it.** The app reads where the home's gateway
   said it listens, then asks it, on `127.0.0.1` and with no credential, which home it serves. It
@@ -139,8 +143,8 @@ own, which could only be refused:
 - **The app follows it.** When it restarts (Settings → Restart, or an update), the app finds it
   again, on a new port if it moved. Until that gateway proves again that it serves this home, the
   app sends nothing that carries the home's sign-in or its local secret to the port it was on, so
-  a program that took that port gets none of them. When it stops, the app says so, and the Gateways
-  window offers to start a gateway here or connect to another one.
+  a program that took that port gets none of them. When it stops, the app says so, and the
+  chooser offers to try again, which starts the app's own gateway, or to add another one.
 - **Desktop capabilities work there**, since it proved it serves this home: see below.
 
 A window signed in this way is asked to confirm it's you before it pairs a device or creates a
@@ -149,12 +153,22 @@ opening it again signs it in afresh.
 
 ## When nothing serves your home
 
-If the app cannot start its gateway, or the one it used stops, the main window says it is not
-connected and the **Gateways** window opens on its own. Its **This computer** row says why (how the
-gateway exited and the last thing it said, or that the gateway it used has stopped) and offers
-**Start a Gateway Here**. Below it you can connect to another gateway, on this computer or
-elsewhere. If a gateway serves your home that the app cannot sign in to, the row says why and
-offers **Try Again** instead, since a second gateway on the home would only be refused.
+When the app's own gateway starts, no other window opens: **Gateway → Gateways…** is in the menu
+when you want it. If the app cannot start its gateway, for any reason, or the one it used stops,
+the main window says it is not connected, and a small window, **Choose a Gateway**, opens on its
+own. It says why (how the gateway exited and the last thing it said, that another gateway serves
+your home, or that the gateway it used has stopped) and offers:
+
+- **Use the Gateway Already Running**, only when this home's gateway is running and has proved it
+  serves the home ([above](#when-a-gateway-already-serves-your-home)), with **Use it automatically
+  next time**;
+- **Add a Gateway…**, which opens the Gateways window, where you connect to another gateway, on
+  this computer or elsewhere;
+- **Try Again**, which starts the app's own gateway again.
+
+The Gateways window's **This computer** row says the same, and offers **Start a Gateway Here**, or
+**Use It** for a running gateway the app found. If a gateway serves your home that the app cannot
+sign in to, the row says why and offers **Try Again** instead.
 
 ## The window
 
@@ -282,8 +296,9 @@ open it, so it offers the link instead, and the link opens in your browser too.
 
 ## Connecting to a gateway you did not start
 
-By default the desktop app uses this computer's gateway: the one already serving your home, or
-one it starts and loads. Nothing below happens unless you ask for it.
+By default the desktop app uses this computer's gateway: the one it starts and loads, or, when that
+one doesn't start, the one already serving your home, once you choose it. Nothing below happens
+unless you ask for it.
 
 **Gateway → Gateways…** (⌘⇧G) opens the switcher. It lists every gateway you have paired with, marks
 the one you are looking at, and lets you add another — a PersonalClaw running on a different machine
@@ -403,15 +418,15 @@ A restart whose program can no longer be run is refused before anything stops, a
 so; the gateway keeps running as it is.
 
 Any other time the gateway stops while the app is open (it crashed, something ended it, or a
-restart could not start it again), the app says so on the Gateways window's **This computer** row:
-**PersonalClaw's gateway stopped**, with how it exited and the last thing it said. **Start a
-Gateway Here** starts a new gateway, and every window moves to it, signed in, the way it does after
-a restart; a start that fails says so the same way.
+restart could not start it again), the app says so in the chooser and on the Gateways window's
+**This computer** row: **PersonalClaw's gateway stopped**, with how it exited and the last thing it
+said. **Try Again** (**Start a Gateway Here** on the row) starts a new gateway, and every window
+moves to it, signed in, the way it does after a restart; a start that fails says so the same way.
 
 A gateway that cannot start when the app opens is the same news, said as soon as the start fails:
 **PersonalClaw's gateway did not start**, with how it exited and the last thing it said. A gateway
 that started and never answered, within two minutes, is said the same way. When another gateway
-started serving the app's home meanwhile, the app uses that one
+serves the app's home, the chooser offers it
 ([above](#when-a-gateway-already-serves-your-home)).
 
 ## What the desktop app runs, and what needs the installed version

@@ -12,7 +12,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const { CONNECT_CHANNELS, LOCAL_STATES, describeLocal, healthCopy, describeRow, describeList, makeConnectDialog } = require("../connectDialog");
+const { CONNECT_CHANNELS, LOCAL_STATES, describeLocal, describeChooser, healthCopy, describeRow, describeList, makeConnectDialog } = require("../connectDialog");
 const {
   LOCAL_ENDPOINT_ID,
   HEALTH_STATES,
@@ -159,6 +159,25 @@ describe("the \"This computer\" row, by how this computer's gateway stands", () 
     assert.match(served.statusDetail, /did not prove/);
   });
 
+  it("offers Use It for a running gateway the app found, with why, and nothing to switch to before then", () => {
+    const found = at({ state: "found", sentence: "PersonalClaw's own gateway didn't start: this home's gateway is already running, on port 10000 (pid 4242)…" });
+    assert.equal(found.localBadge, "already running");
+    assert.equal(found.statusText, "Running, not used yet");
+    assert.deepEqual(found.localAction, { id: "use", label: "Use It" });
+    assert.match(found.statusDetail, /already running, on port 10000/);
+    assert.equal(found.switchable, false, "Switch would open a gateway the app is not signed in to");
+  });
+
+  it("offers Ask Each Time on a gateway used without asking, and nothing more on one used on a press", () => {
+    const asked = at({ state: "adopted" }, { [LOCAL_ENDPOINT_ID]: { status: HEALTH_REACHABLE } });
+    assert.equal(asked.localOption, null);
+    const always = at({ state: "adopted", autoUse: true }, { [LOCAL_ENDPOINT_ID]: { status: HEALTH_REACHABLE } });
+    assert.deepEqual(always.localOption, { id: "ask", label: "Ask Each Time" });
+    assert.match(always.statusDetail, /used without asking when the app's own gateway doesn't start/);
+    assert.equal(always.localAction, null, "Switch stays");
+    assert.equal(at({ state: "own", autoUse: true }).localOption, null, "the app's own gateway is never 'used without asking'");
+  });
+
   it("offers nothing while it starts", () => {
     const starting = at({ state: "starting" });
     assert.equal(starting.statusText, "Starting…");
@@ -174,6 +193,33 @@ describe("the \"This computer\" row, by how this computer's gateway stands", () 
   });
 });
 
+describe("the chooser, while nothing serves the windows", () => {
+  it("offers the running gateway only once it is found, and Add a Gateway and Try Again always", () => {
+    const found = describeChooser({ state: "found", sentence: "already running, on port 10000" });
+    assert.equal(found.use, true);
+    assert.equal(found.sentence, "already running, on port 10000");
+    for (const state of ["stopped", "served"]) {
+      const none = describeChooser({ state, sentence: "why" });
+      assert.equal(none.use, false, `${state} offers a gateway it has not proved`);
+      assert.equal(none.sentence, "why");
+      assert.equal(none.busy, false);
+      assert.equal(none.settled, false);
+    }
+  });
+
+  it("holds its offers while a start runs, and has nothing to choose once a gateway serves", () => {
+    assert.equal(describeChooser({ state: "starting" }).busy, true);
+    assert.equal(describeChooser({ state: "starting" }).use, false);
+    for (const state of ["own", "adopted"]) assert.equal(describeChooser({ state }).settled, true);
+    assert.equal(describeChooser(undefined).busy, true, "an unknown state reads as starting");
+  });
+
+  it("is in the list the windows read", () => {
+    const listed = describeList({ registry: { endpoints: [] }, local: { state: "found", sentence: "s" } });
+    assert.equal(listed.chooser.use, true);
+  });
+});
+
 describe("the IPC adaptor", () => {
   function fakeIpc() {
     const handlers = {};
@@ -186,12 +232,26 @@ describe("the IPC adaptor", () => {
     };
   }
 
-  it("registers exactly the seven invokes the preload exposes; `changed` is the main process's to send", () => {
+  it("registers exactly the ten invokes the preload exposes; `changed` is the main process's to send", () => {
     const ipc = fakeIpc();
     makeConnectDialog({ BrowserWindowCtor: class {}, ipcMain: ipc, handlers: {} }).registerIpc(ipc);
     const invokes = Object.entries(CONNECT_CHANNELS).filter(([k]) => k !== "changed").map(([, v]) => v);
-    assert.equal(invokes.length, 7);
+    assert.equal(invokes.length, 10);
     assert.deepStrictEqual(ipc.names().sort(), invokes.sort());
+    const preload = fs.readFileSync(path.join(__dirname, "..", "connectPreload.js"), "utf8");
+    for (const key of Object.keys(CONNECT_CHANNELS)) assert.match(preload, new RegExp(`CONNECT_CHANNELS\\.${key}\\b`), `the preload does not expose ${key}`);
+  });
+
+  it("takes the chooser's yes only as `true`: a renderer's other values mean no", async () => {
+    const seen = [];
+    const ipc = fakeIpc();
+    const handlers = { use: async (arg) => seen.push(["use", arg]), autoUse: async (arg) => seen.push(["autoUse", arg]) };
+    makeConnectDialog({ BrowserWindowCtor: class {}, ipcMain: ipc, handlers }).registerIpc(ipc);
+    await ipc.call(CONNECT_CHANNELS.use, { remember: "yes" });
+    await ipc.call(CONNECT_CHANNELS.use, { remember: true });
+    await ipc.call(CONNECT_CHANNELS.autoUse, { on: 1 });
+    await ipc.call(CONNECT_CHANNELS.autoUse, undefined);
+    assert.deepStrictEqual(seen, [["use", { remember: false }], ["use", { remember: true }], ["autoUse", { on: false }], ["autoUse", { on: false }]]);
   });
 
   it("opens a window of its own, never a sheet on another: a sheet would queue behind the one already there", () => {
@@ -215,6 +275,43 @@ describe("the IPC adaptor", () => {
     assert.equal("parent" in made[0].options, false, "a parent makes it that window's child");
   });
 
+  it("opens the chooser as a small window of its own, on the dialog's preload, and closes both on a gateway", () => {
+    const made = [];
+    class Win {
+      constructor(options) {
+        this.options = options;
+        this.closed = false;
+        made.push(this);
+      }
+      setMenu() {}
+      loadFile(file) {
+        this.file = file;
+      }
+      on() {}
+      close() {
+        this.closed = true;
+      }
+      isDestroyed() {
+        return this.closed;
+      }
+    }
+    const dialog = makeConnectDialog({ BrowserWindowCtor: Win, ipcMain: fakeIpc(), handlers: {} });
+    const chooser = dialog.openChooser();
+    assert.equal(chooser.options.title, "Choose a Gateway");
+    assert.equal(chooser.options.modal, false);
+    assert.equal("parent" in chooser.options, false);
+    assert.equal(chooser.options.resizable, false);
+    assert.ok(chooser.options.width < 560 && chooser.options.height < 600, "the chooser is the Gateways window's size");
+    assert.match(chooser.file, /gatewayChooser\.html$/);
+    assert.match(chooser.options.webPreferences.preload, /connectPreload\.js$/);
+    assert.equal(chooser.options.webPreferences.contextIsolation, true);
+    assert.equal(chooser.options.webPreferences.nodeIntegration, false);
+    const gateways = dialog.open();
+    dialog.close();
+    assert.equal(chooser.closed, true);
+    assert.equal(gateways.closed, true);
+  });
+
   it("tells an open window its list changed", () => {
     const sent = [];
     class Win {
@@ -234,6 +331,9 @@ describe("the IPC adaptor", () => {
     dialog.open();
     dialog.changed();
     assert.deepEqual(sent, [CONNECT_CHANNELS.changed]);
+    dialog.openChooser();
+    dialog.changed();
+    assert.deepEqual(sent, [CONNECT_CHANNELS.changed, CONNECT_CHANNELS.changed, CONNECT_CHANNELS.changed], "the chooser is told too");
   });
 
   it("coerces its arguments, so a renderer cannot hand a handler an object where an id belongs", async () => {
@@ -314,8 +414,45 @@ describe("the dialog document", () => {
 
   it("is listed in electron-builder's files, or the packaged app opens a blank switcher", () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
-    for (const f of ["connectDialog.html", "connectPreload.js", "connectDialog.js", "connectMode.js", "gatewayUrl.js", "endpointRegistry.js", "shellStore.js"]) {
+    for (const f of ["connectDialog.html", "gatewayChooser.html", "connectPreload.js", "connectDialog.js", "connectMode.js", "gatewayUrl.js", "endpointRegistry.js", "shellStore.js"]) {
       assert.ok(pkg.build.files.includes(f), `build.files is missing ${f}`);
     }
+  });
+
+  it("offers Use It through the use invoke, and Ask Each Time through autoUse", () => {
+    assert.match(html, /const using = row\.localAction\.id === 'use';[\s\S]*?window\.pclawConnect\.use\(false\)/);
+    assert.match(html, /if \(row\.localOption\) \{[\s\S]*?window\.pclawConnect\.autoUse\(false\)/);
+  });
+});
+
+describe("the chooser document", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "gatewayChooser.html"), "utf8");
+
+  it("shows the running gateway's offer and its box only when the chooser offers it, and the box starts off", () => {
+    assert.match(html, /byId\('use'\)\.hidden = !chooser\.use;/);
+    assert.match(html, /byId\('remember-row'\)\.hidden = !chooser\.use;/);
+    const box = html.match(/<input id="remember"[^>]*>/);
+    assert.ok(box, "the box is gone");
+    assert.doesNotMatch(box[0], /checked/, "Use it automatically next time is ticked before anyone ticks it");
+    assert.match(html, /window\.pclawConnect\.use\(byId\('remember'\)\.checked\)/);
+    // The box's row is a flex row: without this, its display rule shows it while it is hidden.
+    assert.match(html, /\[hidden\] \{ display: none !important; \}/);
+  });
+
+  it("offers Add a Gateway and Try Again through their invokes, and closes once a gateway serves", () => {
+    assert.match(html, /window\.pclawConnect\.openGateways\(\)/);
+    assert.match(html, /window\.pclawConnect\.start\(\)/);
+    assert.match(html, /if \(chooser\.settled\) \{\s*window\.close\(\);/);
+    assert.match(html, /window\.pclawConnect\.onChanged\(\(\) => load\(\)\)/);
+  });
+
+  it("sets every value with textContent, and carries the Gateways window's policy", () => {
+    for (const sink of ["innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"]) {
+      assert.strictEqual(html.includes(sink), false, `gatewayChooser.html uses ${sink}`);
+    }
+    assert.ok(html.includes("textContent"));
+    const policy = html.match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/)[1];
+    const dialogPolicy = fs.readFileSync(path.join(__dirname, "..", "connectDialog.html"), "utf8").match(/http-equiv="Content-Security-Policy"[\s\S]*?content="([^"]+)"/)[1];
+    assert.equal(policy, dialogPolicy);
   });
 });

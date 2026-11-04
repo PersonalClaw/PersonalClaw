@@ -8,14 +8,15 @@
  * to survive, and the existing `renameCurrentTab` pattern in `main.js` (a `data:` URL with
  * hand-escaped interpolation) is exactly the shape not to copy for untrusted strings.
  *
- * The dialog's preload (`connectPreload.js`) exposes seven invokes and one event, `changed`, and
+ * The dialog's preload (`connectPreload.js`) exposes ten invokes and one event, `changed`, and
  * nothing else. It carries no capability surface: the switcher has no business reaching a microphone.
  *
- * It is also where the app goes when nothing serves its windows: a start that failed or was
- * refused, a gateway that stopped, a paired gateway that does not answer with nothing to fall back
- * to. So it is never a sheet. A sheet holds the window it hangs from, and anything else that window
- * shows as a sheet waits behind it: the Gateways window used to be one, and behind the start-failure
- * sheet it never showed.
+ * When nothing serves the app's windows (its own gateway did not start, a gateway stopped), the app
+ * opens a smaller window instead, the chooser (`gatewayChooser.html`, on the same preload): use this
+ * home's gateway, when one is running and proves it serves the home; add a gateway, which is the
+ * Gateways window; or try again. Neither window is ever a sheet. A sheet holds the window it hangs
+ * from, and anything else that window shows as a sheet waits behind it: the Gateways window used to
+ * be one, and behind the start-failure sheet it never showed.
  */
 
 const path = require("path");
@@ -43,12 +44,18 @@ const CONNECT_CHANNELS = Object.freeze({
   forget: "pclaw:connect:forget",
   refresh: "pclaw:connect:refresh",
   start: "pclaw:connect:start",
+  /** Use this home's running gateway, which the app did not start (`{remember}`: every time). */
+  use: "pclaw:connect:use",
+  /** Whether a running gateway this home's own start finds is used without asking (`{on}`). */
+  autoUse: "pclaw:connect:auto-use",
+  /** The chooser's Add a Gateway…: the Gateways window, where one is added. */
+  gateways: "pclaw:connect:gateways",
   /** Main → dialog: the list changed (the local gateway came up, stopped, or was found), so read it again. */
   changed: "pclaw:connect:changed",
 });
 
 /** The "This computer" row's states, as `main.js` keeps them (`localState`). */
-const LOCAL_STATES = Object.freeze(["starting", "own", "adopted", "stopped", "served"]);
+const LOCAL_STATES = Object.freeze(["starting", "own", "found", "adopted", "stopped", "served"]);
 
 /** The reserved row for this computer's gateway, for a registry that has none yet (a first start
  *  that failed): the row is where a gateway is started here, so it is always there. */
@@ -58,8 +65,10 @@ const LOCAL_ROW = Object.freeze({ id: LOCAL_ENDPOINT_ID, label: "This computer",
  * The "This computer" row as this computer's gateway stands: what it says and what it offers.
  *
  * - `own`: the gateway this app started.
- * - `adopted`: this home's gateway, which was running before the app looked; the app uses it and
- *   never stops it.
+ * - `found`: the app's own start failed, and this home's gateway, started outside the app, is
+ *   running and proved it serves the home. Use it.
+ * - `adopted`: that gateway, in use; the app never stops it. Used without asking (`autoUse`), it
+ *   offers to ask again.
  * - `starting`: on its way up.
  * - `stopped`: none runs, and the sentence says why. Start a gateway here.
  * - `served`: a gateway serves this home that the app cannot sign in to, and the sentence says
@@ -72,8 +81,18 @@ function describeLocal(local = {}) {
   switch (state) {
     case "own":
       return { state, badge: "started by this app", detail: "", action: null };
+    case "found":
+      return { state, badge: "already running", statusText: "Running, not used yet", statusTone: "idle", detail: sentence, action: { id: "use", label: "Use It" } };
     case "adopted":
-      return { state, badge: "already running", detail: "Not started by this app. Quitting PersonalClaw leaves it running.", action: null };
+      return {
+        state,
+        badge: "already running",
+        detail: local && local.autoUse
+          ? "Not started by this app, and used without asking when the app's own gateway doesn't start. Quitting PersonalClaw leaves it running."
+          : "Not started by this app. Quitting PersonalClaw leaves it running.",
+        action: null,
+        option: local && local.autoUse ? { id: "ask", label: "Ask Each Time" } : null,
+      };
     case "stopped":
       return { state, badge: "", statusText: "Not running", statusTone: "warn", detail: sentence, action: { id: "start", label: "Start a Gateway Here" } };
     case "served":
@@ -132,7 +151,7 @@ function describeRow(row, { activeId, health = {}, localBaseUrl = "", local } = 
   const status = (health[row.id] && health[row.id].status) || HEALTH_UNKNOWN;
   const copy = healthCopy(status);
   const here = isLocal && local ? describeLocal(local) : null;
-  // A local row with no gateway behind it (starting, stopped, served) says that, not a probe's word.
+  // A local row with no gateway behind it (starting, found, stopped, served) says that, not a probe's word.
   const running = !here || here.state === "own" || here.state === "adopted";
   return {
     id: row.id,
@@ -159,8 +178,28 @@ function describeRow(row, { activeId, health = {}, localBaseUrl = "", local } = 
     localState: here ? here.state : "",
     /** What the local row offers in place of Switch while no gateway serves it, or null. */
     localAction: here ? here.action : null,
+    /** A quiet second offer on the local row (an adopted gateway's Ask Each Time), or null. */
+    localOption: (here && here.option) || null,
     /** Whether Switch can open this row: a local row only while a gateway serves it. */
     switchable: running,
+  };
+}
+
+/**
+ * What the chooser says and offers while nothing serves the app's windows, from the "This computer"
+ * row's state: why (its sentence), Use the Gateway Already Running only while one is `found`, and
+ * Add a Gateway… and Try Again always, held while a start runs. Pure, as `describeLocal` is.
+ */
+function describeChooser(local = {}) {
+  const here = describeLocal(local);
+  const busy = here.state === "starting";
+  return {
+    state: here.state,
+    sentence: busy ? "Starting PersonalClaw's gateway…" : here.detail || "PersonalClaw's gateway isn't running.",
+    use: here.state === "found",
+    busy,
+    /** Nothing more to choose: a gateway serves the windows. */
+    settled: here.state === "own" || here.state === "adopted",
   };
 }
 
@@ -171,6 +210,7 @@ function describeList({ registry, activeId, health, localBaseUrl, local, warning
   return {
     activeId: activeId || registry.active || "",
     rows: rows.map((row) => describeRow(row, { activeId: activeId || registry.active, health, localBaseUrl, local })),
+    chooser: describeChooser(local),
     warnings,
     storeStatus,
     storeSafe,
@@ -185,6 +225,7 @@ function describeList({ registry, activeId, health, localBaseUrl, local, warning
  */
 function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {} }) {
   let win = null;
+  let chooser = null;
 
   /** Open the window, or bring it forward. Never a sheet, and never anyone's child: see the top. */
   function open() {
@@ -219,17 +260,56 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
     return win;
   }
 
+  /** Open the chooser, or bring it forward: a small window of its own, on the same preload. */
+  function openChooser() {
+    if (chooser && !chooser.isDestroyed()) {
+      chooser.show();
+      chooser.focus();
+      return chooser;
+    }
+    chooser = new BrowserWindowCtor({
+      width: 440,
+      height: 290,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      useContentSize: true,
+      modal: false,
+      title: "Choose a Gateway",
+      backgroundColor: "#0f0f0f",
+      webPreferences: {
+        preload: path.join(__dirname, "connectPreload.js"),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+      },
+    });
+    chooser.setMenu?.(null);
+    chooser.loadFile(path.join(__dirname, "gatewayChooser.html"));
+    chooser.on("closed", () => {
+      chooser = null;
+    });
+    return chooser;
+  }
+
+  function closeChooser() {
+    if (chooser && !chooser.isDestroyed()) chooser.close();
+    chooser = null;
+  }
+
+  /** Close both windows: a gateway serves the windows now. */
   function close() {
     if (win && !win.isDestroyed()) win.close();
     win = null;
+    closeChooser();
   }
 
-  /** Tell an open window its list changed, so it reads it again. */
+  /** Tell each open window its list changed, so it reads it again. */
   function changed() {
-    if (win && !win.isDestroyed()) win.webContents.send(CONNECT_CHANNELS.changed);
+    for (const w of [win, chooser]) if (w && !w.isDestroyed()) w.webContents.send(CONNECT_CHANNELS.changed);
   }
 
-  /** Register the seven invokes. Each one is a thin adaptor over `handlers`, which `main.js` owns. */
+  /** Register the ten invokes. Each one is a thin adaptor over `handlers`, which `main.js` owns. */
   function registerIpc(ipc = ipcMain) {
     const wrap = (name, fn) => {
       ipc.handle(name, async (_event, arg) => {
@@ -251,9 +331,25 @@ function makeConnectDialog({ BrowserWindowCtor, ipcMain, handlers, log = () => {
     wrap(CONNECT_CHANNELS.forget, (arg) => handlers.forget(String((arg && arg.id) || "")));
     wrap(CONNECT_CHANNELS.refresh, () => handlers.refresh());
     wrap(CONNECT_CHANNELS.start, () => handlers.start());
+    wrap(CONNECT_CHANNELS.use, (arg) => handlers.use({ remember: (arg && arg.remember) === true }));
+    wrap(CONNECT_CHANNELS.autoUse, (arg) => handlers.autoUse({ on: (arg && arg.on) === true }));
+    wrap(CONNECT_CHANNELS.gateways, () => handlers.gateways());
   }
 
-  return { open, close, changed, registerIpc, get window() { return win; } };
+  return {
+    open,
+    close,
+    openChooser,
+    closeChooser,
+    changed,
+    registerIpc,
+    get window() {
+      return win;
+    },
+    get chooserWindow() {
+      return chooser;
+    },
+  };
 }
 
-module.exports = { CONNECT_CHANNELS, LOCAL_STATES, describeLocal, healthCopy, describeRow, describeList, makeConnectDialog };
+module.exports = { CONNECT_CHANNELS, LOCAL_STATES, describeLocal, describeChooser, healthCopy, describeRow, describeList, makeConnectDialog };

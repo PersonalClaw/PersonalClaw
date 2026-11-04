@@ -80,9 +80,9 @@
   <body>
     <h1>Gateways</h1>
     <p class="sub">
-      This app uses this computer's gateway: the one already serving your PersonalClaw home, or one
-      it starts. You can also connect it to another gateway — on this computer, on your network, or
-      through your own tunnel.
+      This app starts its own gateway for your PersonalClaw home, and when that one doesn't start, it
+      can use the gateway already serving the home. You can also connect it to another gateway — on
+      this computer, on your network, or through your own tunnel.
     </p>
 
     <div id="banners"></div>
@@ -146,12 +146,14 @@
           li.appendChild(meta);
 
           if (row.localAction) {
-            // No gateway serves this computer's row: start one here, or look for this home's again.
+            // No gateway serves this computer's row: start one here, try again, or use this home's
+            // running gateway, which the app did not start.
+            const using = row.localAction.id === 'use';
             const act = el('button', 'primary', row.localAction.label);
             act.addEventListener('click', async () => {
               act.disabled = true;
-              act.textContent = 'Starting…';
-              const res = await window.pclawConnect.start();
+              act.textContent = using ? 'Signing in…' : 'Starting…';
+              const res = using ? await window.pclawConnect.use(false) : await window.pclawConnect.start();
               if (!res || !res.ok) renderBanners([{ code: 'start_failed', message: (res && res.message) || 'No gateway could be started here.' }]);
               load();
             });
@@ -167,6 +169,16 @@
               }
             });
             li.appendChild(go);
+          }
+          if (row.localOption) {
+            // A gateway used without asking: ask again next time instead.
+            const ask = el('button', 'quiet', row.localOption.label);
+            ask.addEventListener('click', async () => {
+              ask.disabled = true;
+              await window.pclawConnect.autoUse(false);
+              load();
+            });
+            li.appendChild(ask);
           }
           if (row.removable) {
             const drop = el('button', 'quiet', 'Forget');

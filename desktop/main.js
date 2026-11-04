@@ -322,6 +322,16 @@ function startGateway() {
 }
 
 /**
+ * Whether the app's own gateway is up or starting: the child of its latest start spawned and has
+ * not exited. A start that timed out is still so, since `startGateway` rejects and leaves the child
+ * running. While it is, this home's running gateway is that child, never one the app did not start.
+ */
+function ownGatewayLives() {
+  const child = gatewayProcess;
+  return Boolean(child) && child.pid !== undefined && child.exitCode === null && child.signalCode === null;
+}
+
+/**
  * Stop the gateway and WAIT for it.
  *
  * The shell spawned this process, so quit is the one moment its data can be torn in
@@ -376,8 +386,9 @@ async function gatewayLost(exit) {
 }
 
 /**
- * Nothing serves the app's windows: the main window says so, with no spinner, and the Gateways
- * window opens. A window showing a paired gateway keeps it.
+ * Nothing serves the app's windows: the main window says so, with no spinner, and the chooser opens
+ * (use this home's running gateway, when one proved it serves the home; add a gateway; try again).
+ * The Gateways window stays in the menu. A window showing a paired gateway keeps it.
  */
 function showNotConnected() {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -387,7 +398,7 @@ function showNotConnected() {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
   }
-  openConnectDialog();
+  connectDialog?.openChooser();
 }
 
 /** What the Gateways window's "This computer" row says, told to the window if it is open. */
@@ -399,23 +410,73 @@ function setLocalState(state, sentence = "") {
 // ── This home's running gateway, when the app did not start it ──
 
 /**
- * This home's running gateway, signed in: `{ok, gateway, ready}`, or `{ok: false, reason,
- * sentence}` (`homeGateway.reach`'s reasons, or `sign_in`). With *waitMs*, a home that has no
- * running gateway yet is asked again each second until then: a gateway that has just won the home
- * from this app's start writes its runtime record only once it listens.
+ * This home's running gateway, proven to serve it (`homeGateway.reach`) and not signed in to:
+ * `{ok, gateway}`, or `{ok: false, reason, sentence}`. With *waitMs*, a home that has no running
+ * gateway yet is asked again each second until then: a gateway that has just won the home from this
+ * app's start writes its runtime record only once it listens.
  */
-async function reachHomeGateway({ waitMs = 0 } = {}) {
+async function findHomeGateway({ waitMs = 0 } = {}) {
   const until = Date.now() + waitMs;
   for (;;) {
     const found = await homeGateway.reach(PERSONALCLAW_HOME);
-    if (found.ok) {
-      const signed = await homeGateway.signIn(found.gateway, PERSONALCLAW_HOME);
-      if (!signed.ok) return { ok: false, reason: "sign_in", sentence: signed.sentence };
-      return { ok: true, gateway: found.gateway, ready: signed.ready };
-    }
-    if (found.reason !== "none" || Date.now() >= until) return found;
+    if (found.ok || found.reason !== "none" || Date.now() >= until) return found;
     await new Promise((r) => setTimeout(r, 1000));
   }
+}
+
+/**
+ * This home's running gateway, proven and signed in: `{ok, gateway, ready}`, or `{ok: false,
+ * reason, sentence}` (`homeGateway.reach`'s reasons, or `sign_in`).
+ */
+async function reachHomeGateway({ waitMs = 0 } = {}) {
+  const found = await findHomeGateway({ waitMs });
+  if (!found.ok) return found;
+  const signed = await homeGateway.signIn(found.gateway, PERSONALCLAW_HOME);
+  if (!signed.ok) return { ok: false, reason: "sign_in", sentence: signed.sentence };
+  return { ok: true, gateway: found.gateway, ready: signed.ready };
+}
+
+/** The shell-store key of the chooser's "Use it automatically next time": a running gateway the
+ *  app's own start finds is used without asking. Off until the owner ticks it, and the Gateways
+ *  window's Ask Each Time turns it off again. */
+const AUTO_USE_KEY = "pclaw:local-gateway:use-running";
+
+function autoUseRunning() {
+  return Boolean(shellStore) && shellStore.getItem(AUTO_USE_KEY) === "1";
+}
+
+function setAutoUseRunning(on) {
+  if (!shellStore) return;
+  if (on) shellStore.setItem(AUTO_USE_KEY, "1");
+  else shellStore.removeItem(AUTO_USE_KEY);
+}
+
+/** The "This computer" row's sentence for a running gateway the app found and has not used. */
+function foundSentence(gateway) {
+  return (
+    `PersonalClaw's own gateway didn't start: this home's gateway is already running, on port ` +
+    `${gateway.port} (pid ${gateway.pid}), started outside this app. Use it, or quit it and try again.`
+  );
+}
+
+/**
+ * Use this home's running gateway, which the app did not start: proven again and signed in to, as
+ * a command run for the home is (`reachHomeGateway`). Refused while the app's own gateway is up or
+ * starting (`ownGatewayLives`), on a press and on the standing yes alike: the home's gateway is then
+ * that one. Resolves `{ok: true}` once it serves the windows, or `{ok: false, code, message}`.
+ */
+async function useRunningGateway() {
+  if (ownGatewayLives()) return { ok: false, code: "own", message: "This app's own gateway is running, so there is no other one to use." };
+  setLocalState("starting");
+  const found = await reachHomeGateway();
+  if (found.ok) {
+    await adoptHomeGateway(found);
+    return { ok: true };
+  }
+  const gone = found.reason === "none";
+  startFailure = gone ? { gone: true } : { served: true };
+  setLocalState(gone ? "stopped" : "served", found.sentence);
+  return { ok: false, code: localState.state, message: found.sentence || "This home's gateway could not be used." };
 }
 
 /**
@@ -436,25 +497,17 @@ async function adoptHomeGateway(found) {
 }
 
 /**
- * Bring a gateway up for this home: the one already serving it, when one does, else the app's own.
- * A start the home refuses because another gateway took it meanwhile (`HOME_SERVED_EXIT`) uses that
- * one. Resolves whether one serves the windows now. Every failure lands on the Gateways window's
- * "This computer" row, with its sentence.
+ * Bring a gateway up for this home: the app's own, first. Only when that start fails, for any
+ * reason (a home another gateway serves included), and its child is gone, is this home's running
+ * gateway looked for. One that proves it serves the home is used at once if the owner said to every
+ * time (`autoUseRunning`), and otherwise offered, unused and unsigned-in, in the chooser (`found`);
+ * nothing that carries a credential goes to it before then. Resolves whether a gateway serves the
+ * windows now. Every failure lands on the chooser and the Gateways window's "This computer" row,
+ * with its sentence.
  */
 async function bringUpLocalGateway() {
   setLocalState("starting");
-  sendStatus("Looking for this home's gateway…");
-  const found = await reachHomeGateway();
-  if (found.ok) {
-    await adoptHomeGateway(found);
-    return true;
-  }
-  if (found.reason !== "none") {
-    // Something serves this home that the app cannot sign in to: a start could only be refused.
-    startFailure = { served: true };
-    setLocalState("served", found.sentence);
-    return false;
-  }
+  sendStatus("Starting PersonalClaw's gateway…");
   try {
     await startGateway();
     startFailure = null;
@@ -464,17 +517,32 @@ async function bringUpLocalGateway() {
     return true;
   } catch (err) {
     const exit = err.exit || { startError: err.message };
-    if (exit.code === HOME_SERVED_EXIT) {
-      const raced = await reachHomeGateway({ waitMs: 20_000 });
-      if (raced.ok) {
-        await adoptHomeGateway(raced);
-        return true;
-      }
-      startFailure = { ...exit, served: true };
-      setLocalState("served", raced.sentence || exit.lastLine || "");
+    // A start that timed out leaves its child running, and a gateway that serves the home then may
+    // be that child: nothing is looked for while it lives, and the row says it did not start.
+    if (ownGatewayLives()) {
+      console.error("Gateway did not start:", err.message);
+      startFailure = exit;
+      setLocalState("stopped", notStartedSentence(exit));
       return false;
     }
-    console.error("Gateway did not start:", err.message);
+    // A start the home refused because another gateway serves it waits for that one's runtime
+    // record, which it writes only once it listens.
+    const served = exit.code === HOME_SERVED_EXIT;
+    if (!served) console.error("Gateway did not start:", err.message);
+    const found = await findHomeGateway({ waitMs: served ? 20_000 : 0 });
+    if (found.ok) {
+      // Used without asking only on the owner's standing yes; its own failure is said on the row.
+      if (autoUseRunning()) return (await useRunningGateway()).ok;
+      startFailure = { ...exit, found: true };
+      setLocalState("found", foundSentence(found.gateway));
+      return false;
+    }
+    if (found.reason !== "none") {
+      // Something serves this home that the app cannot sign in to.
+      startFailure = { ...exit, served: true };
+      setLocalState("served", found.sentence);
+      return false;
+    }
     startFailure = exit;
     setLocalState("stopped", notStartedSentence(exit));
     return false;
@@ -1746,7 +1814,7 @@ function connectHandlers() {
         activeId: registry.active,
         health: endpointHealth,
         localBaseUrl: localGatewayUrl || "",
-        local: localState,
+        local: { ...localState, autoUse: autoUseRunning() },
         warnings: startupWarnings,
         storeStatus: shellStore.status,
         storeSafe: Boolean(shellStore.permissions && shellStore.permissions.safe),
@@ -1797,14 +1865,36 @@ function connectHandlers() {
       await refreshHealth();
       return { ok: true };
     },
-    // "This computer" row's Start a gateway here and Try again: a gateway for this home, the one
-    // serving it when one does, else the app's own, and the main window on it.
+    // "This computer" row's Start a gateway here, and the chooser's and the row's Try again: the
+    // app's own gateway first (`bringUpLocalGateway`), and the main window on it.
     start: async () => {
       if (localState.state === "starting") return { ok: false, code: "starting", message: "A gateway for this home is already starting." };
       if (!(await startLocalHere())) {
         return { ok: false, code: localState.state, message: localState.sentence || "No gateway could be brought up for this home." };
       }
       return handlers.switchTo(LOCAL_ENDPOINT_ID);
+    },
+    // The chooser's Use the Gateway Already Running, and the row's Use It: proven again and signed
+    // in to only now, on the press. With *remember*, the app's own start uses it without asking.
+    use: async ({ remember }) => {
+      if (localState.state === "starting") return { ok: false, code: "starting", message: "A gateway for this home is already starting." };
+      // Refused while the app's own gateway is up or starting (`useRunningGateway`).
+      const used = await useRunningHere();
+      if (!used.ok) return used;
+      setAutoUseRunning(remember);
+      return handlers.switchTo(LOCAL_ENDPOINT_ID);
+    },
+    // The Gateways window's Ask Each Time (and the chooser's box, through `use`).
+    autoUse: async ({ on }) => {
+      setAutoUseRunning(on);
+      connectDialog.changed();
+      return { ok: true, on: autoUseRunning() };
+    },
+    // The chooser's Add a Gateway…: the Gateways window, where a gateway is added.
+    gateways: async () => {
+      connectDialog.closeChooser();
+      openConnectDialog();
+      return { ok: true };
     },
   };
   return handlers;
@@ -1843,23 +1933,38 @@ async function showLoadingThenConnect(win) {
 }
 
 /**
- * The Gateways window's Start a gateway here, and its Try again: a gateway for this home, the one
- * already serving it when one does, else the app's own (`bringUpLocalGateway`). A start that timed
- * out can still be running, so it is stopped first: never two gateways on one home. The first
- * gateway the windows ever have is set up as the app's start sets one up; one that takes over from
- * a gateway that stopped is followed there (`followRestartedGateway`), which registers again.
+ * The Gateways window's Start a gateway here, and its Try again: a gateway for this home, the app's
+ * own first, and the one already serving it only when that fails (`bringUpLocalGateway`). A start
+ * that timed out can still be running, so it is stopped first: never two gateways on one home. The
+ * first gateway the windows ever have is set up as the app's start sets one up; one that takes over
+ * from a gateway that stopped is followed there (`followRestartedGateway`), which registers again.
  */
 async function startLocalHere() {
   const hadGateway = Boolean(localGatewayUrl);
   if (gatewayProcess) await stopGateway();
   if (!(await bringUpLocalGateway())) return false;
-  if (!hadGateway) {
-    if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
-    await registerWithGateway();
-    startPresenceRefresh();
-    buddyPresence?.start();
-  }
+  if (!hadGateway) await setUpFirstGateway();
   return true;
+}
+
+/**
+ * The chooser's and the "This computer" row's Use It: this home's running gateway, which the app
+ * did not start, set up as the windows' gateway the way `startLocalHere` sets up its own. Resolves
+ * `useRunningGateway`'s answer.
+ */
+async function useRunningHere() {
+  const hadGateway = Boolean(localGatewayUrl);
+  const used = await useRunningGateway();
+  if (used.ok && !hadGateway) await setUpFirstGateway();
+  return used;
+}
+
+/** The first gateway the windows have, set up as the app's start sets one up. */
+async function setUpFirstGateway() {
+  if (shellStore) rememberLocalGateway(shellStore, localGatewayUrl);
+  await registerWithGateway();
+  startPresenceRefresh();
+  buddyPresence?.start();
 }
 
 // ── New Tab — opens another view onto the ACTIVE gateway ──

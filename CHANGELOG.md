@@ -16,7 +16,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 - **For apps, `personalclaw.sdk.channel.ConversationLog.update_metadata` takes `drop`, the chat-level fields to remove from a chat's record in the same write. It refuses to set or remove the record's own fields, or to remove the memory mode.**
 
-- **The desktop app uses the gateway already serving its home, one started in a terminal or as a service, where its own start was refused and left it with no gateway. It finds that gateway the way `personalclaw token` does, signs in with the home's local secret for 30 days, follows it through a restart, and marks it "already running" in the Gateways window. Quitting the app signs it out and leaves that gateway running, and when its sign-in ends the window says to quit PersonalClaw and open it again.**
+- **The desktop app can use the gateway already serving its home, one started in a terminal or as a service, where its own start was refused and left it with no gateway. It finds that gateway the way `personalclaw token` does and offers it; once you choose it, or every time after you tick Use it automatically next time, it signs in with the home's local secret for 30 days, follows it through a restart, and marks it "already running" in the Gateways window. Quitting the app signs it out and leaves that gateway running, and when its sign-in ends the window says to quit PersonalClaw and open it again.**
 
 ### Changed
 
@@ -26,7 +26,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 
 ### Fixed
 
-- **When the desktop app has no gateway, because its own did not start or the one it used stopped, the main window says it is not connected and the Gateways window opens beside it: its This computer row says why and offers Start a Gateway Here, and every other gateway is a click away. The dialog it showed instead held the app, with the Gateways window behind it and out of reach.**
+- **The desktop app starts its own gateway when it opens, and opens no other window when that works. When it has no gateway, because its own did not start or the one it used stopped, the main window says it is not connected and a small Choose a Gateway window says why and offers the gateway already serving the home (when one proves it does), Add a Gateway…, or Try Again. The dialog it showed instead held the app, with the Gateways window behind it and out of reach.**
 - **On Linux, the Docker image included, the gateway could stop answering for good when the loop list opened the workflow store while a background read closed it: from then on it took every request and answered none. It now uses Python's own SQLite wherever that has full-text search and JSON, which every build of PersonalClaw's does, and the loop list reads its stores without holding up the gateway's other requests.**
 - **On the desktop app and in a container, the System status card's update button reads Update, with no restart to confirm, and it and Home's Update available say how the install updates, in the card and in a dialog, with a link to the releases page on the desktop app. Pressing them did nothing there before. On a checkout or a wheel install the confirm says what the update will do, and the update runs as before.**
 

@@ -88,6 +88,7 @@
       "windowPushes.js",
       "buddyPolicy.js",
       "connectDialog.html",
+      "gatewayChooser.html",
       "preload.js",
       "loading.html",
       "icon.png",

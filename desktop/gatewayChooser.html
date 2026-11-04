@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      The chooser: what opens when nothing serves the app's windows. Same preload and same policy as
+      the Gateways window (connectDialog.html): a local document with no remote references, no
+      connect-src, and every value it shows set with textContent.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'none'; base-uri 'none'"
+    />
+    <title>Choose a Gateway</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      /* A display rule below would otherwise show what `hidden` hides. */
+      [hidden] { display: none !important; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0f0f0f; color: #e3e3e3; font-size: 13px; padding: 20px 22px 22px;
+      }
+      h1 { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; margin-bottom: 6px; }
+      .why { color: #c4c7c5; line-height: 1.5; margin-bottom: 16px; }
+      .error { color: #ff8179; font-size: 12px; line-height: 1.45; margin-bottom: 12px; }
+      .choice { display: flex; flex-direction: column; gap: 8px; }
+      button {
+        border: 1px solid #444746; background: #282a2c; color: #c4c7c5; text-align: left;
+        border-radius: 6px; padding: 8px 12px; font-size: 13px; cursor: pointer; font-weight: 600;
+      }
+      button:hover:enabled { background: #333537; }
+      button:disabled { opacity: .45; cursor: default; }
+      button.primary { background: #ff6b5b; border-color: #ff6b5b; color: #3f1008; }
+      button.primary:hover:enabled { background: #ff9a86; border-color: #ff9a86; }
+      label.remember { display: flex; align-items: center; gap: 7px; color: #9a9b9c; font-size: 12px; margin: 0 0 6px 2px; }
+    </style>
+  </head>
+  <body>
+    <h1>Choose a Gateway</h1>
+    <p id="why" class="why"></p>
+    <p id="error" class="error" hidden></p>
+    <div class="choice">
+      <button id="use" hidden>Use the Gateway Already Running</button>
+      <label id="remember-row" class="remember" hidden><input id="remember" type="checkbox" /> Use it automatically next time</label>
+      <button id="add">Add a Gateway…</button>
+      <button id="retry">Try Again</button>
+    </div>
+
+    <script>
+      const byId = (id) => document.getElementById(id);
+      let pressing = false;
+
+      function render(chooser) {
+        if (chooser.settled) {
+          window.close();
+          return;
+        }
+        byId('why').textContent = String(chooser.sentence || '');
+        byId('use').hidden = !chooser.use;
+        byId('remember-row').hidden = !chooser.use;
+        // The first offer is the one most likely to work: a gateway already running, else a new try.
+        byId('use').className = chooser.use ? 'primary' : '';
+        byId('retry').className = chooser.use ? '' : 'primary';
+        for (const id of ['use', 'add', 'retry']) byId(id).disabled = chooser.busy || pressing;
+      }
+
+      function fail(res, fallback) {
+        const out = byId('error');
+        out.textContent = String((res && res.message) || fallback);
+        out.hidden = false;
+      }
+
+      async function load() {
+        const data = await window.pclawConnect.list();
+        if (data && data.chooser) render(data.chooser);
+      }
+
+      async function press(button, run, fallback) {
+        pressing = true;
+        byId('error').hidden = true;
+        for (const id of ['use', 'add', 'retry']) byId(id).disabled = true;
+        const res = await run();
+        pressing = false;
+        if (!res || !res.ok) fail(res, fallback);
+        load();
+      }
+
+      byId('use').addEventListener('click', () =>
+        press(byId('use'), () => window.pclawConnect.use(byId('remember').checked), 'That gateway could not be used.'));
+      byId('add').addEventListener('click', () =>
+        press(byId('add'), () => window.pclawConnect.openGateways(), 'The Gateways window could not be opened.'));
+      byId('retry').addEventListener('click', () =>
+        press(byId('retry'), () => window.pclawConnect.start(), 'No gateway could be started here.'));
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') window.close(); });
+      // The main process says when this computer's gateway came up, stopped or was found.
+      window.pclawConnect.onChanged(() => load());
+      load();
+    </script>
+  </body>
+</html>
