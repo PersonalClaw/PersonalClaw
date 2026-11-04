@@ -310,7 +310,7 @@ export function ThreadRail({ groups, selectedKey, status, failure, onOpen, onRet
             {opened && (
               <div id={listId}>
                 {threads.length === 0
-                  ? <div data-type="body-s" className="py-1 pl-3xl pr-s text-on-surface-low">No chats yet</div>
+                  ? <div data-type="body-s" className="px-s py-1 text-on-surface-low">No chats yet</div>
                   : (
                     <WindowedList
                       items={threads} rowKey={(t) => t.key}
@@ -359,6 +359,11 @@ function GroupByControl({ value, onChange }: { value: GroupBy; onChange: (by: Gr
   )
 }
 
+/** One chat in the sidebar. Its title starts flush with the rail's other rows (`px-s`, as New chat,
+ *  the group headers and the destinations above them), not indented under its group: the rail is
+ *  narrow, a chat's title needs a few words to make sense, and the group header already says which
+ *  group a row is in. A row's state dot sits at its right end, so a dot pushes no title right and a
+ *  row with no state keeps no room for one. */
 function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boolean; onOpen: (route: string) => void }) {
   const pip = thread.pip ? PIP[thread.pip] : null
   const kind = KIND_MARK[thread.kind]
@@ -373,7 +378,7 @@ function ThreadRow({ thread, selected, onOpen }: { thread: Thread; selected: boo
       aria-current={selected ? 'page' : undefined}
       data-type="body-m"
       className={cx(
-        'group relative flex w-full items-center gap-s rounded-pill py-1 pl-3xl pr-s text-left transition-colors duration-(--duration-short)',
+        'group relative flex w-full items-center gap-s rounded-pill px-s py-1 text-left transition-colors duration-(--duration-short)',
         selected ? 'text-on-surface' : 'text-on-surface-var hover:bg-surface-low/60 hover:text-on-surface',
       )}
       style={withWeight({ minHeight: 32 }, selected ? 470 : 400)}>

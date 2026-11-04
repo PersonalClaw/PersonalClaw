@@ -144,4 +144,17 @@ describe('SearchField', () => {
     rerender(<SearchField variant="inline" value="" onChange={() => {}} placeholder="Search" />)
     expect(getByRole('searchbox').className).toContain('[&::-webkit-search-cancel-button]:hidden')
   })
+
+  // The clear button's room at the field's end is kept only while there is something to clear: an
+  // empty field gives it to its placeholder, so the sidebar's, at its narrowest (172 px), reads
+  // "Search" whole instead of "Searc".
+  it('keeps the clear button’s room only while it holds a value, or a trailing slot', () => {
+    const { getByRole, rerender } = render(<SearchField size="sm" value="" onChange={() => {}} placeholder="Search" />)
+    expect(getByRole('searchbox').className).toContain('pr-3')
+    expect(getByRole('searchbox').className).not.toContain('pr-9')
+    rerender(<SearchField size="sm" value="kitchen" onChange={() => {}} placeholder="Search" />)
+    expect(getByRole('searchbox').className).toContain('pr-9')
+    rerender(<SearchField size="sm" value="" onChange={() => {}} placeholder="Search" trailingSlot={<kbd>esc</kbd>} />)
+    expect(getByRole('searchbox').className).toContain('pr-9')
+  })
 })

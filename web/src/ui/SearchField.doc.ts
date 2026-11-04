@@ -40,7 +40,7 @@ const doc: UiDoc = {
     { guidance: false, description: 'Do not add a native search-cancel glyph or a second clear button — the field owns its clear affordance (the webkit cancel glyph is suppressed); toggle `clearable` instead.' },
     { guidance: false, description: 'Do not reach for off-ramp heights/text sizes via className — pick a `size`/`surface`; everything routes through design tokens (the token-lint ratchet fails the build otherwise).' },
   ],
-  anatomy: ['relative box (overlay) / bare fragment (inline)', 'leading magnifier (absolute left-3 overlay / flex child inline)', 'search input (pl-9 pr-9 overlay / transparent inline)', 'trailing cluster: spring-pop ClearButton + trailingSlot'],
+  anatomy: ['relative box (overlay) / bare fragment (inline)', 'leading magnifier (absolute left-3 overlay / flex child inline)', 'search input (pl-9, and pr-9 holding a value or a trailing slot, pr-3 empty, overlay / transparent inline)', 'trailing cluster: spring-pop ClearButton + trailingSlot'],
 }
 
 export default doc

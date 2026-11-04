@@ -18,7 +18,8 @@ import { cx } from './cx'
 // shells and folding one onto the other would BE a redesign:
 //
 //  • overlay (default) — the dominant list/page search: a relative box with the
-//      magnifier absolutely pinned at left-3, the input carrying pl-9 pr-9, and the
+//      magnifier absolutely pinned at left-3, the input carrying pl-9 (and pr-9 while it holds a
+//      value or a trailing slot, pr-3 empty), and the
 //      trailing control absolutely pinned at right-2.5. Owns type="search",
 //      Escape-to-clear, and the size→height/radius scale.
 //  • inline — the ⌘K/⌘P palette shell: a rounded flex row (bg lives on the parent
@@ -195,11 +196,15 @@ export function SearchField({
     )
   }
 
-  // overlay: magnifier pinned left-3, input pl-9 pr-9, clear pinned right-2.5.
+  // overlay: magnifier pinned left-3, input pl-9, clear pinned right-2.5. The end keeps the clear
+  // button's room (pr-9) only while there is something there to clear, or a trailing slot: an empty
+  // field gives it to its placeholder, so a narrow one (the sidebar's, at its narrowest) still reads
+  // "Search" whole.
+  const endRoom = (clearable && value) || trailingSlot ? 'pr-9' : 'pr-3'
   return (
     <div className="relative w-full">
       <Search size={14} className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-on-surface-low" />
-      <input {...inputProps} className={cx('w-full pl-9 pr-9', INPUT_CHROME, OVERLAY_FOCUS, OVERLAY_SIZE[size], SEARCH_SURFACE[surface])} />
+      <input {...inputProps} className={cx('w-full pl-9', endRoom, INPUT_CHROME, OVERLAY_FOCUS, OVERLAY_SIZE[size], SEARCH_SURFACE[surface])} />
       <div className="absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center gap-1">
         {clearable && <ClearButton show={!!value} onClear={() => onChange('')} label={clearLabel} />}
         {trailingSlot}
