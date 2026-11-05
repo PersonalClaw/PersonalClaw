@@ -730,11 +730,13 @@ def test_desktop_kind_delegates_to_the_app_and_exits_zero(
 
     cli_server._update()
 
-    # The delegation must name WHERE the new version comes from. "the app updates itself"
-    # (the wording this asserted before #2673) described the unbuilt electron-updater half
-    # of the desktop update path, so a reader followed an instruction with nothing behind it.
+    # The delegation must name how the new version comes: the app's own update, asked for in
+    # its menu (`desktop/appUpdate.js`), and the releases page beside it. "The app updates
+    # itself" (the wording before #2673) named an updater nothing had built, so a reader
+    # followed an instruction with nothing behind it.
     out = capsys.readouterr().out
     assert "desktop install" in out
+    assert "Check for Updates…" in out
     assert "https://github.com/PersonalClaw/PersonalClaw/releases" in out
     assert not git.calls and not spawns
 

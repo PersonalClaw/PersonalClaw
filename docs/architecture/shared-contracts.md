@@ -418,7 +418,7 @@ leave the machine, `inventory.py:116`), `merged_in`, `records`, `arrives`, `comp
 | Memory's own tables | `memory_sources` and `memory_applied` in every `memory.db`; `consolidation_passes` in `learning.db`; `sessions_tri` in the disposable search index | inside their entries; `source_session` is removed from `memory.db` | | `memory_sources` closed; `memory_applied` open (an unreadable table reads as unseen) | its design's |
 | Learning proposals | the learning proposals store | unchanged entry; gains the kinds `memory_hold` and `follow_up` and a `payload` (a lesson's replacement is the landed `lesson_batch` question tagged `lesson_conflict`) | | as today | its design's |
 | Releases cache | `update_releases.json` | already ignored; gains `view: 2` and the fields of §16.2 | | open (an empty list) | 16.2 |
-| Desktop installers | `desktop-installers/<tag>/` | **ignored**: a cache refilled by a download, never in a snapshot; a name of its own, because an ignored name hides that name at every depth | | closed: an unverified file is deleted and never offered | 16.2 |
+| Desktop installers (**not built**, a later target: the app's own update keeps nothing in the home, §16.2) | `desktop-installers/<tag>/` | **ignored**: a cache refilled by a download, never in a snapshot; a name of its own, because an ignored name hides that name at every depth | | closed: an unverified file is deleted and never offered | 16.2 |
 | Browse replays | `browse/replays/<replay>/` | under the ignored `browse` row, its reason widened: "and the screenshots a browse run kept of its steps, which show pages the owner was signed in to: kept on this machine only, never in a snapshot, an export or a sync" | | | its design's |
 | A kept agent's sign-ins | `browse/agents/<ka id>/<site>/.meta.json` | under the ignored `browse` row, its reason widened again: "and each kept agent's own sign-in records under `browse/agents/`" | | | its design's |
 | Owner activity | `owner_activity.json` | new `owner_activity` (the away check's last sign of the owner) | machine state | open | its design's |
@@ -514,7 +514,7 @@ every resumption of unattended or interrupted work writes one row; a dry read wr
 | `guardrails.governance_check` | `personalclaw governance check` validates a file, written from its own process, valid or not (path digest, outcome, code) | 8.5 |
 | `incident.reviewed` | the owner adds the "What happened?" note | 16.1 |
 | `update.withdrawn_skipped`, `update.rolled_back` | the updater skips a withdrawn release; an automatic return to the last healthy release | 16.2 |
-| `update.installer_opened` | a verified desktop installer is handed to the shell to open (tag, SHA-256, size) | 16.2 |
+| `update.installer_opened` (**not built**, a later target: the shell has no audit writer, §16.2) | a verified desktop installer is handed to the shell to open (tag, SHA-256, size) | 16.2 |
 | `system.uninstall_started` | the owner's confirmed uninstall is handed to its executor | 8.7 |
 | `projects.defaults_changed` | a project's defaults are saved (the project, the keys changed, whether it loosened) | 13.3 |
 | `triggers.project_changed` | the owner moves an automation between projects | 13.5 |
@@ -4110,11 +4110,26 @@ Status: planned
   a missing or bad signature, a wheel the sums do not name, or another hash refuses with `502
   update_unverified`, and a release published before signing asks the owner. The updater runs only the
   `uv` the owner allowed (the `installers` book, §17.1; `update.installer_allowed`).
-- **Desktop installers.** A desktop update downloads the release's installer into
-  `<home>/desktop-installers/<tag>/` only when the owner asks, opens it only after its SHA-256 matches the
-  release's published checksum file (checked by the gateway and again by the shell), writes
-  `update.installer_opened`, and keeps the running release's and `previous_healthy`'s installers as the way
-  back.
+- **The desktop app's own update.** The shell checks the release list a minute after it starts and
+  once a day, follows `updates.channel` (and `updates.pin` while it runs its own gateway), and downloads
+  nothing until its owner presses Update (Settings › Updates › This app, Check for Updates…). Update
+  takes exactly the release's copy for this computer, from GitHub's release hosts, checked against the
+  size and `sha256` digest GitHub publishes for it as it streams, into a private folder of its own; on
+  macOS the app inside the image must carry this app's bundle id, the release's version, an intact seal
+  and this Mac's architecture. The private folder is the app's own (in its data folder, 0700), and a
+  quit, mid-download too, leaves nothing there that the next start does not remove, unless a disk image
+  in it can't be detached; that folder is left, and the log says so. Nothing beside the
+  app changes until the owner presses Restart to Finish the Update, and that press uses the copy only
+  while it is the one that was checked (the same folder, the owner's, 0700) and while `updates.pin` and
+  `updates.channel`, read again, still allow it; a check while it waits reads them again too. Only then
+  is the checked copy put beside the app, checked there against exactly the build the image held (its
+  CDHash), or the release's digest for an AppImage, and it takes the old one's place only
+  after the app has quit and stopped its gateway, and the
+  old copy is kept until the new one and its gateway are up (`desktop/appUpdate.js`). Every copy it
+  cannot replace, and every failure, is sent to the releases page. The shell has no audit writer of its
+  own, so it records no `sel()` row: it logs each step, and the next start says how the update ended.
+  Nothing checks who made a release yet: a release key (Ed25519, the owner's) is the hardening that
+  would.
 
 | An applied release | Becomes | When |
 |---|---|---|

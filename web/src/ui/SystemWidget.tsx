@@ -13,6 +13,9 @@ import { WidgetBoundary } from '../app/ErrorBoundary'
 import { NO_READING, fixedReading, isReading, percentReading } from '../lib/readings'
 import { connectionWords, useGatewayConnection } from '../app/gatewayConnection'
 import { applyUpdate, updatedOutside, useInstallKind } from '../app/applyUpdate'
+import { useAppUpdate } from '../app/appUpdate'
+import { desktopBridge } from '../lib/desktopBridge'
+import { AppUpdateControls, appUpdateOnOffer } from '../app/AppUpdateControls'
 
 /** Live system + auth health — the status line's connection, at the window's bottom left.
  *  - Collapsed (resting): the gateway connection, read from the shell's one reading of it
@@ -117,6 +120,7 @@ export function SystemWidget({ className }: {
               <RunningAgents open={open} />
             </WidgetBoundary>
 
+            <AppUpdateRow />
             <RestartControls onFired={() => setOpen(false)} />
 
             {auth && (
@@ -282,6 +286,20 @@ function RunningAgents({ open }: { open: boolean }) {
   )
 }
 
+/** The desktop app's own update, as a row of its own: only while a new version is on offer or an
+ *  update runs, and only in the app's windows on this computer's gateway (`AppUpdateControls`). The
+ *  gateway's Update below stays the gateway's, on the app's own gateway too: it says how that
+ *  install is updated, and does not update the app. */
+function AppUpdateRow() {
+  const update = useAppUpdate()
+  if (!update || !appUpdateOnOffer(update.state)) return null
+  return (
+    <div className="mt-3 border-t border-outline-variant/30 pt-2.5">
+      <AppUpdateControls update={update} place="popover" />
+    </div>
+  )
+}
+
 /** What an update that restarts does, as its confirm asks it, by how this install is updated. */
 const UPDATE_ASK: Record<string, string> = {
   git: 'Pull latest, rebuild, and restart the gateway?',
@@ -316,6 +334,9 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
   const [asking, setAsking] = useState(false)
   const kind = useInstallKind()
   const outside = updatedOutside(kind)
+  // In the app, the app's own row has an Update beside this one (`AppUpdateRow`): this one is named
+  // the gateway's, its label staying Update. Read once: the bridge doesn't come or go.
+  const [inTheApp] = useState(() => Boolean(desktopBridge()?.appUpdate))
 
   const update = async () => {
     setAsking(true)
@@ -382,6 +403,7 @@ function RestartControls({ onFired }: { onFired?: () => void }) {
             <RotateCw size={12} /> Restart
           </button>
           <button type="button" onClick={() => ask('update')} data-type="caption"
+            aria-label={outside && inTheApp ? 'Update the gateway' : undefined}
             className="flex items-center gap-1.5 rounded-lg bg-surface-high px-2 py-1 text-on-surface-var hover:bg-surface-highest hover:text-on-surface"
             style={{ borderRadius: 'var(--radius-md)' }}>
             <DownloadCloud size={12} /> {outside ? 'Update' : <>Update &amp; Restart</>}

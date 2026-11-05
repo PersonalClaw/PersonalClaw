@@ -139,8 +139,10 @@ program" is a hard requirement, stop here.
 **Walk away if:** an app without a publisher's signature, or an update you download and
 install yourself, is unacceptable.
 
-The Electron desktop shell is explicitly experimental, and it **has no auto-update
-channel** — the README's tech-stack note says exactly that. CI builds it for every
+The Electron desktop shell is explicitly experimental. It **updates itself only when you press
+for it** (Settings › Updates › This app), and what it checks is that a download is the file the
+release published, by the size and `sha256` digest GitHub states for it, not who made it: nothing
+signs the releases yet ([The desktop app → Updating](desktop.md#updating)). CI builds it for every
 release, which attaches a `.dmg` for Apple silicon, one for Intel Macs, and an x86-64 Linux
 AppImage and `.deb`. None carries a publisher's signature. The dmgs are ad-hoc signed and not
 notarized, because
@@ -149,7 +151,7 @@ on, so macOS Gatekeeper charges you one approval step per installed version; the
 files are unsigned, the platform norm ([The desktop app → Platforms](desktop.md#platforms)).
 
 The gateway itself updates fine (`personalclaw update`, plus **Settings → Updates**).
-It is the desktop *shell* that has no update channel. If you only need a window, the
+It is the desktop *shell*'s releases that carry no publisher's signature. If you only need a window, the
 dashboard in an ordinary browser tab is the supported path and always current.
 
 ## 7. You want it to live in a chat app it has no channel for

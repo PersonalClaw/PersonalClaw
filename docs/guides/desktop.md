@@ -813,39 +813,103 @@ tested backend paths today: [WSL2 or Docker Desktop](platforms.md#windows-via-ws
 
 ## Updating
 
-**Download the new version and install it over the old one** — from the
-[releases page](https://github.com/PersonalClaw/PersonalClaw/releases), the same place you
-got this one. Replace the AppImage, or `sudo apt install ./personalclaw-desktop_<new>_amd64.deb`
-over the installed package. Your data lives in `~/.personalclaw` and is untouched by either.
+**The app updates itself when you ask it to.** It looks for a new release a minute after it
+starts and then once a day, and says so in two places: **Settings › Updates › This app**, and a
+row in the System status card while a new version is on offer. **PersonalClaw › Check for
+Updates…** (on Linux, **Help › Check for Updates…**) looks now and opens This app. It takes two
+presses. **Update** downloads and checks the new version in the background, and changes nothing
+beside the app; when it is ready, This app and the row say **Restart to Finish the Update**. That
+press, once you confirm, installs it; the confirm says whether your gateway restarts with the app,
+and how many running agents that interrupts. Nothing is downloaded before the first press, and
+nothing in Applications changes before the second.
 
-There is **no in-app update yet**, and the app will not offer you one. Settings → Updates
-tells you when a newer release exists and then points here, and so do the System status card's
-**Update** (which restarts nothing here, so it asks nothing first) and Home's **Update available**,
-with a link to the releases page. Settings deliberately does not show the "Update" button that a
-pip or git install gets, because the shell owns this install: the backend inside the app is a frozen bundle with no interpreter to upgrade,
-so a new version is a new app. An auto-updater is planned — until it ships, the panel says what
-is actually true rather than promising an update that never arrives.
+What **Update** does:
 
-On a gateway the app did not start ([one already serving your home](#when-a-gateway-already-serves-your-home)),
-those controls are that gateway's: one installed with pip updates itself as it does in a browser,
-and the app follows it through the restart.
+1. The app reads the release list from GitHub and takes that release's copy for this computer
+   and nothing else: on macOS exactly `PersonalClaw-<version>-<arch>.dmg`, from an AppImage
+   exactly `PersonalClaw-<version>.AppImage`. The download goes to GitHub's release hosts only,
+   with no credential, into a private folder of its own in the app's own data folder (readable by
+   your account only, and never emptied by the system's temp cleaning), and is checked against
+   the size and `sha256` digest GitHub publishes for that file; a copy that differs is not used.
+2. On macOS the disk image is attached read-only, and the app in it must be `PersonalClaw.app`
+   with this app's bundle id (`io.personalclaw.app`), the release's version, an intact seal
+   (`codesign --verify --deep --strict`) and this Mac's architecture. It is copied out of the
+   image into that private folder, still sealed, and waits there. Quitting without finishing
+   removes it, a download still under way included; a folder a quit left behind is removed at
+   the next start, unless a disk image in it can't be detached; that folder is left, and the log
+   says so.
+3. While it waits, the home's update settings still hold: a pin or a channel set after Update that
+   no longer allows that version drops it, at the next check (Check now reads them again, and
+   asks GitHub only once they no longer allow it) or at Restart to Finish the Update.
+
+What **Restart to Finish the Update** does:
+
+4. The checked copy is used only while it is still the one that was checked: its folder the same
+   one, your account's and readable by you only. It is copied beside the running app as
+   `.PersonalClaw-<version>.app.incoming` and checked again there: the bundle id, the version,
+   this Mac's architecture, and exactly the build the disk image held (its CDHash); an AppImage
+   must still match the release's digest. A copy that is gone by then is no failure: the app
+   says so and offers Update again. The CDHash holds the copy to that build while it waits and
+   against other accounts on this Mac; it is no guard against a program running as you, which
+   could change the image as it downloads (an account that is already compromised is outside
+   the scope of [SECURITY.md](../../SECURITY.md)). Then the app quits as it always does (it
+   signs out and stops its gateway), and only then does the new copy take the old one's place:
+   the old one moves to
+   `.PersonalClaw-<old>.app.previous` beside it, the new one to `PersonalClaw.app`. The app starts
+   again, on the new copy.
+5. Once the new copy and its gateway are up, the old copy goes to the Trash. Until then it is kept:
+   if the new one doesn't start, move it to the Trash and rename the old one back (it is hidden;
+   in Terminal, `mv /Applications/.PersonalClaw-<old>.app.previous /Applications/PersonalClaw.app`).
+
+The next start says how it went: This app reads "Updated from 0.3.7 to 0.3.8.", or, when the new
+copy could not be put in place, that this copy is unchanged, and Settings › Updates opens on it.
+An AppImage replaces itself the same way, the old file kept beside it until the new one starts.
+Your data lives in `~/.personalclaw` and is untouched by any of it.
+
+**Where it can't update itself, it says why and points at the
+[releases page](https://github.com/PersonalClaw/PersonalClaw/releases)**, as every failure does:
+
+- a copy run from its disk image, or one macOS runs from a temporary copy because it was opened
+  where it was downloaded: move it to Applications first;
+- a copy renamed from `PersonalClaw.app`, or in a folder this account can't write to (a standard
+  account and `/Applications`);
+- the `.deb`: install the new package over it, `sudo apt install ./personalclaw-desktop_<new>_amd64.deb`;
+- a development run (`npm start`), which updates from its checkout.
+
+When you press **Restart to Finish the Update**, macOS may ask once whether PersonalClaw may change
+apps (System Settings › Privacy & Security › App Management): allow it, or decline and install from
+the releases page. **Update** alone never asks: it writes nothing in Applications. A permission macOS
+gave the old copy (the microphone, notifications) can be asked for again by the new one, as after
+installing it by hand: the app isn't notarized, so macOS ties those to each build.
+
+The System status card's own **Update** and Home's **Update available** stay the gateway's. On the
+app's own gateway they restart nothing and say how that install is updated: the app's Check for
+Updates…, or the releases page. On a gateway the app did not start
+([one already serving your home](#when-a-gateway-already-serves-your-home)), they are that
+gateway's: one installed with pip updates itself as it does in a browser, and the app follows it
+through the restart. The app's row is about the app alone. A browser tab, or a paired gateway's
+window, has no app to ask, so it shows neither This app nor the row.
 
 ### What the update settings still do here
 
-The `updates` block is honored on this install even though the apply is manual, because it
-governs what the app *tells* you:
+The `updates` block is honored on this install, by the gateway's check and by the app's own; the
+app reads it from `~/.personalclaw/config.json` at each check, so a change in Settings holds from
+the next one. A file it can't read offers nothing: the pin it may hold is a limit the app won't
+drop, so This app says the file couldn't be read instead.
 
 - **Channel** (`updates.channel`) — `stable` (default) watches normal releases, `beta`
   watches release candidates too. `nightly` tracks a git branch, so it has no meaning for
-  a packaged app; the resolver treats it as `stable` here.
-- **Version pin** (`updates.pin`) — pin `0.1.3` and the panel stops reporting newer
-  releases as available, which is how you stay on a known-good build while you finish
-  something. It must be an exact release version; a pin that matches no published
-  release is flagged in the panel rather than silently stopping updates. Clear it to
-  follow the channel again.
+  a packaged app; the resolver and the app treat it as `stable` here.
+- **Version pin** (`updates.pin`) — pin `0.1.3` and neither the panel nor the app offers newer
+  releases, which is how you stay on a known-good build while you finish something. It must be
+  an exact release version; a pin that matches no published release is flagged rather than
+  silently stopping updates. Clear it to follow the channel again. The app follows the pin while
+  it runs its own gateway; a gateway it found serving your home is pinned by its own install. A
+  pin older than the app is said, not installed: the app doesn't roll back.
 - **Roll back** — download the older release from the
   [releases page](https://github.com/PersonalClaw/PersonalClaw/releases) and install it over
-  this one, then set `updates.pin` to that version so the panel stops nagging. Run
+  this one, then set `updates.pin` to that version so neither the panel nor the app offers the
+  newer one again. Run
   `personalclaw snapshot` first: pre-1.0 releases carry no data migrations in either
   direction. Your home then remembers the newer release, and the older app's gateway is refused
   it until the rollback is said to be meant, once, by a start of its own: quit the app, run the
@@ -855,14 +919,14 @@ governs what the app *tells* you:
   stop it with Ctrl-C once it serves, and open the app. The app never passes that variable on to
   its own gateway. (The one-click **Roll back to v&lt;previous&gt;** button is a git/pip
   affordance — there is nothing for it to install here.)
-- **Apply updates** (`updates.auto`) — not offered on this kind: the shell owns the install,
-  and nothing in it can replace a running app bundle, so `staged` notifies exactly as `off`
-  does. The field stays in the config because the same config file follows your
-  `~/.personalclaw` to other install kinds.
+- **Apply updates** (`updates.auto`) — not offered on this kind: the app installs only when you
+  press for it, so `staged` notifies exactly as `off` does. The field stays in the config
+  because the same config file follows your `~/.personalclaw` to other install kinds.
 - **Automatic update checks** (`updates.check_enabled` + `updates.check_interval_hours`) —
-  the same switch as everywhere else. Off, the update check makes **zero** calls to GitHub on
-  its own, so the panel reports a new release only when you press **Check now**. On, it asks when it
-  starts and then once every `check_interval_hours` (default 12).
+  the same switch as everywhere else. Off, neither the gateway nor the app asks GitHub on its
+  own: the panel's **Check now** and **Check for Updates…** each look once, when you press them.
+  On, the gateway asks when it starts and then once every `check_interval_hours` (default 12),
+  and the app a minute after it starts and then once a day.
 
 ## Related
 

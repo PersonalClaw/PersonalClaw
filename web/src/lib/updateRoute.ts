@@ -16,7 +16,7 @@ export function howAnUpdateArrives(kind: InstallKind | undefined): string {
     case 'container':
       return 'A container is updated from the host: it never changes itself, so a new version means pulling the new image and recreating the container. The exact commands are shown when one ships.'
     case 'desktop':
-      return 'When a new version ships, install it from the releases page and reopen the app. The app never updates on its own.'
+      return 'When a new version ships, the app offers it in Settings › Updates › This app: Update downloads it, and Restart to Finish the Update installs it. It never updates on its own.'
     default:
       return ''
   }

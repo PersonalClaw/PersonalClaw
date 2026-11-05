@@ -85,6 +85,16 @@ const IPC_CHANNELS = {
    * answer whether it opened. Handled by `registerSystemBrowserIpc`, which opens only an http or
    * https page, the rule every other door to the system browser follows. */
   systemBrowserOpen: `${IPC_PREFIX}system-browser-open`,
+  /** renderer → main: the app's own update (`appUpdate.js`): what it stands at, a check now, the
+   * download of the version the page's Update named, and Restart to finish for the version ready.
+   * Handled by `registerAppUpdateIpc`, which answers the app's own bridged windows only. Not a
+   * capability: it asks the OS for nothing. */
+  appUpdateStatus: `${IPC_PREFIX}app-update-status`,
+  appUpdateCheck: `${IPC_PREFIX}app-update-check`,
+  appUpdateDownload: `${IPC_PREFIX}app-update-download`,
+  appUpdateFinish: `${IPC_PREFIX}app-update-finish`,
+  /** main → renderer push: the app's update moved on (checked, downloading, ready, restarting, failed). */
+  appUpdateState: `${IPC_PREFIX}app-update-state`,
   /** renderer → main: this machine's buddy rows in Settings (#3901): where the buddy's window sits,
    * putting it back docked, and whether it is kept out of screen capture. Handled by
    * `registerBuddySettingsIpc` (`buddyWindow.js`), which answers the app's own bridged windows only. */

@@ -14,6 +14,8 @@ import { fvs } from '../../design/fontWeight'
 import { notify } from '../../app/appSdk'
 import { RELEASES_PAGE_URL, repoDocUrl } from '../../lib/repoDocs'
 import { howAnUpdateArrives } from '../../lib/updateRoute'
+import { useAppUpdate } from '../../app/appUpdate'
+import { AppUpdateControls } from '../../app/AppUpdateControls'
 
 /** Where an update's upgrade steps live: the CHANGELOG is headline-only, so they are in the docs. */
 export const UPGRADE_NOTES_DOC = 'docs/guides/getting-started.md#updating'
@@ -136,6 +138,8 @@ export function updateEntries(changes: string): string {
 }
 
 export function UpdatesPanel() {
+  // The desktop app's own update, in its windows on this computer's gateway only (This app).
+  const appUpdate = useAppUpdate()
   const [applying, setApplying] = useState(false)
   // Check now in flight. The status query's own `loading` is never true while this button shows:
   // the panel renders a skeleton until the first snapshot lands.
@@ -303,7 +307,7 @@ export function UpdatesPanel() {
   const isContainer = kind === 'container'
   const isDesktop = kind === 'desktop'
   const isGit = kind === 'git'
-  // Only git+pip apply in place; container shows commands, desktop self-updates.
+  // Only git+pip apply in place; container shows commands, the desktop app updates itself (This app).
   const canApplyInApp = isGit || kind === 'pip'
   const kindLabel = { git: 'Git checkout', pip: 'pip / uv install', container: 'Container', desktop: 'Desktop app' }[kind] ?? kind
   const channel = info.channel ?? 'stable'
@@ -432,19 +436,34 @@ export function UpdatesPanel() {
                 data-type="caption" className="overflow-auto leading-relaxed text-on-surface"><code>{info.instructions.join('\n')}</code></pre>
             </div>
           ) : null}
-          {/* Desktop: the SHELL owns updates, so there is no in-app apply. What the shell does
-              about it is a re-download today — the electron-updater half is unbuilt
-              (no electron-updater dependency in desktop/package.json, nothing in the shell
-              checks for a release), and this note promised a self-update on next launch for the
-              whole life of the shipped Linux artifact (issue 2673). Naming the release page is
-              the same answer `personalclaw update` gives on this kind. */}
+          {/* Desktop: the SHELL owns updates, so the gateway applies none. In the app, its own
+              update is This app, below (the app's own updater); elsewhere (a browser tab) the
+              release page is the way, the answer `personalclaw update` gives beside the app's
+              menu. A pin back to an older release is the releases page in both: the app does not
+              roll back. This note once promised a self-update on next launch that nothing
+              built (issue 2673). */}
           {isDesktop && (info.available || verdict === 'pin_older') && (
             <div data-type="caption" className="mt-3 rounded-md bg-surface-high px-3 py-2 text-on-surface-low">
-              Install the {verdict === 'pin_older' ? 'pinned' : 'new'} version from the <a className="underline" href={RELEASES_PAGE_URL} target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.
+              {appUpdate && verdict !== 'pin_older'
+                ? 'This app updates itself: see This app, below.'
+                : <>Install the {verdict === 'pin_older' ? 'pinned' : 'new'} version from the <a className="underline" href={RELEASES_PAGE_URL} target="_blank" rel="noreferrer noopener">releases page</a>, then reopen the app.</>}
             </div>
           )}
         </div>
       </Section>
+
+      {/* The desktop app on this computer, which updates itself: on launch and once a day it looks
+          for a release on this home's line (and its pin, while it runs its own gateway). It downloads
+          nothing until Update is pressed, and puts nothing in place until Restart to Finish the Update
+          (the app's own updater). Only in the
+          app's own windows: a browser tab or a paired gateway's page has no app to ask. */}
+      {appUpdate && (
+        <Section title="This app" hint="The PersonalClaw app on this computer. It looks for a new version when it starts and once a day, on the release line below, downloads nothing until you press Update, and changes nothing until you press Restart to Finish the Update.">
+          <div className="rounded-lg bg-surface-container px-4 py-3">
+            <AppUpdateControls update={appUpdate} place="settings" />
+          </div>
+        </Section>
+      )}
 
       {/* The licences, beside the version they are the licences of. Both notices are plain text at
           the dist root: the fonts' is tracked in web/public, and the packages' is written by the

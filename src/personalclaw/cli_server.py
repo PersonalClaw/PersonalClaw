@@ -845,16 +845,17 @@ def _update_desktop() -> None:
     wheel under it or re-execing it is the wrong move even where it would work (a packaged
     app has no interpreter to upgrade — the backend is a frozen PyInstaller bundle).
 
-    What the shell then does is a RE-DOWNLOAD, not an in-app update: the electron-updater
-    half of desktop updates is unbuilt (no electron-updater dependency in ``desktop/package.json``,
-    nothing in the shell checks for a release), so "accept the update it offers" named an
-    offer that never arrives (#2673). Restore that wording when the updater lands, not
-    before — the rail in ``tests/test_desktop_install_kind.py`` reds when it does.
+    The shell updates itself when its owner asks it to (``desktop/appUpdate.js``): Check for
+    Updates… in its menu, or Settings › Updates › This app, and never on its own. A copy it
+    cannot replace (a package, one run from the disk image) is pointed at the releases page,
+    so that is named too. Before that updater this named only the re-download (#2673), and
+    ``tests/test_desktop_install_kind.py`` holds every desktop surface to the updater as built.
 
     Exit code 0 for the same reason as the container branch.
     """
-    print("  🖥  This is a desktop install — the PersonalClaw app manages its own version.")
-    print("  Install the new version from the releases page, then reopen the app:")
+    print("  🖥  This is a desktop install — the PersonalClaw app updates it when you ask:")
+    print("  choose Check for Updates… in its menu, or Settings › Updates › This app.")
+    print("  Or install the new version from the releases page:")
     print("  https://github.com/PersonalClaw/PersonalClaw/releases")
 
 

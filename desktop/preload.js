@@ -49,6 +49,11 @@ const IPC_CHANNELS = {
   notify: `${IPC_PREFIX}notify`,
   notificationActivate: `${IPC_PREFIX}notification-activate`,
   systemBrowserOpen: `${IPC_PREFIX}system-browser-open`,
+  appUpdateStatus: `${IPC_PREFIX}app-update-status`,
+  appUpdateCheck: `${IPC_PREFIX}app-update-check`,
+  appUpdateDownload: `${IPC_PREFIX}app-update-download`,
+  appUpdateFinish: `${IPC_PREFIX}app-update-finish`,
+  appUpdateState: `${IPC_PREFIX}app-update-state`,
   buddyGetPlace: `${IPC_PREFIX}buddy-get-place`,
   buddyResetPlace: `${IPC_PREFIX}buddy-reset-place`,
   buddyGetHideFromCapture: `${IPC_PREFIX}buddy-get-hide-from-capture`,
@@ -220,6 +225,26 @@ contextBridge.exposeInMainWorld("pclawDesktop", {
     /** Resolves {ok, reason?}: a browser that did not open is an answer, so the page can offer
      * the link to open by hand. */
     open: (url) => ipcRenderer.invoke(IPC_CHANNELS.systemBrowserOpen, String(url ?? "")),
+  },
+
+  /** The app's own update (`appUpdate.js`). `status()` and `check()` resolve what it stands at:
+   * `{current, how, phase, available, checkedAt, progress, sentence, last, ready, releasesPage,
+   * restartsGateway}`. `download()` downloads and checks the version the page's Update named, in a
+   * private folder, and `finish()` is Restart to finish for the version ready; each resolves `{ok,
+   * sentence?}` at once, and the progress arrives on `on()`. Nothing downloads before `download()`,
+   * and nothing beside the app changes before `finish()`. */
+  appUpdate: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.appUpdateStatus),
+    check: () => ipcRenderer.invoke(IPC_CHANNELS.appUpdateCheck),
+    download: (version) => ipcRenderer.invoke(IPC_CHANNELS.appUpdateDownload, String(version ?? "")),
+    finish: (version) => ipcRenderer.invoke(IPC_CHANNELS.appUpdateFinish, String(version ?? "")),
+    /** Subscribe to the update's state as it moves on. Returns an unsubscribe fn. */
+    on: (cb) => {
+      if (typeof cb !== "function") return () => {};
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on(IPC_CHANNELS.appUpdateState, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.appUpdateState, handler);
+    },
   },
 
   /** This machine's buddy rows in Settings (#3901): where the buddy's window sits and whether it
