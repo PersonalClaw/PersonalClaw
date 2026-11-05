@@ -49,6 +49,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **Follow-up suggestions stop asking a failing model again on every page read. While the model that writes them was down, Home and a new chat asked it about 89 times a second, each a warning line in the gateway log. A refresh that failed now waits a minute, doubling while it keeps failing, up to half an hour; Refresh still asks at once.**
 - **A generated image in a chat that can't be loaded right now no longer reads as deleted. Only an image the gateway says is gone shows its prompt and offers Regenerate; any other failure says the image can't be shown, so a refused load never offers a model call.**
 - **The desktop app reaches the gateway it starts at the address that gateway listens on, `127.0.0.1`, where it used `localhost`.**
+- **An MCP server that pages its tool list shows every tool. Its list was read to the first page only, so every tool after it was missing from the Tools page's card, from agents and from the trust review. A list that never ends is read up to 50 pages, a server that sends the same page again has it listed once, a page after the first that fails keeps the ones read, and in each case its card says only the first ones are shown.**
 
 ### Security
 

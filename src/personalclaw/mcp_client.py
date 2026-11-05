@@ -90,6 +90,10 @@ _SWEEP_INTERVAL_SECS = 120.0
 _CLOSE_TIMEOUT_SECS = 10.0
 # The door a remote server's rows in the audit log name (`egress_fetch` from `mcp:mcp_server`).
 _EGRESS_DOOR = "mcp"
+#: The most pages of a server's tool list it is asked for (`McpServerConn._refresh_tools`). A list
+#: that has more is kept as far as it was read, and its card says so. The pages share the start's
+#: deadline, so a slow pager fails the start as a slow single page does.
+MAX_TOOL_PAGES = 50
 
 
 @dataclass
@@ -255,6 +259,8 @@ class McpServerConn:
         self._requests: asyncio.Queue[_Call] | None = None
         self._ready: asyncio.Event = asyncio.Event()
         self._tools: list[McpToolSpec] = []
+        #: What the card says when the tool list was not read to its end, or ``""``.
+        self._tools_note: str = ""
         self._error: str = ""
         # The last connection failed because the server wants its owner to sign in (again): it
         # answered 401 with a Bearer challenge, or its sign-in has ended (mcp_oauth).
@@ -563,7 +569,9 @@ class McpServerConn:
                     if deadline.expired() and self._stdio is not None:
                         self._stdio.stop_waiting()
                     raise
-                note_start(self.name, self._definition_seal(), tools=self._tools)
+                note_start(
+                    self.name, self._definition_seal(), tools=self._tools, note=self._tools_note
+                )
                 self._ready.set()
                 await self._serve(session, requests)
         except asyncio.CancelledError:
@@ -594,9 +602,10 @@ class McpServerConn:
         """Why this start failed, in `mcp_status`'s words. A stdio program that ended on its own
         exited; one still starting at the deadline, and left to finish, is still starting, as is a
         start that waited for an earlier one still finishing; one still running at the deadline
-        did not answer; one that closed its output and had to be stopped closed the connection.
-        Any other failure is the connection's own (:func:`_failure_text`), with the program's error
-        output as its detail."""
+        did not answer; one that closed its output and had to be stopped, or whose stream ended
+        (:func:`_stream_ended`), closed the connection, and so did a remote server whose stream
+        ended. Any other failure is the connection's own (:func:`_failure_text`), with the
+        program's error output as its detail."""
         run = self._stdio
         leaf = _leaf(exc)
         if isinstance(leaf, CommandNotFound):
@@ -614,11 +623,14 @@ class McpServerConn:
                 return exited(self.name, run.returncode, run.stderr)
             if timed_out:
                 return did_not_answer(self.name, self._connect_timeout, run.stderr)
-            if _connection_closed(leaf):
+            if _connection_closed(leaf) or _stream_ended(leaf):
                 return closed(self.name, run.stderr)
             return StartFailure(_failure_text(exc, "", self.name), detail=run.stderr.strip())
         if timed_out:
             return did_not_answer(self.name, self._connect_timeout)
+        if _stream_ended(leaf):
+            # The stream's own error has no message: its class name was the card's whole line.
+            return StartFailure(f"{self.name} closed its connection.")
         return StartFailure(_failure_text(exc, str(self.spec.get("url") or ""), self.name))
 
     async def _open_transport(self, stack: Any):
@@ -665,19 +677,87 @@ class McpServerConn:
         return await stack.enter_async_context(stdio_streams(self.name, self.spec, run=self._stdio))
 
     async def _refresh_tools(self, session: Any) -> None:
-        result = await session.list_tools()
+        """List the server's tools, following ``nextCursor`` page by page until the list ends.
+
+        A server may page its ``tools/list``, and reading only the first page left every tool
+        after it out of the card, the agents and the trust review, with nothing said. It stops
+        early at :data:`MAX_TOOL_PAGES`, at a cursor it was given before (a server that would send
+        it round the same pages for ever), or at a later page that fails. Each time it keeps what it
+        read, logs it, and leaves a note its card shows (``_tools_note``). A tool already read is
+        not listed again, so a server that ignores the cursor and sends its first page twice lists
+        it once.
+
+        The first page is asked for with no argument and the next with ``cursor=``, which every
+        ``mcp`` this package allows (``>=1.10``) takes; ``params=`` came in 1.18.
+
+        A later page that fails keeps the pages read, as when only the first page was read: a
+        remote server whose replica never saw the cursor answers "invalid cursor", and its first
+        page is listed and its tools called. The log names the server's error, its URL left out. A
+        failing first page, a closed connection (the SDK's CONNECTION_CLOSED, a broken stdio pipe, a
+        closed HTTP stream) and the start's deadline (``CancelledError`` is not an ``Exception``)
+        still fail the start.
+        """
         tools: list[McpToolSpec] = []
-        for t in getattr(result, "tools", None) or []:
-            tools.append(
-                McpToolSpec(
-                    name=getattr(t, "name", ""),
-                    description=getattr(t, "description", "") or "",
-                    input_schema=getattr(t, "inputSchema", None)
-                    or {"type": "object", "properties": {}},
-                    annotations=_annotations_of(t),
+        names: set[str] = set()
+        cursor: str | None = None
+        seen: set[str] = set()
+        pages = 0
+        why_stopped = ""
+        failed = ""
+        while True:
+            if cursor is None:
+                result = await session.list_tools()
+            else:
+                try:
+                    result = await session.list_tools(cursor=cursor)
+                except Exception as exc:
+                    leaf = _leaf(exc)
+                    if _connection_closed(leaf) or _stream_ended(leaf):
+                        raise  # the transport has ended: the start fails, as `_serve` reads it
+                    why_stopped = "failed to send the rest of its tool list"
+                    failed = _logged_failure(exc, str(self.spec.get("url") or ""))
+                    break
+            pages += 1
+            for t in getattr(result, "tools", None) or []:
+                name = getattr(t, "name", "")
+                if name in names:
+                    continue
+                names.add(name)
+                tools.append(
+                    McpToolSpec(
+                        name=name,
+                        description=getattr(t, "description", "") or "",
+                        input_schema=getattr(t, "inputSchema", None)
+                        or {"type": "object", "properties": {}},
+                        annotations=_annotations_of(t),
+                    )
                 )
-            )
+            following = getattr(result, "nextCursor", None)
+            if not following:
+                break
+            if following in seen or following == cursor:
+                why_stopped = "sent the same page of its tool list again"
+                break
+            if pages >= MAX_TOOL_PAGES:
+                why_stopped = f"listed more than {MAX_TOOL_PAGES} pages of tools"
+                break
+            seen.add(following)
+            cursor = following
         self._tools = tools
+        self._tools_note = (
+            f"{self.name} {why_stopped}, so PersonalClaw stopped reading it: the first "
+            f"{len(tools)} are shown."
+            if why_stopped
+            else ""
+        )
+        if why_stopped:
+            logger.warning(
+                "MCP server %r %s%s; keeping the first %d tools",
+                self.name,
+                why_stopped,
+                f" ({failed})" if failed else "",
+                len(tools),
+            )
 
     async def _serve(self, session: Any, requests: asyncio.Queue[_Call]) -> None:
         """Send the queued calls one at a time, until the connection ends.
@@ -751,6 +831,15 @@ def _connection_closed(exc: BaseException) -> bool:
     return isinstance(exc, McpError) and getattr(exc.error, "code", None) == CONNECTION_CLOSED
 
 
+def _stream_ended(exc: BaseException) -> bool:
+    """Whether *exc* is the transport's own "the stream has ended": a broken stdio pipe
+    (``BrokenResourceError``) or a closed HTTP stream (``ClosedResourceError``), which the
+    session raises on a send, as `_serve` reads them."""
+    import anyio
+
+    return isinstance(exc, (anyio.ClosedResourceError, anyio.BrokenResourceError))
+
+
 @dataclass(frozen=True)
 class StartResult:
     """What one start of a server found (:func:`try_start`)."""
@@ -767,6 +856,8 @@ class StartResult:
     #: It is still starting: it was left to finish, or it waited for an earlier start that was
     #: (`mcp_stdio`), and it is looked at again once that start ends.
     starting: bool = False
+    #: What its card says when its tool list was not read to its end, or ``""``.
+    note: str = ""
 
 
 async def try_start(name: str, spec: dict[str, Any], *, deadline: float, seal: str) -> StartResult:
@@ -791,6 +882,7 @@ async def try_start(name: str, spec: dict[str, Any], *, deadline: float, seal: s
         sign_in_needed=conn.sign_in_needed,
         timed_out=conn._timed_out,
         starting=failure is not None and failure.pending,
+        note=conn._tools_note,
     )
 
 
@@ -898,6 +990,17 @@ def _failure_text(exc: BaseException, url: str = "", server: str = "") -> str:
         from personalclaw.mcp_discovery import masked_url
 
         text = text.replace(url, masked_url(url))
+    return text[:300]
+
+
+def _logged_failure(exc: BaseException, url: str = "") -> str:
+    """A failure as the log says it: the error's own words, with the server's URL, which may carry
+    a credential, read as "<its URL>". The card shows that URL masked (:func:`_failure_text`); the
+    log keeps no part of it, the mask included."""
+    leaf = _leaf(exc)
+    text = str(leaf) or leaf.__class__.__name__
+    if url:
+        text = text.replace(url, "<its URL>")
     return text[:300]
 
 

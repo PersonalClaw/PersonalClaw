@@ -951,6 +951,11 @@ function GroupBlock({ g, openName, onOpen, onToggleServer, onEditServer, onRemov
           AuditPanel, PresetEmptyState, DesignCockpitPage ×2).
           🪤 This comment sits ABOVE the conditional on purpose: a `{…}` comment as the first child of a
           ternary branch is a second child where one expression is allowed, and it does not compile. */}
+      {/* A server whose tool list was not read to its end says so, above the tools that were: the
+          rest are missing from agents too. */}
+      {!waiting && !stopped && g.server?.note && (
+        <p role="note" data-type="body-s" className="mb-s text-on-surface-low">{g.server.note}</p>
+      )}
       {/* A server that waits, or that was stopped, has no tools to show, and its line above already
           says why. */}
       {waiting || stopped ? null : g.kind === 'mcp' && g.tools.length === 0 ? (

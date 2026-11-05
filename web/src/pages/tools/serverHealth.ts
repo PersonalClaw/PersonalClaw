@@ -6,7 +6,7 @@ export function serverHealth(s: McpServer): { state: string; tone: string; detai
   // Before `enabled`: a server that waits is off until its Allow, which also switches it on.
   if (s.status === 'waiting') return { state: 'waiting for your Allow', tone: 'var(--color-warn)', detail: s.error }
   if (!s.enabled) return { state: 'disabled', tone: 'var(--color-on-surface-low)' }
-  if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)' }
+  if (s.status === 'ready' || s.status === 'ok' || s.status === 'connected') return { state: 'ready', tone: 'var(--color-ok)', ...(s.note ? { detail: s.note } : {}) }
   // It failed to start again and again, and nothing starts it until Retry (`mcp_status.STOPPED`).
   if (s.status === 'stopped') return { state: 'failed — stopped retrying', tone: 'var(--color-danger)', detail: s.error }
   if (s.status === 'error') return { state: 'error', tone: 'var(--color-danger)', detail: s.error }

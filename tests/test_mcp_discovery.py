@@ -774,7 +774,7 @@ class TestProbeCache:
         _clear_cache()
 
     def test_cache_miss_returns_unknown(self) -> None:
-        status, tools, error, _ = _get_cached(McpServerInfo(name="nonexistent", command="x"))
+        status, tools, error, _, _ = _get_cached(McpServerInfo(name="nonexistent", command="x"))
         assert status == "unknown"
         assert tools == []
         assert error == ""
@@ -784,14 +784,14 @@ class TestProbeCache:
             name="test-srv", command="x", status="ok", tools=["t1", "t2"], error=""
         )
         _cache_probe(server)
-        status, tools, error, _ = _get_cached(McpServerInfo(name="test-srv", command="x"))
+        status, tools, error, _, _ = _get_cached(McpServerInfo(name="test-srv", command="x"))
         assert status == "ok"
         assert tools == ["t1", "t2"]
         assert error == ""
 
     def test_a_result_for_another_definition_is_not_this_servers(self) -> None:
         _cache_probe(McpServerInfo(name="test-srv", command="x", status="ok", tools=["t1"]))
-        status, tools, _, _ = _get_cached(McpServerInfo(name="test-srv", command="y"))
+        status, tools, _, _, _ = _get_cached(McpServerInfo(name="test-srv", command="y"))
         assert (status, tools) == ("unknown", [])
 
     def test_cache_error_preserved(self) -> None:
@@ -799,7 +799,7 @@ class TestProbeCache:
             name="err-srv", command="x", status="error", tools=[], error="timeout"
         )
         _cache_probe(server)
-        status, tools, error, _ = _get_cached(McpServerInfo(name="err-srv", command="x"))
+        status, tools, error, _, _ = _get_cached(McpServerInfo(name="err-srv", command="x"))
         assert status == "error"
         assert error == "timeout"
 
