@@ -11,7 +11,8 @@ import { HeaderActions, HeaderControl, inRowOrder } from './HeaderActions'
 // label on each choice) and lands at the end, and one that mounts later than those beside it does
 // too, so the index named another control's width, and the `…` listed its rows out of the row's
 // order (Knowledge's read Sources, Reports, Regenerate where the row reads Regenerate, Sources,
-// Reports). Each member is marked with its id in the probes now, and both read the DOM.
+// Reports). Each member is marked with its name in the probes now (each probe draws its own copy,
+// with an id of its own), and both read the DOM.
 
 function Row({ late, sources }: { late: boolean; sources: string }) {
   return (

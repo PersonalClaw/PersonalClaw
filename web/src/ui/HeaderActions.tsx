@@ -88,15 +88,14 @@ interface ClusterCtx {
   visibleIds: Set<number> | null
   register: (reg: ChildReg) => void
   unregister: (id: number) => void
-  /** The live row's slot after the `…`: the page's primary action draws there (`trailing`), so
-   *  the `…` sits left of it and the primary ends the row. Unset in the probes. */
-  trailing?: HTMLElement | null
+  /** The live row's slot after the `…` for the member *id*: the page's primary actions draw there
+   *  (`trailing`), each in a target of its own laid out in the row's order, so the `…` sits left of
+   *  them and they end the row. Unset in the probes. */
+  trailing?: (id: number) => HTMLElement | null
 }
 
 const Cluster = createContext<ClusterCtx | null>(null)
 
-/** *regs* in the row's order, as *place* (id → position) last read it from the DOM; one it has
- *  not placed yet keeps its place among the rest by registration. */
 /** A probe's marked members by name (`useHeaderChild`'s mark), in the row's order. Two members of
  *  one cluster with the same name would share one mark: a row should not hold two like that. */
 function membersIn(probe: HTMLElement | null): Map<string, HTMLElement> {
@@ -114,6 +113,8 @@ function samePlaces(a: Map<number, number>, b: Map<number, number>): boolean {
   return true
 }
 
+/** *regs* in the row's order, as *place* (id → position) last read it from the DOM; one it has
+ *  not placed yet keeps its place among the rest by registration. */
 export function inRowOrder<T extends { id: number }>(regs: T[], place: Map<number, number>): T[] {
   return regs
     .map((r, i) => ({ r, at: place.get(r.id) ?? Number.MAX_SAFE_INTEGER, i }))
@@ -138,7 +139,7 @@ export function useHeaderProbe(): boolean {
 /** Register a child control with the cluster. Returns whether this child should
  *  render itself VISIBLY (false → the container is showing it as a `…`-menu row in
  *  OVERFLOW, so the child renders nothing). Stable across renders for a given child. */
-export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; tier: Tier; mark: (node: ReactNode) => ReactNode } {
+export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; tier: Tier; mark: (node: ReactNode) => ReactNode; id: number } {
   const ctx = useContext(Cluster)
   const idRef = useRef<number>(0)
   if (!idRef.current) idRef.current = nextId()
@@ -166,7 +167,7 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
     // container's overflow math + menu labels stay correct.
   }, [ctx, id, reg.priority, reg.canIcon, reg.inOverflow, reg.trailing, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled,
     reg.menu.rows?.map((r) => `${r.label}\u0000${r.hint ?? ''}`).join('\u0001')])
-  if (!ctx) return { visible: !reg.inOverflow, tier: 'full', mark: (node) => node }
+  if (!ctx) return { visible: !reg.inOverflow, tier: 'full', mark: (node) => node, id }
   const visible = !reg.inOverflow && (ctx.tier !== 'overflow' || !ctx.visibleIds || ctx.visibleIds.has(id))
   // In the probes a member is marked with its name (`menu.label`), so the cluster reads its width,
   // and its place among the others, from the DOM rather than from the order it registered in
@@ -175,13 +176,9 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
   const mark = (node: ReactNode): ReactNode => (ctx.probe
     ? <span className="contents" data-header-member={reg.menu.label}>{node}</span>
     : node)
-  return { visible, tier: ctx.tier, mark }
+  return { visible, tier: ctx.tier, mark, id }
 }
 
-/** Draws a control where the cluster puts it: the page's primary action after the `…` (the live
- *  row's trailing slot), so the `…` never follows it; everything else, and every probe, in place.
- *  A portal keeps the React tree, and the slot follows the `…` in the DOM, so the tab order is the
- *  visual order. */
 /** Whether a member is the page's primary action, which ends the row after the `…`: a
  *  `variant="primary"` control, or one that holds the row by `priority="primary"` and opens no
  *  region (a disclosure such as the Session map keeps its place). The rule
@@ -190,9 +187,14 @@ export function isThePrimary(variant: string | undefined, priority: string | und
   return variant === 'primary' || (priority === 'primary' && ariaExpanded === undefined)
 }
 
-function usePlaced(trailing: boolean, mark: (node: ReactNode) => ReactNode): (node: ReactNode) => ReactNode {
+/** Draws a control where the cluster puts it: the page's primary action after the `…` (the live
+ *  row's trailing slot, in the target the cluster keeps for member *id*), so the `…` never follows
+ *  it; everything else, and every probe, in place. A portal keeps the React tree, and the slot
+ *  follows the `…` in the DOM, so the tab order is the visual order. A target of its own per member,
+ *  laid out in the row's order, means one that mounts late lands at its place rather than last. */
+function usePlaced(trailing: boolean, mark: (node: ReactNode) => ReactNode, id: number): (node: ReactNode) => ReactNode {
   const ctx = useContext(Cluster)
-  const slot = trailing && ctx && !ctx.probe ? ctx.trailing : null
+  const slot = trailing && ctx && !ctx.probe ? ctx.trailing?.(id) ?? null : null
   return (node) => (slot ? createPortal(node, slot) : mark(node))
 }
 
@@ -615,8 +617,29 @@ export function HeaderActions({ children, className, overflowClassName }: {
     return () => ro.disconnect()
   }, [regVersion])
 
-  // The live row's trailing slot, after the `…` (`usePlaced`): set once it mounts.
-  const [trailing, setTrailing] = useState<HTMLElement | null>(null)
+  // The live row's trailing slot, after the `…` (`usePlaced`): one target per primary member, in the
+  // row's order, each set once it mounts. A member that mounts late (a cockpit's Commit once git
+  // status arrives) lands at its place among them, and none of the others moves.
+  const trailingIds = useMemo(
+    () => inRowOrder([...regs.current.values()].filter((r) => r.trailing), domOrder).map((r) => r.id),
+    [regVersion, domOrder])
+  const [slots, setSlots] = useState<Map<number, HTMLElement>>(() => new Map())
+  const slotRefs = useRef(new Map<number, (el: HTMLElement | null) => void>())
+  const slotRef = (id: number) => {
+    let set = slotRefs.current.get(id)
+    if (!set) {
+      set = (el) => setSlots((prev) => {
+        if (el ? prev.get(id) === el : !prev.has(id)) return prev
+        const next = new Map(prev)
+        if (el) next.set(id, el)
+        else next.delete(id)
+        return next
+      })
+      slotRefs.current.set(id, set)
+    }
+    return set
+  }
+  const trailing = useCallback((id: number) => slots.get(id) ?? null, [slots])
   const ctx = useMemo<ClusterCtx>(() => ({ tier, visibleIds, register, unregister, trailing }), [tier, visibleIds, register, unregister, trailing])
 
   // The overflow menu's actions = children NOT kept visible (in overflow), lowest
@@ -672,8 +695,11 @@ export function HeaderActions({ children, className, overflowClassName }: {
               </motion.div>
             )}
           </AnimatePresence>
-          {/* The page's primary action, after the `…`: the row's last control (`usePlaced`). */}
-          <div ref={setTrailing} data-header-trailing className="flex items-center gap-s empty:hidden" />
+          {/* The page's primary actions, after the `…`: the row's last controls (`usePlaced`), each
+              in a target of its own, in the row's order. */}
+          <div data-header-trailing className={trailingIds.length ? 'flex items-center gap-s' : 'hidden'}>
+            {trailingIds.map((id) => <span key={id} ref={slotRef(id)} className="contents" />)}
+          </div>
         </div>
       </div>
     </Cluster.Provider>
@@ -790,14 +816,14 @@ export function HeaderControl({
   // The page's primary action, drawn after the `…`: a `variant="primary"` control, or one that
   // holds the row by `priority="primary"` and opens no region (the rail's rule, `isThePrimary`).
   const primary = isThePrimary(variant, priority, ariaExpanded)
-  const { visible, tier, mark } = useHeaderChild({
+  const { visible, tier, mark, id } = useHeaderChild({
     priority,
     canIcon: !!Icon,
     inOverflow,
     trailing: primary,
     menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick },
   })
-  const placed = usePlaced(primary, mark)
+  const placed = usePlaced(primary, mark, id)
   if (!visible) return mark(null) // container is showing this as a `…`-menu row
   // Rendering per tier:
   //  • FULL  → icon + label
@@ -867,13 +893,13 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
   disabled?: boolean
 }) {
   const primary = isThePrimary(variant, priority)
-  const { visible, tier, mark } = useHeaderChild({
+  const { visible, tier, mark, id } = useHeaderChild({
     priority,
     canIcon: true,
     trailing: primary,
     menu: { label, icon: Icon, disabled, rows: disabled ? items.map((it) => ({ ...it, disabled: true })) : items },
   })
-  const placed = usePlaced(primary, mark)
+  const placed = usePlaced(primary, mark, id)
   if (!visible) return mark(null)
   const iconOnly = tier === 'icon' || tier === 'overflow'
   return placed(
