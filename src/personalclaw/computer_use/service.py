@@ -314,6 +314,8 @@ def _remember(app: str, fingerprint: str, elements: list[dict[str, Any]]) -> Sna
     _SNAPSHOTS[snap.snapshot_id] = snap
     while len(_SNAPSHOTS) > MAX_LIVE_SNAPSHOTS:
         _SNAPSHOTS.pop(next(iter(_SNAPSHOTS)))
+    # A walk is the desktop in use: the dashboard's live view is shown while it is.
+    overlay.announce_activity()
     return snap
 
 

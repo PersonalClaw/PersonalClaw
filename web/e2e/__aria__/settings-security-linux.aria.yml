@@ -267,6 +267,9 @@
     - heading "Desktop capabilities" [level=#]
     - paragraph: Native permissions the PersonalClaw desktop app holds on this machine. Each one is granted by macOS, not by PersonalClaw — revoking it in <theme> Settings takes effect immediately, and nothing here can grant itself.
     - text: Desktop app not connected You are viewing this in a browser tab. Native capabilities — microphone, notifications, the menu-bar item — exist only while the PersonalClaw desktop app is running, so there is nothing to show or grant here.
+    - heading "Desktop control" [level=#]
+    - paragraph: Whether an agent may drive apps on this computer, and which. Only a file you write yourself in PersonalClaw's home (governance/computer_use.enable.json) switches it on, naming the apps; nothing in PersonalClaw can, so no agent can.
+    - text: Agents may drive this computer Off
   - region "Guardrails":
     - heading "Guardrails" [level=#]
     - paragraph: The personal safety floor — a daily spend ceiling, an outbound secret scan, circuit breakers for a failing provider and a failing tool loop, and a kill switch. The budget, scan and kill switch bind unattended work only; the breakers apply to any run, including this chat.
@@ -274,6 +277,10 @@
     - paragraph: Suspend ALL unattended work — cron jobs, hooks, event triggers, subagent spawns — at once. Interactive chat keeps working. Resume is explicit.
     - text: Incident mode Off — automation runs normally.
     - switch "Incident mode"
+    - heading "Unattended browsing" [level=#]
+    - paragraph: "Stop every unattended browse at once: one that runs parks within a step, and a new one does not start. Other automations and your chats keep running. Letting it run again is asked first."
+    - text: Unattended browsing On — unattended browse runs can start.
+    - switch "Unattended browsing" [checked]
     - heading "Daily budget" [level=#]
     - paragraph: Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. Each ceiling resets at midnight. # = unlimited.
     - text: Max tokens / day Counts every unattended call, local models' too. At the ceiling, unattended runs are skipped (a cron fire is paused, a subagent spawn refused) until it resets.

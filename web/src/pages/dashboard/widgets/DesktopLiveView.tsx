@@ -1,40 +1,35 @@
-import { useState } from 'react'
-import { Monitor } from 'lucide-react'
-import { api, type ComputerUseElement, type ComputerUseTrailPoint } from '../../../lib/api'
+import { useCallback } from 'react'
+import { api, type ComputerUseElement, type ComputerUseLiveView, type ComputerUseTrailPoint } from '../../../lib/api'
 import { useQuery } from '../../../lib/data'
+import { refreshKinds, useChatSocket, type WsMessage } from '../../../lib/useChatSocket'
 import { useVisiblePoll } from '../../../lib/useVisiblePoll'
 import { StatusPill, type StatusPillTone } from '../../../ui/StatusPill'
-import { Toggle } from '../../../ui/Toggle'
 import { relPast } from '../../schedule/scheduleMeta'
 import { epochSeconds } from '../../../lib/epoch'
-import { SlotEmptyState, WidgetRow } from './kit'
+import { WidgetRow } from './kit'
 
-/** Desktop live view + cursor-motion overlay.
+/** Desktop live view + cursor-motion overlay, shown on Home's Overview only while the agent is
+ *  driving this desktop.
  *
- *  The human-facing half of desktop computer use: an action feed of every attempt (allowed
- *  or refused, straight off the SEL), an optional live-view mirror of the window the agent
- *  last walked (the accessibility tree the model already read — this system reads trees,
- *  not pixels), and an optional cursor-motion overlay that draws a FAKE cursor where each
- *  approved action lands. The fake cursor exists only in this rendering: it is not the real
- *  pointer, paints nothing on the driven desktop, and exposes nothing a `computer_snapshot`
- *  walk or any capture of that desktop could see — which is "invisible to
- *  screen capture" satisfied by construction. EVERYTHING here is a mirror served by one GET;
- *  the widget can observe the capability and cannot exercise it, and the backend census
- *  (`tests/test_computer_use_live_view.py`) pins that the tool surface is unchanged with
- *  these views on.
+ *  The human-facing half of desktop computer use: a wireframe of the window the agent last walked
+ *  (the accessibility tree the model already read — this system reads trees, not pixels), a FAKE
+ *  cursor where each approved action lands, and the feed of every attempt, allowed or refused,
+ *  straight off the SEL. The fake cursor exists only in this rendering: it is not the real
+ *  pointer, paints nothing on the driven desktop, and exposes nothing a `computer_snapshot` walk
+ *  or any capture of that desktop could see. EVERYTHING here is a mirror served by one GET; the
+ *  band can observe the capability and cannot exercise it, and the backend census
+ *  (`tests/test_computer_use_live_view.py`) pins that the tool surface is unchanged.
  *
- *  🔑 THE POLL IS AN ARGUED EXCEPTION to DashboardLive's "no widget opens its own poll".
- *  That doctrine exists so the always-on widgets share one connection and one cadence — and
- *  this surface is the opposite shape: OFF by default, polled only while the operator has a
- *  view toggled on AND the tab is visible (`useVisiblePoll(_, null)` otherwise), and its
- *  slice is consumed by no other widget. Folding it into the shared FAST_POLL would charge
- *  every dashboard visitor a per-tick request for a capability most installs never arm. */
+ *  🔑 ONLY WHILE LIVE. The gateway says when the desktop is in use (`live`: an approved action or a
+ *  walk within the last 30 s, `computer_use/render.is_live`), and rings a `computer_use` refresh
+ *  hint at each action, so the band appears when a drive starts without anything polling a desktop
+ *  nobody drives. While it is live the band reads the view every few seconds, both the wireframe
+ *  and the cursor, until the read says it is not. Whether desktop control is armed, and which apps
+ *  it may drive, is said in Settings › Security, where it is configured; this band has no posture,
+ *  no switches and no preference of its own. */
 
-const MIRROR_KEY = 'computerUse.liveView'
-const OVERLAY_KEY = 'computerUse.cursorOverlay'
-
-/** How fast the mirror refreshes while a view is on. Faster than FAST_POLL because a click
- *  trail is stale in seconds; still visibility-gated, and zero when both views are off. */
+/** How fast the view refreshes while the desktop is live. A click trail is stale in seconds; still
+ *  visibility-gated, and nothing at all while it is not live. */
 const WATCH_POLL_MS = 2500
 
 /** Trail points actually drawn. The server keeps more history; the overlay is about the
@@ -57,11 +52,22 @@ function outcomeTone(outcome: string): StatusPillTone {
   return 'neutral'
 }
 
-function readPref(key: string): boolean {
-  try { return localStorage.getItem(key) === '1' } catch { return false }
-}
-function writePref(key: string, on: boolean) {
-  try { localStorage.setItem(key, on ? '1' : '0') } catch { /* opaque origin — session-only */ }
+/** The desktop live view as the gateway serves it, whether the desktop is live now, and whether the
+ *  last read failed. Read once when Home's Overview opens, again at each `computer_use` hint and
+ *  after a reconnect, and every few seconds while it is live. A read that fails keeps the last
+ *  answer: a band that was live stays, saying its read failed, until a read says otherwise, and one
+ *  that was not never appears on a guess. */
+export function useDesktopLive(): { view: ComputerUseLiveView | undefined; live: boolean; failed: boolean } {
+  // `async`, so a call that throws as it is made is a failed read, never a thrown render.
+  const { data, error, refresh } = useQuery('computer-use:live-view', async () => api.computerUseLiveView(), { persist: false })
+  const live = data?.live === true
+  const onMessage = useCallback((m: WsMessage) => {
+    if (refreshKinds(m).includes('computer_use')) refresh()
+  }, [refresh])
+  useChatSocket(onMessage, refresh)
+  // No idle back-off: a live mirror is watched WITHOUT input, and its cadence is the whole product.
+  useVisiblePoll(refresh, live ? WATCH_POLL_MS : null, { idleBackoff: false })
+  return { view: data, live, failed: Boolean(error) }
 }
 
 /** The drawing bounds: every mirrored frame plus every drawn trail point, padded. */
@@ -88,64 +94,19 @@ function stageBounds(boxes: ComputerUseElement[], points: ComputerUseTrailPoint[
   }
 }
 
-export function DesktopLiveView() {
-  const [mirrorOn, setMirrorOn] = useState(() => readPref(MIRROR_KEY))
-  const [overlayOn, setOverlayOn] = useState(() => readPref(OVERLAY_KEY))
-  const watching = mirrorOn || overlayOn
-
-  const { data, error, refresh } = useQuery('computer-use:live-view', () =>
-    api.computerUseLiveView(), { persist: false },
-  )
-  // Poll ONLY while a view is on and the tab visible — see the header comment for why this
-  // widget carries its own (gated) poll instead of a DashboardLive slice. No idle back-off: a
-  // live mirror is watched WITHOUT input, and its cadence is the whole product.
-  useVisiblePoll(refresh, watching ? WATCH_POLL_MS : null, { idleBackoff: false })
-
-  // A failed read must not render as a quiet desktop: "the agent is doing nothing" and
-  // "the gateway didn't answer" are different facts, and one of them is about your machine.
-  if (!data && error) {
-    return (
-      <SlotEmptyState icon={Monitor}>
-        Couldn&rsquo;t read the desktop live view.
-      </SlotEmptyState>
-    )
-  }
-  if (!data) return null
-
-  const setMirror = (on: boolean) => { setMirrorOn(on); writePref(MIRROR_KEY, on); if (on) refresh() }
-  const setOverlay = (on: boolean) => { setOverlayOn(on); writePref(OVERLAY_KEY, on); if (on) refresh() }
-
+export function DesktopLiveView({ view, failed = false }: { view: ComputerUseLiveView; failed?: boolean }) {
   // Tolerant reads on every wire array: a gateway older or newer than this widget (or a
   // partially-mocked test double) may omit any of them, and a dashboard widget must never
-  // crash the page it decorates — degrade to the empty state instead.
-  const newest = (data.snapshots ?? [])[0]
-  const boxes = mirrorOn && newest?.elements ? newest.elements.filter((el) => el.frame) : []
-  const drawable = (data.trail ?? []).filter((p) => p.x != null && p.y != null)
-  const points = overlayOn ? drawable.slice(-DRAWN_TRAIL) : []
-  const bounds = watching ? stageBounds(boxes, points) : null
+  // crash the page it decorates — degrade to drawing less instead.
+  const newest = (view.snapshots ?? [])[0]
+  const boxes = newest?.elements ? newest.elements.filter((el) => el.frame) : []
+  const points = (view.trail ?? []).filter((p) => p.x != null && p.y != null).slice(-DRAWN_TRAIL)
+  const bounds = stageBounds(boxes, points)
   const cursor = points.length > 0 ? points[points.length - 1] : null
-  const feed = (data.feed ?? []).slice(0, FEED_ROWS)
+  const feed = (view.feed ?? []).slice(0, FEED_ROWS)
 
   return (
     <div className="flex min-w-0 flex-col gap-s pt-xs">
-      {/* Posture + the two optional views. The pills state facts; the toggles change only
-          what THIS page draws — they configure no capability, which is the whole change. */}
-      <div className="flex flex-wrap items-center gap-m">
-        <StatusPill tone={data.enabled ? 'ok' : 'neutral'}>
-          {data.enabled ? 'Armed' : 'Off'}
-        </StatusPill>
-        {data.enabled && (
-          <span data-type="caption" className="text-on-surface-low">
-            {data.allowed_apps.length === 0
-              ? 'no apps allowlisted'
-              : `may drive: ${data.allowed_apps.join(', ')}`}
-          </span>
-        )}
-        <span className="flex-1" />
-        <Toggle size="sm" on={mirrorOn} onChange={setMirror} label="Live view" />
-        <Toggle size="sm" on={overlayOn} onChange={setOverlay} label="Cursor overlay" />
-      </div>
-
       {/* The PiP stage: a wireframe of the tree the model already read, with the fake
           cursor + motion trail over it. Screen coordinates, so the two layers agree. */}
       {bounds && (
@@ -217,31 +178,17 @@ export function DesktopLiveView() {
             {boxes.length > 0 && newest
               ? `${newest.app} · walked ${newest.age_secs}s ago${newest.expired ? ' · index expired' : ''} · ${newest.element_count} elements`
               : 'Cursor motion trail'}
-            {overlayOn && ' · the cursor drawn here is a fake — it never appears on your screen'}
+            {cursor && ' · the cursor drawn here is a fake — it never appears on your screen'}
           </figcaption>
         </figure>
       )}
-      {watching && !bounds && (
-        <p data-type="body-s" className="text-on-surface-low">
-          Nothing to draw yet — the mirror fills in when the agent walks a window or acts.
+      {failed && (
+        <p role="status" data-type="body-s" className="text-on-surface-low">
+          Couldn&rsquo;t read the desktop live view just now: this is what it showed last.
         </p>
       )}
 
-      {/* The action feed: every attempt, allowed or refused, straight off the audit log.
-          One SlotEmptyState per branch, each with a LITERAL body — the slot-empty-state
-          census reads the text between the tags, and a {ternary} body extracts as "". */}
-      {feed.length === 0 && data.enabled && (
-        <SlotEmptyState icon={Monitor}>
-          No desktop activity yet. Actions appear here the moment the agent drives an
-          allowlisted app.
-        </SlotEmptyState>
-      )}
-      {feed.length === 0 && !data.enabled && (
-        <SlotEmptyState icon={Monitor}>
-          Desktop computer use is off. If you arm it (an out-of-band step no agent can
-          take), every action shows up here live.
-        </SlotEmptyState>
-      )}
+      {/* The action feed: every attempt, allowed or refused, straight off the audit log. */}
       {feed.length > 0 && (
         <div className="flex flex-col gap-xs">
           {feed.map((row, i) => (

@@ -53,6 +53,10 @@ export const CACHE_NAMESPACES: Record<string, NamespacePolicy> = {
    *  busts it. */
   automations: COLLECTION,
   autonomy: CONFIG,
+  /** Unattended browsing's state (`GET /api/browse/status`): its kill switch and the sites whose
+   *  sign-in expired, read by Settings › Guardrails. LIVE: the switch can be flipped from another
+   *  tab or by a run's own stop. */
+  browse: LIVE,
   chat: COLLECTION,
   code: COLLECTION,
   companion: CONFIG,

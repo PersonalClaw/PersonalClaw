@@ -5157,8 +5157,10 @@ export interface ComputerUseFeedRow {
 // GET /api/computer-use/live-view — everything here is a MIRROR of state that already
 // exists in the gateway (the views grant nothing). Renders on any posture:
 // `enabled: false` is itself the most useful thing the view can say on a disarmed machine.
+// `live`: the agent acted on the desktop or walked one of its windows within the last 30 s
+// (`computer_use/render.is_live`); Home shows the view only while it is.
 export interface ComputerUseLiveView {
-  enabled: boolean; allowed_apps: string[]; ttl_secs: number
+  live: boolean; enabled: boolean; allowed_apps: string[]; ttl_secs: number
   snapshots: ComputerUseSnapshot[]; trail: ComputerUseTrailPoint[]; feed: ComputerUseFeedRow[]
 }
 
@@ -5187,6 +5189,9 @@ export interface BrowsePendingGrant {
   timeout: number
 }
 export interface BrowseStatus {
+  /** A browse took a step within the last 30 s (`browse/mirror.is_live`): Home shows its browse
+   *  live view only while one did. */
+  live?: boolean
   kill: BrowseKillState
   expired: BrowseExpiredSite[]
   grants: BrowsePendingGrant[]

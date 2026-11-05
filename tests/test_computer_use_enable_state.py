@@ -664,13 +664,16 @@ def test_the_packages_public_surface_is_pinned():
         # named `computer_*` for the reason nothing else here is, and
         # `tests/test_computer_use_live_view.py` additionally asserts by AST that neither
         # imports a driver nor reaches the dispatch — the views-grant-nothing floor.
+        # `announce_activity` only tells open pages that the desktop is in use, and `is_live`
+        # only reads whether it was in the last 30 seconds: what Home's band shows, no more.
         "overlay.py": [
             "TrailPoint",
+            "announce_activity",
             "motion_trail",
             "observe_action",
             "reset_trail",
         ],
-        "render.py": ["live_view"],
+        "render.py": ["is_live", "live_view"],
     }, (
         "the computer_use package grew a public function/class. If it is a dispatchable "
         "tool, name it computer_* so the keystone ratchet covers it and call "

@@ -104,10 +104,11 @@ const GROUP_EMPTY: Record<Group, string> = {
   recent: 'Nothing has finished lately, and you have no chats yet.',
 }
 
-/** The views Home's header switches between. A phone shows each by its glyph, named by its label. */
+/** The views Home's header switches between, in the owner's order: Overview on the left,
+ *  Attention on the right. A phone shows each by its glyph, named by its label. */
 export const HOME_VIEWS = [
-  { key: 'attention', label: 'Attention', icon: Hand },
   { key: 'overview', label: 'Overview', icon: LayoutGrid },
+  { key: 'attention', label: 'Attention', icon: Hand },
 ]
 
 type Shown = 'all' | Group
@@ -218,8 +219,11 @@ export function Home({ defaultView = 'overview', ...route }: RouteProps & { defa
     />
   )
   if (view === 'overview') {
+    // The column does not clip: its scroller is bounded by `min-h-0`, so the column's own
+    // `overflow-hidden` only cut, at the fold, the focus ring of whatever control lay on it (the UI
+    // matrix's clipped-ring check, on Schedule's "New trigger" at its viewport).
     return (
-      <div className="flex h-full flex-col overflow-hidden">
+      <div className="flex h-full flex-col">
         {header}
         <div className="min-h-0 flex-1 overflow-y-auto"><HomeOverview {...route} /></div>
       </div>

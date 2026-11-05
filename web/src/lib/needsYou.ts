@@ -99,7 +99,14 @@ export function waitingSubtitle(item: WaitingItem): string {
   switch (item.kind) {
     case 'approval': return firstLine(b.tool_purpose)
     case 'loop_question': return firstLine(b.why)
-    case 'browse_grant': return firstLine(b.scope)
+    case 'browse_grant': {
+      // What the browse panel's grant card said, which this card now carries alone: the sites it
+      // asks for (a list, which `firstLine` would read as nothing), and that silence refuses it.
+      const sites = Array.isArray(b.scope) ? b.scope.filter((h): h is string => typeof h === 'string' && h.trim() !== '') : []
+      return sites.length > 0
+        ? `It acts as you in your own browser, on ${sites.join(', ')}. Not answering refuses it.`
+        : 'It acts as you in your own browser, and names no site. Not answering refuses it.'
+    }
     case 'plan_review': return firstLine(record(b.step).objective)
     default: return ''
   }

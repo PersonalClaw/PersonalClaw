@@ -66,3 +66,25 @@ describe('Needs You', () => {
     expect(needsYou({ waiting: [null, 7, { id: '' }] } as unknown as WaitingList)).toEqual([])
   })
 })
+
+// A browser grant's card in Attention is where it is answered now that Home's Browse live view
+// shows only while a browse runs (a run parked on a grant takes no step), so it says what the
+// panel's card said: the sites the task asks for, and that not answering refuses it.
+describe("a browser grant's card", () => {
+  const grant = (scope: unknown) => waitingItem({
+    id: 'browse_grant:g1', kind: 'browse_grant', work: '', session: '',
+    brief: { task: 'Download my October invoices', scope, group: 'Download my October invoices' },
+    route: '#/mission-control',
+  })
+
+  it('names the sites it asks for, and that silence refuses it', () => {
+    const [row] = needsYou(list(grant(['billing.example.com', 'files.example.com'])))
+    expect(row.title).toBe('Download my October invoices')
+    expect(row.subtitle).toBe('It acts as you in your own browser, on billing.example.com, files.example.com. Not answering refuses it.')
+  })
+
+  it('says when it names no site, rather than listing none', () => {
+    const [row] = needsYou(list(grant([])))
+    expect(row.subtitle).toBe('It acts as you in your own browser, and names no site. Not answering refuses it.')
+  })
+})

@@ -9,9 +9,10 @@ import { Button } from '../../ui/Button'
 import { RungChip } from '../../ui/RungChip'
 import { rungMeta } from '../../lib/rungs'
 import { FormSkeleton, LoadError } from '../../ui/ListScaffold'
+import { confirm } from '../../ui/dialog'
 
-/** Guardrails — the personal safety floor. Five groups:
- *  the incident kill switch, daily spend budgets, the outbound secret/PII scan mode,
+/** Guardrails — the personal safety floor. Six groups:
+ *  the incident kill switch, the browse kill switch, daily spend budgets, the outbound secret/PII scan mode,
  *  the per-provider circuit-breaker tuning, and the tool-loop breaker's abort ceiling
  *  — plus a derived provider-health view. Budget/scan/breaker controls PATCH allowlisted
  *  guardrails.* config paths; incident is its own endpoint (not config).
@@ -78,6 +79,7 @@ export function GuardrailsPanel() {
       <PanelHeader title="Guardrails" hint="The personal safety floor — a daily spend ceiling, an outbound secret scan, circuit breakers for a failing provider and a failing tool loop, and a kill switch. The budget, scan and kill switch bind unattended work only; the breakers apply to any run, including this chat." />
 
       <IncidentSection />
+      <BrowseKillSection />
 
       <Section title="Daily budget" hint="Cap what your automations, Unattended loops, subagents and background work spend in a day; your chat turns and Attended loops, whose calls you answer, are not capped. Each ceiling resets at midnight. 0 = unlimited.">
         <RowGroup>
@@ -327,6 +329,62 @@ function IncidentSection() {
           <Toggle on={Boolean(state?.active)} disabled={busy || !state} onChange={toggle} label="Incident mode" />
         </Row>
       </div>
+    </Section>
+  )
+}
+
+/** The browse kill switch, beside the incident one: the scalpel that stops only UNATTENDED browsing
+ *  (a running browse parks within a step, a new one refuses to start), where the incident switch
+ *  stops every automation. Stopping is one click, as a safety stop is; letting it run again is
+ *  asked first, so a stop you chose is never undone by a stray click (`browse/killswitch`). It
+ *  lived on Home's Browse live view, which now shows only while a browse runs. A browse a chat
+ *  started is stopped by that chat's own Stop.
+ *
+ *  The sites whose saved sign-in expired are listed under it: nothing asks you about them until a
+ *  run needs one, and that run asks in Attention, beside every other ask, where it can be
+ *  answered. */
+export function BrowseKillSection() {
+  // `async`, so a call that throws as it is made is a failed read, never a thrown render.
+  const { data, error, refresh } = useQuery('browse:status', async () => api.browseStatus())
+  const [busy, setBusy] = useState(false)
+  const stopped = data?.kill?.active === true
+  const expired = Array.isArray(data?.expired) ? data.expired.filter((e) => typeof e?.site === 'string') : []
+
+  const toggle = async (on: boolean) => {
+    if (on && !(await confirm({
+      title: 'Let unattended browsing run again?',
+      body: 'Browse runs can start again, and one that was stopped where it parked can carry on.',
+      confirmLabel: 'Let browsing run',
+    }))) return
+    setBusy(true)
+    try {
+      if (on) await api.browseKillRelease()
+      else await api.browseKill('Stopped from Settings')
+      refresh()
+    } catch (e) {
+      notify(`Couldn't ${on ? 'let browsing run' : 'stop browsing'}: ${String((e as Error)?.message || e)}`, 'error')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Section title="Unattended browsing" hint="Stop every unattended browse at once: one that runs parks within a step, and a new one does not start. Other automations and your chats keep running. Letting it run again is asked first.">
+      <div className={`rounded-lg px-4 py-1 ${stopped ? 'bg-error/10 ring-1 ring-error/40' : 'bg-surface-container'}`}>
+        <Row label={stopped ? 'Unattended browsing is STOPPED' : 'Unattended browsing'}
+          hint={!data && error
+            ? `Couldn't check whether unattended browsing is stopped: ${String((error as Error)?.message || error)}`
+            : stopped ? `Stopped${data?.kill.reason ? ` — ${data.kill.reason}` : ''}. Switch on to let it run again.`
+            : data ? 'On — unattended browse runs can start.'
+            : 'Checking…'}>
+          <Toggle on={Boolean(data) && !stopped} disabled={busy || !data} onChange={toggle} label="Unattended browsing" />
+        </Row>
+      </div>
+      {expired.map((e) => (
+        <p key={e.site} role="status" data-type="body-s" className="mt-s text-on-surface-var">
+          <strong>Sign-in needed for {e.site}</strong>: its saved browse session expired. The next step
+          that uses it asks you to sign in, in the browser browse drives; PersonalClaw never sees what
+          you type.
+        </p>
+      ))}
     </Section>
   )
 }

@@ -51,13 +51,16 @@ async def api_browse_status(request: web.Request) -> web.Response:
     Values never cross this boundary — ``expired`` carries site slugs; a grant carries its task
     label, host scope and the fail-closed deadline, never a credential, cookie or token.
     """
-    from personalclaw.browse import killswitch
+    from personalclaw.browse import killswitch, mirror
     from personalclaw.browse.grant import pending_grants
     from personalclaw.browse.handoff import expired_sites
 
     kill = killswitch.get_kill()
     return web.json_response(
         {
+            # A browse took a step within the last 30 s (`browse.mirror.is_live`): Home shows its
+            # browse live view only while one did.
+            "live": mirror.is_live(),
             "kill": {"active": kill.active, "reason": kill.reason, "started_at": kill.started_at},
             "expired": expired_sites(),
             "grants": pending_grants(),

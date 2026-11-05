@@ -265,6 +265,24 @@ describe('the header', () => {
   })
 })
 
+describe('the View switch', () => {
+  // The owner's order: Overview on the left, Attention on the right. Order only: each address
+  // keeps the view it opens on.
+  it('reads Overview, then Attention', async () => {
+    render(<HomeHarness />)
+    await screen.findByText('Nothing is waiting on you.')
+    const view = screen.getByRole('radiogroup', { name: 'View' })
+    expect(within(view).getAllByRole('radio').map((r) => r.textContent?.trim() || r.getAttribute('aria-label'))).toEqual(['Overview', 'Attention'])
+  })
+
+  it('and each address keeps the view it opens on', async () => {
+    const { HOME_VIEWS } = await import('./Home')
+    expect(HOME_VIEWS.map((v) => v.key)).toEqual(['overview', 'attention'])
+    // Mission Control opens on Attention and the old home on Overview, whatever the order (#5880).
+    expect(readSource(join(process.cwd(), 'src/app/App.tsx'))).toMatch(/case 'mission-control': return <Home \{\.\.\.r\} defaultView="attention" \/>/)
+  })
+})
+
 describe('the route is Home', () => {
   const app = () => readSource(join(process.cwd(), 'src/app/App.tsx'))
 

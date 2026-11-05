@@ -29,9 +29,14 @@ dispatch would not have handed the model.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from personalclaw.computer_use import enable_state, gate, overlay, service
+
+#: How recently the agent must have acted on the desktop, or walked one of its windows, for the
+#: desktop to be in use now (:func:`is_live`). The dashboard shows its desktop live view only then.
+LIVE_SECS = 30.0
 
 #: How many SEL rows the action feed shows. A view of "what is the agent doing", not an
 #: audit surface — ``GET /api/security/audit`` is the paginated, filtered read for history.
@@ -118,6 +123,22 @@ def _feed_rows(limit: int) -> list[dict[str, Any]]:
     return rows
 
 
+def _wall() -> float:
+    """The clock a trail point's ``ts`` is on. A named seam so a test can move time."""
+    return time.time()
+
+
+def is_live() -> bool:
+    """Whether the agent is driving the desktop now: an approved action landed (the overlay's
+    trail) or a window was walked (the snapshots the dispatch holds) within :data:`LIVE_SECS`.
+    A read of what already happened, like everything here: it decides nothing."""
+    trail = overlay.motion_trail(1)
+    if trail and _wall() - float(trail[-1].get("ts") or 0.0) <= LIVE_SECS:
+        return True
+    now = service._now()  # the clock a snapshot's `taken_at` is on
+    return any(now - snap.taken_at <= LIVE_SECS for snap in service.live_snapshots())
+
+
 def live_view(*, feed_limit: int = FEED_LIMIT, trail_limit: int = overlay.MAX_TRAIL) -> dict:
     """The whole view model, in one read. Renders on ANY posture, decides nothing.
 
@@ -125,9 +146,11 @@ def live_view(*, feed_limit: int = FEED_LIMIT, trail_limit: int = overlay.MAX_TR
     at them; ``snapshots`` is the mirror; ``trail`` is the cursor-motion overlay's data;
     ``feed`` is the attempt history the SEL already holds. ``ttl_secs`` ships so the view can
     say *when* the mirrored window stops being actable without hardcoding the dispatch's
-    number a second time.
+    number a second time. ``live`` is :func:`is_live`: the dashboard shows the view only while it
+    is true.
     """
     return {
+        "live": is_live(),
         "enabled": enable_state.is_enabled(),
         "allowed_apps": [_scrub(app) for app in enable_state.allowed_apps()],
         "ttl_secs": service.SNAPSHOT_TTL_SECS,

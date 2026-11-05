@@ -6,48 +6,32 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
-        "button \"Stop all browsing\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=switch] \"Cursor overlay\"",
-        "button[role=switch] \"Live view\""
+        "button[role=radio] \"Overview\""
       ],
       "390": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
-        "button \"Stop all browsing\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=switch] \"Cursor overlay\"",
-        "button[role=switch] \"Live view\""
+        "button[role=radio] \"Overview\""
       ],
       "412": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
-        "button \"Stop all browsing\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=switch] \"Cursor overlay\"",
-        "button[role=switch] \"Live view\""
+        "button[role=radio] \"Overview\""
       ],
       "768": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
-        "button \"Stop all browsing\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=switch] \"Cursor overlay\"",
-        "button[role=switch] \"Live view\""
+        "button[role=radio] \"Overview\""
       ]
     },
     "known": {
@@ -64,48 +48,32 @@
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
-        "button \"Stop all browsing\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=switch] \"Cursor overlay\"",
-        "button[role=switch] \"Live view\""
+        "button[role=radio] \"Overview\""
       ],
       "390": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
-        "button \"Stop all browsing\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=switch] \"Cursor overlay\"",
-        "button[role=switch] \"Live view\""
+        "button[role=radio] \"Overview\""
       ],
       "412": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
-        "button \"Stop all browsing\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=switch] \"Cursor overlay\"",
-        "button[role=switch] \"Live view\""
+        "button[role=radio] \"Overview\""
       ],
       "768": [
         "button \"Dismiss — don't suggest this again\"",
         "button \"New task\"",
         "button \"Open Chat\"",
         "button \"See all # in Discover\"",
-        "button \"Show # suppressed by a gate\"",
-        "button \"Stop all browsing\"",
         "button[role=radio] \"Attention\"",
-        "button[role=radio] \"Overview\"",
-        "button[role=switch] \"Cursor overlay\"",
-        "button[role=switch] \"Live view\""
+        "button[role=radio] \"Overview\""
       ]
     },
     "known": {

@@ -1,13 +1,11 @@
-import { useState } from 'react'
 import { MoreRow } from '../../../ui/MoreRow'
-import { CalendarClock, ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { CalendarClock, Plus } from 'lucide-react'
 import { useDashboardLive } from '../DashboardLive'
 import { statusMeta, relPast, relFuture } from '../../schedule/scheduleMeta'
 import { epochSeconds } from '../../../lib/epoch'
 import { SlotEmptyState, SlotAction, WidgetRow, StatusDot } from './kit'
 import { ListSkeleton } from '../../../ui/ListScaffold'
 import { partitionRuns } from './scheduleFold'
-import { Button } from '../../../ui/Button'
 import type { RouteProps } from '../../../app/useQueryState'
 import { rowSubject } from '../../../lib/rowSubject'
 
@@ -31,11 +29,7 @@ function rel(ts?: number | string | null): string {
  *  cross-trigger "next fire" index is surfaced; today the backend history endpoint
  *  is the runs index.) */
 export function ScheduleWidget({ navigate }: RouteProps) {
-  const { schedule, scheduleDidIds, scheduleSuppressed, read } = useDashboardLive()
-  // Suppressed rows are archived out of the default view; the disclosure reveals them on demand.
-  // Collapsed by default because the runs inbox is for what the machine
-  // DID — the fold IS the archive, not a nicety layered over an already-crowded list.
-  const [showSuppressed, setShowSuppressed] = useState(false)
+  const { schedule, scheduleDidIds, read } = useDashboardLive()
 
   if (schedule.length === 0) {
     // 🔴 THE ONE SLOT ON THE FIRST SCREEN THAT TAUGHT NOTHING. Measured on a fresh install
@@ -68,22 +62,17 @@ export function ScheduleWidget({ navigate }: RouteProps) {
     )
   }
 
-  // 🔴 the ARCHIVE SPLIT as a FOLD. The backend has returned `did_ids`;
-  // they first only ordered the list work-first, but ordering only helps until the real fires run
-  // out — a minutely trigger inside quiet hours still buried the ONE fire that ran under 11 gate
-  // hits once the visible slots filled. So the suppressed rows now archive behind a disclosure:
-  // the default view is work, and "zero silent drops" holds because they are one
-  // click away, not gone. `partitionRuns` is the single shared copy of the split — membership
-  // comes from the SERVER's `did_ids`, never from re-testing `is_inert` here (a second copy drifts
-  // the moment a new `skipped_*` outcome lands).
+  // 🔴 ONLY WHAT RAN. The backend returns `did_ids`, the fires that did something; the others were
+  // held (quiet hours, a condition, a rung) and are not Home's to show: the card says what ran, and
+  // when nothing did it says so and nothing more. Held fires stay listed in Automations' history.
+  // `partitionRuns` is the single shared copy of the split — membership comes from the SERVER's
+  // `did_ids`, never from re-testing `is_inert` here (a second copy drifts the moment a new
+  // `skipped_*` outcome lands).
   //
   // Outcomes render via the SHARED `statusMeta`: `/api/triggers/history` returns
   // FireRecord rows whose typed value is `outcome` (`ran | skipped_gate | blocked_injection | …`),
   // not `status`, so a local mapper would render a quiet-hours suppression as "ran".
-  const { did, suppressed } = partitionRuns(schedule, scheduleDidIds)
-  // The count comes from the SERVER (`scheduleSuppressed`, the full-window tally) rather than
-  // `suppressed.length`, which only sees the page fetched — the label must not shrink to the fold.
-  const visible = showSuppressed ? [...did, ...suppressed] : did
+  const { did: visible } = partitionRuns(schedule, scheduleDidIds)
 
   // 🔴 EVERY READ HERE NOW RESOLVES ON THE SHAPE THIS WIDGET ACTUALLY RECEIVES (issue 466). The
   // endpoint was re-pointed underneath this file: `/api/triggers/history` used to return raw
@@ -124,32 +113,16 @@ export function ScheduleWidget({ navigate }: RouteProps) {
 
   return (
     <div className="flex flex-col gap-xs pt-xs">
-      {did.length === 0 && !showSuppressed && (
+      {/* Said plainly: nothing worth your attention ran. Held fires are in Automations' history. */}
+      {visible.length === 0 && (
         <p data-type="body-m" className="px-xs text-on-surface-low">
-          Nothing ran recently — every recent fire was held by a gate.
+          Nothing ran recently.
         </p>
       )}
       {visible.slice(0, 6).map(row)}
-      {/* 🔑 THIS FILE ALREADY SETS THE STANDARD IT WAS MISSING. Its disclosure below reveals the rows
-          an archive fold hides, and its comment insists that count come from the SERVER's full-window
-          tally because "the label must not shrink to the fold" — while a second, silent truncation sat
-          right here, cutting the visible rows at six with nothing said. Same principle, applied to the
-          cap: `visible` is what the fold decided to show, so the residue is measured against it. */}
+      {/* The six-row cap is said, never silent: `visible` is what ran, so the residue is measured
+          against it. */}
       <MoreRow total={visible.length} shown={6} />
-      {scheduleSuppressed > 0 && (
-        <Button
-          variant="ghost"
-          size="xs"
-          ariaExpanded={showSuppressed}
-          onClick={() => setShowSuppressed((v) => !v)}
-          className="self-start px-xs text-on-surface-low"
-        >
-          {showSuppressed ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          {showSuppressed
-            ? `Hide ${scheduleSuppressed} suppressed by a gate`
-            : `Show ${scheduleSuppressed} suppressed by a gate`}
-        </Button>
-      )}
     </div>
   )
 }
