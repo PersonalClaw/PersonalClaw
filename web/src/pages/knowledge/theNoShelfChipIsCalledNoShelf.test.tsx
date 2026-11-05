@@ -61,9 +61,9 @@ async function shelfSection(): Promise<HTMLElement> {
 }
 /** Each row's words (its label, then any count). */
 const rows = (section: HTMLElement) => within(section).getAllByRole('button').map((b) => b.textContent?.trim())
-/** The rows the section has chosen: the one with the check. */
-const chosen = (section: HTMLElement) => within(section).getAllByRole('button')
-  .filter((b) => b.querySelector('svg.text-primary')).map((b) => b.textContent?.trim())
+/** The rows the section has chosen, as a screen reader hears them: pressed. */
+const chosen = (section: HTMLElement) => within(section).queryAllByRole('button', { pressed: true })
+  .map((b) => b.textContent?.trim())
 
 beforeEach(() => {
   vi.resetModules()

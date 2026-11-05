@@ -310,8 +310,9 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // asserted in the test below, which is the one that would catch that matcher silently matching
     // nothing — the whole population floor is too coarse to notice six missing). 22 since the shell's
     // content-width pill, one of the 23, was removed with its file (#5718); 21 since Chat history's
-    // tag filter became its header filter's Tag section, whose rows mark the choice with a check; 19
-    // since Memory's view strip and kind chips moved into its page header (a radiogroup and a filter).
+    // tag filter became its header filter's Tag section; 19 since Memory's view strip and kind chips
+    // moved into its page header (a radiogroup and a filter). The header filter's sections are named
+    // groups of pressed rows (`ui/FilterMenu`), held below with the other named groups.
     expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(19)
     for (const rel of ['pages/settings/NotificationRulesMatrix.tsx', 'pages/settings/PersonalityPicker.tsx']) {
       expect(groups.map((g) => g.rel), `${rel} delegates, and must still be COUNTED`).toContain(rel)
@@ -361,6 +362,9 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
       ['pages/chat/composer/ContextPickers.tsx', /role="group" aria-label="Knowledge to attach"/],
       ['pages/agents/AgentForm.tsx', /role="group" aria-label=\{label\}/],
       ['pages/loops/LoopPlanReview.tsx', /role="group" aria-label=\{label\}/],
+      // The header filter's sections (Chat history's tags, Knowledge's shelves, the Store's
+      // categories and sources): each a group named by its title, its rows pressed when chosen.
+      ['ui/FilterMenu.tsx', /role="group" aria-labelledby=\{titleId\}/],
     ]
     for (const [rel, re] of named) {
       const src = stripComments(readSource(join(SRC, rel)))

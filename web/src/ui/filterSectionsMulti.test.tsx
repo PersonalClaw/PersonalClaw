@@ -22,9 +22,8 @@ describe('toggledKey', () => {
   })
 })
 
-/** The rows the section has chosen: the ones with the check. */
-const chosen = () => screen.getAllByRole('button')
-  .filter((b) => b.querySelector('svg.text-primary')).map((b) => b.textContent?.trim())
+/** The rows the section has chosen, as a screen reader hears them: pressed. */
+const chosen = () => screen.queryAllByRole('button', { pressed: true }).map((b) => b.textContent?.trim())
 
 function Tags() {
   const [value, setValue] = useState('')

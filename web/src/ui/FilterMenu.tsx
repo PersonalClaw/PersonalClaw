@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useId, useMemo, type ReactNode } from 'react'
 import { SlidersHorizontal, Check, type LucideIcon } from 'lucide-react'
 import { Popover } from './Popover'
 import { FilterRow } from './FilterRow'
@@ -124,11 +124,14 @@ export function FilterSections({ sections, close }: { sections: FilterSectionDef
   )
 }
 
+/** One choice set of the menu: a group named by its title, so a screen reader says which set a
+ *  row is in ("Type", "Shelf") as the old chip rows' groups did. */
 function Section({ title, onClear, children }: { title: string; onClear?: () => void; children: ReactNode }) {
+  const titleId = useId()
   return (
-    <div className="flex flex-col gap-0.5">
+    <div role="group" aria-labelledby={titleId} className="flex flex-col gap-0.5">
       <div className="flex items-center justify-between px-2 pb-0.5">
-        <span data-type="caption" className="text-on-surface-low uppercase tracking-wide">{title}</span>
+        <span id={titleId} data-type="caption" className="text-on-surface-low uppercase tracking-wide">{title}</span>
         {onClear && <TextLink onClick={onClear} size="xs">Clear</TextLink>}
       </div>
       {children}
@@ -144,9 +147,12 @@ function Row({ option, selected, onClick }: { option: FilterOption; selected: bo
       {/* The row itself is `ui/FilterRow` — the App Store's persistent
           category/source rail renders the same one, because it and this dropdown are one
           control at two viewport widths. The selected-row tint lives there. */}
-      <FilterRow label={option.label} count={option.count} icon={Icon} selected={selected}
+      {/* `pressed` says which row is chosen: the check is drawn for the eye, and a screen reader
+          heard the same label for the chosen row and the rest (the chips these rows replaced
+          announced it). */}
+      <FilterRow label={option.label} count={option.count} icon={Icon} selected={selected} pressed={selected}
         onClick={onClick}
-        trailing={selected ? <Check size={14} className="relative shrink-0 text-primary" /> : undefined} />
+        trailing={selected ? <Check size={14} aria-hidden className="relative shrink-0 text-primary" /> : undefined} />
     </>
   )
 }

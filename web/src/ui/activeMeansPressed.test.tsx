@@ -19,7 +19,7 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //   `IconButton`     ui/IconButton.tsx      **2 call sites** (composer optimize + mic)
 //
 // (Knowledge's `FilterChip` rows are gone since: the library's type, curation, archived and shelf
-// choices are sections of the header's filter, whose rows mark the choice with a check.)
+// choices are sections of the header's filter, whose rows are pressed when chosen, below.)
 //
 // 🔑 SO THE FIX BELONGS IN THREE PRIMITIVES, NOT AT 24 CALL SITES — and the contract is already written
 // down in `Button`'s own doc: *"a button acting as a SELECTED/UNSELECTED choice must announce that state,
@@ -176,6 +176,14 @@ describe('the population this reaches, so the primitives were the right place', 
 
   it('HeaderControl has 14 active call sites', () => {
     expect(callSites('HeaderControl').length).toBeGreaterThanOrEqual(14)
+  })
+
+  it("the header filter's rows announce their state, as Knowledge's chips did", () => {
+    // The chips' choices are `FilterSections` rows now (`HeaderFilter`, on every page that had a
+    // chip row or a filter rail), drawn by `FilterRow`: the chosen one must be pressed, not only
+    // tinted and checked, or a screen reader hears the same row whichever is chosen.
+    expect(readSource(join(SRC, 'ui/FilterMenu.tsx'))).toMatch(/<FilterRow [^>]*selected=\{selected\} pressed=\{selected\}/)
+    expect(readSource(join(SRC, 'ui/FilterRow.tsx'))).toMatch(/aria-pressed=\{pressed\}/)
   })
 
   it('IconButton has 2 — small, and one of them is a recording state', () => {

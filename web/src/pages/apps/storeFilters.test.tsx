@@ -114,14 +114,13 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 async function section(title: string): Promise<HTMLElement> {
   const trigger = await findHeaderFilter()
   if (trigger.getAttribute('aria-expanded') !== 'true') await userEvent.click(trigger)
-  const heading = await screen.findByText(title, { selector: 'span' })
-  return heading.parentElement!.parentElement as HTMLElement
+  return screen.findByRole('group', { name: title })
 }
 /** A section's rows, by their words (the count stripped). */
 const rows = (el: HTMLElement) => within(el).getAllByRole('button').map((b) => (b.textContent ?? '').replace(/\d+$/, '').trim())
-/** The rows a section has chosen: the ones with the check. */
-const chosen = (el: HTMLElement) => within(el).getAllByRole('button')
-  .filter((b) => b.querySelector('svg.text-primary')).map((b) => (b.textContent ?? '').replace(/\d+$/, '').trim())
+/** The rows a section has chosen, as a screen reader hears them: pressed. */
+const chosen = (el: HTMLElement) => within(el).queryAllByRole('button', { pressed: true })
+  .map((b) => (b.textContent ?? '').replace(/\d+$/, '').trim())
 
 // ── The call site ────────────────────────────────────────────────────────────────────────
 describe('the filters are drawn by the page a user reaches', () => {
@@ -155,6 +154,33 @@ describe("categories and sources are sections of the Store's header filter", () 
     await mount(makeRouter('view=store'))
     await userEvent.click(within(await section('Sources')).getByRole('button', { name: 'Add source' }))
     await waitFor(() => expect(screen.getByPlaceholderText(/a directory of app subdirs/)).toBeTruthy())
+  })
+})
+
+// ── The sections say what is chosen, to a screen reader as to the eye ──────────────────────
+// The rail these sections replaced announced its state: one pressed entry per block, each a real
+// button. The sections keep that: each is a group named by its title, and its chosen row is
+// pressed, not only tinted and checked.
+describe('the sections are operable from the accessibility tree', () => {
+  it('exactly one row per section is pressed, and it is the chosen one', async () => {
+    await mount(makeRouter('view=store&stag=utility&ssrc=builtin'))
+    expect(chosen(await section('Categories'))).toEqual(['Utility'])
+    expect(chosen(await section('Sources'))).toEqual(['Built-in'])
+    // Vacuity: with nothing filtered, the defaults are the pressed rows.
+    cleanup()
+    await mount(makeRouter('view=store'))
+    expect(chosen(await section('Categories'))).toEqual(['All apps'])
+    expect(chosen(await section('Sources'))).toEqual(['All sources'])
+  })
+
+  it('every row is a real button that stays a tab stop, and the rest say they are not chosen', async () => {
+    await mount(makeRouter('view=store'))
+    for (const title of ['Categories', 'Sources']) {
+      for (const b of within(await section(title)).getAllByRole('button')) {
+        expect(b.getAttribute('tabindex'), `${b.textContent} must stay a tab stop`).not.toBe('-1')
+        if (b.textContent !== 'Add source') expect(b.getAttribute('aria-pressed'), b.textContent ?? '').toMatch(/^(true|false)$/)
+      }
+    }
   })
 })
 
