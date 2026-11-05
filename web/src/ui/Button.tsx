@@ -6,8 +6,10 @@ import { spring, physics, exprHeavy } from '../design/motion'
 import { fvs } from '../design/fontWeight'
 import { usePersonality } from '../app/personality'
 
-type Variant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger' | 'ghost-accent'
-type Size = 'xs' | 'sm' | 'md' | 'lg' | 'orb'
+export type ButtonVariant = 'primary' | 'tonal' | 'secondary' | 'ghost' | 'danger' | 'ghost-accent'
+export type ButtonSize = 'xs' | 'sm' | 'md' | 'lg' | 'orb'
+type Variant = ButtonVariant
+type Size = ButtonSize
 
 // The two SOLID tiers draw their focus ring in the ink, not the accent. The app-wide `:focus-visible`
 // ring in `design/tokens.css` is `--color-primary`, which on `primary` is the fill's own colour
@@ -76,6 +78,19 @@ const sizeRole: Record<Size, string> = {
   md: 'label-m',
   lg: 'label-l',
   orb: 'label-l',
+}
+
+// whitespace-nowrap + shrink-0: a labelled pill must never wrap its text or be squeezed below its
+// content in a tight flex row.
+const BASE = 'relative inline-flex shrink-0 items-center justify-center gap-s overflow-hidden whitespace-nowrap font-[450] select-none'
+const EASE = 'transition-colors duration-(--duration-short) ease-[cubic-bezier(0.2,0,0,1)]'
+const corner = (shape: 'pill' | 'squircle') => (shape === 'squircle' ? 'squircle' : 'rounded-pill')
+
+/** What a Button looks like, for the one kit piece that draws it on another element: `ButtonLink`'s
+ *  `<a>`. The same maps, so a link that looks like a button never drifts from the button. Its states
+ *  (disabled, loading) are the button's alone: a link has neither. */
+export function buttonLook(variant: Variant, size: Size, shape: 'pill' | 'squircle'): { className: string; role: string } {
+  return { className: cx(BASE, corner(shape), EASE, variants[variant], pressed[variant], sizes[size]), role: sizeRole[size] }
 }
 
 /** The one shared button. A press and a hover show by COLOUR, at once: each variant's
@@ -218,11 +233,9 @@ export function Button({
       data-type={sizeRole[size]}
       style={fvs(470)}
       className={cx(
-        // whitespace-nowrap + shrink-0: a labelled pill must never wrap its text
-        // or be squeezed below its content in a tight flex row.
-        'relative inline-flex shrink-0 items-center justify-center gap-s overflow-hidden whitespace-nowrap font-[450] select-none',
-        shape === 'squircle' ? 'squircle' : 'rounded-pill',
-        'transition-colors duration-(--duration-short) ease-[cubic-bezier(0.2,0,0,1)]',
+        BASE,
+        corner(shape),
+        EASE,
         // aria-disabled needs the same dimming as the native attribute, and must not
         // swallow pointer events (a hover has to reveal the title/tooltip).
         //

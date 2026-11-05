@@ -106,12 +106,6 @@ export const phaseAccent = (phase: WorkPhase): string => (WORK_PHASE_LOOKS[phase
 /** A phase's tone as a text class. */
 export const phaseText = (phase: WorkPhase): string => TONE_TEXT[WORK_PHASE_LOOKS[phase].tone]
 
-/** The phase each ambient world state stands for, which its tone is read from: the world of each
- *  is the state itself (`world` above). Live work held up is painted as queued work is. */
-export const WORLD_PHASE: Record<AgentActivityState, WorkPhase> = {
-  working: 'thinking', waiting_approval: 'approval', needs_input: 'input', error: 'error', blocked: 'queued', idle: 'idle',
-}
-
 /** The phase each workflow run status reads as, the gateway's own (`work_phase.py`,
  *  `RUN_STATUS_PHASES`): a cancel and a decline are done, a failure and an escalation errors.
  *  `tests/test_work_phase_vocabulary.py` pins it to the gateway's in both directions. A loop's are

@@ -1,7 +1,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import {
-  ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, REDUCED_MOTION_SHOTS, axisShots, type ReducedMotionOpen, type VisualAxis,
+  ROUTES, VIEW_ROUTES, THEMES, ORB_STATE_SHOTS, AGENTS_BAND_SHOTS, REDUCED_MOTION_SHOTS, axisShots, type ReducedMotionOpen, type VisualAxis,
 } from './routes'
+import { answerTheBandsReads, band } from './agentsBandFixture'
 import {
   seedTheme, gotoRoute, expectRouteScreenshot, assertPristineFlywheel, settleDom, settleEntranceAnimations, type SettleReport,
 } from './helpers'
@@ -218,6 +219,26 @@ for (const { key, theme, reducedMotion } of ORB_STATE_SHOTS) {
   })
 }
 
+// ── Home's agents band with work on it: the owner's pick, in both themes at 1440 and 390 ─────────
+// `routes.ts`'s AGENTS_BAND_SHOTS. Its reads are answered from one fixed evening, and the page's
+// clock is pinned to it, so the axis, the "asked N ago" and the failure's time draw the same every
+// run. A phone's height leaves the band clear of the fixed bottom bar. The titles carry no `(#/`:
+// these are not route scans, so `assert-no-route-skips.mjs` does not count them.
+for (const { key, theme, width, height } of AGENTS_BAND_SHOTS) {
+  test.describe(`visual: ${key}`, { tag: '@visual' }, () => {
+    test.describe.configure({ timeout: 300_000 })
+    test.use({ viewport: { width, height } })
+    test('what waits on you and what failed, lifted', async ({ page }) => {
+      await seedTheme(page, theme)
+      await answerTheBandsReads(page)
+      const settle = await gotoRoute(page, 'dashboard?view=overview', BUDGET)
+      expect(settle.exhausted, `the overview never reached rest: ${settle.exhausted.join(', ')}`).toEqual([])
+      await expect(band(page).getByText('2 asks wait on you · 1 failed today')).toBeVisible()
+      await expect(band(page)).toHaveScreenshot(`${key}.png`, { animations: 'disabled' })
+    })
+  })
+}
+
 // ── Reduced motion: the surfaces the motion audit stripped, at rest under the preference ───────
 // `routes.ts`'s REDUCED_MOTION_SHOTS: each route the audit touched that this suite shoots, and the
 // command palette and the composer's + menu open, with `prefers-reduced-motion: reduce` in force.
@@ -331,6 +352,27 @@ test.describe('visual: each pin holds', { tag: '@visual' }, () => {
     const fixed = FIXED_CLOCK.learning.slice(0, 10)
     const before = (n: number) => new Date(Date.parse(`${fixed}T00:00:00Z`) - n * 86_400_000).toISOString().slice(0, 10)
     expect(days).toEqual([6, 5, 4, 3, 2, 1, 0].map(before))
+  })
+
+  test("Home draws only the times its fixed clock gives", async ({ page }) => {
+    await assertPristineFlywheel(page)
+    await seedTheme(page, 'light')
+    await loadPinned(page, 'dashboard')
+    await expect(page.getByRole('heading', { name: 'Your agents today' })).toBeVisible()
+    // The agents band names "now" and each hour of its window, four either side of now at most:
+    // every time on the page is one of those at the fixed instant, in the browser's own format.
+    const { shown, given } = await page.evaluate((fixed) => {
+      const at = Date.parse(fixed)
+      const hour = 3_600_000
+      const clock = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+      const tick = new Date(at - 4 * hour)
+      tick.setMinutes(0, 0, 0)
+      const given = [clock(at)]
+      for (let t = tick.getTime(); t <= at + 4 * hour; t += hour) given.push(clock(t))
+      return { shown: document.body.innerText.match(/\b\d{2}:\d{2}\b/g) ?? [], given }
+    }, FIXED_CLOCK.dashboard)
+    expect(shown.length, 'the band draws its hours').toBeGreaterThan(0)
+    expect(shown.filter((t) => !given.includes(t)), 'a time no fixture gave').toEqual([])
   })
 
   test("Settings' tiles read the fixed count and reading, not the run's", async ({ page }) => {

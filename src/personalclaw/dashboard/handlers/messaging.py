@@ -282,6 +282,9 @@ async def api_spawn_list(request: web.Request) -> web.Response:
         if info.done:
             entry["result"] = _redact(info.result)
             entry["error"] = _redact(info.error) if info.error else ""
+            # When it ended: its start plus how long it ran, set as it finished.
+            if info.elapsed:
+                entry["ended"] = info.started + info.elapsed
         else:
             entry["turns"] = info.turns
             entry["last_tool"] = _redact(info.last_tool)

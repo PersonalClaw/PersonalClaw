@@ -4,6 +4,9 @@ import { join } from 'node:path'
 import { filesUnder, readSource } from '../test/sourceTree'
 
 // ── Side-stripe doctrine rail (Tone-Not-Line, web/DESIGN.md §"The Tone-Not-Line Rule") ──
+// Known gaps, filed as #5924: a logical `border-s-[Npx]`, a `borderLeft` whose width or colour it
+// cannot read as a literal (a var(), a template string, `borderLeftWidth`), and a bar drawn by a
+// pseudo-element or a child. Each of those still draws a stripe this scan passes.
 // "Depth and grouping come from the surface ramp; borders are 1px hairlines or nothing.
 // Never a colored side-stripe." The Don't list bans `border-left` > 1px in color. Two
 // violations shipped anyway — the Markdown blockquote's 3px coral stripe (ui/Markdown.tsx)

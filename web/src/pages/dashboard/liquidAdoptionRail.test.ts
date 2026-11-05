@@ -20,10 +20,6 @@ import { filesUnder, readSource } from '../../test/sourceTree'
 // ever animates at all — is only visible in the source.
 //
 // Not adopted, and why (so a later pass does not re-derive it):
-//   · `dashboard/world/AgentWorld.tsx` — the other live ambient surface, and the obvious second
-//     candidate. It is a `<canvas>` painter ("clock, context, and pixels"); its scene nodes are
-//     drawn, not mounted, so it structurally cannot host an SVG child. Giving it a liquid state
-//     would mean porting the silhouette into `worldScene.ts`, which is a different change.
 //   · `loops/LoopCockpitPage.tsx` — a REAL candidate, not an absent one: it exists (1.3k lines)
 //     and it has the phase/running state a composure morph depicts. Loop cockpits and ambient
 //     surfaces are both natural consumers. It is left for a later pass on purpose — this

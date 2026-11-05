@@ -196,7 +196,7 @@ Top to bottom:
   nothing at 0), the chip row that repeats the sidebar, the system telemetry (to Settings ›
   System), and suggestions outside Needs You or the empty state. #3803 made the first cut, and
   #3813 made Home the three groups.
-- **To Home's Overview:** the bands that have no place in the three groups, the Agent world, the
+- **To Home's Overview:** the bands that have no place in the three groups, your agents' day, the
   desktop and browser live views, tasks, Discover, pinned artifacts and recent activity, are Home's
   second view, View › Overview (`#/dashboard?view=overview`). What was pinned to Home and the
   dashboard's surface overlays stay under the three groups.

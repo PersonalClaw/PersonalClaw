@@ -31,8 +31,11 @@
   - heading "Tasks" [level=#]
   - paragraph: No tasks ready to work.
   - button "New task"
-  - heading "Agent world" [level=#]
-  - paragraph: Nothing is running. Loops, chats and subagents appear here as they start.
+  - heading "Your agents today" [level=#]
+  - button "Filter & sort": Show
+  - link "Manage agents":
+    - /url: "#/agents"
+  - paragraph: Nothing ran today.
   - heading "Discover" [level=#]
   - paragraph: Start a conversation
   - paragraph: Chat is the front door — ask a question, hand over a task, or think out loud, and PersonalClaw picks the tools and agents it needs on its own.

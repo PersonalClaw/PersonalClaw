@@ -52,6 +52,12 @@ describe("Learning's week", () => {
   })
 })
 
+describe("Home's agents band", () => {
+  it('loads under a fixed clock, since it draws the hours around now', () => {
+    expect(FIXED_CLOCK.dashboard).toBeDefined()
+  })
+})
+
 describe("Settings' tiles", () => {
   it('read a fixed audit count, in the six keys the handler emits', () => {
     if (!('json' in AUDIT_VERIFIED)) throw new Error('AUDIT_VERIFIED is a fixed answer')

@@ -30,6 +30,7 @@ After any mutating call (POST/PUT/PATCH/DELETE), **read the entity back** to con
 - `PUT /api/agent/config` — read or write the installed agent config.
 - `GET /api/agents` — list all PersonalClaw agent definitions.
 - `POST /api/agents` — create a new PersonalClaw agent.
+- `GET /api/agents/day` — each agent's blocks of work in ``[since, until)``.
 - `DELETE /api/agents/detail/{name}` — view, delete, or update agent config.
 - `GET /api/agents/detail/{name}` — view, delete, or update agent config.
 - `PATCH /api/agents/detail/{name}` — view, delete, or update agent config.

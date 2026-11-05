@@ -64,8 +64,8 @@ import { Suggestions } from './widgets/Suggestions'
 // 840 px of the tab's own width) and in their place where there is not, with Back to Home. The
 // selection is in the address (`?open=`), so Back, a reload and a copied link open the same one.
 //
-// The header's View switches to Overview, the bands that have no place in the three groups (the
-// Agent world, the desktop and browser live views, tasks, Discover, pinned artifacts and recent
+// The header's View switches to Overview, the bands that have no place in the three groups (your
+// agents' day, the desktop and browser live views, tasks, Discover, pinned artifacts and recent
 // activity), `?view=overview`.
 
 /** ── THE ONE RECONCILIATION POINT with `dashboard/views_store.py` ──────────────────────────

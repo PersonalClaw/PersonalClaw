@@ -6,7 +6,7 @@
      tests/rails/test_docs_api_reference.py. Hand edits are reverted by the next
      regeneration and red CI in the meantime. -->
 
-Every HTTP route the gateway registers: **956 registrations** over **775 distinct paths** — 949 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
+Every HTTP route the gateway registers: **957 registrations** over **776 distinct paths** — 950 agent-callable (`/api/*`, non-websocket) and 7 websocket or internal.
 
 **This list is generated, not maintained.** It is rendered from the route registrations in the source tree — the same census that produces the offline reference shipped inside the package and the live `GET /api/manifest` — so a route added to the code without a row here reds CI rather than quietly becoming an undocumented surface. The count above is therefore the real count, not an aspiration.
 
@@ -39,8 +39,8 @@ The 132 families the surface divides into, largest first.
 | `/api/voice` | 17 | 11 |
 | `/api/channels` | 16 | 14 |
 | `/api/sessions` | 15 | 12 |
+| `/api/agents` | 14 | 10 |
 | `/api/projects` | 14 | 10 |
-| `/api/agents` | 13 | 9 |
 | `/api/dashboard` | 13 | 8 |
 | `/api/packs` | 13 | 13 |
 | `/api/tasks` | 13 | 9 |
@@ -159,7 +159,7 @@ The 132 families the surface divides into, largest first.
 
 ## Agent-callable routes
 
-The 949 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
+The 950 routes an agent drives directly. After any mutating call (POST/PUT/PATCH/DELETE), read the entity back to confirm the change took.
 
 | Method | Path | Summary |
 |---|---|---|
@@ -187,6 +187,7 @@ The 949 routes an agent drives directly. After any mutating call (POST/PUT/PATCH
 | `PUT` | `/api/agent/config` | read or write the installed agent config. |
 | `GET` | `/api/agents` | list all PersonalClaw agent definitions. |
 | `POST` | `/api/agents` | create a new PersonalClaw agent. |
+| `GET` | `/api/agents/day` | each agent's blocks of work in ``[since, until)``. |
 | `DELETE` | `/api/agents/detail/{name}` | view, delete, or update agent config. |
 | `GET` | `/api/agents/detail/{name}` | view, delete, or update agent config. |
 | `PATCH` | `/api/agents/detail/{name}` | view, delete, or update agent config. |

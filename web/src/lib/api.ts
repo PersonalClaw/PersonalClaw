@@ -856,7 +856,9 @@ export interface ChannelSenderPairing { code: string; expires_at: string; ttl_se
 // A background subagent (from /api/spawn) — spawned by a cron/loop/Slack/agent.
 // `title` is what the run is called — a trigger's run by its trigger's name or instruction; "" for
 // a run nobody named, which reads by its task.
-export interface SpawnedAgent { id: string; task: string; title?: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string }
+export interface SpawnedAgent { id: string; task: string; title?: string; done: boolean; parent?: string; agent?: string; started?: number; result?: string; error?: string
+  /** When a finished one ended, epoch seconds: its start plus how long it ran. */
+  ended?: number }
 /** One subagent as `GET /api/spawn/{id}` reads it: running (its turns, latest call and elapsed
  *  seconds) or ended (its report, its error, and whether it was stopped rather than failed). */
 export interface SpawnedAgentStatus { id: string; task: string; title?: string; agent?: string; done: boolean; started?: number; result?: string; error?: string; stopped?: boolean; turns?: number; last_tool?: string; elapsed?: number }
@@ -7858,6 +7860,16 @@ export interface UsageFold {
   reachable_purposes: string[]
 }
 
+/** One block of an agent's work: its model calls in one session, merged across the short gaps its
+ *  tools ran in (`GET /api/agents/day`, `agent_day.py`). ISO times. */
+export interface AgentDayBlock { start: string; end: string; session: string; source: string }
+/** One agent's day: `agent` is `''` for the default agent; `before` is the end of its latest block
+ *  earlier today, outside the window, `null` when none. */
+export interface AgentDayEntry { agent: string; blocks: AgentDayBlock[]; before: string | null }
+/** `GET /api/agents/day`: what each agent did in `[since, until)`, a day at most. `cut` counts the
+ *  oldest blocks left out to keep to the read's block cap. */
+export interface AgentDayRead { since: string; until: string; agents: AgentDayEntry[]; cut: number }
+
 /** `GET /api/usage/budget` — today's spend as the daily cap counts it, and the cap.
  *
  *  The spend meter charges the model calls PersonalClaw makes on its own (automations, loops,
@@ -8366,6 +8378,10 @@ export const api = {
   // Today's spend as the daily cap counts it, beside that cap: the only numbers the Usage page
   // may set side by side (the ledger totals above include chat turns, which no cap covers).
   usageBudget: () => get<UsageBudget>('/api/usage/budget'),
+  /** `GET /api/agents/day`: each agent's blocks of work in `[since, until)`, read off its model calls. */
+  agentsDay: (since: string, until: string) =>
+    get<AgentDayRead>(
+      `/api/agents/day?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`),
   // The prices model calls are counted at (Settings → Usage → Model prices). A price set here is
   // what the dollar caps, the Usage page and cost-aware routing count the model's calls at, from
   // the next call on. Each write changes ONE rate, so it names no revision.

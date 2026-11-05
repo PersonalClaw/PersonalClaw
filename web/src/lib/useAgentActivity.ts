@@ -70,6 +70,14 @@ export interface AgentActivityEntity {
    *  a ring drawn empty for an unknown is a lie about the run. */
   progress?: number
   refs: AgentActivityRefs
+  /** The gateway's own name for the work (`chat:x`, `loop:x`, `workflow:x`, …), so a host can join
+   *  an entity to what waits on you for it. Absent for an entity no running row holds. */
+  work?: string
+  /** The agent doing it, `''` for the default agent (the usage ledger's spelling). Absent when
+   *  the source names none. */
+  agent?: string
+  /** When the running work began, ISO. Absent when the source does not say. */
+  since?: string
 }
 
 export interface AgentActivityFeed {
@@ -174,6 +182,9 @@ export function foldRunning(
       title: label(row.name, 'Work'),
       ...(progress === undefined ? {} : { progress }),
       refs: { link: row.route || '', ...(row.session ? { session: row.session } : {}) },
+      work: row.work,
+      agent: typeof row.agent === 'string' ? row.agent : '',
+      ...(row.started_at ? { since: row.started_at } : {}),
     })
   }
   return out
@@ -197,6 +208,8 @@ export function foldLoops(loops: Loop[]): AgentActivityEntity[] {
         link: `#/${loopRoute(l)}`,
         ...(l.session_key ? { session: l.session_key } : {}),
       },
+      work: `loop:${l.id}`,
+      agent: l.agent ?? '',
     }
   })
 }

@@ -250,7 +250,7 @@ No function in core grows past 300 lines or a cyclomatic complexity of 30
 | Inbox & channels | [inbox-channels.md](inbox-channels.md) | `inbox.py`, `inbox_service.py`, `channel_delivery.py` |
 | App platform | [app-platform.md](app-platform.md) | `apps/app_manager.py`, `apps/backend_runtime.py`, `apps/permissions.py` |
 | Security | [security.md](security.md) | `security.py`, `net/`, `auth/`, `sel.py`, `supply_chain.py` |
-| Agent worlds | [agent-activity-feed.md](agent-activity-feed.md) | `web/src/lib/useAgentActivity.ts`, `web/src/pages/dashboard/world/` |
+| Agent worlds and Home's agents band | [agent-activity-feed.md](agent-activity-feed.md) | `web/src/lib/useAgentActivity.ts`, `web/src/pages/dashboard/agents/`, `src/personalclaw/agent_day.py` |
 
 ## Configuration
 

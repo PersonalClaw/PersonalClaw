@@ -1,16 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
-  RUN_STATUS_PHASES, WORLD_PHASE, WORK_PHASE_LOOKS, phaseAccent, phaseColor, phaseText, phaseToken,
+  RUN_STATUS_PHASES, phaseAccent, phaseColor, phaseText, phaseToken,
   type WorkPhase,
 } from './workPhase'
 import { LOOP_STATUS_PHASES, loopStatusLook } from './loopStatus'
 import { runLook } from '../pages/workflows/workflowMeta'
 import { ITEM_KINDS } from '../pages/inbox/inboxMeta'
 import { kindMeta } from '../pages/notifications/notificationMeta'
-import { STATE_VISUAL } from '../pages/dashboard/world/worldScene'
 import { NEEDS_YOU_DOT } from '../pages/projects/ProjectsSection'
 import { MIC_TONE } from '../ui/MicCaptureChip'
-import type { AgentActivityState } from './useAgentActivity'
 
 // ── One tone per phase, on every surface that paints one (#3833) ───────────────────────────────
 //
@@ -51,18 +49,6 @@ describe('a workflow run is painted in its phase\'s tone', () => {
     // A run stopped at its budget ended early, as a loop that did: an error, said in words.
     expect(runLook('escalated', null, true).tone).toBe(phaseText(LOOP_STATUS_PHASES.ended_early))
     expect(runLook('escalated', null, true).label).toBe('Stopped at its budget')
-  })
-})
-
-describe('the ambient world paints each state in its phase\'s tone', () => {
-  it('each world state is the world of the phase it stands for', () => {
-    for (const [state, phase] of Object.entries(WORLD_PHASE)) expect(WORK_PHASE_LOOKS[phase].world, state).toBe(state)
-  })
-
-  it('each world state\'s tone is its phase\'s: working is alive, not ok', () => {
-    const paint = Object.fromEntries(Object.entries(STATE_VISUAL).map(([s, v]) => [s, v.tone])) as Record<AgentActivityState, string>
-    expect(offTone(paint, (s) => WORLD_PHASE[s], phaseToken)).toEqual([])
-    expect(STATE_VISUAL.working.tone).toBe('--color-primary')
   })
 })
 

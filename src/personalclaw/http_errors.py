@@ -366,6 +366,9 @@ HTTP_ERROR_CODES: dict[str, str] = {
     ),
     # ── security audit (handlers/security_audit.py) ──
     "audit_owner_only": "The audit trail is owner-only; an app-scoped token may not read it.",
+    "agents_day_owner_only": (
+        "What every agent did is yours to read: an app or a chat's agent reads only its own work."
+    ),
     # ── listening (handlers/listening.py) ──
     "listening_owner_only": "Only the desktop shell, signed in as you, says whether the microphone "
     "is live; an agent or its tools cannot.",
