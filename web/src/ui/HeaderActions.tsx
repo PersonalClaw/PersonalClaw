@@ -42,9 +42,11 @@ import { TOUCH_TARGET } from './Toggle'
  *      control that OPENS A SIDE PANEL (a `<SidePanel>`/detail/inspector rail, e.g.
  *      "Details", "Activity", "Inbox settings") rightmost.
  *    • The primary action (New, Add, Install, Run) is the rightmost control, after the
- *      cluster's own `…` too: the primary (`isThePrimary`: `variant="primary"`, or
- *      `priority="primary"` on a control that opens no region) draws in the row's trailing slot
- *      (`usePlaced`). `app/pageControlsAreInTheHeader.test.ts` holds every cluster to the order.
+ *      cluster's own `…` too: a `variant="primary"` control, or a `priority="primary"` one with no
+ *      `ariaExpanded` (`isThePrimary`), draws in the row's trailing slot (`usePlaced`). So a way
+ *      back or elsewhere (All projects, Back) is not marked `priority="primary"`: it would end the
+ *      row as if it were the page's action. `app/pageControlsAreInTheHeader.test.ts` holds every
+ *      cluster to the order.
  *  `priority` (primary/default/low) governs OVERFLOW shedding independently of this
  *  visual order, so keep Delete/panel-opener `priority="low"` even though their
  *  positions are fixed by the tenet. */

@@ -1489,7 +1489,7 @@ function Shell({ title, titleNode, onBack, actions, primary, scroll = true, pane
         // project is the destination at that URL, so it carries the h1. `titleNode` (the rename editor)
         // keeps its own input — an editable title is not a heading.
         left={titleNode ?? <div className="flex items-center gap-2"><FolderKanban size={18} className="text-primary" /><PageTitle>{title}</PageTitle></div>}
-        right={<HeaderActions>{actions}<HeaderControl icon={FolderKanban} label="All projects" onClick={onBack} priority="primary" />{primary}</HeaderActions>} />
+        right={<HeaderActions>{actions}<HeaderControl icon={FolderKanban} label="All projects" onClick={onBack} />{primary}</HeaderActions>} />
       <div className="flex min-h-0 flex-1">
         {/* Detail hub fills height (scroll=false); list/loading states scroll. */}
         <div className={`min-w-0 flex-1 ${scroll ? 'overflow-y-auto' : 'overflow-hidden'}`}>{children}</div>
