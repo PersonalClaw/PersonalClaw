@@ -83,7 +83,7 @@ from personalclaw.sdk.model import (  # noqa: F401
     require_model,
     until_terminal,
 )
-from personalclaw.sdk.net import http_client, http_session
+from personalclaw.sdk.net import USER_AGENT, http_client, http_session
 
 logger = logging.getLogger(__name__)
 
@@ -1432,7 +1432,6 @@ _CATALOG_TIMEOUT = 10  # seconds — list/connectivity probes
 _SHOW_TIMEOUT = 15
 _DELETE_TIMEOUT = 30
 _PULL_TIMEOUT = 1800  # a large model download can take a long time
-_SEARCH_UA = "Mozilla/5.0 (compatible; PersonalClaw/1.0)"
 
 
 class OllamaCatalog(ModelManager):
@@ -1611,7 +1610,7 @@ class OllamaCatalog(ModelManager):
                     "https://ollama.com/search",
                     params={"q": search_q},
                     timeout=aiohttp.ClientTimeout(total=_CATALOG_TIMEOUT),
-                    headers={"User-Agent": _SEARCH_UA},
+                    headers={"User-Agent": USER_AGENT},
                 ) as r:
                     if r.status != 200:
                         return []
@@ -1634,7 +1633,7 @@ class OllamaCatalog(ModelManager):
                 async with sess.get(
                     f"https://ollama.com/library/{base_name}/tags",
                     timeout=aiohttp.ClientTimeout(total=5),
-                    headers={"User-Agent": _SEARCH_UA},
+                    headers={"User-Agent": USER_AGENT},
                 ) as tr:
                     if tr.status != 200:
                         return ["latest"]

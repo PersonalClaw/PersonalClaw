@@ -37,7 +37,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from personalclaw.net.client import EgressBlocked, audit, fetch_as
+from personalclaw.net.client import USER_AGENT, EgressBlocked, audit, fetch_as
 from personalclaw.net.guard import evaluate
 from personalclaw.net.policy import STRICT, EgressPolicy
 
@@ -168,7 +168,10 @@ async def render_url(
                 args=list(_NO_NETWORK_ARGS),
             )
             try:
-                context = await browser.new_context(service_workers="block")
+                # The browser's own requests carry its User-Agent to the guard, which forwards it
+                # (`_route`): named PersonalClaw, as `net.fetch`'s are (`net.client`), not
+                # HeadlessChrome, which sites such as Wikipedia refuse.
+                context = await browser.new_context(user_agent=USER_AGENT, service_workers="block")
                 await context.add_init_script(script=_NO_SOCKETS)
                 await context.route("**/*", guarded)
                 page = await context.new_page()

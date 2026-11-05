@@ -263,6 +263,17 @@ async def test_an_allowed_request_is_dialled_at_the_checked_address(browser) -> 
 
 
 @pytest.mark.asyncio
+async def test_the_rendered_page_names_personalclaw(browser) -> None:
+    """The browser's requests reach the guard with its own User-Agent, which the guard forwards:
+    the context names PersonalClaw, as the plain fetch does, not HeadlessChrome."""
+    from personalclaw.net.client import USER_AGENT
+
+    await render.render_url(PAGE, resolver=_resolver)
+
+    assert browser["context"].get("user_agent") == USER_AGENT
+
+
+@pytest.mark.asyncio
 async def test_what_routing_cannot_carry_is_refused(browser) -> None:
     await render.render_url(PAGE, resolver=_resolver)
 

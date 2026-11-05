@@ -17,6 +17,7 @@ from personalclaw.inbound.a2a import outbound_policy as a2a_outbound_policy  # n
 from personalclaw.net import (  # noqa: F401
     CONNECTOR,
     SYNC,
+    USER_AGENT,
     WEBHOOK,
     EgressBlocked,
     EgressPolicy,
@@ -67,6 +68,10 @@ from personalclaw.web.fetch import (  # noqa: F401
 # reaching into ``personalclaw.net`` directly (the app import-boundary forbids that).
 __all__ = [
     "fetch",
+    # How PersonalClaw names itself to a site, which `fetch` sends when a request sets no
+    # User-Agent of its own: for an app's own HTTP client (`http_session`, `http_client`) to send
+    # the same, rather than spelling its own.
+    "USER_AGENT",
     # `fetch`'s counterpart for a download too large to buffer: a model's weights, an app's
     # model files. The standard library's opener with every request asked of the guard first,
     # each redirect hop included, under the connector policy and the owner's Network egress
