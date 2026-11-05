@@ -312,7 +312,12 @@ export function slotWidths(slot: HTMLElement): { min: number; natural: number; h
   slot.style.flex = '0 0 auto'
   slot.style.maxWidth = 'none'
   slot.style.width = '0px'
-  const min = slot.scrollWidth
+  // A part of the title marked as one it cannot shed (`data-title-keep`: a breadcrumb's
+  // "› Tasks") counts too. The bar clips every `[data-type]` descendant (`TopBar`'s
+  // truncation), so a `shrink-0` part inside the heading added nothing to the slot's shrunk
+  // width, and the row took its room: at 390 px a project's Tasks read a lone "›".
+  const kept = [...slot.querySelectorAll<HTMLElement>('[data-title-keep]')].reduce((w, el) => w + el.scrollWidth, 0)
+  const min = Math.max(slot.scrollWidth, kept)
   slot.style.width = 'max-content'
   const natural = slot.scrollWidth
   const hasContent = Array.from(slot.children).some((c) => {
