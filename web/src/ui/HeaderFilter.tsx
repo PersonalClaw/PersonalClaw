@@ -5,6 +5,7 @@ import { FilterSections, type FilterSectionDef } from './FilterMenu'
 import { accentChip } from '../design/accent'
 import { fvs } from '../design/fontWeight'
 import { useHeaderChild } from './HeaderActions'
+import { TOUCH_TARGET } from './Toggle'
 
 /** What a header filter says it is set to: its prefix, then each section's choice, in order
  *  ("Show: Chats · Active"). Every section set away from its default is named, so a filtered page
@@ -39,7 +40,7 @@ export function headerFilterSet(sections: FilterSectionDef[]): number {
  *  a filter the page is under must stay in sight. */
 export function HeaderFilter({ sections, prefix = 'Show', className }: {
   sections: FilterSectionDef[]
-  /** Added to the trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  /** Added to the trigger. It has the compact widths' 44 px hit box (`TOUCH_TARGET`) already. */
   className?: string
   /** The word before the choices: "Show", or nothing where the choices say it themselves (a sort
    *  alone, "Sorted by name"). */
@@ -56,6 +57,8 @@ export function HeaderFilter({ sections, prefix = 'Show', className }: {
           data-type="label-s" data-header-filter={set > 0 ? 'set' : 'default'}
           className={cx(
             'relative inline-flex h-10 shrink-0 items-center gap-1.5 rounded-pill transition-colors duration-(--duration-short)',
+            // The compact widths' 44 px hit box, by default: a header filter is tapped there.
+            TOUCH_TARGET,
             iconOnly ? 'w-10 justify-center' : 'max-w-[18rem] px-l',
             set > 0 || open ? '' : 'text-on-surface hover:bg-surface-high',
             className,

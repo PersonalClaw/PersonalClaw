@@ -9,6 +9,7 @@ import { fvs, withWeight } from '../design/fontWeight'
 import { Popover, MenuRow } from './Popover'
 import { Segmented, type SegOption } from './Segmented'
 import { TOP_BAR_BAND, useStackBelowCorners } from './TopBar'
+import { TOUCH_TARGET } from './Toggle'
 
 /** Responsive header controls — the ONE 4-tier cluster (`responsive-header-controls.md`).
  *  The row of controls degrades TOGETHER (whole-cluster) as horizontal space
@@ -935,7 +936,10 @@ export function HeaderSegmented({ options, value, onChange, ariaLabel, disabled 
   // without icons keeps its labels and folds to the pill of the active view (`collapse="menu"`).
   // The active segment stays highlighted so the current value is always visible.
   const iconOnly = canIcon && tier !== 'full'
-  return <Segmented options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} disabled={disabled} iconOnly={iconOnly} collapse="menu" />
+  // Folded to its pill, it takes the compact widths' 44 px hit box, as the header's search and
+  // filter do, with the width marked important as `DestinationTabs`' pill has it.
+  return <Segmented options={options} value={value} onChange={onChange} ariaLabel={ariaLabel} disabled={disabled} iconOnly={iconOnly} collapse="menu"
+    collapsedClassName={`${TOUCH_TARGET} max-lg:min-w-11!`} />
 }
 
 /** A header mode control that shows ONLY the current selection, and expands on

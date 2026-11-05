@@ -3,6 +3,7 @@ import { cx } from './cx'
 import { Popover } from './Popover'
 import { SearchField } from './SearchField'
 import { useHeaderChild, useHeaderProbe } from './HeaderActions'
+import { TOUCH_TARGET } from './Toggle'
 
 /** The page's search, as a member of the header's action cluster (`HeaderActions`): every
  *  page-level control lives in the page header's action area, the search that filters the page
@@ -24,7 +25,7 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
   /** The field's accessible name; defaults to its placeholder. */
   label?: string
   autoFocus?: boolean
-  /** Added to the shed form's Search button, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`). */
+  /** Added to the shed form's Search button. Both forms have the compact widths' 44 px hit box (`TOUCH_TARGET`) already. */
   className?: string
   /** A product-tour anchor (`data-tour`), on the live field or its button and never on a probe, so
    *  the tour rings what is on screen. */
@@ -39,7 +40,8 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
   if (tier === 'full' || tier === 'text') {
     if (probe) return <div aria-hidden className={cx('h-10 shrink-0', width)} />
     return (
-      <div data-tour={tour} className={cx('shrink-0', width)}>
+      // The compact widths' 44 px hit box, by default, on the field as on the shed button.
+      <div data-tour={tour} className={cx('shrink-0 max-lg:[&_input]:min-h-11', width)}>
         {/* `lg`: the row's 40 px height, as every header control is. */}
         <SearchField size="lg" value={value} onChange={onChange} placeholder={placeholder} ariaLabel={name}
           name={fieldName} autoFocus={autoFocus} />
@@ -56,6 +58,7 @@ export function HeaderSearch({ value, onChange, placeholder = 'Search', label, a
           data-tour={tour}
           className={cx(
             'relative inline-flex size-10 shrink-0 items-center justify-center rounded-pill transition-colors duration-(--duration-short)',
+            TOUCH_TARGET,
             open ? 'bg-surface-high text-on-surface' : 'text-on-surface hover:bg-surface-high',
             className,
           )}>

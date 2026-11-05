@@ -9,7 +9,7 @@ const doc: UiDoc = {
   props: [
     { name: 'sections', description: "The titled single-select groups ({ title, value, defaultKey, options, onChange, quiet?, said? }). A `quiet` section is named in the label only once set away from its default; `said` words a choice from its key (\"Sorted by name\")." },
     { name: 'prefix', description: "The word before the choices (default 'Show'); empty where the choices say it themselves, as a sort alone does." },
-    { name: 'className', description: "Added to the trigger, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`)." },
+    { name: 'className', description: "Added to the trigger. It has the compact widths' 44 px hit box (`TOUCH_TARGET`) already." },
   ],
   bestPractices: [
     { guidance: true, description: "Lead with the section that says what the list shows (its scope or status), with a default option that reads as a phrase (\"All triggers\", \"Any status\"), and mark the finer sections quiet." },

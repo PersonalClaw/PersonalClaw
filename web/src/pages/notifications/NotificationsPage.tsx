@@ -199,7 +199,7 @@ export function NotificationsPage({ query, setQuery, navigate, inboxFilters }: P
             // is the way back to the Inbox's items), then the feed's actions; each collapses to an
             // icon when tight.
             <HeaderActions overflowClassName={TOUCH_TARGET}>
-              {showFilter && <HeaderFilter sections={inboxFilters ? [inboxFilters, { ...filterSection, quiet: true }] : [filterSection]} className={TOUCH_TARGET} />}
+              {showFilter && <HeaderFilter sections={inboxFilters ? [inboxFilters, { ...filterSection, quiet: true }] : [filterSection]} />}
               {items && items.length > 0 && <HeaderControl icon={Trash2} label="Clear all" danger priority="low" onClick={clearAll} className={TOUCH_TARGET} />}
               {unread > 0 && <HeaderControl icon={CheckCheck} label="Mark all read" priority="primary" onClick={ackAll} className={TOUCH_TARGET} />}
             </HeaderActions>

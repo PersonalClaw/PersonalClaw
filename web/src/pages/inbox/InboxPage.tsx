@@ -417,8 +417,8 @@ function InboxItems({ query, setQuery, navigate }: Pick<RouteProps, 'query' | 's
             // the settings panel's opener, and Capture a note last. The cluster collapses them
             // (icon-only → …) when tight.
             <HeaderActions overflowClassName={TOUCH_TARGET}>
-              {(items === undefined || items.length > 0) && <HeaderSearch value={q} onChange={setQ} placeholder="Search inbox" className={TOUCH_TARGET} />}
-              <HeaderFilter sections={filterSections} className={TOUCH_TARGET} />
+              {(items === undefined || items.length > 0) && <HeaderSearch value={q} onChange={setQ} placeholder="Search inbox" />}
+              <HeaderFilter sections={filterSections} />
               {/* Gated on `open_count`, the same set the sweep reaches. Gating on the old
                   PENDING-only count made the only bulk control VANISH once every row had been
                   read, while the queue was still full (issue 493). */}

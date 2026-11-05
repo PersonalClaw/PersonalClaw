@@ -12,7 +12,7 @@ const doc: UiDoc = {
     { name: 'placeholder', description: "What the field searches, in the page's words (default 'Search')." },
     { name: 'label', description: 'The accessible name, where it should differ from the placeholder; defaults to it.' },
     { name: 'autoFocus', description: 'Focus the field on mount, at the tiers that draw one.' },
-    { name: 'className', description: "Added to the shed form's Search button, e.g. the compact widths' 44 px hit box (`TOUCH_TARGET`)." },
+    { name: 'className', description: "Added to the shed form's Search button. Both forms have the compact widths' 44 px hit box (`TOUCH_TARGET`) already." },
     { name: 'tour', description: 'A product-tour anchor (`data-tour`), on the live field or its button and never on a probe, so the tour rings what is on screen (Settings home: `settings`).' },
   ],
   bestPractices: [
