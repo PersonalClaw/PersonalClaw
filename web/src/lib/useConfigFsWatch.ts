@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { api } from './api'
+import { openEventStream, type EventStreamLike } from './eventStream'
 
 /** Live-watch the config trees (config.json, agents/, skills/, workflows/) for
  *  out-of-band edits via the /api/config-fs/stream SSE feed. Calls `onChange(path)`
@@ -14,9 +15,9 @@ export function useConfigFsWatch(enabled: boolean, onChange: (path: string) => v
 
   useEffect(() => {
     if (!enabled) return
-    let es: EventSource | null = null
+    let es: EventStreamLike | null = null
     try {
-      es = new EventSource(api.configFsStreamUrl())
+      es = openEventStream(api.configFsStreamUrl())
     } catch {
       return
     }

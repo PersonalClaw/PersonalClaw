@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, type ReindexJob } from './api'
+import { openEventStream, type EventStreamLike } from './eventStream'
 
 /** Follow the one embedding re-index (`/api/models/embedding/reindex`).
  *
@@ -18,7 +19,7 @@ export function useEmbeddingReindex({ enabled = true, onSettled }: { enabled?: b
   const [job, setJob] = useState<ReindexJob | null>(null)
   // Between a start and the route's answer, which probes the model first and so can take seconds.
   const [starting, setStarting] = useState(false)
-  const stream = useRef<EventSource | null>(null)
+  const stream = useRef<EventStreamLike | null>(null)
   const settled = useRef(onSettled)
   settled.current = onSettled
 
@@ -27,8 +28,8 @@ export function useEmbeddingReindex({ enabled = true, onSettled }: { enabled?: b
     stream.current?.close()
     stream.current = null
     if (next.status !== 'running') return
-    let es: EventSource
-    try { es = new EventSource(api.embeddingReindexStreamUrl(next.id)) } catch { return }
+    let es: EventStreamLike
+    try { es = openEventStream(api.embeddingReindexStreamUrl(next.id)) } catch { return }
     stream.current = es
     const onFrame = (e: Event) => {
       let frame: ReindexJob | null = null

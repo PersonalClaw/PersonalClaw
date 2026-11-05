@@ -4,6 +4,7 @@ import type { KnowledgeEnrichment } from '../../lib/api'
 import { GraphZoomControls } from '../../ui/GraphZoomControls'
 import { EmptyState, LoadError } from '../../ui/ListScaffold'
 import { PartialCount } from '../../ui/MoreRow'
+import { pairFetch } from '../../lib/pair'
 
 /** What the 0-entity state offers: run extraction, connect the model it needs, or nothing. */
 export type GraphEmptyAction = 'regenerate' | 'setup-model' | null
@@ -329,7 +330,7 @@ export function KnowledgeGraph({ selectedId, onSelect, onRegenerate, regeneratin
     // `r.ok` is checked because without it the error branch is unreachable for the commonest
     // failure: a 4xx/5xx still resolves, and `r.json()` then yields the error ENVELOPE, whose
     // `nodes` is undefined — read one line into the zero-node branch as a crash, not a failure.
-    fetch('/api/knowledge/graph', { headers: { 'X-Session-Key': 'dashboard:ui' } })
+    pairFetch('/api/knowledge/graph', { headers: { 'X-Session-Key': 'dashboard:ui' } })
       .then((r) => { if (!r.ok) throw new Error(`graph read failed (${r.status})`); return r.json() })
       .then((d) => { if (alive) { setErr(null); setGraph(d) } })
       .catch((e) => { if (alive) setErr(e) })

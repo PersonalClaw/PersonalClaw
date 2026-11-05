@@ -22,6 +22,7 @@
 import { Fragment, createElement, type ReactNode } from 'react'
 import { apiVersionHeaders } from './apiVersion'
 import { errEnvelope } from './errText'
+import { keepPair, keepPairFrom, pairFetch } from './pair'
 import { GatewaySentence } from '../app/SignedOutScreen'
 import { alertDialog, promptForm, type DialogField } from '../ui/dialog'
 
@@ -130,12 +131,23 @@ function fieldsFor(asked: FreshSignInAsked): DialogField[] {
 }
 
 async function withPassword(password: string, code: string): Promise<Attempt> {
-  const r = await fetch('/api/auth/confirm', {
+  const r = await pairFetch('/api/auth/confirm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...HEADERS },
     body: JSON.stringify(code ? { password, totp: code } : { password }),
   })
-  if (r.ok) return { ok: true }
+  if (r.ok) {
+    // A gateway that pairs its sign-ins answers the renewed session's pair, which replaces the
+    // one the session it ended carried (`lib/pair.ts`). An older gateway's answer has none.
+    let answer: { pair?: unknown } = {}
+    try {
+      answer = (await r.clone().json()) as { pair?: unknown }
+    } catch {
+      // An answer with no JSON body carries no pair; the sign-in itself still succeeded.
+    }
+    keepPair(answer.pair)
+    return { ok: true }
+  }
   const { message, code: refusal } = await errEnvelope(r)
   // A wrong password or code, or a missing one, is worth another try; a lockout or a gateway that
   // stopped offering password sign-in is not.
@@ -150,13 +162,18 @@ async function withLink(raw: string): Promise<Attempt> {
   const token = tokenFromLink(raw)
   // A paste with no token in it is asked for again without a request the gateway can only refuse.
   if (!token) return { ok: false, message: NOT_A_LINK }
-  const r = await fetch(`/api/auth/session?token=${encodeURIComponent(token)}`, { headers: HEADERS })
-  if (r.ok) return { ok: true }
+  const r = await pairFetch(`/api/auth/session?token=${encodeURIComponent(token)}`, { headers: HEADERS })
+  if (r.ok) {
+    // The link exchange answers the new session's pair in its header (`lib/pair.ts`).
+    keepPairFrom(r)
+    return { ok: true }
+  }
   const { message, detail } = await errEnvelope(r)
   const reason = (detail as { reason?: unknown } | undefined)?.reason
-  // The gateway explains a link it made that can no longer sign a device in (it expired, or another
-  // device used it). Anything else is no link of this PersonalClaw's, and its own sentence — "this
-  // device isn't signed in" — would be untrue of this one, which still is.
-  if (reason === 'link_expired' || reason === 'link_used') return { ok: false, message }
+  // The gateway explains a link it made that can no longer sign a device in (it expired, another
+  // device used it, or it was the startup link and already signed a browser in). Anything else is no
+  // link of this PersonalClaw's, and its own sentence — "this device isn't signed in" — would be
+  // untrue of this one, which still is.
+  if (reason === 'link_expired' || reason === 'link_used' || reason === 'link_opened') return { ok: false, message }
   return { ok: false, message: NOT_A_LINK }
 }

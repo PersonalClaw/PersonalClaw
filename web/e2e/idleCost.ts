@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test'
 import type { RouteEntry } from './routes'
+import { apiGet } from './pairedApi'
 
 // ── The idle-cost probe: what an idle page schedules, held to a budget (#3811) ───────────────────
 //
@@ -140,8 +141,8 @@ export function voidReason(sample: IdleSample, running: readonly string[]): stri
 
 /** The chats with a turn running on the gateway, read beside the page rather than by it, so the
  *  read is not one of the page's own requests. */
-export async function turnsRunning(page: Pick<Page, 'request'>): Promise<string[]> {
-  const res = await page.request.get('/api/chat/sessions')
+export async function turnsRunning(page: Pick<Page, 'request' | 'evaluate'>): Promise<string[]> {
+  const res = await apiGet(page, '/api/chat/sessions')
   if (!res.ok()) throw new Error(`could not read whether a turn is running: GET /api/chat/sessions answered ${res.status()}`)
   const rows = (await res.json()) as { key: string; run_state?: { turn?: unknown } }[]
   return rows.filter((r) => r.run_state?.turn).map((r) => r.key)

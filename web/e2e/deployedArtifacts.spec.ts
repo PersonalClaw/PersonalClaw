@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { gotoRoute, assertShellMounted } from './helpers'
+import { apiDelete } from './pairedApi'
 
 // ── A deployed artifact's page runs in an origin of its own ─────────────────────────────────────
 //
@@ -103,8 +104,6 @@ test('a deployed page loads its own files and reaches nothing of the dashboard, 
     await inTab(page, `/api/artifacts/${slug}`, 'DELETE')
     expect((await page.request.get(again.deployment.url)).status()).toBe(404)
   } finally {
-    await page.evaluate(async (s) => {
-      await fetch(`/api/artifacts/${s}`, { method: 'DELETE', headers: { 'X-Session-Key': 'dashboard:ui' } })
-    }, slug)
+    await apiDelete(page, `/api/artifacts/${slug}`, { 'X-Session-Key': 'dashboard:ui' })
   }
 })

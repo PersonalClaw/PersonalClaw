@@ -69,6 +69,18 @@ function tokenProxyPlugin(): Plugin {
       // onboarding. curl showed a healthy Set-Cookie the whole time.
       const cookies = r.headers.getSetCookie()
       if (cookies.length) res.setHeader('set-cookie', cookies)
+      // A gateway that pairs its sign-ins answers the exchange with the session's pair, which the
+      // page keeps in its origin storage (`src/lib/pair.ts`). This origin is the dev or preview
+      // server's, not the gateway's, so the pair is written here, by a small page on this origin,
+      // before it moves on to `/`. A gateway that doesn't pair answers none: the 302 below.
+      const pair = r.headers.get('x-personalclaw-pair') || ''
+      if (/^[A-Za-z0-9_-]{43}$/.test(pair)) {
+        res.statusCode = 200
+        res.setHeader('content-type', 'text/html; charset=utf-8')
+        res.setHeader('cache-control', 'no-store')
+        res.end(`<!doctype html><script>try{localStorage.setItem('pc_pair','${pair}')}catch(e){}location.replace('/')</script>`)
+        return
+      }
     } catch { /* backend down — fall through */ }
     res.statusCode = 302
     res.setHeader('location', '/')

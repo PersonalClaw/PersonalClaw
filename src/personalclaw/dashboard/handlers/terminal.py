@@ -18,6 +18,7 @@ from aiohttp import web
 
 from personalclaw import tmux_substrate
 from personalclaw.config import loader as config_loader
+from personalclaw.dashboard.socket_protocols import SOCKET_PROTOCOL, without_pair_protocol
 from personalclaw.http_errors import json_error
 from personalclaw.request_validation import json_object_body, string_field
 from personalclaw.safety_flags import strict_bool
@@ -416,9 +417,9 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
     if placeholder:
         registry[session_id] = None
 
-    ws = web.WebSocketResponse(heartbeat=30, timeout=300)
+    ws = web.WebSocketResponse(heartbeat=30, timeout=300, protocols=(SOCKET_PROTOCOL,))
     try:
-        await ws.prepare(request)
+        await ws.prepare(without_pair_protocol(request))
     except Exception:
         if placeholder:
             registry.pop(session_id, None)  # type: ignore[arg-type]

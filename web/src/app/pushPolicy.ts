@@ -122,8 +122,8 @@ export function notificationFor(
   }
 }
 
-/** Build the `{ wireKind: voice }` map `notificationFor` reads, from the rules document the SW
- *  fetched. Defensive by contract — the document crosses the network: a
+/** Build the `{ wireKind: voice }` map `notificationFor` reads, from the rules document the
+ *  page read (`pushCuePlayback.ts`). Defensive by contract — the document crosses the network: a
  *  row without a string `wire`, or whose `sound` is not a registered voice, is skipped, so a
  *  malformed or newer-build document degrades to "no cue" rather than an unplayable one. */
 export function soundMapFromRules(doc: unknown): Record<string, PushCue> {

@@ -367,6 +367,12 @@ and its SDK calls, **not** its page code. `ui.components` (the `generative-compo
 capability) is loaded by the shell for every *enabled* declaring app, so that module runs
 without the user ever opening the app's page.
 
+The same holds for what the page keeps in this origin's storage, the sign-in's pair among it
+(`web/src/lib/pair.ts`): app page code can read it, as it can make any request the dashboard
+makes. And the SDK's `mediaUrl(path)` and `bindMedia(element, path)` sign *path* with the host's
+own signer, the owner's reach for that one URL, once the client has checked it against the app's
+declared `permissions.api`.
+
 This is not closable from the server side: a same-origin request from an app's bundle is
 indistinguishable from the dashboard's own. It needs a distinct **origin** for app UI. A
 `sandbox` attribute alone cannot deliver it while the bundle shares the host's React

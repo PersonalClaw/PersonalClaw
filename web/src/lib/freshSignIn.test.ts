@@ -72,6 +72,7 @@ function gateway(answers: Response[]): Call[] {
 }
 
 afterEach(() => {
+  window.localStorage.clear()
   promptSpy.mockReset()
   alertSpy.mockReset()
   vi.unstubAllGlobals()
@@ -115,6 +116,17 @@ describe('signing in again with the password', () => {
     expect(calls[1].body).toEqual({ password: 'correct-horse-battery-staple' })
     // A request that was answered "sign in again" is not a sign-out.
     expect(signedOutState()).toBeNull()
+  })
+
+  it('keeps the pair the confirm answers, so the write sent again carries the new sign-in’s', async () => {
+    const pair = 'C'.repeat(43)
+    const calls = gateway([asked({ password: true }), json(200, { ok: true, pair }), json(200, PAIRED)])
+    promptSpy.mockResolvedValueOnce({ password: 'correct-horse-battery-staple' })
+
+    await expect(api.devicePairStart()).resolves.toEqual(PAIRED)
+
+    expect(window.localStorage.getItem('pc_pair')).toBe(pair)
+    expect(calls).toHaveLength(3)
   })
 
   it('reads the plain 401 the same way, as a write that does not say it asks gets it', async () => {
@@ -187,6 +199,16 @@ describe('signing in again with a new link, where password sign-in is off', () =
     expect(calls[1]).toMatchObject({ method: 'GET', url: '/api/auth/session?token=fresh.token' })
   })
 
+  it('keeps the pair the link’s exchange answers in its header', async () => {
+    const pair = 'D'.repeat(43)
+    gateway([asked({ password: false }, LINK_SENTENCE), json(200, { user: 'local-app' }, { 'X-PersonalClaw-Pair': pair }), json(200, PAIRED)])
+    promptSpy.mockResolvedValueOnce({ link: 'http://localhost:10000/?token=fresh.token' })
+
+    await expect(api.devicePairStart()).resolves.toEqual(PAIRED)
+
+    expect(window.localStorage.getItem('pc_pair')).toBe(pair)
+  })
+
   it('a paste that is no link of this gateway asks again, and this tab stays signed in', async () => {
     const refusal = json(
       403,
@@ -202,6 +224,19 @@ describe('signing in again with a new link, where password sign-in is off', () =
     const second = promptSpy.mock.calls[1][0] as { body: unknown }
     expect(shown(second.body)).toMatch(/^That isn’t a sign-in link from this PersonalClaw\./)
     expect(shown(second.body)).not.toMatch(/isn’t signed in/)
+    expect(signedOutState()).toBeNull()
+  })
+
+  it('a startup link that already signed a browser in says so, and this tab stays signed in', async () => {
+    const opened = 'This sign-in link has already signed a browser in. To sign in, run `personalclaw token` on the computer running PersonalClaw and open the new link it prints.'
+    const refusal = json(403, { error: { code: 'session_required', message: opened, detail: { reason: 'link_opened', at: 1 } } })
+    gateway([asked({ password: false }, LINK_SENTENCE), refusal])
+    promptSpy.mockResolvedValueOnce({ link: 'http://localhost:10000/?token=spent.link' }).mockResolvedValueOnce(null)
+
+    await expect(api.devicePairStart()).rejects.toBeInstanceOf(SignInNotRenewed)
+
+    const second = promptSpy.mock.calls[1][0] as { body: unknown }
+    expect(shown(second.body)).toMatch(/^This sign-in link has already signed a browser in\./)
     expect(signedOutState()).toBeNull()
   })
 

@@ -8,6 +8,7 @@ import { idleRunState } from '../src/lib/workPhase'
 import { BASELINED_STEPS, runMatrix, stepVerdict, type Baselines, type Measured, type SurfaceContext } from './surfaceChecks'
 import { LEARNING_WEEK, STORE_CATALOGUE, answerStubbedRead, type StubbedRead } from './stubbedReads'
 import { FIXED_CLOCK } from './fixedClock'
+import { apiGet } from './pairedApi'
 
 // ── The UI quality check: every surface, once per theme, every check ────────────────────────────
 //
@@ -426,7 +427,7 @@ const ARRANGED: Record<string, { why: string; arrange: (page: Page) => Promise<A
   // The lexicon's store makes its folder the first time anything reads it (Knowledge, a
   // transcription, Settings), so Files listed `lexicon` after one of those pages and not before.
   // Reading it first makes the folder always there.
-  files: { why: 'the lexicon folder is made by the first page that reads it', arrange: (page) => page.request.get('/api/lexicon/terms') },
+  files: { why: 'the lexicon folder is made by the first page that reads it', arrange: (page) => apiGet(page, '/api/lexicon/terms') },
 }
 
 /** `live` (a `/api/doctor` report) with one probe's result replaced by `pinned`. */

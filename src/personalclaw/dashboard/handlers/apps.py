@@ -1576,7 +1576,8 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
     # own permissions rather than borrowing the owner's session. The app's CURRENT token,
     # not a fresh mint per request: every mint is a session, and minting on every proxied
     # request signed the owner's other devices out.
-    _STRIP = _HOP_BY_HOP | {"cookie", "authorization", "x-personalclaw-app"}
+    # The sign-in's pair never reaches an app's backend: it is the owner's, like the cookie.
+    _STRIP = _HOP_BY_HOP | {"cookie", "authorization", "x-personalclaw-app", "x-personalclaw-pair"}
     fwd_headers = {k: v for k, v in request.headers.items() if k.lower() not in _STRIP}
     user_id = request.get("user", "dashboard")
     fwd_headers["Authorization"] = f"Bearer {app_session_token(user_id, name)[0]}"
@@ -1601,7 +1602,9 @@ async def api_app_proxy(request: web.Request) -> web.StreamResponse:
             ) as upstream:
                 resp = web.StreamResponse(status=upstream.status)
                 for k, v in upstream.headers.items():
-                    if k.lower() not in _HOP_BY_HOP:
+                    # `X-Auth-Required` is the gateway's own word that this browser's sign-in
+                    # ended (`web/src/lib/signedOut.ts`): an app's backend can't say it for it.
+                    if k.lower() not in _HOP_BY_HOP and k.lower() != "x-auth-required":
                         resp.headers[k] = v
                 await resp.prepare(request)
                 async for chunk in upstream.content.iter_chunked(8192):

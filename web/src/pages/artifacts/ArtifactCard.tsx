@@ -9,6 +9,7 @@ import { useReactPreview } from '../../ui/widget/reactPreview'
 import { resolveContentType, isSandboxed } from '../../ui/content/contentTypes'
 import { TileButton } from '../../ui/TileButton'
 import { useMode } from '../../app/theme'
+import { SignedImg } from '../../ui/SignedMedia'
 
 /** Live-preview card for the artifacts library grid (ARTIFACTS S2).
  *
@@ -214,7 +215,7 @@ export const ArtifactCard = memo(function ArtifactCard({ art, onOpen }: {
     if (isThumbnail) {
       // The version's own URL: a page keeps the image one URL gave it, so an unversioned /raw
       // left the card on the first version after the artifact had its next.
-      return <img src={`/api/artifacts/${encodeURIComponent(art.slug)}/raw?version=${art.version}`} alt={art.name} loading="lazy" className="h-full w-full object-cover" />
+      return <SignedImg src={`/api/artifacts/${encodeURIComponent(art.slug)}/raw?version=${art.version}`} alt={art.name} loading="lazy" className="h-full w-full object-cover" />
     }
     if (content === null) return <Placeholder tone={km.tone} label={km.label} />
     if (isExcerpt) return <ExcerptPreview content={content} />

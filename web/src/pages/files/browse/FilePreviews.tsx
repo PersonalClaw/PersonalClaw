@@ -3,6 +3,7 @@ import { MoreRow } from '../../../ui/MoreRow'
 import { ChevronRight, ChevronDown } from 'lucide-react'
 import { api } from '../../../lib/api'
 import { extOf } from '../fileMeta'
+import { useSignedUrl } from '../../../lib/signedUrl'
 
 /* ── Image ── */
 export const ImagePreview = memo(function ImagePreview({ path, src }: { path?: string; src?: string }) {
@@ -16,18 +17,21 @@ export const ImagePreview = memo(function ImagePreview({ path, src }: { path?: s
   // Reset the error state when the source changes — else a reused instance (React
   // reconciliation across opens) keeps a prior image's failure + never shows the new.
   useEffect(() => { setFailed(false) }, [url])
+  // The browser loads the image and the link itself, so on a gateway that pairs its sign-ins
+  // the URL is signed first (`lib/signedUrl.ts`); otherwise `shown` is `url`.
+  const shown = useSignedUrl(url || undefined)
   const label = (path || src || '').split('/').pop() || 'image'
   return (
     <div className="flex h-full items-center justify-center overflow-auto p-l">
       {failed || !url ? (
         <div className="flex flex-col items-center gap-3 text-on-surface-low">
           <span className="text-[0.8125rem]">Couldn’t load this image — it may have been moved or deleted.</span>
-          {url && <a href={url} target="_blank" rel="noreferrer" className="rounded-md px-3 py-1.5 text-[0.8125rem]" style={{ background: 'var(--color-surface-high)' }}>Open directly</a>}
+          {shown && <a href={shown} target="_blank" rel="noreferrer" className="rounded-md px-3 py-1.5 text-[0.8125rem]" style={{ background: 'var(--color-surface-high)' }}>Open directly</a>}
         </div>
-      ) : (
-        <img src={url} alt={label} onError={() => setFailed(true)}
+      ) : shown ? (
+        <img src={shown} alt={label} onError={() => setFailed(true)}
           className="max-h-full max-w-full rounded-md object-contain" draggable={false} />
-      )}
+      ) : null}
     </div>
   )
 })
@@ -40,6 +44,7 @@ export const PdfPreview = memo(function PdfPreview({ path, src }: { path?: strin
   // through `fileRawUrl`, so a generated pdf artifact — which has no path at all —
   // asked the FILES endpoint for the empty path and previewed nothing.
   const url = src || (path ? api.fileRawUrl(path, true) : '')
+  const shown = useSignedUrl(url || undefined)
   // No source at all is a DIFFERENT failure from "your browser won't render pdfs", and
   // the fallback below would have said the wrong one while offering a link to nowhere.
   if (!url) {
@@ -49,11 +54,12 @@ export const PdfPreview = memo(function PdfPreview({ path, src }: { path?: strin
       </div>
     )
   }
+  if (!shown) return null
   return (
-    <object data={url} type="application/pdf" className="h-full w-full">
+    <object data={shown} type="application/pdf" className="h-full w-full">
       <div className="flex h-full flex-col items-center justify-center gap-3 text-on-surface-low">
         <span className="text-[0.8125rem]">PDF preview not supported in this browser</span>
-        <a href={url} target="_blank" rel="noreferrer" className="rounded-md px-3 py-1.5 text-[0.8125rem]" style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>Open in browser</a>
+        <a href={shown} target="_blank" rel="noreferrer" className="rounded-md px-3 py-1.5 text-[0.8125rem]" style={{ background: 'var(--color-primary)', color: 'var(--color-on-primary)' }}>Open in browser</a>
       </div>
     </object>
   )

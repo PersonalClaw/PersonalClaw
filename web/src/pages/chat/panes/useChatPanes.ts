@@ -9,6 +9,7 @@ import { useQueryParam, type RouteProps } from '../../../app/useQueryState'
 import { useIsMobile } from '../../../app/useIsMobile'
 import { useKeyBinding } from '../../../app/keymap'
 import type { ChatStream } from '../useChatStream'
+import { pairFetch } from '../../../lib/pair'
 
 // ── The chat's docked panes ────────────────────────────────────────────────────────────────────
 //
@@ -110,7 +111,7 @@ export function useChatPanes({ query, setQuery, stream, focus = false }: {
     if (!sess) return
     let alive = true
     setResultBody(null)
-    fetch(`/api/chat/sessions/${encodeURIComponent(sess)}/tool-result/${encodeURIComponent(resultRef)}`,
+    pairFetch(`/api/chat/sessions/${encodeURIComponent(sess)}/tool-result/${encodeURIComponent(resultRef)}`,
       { headers: { 'X-Session-Key': 'dashboard:ui' } })
       // Surface the backend's actual reason (not-found vs evicted vs bad-grep)
       // rather than blanket-labeling every failure "expired" — that conflation

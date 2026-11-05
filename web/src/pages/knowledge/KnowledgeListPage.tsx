@@ -38,6 +38,7 @@ import { PageTitle } from '../../ui/PageTitle'
 import { notify } from '../../app/appSdk'
 import { BUSY_REASON } from '../../ui/unavailable'
 import { DiscoverTip } from '../discover/DiscoverTip'
+import { SignedImg } from '../../ui/SignedMedia'
 
 // 'home' is the library HOME: the shelves — recently added, continue reading, favorites,
 // per-shelf counts — as opposed to the filterable item list. FIRST in the view strip, because it
@@ -863,7 +864,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                               ariaLabel={`Select ${it.title || it.url_title || 'item'}`} />
                           </span>
                           {tm.key === 'image' && it.file_path
-                            ? <img src={api.knowledgeItemThumbnailUrl(it.id)} alt="" className="shrink-0 size-10 rounded-lg object-cover bg-surface-container" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                            ? <SignedImg src={api.knowledgeItemThumbnailUrl(it.id)} alt="" className="shrink-0 size-10 rounded-lg object-cover bg-surface-container" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
                             : <span className="shrink-0 inline-flex size-10 items-center justify-center rounded-lg" style={{ background: `color-mix(in srgb, ${tm.tone} 16%, transparent)` }}><tm.icon size={19} style={{ color: tm.tone }} /></span>}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-s">

@@ -26,6 +26,8 @@ import { OUTCOME_WORDS, PhaseOutcomes, outcomeSentence, stepLabel } from './Phas
 import { confirm } from '../../ui/dialog'
 import { api } from '../../lib/api'
 import { BUSY_REASON } from '../../ui/unavailable'
+import { openEventStream } from '../../lib/eventStream'
+import { SignedAnchor, SignedAudio, SignedImg, SignedVideo } from '../../ui/SignedMedia'
 
 /** Wrap gist code in a fenced markdown block so Markdown's CodeBlock highlights it.
  *  The fence is longer than any backtick run in the body (defensive against code
@@ -185,7 +187,7 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
   // so the transparency strip animates live and the pool refreshes on completion.
   useEffect(() => {
     if (procStatus !== 'queued' && procStatus !== 'processing') return
-    const es = new EventSource(api.knowledgeIngestStreamUrl(item.id))
+    const es = openEventStream(api.knowledgeIngestStreamUrl(item.id))
     const onNode = (e: MessageEvent) => {
       try { const d = JSON.parse(e.data); if (d.node) setNodePhases((p) => ({ ...p, [d.node]: d.phase })) } catch { /* ignore */ }
     }
@@ -771,9 +773,9 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
     const fills = tm.key === 'image' || tm.key === 'video'
     return (
       <div className={fills ? fillFrame : baseFrame + (prominent ? ' w-full self-start' : '')}>
-        {tm.key === 'image' && <img src={api.knowledgeItemFileUrl(item.id)} alt={item.title} className={`${mediaMax} w-full object-contain bg-surface`} />}
-        {tm.key === 'audio' && <div className="p-m"><audio src={api.knowledgeItemFileUrl(item.id)} controls className="w-full" /></div>}
-        {tm.key === 'video' && <video src={api.knowledgeItemFileUrl(item.id)} controls className={`${mediaMax} w-full bg-black`} />}
+        {tm.key === 'image' && <SignedImg src={api.knowledgeItemFileUrl(item.id)} alt={item.title} className={`${mediaMax} w-full object-contain bg-surface`} />}
+        {tm.key === 'audio' && <div className="p-m"><SignedAudio src={api.knowledgeItemFileUrl(item.id)} controls className="w-full" /></div>}
+        {tm.key === 'video' && <SignedVideo src={api.knowledgeItemFileUrl(item.id)} controls className={`${mediaMax} w-full bg-black`} />}
         <FileRow item={item} tm={tm} />
       </div>
     )
@@ -818,13 +820,13 @@ function Preview({ item, tm, fullscreen, prominent }: { item: KnowledgeItem; tm:
 /** A uniform file row: type icon + filename + size + download link. */
 function FileRow({ item, tm }: { item: KnowledgeItem; tm: ReturnType<typeof resolveType> }) {
   return (
-    <a href={api.knowledgeItemFileUrl(item.id)} target="_blank" rel="noreferrer" download={item.title}
+    <SignedAnchor href={api.knowledgeItemFileUrl(item.id)} target="_blank" rel="noreferrer" download={item.title}
       data-type="body-s" className="flex items-center gap-s px-m py-2.5 hover:bg-surface-high transition-colors text-on-surface-var border-t border-outline-variant/30 first:border-t-0">
       <tm.icon size={16} style={{ color: tm.tone }} className="shrink-0" />
       <span className="flex-1 truncate">{item.title}</span>
       {item.file_size != null && <span data-type="caption" className="shrink-0 text-on-surface-low">{fmtBytes(item.file_size)}</span>}
       <Download size={14} className="shrink-0 text-on-surface-low" />
-    </a>
+    </SignedAnchor>
   )
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { openSocket } from './pair'
 import { signedOutState } from './signedOut'
 
 export interface WsMessage { type: string; data: Record<string, unknown> }
@@ -73,7 +74,7 @@ function call(fn: () => void): void {
 
 function connect(): void {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  const sock = new WebSocket(`${proto}://${location.host}/api/ws`)
+  const sock = openSocket(`${proto}://${location.host}/api/ws`)
   ws = sock
   sock.onopen = () => {
     if (ws !== sock) return

@@ -3,6 +3,7 @@ import { FULL_SCREEN_ROUTES, type Theme } from './routes'
 import { STREAM_HEAL_WARNING } from '../src/pages/chat/streamStall'
 import { idleRunState } from '../src/lib/workPhase'
 import { askTheGatewayWhereItWaits } from './runPlaces'
+import { apiGet } from './pairedApi'
 
 // ── Harness helpers ─────────────────────────────────────────────────────────
 
@@ -827,7 +828,7 @@ export async function assertPristineFlywheel(page: Page): Promise<void> {
   // dirty, and collapsing the two is how this defect survived a green run in the first place.
   let health: { composite?: { measured?: number } }
   try {
-    const res = await page.request.get('/api/learning/health?days=7')
+    const res = await apiGet(page, '/api/learning/health?days=7')
     if (!res.ok()) return
     health = (await res.json()) as { composite?: { measured?: number } }
   } catch {

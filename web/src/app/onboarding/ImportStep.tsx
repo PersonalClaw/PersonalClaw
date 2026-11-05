@@ -25,6 +25,7 @@ import {
   type OnboardingImportSource,
   type OnboardingImportStatus,
 } from '../../lib/api'
+import { openEventStream, type EventStreamLike } from '../../lib/eventStream'
 
 /** The onboarding step that brings another local agent tool's setup over.
  *
@@ -322,8 +323,8 @@ export function ImportStep({ onDone, onSkip }: {
   const watchedId = job?.id ?? ''
   useEffect(() => {
     if (!readingRuns && !watching) return
-    let es: EventSource
-    try { es = new EventSource(api.onboardingImportStreamUrl()) } catch { return }
+    let es: EventStreamLike
+    try { es = openEventStream(api.onboardingImportStreamUrl()) } catch { return }
     let readingWas = readingRuns
     es.addEventListener('status', (e) => {
       let frame: OnboardingImportStatus

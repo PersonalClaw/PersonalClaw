@@ -7,6 +7,7 @@ import logging
 from aiohttp import WSMsgType, web
 
 from personalclaw.dashboard.origin import check_origin
+from personalclaw.dashboard.socket_protocols import SOCKET_PROTOCOL, without_pair_protocol
 from personalclaw.dashboard.state import DashboardState
 from personalclaw.security import redact_credentials, redact_exfiltration_urls
 
@@ -86,8 +87,10 @@ async def api_ws(request: web.Request) -> web.WebSocketResponse:
     from personalclaw.dashboard.handlers import _log_ring
 
     state: DashboardState = request.app["state"]
-    ws = web.WebSocketResponse(heartbeat=30)
-    await ws.prepare(request)
+    # Selects the dashboard's own subprotocol, and hands the handshake a request with the
+    # sign-in's pair taken out of the offered list (`socket_protocols`).
+    ws = web.WebSocketResponse(heartbeat=30, protocols=(SOCKET_PROTOCOL,))
+    await ws.prepare(without_pair_protocol(request))
 
     # request["app"] is set by the token middleware when the handshake carried an
     # app-scoped token (?app_token=…). Scope this connection so every send path filters

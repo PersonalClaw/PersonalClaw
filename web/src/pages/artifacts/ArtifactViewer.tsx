@@ -23,6 +23,7 @@ import { ArtifactCompare } from './ArtifactCompare'
 import { ArtifactDeploy } from './ArtifactDeploy'
 import type { CommentTarget } from '../../ui/content/commentTarget'
 import { invalidateKeys } from '../../lib/data'
+import { signUrl, signs } from '../../lib/signedUrl'
 
 interface ViewerProps {
   slug: string
@@ -304,10 +305,16 @@ export function ArtifactViewer({ slug, onChanged, onDeleted, onOpenSourceFile, c
     // Content-Type; the browser keeps the right extension.
     if (ctype?.binary) {
       const q = selVersion === null ? '' : `?version=${selVersion}`
-      const a = document.createElement('a')
-      a.href = `/api/artifacts/${encodeURIComponent(slug)}/raw${q}`
-      a.download = `${safeFilename(art.name, art.slug)}${suffix}`
-      document.body.appendChild(a); a.click(); a.remove()
+      const save = (href: string) => {
+        const a = document.createElement('a')
+        a.href = href
+        a.download = `${safeFilename(art.name, art.slug)}${suffix}`
+        document.body.appendChild(a); a.click(); a.remove()
+      }
+      // Signed first on a gateway that pairs its sign-ins (`lib/signedUrl.ts`); as it is otherwise.
+      const raw = `/api/artifacts/${encodeURIComponent(slug)}/raw${q}`
+      if (signs()) void signUrl(raw).then(save)
+      else save(raw)
       return
     }
     downloadText(`${safeFilename(art.name, art.slug)}${suffix}.${ext[art.kind] || 'txt'}`, viewContent, mime[art.kind])

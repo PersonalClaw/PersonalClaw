@@ -17,6 +17,9 @@ vi.mock('../design/soundCues', () => ({
   CUE_POINTS: ['turn_complete', 'approval_needed', 'error'],
 }))
 
+const notificationRules = vi.fn()
+vi.mock('../lib/api', () => ({ api: { notificationRules: () => notificationRules() } }))
+
 import { installPushCuePlayback } from './pushCuePlayback'
 import { PUSH_CUE_MESSAGE } from './pushPolicy'
 
@@ -65,5 +68,40 @@ describe('installPushCuePlayback', () => {
     off()
     post({ type: PUSH_CUE_MESSAGE, cue: 'coin_blip' })
     expect(playCue).not.toHaveBeenCalled()
+  })
+})
+
+describe('a push the worker hands over by kind', () => {
+  const rules = { rules: [{ wire: 'approval', sound: 'approval_needed' }] }
+
+  it('a visible page reads the voice through its own request layer and plays it', async () => {
+    notificationRules.mockResolvedValue(rules)
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    const dispose = installPushCuePlayback()
+    post({ type: PUSH_CUE_MESSAGE, kind: 'approval' })
+    await vi.waitFor(() => expect(playCue).toHaveBeenCalledWith('approval_needed', 'approval_needed'))
+    dispose()
+  })
+
+  it('a hidden page plays nothing and reads nothing', async () => {
+    notificationRules.mockClear()
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    const dispose = installPushCuePlayback()
+    post({ type: PUSH_CUE_MESSAGE, kind: 'approval' })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(notificationRules).not.toHaveBeenCalled()
+    expect(playCue).not.toHaveBeenCalled()
+    dispose()
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+  })
+
+  it('a rules read that fails leaves the push silent', async () => {
+    notificationRules.mockRejectedValue(new Error('refused'))
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    const dispose = installPushCuePlayback()
+    post({ type: PUSH_CUE_MESSAGE, kind: 'approval' })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(playCue).not.toHaveBeenCalled()
+    dispose()
   })
 })
