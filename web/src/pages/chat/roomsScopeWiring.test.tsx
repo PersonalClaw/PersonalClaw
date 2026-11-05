@@ -96,6 +96,20 @@ describe('the rooms list', () => {
     expect(screen.getByRole('textbox', { name: 'Room title' })).toBeTruthy()
   })
 
+  it("draws no New room over a list: that is the page header's primary in this scope", () => {
+    render(<RoomsScope rooms={[room()]} error={null} loading={false} onRefresh={() => {}} navigate={() => {}} />)
+    expect(screen.queryByRole('button', { name: /New room/ })).toBeNull()
+  })
+
+  it('opens the form the page holds open, and Cancel hands the closing back to the page', async () => {
+    const onCreating = vi.fn()
+    render(<RoomsScope rooms={[room()]} error={null} loading={false} onRefresh={() => {}} navigate={() => {}}
+      creating onCreating={onCreating} />)
+    expect(screen.getByRole('textbox', { name: 'Room title' })).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(onCreating).toHaveBeenCalledWith(false)
+  })
+
   it('reads the list\'s `{"enabled": false}` as the feature being off, and routes to the switch', async () => {
     // A decided 200 now, not the 403 `rooms_disabled` it used to be — which logged a failed request
     // on every chat visit of a default install, where the feature ships off.
@@ -161,6 +175,11 @@ describe('🔴 the wiring that makes a room reachable at all', () => {
     expect(bodyIdx, 'the rooms body branch must exist').toBeGreaterThan(0)
     expect(bodyIdx, 'and must precede the session load states').toBeLessThan(sessionErrIdx)
     expect(historyView, 'it renders the rooms list, not a narrowed session list').toContain('<RoomsScope rooms={roomsData}')
+  })
+
+  it("the scope's New room is the header's primary, and it opens the scope's form", () => {
+    expect(historyView).toMatch(/\{roomsScope && roomsAvailable && !creatingRoom && \(\s*<HeaderControl icon=\{Plus\} label="New room" variant="primary" priority="primary" onClick=\{\(\) => setCreatingRoom\(true\)\} \/>/)
+    expect(historyView).toContain('creating={creatingRoom} onCreating={setCreatingRoom}')
   })
 
   it('`#/chat/room/<id>` resolves to the room, ABOVE the session-key fallthrough', () => {

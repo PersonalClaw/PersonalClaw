@@ -17,6 +17,8 @@ import { ConflictPanel } from './ConflictPanel'
 import { SidePanel } from '../../ui/SidePanel'
 import { ListStatus } from '../../ui/ListControls'
 import { HeaderSearch } from '../../ui/HeaderSearch'
+import { HeaderFilter } from '../../ui/HeaderFilter'
+import { type FilterSectionDef } from '../../ui/FilterMenu'
 import { HeaderActions, HeaderControl, HeaderSegmented } from '../../ui/HeaderActions'
 import { ContextMenu, type ContextMenuItem } from '../../ui/motion'
 import { api, type KnowledgeIntent, type KnowledgeIntentRecord, type IntentOutcome, type KnowledgeItem, type KnowledgeCollection, type KnowledgeBulkOp, type ReindexJob } from '../../lib/api'
@@ -482,6 +484,45 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
       favorites: base.filter((i) => !!i.favorited).length,
     }
   }, [items])
+  // The library's choice sets, the type, the provider, the curation, the archived and the tag, and
+  // the shelf, as the sections of the header's filter, each named in its label once set. A shelf
+  // REPLACES the item source (a smart shelf's membership is server-resolved), so it is a section of
+  // its own, with New shelf as its last row.
+  const librarySections = useMemo<FilterSectionDef[]>(() => {
+    const list: FilterSectionDef[] = []
+    const several = (items?.length ?? 0) > 1
+    if (typesPresent.length > 1) {
+      list.push({ title: 'Type', value: typeFilter, defaultKey: '', onChange: setTypeFilter, quiet: true,
+        options: [{ key: '', label: 'All types' }, ...typesPresent.map((t) => { const tm = resolveType({ type: t as never }); return { key: t, label: tm.label, icon: tm.icon } })] })
+    }
+    if (providersPresent.length > 1) {
+      list.push({ title: 'Provider', value: providerFilter, defaultKey: '', onChange: setProviderFilter, quiet: true,
+        options: [{ key: '', label: 'All providers', icon: Database }, ...providersPresent.map((p) => ({ key: p, label: p === 'native' ? 'PersonalClaw' : p }))] })
+    }
+    // Curation: only the states actually present, and only once the library is big enough for
+    // filtering to be the point; favourites whenever there are any.
+    const curation = [
+      ...(several && curationCounts.reading > 0 ? [{ key: 'reading', label: 'Reading', icon: BookOpen, count: curationCounts.reading }] : []),
+      ...(several && curationCounts.unread > 0 && curationCounts.unread !== (items?.length ?? 0) ? [{ key: 'unread', label: 'Unread', count: curationCounts.unread }] : []),
+      ...(several && curationCounts.read > 0 ? [{ key: 'read', label: 'Read', count: curationCounts.read }] : []),
+      ...(curationCounts.favorites > 0 ? [{ key: 'favorites', label: 'Favorites', icon: Star, count: curationCounts.favorites }] : []),
+    ]
+    if (curation.length > 0) {
+      list.push({ title: 'Curation', value: curationFilter, defaultKey: '', onChange: setCurationFilter, quiet: true,
+        options: [{ key: '', label: 'Any state' }, ...curation] })
+    }
+    list.push({ title: 'Archived', value: showArchived ? 'show' : '', defaultKey: '', onChange: (k) => setShowArchived(k === 'show'), quiet: true,
+      said: (k) => (k === 'show' ? 'Showing archived' : 'Not archived'),
+      options: [{ key: '', label: 'Hide archived' }, { key: 'show', label: 'Show archived', icon: Archive }] })
+    if (tagFilter) {
+      list.push({ title: 'Tag', value: tagFilter, defaultKey: '', onChange: setTagFilter, quiet: true, said: (k) => `# ${k}`,
+        options: [{ key: '', label: 'Any tag' }, { key: tagFilter, label: `# ${tagFilter}` }] })
+    }
+    list.push({ title: 'Shelf', value: collectionTok, defaultKey: '', onChange: setCollectionTok, quiet: true,
+      options: [{ key: '', label: 'No shelf', icon: Library }, ...collections.map((c) => ({ key: c.id, label: c.name, icon: c.kind === 'smart' ? Sparkles : Layers, count: c.kind === 'manual' && typeof c.item_count === 'number' ? c.item_count : undefined }))],
+      actions: [{ label: 'New shelf', icon: Plus, onSelect: () => { void createCollection() } }] })
+    return list
+  }, [items, typesPresent, providersPresent, curationCounts, typeFilter, providerFilter, curationFilter, showArchived, tagFilter, collectionTok, collections])
   // 🪤 STAYS ON `stats.items`, DELIBERATELY — do not "simplify" this to `items.length === 0`.
   // `stats.items` is a WHOLE-LIBRARY count; `items` is the filtered/paged list for the current
   // lens, search (`q`) and shelf (`collectionTok`). They are not interchangeable, and swapping them
@@ -516,6 +557,7 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
           right={
             <HeaderActions>
               {view === 'library' && <HeaderSearch value={q} onChange={setQ} placeholder="Search knowledge" />}
+              {view === 'library' && <HeaderFilter sections={librarySections} />}
               <HeaderSegmented ariaLabel="Knowledge view" value={view} onChange={(v) => setView(v as View)}
                 options={[{ key: 'home', label: 'Home', icon: Home }, { key: 'library', label: 'All items', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }, { key: 'decisions', label: 'Decisions', icon: Gavel }]} />
               {view === 'library' && (items?.length ?? 0) > 0 && (
@@ -659,65 +701,8 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
               <IntentsView selectedId={selectedIntent?.id ?? null} onSelect={setSelectedIntent} reloadKey={intentsReloadKey} />
             ) : (
               <>
-                <div className="mb-l flex flex-wrap gap-1.5">
-                  {typesPresent.length > 1 && <FilterChip active={typeFilter === ''} onClick={() => setTypeFilter('')}>All types</FilterChip>}
-                  {typesPresent.length > 1 && typesPresent.map((t) => { const tm = resolveType({ type: t as never }); return <FilterChip key={t} active={typeFilter === t} onClick={() => setTypeFilter(t)} tone={tm.tone}><tm.icon size={12} /> {tm.label}</FilterChip> })}
-                  {providersPresent.length > 1 && <FilterChip active={providerFilter === ''} onClick={() => setProviderFilter('')}><Database size={12} /> All providers</FilterChip>}
-                  {providersPresent.length > 1 && providersPresent.map((p) => <FilterChip key={p} active={providerFilter === p} onClick={() => setProviderFilter(p)}>{p === 'native' ? 'PersonalClaw' : p}</FilterChip>)}
-                  {/* Curation chips: only for states actually present, and only once
-                      the library is big enough for filtering to be the point. */}
-                  {(items?.length ?? 0) > 1 && curationCounts.reading > 0 && (
-                    <FilterChip active={curationFilter === 'reading'} onClick={() => setCurationFilter(curationFilter === 'reading' ? '' : 'reading')}>
-                      <BookOpen size={12} /> Reading {curationCounts.reading}
-                    </FilterChip>
-                  )}
-                  {(items?.length ?? 0) > 1 && curationCounts.unread > 0 && curationCounts.unread !== (items?.length ?? 0) && (
-                    <FilterChip active={curationFilter === 'unread'} onClick={() => setCurationFilter(curationFilter === 'unread' ? '' : 'unread')}>
-                      Unread {curationCounts.unread}
-                    </FilterChip>
-                  )}
-                  {(items?.length ?? 0) > 1 && curationCounts.read > 0 && (
-                    <FilterChip active={curationFilter === 'read'} onClick={() => setCurationFilter(curationFilter === 'read' ? '' : 'read')}>
-                      Read {curationCounts.read}
-                    </FilterChip>
-                  )}
-                  {curationCounts.favorites > 0 && (
-                    <FilterChip active={curationFilter === 'favorites'} onClick={() => setCurationFilter(curationFilter === 'favorites' ? '' : 'favorites')} tone="var(--color-primary)">
-                      <Star size={12} /> Favorites {curationCounts.favorites}
-                    </FilterChip>
-                  )}
-                  <FilterChip active={showArchived} onClick={() => setShowArchived((v) => !v)}><Archive size={12} /> {showArchived ? 'Showing archived' : 'Show archived'}</FilterChip>
-                  {tagFilter && <FilterChip active onClick={() => setTagFilter('')}># {tagFilter} <X size={11} /></FilterChip>}
-                </div>
-                {/* Collections rail. A shelf REPLACES the item source (a smart shelf's
-                    membership is server-resolved), so selecting one also parks the
-                    search/type chips above — they describe the library, not the shelf.
-                    Its first chip chooses no shelf, so it says so: All items is the view's own
-                    name (#3815), and two controls, one over the other, would read the same. */}
-                <div className="mb-m flex flex-wrap items-center gap-1.5">
-                  <FilterChip active={!collectionTok} onClick={() => setCollectionTok('')}>
-                    <Library size={12} /> No shelf
-                  </FilterChip>
-                  {/* The shelf name is the only user-authored text in this rail, so it is the
-                      only chip that can be arbitrarily long. Bounded + truncated (with the full
-                      name in `title`) so one long name cannot push its siblings out of reach —
-                      the store now caps new names, and this keeps ALREADY-STORED ones legible
-                      without a migration (issue 393). Same idiom as the project path chip.
-                      (Issue numbers are spelled out here: a bare hash-393 reads as a 3-digit
-                      hex colour to the design-system token lint.) */}
-                  {collections.map((c) => (
-                    <FilterChip key={c.id} active={collectionTok === c.id} onClick={() => setCollectionTok(c.id)} title={c.name}>
-                      {c.kind === 'smart' ? <Sparkles size={12} className="shrink-0" /> : <Layers size={12} className="shrink-0" />}
-                      <span className="min-w-0 max-w-[16rem] truncate">{c.name}</span>
-                      {c.kind === 'manual' && typeof c.item_count === 'number' ? <span className="shrink-0">{c.item_count}</span> : null}
-                    </FilterChip>
-                  ))}
-                  {/* Reuses the rail's own chip rather than a bespoke button — it
-                      lives in the chip row and should read as one of them. */}
-                  <FilterChip active={false} onClick={createCollection}>
-                    <Plus size={12} /> New shelf
-                  </FilterChip>
-                </div>
+                {/* The library's type, provider, curation, archived, tag and shelf choices are sections of
+                    the header's filter (`librarySections`), so no row of chips sits above the list. */}
                 {activeCollection && (
                   <div className="mb-m flex flex-wrap items-center gap-2">
                     <span data-type="label-l" className="text-on-surface">{activeCollection.name}</span>
@@ -1496,39 +1481,3 @@ export function IntentEditor({ intent, onClose, onSaved }: { intent: KnowledgeIn
   )
 }
 
-/** One filter/collection chip. Selected chips carry the accent; the rest are neutral.
- *
- *  🪤 A SELECTED CHIP PUT THE ACCENT IN BOTH THE TEXT AND THE BACKGROUND, which is what broke it:
- *  coral text on a 20% coral tint measured **3.33:1** in light mode — below the 4.5 floor and
- *  reported `[serious] color-contrast` by axe. The tint raises the backdrop's luminance toward the
- *  text it sits under, so the two converge. Dark mode was never affected (6.99:1) because there the
- *  tint darkens the backdrop *away* from the light accent.
- *
- *  The selected state now uses the token pair the design system provides for exactly this — an
- *  accent-tinted container with ink chosen to sit on it (`--color-primary-container` /
- *  `--color-on-primary-container`, 13.1:1 in light, 10.43:1 in dark) — instead of hand-rolling a
- *  `color-mix` tint and reusing the accent as ink.
- *
- *  A per-type `tone` (the Note/Bookmark/Gist hues) is left EXACTLY as it was. There is no
- *  `<tone>-container` sibling to pair it with, and putting a type's hue on the coral container
- *  would be both a new contrast risk and visually wrong. Those chips do not render selected on this
- *  surface in any state measured here; if one ever fails, it needs its own container value, not a
- *  guess made from this one. */
-function FilterChip({ active, onClick, tone, title, children }: { active: boolean; onClick: () => void; tone?: string; title?: string; children: React.ReactNode }) {
-  const selected = tone
-    // Untouched: a type-toned chip keeps its own tint + ink.
-    ? { background: `color-mix(in srgb, ${tone} 20%, transparent)`, color: tone }
-    : { background: 'var(--color-primary-container)', color: 'var(--color-on-primary-container)' }
-  return (
-    // `min-w-0` so a bounded, truncating child (the shelf-name span) can actually shrink:
-    // a flex item's default `min-width:auto` floors it at its content width, which is what
-    // let a 10k-character shelf name render as one pill wider than the viewport (issue 393).
-    // Inert for every short chip. `title` surfaces the full text a truncated child hides.
-    // Raw: a type-toned chip carries its hue as an inline style, which no primitive takes.
-    <button type="button" onClick={onClick} aria-pressed={active} title={title}
-      data-type="body-s" className="inline-flex min-w-0 items-center gap-1 rounded-pill px-m h-8 transition-colors"
-      style={active ? selected : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
-      {children}
-    </button>
-  )
-}

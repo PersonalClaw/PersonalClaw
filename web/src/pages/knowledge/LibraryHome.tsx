@@ -94,7 +94,7 @@ export function LibraryHome({ onOpenItem, onOpenReader, onOpenCollection, onShow
       {writeErr ? <InlineError icon onDismiss={() => setWriteErr('')}>{writeErr}</InlineError> : null}
 
       <Shelf id="home-collections" icon={Layers} title="Shelves" count={data.collections.length}
-        empty="No shelves yet — group items into one from the Library lens's shelf rail.">
+        empty="No shelves yet — make one with New shelf in All items' filter.">
         <ul className="flex flex-wrap gap-s">
           {data.collections.map((c) => (
             <li key={c.id}>

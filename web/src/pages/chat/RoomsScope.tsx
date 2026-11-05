@@ -30,14 +30,20 @@ import {
  *  surfacing the members as rows would answer "what rooms do I have" with the wrong noun. So
  *  this scope reads `/api/rooms`, and the scope's count comes from that read.
  */
-export function RoomsScope({ rooms, error, loading, onRefresh, navigate }: {
+export function RoomsScope({ rooms, error, loading, onRefresh, navigate, creating: held, onCreating }: {
   rooms: RoomRecord[] | SwitchedOffView | undefined
   error: unknown
   loading: boolean
   onRefresh: () => void
   navigate: (path: string) => void
+  /** Whether the new-room form is open, where the page holds it: the page's header has the scope's
+   *  New room, so the header opens the form this draws. Held here when the page passes neither. */
+  creating?: boolean
+  onCreating?: (open: boolean) => void
 }) {
-  const [creating, setCreating] = useState(false)
+  const [own, setOwn] = useState(false)
+  const creating = held ?? own
+  const setCreating = onCreating ?? setOwn
   const [title, setTitle] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -86,16 +92,10 @@ export function RoomsScope({ rooms, error, loading, onRefresh, navigate }: {
           action={{ label: 'New room', onClick: () => setCreating(true), icon: Plus }} />
       ) : (
         <>
-          <div className="flex items-center justify-between gap-s">
-            <Eyebrow as="h2" id="rooms-heading">
-              {list.length} room{list.length === 1 ? '' : 's'}
-            </Eyebrow>
-            {!creating && (
-              <Button size="sm" variant="secondary" onClick={() => setCreating(true)}>
-                <Plus size={14} aria-hidden /> New room
-              </Button>
-            )}
-          </div>
+          {/* New room is the page header's primary in this scope (`ChatHistoryPage`). */}
+          <Eyebrow as="h2" id="rooms-heading">
+            {list.length} room{list.length === 1 ? '' : 's'}
+          </Eyebrow>
           {list.length > 0 && (
             <ul aria-labelledby="rooms-heading" className="flex flex-col gap-s">
               {list.map((room) => (

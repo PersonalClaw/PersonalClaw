@@ -19,7 +19,7 @@ const doc: UiDoc = {
     { guidance: true, description: 'Pass onClick wherever the list can actually filter by the value. A chip that looks like its interactive sibling and is not is the exact defect this component was extracted to end.' },
     { guidance: true, description: 'Omit onClick on a surface that cannot host a control rather than rendering a dead button. The kanban card does this deliberately: its wrapper is the ONLY drag source, and TaskBoard records that a control across a `draggable` element gets between the pointer and the drag.' },
     { guidance: true, description: 'Keep it h-6 so it sits level with the priority/due chips it shares a meta row with. Reach for ui/Button only when you want stock button chrome — its smallest size is h-7 px-m with a centred label, which is a different visual object.' },
-    { guidance: false, description: 'Do not confuse it with pages/knowledge\'s local FilterChip: that is an h-8 TOGGLE carrying aria-pressed, one of a rail of filter states you switch between. This reports a value and narrows to it. Merging them would force one height and one semantic onto both.' },
+    { guidance: false, description: 'Do not make it a filter toggle, one of a set of filter states you switch between: those are rows of the header\'s filter. This reports a value and narrows to it.' },
     { guidance: false, description: 'Do not drop the stopPropagation in the button form. Every one of these sits inside a row or card whose own click opens the record, so filtering by a tag would also open whichever task the tag happened to hang on.' },
     { guidance: false, description: 'Do not hardcode colors — `tone` routes through the accent skin and the surface tokens so the chip stays themable in both modes.' },
   ],

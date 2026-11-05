@@ -23,7 +23,7 @@
 {"file":"pages/chat/composer/PasteCards.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/composer/QueueStack.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/header/ChatHeader.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
-{"file":"pages/chat/history/ChatHistoryPage.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
+{"file":"pages/chat/history/ChatHistoryPage.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/history/SessionPeek.tsx","raw-button":1,"raw-input":1,"raw-dialog":0}
 {"file":"pages/chat/inspector/InspectorSection.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/chat/transcript/AssistantSegments.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
@@ -59,7 +59,7 @@
 {"file":"pages/knowledge/KnowledgeCreatePage.tsx","raw-button":2,"raw-input":5,"raw-dialog":0}
 {"file":"pages/knowledge/KnowledgeDetail.tsx","raw-button":1,"raw-input":2,"raw-dialog":0}
 {"file":"pages/knowledge/KnowledgeDetailPage.tsx","raw-button":2,"raw-input":0,"raw-dialog":0}
-{"file":"pages/knowledge/KnowledgeListPage.tsx","raw-button":5,"raw-input":0,"raw-dialog":0}
+{"file":"pages/knowledge/KnowledgeListPage.tsx","raw-button":4,"raw-input":0,"raw-dialog":0}
 {"file":"pages/loop/LoopComposer.tsx","raw-button":2,"raw-input":4,"raw-dialog":0}
 {"file":"pages/loop/LoopRuntimePill.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}
 {"file":"pages/loop/LoopSelfApproval.tsx","raw-button":1,"raw-input":0,"raw-dialog":0}

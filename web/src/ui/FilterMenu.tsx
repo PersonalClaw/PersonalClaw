@@ -33,6 +33,23 @@ export interface FilterSectionDef {
   /** In a header filter's label: how this section's choice is said, from its key ("Sorted by
    *  name"); the chosen option's own label otherwise. */
   said?: (key: string) => string
+  /** Rows after the choices that act rather than choose (Knowledge's New shelf, under its shelves).
+   *  Choosing one closes the menu. */
+  actions?: { label: string; icon?: LucideIcon; onSelect: () => void }[]
+  /** Several choices at once (Chat history's tags, any of which a chat may carry): `value` is the
+   *  chosen keys joined by commas, '' for none, and each row adds or removes its own key. */
+  multi?: boolean
+}
+
+/** A multi section's value with `key` added, or taken out if it was in. */
+export function toggledKey(value: string, key: string): string {
+  const keys = value.split(',').filter(Boolean)
+  return (keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key]).join(',')
+}
+
+/** Whether a section has `key` chosen. */
+function isChosen(s: FilterSectionDef, key: string): boolean {
+  return s.multi ? s.value.split(',').includes(key) : s.value === key
 }
 
 /** The canonical header "Filter & sort" control: a single 40px pill that opens a
@@ -94,7 +111,11 @@ export function FilterSections({ sections, close }: { sections: FilterSectionDef
         <Section key={s.title} title={s.title}
           onClear={s.value !== s.defaultKey ? () => s.onChange(s.defaultKey) : undefined}>
           {s.options.map((o) => (
-            <Row key={o.key} option={o} selected={s.value === o.key} onClick={() => s.onChange(o.key)} />
+            <Row key={o.key} option={o} selected={isChosen(s, o.key)}
+              onClick={() => s.onChange(s.multi ? toggledKey(s.value, o.key) : o.key)} />
+          ))}
+          {s.actions?.map((a) => (
+            <FilterRow key={a.label} label={a.label} icon={a.icon} selected={false} onClick={() => { close(); a.onSelect() }} />
           ))}
         </Section>
       ))}

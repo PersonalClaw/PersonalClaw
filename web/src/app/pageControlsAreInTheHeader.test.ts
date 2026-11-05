@@ -21,8 +21,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //  · a link in the title (a breadcrumb, such as a project's name before "Tasks", back to its
 //    Overview) says where you are, in `TopBar.left`: navigation, not a page control, so not counted.
 //
-// So no page draws `ListControls` or a `FilterMenu`, and a page that owns a header draws no
-// `Segmented` or `SearchField` of its own beyond its sections'. Measured against a budget that
+// So no page draws `ListControls`, a `FilterMenu` or a `FilterChip`, and a page that owns a header
+// draws no `Segmented`, `SearchField` or row of pressed toggles (a `role="group"` of `aria-pressed`
+// buttons, a filter by another name) of its own beyond its sections'. Measured against a budget that
 // holds what had not moved yet and ratchets to nothing.
 
 const SRC = join(process.cwd(), 'src')
@@ -35,12 +36,12 @@ const rel = (abs: string) => relative(SRC, abs)
 const count = (src: string, re: RegExp) => [...src.matchAll(re)].length
 
 /** A section's own controls in a page that owns a header: not page-level, so not counted. */
-const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; why: string }> = {
+const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; toggles?: number; why: string }> = {
   'pages/files/FilesSection.tsx': { search: 1, why: "the explorer pane's search of the file tree" },
   'pages/tools/ToolsPage.tsx': { segmented: 3, why: "the add and edit server dialogs' type and transport fields" },
   'pages/loop/LoopComposer.tsx': { segmented: 3, why: "the composer's own fields: granularity, project kind, loop kind" },
   'pages/loops/DesignCockpitPage.tsx': { segmented: 1, why: "the design preview pane's colour scheme" },
-  'pages/loops/LoopPlanReview.tsx': { segmented: 1, why: "a plan field, the goal type" },
+  'pages/loops/LoopPlanReview.tsx': { segmented: 1, toggles: 1, why: "plan fields: the goal type, and each phase's capabilities" },
   'pages/knowledge/SourceCreatePage.tsx': { segmented: 1, why: 'a form field, the enrichment for this source' },
   'pages/prompts/PromptCreatePage.tsx': { segmented: 2, why: "a form field (the prompt kind) and the editor's right-rail pane" },
   'pages/triggers/TriggerCreatePage.tsx': { segmented: 1, why: 'a form field, the trigger kind' },
@@ -52,15 +53,38 @@ const SECTION_CONTROLS: Record<string, { segmented?: number; search?: number; wh
  *  controls moved. */
 const BUDGET: Record<string, number> = {}
 
+/** The rows of pressed toggles in a source: each `role="group"` element with an `aria-pressed`
+ *  button inside it. The element runs from its opening tag to the close that balances it. */
+export function toggleRows(src: string): number {
+  let rows = 0
+  for (const m of src.matchAll(/role="group"/g)) {
+    const open = src.lastIndexOf('<', m.index)
+    const tag = /^<([\w.]+)/.exec(src.slice(open))?.[1]
+    if (!tag) continue
+    const name = tag.replace('.', '\\.')
+    const edge = new RegExp(`<${name}[\\s>]|</${name}>`, 'g')
+    edge.lastIndex = open + 1
+    let depth = 1
+    let end = src.length
+    for (let t = edge.exec(src); t; t = edge.exec(src)) {
+      depth += t[0].startsWith('</') ? -1 : 1
+      if (depth === 0) { end = t.index; break }
+    }
+    if (/aria-pressed=/.test(src.slice(open, end))) rows += 1
+  }
+  return rows
+}
+
 /** The page-level controls a page draws outside its header. */
 function outsideTheHeader(abs: string): number {
   const src = strip(readSource(abs))
-  const bars = count(src, /<ListControls[\s>]/g) + count(src, /<FilterMenu[\s>]/g)
+  const bars = count(src, /<ListControls[\s>]/g) + count(src, /<FilterMenu[\s>]/g) + count(src, /<FilterChip[\s>]/g)
   if (!/<TopBar[\s>]/.test(src)) return bars
   const own = SECTION_CONTROLS[rel(abs)] ?? {}
   const strips = Math.max(0, count(src, /<Segmented[\s>]/g) - (own.segmented ?? 0))
   const searches = Math.max(0, count(src, /<SearchField[\s>]/g) - (own.search ?? 0))
-  return bars + strips + searches
+  const toggles = Math.max(0, toggleRows(src) - (own.toggles ?? 0))
+  return bars + strips + searches + toggles
 }
 
 describe('every page-level control is in the page header', () => {
@@ -87,7 +111,15 @@ describe('every page-level control is in the page header', () => {
       const src = strip(readSource(join(SRC, f)))
       expect(count(src, /<Segmented[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.segmented ?? 0)
       expect(count(src, /<SearchField[\s>]/g), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.search ?? 0)
+      expect(toggleRows(src), `${f}: ${own.why}`).toBeGreaterThanOrEqual(own.toggles ?? 0)
     }
+  })
+
+  it('counts a row of pressed toggles, and a group of anything else not', () => {
+    const row = '<div role="group" aria-label="Filter by tag">\n  <button aria-pressed={on}>a</button>\n</div>'
+    expect(toggleRows(row)).toBe(1)
+    expect(toggleRows('<div role="group" aria-label="Body"><div><p>x</p></div></div><button aria-pressed={on} />')).toBe(0)
+    expect(toggleRows(`<section role="group"><div><div /></div>${row}</section>`)).toBe(2)
   })
 
   it('and the page layouts keep no slot for a bar under the header', () => {

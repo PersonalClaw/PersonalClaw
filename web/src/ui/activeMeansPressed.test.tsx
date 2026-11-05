@@ -18,6 +18,9 @@ import { filesUnder, readSource } from '../test/sourceTree'
 //   `FilterChip`     knowledge/KnowledgeListPage.tsx   **8 call sites** → `style={active ? selected : …}`
 //   `IconButton`     ui/IconButton.tsx      **2 call sites** (composer optimize + mic)
 //
+// (Knowledge's `FilterChip` rows are gone since: the library's type, curation, archived and shelf
+// choices are sections of the header's filter, whose rows mark the choice with a check.)
+//
 // 🔑 SO THE FIX BELONGS IN THREE PRIMITIVES, NOT AT 24 CALL SITES — and the contract is already written
 // down in `Button`'s own doc: *"a button acting as a SELECTED/UNSELECTED choice must announce that state,
 // or a screen-reader user hears an identical label for the row they are on and the row they are not."*
@@ -173,12 +176,6 @@ describe('the population this reaches, so the primitives were the right place', 
 
   it('HeaderControl has 14 active call sites', () => {
     expect(callSites('HeaderControl').length).toBeGreaterThanOrEqual(14)
-  })
-
-  it('FilterChip has 8, and now announces them', () => {
-    expect(callSites('FilterChip').length).toBeGreaterThanOrEqual(8)
-    const src = readSource(join(SRC, 'pages/knowledge/KnowledgeListPage.tsx'))
-    expect(src).toMatch(/<button type="button" onClick=\{onClick\} aria-pressed=\{active\}/)
   })
 
   it('IconButton has 2 — small, and one of them is a recording state', () => {

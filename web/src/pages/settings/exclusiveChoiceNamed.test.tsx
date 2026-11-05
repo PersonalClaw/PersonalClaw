@@ -309,8 +309,9 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // 17 was the equality-only population; the membership spelling added six more (see the floor
     // asserted in the test below, which is the one that would catch that matcher silently matching
     // nothing — the whole population floor is too coarse to notice six missing). 22 since the shell's
-    // content-width pill, one of the 23, was removed with its file (#5718).
-    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(22)
+    // content-width pill, one of the 23, was removed with its file (#5718); 21 since Chat history's
+    // tag filter became its header filter's Tag section, whose rows mark the choice with a check.
+    expect(groups.length, 'the sweep must find the groups').toBeGreaterThanOrEqual(21)
     for (const rel of ['pages/settings/NotificationRulesMatrix.tsx', 'pages/settings/PersonalityPicker.tsx']) {
       expect(groups.map((g) => g.rel), `${rel} delegates, and must still be COUNTED`).toContain(rel)
     }
@@ -328,14 +329,13 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     // 🔑 THE FLOOR THAT MATTERS FOR A NEW MATCHER. A regex that resolves to nothing produces exactly
     // the same green as a clean tree, and this one interpolates the map's item name — one escaping
     // slip and it silently matches zero. Six is what was measured when it was written: five stateless
-    // (now fixed) plus `ChatPage`'s artifact picker, which was already correct via `MenuRow`.
+    // (now fixed) plus `ChatPage`'s artifact picker, which was already correct via `MenuRow`. Five since
+    // Chat history's tag filter left the page body for the header's filter.
     const groups = exclusiveGroups()
     const member = groups.filter((g) => g.via === 'membership')
-    expect(member.length, 'the membership matcher must resolve its own population').toBeGreaterThanOrEqual(6)
+    expect(member.length, 'the membership matcher must resolve its own population').toBeGreaterThanOrEqual(5)
     for (const rel of [
       'pages/settings/SearchPanel.tsx',
-      // The history page's tag filter, which moved out of ChatPage.
-      'pages/chat/history/ChatHistoryPage.tsx',
       // The composer's knowledge and artifact pickers, which moved out of ChatPage.
       'pages/chat/composer/ContextPickers.tsx',
       'pages/agents/AgentForm.tsx',
@@ -356,7 +356,6 @@ describe('the family is DERIVED, so the next pill group cannot be missed', () =>
     const named: [string, RegExp][] = [
       ['pages/settings/SearchPanel.tsx', /role="group" aria-label=\{`\$\{meta\.label\} provider`\}/],
       ['pages/chat/composer/ContextPickers.tsx', /role="group" aria-label="Knowledge to attach"/],
-      ['pages/chat/history/ChatHistoryPage.tsx', /role="group" aria-label="Filter by tag"/],
       ['pages/agents/AgentForm.tsx', /role="group" aria-label=\{label\}/],
       ['pages/loops/LoopPlanReview.tsx', /role="group" aria-label=\{label\}/],
     ]

@@ -1,8 +1,9 @@
+import { useState } from 'react'
 import { ResultAnnouncement } from '../../../ui/ListControls'
 import { BUSY_REASON } from '../../../ui/unavailable'
 import { fvs } from '../../../design/fontWeight'
 import { AnimatePresence } from 'framer-motion'
-import { Edit3, Search, MessageCircle, MessageSquare, Trash2, Pin, Sparkles, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, Filter, Loader2, Target, Code2 as CodeIcon, GripVertical, Eye, Archive, ArchiveRestore, Download, Share2 } from 'lucide-react'
+import { Edit3, Search, MessageCircle, MessageSquare, Trash2, Pin, Sparkles, Folder, FolderPlus, Tag as TagIcon, Columns3, List as ListIcon, Filter, Loader2, Target, Code2 as CodeIcon, GripVertical, Eye, Archive, ArchiveRestore, Download, Share2, Plus } from 'lucide-react'
 import { IconButton } from '../../../ui/IconButton'
 import { SquareIconButton } from '../../../ui/SquareIconButton'
 import { TopBar } from '../../../ui/TopBar'
@@ -85,6 +86,8 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
     originCounts, roomCount, roomsAvailable, del, downloadExport, shareSession, togglePin, setFolder,
     toggleTag, setColumnTag, setLifecycle, setNeverArchive, createFolder, byFolder,
   } = useChatHistory({ navigate, query, setQuery })
+  // The Rooms scope's new-room form: its header's New room opens it, and `RoomsScope` draws it.
+  const [creatingRoom, setCreatingRoom] = useState(false)
 
   // Scoped right-click actions — reuse the row's existing handlers. Folder
   // assignment appears as flat "Move to …" items (the primitive is single-level).
@@ -281,6 +284,8 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
   //    their choices. Rooms join the moment `/api/rooms` answers at all, which is the moment the
   //    feature is on, including at zero rooms, because the choice is how the first one gets made.
   //  · Active or Archived, for the session list: none of it applies to the Rooms scope.
+  //  · Tag, once any tag exists: the chats carrying any of the chosen tags. Several at once, and
+  //    out of the label until one is chosen. Not in the Rooms scope either: rooms carry no tags.
   const scoped = originCounts.loop > 0 || originCounts.code > 0 || originCounts.channel > 0 || roomsAvailable
   const historySections: FilterSectionDef[] = [
     ...(scoped ? [{
@@ -299,6 +304,12 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
       onChange: (v: string) => { clearSelection(); setShowArchived(v === 'archived') },
       options: [{ key: 'active', label: 'Active' }, { key: 'archived', label: 'Archived' }],
     }] : []),
+    ...(!roomsScope && tags.length > 0 ? [{
+      title: 'Tag', value: [...tagFilter].join(','), defaultKey: '', multi: true, quiet: true,
+      onChange: (v: string) => setTagFilter(new Set(v.split(',').filter(Boolean))),
+      said: (v: string) => v.split(',').filter(Boolean).map((id) => tagById[id]?.name ?? id).join(', '),
+      options: tags.map((t) => ({ key: t.id, label: t.name, icon: TagIcon })),
+    }] : []),
   ]
 
   return (
@@ -308,8 +319,8 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
         left={<span data-type="title-l" className="text-on-surface">{roomsScope ? 'Agent Rooms' : 'Chat history'}</span>}
         // Every header action here acts on the SESSION list — a view switcher for chat cards, a
         // re-tag job over chats, a chat folder, a new chat. In the Rooms scope they would be
-        // controls for the list that is not on screen, so the scope carries its own action
-        // (`RoomsScope`'s "New room") and the header drops them.
+        // controls for the list that is not on screen, so the header drops them and its primary is
+        // the scope's own, New room, which opens `RoomsScope`'s form.
         //
         // The search and the filter (the scope, and Active or Archived) lead the row, in the one
         // order every header keeps. In the Rooms scope the filter stays, since its Scope is the way
@@ -338,6 +349,9 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
           <HeaderControl icon={FolderPlus} label="New folder" priority="low" onClick={createFolder} />
           <HeaderControl icon={Edit3} label="New chat" variant="primary" priority="primary" onClick={() => navigate('chat/new')} />
           </>}
+          {roomsScope && roomsAvailable && !creatingRoom && (
+            <HeaderControl icon={Plus} label="New room" variant="primary" priority="primary" onClick={() => setCreatingRoom(true)} />
+          )}
         </HeaderActions>} />
       {/* body row: the chat-history column + (optional) the right-docked
           "Manage folders & tags" rail, a flex sibling that PUSHES the column
@@ -427,27 +441,6 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
             {bulkNote && !selecting && (
               <div role="status" className="mb-m text-on-surface-var text-[0.8125rem]">{bulkNote}</div>
             )}
-            {tags.length > 0 && (
-              // 🔴 Which tags were filtering was readable only as a tinted pill. `role="group"` goes on
-              //    the row that already exists — wrapping only the chips would make them ONE flex item
-              //    and break the wrap + gap — and the visible "Filter:" is a bare `<span>`, which labels
-              //    nothing, so the group states the dimension itself.
-              <div role="group" aria-label="Filter by tag" className="mb-m flex flex-wrap items-center gap-1.5">
-                <span className="text-on-surface-low text-[0.75rem] mr-1">Filter:</span>
-                {tags.map((t) => {
-                  const on = tagFilter.has(t.id)
-                  // Raw: a filter toggle tinted with its tag's own colour; no toggle-chip primitive takes a colour.
-                  return (
-                    <button key={t.id} type="button" aria-pressed={on} onClick={() => { const nx = new Set(tagFilter); nx.has(t.id) ? nx.delete(t.id) : nx.add(t.id); setTagFilter(nx) }}
-                      className="inline-flex items-center gap-1 rounded-pill px-2 h-7 text-[0.75rem] transition-colors"
-                      style={on ? { background: `color-mix(in srgb, ${t.color || 'var(--color-primary)'} 22%, transparent)`, color: t.color || 'var(--color-primary)' } : { background: 'var(--color-surface-high)', color: 'var(--color-on-surface-var)' }}>
-                      <TagIcon size={11} /> {t.name}
-                    </button>
-                  )
-                })}
-                {tagFilter.size > 0 && <Button variant="ghost" size="xs" onClick={() => setTagFilter(new Set())} className="h-6 px-1 text-[0.75rem] text-on-surface-low">Clear</Button>}
-              </div>
-            )}
             </>)}
           </>)}
         </div>
@@ -459,7 +452,7 @@ export function ChatHistoryPage({ navigate, query, setQuery }: { navigate: (p: s
           <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="mx-auto w-full px-l pb-2xl">
               <RoomsScope rooms={roomsData} error={roomsError} loading={false}
-                onRefresh={refreshRooms} navigate={navigate} />
+                onRefresh={refreshRooms} navigate={navigate} creating={creatingRoom} onCreating={setCreatingRoom} />
             </div>
           </div>
         )
