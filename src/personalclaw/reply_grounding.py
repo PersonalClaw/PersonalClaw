@@ -8,9 +8,10 @@ be read has to stop the draft: left to write around the gap, the model fills it 
 
 **Only her instruction decides what is read.** The message being answered is somebody else's text,
 fenced as data (``inbox_service.fence_message_for_prompt``); a file name or a topic in it reads
-nothing. What is read: each file her instruction names by its file name (:func:`named_files`) and,
-when it names none, the knowledge library's best matches for what she said. The model is handed
-the text and never a tool, so nothing in the message can make anything be fetched.
+nothing. What is read: each file her instruction names by its file name (:func:`named_files`),
+with or without its extension (:func:`named_stems`), and, when it names none, the knowledge
+library's best matches for what she said. The model is handed the text and never a tool, so
+nothing in the message can make anything be fetched.
 
 **A named file is looked for where chat's reads reach without asking.** First among the notes the
 knowledge library's watched folders took in (the note at that path in one of them, or the one
@@ -35,7 +36,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 #: File types a named source can be: what a watched folder takes in (``dir_source``) and the
-#: documents the library keeps text for. A word in her instruction is a file name only with one.
+#: documents the library keeps text for. A word in her instruction is a file name with one, or
+#: with none when it is joined ("talk-outline") and a note or file is named so.
 NAMED_SOURCE_TYPES: tuple[str, ...] = (
     "md",
     "markdown",
@@ -81,6 +83,14 @@ _QUOTED = re.compile(
     rf"[\"'`“‘]([^\"'`”’\n]*?\w\.(?:{_TYPES}))[\"'`”’]",
     re.IGNORECASE,
 )
+
+#: A name written with no extension: letters and digits joined by one ``-`` or ``_`` at a time
+#: ("talk-outline", "q3_plan"; not "__init__"), with its folders when written
+#: ("Talks/talk-outline"). It is a name only when a note
+#: or file is named so, which :func:`_read_stem` decides.
+_STEM = re.compile(r"(?<![\w./~@-])(?:[\w.-]+/)*[^\W_]+(?:[-_][^\W_]+)+(?![\w/@-]|\.\w)")
+#: The most such words one instruction has looked up: each is a word until a note is named so.
+MAX_STEMS = 2 * MAX_NAMED
 
 #: A word limit, written after its number ("120 words max"), before it ("at most 120 words") or
 #: as an adjective ("a 120-word abstract").
@@ -244,6 +254,25 @@ def named_files(instructions: str) -> list[str]:
     return out
 
 
+def named_stems(instructions: str) -> list[str]:
+    """The joined words *instructions* hold that may name a note with no extension, in the order
+    written, each once: none inside a file name :func:`named_files` finds or an address, none all
+    digits (a date), and none that is the name of a file it names ("my talk-outline
+    (Talks/talk-outline.md)" names one note)."""
+    text = _ADDRESS.sub(" ", instructions or "")
+    text = _PLAIN.sub(" ", _QUOTED.sub(" ", text))
+    named = {Path(n).stem.lower() for n in named_files(instructions)}
+    out: list[str] = []
+    for m in _STEM.finditer(text):
+        stem = m.group(0)
+        last = stem.rsplit("/", 1)[-1]
+        if not any(c.isalpha() for c in last) or last.lower() in named:
+            continue
+        if stem.lower() not in {o.lower() for o in out}:
+            out.append(stem)
+    return out
+
+
 def ground(instructions: str) -> Grounding:
     """Read what *instructions* (her words for one reply) call for. Blocking: run off the loop."""
     said = (instructions or "").strip()
@@ -267,6 +296,20 @@ def ground(instructions: str) -> Grounding:
             grounding.named.append(read)
         else:
             grounding.unread.append(read)
+    for stem in named_stems(said)[:MAX_STEMS]:
+        by_stem = _read_stem(stem)
+        if by_stem is None or any(
+            n.found == getattr(by_stem, "found", None) for n in grounding.named
+        ):
+            continue
+        if len(names) >= MAX_NAMED:
+            # A name read without its extension counts toward the same bound as one with it.
+            by_stem = Unread(stem, f"a draft reads at most {MAX_NAMED} of the files you name")
+        names.append(stem)
+        if isinstance(by_stem, Note):
+            grounding.named.append(by_stem)
+        else:
+            grounding.unread.append(by_stem)
     if not names:
         grounding.related = _related(said)
     return grounding
@@ -295,13 +338,7 @@ def _read_named(name: str) -> Note | Unread:
             "write its folder too",
         )
     if notes:
-        note = notes[0]
-        content = str(note.get("content") or "")
-        found = str(note.get("guid") or name)
-        if not content.strip():
-            return Unread(name, _why_no_text(note))
-        text, cut = _masked(content, MAX_NOTE_CHARS)
-        return Note(name, found, LIBRARY, text, cut)
+        return _from_library(name, notes[0])
     try:
         path = _file_tools_path(name)
     except ValueError:
@@ -313,6 +350,62 @@ def _read_named(name: str) -> Note | Unread:
         return Unread(
             name, "no note or file by that name is in your knowledge library or your workspace"
         )
+    return _from_workspace(name, name, path)
+
+
+def _read_stem(stem: str) -> Note | Unread | None:
+    """The note *stem* names with no extension, read; why it could not be, when more than one is
+    named so; or None when none is, so *stem* is a word and reads nothing. Looked for as
+    :func:`_read_named` looks: in the knowledge library, then in the workspace."""
+    try:
+        notes = [n for t in NAMED_SOURCE_TYPES for n in _library_notes(f"{stem}.{t}")]
+    except Exception:  # noqa: BLE001 - a word may name nothing; the library is not asked again
+        logger.warning("reply draft: the knowledge library could not be read", exc_info=True)
+        return None
+    if len(notes) > 1:
+        shown = ", ".join(str(n.get("guid") or "") for n in notes[:3])
+        more = f" and {len(notes) - 3} more" if len(notes) > 3 else ""
+        return Unread(
+            stem,
+            f"{len(notes)} notes in your knowledge library are named so ({shown}{more}); "
+            "write its folder or its file type too",
+        )
+    if notes:
+        return _from_library(stem, notes[0])
+    try:
+        bare = _file_tools_path(stem)
+        files = [
+            (f"{stem}.{t}", _file_tools_path(f"{stem}.{t}"))
+            for t in NAMED_SOURCE_TYPES
+            if bare.with_name(f"{bare.name}.{t}").is_file()
+        ]
+    except ValueError:
+        return None
+    if len(files) > 1:
+        return Unread(
+            stem,
+            f"{len(files)} files in your workspace are named so "
+            f"({', '.join(n for n, _ in files)}); write its file type too",
+        )
+    if files:
+        found, path = files[0]
+        return _from_workspace(stem, found, path)
+    return None
+
+
+def _from_library(name: str, note: dict) -> Note | Unread:
+    """The library's *note*, which *name* named, as the model is given it; or why it holds no
+    text."""
+    content = str(note.get("content") or "")
+    found = str(note.get("guid") or name)
+    if not content.strip():
+        return Unread(name, _why_no_text(note))
+    text, cut = _masked(content, MAX_NOTE_CHARS)
+    return Note(name, found, LIBRARY, text, cut)
+
+
+def _from_workspace(name: str, found: str, path: Path) -> Note | Unread:
+    """The workspace file *found* at *path*, which *name* named, read; or why it could not be."""
     try:
         with open(path, "rb") as fh:
             data = fh.read(_MAX_FILE_BYTES)
@@ -324,7 +417,7 @@ def _read_named(name: str) -> Note | Unread:
     if not content.strip():
         return Unread(name, "it is empty")
     text, cut = _masked(content, MAX_NOTE_CHARS)
-    return Note(name, name, WORKSPACE, text, cut or len(data) == _MAX_FILE_BYTES)
+    return Note(name, found, WORKSPACE, text, cut or len(data) == _MAX_FILE_BYTES)
 
 
 def _why_no_text(note: dict) -> str:

@@ -52,6 +52,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **An MCP server that pages its tool list shows every tool. Its list was read to the first page only, so every tool after it was missing from the Tools page's card, from agents and from the trust review. A list that never ends is read up to 50 pages, a server that sends the same page again has it listed once, a page after the first that fails keeps the ones read, and in each case its card says only the first ones are shown.**
 - **The agent's web_fetch names PersonalClaw to the sites it reads, where it sent a generic name some sites refuse, and a page a site answers with an error (a refusal, a missing page, a rate limit) is a failed fetch that names the status, not a page the chat read.**
 - **A skill imported from another agent tool is invoked by the name its SKILL.md declares, where only its stored path worked. A name more than one skill the agent may use declares is refused, naming each.**
+- **A reply draft reads a note named by a joined file name without its extension ("from talk-outline", "q3_plan"). A name that matches more than one note reads none of them, and names them. A single word is still a word.**
 
 ### Security
 
