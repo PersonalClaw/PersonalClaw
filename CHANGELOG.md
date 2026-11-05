@@ -53,6 +53,7 @@ The in-app Updates panel reads this file (`GET /api/changelog`) to show "what's 
 - **The agent's web_fetch names PersonalClaw to the sites it reads, where it sent a generic name some sites refuse, and a page a site answers with an error (a refusal, a missing page, a rate limit) is a failed fetch that names the status, not a page the chat read.**
 - **A skill imported from another agent tool is invoked by the name its SKILL.md declares, where only its stored path worked. A name more than one skill the agent may use declares is refused, naming each.**
 - **A reply draft reads a note named by a joined file name without its extension ("from talk-outline", "q3_plan"). A name that matches more than one note reads none of them, and names them. A single word is still a word.**
+- **Memory › Settings › Consolidate now consolidates each chat it lists. It read no transcript and said it had started. A chat with no transcript now counts as not started, and the panel says how many chats it skipped, and why.**
 
 ### Security
 

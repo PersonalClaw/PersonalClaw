@@ -1523,7 +1523,13 @@ async def api_memory_context_preview(request: web.Request) -> web.Response:
 
 
 async def api_memory_consolidate(request: web.Request) -> web.Response:
-    """POST /api/memory/consolidate — trigger immediate consolidation for testing."""
+    """POST /api/memory/consolidate — consolidate one conversation into memory now.
+
+    Memory › Settings › Consolidate now sends it each chat's key as the chat list gives it. That
+    key is resolved to the one the conversation's transcript is kept under
+    (``chat_utils.candidate_history_keys``: a chat's ``dashboard:`` form, or a channel thread's
+    own key), the key the pass reads; a key no transcript is kept under is refused (404) rather
+    than answered ok with nothing to consolidate."""
     state: DashboardState = request.app["state"]
     if _is_restricted_session(state, request):
         sk = work_of_request(request)
@@ -1546,9 +1552,21 @@ async def api_memory_consolidate(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "JSON body must be an object"}, status=400)
-    key = body.get("key", "").strip()
-    if not key:
+    given = body.get("key", "")
+    given = given.strip() if isinstance(given, str) else ""
+    if not given:
         return web.json_response({"error": "session key required"}, status=400)
+    from personalclaw.dashboard.chat_utils import candidate_history_keys
+
+    # The transcript the pass reads is the consolidator's log's: the key is resolved there.
+    log = state.consolidator._log
+    key = next((k for k in candidate_history_keys(given) if log.has_session(k)), None)
+    if key is None:
+        return json_error(
+            "session_not_found",
+            message=f"No conversation is kept under '{given}', so there is nothing to consolidate.",
+            status=404,
+        )
     include_history = bool_field(body, "include_history", default=True)
     nothing = state.consolidator.why_nothing_is_kept(key)
     if nothing:
