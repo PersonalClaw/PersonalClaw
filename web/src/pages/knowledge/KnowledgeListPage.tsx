@@ -560,12 +560,16 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
               {view === 'library' && <HeaderFilter sections={librarySections} />}
               <HeaderSegmented ariaLabel="Knowledge view" value={view} onChange={(v) => setView(v as View)}
                 options={[{ key: 'home', label: 'Home', icon: Home }, { key: 'library', label: 'All items', icon: Library }, { key: 'graph', label: 'Graph', icon: Network }, { key: 'intents', label: 'Intents', icon: Target }, { key: 'tags', label: 'Tags', icon: TagIcon }, { key: 'conflicts', label: 'Conflicts', icon: Scale }, { key: 'decisions', label: 'Decisions', icon: Gavel }]} />
-              {view === 'library' && (items?.length ?? 0) > 0 && (
+              {view === 'library' && (
                 // `priority="low"` so this sheds into the `…` menu before the primary action —
-                // it is a maintenance nicety, not the reason anyone opens the page.
+                // it is a maintenance nicety, not the reason anyone opens the page. Kept mounted
+                // whatever the list shows: it works on the whole library, and a member that came and
+                // went with a search's matches re-tiered the row under the field being typed in.
                 <HeaderControl icon={Sparkles} label="Regenerate intelligence" priority="low"
                   hint="Re-derive insights for items missing them"
-                  disabled={regenning} onClick={regenning ? undefined : regenerate} />
+                  disabled={regenning || !stats?.items}
+                  disabledReason={regenning ? undefined : !stats?.items ? 'Nothing in the library yet' : undefined}
+                  onClick={regenning || !stats?.items ? undefined : regenerate} />
               )}
               {/* The way IN to watched sources. It lives beside the
                   primary action rather than in the `view` strip because Sources is its own

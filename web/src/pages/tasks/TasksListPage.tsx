@@ -355,10 +355,12 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   // (which present their own statuses) so both narrowings apply to every view.
   const scopedTasks = useMemo(() => (tasks ?? []).filter(inScope).filter(hasTag), [tasks, inScope, hasTag])
 
-  // The unified Filter & sort menu's sections. Status hides while searching (the
-  // query overrides it) and Sort hides on board/dag (they present + order their
-  // own statuses) — so the menu only ever offers what the current view honors.
-  const showStatus = !FULL_WIDTH.includes(view) && !q
+  // The unified Filter & sort menu's sections. Sort hides on board/dag (they present + order
+  // their own statuses), so the menu only ever offers what the current view honors. Status stays
+  // while searching and narrows the matches too: a section that came and went with the query
+  // left a project's header with no filter on the first key, and the row re-tiered under the
+  // field being typed in.
+  const showStatus = !FULL_WIDTH.includes(view)
   const showSort = view === 'list' || view === 'cards'
   const filterSections = useMemo<FilterSectionDef[]>(() => {
     const byProject = new Map<string, number>()
@@ -427,8 +429,13 @@ export function TasksListPage({ onCreate, view: viewProp, filter, openId, setVie
   }, [tasks, ready, projects, codingProjectNames, scope, filter, sortBy, showStatus, showSort, owner, assigned, tagFilter, inAProject])
 
   const filtered = useMemo(() => {
+    // The chosen status, over the search's matches as over the whole list.
+    const readyIds = new Set((ready ?? []).map((t) => t.id))
+    const withStatus = (list: TaskItem[]) => filter === 'all' ? list
+      : filter === 'ready' ? (ready ? list.filter((t) => readyIds.has(t.id)) : list)
+        : filter === 'done' ? list.filter((t) => TERMINAL.has(t.status)) : list.filter((t) => t.status === filter)
     let base: TaskItem[] | null
-    if (q) base = results  // search overrides the status filter
+    if (q) base = results && withStatus(results)
     else if (filter === 'ready') base = ready
     else if (!tasks) base = null
     else base = filter === 'all' ? [...tasks] : filter === 'done' ? tasks.filter((t) => TERMINAL.has(t.status)) : tasks.filter((t) => t.status === filter)

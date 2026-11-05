@@ -177,6 +177,6 @@ describe('the parent reaches the shared empty state from every view', () => {
     expect(src).toMatch(/onRegenerate=\{regenerate\}/)
     expect(src).toMatch(/regenerating=\{regenning\}/)
     // The reason the hand-down is needed — if this ever stops being library-only, revisit.
-    expect(src, 'header control is still library-only').toMatch(/view === 'library' && \(items\?\.length \?\? 0\) > 0/)
+    expect(src, 'header control is still library-only').toMatch(/\{view === 'library' && \([\s\S]{0,600}?label="Regenerate intelligence"/)
   })
 })
