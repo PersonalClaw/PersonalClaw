@@ -29,6 +29,7 @@
     - radio "Files"
     - radio "Artifacts"
   - heading "Memory" [level=#]
+  - searchbox "Filter memory audit log"
   - radiogroup "Memory view":
     - radio "Studio"
     - radio "Health"
@@ -36,12 +37,10 @@
     - radio "Inspect"
     - radio "Audit" [checked]
     - radio "Settings"
+  - button "Reload the audit log"
   - paragraph: Explore and manage what the <theme> remembers — a studio over semantic facts, episodes, lessons, and documents, plus health, recall, and the audit trail.
   - text: # Semantic # Episodic # Events # Embedded · no model bound
-  - textbox "Filter memory audit log":
-    - /placeholder: Filter by type or key
   - status
-  - button "Reload the audit log"
   - heading "Nothing recorded yet" [level=#]
   - paragraph: Every memory write, update and deletion lands here — reversibly. It fills as agents remember things.
 - contentinfo "Status":

@@ -17,6 +17,7 @@
       "390": [
         "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
+        "button \"Garden: its overview\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
@@ -30,6 +31,7 @@
       "412": [
         "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
+        "button \"Garden: its overview\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
@@ -79,6 +81,7 @@
       "390": [
         "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
+        "button \"Garden: its overview\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",
@@ -92,6 +95,7 @@
       "412": [
         "button \"All projects\"",
         "button \"Filter by project “Garden”\"",
+        "button \"Garden: its overview\"",
         "button \"New task\"",
         "button \"Rename\"",
         "button \"Select: Fix the gate latch\"",

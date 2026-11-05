@@ -34,8 +34,8 @@
   - heading "Tools" [level=#]
   - searchbox "Search tools"
   - 'button "Show: Any risk"'
-  - button "Add tool server"
   - button "More actions"
+  - button "Add tool server"
   - status
   - text: Tool groups · # groups, # tools
   - switch "Tool groups"

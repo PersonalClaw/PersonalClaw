@@ -29,7 +29,7 @@
     - radio "Files"
     - radio "Artifacts"
   - heading "Knowledge" [level=#]
-  - searchbox "Search knowledge"
+  - button "Search knowledge"
   - button "Filter"
   - radiogroup "Knowledge view":
     - radio "Home"
@@ -39,6 +39,7 @@
     - radio "Tags"
     - radio "Conflicts"
     - radio "Decisions"
+  - button "Regenerate intelligence" [disabled]
   - button "Sources"
   - button "Reports"
   - button "Add knowledge"
