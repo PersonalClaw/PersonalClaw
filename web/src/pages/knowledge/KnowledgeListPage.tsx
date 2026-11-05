@@ -141,6 +141,9 @@ function EmbeddingChip({ stats, reindex, starting, onReindex }: {
   )
 }
 
+/** A curation state as its option reads, for one the current matches no longer hold. */
+const CURATION_SAID: Record<string, string> = { reading: 'Reading', unread: 'Unread', read: 'Read', favorites: 'Favorites' }
+
 export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSources, onOpenReports, onOpenChat, onOpenModels, query, setQuery }: { onCreate: () => void; onOpenItem: (id: string) => void; onOpenReader?: (id: string) => void; onOpenSources: () => void; onOpenReports: () => void; onOpenChat: () => void; /** Settings → Models — where a missing model is fixed. Optional: a host with no route for it omits the action rather than rendering a dead button. */ onOpenModels?: () => void } & Pick<RouteProps, 'query' | 'setQuery'>) {
   // 🪤 The default stays 'library', measured rather than preferred: `pages/loadErrorSurfaces`
   // mounts this page with an empty query and asserts the ITEM LIST's failed-read and empty-library
@@ -488,16 +491,24 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
   // the shelf, as the sections of the header's filter, each named in its label once set. A shelf
   // REPLACES the item source (a smart shelf's membership is server-resolved), so it is a section of
   // its own, with New shelf as its last row.
+  //
+  // A section shows while the matches hold more than one of its kind, AND while its value is set,
+  // with the chosen option kept: the matches change with each search (and are empty while one
+  // loads), and a section that left with them took the filter's label and the only row that clears
+  // it, while its choice went on filtering.
   const librarySections = useMemo<FilterSectionDef[]>(() => {
     const list: FilterSectionDef[] = []
     const several = (items?.length ?? 0) > 1
-    if (typesPresent.length > 1) {
+    const keeping = (present: string[], chosen: string) => (chosen && !present.includes(chosen) ? [...present, chosen] : present)
+    const types = keeping(typesPresent, typeFilter)
+    if (types.length > 1 || typeFilter) {
       list.push({ title: 'Type', value: typeFilter, defaultKey: '', onChange: setTypeFilter, quiet: true,
-        options: [{ key: '', label: 'All types' }, ...typesPresent.map((t) => { const tm = resolveType({ type: t as never }); return { key: t, label: tm.label, icon: tm.icon } })] })
+        options: [{ key: '', label: 'All types' }, ...types.map((t) => { const tm = resolveType({ type: t as never }); return { key: t, label: tm.label, icon: tm.icon } })] })
     }
-    if (providersPresent.length > 1) {
+    const providers = keeping(providersPresent, providerFilter)
+    if (providers.length > 1 || providerFilter) {
       list.push({ title: 'Provider', value: providerFilter, defaultKey: '', onChange: setProviderFilter, quiet: true,
-        options: [{ key: '', label: 'All providers', icon: Database }, ...providersPresent.map((p) => ({ key: p, label: p === 'native' ? 'PersonalClaw' : p }))] })
+        options: [{ key: '', label: 'All providers', icon: Database }, ...providers.map((p) => ({ key: p, label: p === 'native' ? 'PersonalClaw' : p }))] })
     }
     // Curation: only the states actually present, and only once the library is big enough for
     // filtering to be the point; favourites whenever there are any.
@@ -507,6 +518,9 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
       ...(several && curationCounts.read > 0 ? [{ key: 'read', label: 'Read', count: curationCounts.read }] : []),
       ...(curationCounts.favorites > 0 ? [{ key: 'favorites', label: 'Favorites', icon: Star, count: curationCounts.favorites }] : []),
     ]
+    if (curationFilter && !curation.some((c) => c.key === curationFilter)) {
+      curation.push({ key: curationFilter, label: CURATION_SAID[curationFilter] ?? curationFilter, count: 0 })
+    }
     if (curation.length > 0) {
       list.push({ title: 'Curation', value: curationFilter, defaultKey: '', onChange: setCurationFilter, quiet: true,
         options: [{ key: '', label: 'Any state' }, ...curation] })
@@ -567,9 +581,12 @@ export function KnowledgeListPage({ onCreate, onOpenItem, onOpenReader, onOpenSo
                 // went with a search's matches re-tiered the row under the field being typed in.
                 <HeaderControl icon={Sparkles} label="Regenerate intelligence" priority="low"
                   hint="Re-derive insights for items missing them"
-                  disabled={regenning || !stats?.items}
-                  disabledReason={regenning ? undefined : !stats?.items ? 'Nothing in the library yet' : undefined}
-                  onClick={regenning || !stats?.items ? undefined : regenerate} />
+                  // Off only where the library is KNOWN empty (`empty`, below): while the stats load,
+                  // or after their read failed, "Nothing in the library yet" would be a claim nobody
+                  // checked, the one `empty` exists to avoid.
+                  disabled={regenning || !!empty}
+                  disabledReason={regenning ? undefined : empty ? 'Nothing in the library yet' : undefined}
+                  onClick={regenning || empty ? undefined : regenerate} />
               )}
               {/* The way IN to watched sources. It lives beside the
                   primary action rather than in the `view` strip because Sources is its own
