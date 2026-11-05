@@ -429,26 +429,20 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
 
   // The action cluster — the ONE responsive header cluster (4-tier FULL→TEXT→ICON→
   // OVERFLOW). Edit mode swaps Edit for Cancel/Save; the curation controls (pin/
-  // archive/delete/more) stay available throughout. Priorities drive the overflow
-  // Header tenet: the side-panel opener (More details) is the RIGHTMOST control;
-  // Delete sits LEFTMOST of the right-edge group; the rest in between. Priority
-  // (not order) drives overflow: the primary action (Save when editing, else Edit)
-  // is kept longest; the low ones (Delete, More details) fall into the auto-`…`
-  // menu first as the header tightens.
+  // archive/delete/more) stay available throughout. The one order: Delete leftmost, then
+  // Cancel while editing and the rest, the side-panel opener (More details) after them, and
+  // the primary action (Save when editing, else Edit) rightmost. Priority (not order) drives
+  // overflow: the primary is held in the row; the low ones (Delete, More details) fall into
+  // the auto-`…` menu first as the header tightens.
   const actionCluster = (
     <HeaderActions>
       <HeaderControl icon={Trash2} label="Delete" priority="low" danger onClick={del} />
-      {editing ? (
+      {editing && (
         <>
           {/* Cancel drops the edit — and with it any refused copy the notice is holding, which
               would otherwise greet the next edit with a change the user already walked away from. */}
           <HeaderControl icon={X} label="Cancel" onClick={() => { if (guard.conflict) guard.discard(); setEditing(false); setErr('') }} />
-          {/* Off while a refused save is pending: the notice is where that one is settled, and a
-              second save would be refused the same way. */}
-          <HeaderControl icon={Check} label={saving ? 'Saving…' : 'Save'} variant="primary" priority="primary" onClick={save} disabled={saving || guard.conflict !== null} />
         </>
-      ) : (
-        <HeaderControl icon={Pencil} label="Edit" variant="primary" priority="primary" onClick={startEdit} />
       )}
       {/* Investigate — the shared primitive, rendered as a HeaderControl
           so it inherits this header's 4-tier responsive collapse (an icon button
@@ -487,6 +481,11 @@ export function KnowledgeDetail({ item, onChanged, onDeleted, onTagClick, onShow
       {onShowDetails && (
         <HeaderControl icon={Layers} label={`More details${detailsCount ? ` · ${detailsCount}` : ''}`} active={detailsOpen} priority="low" onClick={onShowDetails} />
       )}
+      {/* Off while a refused save is pending: the notice is where that one is settled, and a
+          second save would be refused the same way. */}
+      {editing
+        ? <HeaderControl icon={Check} label={saving ? 'Saving…' : 'Save'} variant="primary" priority="primary" onClick={save} disabled={saving || guard.conflict !== null} />
+        : <HeaderControl icon={Pencil} label="Edit" variant="primary" priority="primary" onClick={startEdit} />}
     </HeaderActions>
   )
   const wandBtn = aiTitleAvailable ? (

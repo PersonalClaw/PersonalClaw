@@ -111,12 +111,12 @@ function seed() {
  *  detail carries; `pick`, the name of the control that selects it) with the address that row
  *  selects, and a second row that stays in the list. */
 const TABS = [
-  { tab: 'Agents', address: 'agents', add: 'New agent', header: ['New agent', 'More actions'], row: 'scout', pick: 'scout', open: 'native:scout', other: 'probe', noun: 'agents' },
+  { tab: 'Agents', address: 'agents', add: 'New agent', header: ['More actions', 'New agent'], row: 'scout', pick: 'scout', open: 'native:scout', other: 'probe', noun: 'agents' },
   { tab: 'Skills', address: 'skills', add: 'New skill', header: ['New skill'], row: 'tidy-notes', pick: 'tidy-notes', open: 'tidy-notes', other: 'brief', noun: 'skills' },
   { tab: 'Tools', address: 'tools', add: 'Add tool server', header: ['Show: Any risk', 'Add tool server', 'More actions'], row: 'mcp/files/hello', pick: /^mcp\/files\/hello/, open: 'mcp/files/hello', other: 'read_file', noun: 'tools' },
   { tab: 'Prompts', address: 'prompts', add: 'New prompt', header: ['Sorted by name', 'New prompt'], row: 'greeting', pick: 'greeting', open: 'greeting', other: 'farewell', noun: 'prompts' },
   { tab: 'Apps', address: 'apps', add: 'Install from URL', header: ['Show: All apps · Sorted by name', 'Install from URL'], row: 'Notes', pick: 'Notes — details', open: 'notes', other: 'Clips', noun: 'apps' },
-  { tab: 'Store', address: 'apps?view=store', add: 'Install from URL', header: ['Show: All apps · Sorted by name', 'Install from URL', 'More actions'], row: 'Weather', pick: 'Weather — details', open: 'weather', other: 'Maps', noun: 'apps' },
+  { tab: 'Store', address: 'apps?view=store', add: 'Install from URL', header: ['Show: All apps · Sorted by name', 'More actions', 'Install from URL'], row: 'Weather', pick: 'Weather — details', open: 'weather', other: 'Maps', noun: 'apps' },
 ] as const
 
 /** The address with the selection `open` added to it. */
@@ -247,8 +247,9 @@ function permissions(region: HTMLElement): Record<string, string> {
 }
 
 describe('the header holds the tab’s controls, the one that adds last', () => {
-  // Its filter, named for what it shows; the action that adds; the `…` with the tab's other
-  // actions. The search and the view switch are a field and radios, not buttons.
+  // Its filter, named for what it shows; the `…` with the tab's other actions; and the action that
+  // adds, last when it is the tab's primary (it ends the row, after the `…`). The search and the
+  // view switch are a field and radios, not buttons.
   it.each(TABS)('$tab: $header', async ({ address, add, header }) => {
     await open(address)
     expect(headerActions()).toEqual(header)

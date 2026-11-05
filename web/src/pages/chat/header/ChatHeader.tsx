@@ -116,8 +116,9 @@ export function ChatHeader({ header, stream, composer, panes, transcript, starte
       // Boundary control, which holds the permission mode and the working folder. Brief the agent
       // is a row of the composer's `+` menu.
       //
-      // Header ordering tenet: the side-panel opener is the RIGHTMOST control. On the new-chat page
-      // that's "Chat history"; once started it's "Activity".
+      // The one order: the side-panel opener is the last of the actions, and the primary follows
+      // it. A thread has no primary on the row (New chat lives in the `…`), so the panel opener
+      // ends it: "Chat history" on the new-chat page, "Activity" once started.
       <HeaderActions className="max-w-[70vw]">
         {/* The chat's link and the channels it can continue on, in one menu. A control like its
             neighbours, so it takes the cluster's ladder, and its rows join the `…` when tighter. */}

@@ -16,7 +16,7 @@ const docs: UiDoc[] = [
     ],
     bestPractices: [
       { guidance: true, description: "Every page-level control lives in this cluster, so no page draws a controls bar under its header: the page search is a HeaderSearch, its main view switch its one HeaderSegmented, and every other choice set (scope, status, kind, owner, sort) a section of its HeaderFilter." },
-      { guidance: true, description: 'ORDERING TENET: search · filter and sort · the view switch · secondary actions · the primary action, rightmost; only the cluster\'s own … follows it.' },
+      { guidance: true, description: 'ORDERING TENET: search · filter and sort · the view switch · a destructive action · the other secondary actions · a side-panel opener · the cluster\'s own … · the primary action, rightmost.' },
       { guidance: true, description: 'ORDERING TENET: among the secondary actions, a destructive control (Delete) sits leftmost and a control that opens a side panel (SidePanel/detail/inspector rail) rightmost.' },
       { guidance: true, description: "Keep the Delete and panel-opener controls priority='low' even though their positions are fixed — priority governs OVERFLOW shedding independently of visual order." },
       { guidance: false, description: 'Do not build a header overflow menu by hand — it falls out of the same child list automatically in the OVERFLOW tier, and a HeaderControl marked inOverflow is a row of it at every tier.' },

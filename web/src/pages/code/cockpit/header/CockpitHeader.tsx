@@ -75,25 +75,12 @@ export function CockpitHeader({ id, project: p, setProject, setToast, onOpenProj
         )}
       </div>}
       right={<HeaderActions>
-        {/* Run controls + terminal toggle are primary/default (frequent, contextual);
-            everything else (run build/tests, reuse workspace, navigate away, delete)
-            is low-priority so the cluster's own overflow menu absorbs it first. */}
-        {LOOP_ACTION_SOURCE_STATUSES.pause.has(p.status)
-          ? <HeaderControl icon={Pause} label="Pause" priority="primary" onClick={() => act('pause')} disabled={acting} />
-          : LOOP_ACTION_SOURCE_STATUSES.resume.has(p.status)
-            ? <HeaderControl icon={Play} label="Resume" priority="primary" onClick={() => act('resume')} variant="primary" disabled={acting} />
-            : LOOP_ACTION_SOURCE_STATUSES.start.has(p.status)
-              ? <HeaderControl icon={Play} label="Start" priority="primary" onClick={() => act('start')} variant="primary" disabled={acting} />
-              : null}
-        {/* Stop is TERMINAL + non-resumable — confirm first, like Delete. `stagnant`
-            is an active attention state (resume + stop both valid). */}
-        {LOOP_ACTION_SOURCE_STATUSES.stop.has(p.status) &&
-          <HeaderControl icon={Square} label="Stop" priority="primary" onClick={async () => {
-            // The one Stop confirm, said once for every Stop control (`loop/stopLoop`).
-            if (await confirmStopLoop(p.status, p.name)) act('stop')
-          }} />}
-        {/* A shell only makes sense in a real codebase (gate on `ws`). */}
-        {!!ws && <HeaderControl icon={TerminalSquare} label={showTerm ? 'Hide terminal' : 'Terminal'} onClick={() => setShowTerm(!showTerm)} active={showTerm} ariaExpanded={showTerm} />}
+        {/* The one order: Delete first, then the build and test runs and the navigation, the
+            terminal (the panel opener), and the run's own actions last, Commit, Stop and the
+            next step, Pause, Resume or Start. Run controls and the terminal are primary/default
+            (frequent, contextual); everything else is low-priority so the cluster's own
+            overflow menu absorbs it first. */}
+        <HeaderControl icon={Trash2} label="Delete project" danger priority="low" onClick={() => { void del() }} />
         {/* Run the configured build/test command in the cockpit terminal (only with a
             real workspace + the command configured). Low priority → overflow first. */}
         {!!ws && p.verify_command && <HeaderControl icon={Play}
@@ -106,11 +93,26 @@ export function CockpitHeader({ id, project: p, setProject, setToast, onOpenProj
           onClick={() => runInWorkspaceTerminal(p.test_command || '')} />}
         {/* Reuse this project's BOUND workspace for a fresh target — only with a real
             codebase dir + not mid-run. */}
-        {canCommit && <HeaderControl icon={GitCommitHorizontal} label="Commit" priority="primary" onClick={() => { void commit() }}
-          title={`Commit the session's changes. ${COMMIT_HOOKS_NOTE}`} hint={COMMIT_HOOKS_NOTE} />}
         {onNewTarget && !active && !!ws && <HeaderControl icon={Target} label="New target" priority="low" onClick={() => onNewTarget(ws)} />}
         <HeaderControl icon={ListChecks} label="All projects" priority="low" onClick={onBack} />
-        <HeaderControl icon={Trash2} label="Delete project" danger priority="low" onClick={() => { void del() }} />
+        {/* A shell only makes sense in a real codebase (gate on `ws`). */}
+        {!!ws && <HeaderControl icon={TerminalSquare} label={showTerm ? 'Hide terminal' : 'Terminal'} onClick={() => setShowTerm(!showTerm)} active={showTerm} ariaExpanded={showTerm} />}
+        {canCommit && <HeaderControl icon={GitCommitHorizontal} label="Commit" priority="primary" onClick={() => { void commit() }}
+          title={`Commit the session's changes. ${COMMIT_HOOKS_NOTE}`} hint={COMMIT_HOOKS_NOTE} />}
+        {/* Stop is TERMINAL + non-resumable — confirm first, like Delete. `stagnant`
+            is an active attention state (resume + stop both valid). */}
+        {LOOP_ACTION_SOURCE_STATUSES.stop.has(p.status) &&
+          <HeaderControl icon={Square} label="Stop" priority="primary" onClick={async () => {
+            // The one Stop confirm, said once for every Stop control (`loop/stopLoop`).
+            if (await confirmStopLoop(p.status, p.name)) act('stop')
+          }} />}
+        {LOOP_ACTION_SOURCE_STATUSES.pause.has(p.status)
+          ? <HeaderControl icon={Pause} label="Pause" priority="primary" onClick={() => act('pause')} disabled={acting} />
+          : LOOP_ACTION_SOURCE_STATUSES.resume.has(p.status)
+            ? <HeaderControl icon={Play} label="Resume" priority="primary" onClick={() => act('resume')} variant="primary" disabled={acting} />
+            : LOOP_ACTION_SOURCE_STATUSES.start.has(p.status)
+              ? <HeaderControl icon={Play} label="Start" priority="primary" onClick={() => act('start')} variant="primary" disabled={acting} />
+              : null}
       </HeaderActions>} />
   )
 }

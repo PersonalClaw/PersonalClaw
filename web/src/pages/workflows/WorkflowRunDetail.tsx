@@ -548,6 +548,18 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                 ]}
               />
             )}
+            {/* The one order: Cancel and Steer, then the panels, then the run's next step (Start,
+                Pause or Resume, or Fork once it ended) last. Three lifecycle phases, not two — see
+                the note beside `start` above. */}
+            {!isTerminal(run.status) && (
+              <HeaderControl icon={X} label="Cancel" onClick={cancel}
+                title={isPrelaunch(run.status) ? 'Cancel this run before it starts' : 'Cancel this run'} />
+            )}
+            {!isPrelaunch(run.status) && !isTerminal(run.status) && (
+              <HeaderControl icon={MessageSquarePlus} label="Steer" ariaExpanded={steerOpen}
+                onClick={() => setSteerOpen((v) => !v)}
+                title="Steer this run — queue an instruction or accept a judge comment" />
+            )}
             {/* Workspace on BOTH sides of the terminal split, unlike Steer/Pause/Fork: reviewing
                 what a run changed is the one thing a user wants equally mid-run (is it touching
                 what I expected) and after (do I take this work). */}
@@ -580,18 +592,11 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
             <HeaderControl icon={MessageSquareCode} label="Review" priority="low" ariaExpanded={reviewOpen}
               onClick={() => setReviewOpen((v) => !v)}
               title="Review — accept or reject this run's line-anchored findings" hint="Accept or reject this run's line-anchored findings" />
-            {/* Three lifecycle phases, not two — see the note beside `start` above. */}
             {isPrelaunch(run.status) ? (
-              <>
-                <HeaderControl icon={Play} label="Start" priority="primary" onClick={start}
-                  title="Start this run — it has not executed yet" />
-                <HeaderControl icon={X} label="Cancel" onClick={cancel} title="Cancel this run before it starts" />
-              </>
+              <HeaderControl icon={Play} label="Start" priority="primary" onClick={start}
+                title="Start this run — it has not executed yet" />
             ) : !isTerminal(run.status) ? (
               <>
-                <HeaderControl icon={MessageSquarePlus} label="Steer" ariaExpanded={steerOpen}
-                  onClick={() => setSteerOpen((v) => !v)}
-                  title="Steer this run — queue an instruction or accept a judge comment" />
                 {/* A pause STOPS the step in flight and re-queues it — the old "in-flight steps
                     finish" promise was a pause that paused nothing. It lands on the controller's
                     next step, so the gap between the click and that step says so instead of
@@ -615,7 +620,6 @@ export function WorkflowRunDetail({ runId, onBack, onOpenRun, deepLinkNodeId = n
                     onClick={() => act('Pause', () => api.pauseWorkflowRun(runId))}
                     title="Pause — stops the step in flight; Resume runs it again" />
                 )}
-                <HeaderControl icon={X} label="Cancel" onClick={cancel} title="Cancel this run" />
               </>
             ) : (
               <HeaderControl icon={GitBranch} label="Fork" priority="primary" onClick={fork}

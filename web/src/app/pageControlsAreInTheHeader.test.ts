@@ -151,3 +151,59 @@ describe('the header holds one view switch, and a filter that says what is set',
     expect(own).toEqual([])
   })
 })
+
+// ── One order in every header cluster ─────────────────────────────────────────────────────────────
+//
+// The primary action is rightmost, so the eye finds it at the row's end on every page; a
+// destructive control is the first of the actions, apart from the rest; a control that always
+// lives in the `…` (`inOverflow`) has no place in the row and is left out. "The primary" is a
+// `variant="primary"` control, or a `priority="primary"` one that does something rather than open a
+// panel (a Session map toggle keeps its place by priority without being the page's action).
+// Alternatives (Edit or Save, Start or Pause) are all primaries, so they may follow one another.
+
+/** Where a cluster's members break the one order. */
+export function headerOrderFindings(src: string): string[] {
+  const out: string[] = []
+  for (const block of src.matchAll(/<HeaderActions[\s>][\s\S]*?<\/HeaderActions>/g)) {
+    const members = [...block[0].matchAll(/<(HeaderControl|HeaderMenu)\b([\s\S]*?)\/?>/g)]
+      .map((m) => ({ attrs: m[2], label: /label=("[^"]*"|\{[^}]*\})/.exec(m[2])?.[1].slice(0, 40) ?? m[1] }))
+      .filter((m) => !/\binOverflow\b/.test(m.attrs))
+      .map((m) => ({
+        ...m,
+        primary: /variant="primary"/.test(m.attrs) || (/priority="primary"/.test(m.attrs) && !/ariaExpanded=/.test(m.attrs)),
+        danger: /\sdanger(\s|$|\/)|variant="danger"/.test(m.attrs),
+      }))
+    const first = members.findIndex((m) => m.primary)
+    if (first >= 0) {
+      for (const m of members.slice(first)) if (!m.primary) out.push(`${m.label} after the primary`)
+    }
+    members.forEach((m, i) => {
+      if (!m.danger) return
+      const before = members.slice(0, i).filter((p) => !p.danger && !p.primary)
+      if (before.length) out.push(`${m.label} (destructive) after ${before.map((p) => p.label).join(', ')}`)
+    })
+  }
+  return out
+}
+
+describe('every header cluster keeps the one order', () => {
+  const files = () => [...pageFiles(), ...filesUnder(join(SRC, 'app'), (n) => /\.tsx$/.test(n) && !/\.test\.tsx$/.test(n)),
+    ...filesUnder(join(SRC, 'ui'), (n) => /\.tsx$/.test(n) && !/\.(test|doc)\.tsx$/.test(n))]
+
+  it('the primary last, and a destructive control before the other actions', () => {
+    const found = files().flatMap((f) => headerOrderFindings(strip(readSource(f))).map((x) => `${rel(f)}: ${x}`))
+    expect(found).toEqual([])
+  })
+
+  it('reads a cluster as the order rule says', () => {
+    const cluster = (body: string) => `<HeaderActions>${body}</HeaderActions>`
+    expect(headerOrderFindings(cluster('<HeaderControl label="Delete" danger /><HeaderControl label="Pin" /><HeaderControl label="Edit" variant="primary" />'))).toEqual([])
+    expect(headerOrderFindings(cluster('<HeaderControl label="Start" priority="primary" /><HeaderControl label="Cancel" />'))).toEqual(['"Cancel" after the primary'])
+    expect(headerOrderFindings(cluster('<HeaderControl label="Pin" /><HeaderControl label="Delete" danger priority="low" />'))).toEqual(['"Delete" (destructive) after "Pin"'])
+    // A disclosure kept by priority is not the primary, and a control in the `…` has no place.
+    expect(headerOrderFindings(cluster('<HeaderControl label="Map" priority="primary" ariaExpanded={o} /><HeaderControl label="Activity" />'))).toEqual([])
+    expect(headerOrderFindings(cluster('<HeaderControl label="Go" variant="primary" /><HeaderControl label="New chat" inOverflow />'))).toEqual([])
+    // Alternatives may follow one another.
+    expect(headerOrderFindings(cluster('{a ? <HeaderControl label="Save" variant="primary" /> : <HeaderControl label="Edit" variant="primary" />}'))).toEqual([])
+  })
+})

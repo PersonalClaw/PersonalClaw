@@ -40,8 +40,9 @@ import { TOP_BAR_BAND, useStackBelowCorners } from './TopBar'
  *    • Among the secondary actions, a DESTRUCTIVE control (Delete) sits leftmost and a
  *      control that OPENS A SIDE PANEL (a `<SidePanel>`/detail/inspector rail, e.g.
  *      "Details", "Activity", "Inbox settings") rightmost.
- *    • The primary action (New, Add, Install, Run) is the rightmost control; only the
- *      cluster's own `…` follows it.
+ *    • The primary action (New, Add, Install, Run) is the rightmost control, after the
+ *      cluster's own `…` too: a `variant="primary"` control draws in the row's trailing slot
+ *      (`usePlaced`). `app/pageControlsAreInTheHeader.test.ts` holds every cluster to the order.
  *  `priority` (primary/default/low) governs OVERFLOW shedding independently of this
  *  visual order, so keep Delete/panel-opener `priority="low"` even though their
  *  positions are fixed by the tenet. */
@@ -67,6 +68,8 @@ interface ChildReg {
   inOverflow?: boolean
   /** Overflow menu row descriptor (used when this control is pushed into `…`). */
   menu: OverflowRow & { rows?: OverflowRow[] }
+  /** The page's primary action (`variant="primary"`): drawn after the `…`, outside the rail. */
+  trailing?: boolean
 }
 
 /** One row of the `…` menu. A control that opens a menu of its own (`HeaderMenu`) lists its rows
@@ -83,6 +86,9 @@ interface ClusterCtx {
   visibleIds: Set<number> | null
   register: (reg: ChildReg) => void
   unregister: (id: number) => void
+  /** The live row's slot after the `…`: the page's primary action draws there (`trailing`), so
+   *  the `…` sits left of it and the primary ends the row. Unset in the probes. */
+  trailing?: HTMLElement | null
 }
 
 const Cluster = createContext<ClusterCtx | null>(null)
@@ -130,11 +136,21 @@ export function useHeaderChild(reg: Omit<ChildReg, 'id'>): { visible: boolean; t
     return () => ctx.unregister(id)
     // Re-register when the descriptor's identity-bearing fields change so the
     // container's overflow math + menu labels stay correct.
-  }, [ctx, id, reg.priority, reg.canIcon, reg.inOverflow, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled,
+  }, [ctx, id, reg.priority, reg.canIcon, reg.inOverflow, reg.trailing, reg.menu.label, reg.menu.danger, reg.menu.hint, reg.menu.disabled,
     reg.menu.rows?.map((r) => `${r.label}\u0000${r.hint ?? ''}`).join('\u0001')])
   if (!ctx) return { visible: !reg.inOverflow, tier: 'full' }
   const visible = !reg.inOverflow && (ctx.tier !== 'overflow' || !ctx.visibleIds || ctx.visibleIds.has(id))
   return { visible, tier: ctx.tier }
+}
+
+/** Draws a control where the cluster puts it: the page's primary action after the `…` (the live
+ *  row's trailing slot), so the `…` never follows it; everything else, and every probe, in place.
+ *  A portal keeps the React tree, and the slot follows the `…` in the DOM, so the tab order is the
+ *  visual order. */
+function usePlaced(trailing: boolean): (node: ReactNode) => ReactNode {
+  const ctx = useContext(Cluster)
+  const slot = trailing && ctx && !ctx.probe ? ctx.trailing : null
+  return (node) => (slot ? createPortal(node, slot) : node)
 }
 
 const TIER_ORDER: Tier[] = ['full', 'text', 'icon', 'overflow']
@@ -486,8 +502,11 @@ export function HeaderActions({ children, className, overflowClassName }: {
       // `…` is a later sibling, so it won and the pill became unclickable. The reserve is 0
       // when there is no title, which lets the pills have the room.
       const ceiling = railCeiling({ inner, dots: DOTS, title: reserve })
+      // The primary draws after the `…`, outside the rail, so the rail's cap leaves its width out.
+      let outsideW = 0
+      for (const r of regs.current.values()) if (r.trailing && keep.has(r.id)) outsideW += iconW(r.id)
       const cap = used > avail
-        ? Math.min(Math.max(floorW, Math.round(avail - DOTS)), ceiling)
+        ? Math.max(0, Math.min(Math.max(floorW, Math.round(avail - DOTS)), ceiling) - outsideW)
         : null
       setMaxW((prev) => (prev === cap ? prev : cap))
     }
@@ -504,7 +523,9 @@ export function HeaderActions({ children, className, overflowClassName }: {
     return () => ro.disconnect()
   }, [regVersion])
 
-  const ctx = useMemo<ClusterCtx>(() => ({ tier, visibleIds, register, unregister }), [tier, visibleIds, register, unregister])
+  // The live row's trailing slot, after the `…` (`usePlaced`): set once it mounts.
+  const [trailing, setTrailing] = useState<HTMLElement | null>(null)
+  const ctx = useMemo<ClusterCtx>(() => ({ tier, visibleIds, register, unregister, trailing }), [tier, visibleIds, register, unregister, trailing])
 
   // The overflow menu's actions = children NOT kept visible (in overflow), lowest
   // priority first (they collapsed first, so read top-to-bottom low→high feels off —
@@ -559,6 +580,8 @@ export function HeaderActions({ children, className, overflowClassName }: {
               </motion.div>
             )}
           </AnimatePresence>
+          {/* The page's primary action, after the `…`: the row's last control (`usePlaced`). */}
+          <div ref={setTrailing} data-header-trailing className="flex items-center gap-s empty:hidden" />
         </div>
       </div>
     </Cluster.Provider>
@@ -675,8 +698,10 @@ export function HeaderControl({
     priority,
     canIcon: !!Icon,
     inOverflow,
+    trailing: variant === 'primary',
     menu: { label, icon: Icon, hint: softOff ? disabledReason : hint, danger, disabled, onSelect: disabled ? undefined : onClick },
   })
+  const placed = usePlaced(variant === 'primary')
   if (!visible) return null // container is showing this as a `…`-menu row
   // Rendering per tier:
   //  • FULL  → icon + label
@@ -690,7 +715,7 @@ export function HeaderControl({
   const showLabel = !iconOnly
   const showIcon = !!Icon // icon shows in full/text/icon (never dropped while visible)
   const eff: Variant = danger ? 'danger' : variant
-  return (
+  return placed(
     <button
       type="button" onClick={disabled ? undefined : onClick}
       disabled={softOff ? undefined : disabled}
@@ -745,11 +770,13 @@ export function HeaderMenu({ icon: Icon, label, items, priority = 'default', var
   const { visible, tier } = useHeaderChild({
     priority,
     canIcon: true,
+    trailing: variant === 'primary',
     menu: { label, icon: Icon, rows: items },
   })
+  const placed = usePlaced(variant === 'primary')
   if (!visible) return null
   const iconOnly = tier === 'icon' || tier === 'overflow'
-  return (
+  return placed(
     <Popover portal placement="bottom" align="right" width={260}
       trigger={(open, toggle) => (
         <button type="button" onClick={toggle} aria-haspopup="menu" aria-expanded={open}
