@@ -892,18 +892,19 @@ function ProjectDetailPage({ id, onBack, navigate, query, setQuery, navEpoch }: 
     // Where you are, as a breadcrumb: the project's name, back to its Overview, then Tasks. A
     // project's Overview and Tasks are two pages of it, so the way between them is navigation, and
     // the header's one view switch stays the task list's layout, as on All tasks.
-    // Where the row is tight, "› Tasks" gives up its width before the name does, so the name, the
-    // way back, is what stays (as the project's own title does); below 1024 px the folder glyph
-    // goes too, for the name's sake. Measured at 390 px with both kept: the name was 0 px wide.
+    // Where the row is tight, the name gives up its width first and "› Tasks" stays whole, so the
+    // heading always says which page this is; the name truncates, and its tooltip and link keep
+    // it. "› Tasks" cannot shrink, so the header counts it in what the title slot cannot shed and
+    // still leaves the name a legible width. Below 1024 px the folder glyph goes, for the name.
     const crumb = (
       <div className="flex min-w-0 items-center gap-2">
         <FolderKanban size={18} className="shrink-0 text-primary max-lg:hidden" />
         <PageTitle className="flex min-w-0 items-baseline gap-xs">
           {/* The spaces are for the heading's text ("Garden › Tasks"); the row's gap lays it out. */}
-          <TextLink onClick={() => chooseView('overview')} title={`${project.name}: its overview`} className="min-w-0 truncate">{project.name}</TextLink>{' '}
-          <span className="flex min-w-0 shrink-[100] items-baseline gap-xs overflow-hidden whitespace-nowrap">
+          <TextLink onClick={() => chooseView('overview')} title={`${project.name}: its overview`} className="min-w-0 shrink-[100] truncate">{project.name}</TextLink>{' '}
+          <span className="flex shrink-0 items-baseline gap-xs whitespace-nowrap">
             <span aria-hidden className="text-on-surface-low">›</span>{' '}
-            <span className="truncate">Tasks</span>
+            <span>Tasks</span>
           </span>
         </PageTitle>
       </div>

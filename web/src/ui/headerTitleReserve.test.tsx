@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, pickTier, heldInRow, TITLE_MIN } from './HeaderActions'
+import { titleFloor, titleReserveFor, railCeiling, clusterFloor, stackBelowCorners, pickTier, heldInRow, wholeTitleTier, TITLE_MIN } from './HeaderActions'
 
 // ── An EMPTY title slot is owed nothing ──────────────────────────────────────
 //
@@ -225,5 +225,32 @@ describe('pickTier — a step up needs slack only where shedding could give the 
   it('counts a `…` drawn at every tier in both the row and the floor', () => {
     expect(pickTier({ ...TASKS, icon: 242, dots: 44, floor: 286, cur: 'overflow' })).toBe('icon')
     expect(pickTier({ ...TASKS, icon: 243, dots: 44, floor: 286, cur: 'icon' })).toBe('overflow')
+  })
+})
+
+describe('wholeTitleTier — a plainer tier that shows the title whole wins', () => {
+  // Home at 390 px: "Good morning, Alex" wants 180; New chat and the view switch are 200 with
+  // labels, 120 with icons; the header's inner box is 330.
+  const home = { full: 200, text: 200, icon: 120, dots: 0, inner: 330, natural: 180, hasContent: true }
+
+  it("drops the labels that would cut the greeting", () => {
+    expect(wholeTitleTier({ ...home, picked: 'full' })).toBe('icon')
+  })
+
+  it('keeps the richer tier while the title is whole at it', () => {
+    expect(wholeTitleTier({ ...home, inner: 400, picked: 'full' })).toBe('full')
+  })
+
+  it('keeps the chosen tier where no plainer one shows the title whole either', () => {
+    expect(wholeTitleTier({ ...home, natural: 260, picked: 'full' })).toBe('full')
+  })
+
+  it('leaves overflow, and a header with no title, as they are', () => {
+    expect(wholeTitleTier({ ...home, picked: 'overflow' })).toBe('overflow')
+    expect(wholeTitleTier({ ...home, hasContent: false, picked: 'full' })).toBe('full')
+  })
+
+  it('never steps to a richer tier than the one chosen', () => {
+    expect(wholeTitleTier({ ...home, picked: 'icon', natural: 300 })).toBe('icon')
   })
 })

@@ -239,6 +239,33 @@ export function pickTier(
   return 'overflow'
 }
 
+/** The tier to draw when the one `pickTier` chose cuts the title: the richest plainer tier that
+ *  leaves the title whole, if one does, so the cluster spends no label the title pays for.
+ *  Home's greeting read "Good morni…" beside New chat and its view switch at full labels, with room
+ *  for the whole greeting at icons. It reads only the slot's own width and the tiers' natural
+ *  widths, none of which the choice changes, so it cannot flip. The overflow tier is left alone:
+ *  it is chosen because no tier fits. */
+export function wholeTitleTier(
+  { picked, full, text, icon, dots, inner, natural, hasContent }: {
+    picked: Tier
+    /** Each tier's natural width. */
+    full: number; text: number; icon: number
+    /** The width of a `…` drawn at every tier, else 0. */
+    dots: number
+    /** The header's inner width, and the title slot's natural width. */
+    inner: number; natural: number; hasContent: boolean
+  },
+): Tier {
+  if (!hasContent || picked === 'overflow') return picked
+  const width: Record<Exclude<Tier, 'overflow'>, number> = { full, text, icon }
+  const whole = (t: Exclude<Tier, 'overflow'>) => inner - GAP_TO_TITLE - (width[t] + dots) >= natural
+  if (whole(picked)) return picked
+  for (const t of ['text', 'icon'] as const) {
+    if (TIER_ORDER.indexOf(t) > TIER_ORDER.indexOf(picked) && whole(t)) return t
+  }
+  return picked
+}
+
 /** The narrowest the cluster can get and keep every control reachable: its never-overflow
  *  controls icon-only, plus the `…` when anything else can fall into it — or the whole ICON tier,
  *  when that is narrower (a cluster of two needs no `…`). */
@@ -436,7 +463,10 @@ export function HeaderActions({ children, className, overflowClassName }: {
       // shrinks so the cluster keeps usable width.
       const avail = header ? Math.max(0, inner - reserve - GAP_TO_TITLE) : outer.clientWidth
 
-      const next = pickTier({ full: wFull, text: wText, icon: wIcon, avail, cur, dots, floor, hyst: HYST })
+      const picked = pickTier({ full: wFull, text: wText, icon: wIcon, avail, cur, dots, floor, hyst: HYST })
+      const next = header
+        ? wholeTitleTier({ picked, full: wFull, text: wText, icon: wIcon, dots, inner, natural: slot.natural, hasContent: slot.hasContent })
+        : picked
 
       if (next !== 'overflow') {
         if (next !== cur) setTier(next)
